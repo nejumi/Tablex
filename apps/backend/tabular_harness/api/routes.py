@@ -124,10 +124,12 @@ from tabular_harness.services.evaluation import (
     approve_spec,
     candidate_to_dict,
     create_default_evaluation_candidates,
+    create_evaluation_approval_review,
     create_evaluation_scenario_comparison,
     generate_split_manifest,
     promote_candidate_to_spec,
     spec_to_dict,
+    write_spec_artifact,
 )
 from tabular_harness.services.experiment_lifecycle import (
     compare_project_experiments,
@@ -922,12 +924,109 @@ def get_evaluation_spec(spec_id: str, db: Annotated[Session, Depends(get_session
     return spec_to_dict(spec)
 
 
-@router.post("/api/evaluation-specs/{spec_id}/approve", response_model=EvaluationSpecRead)
-def approve_evaluation_spec(spec_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+@router.post("/api/evaluation-specs/{spec_id}/approval-review", response_model=JobRead)
+def review_evaluation_spec_approval(
+    spec_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
     spec = require_eval_spec(db, spec_id)
+    job = create_job(
+        db,
+        job_type="review_evaluation_approval",
+        project_id=spec.project_id,
+        input_payload={"evaluation_spec_id": spec.id, "approval_intent": False},
+    )
     try:
+        mark_job_running(job)
+        result = create_evaluation_approval_review(db, store=store, spec=spec, approval_intent=False)
+        decision = result.payload["decision_support"]
+        mark_job_succeeded(
+            job,
+            {
+                "evaluation_spec_id": spec.id,
+                "artifact_id": result.artifact.id,
+                "review_status": decision["review_status"],
+                "blocked": decision["blocked"],
+                "blocker_count": decision["blocker_count"],
+                "warning_count": decision["warning_count"],
+            },
+        )
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise
+    return job_to_dict(job)
+
+
+@router.post("/api/evaluation-specs/{spec_id}/approve", response_model=EvaluationSpecRead)
+def approve_evaluation_spec(
+    spec_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    spec = require_eval_spec(db, spec_id)
+    job = create_job(
+        db,
+        job_type="review_evaluation_approval",
+        project_id=spec.project_id,
+        input_payload={"evaluation_spec_id": spec.id, "approval_intent": True},
+    )
+    try:
+        mark_job_running(job)
+        result = create_evaluation_approval_review(db, store=store, spec=spec, approval_intent=True)
+        decision = result.payload["decision_support"]
+        if result.blocked:
+            mark_job_failed(
+                job,
+                "Evaluation approval is blocked by required questions or deployment-blocking assumptions",
+                {
+                    "evaluation_spec_id": spec.id,
+                    "artifact_id": result.artifact.id,
+                    "review_status": decision["review_status"],
+                    "blocked": decision["blocked"],
+                    "blocker_count": decision["blocker_count"],
+                },
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Evaluation approval is blocked by required questions or deployment-blocking assumptions",
+                    "artifact_id": result.artifact.id,
+                    "blockers": result.payload["blockers"],
+                },
+            )
         approve_spec(spec)
+        approved_artifact = write_spec_artifact(db, store, spec)
+        create_lineage_edge(
+            db,
+            project_id=spec.project_id,
+            from_asset_type="artifact",
+            from_asset_id=result.artifact.id,
+            to_asset_type="evaluation_spec",
+            to_asset_id=spec.id,
+            relation_type="supports_approval",
+        )
+        create_lineage_edge(
+            db,
+            project_id=spec.project_id,
+            from_asset_type="evaluation_spec",
+            from_asset_id=spec.id,
+            to_asset_type="artifact",
+            to_asset_id=approved_artifact.id,
+            relation_type="produces",
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "evaluation_spec_id": spec.id,
+                "approval_review_artifact_id": result.artifact.id,
+                "evaluation_spec_artifact_id": approved_artifact.id,
+                "review_status": decision["review_status"],
+                "warning_count": decision["warning_count"],
+            },
+        )
     except ValueError as exc:
+        mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return spec_to_dict(spec)
 

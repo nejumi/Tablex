@@ -148,6 +148,7 @@ type Assumption = {
   confidence: number;
   risk_level: string;
   fallback_policy: string;
+  requires_user_confirmation: boolean;
   evidence: Array<{ summary: string; strength: string }>;
 };
 
@@ -661,7 +662,8 @@ function ProjectDetail({
           assumptions={assumptions}
           questions={questions}
           busy={busy}
-          runAction={() => runAction(() => api(`/api/projects/${project.id}/assumptions/infer`, { method: "POST" }))}
+          applyFallbacks={() => runAction(() => api(`/api/projects/${project.id}/assumptions/infer`, { method: "POST" }))}
+          runAction={runAction}
         />
       )}
       {tab === "Evaluation" && (
@@ -1203,17 +1205,19 @@ function AssumptionsTab({
   assumptions,
   questions,
   busy,
+  applyFallbacks,
   runAction
 }: {
   assumptions: Assumption[];
   questions: Question[];
   busy: boolean;
-  runAction: () => Promise<void>;
+  applyFallbacks: () => Promise<void>;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   return (
     <div className="stack">
       <div className="toolbar">
-        <button className="secondary-button" disabled={busy} onClick={() => void runAction()}>
+        <button className="secondary-button" disabled={busy} onClick={() => void applyFallbacks()}>
           {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
           Apply Fallbacks
         </button>
@@ -1221,13 +1225,31 @@ function AssumptionsTab({
       <Panel title="Assumptions" icon={<AlertTriangle size={18} />}>
         {assumptions.length ? (
           <Table
-            headers={["Statement", "Confidence", "Risk", "Fallback", "Status"]}
+            headers={["Statement", "Confidence", "Risk", "Fallback", "Status", "Actions"]}
             rows={assumptions.map((assumption) => [
               assumption.statement,
               `${Math.round(assumption.confidence * 100)}%`,
               assumption.risk_level,
               assumption.fallback_policy,
-              assumption.status
+              assumption.status,
+              <div className="row-actions" key={assumption.id}>
+                <button
+                  className="icon-button"
+                  disabled={busy || assumption.status === "confirmed"}
+                  onClick={() => void runAction(() => api(`/api/assumptions/${assumption.id}/confirm`, { method: "POST" }))}
+                  title="Confirm assumption"
+                >
+                  <Check size={16} />
+                </button>
+                <button
+                  className="icon-button"
+                  disabled={busy || assumption.status === "challenged"}
+                  onClick={() => void runAction(() => api(`/api/assumptions/${assumption.id}/reject`, { method: "POST" }))}
+                  title="Challenge assumption"
+                >
+                  <AlertTriangle size={16} />
+                </button>
+              </div>
             ])}
           />
         ) : (
@@ -1267,9 +1289,13 @@ function EvaluationTab({
 }) {
   const latestQualityGate = artifacts.find((artifact) => artifact.asset_type === "data_quality_gate") ?? null;
   const scenarioComparisonArtifacts = artifacts.filter((artifact) => artifact.asset_type === "evaluation_scenario_comparison");
+  const approvalReviewArtifacts = artifacts.filter((artifact) => artifact.asset_type === "evaluation_approval_review");
   const [scenarioPreview, setScenarioPreview] = React.useState<ArtifactPreview | null>(null);
   const [scenarioPreviewError, setScenarioPreviewError] = React.useState<string | null>(null);
   const [scenarioPreviewLoadingId, setScenarioPreviewLoadingId] = React.useState<string | null>(null);
+  const [approvalPreview, setApprovalPreview] = React.useState<ArtifactPreview | null>(null);
+  const [approvalPreviewError, setApprovalPreviewError] = React.useState<string | null>(null);
+  const [approvalPreviewLoadingId, setApprovalPreviewLoadingId] = React.useState<string | null>(null);
 
   async function loadScenarioPreview(artifactId: string) {
     setScenarioPreviewError(null);
@@ -1280,6 +1306,18 @@ function EvaluationTab({
       setScenarioPreviewError(err instanceof Error ? err.message : String(err));
     } finally {
       setScenarioPreviewLoadingId(null);
+    }
+  }
+
+  async function loadApprovalPreview(artifactId: string) {
+    setApprovalPreviewError(null);
+    setApprovalPreviewLoadingId(artifactId);
+    try {
+      setApprovalPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setApprovalPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setApprovalPreviewLoadingId(null);
     }
   }
 
@@ -1429,6 +1467,22 @@ function EvaluationTab({
               <div className="row-actions" key={spec.id}>
                 <button
                   className="icon-button"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction(async () => {
+                      const job = await api<Job>(`/api/evaluation-specs/${spec.id}/approval-review`, { method: "POST" });
+                      const artifactId = job.output.artifact_id;
+                      if (typeof artifactId === "string") {
+                        await loadApprovalPreview(artifactId);
+                      }
+                    })
+                  }
+                  title="Create approval review"
+                >
+                  <ListChecks size={16} />
+                </button>
+                <button
+                  className="icon-button"
                   disabled={busy || spec.status === "approved"}
                   onClick={() => void runAction(() => api(`/api/evaluation-specs/${spec.id}/approve`, { method: "POST" }))}
                   title="Approve EvaluationSpec"
@@ -1450,6 +1504,41 @@ function EvaluationTab({
           />
         ) : (
           <EmptyInline text="Adopted primary EvaluationSpecs will appear here. Baselines should use an approved spec and generated SplitManifest." />
+        )}
+      </Panel>
+      <Panel title="Approval Reviews" icon={<FileText size={18} />}>
+        {approvalReviewArtifacts.length ? (
+          <Table
+            headers={["Spec", "Status", "Blockers", "Warnings", "Created", "Actions"]}
+            rows={approvalReviewArtifacts.map((artifact) => [
+              String(artifact.metadata.evaluation_spec_id ?? artifact.name),
+              String(artifact.metadata.review_status ?? "-"),
+              String(artifact.metadata.blocker_count ?? "-"),
+              String(artifact.metadata.warning_count ?? "-"),
+              formatDate(artifact.created_at),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={approvalPreviewLoadingId === artifact.id}
+                  onClick={() => void loadApprovalPreview(artifact.id)}
+                  title="Preview approval review"
+                >
+                  {approvalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download approval review">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Approval reviews will capture blockers, assumption-backed proceed decisions, quality context, scenario comparison context, and lineage before EvaluationSpec approval." />
+        )}
+        {approvalPreviewError ? <div className="banner danger">{approvalPreviewError}</div> : null}
+        {approvalPreview?.preview_available ? (
+          <pre className="markdown-preview">{approvalPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={approvalPreview?.reason ?? "Create or select an approval review to inspect blockers and assumption-backed proceed notes."} />
         )}
       </Panel>
     </div>

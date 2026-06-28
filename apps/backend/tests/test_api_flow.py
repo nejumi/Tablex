@@ -112,6 +112,20 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert promote_response.status_code == 200
     spec_id = promote_response.json()["id"]
 
+    approval_review_response = client.post(f"/api/evaluation-specs/{spec_id}/approval-review")
+    assert approval_review_response.status_code == 200, approval_review_response.text
+    approval_review_job = approval_review_response.json()
+    assert approval_review_job["status"] == "succeeded"
+    assert approval_review_job["output"]["artifact_id"]
+    assert approval_review_job["output"]["review_status"] in {"ready", "ready_with_assumptions"}
+    approval_review_preview_response = client.get(
+        f"/api/artifacts/{approval_review_job['output']['artifact_id']}/preview"
+    )
+    assert approval_review_preview_response.status_code == 200
+    approval_review_preview = approval_review_preview_response.json()["preview"]
+    assert "evaluation_approval_review.v1" in approval_review_preview
+    assert "assumption_backed_proceed" in approval_review_preview
+
     approve_response = client.post(f"/api/evaluation-specs/{spec_id}/approve")
     assert approve_response.status_code == 200
     assert approve_response.json()["status"] == "approved"
@@ -179,6 +193,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "validate_model_package" in job_types
     assert "run_baseline" in job_types
     assert "compare_evaluation_scenarios" in job_types
+    assert "review_evaluation_approval" in job_types
 
     approval_job_response = client.post(
         "/api/jobs",
@@ -483,6 +498,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "data_quality_gate",
         "data_quality_report",
         "evaluation_scenario_comparison",
+        "evaluation_approval_review",
         "research_brief",
         "approach_candidate",
         "report",
@@ -505,6 +521,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     diagnostics_report = next(item for item in artifacts if item["asset_type"] == "evaluation_diagnostics_report")
     run_report = next(item for item in artifacts if item["asset_type"] == "run_report")
     experiment_comparison = next(item for item in artifacts if item["asset_type"] == "experiment_comparison")
+    approval_review = next(item for item in artifacts if item["asset_type"] == "evaluation_approval_review")
     workspace_manifest = next(item for item in artifacts if item["asset_type"] == "agent_workspace_manifest")
 
     preview_response = client.get(f"/api/artifacts/{validation_report['id']}/preview")
@@ -523,6 +540,10 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     comparison_preview_response = client.get(f"/api/artifacts/{experiment_comparison['id']}/preview")
     assert comparison_preview_response.status_code == 200
     assert "experiment_comparison.v1" in comparison_preview_response.json()["preview"]
+
+    approval_review_late_preview_response = client.get(f"/api/artifacts/{approval_review['id']}/preview")
+    assert approval_review_late_preview_response.status_code == 200
+    assert "evaluation_approval_review.v1" in approval_review_late_preview_response.json()["preview"]
 
     workspace_preview_response = client.get(f"/api/artifacts/{workspace_manifest['id']}/preview")
     assert workspace_preview_response.status_code == 200
@@ -544,6 +565,48 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     schema_response = client.get(f"/api/datasets/{dataset_id}/schema")
     assert schema_response.status_code == 200
     assert len(schema_response.json()["columns"]) == 5
+
+
+def test_evaluation_approval_blocks_required_unanswered_question(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Missing target"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("features.csv", b"feature_a,feature_b\n1,10\n2,20\n3,30\n4,40\n", "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    questions_response = client.get(f"/api/projects/{project_id}/questions")
+    assert questions_response.status_code == 200
+    assert any(item["fallback_policy"] == "block_until_answered" for item in questions_response.json())
+
+    design_response = client.post(f"/api/projects/{project_id}/evaluation/design")
+    assert design_response.status_code == 200, design_response.text
+    candidates_response = client.get(f"/api/projects/{project_id}/evaluation/candidates")
+    assert candidates_response.status_code == 200
+    candidate = candidates_response.json()[0]
+
+    promote_response = client.post(f"/api/evaluation-candidates/{candidate['id']}/promote")
+    assert promote_response.status_code == 200, promote_response.text
+    spec_id = promote_response.json()["id"]
+
+    review_response = client.post(f"/api/evaluation-specs/{spec_id}/approval-review")
+    assert review_response.status_code == 200, review_response.text
+    review_job = review_response.json()
+    assert review_job["output"]["review_status"] == "blocked"
+    assert review_job["output"]["blocker_count"] >= 1
+
+    approve_response = client.post(f"/api/evaluation-specs/{spec_id}/approve")
+    assert approve_response.status_code == 409
+    assert "block_until_answered" in approve_response.text
+
+    spec_response = client.get(f"/api/evaluation-specs/{spec_id}")
+    assert spec_response.status_code == 200
+    assert spec_response.json()["status"] == "draft"
 
 
 def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -29,6 +30,19 @@ from tabular_harness.services.artifacts import (
     register_artifact,
 )
 from tabular_harness.services.profiler import read_sql
+
+
+@dataclass(frozen=True)
+class ApprovalReviewResult:
+    artifact: Artifact
+    payload: dict[str, Any]
+
+    @property
+    def blocked(self) -> bool:
+        decision = self.payload.get("decision_support")
+        if isinstance(decision, dict):
+            return bool(decision.get("blocked"))
+        return False
 
 
 def create_default_evaluation_candidates(
@@ -201,6 +215,182 @@ def approve_spec(spec: EvaluationSpec) -> None:
     if spec.status == "deprecated":
         raise ValueError("Deprecated EvaluationSpec cannot be approved")
     spec.status = "approved"
+
+
+def create_evaluation_approval_review(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    spec: EvaluationSpec,
+    approval_intent: bool = False,
+) -> ApprovalReviewResult:
+    project = db.get(Project, spec.project_id)
+    dataset = db.get(DatasetSnapshot, spec.dataset_snapshot_id)
+    if project is None or dataset is None:
+        raise ValueError("EvaluationSpec project or DatasetSnapshot not found")
+
+    scenario_artifact = latest_project_artifact(
+        db,
+        spec.project_id,
+        "evaluation_scenario_comparison",
+        dataset_id=spec.dataset_snapshot_id,
+    )
+    quality_artifact = latest_project_artifact(db, spec.project_id, "data_quality_gate", dataset_id=spec.dataset_snapshot_id)
+    relational_artifact = latest_project_artifact(db, spec.project_id, "relational_catalog", dataset_id=spec.dataset_snapshot_id)
+    questions = list(
+        db.scalars(
+            select(Question)
+            .where(Question.project_id == spec.project_id)
+            .order_by(Question.priority.desc(), Question.created_at)
+        ).all()
+    )
+    assumptions = list(
+        db.scalars(
+            select(Assumption)
+            .where(Assumption.project_id == spec.project_id)
+            .order_by(Assumption.risk_level.desc(), Assumption.updated_at.desc())
+        ).all()
+    )
+    scenario_context = artifact_context(scenario_artifact)
+    quality_context = artifact_context(quality_artifact)
+    relational_context = artifact_context(relational_artifact)
+
+    blocking_questions = [blocking_question_context(question) for question in questions if question_blocks_approval(question)]
+    proceed_questions = [
+        question_context(question)
+        for question in questions
+        if question.status == "open" and not question_blocks_approval(question)
+    ]
+    blocking_assumptions = [
+        blocking_assumption_context(assumption) for assumption in assumptions if assumption_blocks_approval(assumption)
+    ]
+    proceed_assumptions = [
+        assumption_context(assumption)
+        for assumption in assumptions
+        if assumption.status not in {"confirmed", "retired"} and not assumption_blocks_approval(assumption)
+    ]
+    findings = approval_review_findings(
+        spec,
+        scenario_context=scenario_context,
+        quality_context=quality_context,
+        relational_context=relational_context,
+        proceed_questions=proceed_questions,
+        proceed_assumptions=proceed_assumptions,
+    )
+    blocked = bool(blocking_questions or blocking_assumptions)
+    warning_count = len([finding for finding in findings if finding["severity"] in {"warning", "high"}])
+    review_status = "blocked" if blocked else ("ready_with_assumptions" if warning_count else "ready")
+    payload: dict[str, Any] = {
+        "schema_version": "evaluation_approval_review.v1",
+        "project": {
+            "id": project.id,
+            "name": project.name,
+            "task_type": project.task_type,
+            "target_column": project.target_column,
+        },
+        "evaluation_spec": spec_to_dict(spec),
+        "dataset": {
+            "dataset_snapshot_id": dataset.id,
+            "row_count": dataset.row_count,
+            "column_count": dataset.column_count,
+            "source_type": dataset.source_type,
+            "source_ref": dataset.source_ref,
+        },
+        "context": {
+            "scenario_comparison": scenario_context,
+            "quality_gate": quality_context,
+            "relational_catalog": relational_context,
+        },
+        "blockers": {
+            "questions": blocking_questions,
+            "assumptions": blocking_assumptions,
+        },
+        "assumption_backed_proceed": {
+            "open_questions": proceed_questions,
+            "active_assumptions": proceed_assumptions,
+        },
+        "findings": findings,
+        "decision_support": {
+            "review_status": review_status,
+            "blocked": blocked,
+            "can_approve_evaluation_spec": not blocked,
+            "approval_intent": approval_intent,
+            "recommended_action": "answer_blockers" if blocked else "approve_with_recorded_assumptions",
+            "blocker_count": len(blocking_questions) + len(blocking_assumptions),
+            "warning_count": warning_count,
+            "note": "Approval review records evidence and assumptions; it does not change the EvaluationSpec by itself.",
+        },
+    }
+    version = next_artifact_version(db, spec.project_id, "evaluation_approval_review", spec.id)
+    artifact_dir, stored, content_hash = store.store_json(
+        org_id="local-org",
+        project_id=spec.project_id,
+        asset_type="evaluation_approval_review",
+        name=spec.id,
+        version=version,
+        filename="evaluation_approval_review.json",
+        payload=payload,
+        metadata={
+            "project_id": spec.project_id,
+            "dataset_snapshot_id": spec.dataset_snapshot_id,
+            "evaluation_spec_id": spec.id,
+            "review_status": review_status,
+            "blocked": blocked,
+            "blocker_count": len(blocking_questions) + len(blocking_assumptions),
+            "warning_count": warning_count,
+        },
+    )
+    artifact = register_artifact(
+        db,
+        project_id=spec.project_id,
+        asset_type="evaluation_approval_review",
+        name=spec.id,
+        uri=str(artifact_dir),
+        content_hash=content_hash,
+        size_bytes=stored.size_bytes,
+        metadata={
+            "primary_path": str(stored.path),
+            "project_id": spec.project_id,
+            "dataset_snapshot_id": spec.dataset_snapshot_id,
+            "evaluation_spec_id": spec.id,
+            "review_status": review_status,
+            "blocked": blocked,
+            "blocker_count": len(blocking_questions) + len(blocking_assumptions),
+            "warning_count": warning_count,
+        },
+        version=version,
+    )
+    create_lineage_edge(
+        db,
+        project_id=spec.project_id,
+        from_asset_type="evaluation_spec",
+        from_asset_id=spec.id,
+        to_asset_type="artifact",
+        to_asset_id=artifact.id,
+        relation_type="reviewed_by",
+    )
+    create_lineage_edge(
+        db,
+        project_id=spec.project_id,
+        from_asset_type="dataset_snapshot",
+        from_asset_id=dataset.id,
+        to_asset_type="artifact",
+        to_asset_id=artifact.id,
+        relation_type="context_for",
+    )
+    for context_artifact in [scenario_artifact, quality_artifact, relational_artifact]:
+        if context_artifact is None:
+            continue
+        create_lineage_edge(
+            db,
+            project_id=spec.project_id,
+            from_asset_type="artifact",
+            from_asset_id=context_artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="informs",
+        )
+    return ApprovalReviewResult(artifact=artifact, payload=payload)
 
 
 def generate_split_manifest(
@@ -604,6 +794,139 @@ def context_metadata_value(context: dict[str, Any], key: str, default: Any = Non
     if isinstance(metadata, dict):
         return metadata.get(key, default)
     return default
+
+
+def question_blocks_approval(question: Question) -> bool:
+    if question.status != "open":
+        return False
+    if question.fallback_policy == "block_until_answered":
+        return True
+    if question.blocks_next_phase:
+        return True
+    return not question.can_proceed_without_answer
+
+
+def assumption_blocks_approval(assumption: Assumption) -> bool:
+    if assumption.status in {"confirmed", "retired"}:
+        return False
+    if assumption.fallback_policy in {"block_until_answered", "require_before_deployment"}:
+        return True
+    return assumption.risk_level in {"blocking", "deployment_blocking"}
+
+
+def blocking_question_context(question: Question) -> dict[str, Any]:
+    item = question_context(question)
+    if question.fallback_policy == "block_until_answered":
+        reason = "fallback_policy=block_until_answered"
+    elif question.blocks_next_phase:
+        reason = "blocks_next_phase=true"
+    else:
+        reason = "can_proceed_without_answer=false"
+    item["block_reason"] = reason
+    return item
+
+
+def blocking_assumption_context(assumption: Assumption) -> dict[str, Any]:
+    item = assumption_context(assumption)
+    if assumption.fallback_policy in {"block_until_answered", "require_before_deployment"}:
+        reason = f"fallback_policy={assumption.fallback_policy}"
+    else:
+        reason = f"risk_level={assumption.risk_level}"
+    item["block_reason"] = reason
+    return item
+
+
+def approval_review_findings(
+    spec: EvaluationSpec,
+    *,
+    scenario_context: dict[str, Any],
+    quality_context: dict[str, Any],
+    relational_context: dict[str, Any],
+    proceed_questions: list[dict[str, Any]],
+    proceed_assumptions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    if scenario_context.get("status") != "available":
+        findings.append(
+            {
+                "topic": "scenario_comparison",
+                "severity": "warning",
+                "summary": "No EvaluationScenarioComparison artifact is available for this DatasetSnapshot.",
+                "recommendation": "Generate a comparison before approval when split choice is ambiguous.",
+            }
+        )
+    else:
+        recommended = context_metadata_value(scenario_context, "recommended_candidate_id")
+        if spec.source_evaluation_candidate_id and recommended and recommended != spec.source_evaluation_candidate_id:
+            findings.append(
+                {
+                    "topic": "scenario_comparison",
+                    "severity": "warning",
+                    "summary": "The promoted EvaluationSpec does not match the latest comparison recommendation.",
+                    "recommendation": "Review candidate risks before approval or document the override rationale.",
+                    "recommended_candidate_id": recommended,
+                    "spec_source_candidate_id": spec.source_evaluation_candidate_id,
+                }
+            )
+    if quality_context.get("status") != "available":
+        findings.append(
+            {
+                "topic": "quality_gate",
+                "severity": "warning",
+                "summary": "No DataQualityGate artifact is available for this DatasetSnapshot.",
+                "recommendation": "Run data quality analysis before relying on the approved evaluation.",
+            }
+        )
+    else:
+        severity = context_metadata_value(quality_context, "severity")
+        if severity in {"warning", "fail"}:
+            findings.append(
+                {
+                    "topic": "quality_gate",
+                    "severity": "high" if severity == "fail" else "warning",
+                    "summary": f"DataQualityGate severity is {severity}.",
+                    "recommendation": "Inspect leakage, availability, duplicate, missingness, and readiness notes.",
+                    "artifact_id": quality_context.get("artifact_id"),
+                }
+            )
+    if context_metadata_value(relational_context, "table_count", 0) and spec.split_type != "group":
+        findings.append(
+            {
+                "topic": "relational_leakage",
+                "severity": "warning",
+                "summary": "Relational supporting tables exist while the EvaluationSpec is not group-aware.",
+                "recommendation": "Confirm entity leakage risk and prediction-time join semantics before relational features.",
+                "artifact_id": relational_context.get("artifact_id"),
+            }
+        )
+    if spec.risk_level in {"high", "blocking", "deployment_blocking"}:
+        findings.append(
+            {
+                "topic": "spec_risk",
+                "severity": "high",
+                "summary": f"EvaluationSpec risk level is {spec.risk_level}.",
+                "recommendation": "Treat approval as a reviewed exception unless supporting evidence is strong.",
+            }
+        )
+    if proceed_questions:
+        findings.append(
+            {
+                "topic": "open_questions",
+                "severity": "warning",
+                "summary": f"{len(proceed_questions)} open questions can proceed via fallback policy.",
+                "recommendation": "Keep assumptions visible and revisit when answers arrive.",
+            }
+        )
+    if proceed_assumptions:
+        findings.append(
+            {
+                "topic": "assumption_backed_proceed",
+                "severity": "warning",
+                "summary": f"{len(proceed_assumptions)} active assumptions remain part of the approval context.",
+                "recommendation": "Record confidence, risk, fallback_policy, and evidence for later challenge.",
+            }
+        )
+    return findings
 
 
 def question_context(question: Question) -> dict[str, Any]:

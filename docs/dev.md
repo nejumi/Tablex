@@ -122,6 +122,15 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/evaluation/compare
 
 This creates or reuses EvaluationCandidates, compares random/stratified/time/group scenarios against the latest DatasetSnapshot, DataQualityGate, RelationalCatalog, open Questions, and high-risk Assumptions, then stores an `evaluation_scenario_comparison` artifact. It is decision support only; it does not mutate or approve an EvaluationSpec.
 
+Evaluation approval review endpoint:
+
+```bash
+curl -X POST http://localhost:8000/api/evaluation-specs/{evaluation_spec_id}/approval-review
+curl -X POST http://localhost:8000/api/evaluation-specs/{evaluation_spec_id}/approve
+```
+
+The review stores an `evaluation_approval_review` artifact before approval. It blocks only explicit blockers such as unanswered `block_until_answered` questions or deployment-blocking assumptions. Other unresolved questions and assumptions are recorded as assumption-backed proceed context so work can continue without hiding risk.
+
 Benchmark catalog endpoints:
 
 ```bash

@@ -33,6 +33,7 @@ The product name may still change. Internal package names and database tables st
 - Benchmark Dataset Catalog v0 with Home Credit, fraud, retail forecasting, basket, and UCI smoke-test entries plus local primary-table import, relational catalog artifacts, and inferred join-key context without storing external credentials.
 - Baseline Strategy Planner v0 with artifact-backed candidate strategies, selected/deferred rationale, relational AgentTask handoff notes, and baseline report integration.
 - Evaluation Scenario Comparison v0 with artifact-backed split feasibility, temporal/group leakage, quality gate, relational context, open question, and assumption-risk comparison before EvaluationSpec adoption.
+- Evaluation Approval Review v0 with artifact-backed approval blockers, assumption-backed proceed notes, review lineage, and UI preview before approving an EvaluationSpec.
 - Leaderboard backed by ExperimentRun metrics.
 - React UI with project list, dataset upload, assumptions, evaluation, approach, experiments, leaderboard, reports, assets, jobs, and lineage tabs.
 - AgentRunner interface with Noop/LocalStub and Codex CLI skeleton.

@@ -349,6 +349,7 @@ class JobCreate(BaseModel):
         "infer_assumptions",
         "design_evaluation_candidates",
         "compare_evaluation_scenarios",
+        "review_evaluation_approval",
         "build_split_manifest",
         "run_baseline",
         "plan_baseline_strategy",
