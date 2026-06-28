@@ -109,6 +109,17 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert split["valid_count"] > 0
     assert split["project_id"] == project_id
 
+    strategy_plan_response = client.post(f"/api/projects/{project_id}/baseline/strategy-plan")
+    assert strategy_plan_response.status_code == 200, strategy_plan_response.text
+    strategy_plan_job = strategy_plan_response.json()
+    assert strategy_plan_job["status"] == "succeeded"
+    assert strategy_plan_job["output"]["baseline_strategy_plan_artifact_id"]
+    strategy_preview_response = client.get(
+        f"/api/artifacts/{strategy_plan_job['output']['baseline_strategy_plan_artifact_id']}/preview"
+    )
+    assert strategy_preview_response.status_code == 200
+    assert "baseline_strategy_plan.v1" in strategy_preview_response.json()["preview"]
+
     baseline_response = client.post(f"/api/projects/{project_id}/baseline/run")
     assert baseline_response.status_code == 200, baseline_response.text
     baseline_job = baseline_response.json()
@@ -119,7 +130,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert baseline_metrics["model_baseline_attempted"] is True
     assert baseline_metrics["baseline_type"] in {"xgboost_classifier", "logistic_regression", "majority_classifier"}
     assert baseline_metrics["primary_metric_value"] >= 0
-    assert len(baseline_job["output"]["artifact_ids"]) >= 6
+    assert len(baseline_job["output"]["artifact_ids"]) >= 7
 
     model_response = client.get(f"/api/model-versions/{baseline_job['output']['model_version_id']}")
     assert model_response.status_code == 200, model_response.text
@@ -448,6 +459,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     asset_types = {item["asset_type"] for item in artifacts_response.json()}
     assert {
         "baseline_plan",
+        "baseline_strategy_plan",
         "feature_recipe",
         "model_package",
         "model_validation_report",

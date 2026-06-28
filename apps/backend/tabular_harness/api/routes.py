@@ -101,6 +101,9 @@ from tabular_harness.services.asset_library import (
     create_library_asset,
     seed_default_assets,
 )
+from tabular_harness.services.baseline import (
+    create_baseline_strategy_plan,
+)
 from tabular_harness.services.baseline import run_baseline as run_baseline_service
 from tabular_harness.services.benchmarks import (
     benchmark_to_dict,
@@ -1298,6 +1301,49 @@ def run_baseline_endpoint(
                 "model_version_id": result.model_version_id,
                 "artifact_ids": result.artifact_ids,
                 "metrics": result.metrics,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/baseline/strategy-plan", response_model=JobRead)
+def plan_baseline_strategy_endpoint(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    spec = latest_approved_spec(db, project_id)
+    if spec is None:
+        raise HTTPException(status_code=400, detail="Approve an EvaluationSpec before planning baseline strategy")
+    split = latest_split_for_spec(db, spec.id)
+    if split is None:
+        raise HTTPException(status_code=400, detail="Generate a SplitManifest before planning baseline strategy")
+    job = create_job(
+        db,
+        job_type="plan_baseline_strategy",
+        project_id=project_id,
+        input_payload={"evaluation_spec_id": spec.id, "split_manifest_id": split.id},
+    )
+    try:
+        mark_job_running(job)
+        result = create_baseline_strategy_plan(
+            db,
+            store=store,
+            project=project,
+            evaluation_spec=spec,
+            split_manifest=split,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "baseline_strategy_plan_artifact_id": result.artifact.id,
+                "strategy_count": len(result.plan.get("candidate_strategies", [])),
+                "next_agent_task_count": len(result.plan.get("next_agent_tasks", [])),
+                "selected_baseline_type": result.plan["selected_execution"].get("baseline_type"),
             },
         )
     except ValueError as exc:

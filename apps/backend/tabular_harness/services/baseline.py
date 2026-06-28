@@ -65,6 +65,12 @@ class BaselineResult:
 
 
 @dataclass(frozen=True)
+class BaselineStrategyPlanResult:
+    plan: dict[str, Any]
+    artifact: Artifact
+
+
+@dataclass(frozen=True)
 class ModelPackagePayload:
     package: dict[str, Any]
     baseline_type: str
@@ -110,6 +116,14 @@ def run_baseline(
         excluded_columns=excluded_columns,
         evaluation_spec=evaluation_spec,
     )
+    baseline_strategy_plan = build_baseline_strategy_plan(
+        db,
+        project=project,
+        dataset=dataset,
+        evaluation_spec=evaluation_spec,
+        split_manifest=split_manifest,
+        baseline_plan=baseline_plan,
+    )
     if task_type == "regression":
         metrics, predictions = run_regression_baseline(
             rows,
@@ -132,6 +146,15 @@ def run_baseline(
     feature_recipe = metrics.pop("feature_recipe", build_fallback_feature_recipe(baseline_name))
     baseline_plan["selected_baseline_type"] = baseline_name
     baseline_plan["execution_status"] = "succeeded"
+    baseline_strategy_plan["selected_execution"] = {
+        "status": "executed",
+        "run_id": None,
+        "baseline_type": baseline_name,
+        "model_family": metrics.get("model_family", "fallback"),
+        "primary_metric_name": metrics.get("primary_metric_name"),
+        "primary_metric_value": metrics.get("primary_metric_value"),
+        "reason": "Selected by local strong baseline runner after respecting EvaluationSpec and SplitManifest.",
+    }
 
     report = render_baseline_report(
         project=project,
@@ -142,6 +165,7 @@ def run_baseline(
         predictions=predictions,
         baseline_plan=baseline_plan,
         feature_recipe=feature_recipe,
+        baseline_strategy_plan=baseline_strategy_plan,
     )
     run = ExperimentRun(
         id=new_id("run"),
@@ -165,11 +189,13 @@ def run_baseline(
     )
     db.add(run)
     db.flush()
+    baseline_strategy_plan["selected_execution"]["run_id"] = run.id
 
     model_artifact: Artifact | None = None
     model_version: ModelVersion | None = None
     if isinstance(model_package_payload, ModelPackagePayload):
         model_package_payload.package["baseline_plan"] = baseline_plan
+        model_package_payload.package["baseline_strategy_plan"] = baseline_strategy_plan
         model_package_payload.package["feature_recipe"] = feature_recipe
         model_package_payload.package["metrics"] = metrics
         model_package_payload.package["run_metadata"] = {
@@ -224,6 +250,23 @@ def run_baseline(
         payload=baseline_plan,
         metadata={"run_id": run.id, "evaluation_spec_id": evaluation_spec.id},
     )
+    strategy_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="baseline_strategy_plan",
+        name=f"baseline_strategy_plan_{run.id}",
+        filename="baseline_strategy_plan.json",
+        payload=baseline_strategy_plan,
+        metadata={
+            "run_id": run.id,
+            "dataset_snapshot_id": dataset.id,
+            "evaluation_spec_id": evaluation_spec.id,
+            "split_manifest_id": split_manifest.id,
+            "selected_baseline_type": baseline_name,
+            "strategy_count": len(baseline_strategy_plan.get("candidate_strategies", [])),
+        },
+    )
     recipe_artifact = store_json_artifact(
         db,
         store,
@@ -268,6 +311,7 @@ def run_baseline(
         model_version.params_json = dumps_json(
             {
                 "baseline_plan_artifact_id": plan_artifact.id,
+                "baseline_strategy_plan_artifact_id": strategy_artifact.id,
                 "feature_recipe_artifact_id": recipe_artifact.id,
                 "model_package_artifact_id": model_artifact.id if model_artifact else None,
             }
@@ -302,6 +346,7 @@ def run_baseline(
         relation_type="uses",
     )
     for artifact in (
+        strategy_artifact,
         plan_artifact,
         recipe_artifact,
         report_artifact,
@@ -361,6 +406,7 @@ def run_baseline(
         run=run,
         artifact_ids=[
             *([model_artifact.id] if model_artifact is not None else []),
+            strategy_artifact.id,
             plan_artifact.id,
             recipe_artifact.id,
             report_artifact.id,
@@ -1127,6 +1173,286 @@ def build_baseline_plan(
     }
 
 
+def create_baseline_strategy_plan(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    evaluation_spec: EvaluationSpec,
+    split_manifest: SplitManifest,
+) -> BaselineStrategyPlanResult:
+    if not project.target_column:
+        raise ValueError("Project target_column is required before planning baseline strategy")
+    dataset = db.get(DatasetSnapshot, evaluation_spec.dataset_snapshot_id)
+    if dataset is None:
+        raise ValueError("DatasetSnapshot not found")
+    dataset_artifact = db.get(Artifact, dataset.artifact_id)
+    split_artifact = db.get(Artifact, split_manifest.artifact_id)
+    if dataset_artifact is None or split_artifact is None:
+        raise ValueError("Required dataset or split artifact not found")
+    rows = load_split_rows(
+        dataset_path=artifact_primary_path(dataset_artifact),
+        split_path=artifact_primary_path(split_artifact),
+        target_column=project.target_column,
+    )
+    task_type = resolve_task_type(project.task_type, rows)
+    baseline_plan = build_baseline_plan(
+        rows,
+        task_type=task_type,
+        target_column=project.target_column,
+        primary_metric=evaluation_spec.primary_metric,
+        excluded_columns=parse_string_list(loads_json(evaluation_spec.excluded_columns_json, [])),
+        evaluation_spec=evaluation_spec,
+    )
+    strategy_plan = build_baseline_strategy_plan(
+        db,
+        project=project,
+        dataset=dataset,
+        evaluation_spec=evaluation_spec,
+        split_manifest=split_manifest,
+        baseline_plan=baseline_plan,
+    )
+    artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="baseline_strategy_plan",
+        name=f"baseline_strategy_plan_{new_id('bsp')}",
+        filename="baseline_strategy_plan.json",
+        payload=strategy_plan,
+        metadata={
+            "dataset_snapshot_id": dataset.id,
+            "evaluation_spec_id": evaluation_spec.id,
+            "split_manifest_id": split_manifest.id,
+            "strategy_count": len(strategy_plan.get("candidate_strategies", [])),
+            "selected_baseline_type": strategy_plan["selected_execution"].get("baseline_type"),
+        },
+    )
+    for from_type, from_id, relation in [
+        ("dataset_snapshot", dataset.id, "plans_from"),
+        ("evaluation_spec", evaluation_spec.id, "constrains"),
+        ("split_manifest", split_manifest.id, "constrains"),
+    ]:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type=from_type,
+            from_asset_id=from_id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type=relation,
+        )
+    return BaselineStrategyPlanResult(plan=strategy_plan, artifact=artifact)
+
+
+def build_baseline_strategy_plan(
+    db: Session,
+    *,
+    project: Project,
+    dataset: DatasetSnapshot,
+    evaluation_spec: EvaluationSpec,
+    split_manifest: SplitManifest,
+    baseline_plan: dict[str, Any],
+) -> dict[str, Any]:
+    quality_artifact = latest_project_artifact(db, project.id, "data_quality_gate")
+    relational_artifact = latest_project_artifact(db, project.id, "relational_catalog")
+    numeric_count = len(parse_string_list(baseline_plan.get("numeric_columns", [])))
+    categorical_count = len(parse_string_list(baseline_plan.get("categorical_columns", [])))
+    text_columns = parse_string_list(baseline_plan.get("text_columns", []))
+    datetime_columns = parse_string_list(baseline_plan.get("datetime_columns", []))
+    lag_specs = baseline_plan.get("lag_rolling_specs", [])
+    relational_metadata = loads_json(relational_artifact.metadata_json, {}) if relational_artifact else {}
+    table_count = int(relational_metadata.get("table_count") or 0)
+    relationship_count = int(relational_metadata.get("relationship_count") or 0)
+    candidates = [
+        {
+            "id": "sanity_floor",
+            "name": "Distribution sanity floor",
+            "status": "always_run",
+            "implementation": "majority_classifier_or_mean_regressor",
+            "why": "Provides a minimum viable reference and detects broken evaluation wiring.",
+            "uses": ["target_distribution", "SplitManifest"],
+        },
+        {
+            "id": "strong_single_table_xgboost",
+            "name": "Strong single-table XGBoost baseline",
+            "status": "selected_for_local_run",
+            "implementation": baseline_plan.get("candidate_model"),
+            "why": "Good pragmatic baseline for mixed numeric, categorical, datetime, and sparse text features before agent-authored modeling.",
+            "uses": ["numeric_median_imputation", "ordinal_categorical_encoding", "text_tfidf", "datetime_calendar_features"],
+        },
+        {
+            "id": "text_tfidf",
+            "name": "Text TF-IDF branch",
+            "status": "included" if text_columns else "not_applicable",
+            "columns": text_columns,
+            "why": "Short text/comment/description columns should be represented without requiring a GenAI feature dependency.",
+        },
+        {
+            "id": "categorical_ordinal_encoding",
+            "name": "Categorical ordinal encoding",
+            "status": "included" if categorical_count else "not_applicable",
+            "column_count": categorical_count,
+            "why": "Tree baselines can use stable integer bins as a first pass; later recipes can compare target encoding or learned embeddings.",
+        },
+        {
+            "id": "datetime_calendar_features",
+            "name": "Datetime calendar features",
+            "status": "included" if datetime_columns else "not_applicable",
+            "columns": datetime_columns,
+            "why": "Calendar decomposition is low risk when the timestamp exists at prediction time.",
+        },
+        {
+            "id": "time_series_lag_rolling",
+            "name": "Lag and rolling covariates",
+            "status": "included" if lag_specs else ("deferred" if baseline_plan.get("time_column") else "not_applicable"),
+            "specs": lag_specs,
+            "why": "Only enabled when EvaluationSpec uses a time split, so future information is not mixed into feature fitting.",
+        },
+        {
+            "id": "relational_aggregation_features",
+            "name": "Relational aggregation feature recipe",
+            "status": "agent_required" if table_count > 1 else "not_applicable",
+            "table_count": table_count,
+            "relationship_count": relationship_count,
+            "why": "Supporting tables need join semantics, aggregation windows, and availability checks before becoming model features.",
+        },
+    ]
+    next_agent_tasks = []
+    if table_count > 1:
+        next_agent_tasks.append(
+            {
+                "task_type": "design_feature_recipe",
+                "title": "Design relational aggregation baseline candidate",
+                "required_context": ["relational_catalog", "EvaluationSpec", "SplitManifest", "DataQualityGate"],
+                "guardrails": [
+                    "respect SplitManifest",
+                    "fit aggregations on train split only",
+                    "confirm prediction-time availability before using supporting tables",
+                ],
+            }
+        )
+    return {
+        "schema_version": "baseline_strategy_plan.v1",
+        "id": new_id("bsp"),
+        "project": {
+            "id": project.id,
+            "name": project.name,
+            "task_type": project.task_type,
+            "target_column": project.target_column,
+        },
+        "dataset": {
+            "dataset_snapshot_id": dataset.id,
+            "source_type": dataset.source_type,
+            "source_ref": dataset.source_ref,
+            "row_count": dataset.row_count,
+            "column_count": dataset.column_count,
+            "schema_hash": dataset.schema_hash,
+        },
+        "evaluation": {
+            "evaluation_spec_id": evaluation_spec.id,
+            "split_manifest_id": split_manifest.id,
+            "split_type": evaluation_spec.split_type,
+            "primary_metric": evaluation_spec.primary_metric,
+            "time_column": evaluation_spec.time_column,
+            "group_column": evaluation_spec.group_column,
+            "stratify_column": evaluation_spec.stratify_column,
+        },
+        "context": {
+            "feature_inventory": {
+                "numeric_count": numeric_count,
+                "categorical_count": categorical_count,
+                "text_count": len(text_columns),
+                "datetime_count": len(datetime_columns),
+                "identifier_count": len(parse_string_list(baseline_plan.get("identifier_columns", []))),
+            },
+            "quality_gate": artifact_summary(quality_artifact),
+            "relational_catalog": artifact_summary(relational_artifact),
+            "current_baseline_plan": {
+                "candidate_model": baseline_plan.get("candidate_model"),
+                "model_family": baseline_plan.get("model_family"),
+                "skipped_features": baseline_plan.get("skipped_features", []),
+                "safeguards": baseline_plan.get("safeguards", []),
+            },
+        },
+        "candidate_strategies": candidates,
+        "selected_execution": {
+            "status": "planned",
+            "baseline_type": baseline_plan.get("candidate_model"),
+            "reason": "Local baseline runner can execute the strong single-table candidate now; other candidates may require AgentTask implementation.",
+        },
+        "risk_register": baseline_strategy_risks(baseline_plan, quality_artifact, table_count, relationship_count),
+        "next_agent_tasks": next_agent_tasks,
+    }
+
+
+def baseline_strategy_risks(
+    baseline_plan: dict[str, Any],
+    quality_artifact: Artifact | None,
+    table_count: int,
+    relationship_count: int,
+) -> list[dict[str, Any]]:
+    risks = [
+        {
+            "topic": "prediction_time_availability",
+            "risk_level": "medium",
+            "mitigation": "Use DataQualityGate and questions to exclude unavailable columns or scenario-compare them.",
+        }
+    ]
+    if baseline_plan.get("time_column") and not baseline_plan.get("lag_rolling_specs"):
+        risks.append(
+            {
+                "topic": "time_series_features",
+                "risk_level": "medium",
+                "mitigation": "Enable lag/rolling covariates only under an approved time split.",
+            }
+        )
+    if table_count > 1:
+        risks.append(
+            {
+                "topic": "relational_join_semantics",
+                "risk_level": "high" if relationship_count == 0 else "medium",
+                "mitigation": "Treat relational joins as an AgentTask/FeatureRecipe candidate until join keys and temporal availability are verified.",
+            }
+        )
+    if quality_artifact is not None:
+        metadata = loads_json(quality_artifact.metadata_json, {})
+        if metadata.get("severity") in {"warning", "fail"}:
+            risks.append(
+                {
+                    "topic": "data_quality_gate",
+                    "risk_level": "high" if metadata.get("severity") == "fail" else "medium",
+                    "mitigation": "Review leakage and evaluation-readiness findings before interpreting baseline metrics.",
+                    "artifact_id": quality_artifact.id,
+                }
+            )
+    return risks
+
+
+def artifact_summary(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {"status": "missing", "artifact_id": None}
+    metadata = loads_json(artifact.metadata_json, {})
+    return {
+        "status": "available",
+        "artifact_id": artifact.id,
+        "asset_type": artifact.asset_type,
+        "name": artifact.name,
+        "version": artifact.version,
+        "metadata": metadata,
+        "preview_url": f"/api/artifacts/{artifact.id}/preview",
+        "download_url": f"/api/artifacts/{artifact.id}/download",
+    }
+
+
+def latest_project_artifact(db: Session, project_id: str, asset_type: str) -> Artifact | None:
+    return db.scalar(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.asset_type == asset_type)
+        .order_by(Artifact.created_at.desc())
+    )
+
+
 def collect_feature_columns(
     rows: list[dict[str, Any]], target_column: str, excluded_columns: list[str]
 ) -> list[str]:
@@ -1670,11 +1996,15 @@ def render_baseline_report(
     predictions: list[dict[str, Any]],
     baseline_plan: dict[str, Any] | None = None,
     feature_recipe: dict[str, Any] | None = None,
+    baseline_strategy_plan: dict[str, Any] | None = None,
 ) -> str:
     summary = loads_json(split.summary_json, {})
     sanity_floor = metrics.get("sanity_floor")
     plan = baseline_plan or {}
     recipe = feature_recipe or {}
+    strategy_plan = baseline_strategy_plan or {}
+    raw_selected_execution = strategy_plan.get("selected_execution")
+    selected_execution: dict[str, Any] = raw_selected_execution if isinstance(raw_selected_execution, dict) else {}
     lines = [
         "# Baseline Report",
         "",
@@ -1698,6 +2028,11 @@ def render_baseline_report(
         f"- Datetime columns: {', '.join(parse_string_list(plan.get('datetime_columns', []))) or 'none'}",
         f"- Identifier columns ignored: {', '.join(parse_string_list(plan.get('identifier_columns', []))) or 'none'}",
         f"- Active text columns: {', '.join(parse_string_list(recipe.get('active_text_columns', []))) or 'none'}",
+        "",
+        "## Strategy Plan",
+        f"- Selected execution: {selected_execution.get('baseline_type', baseline_name)}",
+        f"- Candidate strategies: {len(strategy_plan.get('candidate_strategies', [])) if isinstance(strategy_plan.get('candidate_strategies'), list) else 0}",
+        f"- Next agent tasks: {len(strategy_plan.get('next_agent_tasks', [])) if isinstance(strategy_plan.get('next_agent_tasks'), list) else 0}",
         "",
         "## Metrics",
     ]

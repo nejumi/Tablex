@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tablex.local/schemas/baseline_strategy_plan.schema.json",
+  "title": "BaselineStrategyPlan",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "dataset",
+    "evaluation",
+    "context",
+    "candidate_strategies",
+    "selected_execution",
+    "risk_register"
+  ],
+  "properties": {
+    "schema_version": { "const": "baseline_strategy_plan.v1" },
+    "project": { "type": "object" },
+    "dataset": { "type": "object" },
+    "evaluation": { "type": "object" },
+    "context": { "type": "object" },
+    "candidate_strategies": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "selected_execution": { "type": "object" },
+    "risk_register": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "next_agent_tasks": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  },
+  "additionalProperties": true
+}

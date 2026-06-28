@@ -16,6 +16,7 @@ JOB_TYPES = {
     "design_evaluation_candidates",
     "build_split_manifest",
     "run_baseline",
+    "plan_baseline_strategy",
     "run_agent_task",
     "validate_model_package",
     "generate_research_brief",

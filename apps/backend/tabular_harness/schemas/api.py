@@ -350,6 +350,7 @@ class JobCreate(BaseModel):
         "design_evaluation_candidates",
         "build_split_manifest",
         "run_baseline",
+        "plan_baseline_strategy",
         "validate_model_package",
         "generate_research_brief",
         "generate_approach_candidates",

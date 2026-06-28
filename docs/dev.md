@@ -35,6 +35,14 @@ curl http://localhost:8000/healthz
 Metadata defaults to `data/metadata/app.db`. Artifacts default to `data/artifacts`.
 The baseline runner uses XGBoost as the strong local baseline. It builds persisted `baseline_plan`, `feature_recipe`, `baseline_report`, `baseline_metrics`, validation prediction, and `model_package.joblib` artifacts. Successful strong baseline runs also create a `ModelVersion` record linked to the package artifact. The runner applies numeric median imputation, categorical ordinal encoding, text TF-IDF, datetime calendar features, and falls back to LogisticRegression/Ridge or majority/mean sanity baselines if the strong run fails. Lag and rolling covariate features are enabled only when the approved EvaluationSpec uses a time split.
 
+Create a baseline strategy artifact without running the model:
+
+```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/baseline/strategy-plan
+```
+
+The strategy plan records sanity-floor, strong single-table, text TF-IDF, categorical, datetime, time-series, and relational aggregation candidates. Relational aggregation is marked as AgentTask work until join semantics and prediction-time availability are validated.
+
 Saved ModelVersion packages can be replay-validated from the Assets tab or with:
 
 ```bash
@@ -271,16 +279,17 @@ The current UI flow is:
 11. Prepare and preview AgentContextPacks from the Approach tab before agent execution.
 12. Create and preview ExperimentPlans from the Approach tab.
 13. Review, approve, cancel, retry, or process queued jobs from the Jobs tab.
-14. Run Baseline from the Experiments tab as a sanity floor or reference run.
-15. Draft run reports and compare experiments from the Experiments tab.
-16. Generate Insights, draft Reports, and create Visualization Dashboard specs from the Reports tab.
-17. Generate run diagnostics from the Leaderboard tab and inspect the diagnostics preview.
-18. Preview or download report artifacts from the Reports tab.
-19. Review the run in Experiments, Leaderboard, Assets, and Lineage.
-20. Inspect ModelVersions in the Assets tab.
-21. Validate a saved model package replay from the ModelVersions table.
-22. Review all project jobs in the Jobs tab and validation history in the Assets tab.
-23. Preview or download registered artifacts from the Assets tab.
+14. Plan Baseline from the Experiments tab to inspect candidate strategies and deferred AgentTask work.
+15. Run Baseline from the Experiments tab as a sanity floor or reference run.
+16. Draft run reports and compare experiments from the Experiments tab.
+17. Generate Insights, draft Reports, and create Visualization Dashboard specs from the Reports tab.
+18. Generate run diagnostics from the Leaderboard tab and inspect the diagnostics preview.
+19. Preview or download report artifacts from the Reports tab.
+20. Review the run in Experiments, Leaderboard, Assets, and Lineage.
+21. Inspect ModelVersions in the Assets tab.
+22. Validate a saved model package replay from the ModelVersions table.
+23. Review all project jobs in the Jobs tab and validation history in the Assets tab.
+24. Preview or download registered artifacts from the Assets tab.
 
 Supported SplitManifest generation modes:
 

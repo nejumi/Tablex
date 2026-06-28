@@ -258,6 +258,7 @@ def copy_context_artifacts(
     for asset_type, name in [
         ("agent_context_pack", "agent_context_pack.json"),
         ("experiment_plan", "experiment_plan.json"),
+        ("baseline_strategy_plan", "baseline_strategy_plan.json"),
         ("data_quality_gate", "data_quality_gate.json"),
         ("relational_catalog", "relational_catalog.json"),
         ("evaluation_diagnostics", "evaluation_diagnostics.json"),

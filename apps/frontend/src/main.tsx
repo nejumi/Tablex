@@ -1671,10 +1671,20 @@ function ExperimentsTab({
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const experimentJobs = jobs.filter((job) =>
-    ["run_baseline", "run_agent_task", "create_experiment_plan", "compare_experiments", "draft_run_report"].includes(job.job_type)
+    ["plan_baseline_strategy", "run_baseline", "run_agent_task", "create_experiment_plan", "compare_experiments", "draft_run_report"].includes(job.job_type)
   );
   const experimentArtifacts = artifacts.filter((artifact) =>
-    ["experiment_plan", "experiment_comparison", "experiment_comparison_report", "run_report"].includes(artifact.asset_type)
+    [
+      "baseline_strategy_plan",
+      "baseline_plan",
+      "feature_recipe",
+      "baseline_report",
+      "baseline_metrics",
+      "experiment_plan",
+      "experiment_comparison",
+      "experiment_comparison_report",
+      "run_report"
+    ].includes(artifact.asset_type)
   );
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
@@ -1695,6 +1705,14 @@ function ExperimentsTab({
   return (
     <div className="stack">
       <div className="toolbar">
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() => void runAction(() => api(`/api/projects/${project.id}/baseline/strategy-plan`, { method: "POST" }))}
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+          Plan Baseline
+        </button>
         <button
           className="secondary-button"
           disabled={busy}
