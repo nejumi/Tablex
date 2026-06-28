@@ -134,6 +134,14 @@ Create a scenario pack/report for the imported benchmark context:
 curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/uci_bank_marketing/scenario-pack
 ```
 
+Create a train-fold-safe relational feature plan after importing a multi-table benchmark:
+
+```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/features/relational-plan
+```
+
+The relational feature plan reads the latest `relational_catalog`, benchmark scenario/source context, data quality and evaluation artifacts, and benchmark collection plan. It creates `relational_feature_plan`, `relational_feature_report`, and `visualization_spec` artifacts plus Report, Evidence, and Lineage. The plan proposes aggregation candidates and guardrails only; confirmed FeatureRecipes or AgentTasks still need to implement joins with SplitManifest discipline and prediction-time availability checks.
+
 Run the fixture smoke harness for a project:
 
 ```bash

@@ -415,6 +415,7 @@ class JobCreate(BaseModel):
         "run_benchmark_fixture_smoke",
         "create_benchmark_collection_plan",
         "create_benchmark_evidence_pack",
+        "create_relational_feature_plan",
         "run_baseline",
         "plan_baseline_strategy",
         "run_planned_agent_task_stub",

@@ -1021,6 +1021,19 @@ function DataTab({
     });
   }
 
+  async function createRelationalFeaturePlan() {
+    await runAction(async () => {
+      const job = await api<Job>(`/api/projects/${project.id}/features/relational-plan`, {
+        method: "POST"
+      });
+      const reportArtifactId = textField(job.output.relational_feature_report_artifact_id);
+      if (reportArtifactId) {
+        await loadRelationalPreview(reportArtifactId);
+      }
+      return job;
+    });
+  }
+
   async function createBenchmarkCollectionPlan() {
     await runAction(async () => {
       const job = await api<Job>(`/api/projects/${project.id}/benchmarks/collection-plan`, {
@@ -1117,6 +1130,9 @@ function DataTab({
     ["benchmark_evidence_pack", "benchmark_evidence_report"].includes(artifact.asset_type)
   );
   const relationalArtifacts = artifacts.filter((artifact) => artifact.asset_type === "relational_catalog");
+  const relationalFeatureArtifacts = artifacts.filter((artifact) =>
+    ["relational_feature_plan", "relational_feature_report"].includes(artifact.asset_type)
+  );
   const qualityArtifacts = artifacts.filter((artifact) =>
     ["data_quality_gate", "data_quality_report"].includes(artifact.asset_type)
   );
@@ -1488,6 +1504,12 @@ function DataTab({
         )}
       </Panel>
       <Panel title="Relational Catalogs" icon={<GitBranch size={18} />}>
+        <div className="toolbar">
+          <button className="secondary-button" disabled={busy} onClick={() => void createRelationalFeaturePlan()}>
+            {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+            Feature Plan
+          </button>
+        </div>
         {relationalArtifacts.length ? (
           <Table
             headers={["Benchmark", "Tables", "Relationships", "Actions"]}
@@ -1513,13 +1535,41 @@ function DataTab({
         ) : (
           <EmptyInline text="Benchmark imports with supporting tables will register relational catalogs with table profiles and inferred join keys." />
         )}
+        {relationalFeatureArtifacts.length ? (
+          <Table
+            headers={["Plan", "Benchmark", "Tables", "Candidates", "High Risk", "Created", "Actions"]}
+            rows={relationalFeatureArtifacts.map((artifact) => [
+              artifact.asset_type,
+              String(artifact.metadata.benchmark_id ?? "-"),
+              String(artifact.metadata.table_count ?? "-"),
+              String(artifact.metadata.aggregation_candidate_count ?? "-"),
+              String(artifact.metadata.high_risk_count ?? "-"),
+              formatDate(artifact.created_at),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={relationalPreviewLoadingId === artifact.id}
+                  onClick={() => void loadRelationalPreview(artifact.id)}
+                  title="Preview relational feature plan"
+                >
+                  {relationalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download relational feature plan">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Relational feature plans will turn table profiles and inferred joins into train-fold-safe aggregation candidates, leakage risks, and AgentTask handoff notes." />
+        )}
       </Panel>
-      <Panel title="Relational Catalog Preview" icon={<FileText size={18} />}>
+      <Panel title="Relational Preview" icon={<FileText size={18} />}>
         {relationalPreviewError ? <div className="banner danger">{relationalPreviewError}</div> : null}
         {relationalPreview?.preview_available ? (
           <pre className="markdown-preview">{relationalPreview.preview}</pre>
         ) : (
-          <EmptyInline text={relationalPreview?.reason ?? "Select a relational catalog to inspect table profiles, key candidates, and inferred join graph."} />
+          <EmptyInline text={relationalPreview?.reason ?? "Select a relational catalog or feature plan to inspect table profiles, key candidates, inferred joins, aggregation candidates, and guardrails."} />
         )}
       </Panel>
       <Panel title="Benchmark Scenario Packs" icon={<Layers size={18} />}>

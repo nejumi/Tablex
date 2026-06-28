@@ -20,6 +20,7 @@ JOB_TYPES = {
     "run_benchmark_fixture_smoke",
     "create_benchmark_collection_plan",
     "create_benchmark_evidence_pack",
+    "create_relational_feature_plan",
     "run_public_benchmark_workflow",
     "run_baseline",
     "plan_baseline_strategy",

@@ -83,6 +83,7 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Controlled Agent Workspace v0 with `agent_workspace_manifest`, workspace context materialization, AgentResult artifact ingestion, runner safety checks, and Approach UI preview.
 - Research Findings Synthesis v1 with latest research source packs, research run manifests, source citation manifests, benchmark/baseline context, Evidence, Report, VisualizationSpec, Lineage, AgentTaskContract inputs, AgentContextPack context, and Approach UI preview/download.
 - Benchmark Collection Plan v1 with Home Credit-centered benchmark source readiness, credential policy, fixture/public workflow status, source audit, recommended initial suite, Report, Evidence, VisualizationSpec, Lineage, and Data UI preview/download.
+- Relational Feature Planning v1 with RelationalCatalog-derived aggregation candidates, fold-safety guardrails, point-in-time requirements, leakage/prediction-time risk register, AgentTask handoff, Report, Evidence, VisualizationSpec, Lineage, and contract/context propagation.
 - Job skeleton for:
   - `profile_dataset`
   - `infer_assumptions`
@@ -141,4 +142,5 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Controlled workspaces currently use LocalStubAgentRunner for real execution. CodexCliRunner remains a skeleton until external execution policy, approval, and result ingestion are hardened further.
 - Research Findings Synthesis currently summarizes stub or artifact-backed research outputs. Verified external web/literature retrieval remains controlled-runner future work and must attach source citations before decision-grade claims.
 - Benchmark Collection Plans use catalog source metadata and local readiness; they do not replace real dataset licensing review or credentialed user-managed download flows.
+- Relational Feature Plans are planning artifacts only. Real joins and aggregations still need FeatureRecipe or AgentTask implementation with SplitManifest-aware fitting.
 - Auth is stubbed as local single-user behavior.

@@ -92,12 +92,15 @@ def generate_research_brief(
     )
     research_plan_artifact = latest_project_artifact(db, project.id, "research_plan")
     research_synthesis_artifact = latest_project_artifact(db, project.id, "research_finding_synthesis")
+    relational_feature_plan_artifact = latest_project_artifact(db, project.id, "relational_feature_plan")
+    relational_feature_plan_artifact = latest_project_artifact(db, project.id, "relational_feature_plan")
     sources = build_research_sources(
         project,
         dataset,
         evaluation_spec,
         research_plan_artifact,
         research_synthesis_artifact,
+        relational_feature_plan_artifact,
     )
     key_findings = build_key_findings(project, dataset, evaluation_spec, profile)
     recommended_approaches = build_recommended_approaches(project, profile)
@@ -128,6 +131,9 @@ def generate_research_brief(
             "research_plan_artifact_id": research_plan_artifact.id if research_plan_artifact else None,
             "research_finding_synthesis_artifact_id": research_synthesis_artifact.id
             if research_synthesis_artifact
+            else None,
+            "relational_feature_plan_artifact_id": relational_feature_plan_artifact.id
+            if relational_feature_plan_artifact
             else None,
             "question": research_question,
         },
@@ -192,6 +198,7 @@ def create_research_plan(
     context_artifacts = {
         "data_quality_gate": latest_project_artifact(db, project.id, "data_quality_gate"),
         "relational_catalog": latest_project_artifact(db, project.id, "relational_catalog"),
+        "relational_feature_plan": latest_project_artifact(db, project.id, "relational_feature_plan"),
         "evaluation_scenario_comparison": latest_project_artifact(db, project.id, "evaluation_scenario_comparison"),
         "evaluation_approval_review": latest_project_artifact(db, project.id, "evaluation_approval_review"),
         "evaluation_diagnostics": latest_project_artifact(db, project.id, "evaluation_diagnostics"),
@@ -336,6 +343,7 @@ def generate_approach_candidates(
         recommended = build_recommended_approaches(project, profile)
     research_plan_artifact = latest_project_artifact(db, project.id, "research_plan")
     research_synthesis_artifact = latest_project_artifact(db, project.id, "research_finding_synthesis")
+    relational_feature_plan_artifact = latest_project_artifact(db, project.id, "relational_feature_plan")
     ideas: list[Idea] = []
     artifact_ids: list[str] = []
     for index, approach in enumerate(recommended[:5], start=1):
@@ -349,6 +357,7 @@ def generate_approach_candidates(
             research_brief=research_brief,
             research_plan_artifact=research_plan_artifact,
             research_synthesis_artifact=research_synthesis_artifact,
+            relational_feature_plan_artifact=relational_feature_plan_artifact,
         )
         payload = {
             "schema_version": "approach_candidate.v1",
@@ -377,6 +386,9 @@ def generate_approach_candidates(
                 "research_plan_artifact_id": research_plan_artifact.id if research_plan_artifact else None,
                 "research_finding_synthesis_artifact_id": research_synthesis_artifact.id
                 if research_synthesis_artifact
+                else None,
+                "relational_feature_plan_artifact_id": relational_feature_plan_artifact.id
+                if relational_feature_plan_artifact
                 else None,
             },
         )
@@ -1221,6 +1233,7 @@ def build_research_sources(
     evaluation_spec: EvaluationSpec | None,
     research_plan_artifact: Artifact | None = None,
     research_synthesis_artifact: Artifact | None = None,
+    relational_feature_plan_artifact: Artifact | None = None,
 ) -> list[dict[str, Any]]:
     sources = [
         {
@@ -1280,6 +1293,20 @@ def build_research_sources(
                     "Synthesized runner findings, citation audit, follow-up requirements, and AgentTask handoff "
                     f"context. Findings: {metadata.get('finding_count', 'unknown')}; "
                     f"citations: {metadata.get('citation_count', 'unknown')}."
+                ),
+            }
+        )
+    if relational_feature_plan_artifact:
+        metadata = loads_json(relational_feature_plan_artifact.metadata_json, {})
+        sources.append(
+            {
+                "source_type": "relational_feature_plan",
+                "title": "Relational Feature Plan",
+                "ref": relational_feature_plan_artifact.id,
+                "summary": (
+                    "Train-fold-safe relational feature planning context. "
+                    f"Aggregation candidates: {metadata.get('aggregation_candidate_count', 'unknown')}; "
+                    f"high risks: {metadata.get('high_risk_count', 'unknown')}."
                 ),
             }
         )
@@ -1654,9 +1681,11 @@ def build_agent_task_contract(
     research_brief: ResearchBrief | None,
     research_plan_artifact: Artifact | None = None,
     research_synthesis_artifact: Artifact | None = None,
+    relational_feature_plan_artifact: Artifact | None = None,
 ) -> dict[str, Any]:
     research_contract_inputs = research_plan_contract_inputs(research_plan_artifact)
     research_synthesis_inputs = research_synthesis_contract_inputs(research_synthesis_artifact)
+    relational_plan_inputs = relational_feature_plan_contract_inputs(relational_feature_plan_artifact)
     return {
         "task_id": f"agt_{idea_id}",
         "task_type": "implement_prediction_approach",
@@ -1674,10 +1703,14 @@ def build_agent_task_contract(
             "research_finding_synthesis_artifact_id": research_synthesis_artifact.id
             if research_synthesis_artifact
             else None,
+            "relational_feature_plan_artifact_id": relational_feature_plan_artifact.id
+            if relational_feature_plan_artifact
+            else None,
             "approach_type": approach["approach_type"],
             "allowed_research_modes": ["project_artifacts", "skill_library", "controlled_web_search"],
             "must_respect_split_manifest": True,
             "research_finding_synthesis": research_synthesis_inputs,
+            "relational_feature_plan": relational_plan_inputs,
             **research_contract_inputs,
         },
         "required_outputs": [
@@ -1773,6 +1806,29 @@ def research_synthesis_contract_inputs(synthesis_artifact: Artifact | None) -> d
         "follow_up_requirements": payload.get("follow_up_requirements")
         if isinstance(payload.get("follow_up_requirements"), list)
         else [],
+        "agent_task_handoff": payload.get("agent_task_handoff")
+        if isinstance(payload.get("agent_task_handoff"), dict)
+        else {},
+    }
+
+
+def relational_feature_plan_contract_inputs(plan_artifact: Artifact | None) -> dict[str, Any]:
+    if plan_artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(plan_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "artifact_id": plan_artifact.id,
+        "source_summary": payload.get("source_summary") if isinstance(payload.get("source_summary"), dict) else {},
+        "table_coverage": payload.get("table_coverage") if isinstance(payload.get("table_coverage"), dict) else {},
+        "aggregation_candidate_count": len(payload.get("aggregation_candidates", []))
+        if isinstance(payload.get("aggregation_candidates"), list)
+        else 0,
+        "risk_register": payload.get("risk_register") if isinstance(payload.get("risk_register"), list) else [],
         "agent_task_handoff": payload.get("agent_task_handoff")
         if isinstance(payload.get("agent_task_handoff"), dict)
         else {},

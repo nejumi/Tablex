@@ -173,6 +173,7 @@ from tabular_harness.services.planned_agent_workspace import (
     prepare_workspace_from_contract_artifact,
 )
 from tabular_harness.services.profiler import profile_tabular_file
+from tabular_harness.services.relational_feature_planning import create_relational_feature_plan
 from tabular_harness.services.reporting import (
     create_project_visualization_dashboard,
     generate_project_insights,
@@ -820,6 +821,54 @@ def create_project_benchmark_collection_plan(
             },
         )
     except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/features/relational-plan", response_model=JobRead)
+def create_project_relational_feature_plan(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="create_relational_feature_plan",
+        project_id=project_id,
+        input_payload={"project_id": project_id},
+        policy={
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "external_download": "not_performed",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_relational_feature_plan(db, store=store, project=project, job=job)
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.plan["schema_version"],
+                "benchmark_id": result.plan["source_summary"].get("benchmark_id"),
+                "relational_feature_plan_artifact_id": result.plan_artifact.id,
+                "relational_feature_report_id": result.report.id,
+                "relational_feature_report_artifact_id": result.report_artifact.id,
+                "visualization_id": result.visualization.id,
+                "visualization_artifact_id": result.visualization_artifact.id,
+                "evidence_id": result.evidence.id,
+                "artifact_ids": result.artifact_ids,
+                "table_count": result.plan["table_coverage"]["table_count"],
+                "supporting_table_count": result.plan["table_coverage"]["supporting_table_count"],
+                "relationship_count": result.plan["table_coverage"]["relationship_count"],
+                "aggregation_candidate_count": len(result.plan["aggregation_candidates"]),
+                "high_risk_count": len(
+                    [item for item in result.plan["risk_register"] if item["risk_level"] == "high"]
+                ),
+            },
+        )
+    except ValueError as exc:
         mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
@@ -3915,6 +3964,9 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "citation_audit_report_artifact_id": output.get("citation_audit_report_artifact_id"),
         "citation_evidence_id": output.get("citation_evidence_id"),
         "citation_visualization_id": output.get("citation_visualization_id"),
+        "relational_feature_plan_artifact_id": output.get("relational_feature_plan_artifact_id"),
+        "relational_feature_report_id": output.get("relational_feature_report_id"),
+        "relational_feature_report_artifact_id": output.get("relational_feature_report_artifact_id"),
         "research_run_manifest_artifact_id": output.get("research_run_manifest_artifact_id"),
         "research_findings_report_id": output.get("research_findings_report_id"),
         "research_findings_report_artifact_id": output.get("research_findings_report_artifact_id"),
@@ -3939,6 +3991,11 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "local_ready_count": output.get("local_ready_count"),
         "multitable_count": output.get("multitable_count"),
         "time_series_count": output.get("time_series_count"),
+        "table_count": output.get("table_count"),
+        "supporting_table_count": output.get("supporting_table_count"),
+        "relationship_count": output.get("relationship_count"),
+        "aggregation_candidate_count": output.get("aggregation_candidate_count"),
+        "high_risk_count": output.get("high_risk_count"),
         "recommended_asset_count": output.get("recommended_asset_count"),
         "materialized_context_count": output.get("materialized_context_count"),
         "materialized_library_asset_count": output.get("materialized_library_asset_count"),

@@ -165,6 +165,7 @@ def build_agent_task_contract_payload(
     research_inputs = research_plan_contract_inputs(research_plan_artifact)
     source_pack_inputs = research_source_pack_contract_inputs(context_artifacts.get("research_source_pack"))
     synthesis_inputs = research_synthesis_contract_inputs(context_artifacts.get("research_finding_synthesis"))
+    relational_plan_inputs = relational_feature_plan_contract_inputs(context_artifacts.get("relational_feature_plan"))
     source_policy = source_pack_inputs.get("source_policy") or research_inputs.get(
         "research_source_policy",
         {"network_default": "disabled_until_runner_policy_allows"},
@@ -198,6 +199,7 @@ def build_agent_task_contract_payload(
             "research_source_policy": source_policy,
             "research_source_pack": source_pack_inputs,
             "research_finding_synthesis": synthesis_inputs,
+            "relational_feature_plan": relational_plan_inputs,
         },
         "required_outputs": [
             {
@@ -522,6 +524,7 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "understanding_report": latest_project_artifact(db, project_id, "understanding_report"),
         "data_quality_gate": latest_project_artifact(db, project_id, "data_quality_gate"),
         "relational_catalog": latest_project_artifact(db, project_id, "relational_catalog"),
+        "relational_feature_plan": latest_project_artifact(db, project_id, "relational_feature_plan"),
         "benchmark_import_manifest": latest_project_artifact(db, project_id, "benchmark_import_manifest"),
         "benchmark_scenario_pack": latest_project_artifact(db, project_id, "benchmark_scenario_pack"),
         "evaluation_scenario_comparison": latest_project_artifact(
@@ -579,6 +582,29 @@ def research_synthesis_contract_inputs(synthesis_artifact: Artifact | None) -> d
         "follow_up_requirements": payload.get("follow_up_requirements")
         if isinstance(payload.get("follow_up_requirements"), list)
         else [],
+        "agent_task_handoff": payload.get("agent_task_handoff")
+        if isinstance(payload.get("agent_task_handoff"), dict)
+        else {},
+    }
+
+
+def relational_feature_plan_contract_inputs(plan_artifact: Artifact | None) -> dict[str, Any]:
+    if plan_artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(plan_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "artifact_id": plan_artifact.id,
+        "source_summary": payload.get("source_summary") if isinstance(payload.get("source_summary"), dict) else {},
+        "table_coverage": payload.get("table_coverage") if isinstance(payload.get("table_coverage"), dict) else {},
+        "aggregation_candidate_count": len(payload.get("aggregation_candidates", []))
+        if isinstance(payload.get("aggregation_candidates"), list)
+        else 0,
+        "risk_register": payload.get("risk_register") if isinstance(payload.get("risk_register"), list) else [],
         "agent_task_handoff": payload.get("agent_task_handoff")
         if isinstance(payload.get("agent_task_handoff"), dict)
         else {},

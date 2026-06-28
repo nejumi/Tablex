@@ -1690,3 +1690,63 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert "relational_catalog.v1" in preview
     assert "SK_ID_CURR" in preview
     assert "shared_key_name" in preview
+
+    seed_assets_response = client.post("/api/assets/seed-defaults")
+    assert seed_assets_response.status_code == 200
+    collection_response = client.post(f"/api/projects/{project_id}/benchmarks/collection-plan")
+    assert collection_response.status_code == 200, collection_response.text
+
+    relational_plan_response = client.post(f"/api/projects/{project_id}/features/relational-plan")
+    assert relational_plan_response.status_code == 200, relational_plan_response.text
+    relational_plan_job = relational_plan_response.json()
+    assert relational_plan_job["status"] == "succeeded"
+    assert relational_plan_job["output"]["schema_version"] == "relational_feature_plan.v1"
+    assert relational_plan_job["output"]["relational_feature_plan_artifact_id"]
+    assert relational_plan_job["output"]["relational_feature_report_artifact_id"]
+    assert relational_plan_job["output"]["visualization_id"]
+    assert relational_plan_job["output"]["evidence_id"]
+    assert relational_plan_job["output"]["supporting_table_count"] == 1
+    assert relational_plan_job["output"]["relationship_count"] >= 1
+    assert relational_plan_job["output"]["aggregation_candidate_count"] >= 1
+
+    relational_plan_download_response = client.get(
+        f"/api/artifacts/{relational_plan_job['output']['relational_feature_plan_artifact_id']}/download"
+    )
+    assert relational_plan_download_response.status_code == 200
+    relational_plan = relational_plan_download_response.json()
+    assert relational_plan["schema_version"] == "relational_feature_plan.v1"
+    assert relational_plan["source_summary"]["benchmark_id"] == "kaggle_home_credit_default_risk"
+    assert relational_plan["source_summary"]["benchmark_collection_plan_artifact_id"] == collection_response.json()[
+        "output"
+    ]["benchmark_collection_plan_artifact_id"]
+    assert relational_plan["agent_task_handoff"]["fit_aggregations_on_training_folds_only"] is True
+    assert any(item["risk_level"] == "high" for item in relational_plan["risk_register"])
+
+    relational_report_response = client.get(
+        f"/api/artifacts/{relational_plan_job['output']['relational_feature_report_artifact_id']}/preview"
+    )
+    assert relational_report_response.status_code == 200
+    assert "Relational Feature Plan" in relational_report_response.json()["preview"]
+
+    agent_task_plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
+    assert agent_task_plan_response.status_code == 200, agent_task_plan_response.text
+    agent_contract_response = client.get(
+        f"/api/artifacts/{agent_task_plan_response.json()['output']['agent_task_contract_artifact_id']}/download"
+    )
+    assert agent_contract_response.status_code == 200
+    assert agent_contract_response.json()["inputs"]["relational_feature_plan"]["artifact_id"] == relational_plan_job[
+        "output"
+    ]["relational_feature_plan_artifact_id"]
+
+    ideas_response = client.post(f"/api/projects/{project_id}/approach/ideas/generate")
+    assert ideas_response.status_code == 200, ideas_response.text
+    ideas_list_response = client.get(f"/api/projects/{project_id}/approach/ideas")
+    assert ideas_list_response.status_code == 200
+    idea = ideas_list_response.json()[0]
+    context_response = client.post(f"/api/ideas/{idea['id']}/prepare-agent-context")
+    assert context_response.status_code == 200, context_response.text
+    context_payload_response = client.get(f"/api/artifacts/{context_response.json()['output']['artifact_id']}/download")
+    assert context_payload_response.status_code == 200
+    assert context_payload_response.json()["relational_feature_plan_context"]["artifact_id"] == relational_plan_job[
+        "output"
+    ]["relational_feature_plan_artifact_id"]
