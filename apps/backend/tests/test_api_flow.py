@@ -642,6 +642,7 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     uci_benchmark = next(item for item in benchmarks if item["id"] == "uci_bank_marketing")
     assert uci_benchmark["local_status"]["ready"] is False
     assert uci_benchmark["fixture_available"] is True
+    assert uci_benchmark["scenario"]["kind"] == "single_table_categorical_smoke"
     assert "Do not paste Kaggle credentials" in next(
         item["download_instructions"] for item in benchmarks if item["id"] == "kaggle_home_credit_default_risk"
     )
@@ -679,6 +680,7 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     assert payload["artifact"]["metadata"]["benchmark_id"] == "uci_bank_marketing"
     assert payload["import_manifest_artifact"]["asset_type"] == "benchmark_import_manifest"
     assert payload["relational_catalog_artifact"]["asset_type"] == "relational_catalog"
+    assert payload["supporting_table_artifacts"] == []
 
     project_after_import = client.get(f"/api/projects/{project_id}")
     assert project_after_import.status_code == 200
@@ -692,6 +694,18 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     relational_preview_response = client.get(f"/api/artifacts/{payload['relational_catalog_artifact']['id']}/preview")
     assert relational_preview_response.status_code == 200
     assert "relational_catalog.v1" in relational_preview_response.json()["preview"]
+
+    scenario_response = client.post(f"/api/projects/{project_id}/benchmarks/uci_bank_marketing/scenario-pack")
+    assert scenario_response.status_code == 200, scenario_response.text
+    scenario_job = scenario_response.json()
+    assert scenario_job["status"] == "succeeded"
+    assert scenario_job["output"]["scenario_kind"] == "single_table_categorical_smoke"
+    assert scenario_job["output"]["benchmark_scenario_pack_artifact_id"]
+    scenario_preview_response = client.get(
+        f"/api/artifacts/{scenario_job['output']['benchmark_scenario_report_artifact_id']}/preview"
+    )
+    assert scenario_preview_response.status_code == 200
+    assert "Benchmark Scenario Report" in scenario_preview_response.json()["preview"]
 
 
 def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:
@@ -719,7 +733,10 @@ def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:
     assert output["approval_review_artifact_id"]
     assert output["split_manifest_id"]
     assert output["baseline_strategy_plan_artifact_id"]
-    assert len(output["artifact_ids"]) >= 9
+    assert output["research_plan_artifact_id"]
+    assert output["benchmark_scenario_pack_artifact_id"]
+    assert output["benchmark_scenario_report_artifact_id"]
+    assert len(output["artifact_ids"]) >= 16
 
     artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
     assert artifacts_response.status_code == 200
@@ -732,7 +749,17 @@ def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:
         "evaluation_approval_review",
         "split_manifest",
         "baseline_strategy_plan",
+        "research_plan",
+        "benchmark_supporting_table",
+        "benchmark_scenario_pack",
+        "benchmark_scenario_report",
     }.issubset(asset_types)
+
+    scenario_report_preview_response = client.get(f"/api/artifacts/{output['benchmark_scenario_report_artifact_id']}/preview")
+    assert scenario_report_preview_response.status_code == 200
+    scenario_report_preview = scenario_report_preview_response.json()["preview"]
+    assert "multi_table_credit_risk" in scenario_report_preview
+    assert "Fixture results are product smoke checks" in scenario_report_preview
 
 
 def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None:
@@ -766,6 +793,8 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
         json={},
     )
     assert import_response.status_code == 200, import_response.text
+    assert len(import_response.json()["supporting_table_artifacts"]) == 1
+    assert import_response.json()["supporting_table_artifacts"][0]["asset_type"] == "benchmark_supporting_table"
     output_job_response = client.get(f"/api/projects/{project_id}/jobs")
     assert output_job_response.status_code == 200
     import_job = next(item for item in output_job_response.json() if item["job_type"] == "import_benchmark_dataset")

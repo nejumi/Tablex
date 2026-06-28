@@ -38,6 +38,7 @@
         "modality_tags": { "type": "array", "items": { "type": "string" } },
         "scale": { "type": "string" },
         "recommended_uses": { "type": "array", "items": { "type": "string" } },
+        "scenario": { "type": "object" },
         "primary_table": { "$ref": "#/$defs/primary_table" },
         "required_files": { "type": "array", "items": { "$ref": "#/$defs/file_spec" } },
         "recommended_files": { "type": "array", "items": { "$ref": "#/$defs/file_spec" } },

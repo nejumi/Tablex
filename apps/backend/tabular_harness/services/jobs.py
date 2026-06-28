@@ -35,6 +35,7 @@ JOB_TYPES = {
     "draft_run_report",
     "analyze_data_quality",
     "import_benchmark_dataset",
+    "create_benchmark_scenario_pack",
 }
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}

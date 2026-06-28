@@ -32,6 +32,7 @@ The product name may still change. Internal package names and database tables st
 - Controlled Agent Workspace v0 with materialized runner context, workspace manifests, AgentResult artifact ingestion, and workspace preview in the Approach UI.
 - Benchmark Dataset Catalog v0 with Home Credit, fraud, retail forecasting, basket, and UCI smoke-test entries plus local primary-table import, relational catalog artifacts, and inferred join-key context without storing external credentials.
 - Benchmark Fixture & Smoke Harness v0 with credential-free Home Credit-like, UCI Bank-like, and retail time-series fixtures plus fixture-driven import/quality/evaluation/baseline strategy smoke.
+- Benchmark Scenario Pack v1 with fixture-aware benchmark_scenario_pack/report artifacts, supporting-table artifact registration for small local bundles, ResearchPlan handoff, and UI preview.
 - Baseline Strategy Planner v0 with artifact-backed candidate strategies, selected/deferred rationale, relational AgentTask handoff notes, and baseline report integration.
 - Evaluation Scenario Comparison v0 with artifact-backed split feasibility, temporal/group leakage, quality gate, relational context, open question, and assumption-risk comparison before EvaluationSpec adoption.
 - Evaluation Approval Review v0 with artifact-backed approval blockers, assumption-backed proceed notes, review lineage, and UI preview before approving an EvaluationSpec.

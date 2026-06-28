@@ -79,6 +79,7 @@ type BenchmarkDataset = {
   modality_tags: string[];
   scale: string | null;
   recommended_uses: string[];
+  scenario: Record<string, unknown> | null;
   primary_table: Record<string, unknown>;
   required_files: Array<Record<string, unknown>>;
   recommended_files: Array<Record<string, unknown>>;
@@ -828,6 +829,9 @@ function DataTab({
   const [relationalPreview, setRelationalPreview] = React.useState<ArtifactPreview | null>(null);
   const [relationalPreviewError, setRelationalPreviewError] = React.useState<string | null>(null);
   const [relationalPreviewLoadingId, setRelationalPreviewLoadingId] = React.useState<string | null>(null);
+  const [scenarioPreview, setScenarioPreview] = React.useState<ArtifactPreview | null>(null);
+  const [scenarioPreviewError, setScenarioPreviewError] = React.useState<string | null>(null);
+  const [scenarioPreviewLoadingId, setScenarioPreviewLoadingId] = React.useState<string | null>(null);
 
   async function uploadDataset() {
     if (!file) return;
@@ -879,6 +883,19 @@ function DataTab({
     );
   }
 
+  async function createBenchmarkScenarioPack(benchmark: BenchmarkDataset) {
+    await runAction(async () => {
+      const job = await api<Job>(`/api/projects/${project.id}/benchmarks/${benchmark.id}/scenario-pack`, {
+        method: "POST"
+      });
+      const reportArtifactId = job.output.benchmark_scenario_report_artifact_id;
+      if (typeof reportArtifactId === "string") {
+        await loadScenarioPreview(reportArtifactId);
+      }
+      return job;
+    });
+  }
+
   async function loadQualityPreview(artifactId: string) {
     setQualityPreviewLoadingId(artifactId);
     setQualityPreviewError(null);
@@ -903,7 +920,22 @@ function DataTab({
     }
   }
 
+  async function loadScenarioPreview(artifactId: string) {
+    setScenarioPreviewLoadingId(artifactId);
+    setScenarioPreviewError(null);
+    try {
+      setScenarioPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setScenarioPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScenarioPreviewLoadingId(null);
+    }
+  }
+
   const datasetArtifacts = artifacts.filter((artifact) => artifact.asset_type === "dataset_snapshot");
+  const scenarioArtifacts = artifacts.filter((artifact) =>
+    ["benchmark_scenario_pack", "benchmark_scenario_report"].includes(artifact.asset_type)
+  );
   const relationalArtifacts = artifacts.filter((artifact) => artifact.asset_type === "relational_catalog");
   const qualityArtifacts = artifacts.filter((artifact) =>
     ["data_quality_gate", "data_quality_report"].includes(artifact.asset_type)
@@ -940,6 +972,7 @@ function DataTab({
               const status = benchmark.local_status;
               const benchmarkPath = benchmarkPaths[benchmark.id] ?? benchmark.default_local_path;
               const targetColumn = textField(benchmark.primary_table.target_column) ?? "-";
+              const scenarioKind = textField(benchmark.scenario?.kind) ?? "-";
               return (
                 <div className="benchmark-card" key={benchmark.id}>
                   <div className="benchmark-card-header">
@@ -975,6 +1008,10 @@ function DataTab({
                       <dd>{targetColumn}</dd>
                     </div>
                     <div>
+                      <dt>Scenario</dt>
+                      <dd>{scenarioKind.replace(/_/g, " ")}</dd>
+                    </div>
+                    <div>
                       <dt>Required</dt>
                       <dd>
                         {status?.required_found_count ?? 0}/{benchmark.required_files.length} files
@@ -1008,6 +1045,14 @@ function DataTab({
                     >
                       <Play size={16} />
                       Smoke
+                    </button>
+                    <button
+                      className="secondary-button"
+                      disabled={busy}
+                      onClick={() => void createBenchmarkScenarioPack(benchmark)}
+                    >
+                      <Layers size={16} />
+                      Scenario
                     </button>
                     <a className="secondary-button text-link-button" href={benchmark.source_url} target="_blank" rel="noreferrer">
                       Source
@@ -1083,6 +1128,40 @@ function DataTab({
           <pre className="markdown-preview">{relationalPreview.preview}</pre>
         ) : (
           <EmptyInline text={relationalPreview?.reason ?? "Select a relational catalog to inspect table profiles, key candidates, and inferred join graph."} />
+        )}
+      </Panel>
+      <Panel title="Benchmark Scenario Packs" icon={<Layers size={18} />}>
+        {scenarioArtifacts.length ? (
+          <Table
+            headers={["Type", "Benchmark", "Scenario", "Dataset", "Actions"]}
+            rows={scenarioArtifacts.map((artifact) => [
+              artifact.asset_type,
+              String(artifact.metadata.benchmark_id ?? artifact.name),
+              String(artifact.metadata.scenario_kind ?? "-").replace(/_/g, " "),
+              String(artifact.metadata.dataset_snapshot_id ?? "-"),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={scenarioPreviewLoadingId === artifact.id}
+                  onClick={() => void loadScenarioPreview(artifact.id)}
+                  title="Preview benchmark scenario"
+                >
+                  {scenarioPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download benchmark scenario">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Benchmark scenario packs will summarize intended use, local fixture status, relational context, evaluation readiness, ResearchPlan handoff, reporting expectations, and runner guardrails." />
+        )}
+        {scenarioPreviewError ? <div className="banner danger">{scenarioPreviewError}</div> : null}
+        {scenarioPreview?.preview_available ? (
+          <pre className="markdown-preview">{scenarioPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={scenarioPreview?.reason ?? "Generate or select a benchmark scenario artifact to inspect workflow and runner handoff context."} />
         )}
       </Panel>
       <Panel title="Data Quality Gates" icon={<ListChecks size={18} />}>

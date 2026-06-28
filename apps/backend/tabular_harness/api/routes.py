@@ -112,6 +112,8 @@ from tabular_harness.services.benchmarks import (
     benchmark_to_dict,
     build_import_manifest,
     build_relational_catalog,
+    create_benchmark_scenario_pack,
+    default_benchmark_root,
     generate_benchmark_fixture,
     get_benchmark_dataset,
     inspect_benchmark_local_files,
@@ -120,6 +122,7 @@ from tabular_harness.services.benchmarks import (
     relative_path,
     resolve_benchmark_root,
     select_primary_file,
+    store_benchmark_supporting_table_artifacts,
     validate_required_files,
 )
 from tabular_harness.services.data_quality import analyze_dataset_quality
@@ -524,6 +527,15 @@ def import_benchmark_dataset(
                 "primary_file": primary_relative_path,
             },
         )
+        supporting_tables = store_benchmark_supporting_table_artifacts(
+            db,
+            store=store,
+            project_id=project_id,
+            benchmark=benchmark,
+            root=root,
+            primary_file=primary_file,
+            relational_catalog_artifact=relational_catalog_artifact,
+        )
         create_lineage_edge(
             db,
             project_id=project_id,
@@ -565,6 +577,8 @@ def import_benchmark_dataset(
                 "target_column": effective_target,
                 "table_count": relational_catalog["table_count"],
                 "relationship_count": len(relational_catalog["relationships"]),
+                "supporting_table_artifact_ids": [artifact.id for artifact in supporting_tables.artifacts],
+                "skipped_supporting_tables": supporting_tables.skipped,
             },
         )
     except Exception as exc:
@@ -579,9 +593,67 @@ def import_benchmark_dataset(
         "artifact": artifact_to_dict(dataset_artifact),
         "import_manifest_artifact": artifact_to_dict(import_manifest_artifact),
         "relational_catalog_artifact": artifact_to_dict(relational_catalog_artifact),
+        "supporting_table_artifacts": [artifact_to_dict(artifact) for artifact in supporting_tables.artifacts],
+        "skipped_supporting_tables": supporting_tables.skipped,
         "profile_job_id": job.id,
         "primary_file": primary_relative_path,
     }
+
+
+@router.post("/api/projects/{project_id}/benchmarks/{benchmark_id}/scenario-pack", response_model=JobRead)
+def create_project_benchmark_scenario_pack(
+    project_id: str,
+    benchmark_id: str,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    settings = request.app.state.settings
+    try:
+        benchmark = raw_benchmark_dataset(benchmark_id)
+        root = default_benchmark_root(settings, benchmark_id)
+        local_status = latest_benchmark_import_local_status(db, project_id, benchmark_id) or inspect_benchmark_local_files(
+            benchmark, root
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
+    job = create_job(
+        db,
+        job_type="create_benchmark_scenario_pack",
+        project_id=project_id,
+        input_payload={"benchmark_id": benchmark_id},
+        policy={
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "external_download": "not_performed",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_benchmark_scenario_pack(
+            db,
+            store=store,
+            project=project,
+            benchmark=benchmark,
+            local_status=local_status,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "benchmark_id": benchmark_id,
+                "schema_version": result.pack["schema_version"],
+                "scenario_kind": result.pack["scenario"]["kind"],
+                "benchmark_scenario_pack_artifact_id": result.pack_artifact.id,
+                "benchmark_scenario_report_artifact_id": result.report_artifact.id,
+                "dataset_snapshot_id": result.pack["dataset"].get("dataset_snapshot_id"),
+                "supporting_table_artifact_count": len(result.pack["supporting_table_artifacts"]),
+            },
+        )
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
 
 
 @router.post("/api/projects/{project_id}/benchmarks/{benchmark_id}/fixture-smoke", response_model=JobRead)
@@ -671,16 +743,44 @@ def run_benchmark_fixture_smoke(
             evaluation_spec=spec,
             split_manifest=split,
         )
+        research_plan = create_research_plan(
+            db,
+            store=store,
+            project=project,
+            dataset=dataset,
+            evaluation_spec=spec,
+        )
+        supporting_artifact_ids = [item["id"] for item in import_result.get("supporting_table_artifacts", [])]
+        supporting_artifacts = (
+            list(db.scalars(select(Artifact).where(Artifact.id.in_(supporting_artifact_ids))).all())
+            if supporting_artifact_ids
+            else []
+        )
+        scenario = create_benchmark_scenario_pack(
+            db,
+            store=store,
+            project=project,
+            benchmark=raw_benchmark_dataset(benchmark_id),
+            local_status=fixture["local_status"],
+            fixture=fixture,
+            dataset=dataset,
+            supporting_table_artifacts=supporting_artifacts,
+            skipped_supporting_tables=import_result.get("skipped_supporting_tables", []),
+        )
         artifact_ids = [
             import_result["artifact"]["id"],
             import_result["import_manifest_artifact"]["id"],
             import_result["relational_catalog_artifact"]["id"],
+            *supporting_artifact_ids,
             *quality.artifact_ids,
             comparison_artifact.id,
             review.artifact.id,
             approved_artifact.id,
             split.artifact_id,
             strategy.artifact.id,
+            research_plan.artifact.id,
+            scenario.pack_artifact.id,
+            scenario.report_artifact.id,
         ]
         mark_job_succeeded(
             job,
@@ -695,6 +795,9 @@ def run_benchmark_fixture_smoke(
                 "approval_review_artifact_id": review.artifact.id,
                 "split_manifest_id": split.id,
                 "baseline_strategy_plan_artifact_id": strategy.artifact.id,
+                "research_plan_artifact_id": research_plan.artifact.id,
+                "benchmark_scenario_pack_artifact_id": scenario.pack_artifact.id,
+                "benchmark_scenario_report_artifact_id": scenario.report_artifact.id,
                 "artifact_ids": artifact_ids,
             },
         )
@@ -2313,6 +2416,26 @@ def profile_dataset_artifact(
             relation_type="produces",
         )
     return dataset
+
+
+def latest_benchmark_import_local_status(db: Session, project_id: str, benchmark_id: str) -> dict[str, Any] | None:
+    artifact = db.scalar(
+        select(Artifact)
+        .where(
+            Artifact.project_id == project_id,
+            Artifact.asset_type == "benchmark_import_manifest",
+            Artifact.metadata_json.contains(benchmark_id),
+        )
+        .order_by(Artifact.created_at.desc())
+    )
+    if artifact is None:
+        return None
+    try:
+        payload = json.loads(artifact_primary_path(artifact).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    local_status = payload.get("local_status")
+    return cast(dict[str, Any], local_status) if isinstance(local_status, dict) else None
 
 
 def store_and_register_json(

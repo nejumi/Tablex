@@ -168,6 +168,7 @@ class BenchmarkDatasetRead(BaseModel):
     modality_tags: list[str]
     scale: str | None = None
     recommended_uses: list[str] = Field(default_factory=list)
+    scenario: dict[str, Any] | None = None
     primary_table: dict[str, Any]
     required_files: list[dict[str, Any]]
     recommended_files: list[dict[str, Any]] = Field(default_factory=list)
@@ -201,6 +202,8 @@ class BenchmarkImportResponse(BaseModel):
     artifact: ArtifactRead
     import_manifest_artifact: ArtifactRead
     relational_catalog_artifact: ArtifactRead
+    supporting_table_artifacts: list[ArtifactRead] = Field(default_factory=list)
+    skipped_supporting_tables: list[dict[str, Any]] = Field(default_factory=list)
     profile_job_id: str
     primary_file: str
 
@@ -388,6 +391,7 @@ class JobCreate(BaseModel):
         "draft_run_report",
         "analyze_data_quality",
         "import_benchmark_dataset",
+        "create_benchmark_scenario_pack",
         "run_agent_task",
     ]
     project_id: str | None = None

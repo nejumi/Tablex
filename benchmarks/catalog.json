@@ -23,6 +23,12 @@
         "evaluation sanity checks for imbalanced binary classification",
         "agent task contracts that need joins, aggregation, and reportable assumptions"
       ],
+      "scenario": {
+        "kind": "multi_table_credit_risk",
+        "validation_focus": "stratified_with_entity_and_time_leakage_review",
+        "feature_focus": ["relational_aggregations", "credit_history_summaries", "prediction_time_availability", "leakage_controls"],
+        "report_focus": ["relationship_coverage", "assumption_risk", "feature_scenario_comparison", "calibration_or_threshold_summary", "leaderboard"]
+      },
       "primary_table": {
         "path": "application_train.csv",
         "target_column": "TARGET",
@@ -167,6 +173,12 @@
         "lag, rolling, calendar, holiday, oil price, and store metadata feature recipes",
         "forecasting report and visualization workflows"
       ],
+      "scenario": {
+        "kind": "retail_time_series",
+        "validation_focus": "time_split_or_rolling_origin",
+        "feature_focus": ["calendar_features", "lag_features", "rolling_statistics", "known_future_covariates", "hierarchical_group_slices"],
+        "report_focus": ["forecast_horizon_errors", "time_slice_metrics", "store_family_slices", "leaderboard"]
+      },
       "primary_table": {
         "path": "train.csv",
         "target_column": "sales",
@@ -334,6 +346,12 @@
         "categorical preprocessing and target-profile checks",
         "question/assumption UX checks on a compact business dataset"
       ],
+      "scenario": {
+        "kind": "single_table_categorical_smoke",
+        "validation_focus": "stratified_split_with_leakage_question",
+        "feature_focus": ["categorical_encoding", "numeric_imputation", "duration_leakage_scenario_compare"],
+        "report_focus": ["baseline_sanity", "target_profile", "assumption_risk", "leaderboard"]
+      },
       "primary_table": {
         "path": "bank-full.csv",
         "target_column": "y",

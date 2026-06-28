@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BenchmarkScenarioPack",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "benchmark",
+    "scenario",
+    "dataset",
+    "local_status",
+    "artifact_context",
+    "supporting_table_artifacts",
+    "relational_summary",
+    "recommended_workflow",
+    "agent_handoff",
+    "reporting_expectations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "benchmark_scenario_pack.v1"
+    },
+    "project": {
+      "type": "object"
+    },
+    "benchmark": {
+      "type": "object"
+    },
+    "scenario": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "validation_focus": {
+          "type": "string"
+        },
+        "feature_focus": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "report_focus": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "dataset": {
+      "type": "object"
+    },
+    "local_status": {
+      "type": "object"
+    },
+    "fixture": {
+      "type": "object"
+    },
+    "artifact_context": {
+      "type": "object"
+    },
+    "supporting_table_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "skipped_supporting_tables": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "relational_summary": {
+      "type": "object"
+    },
+    "recommended_workflow": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "agent_handoff": {
+      "type": "object"
+    },
+    "reporting_expectations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

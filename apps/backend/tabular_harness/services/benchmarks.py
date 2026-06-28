@@ -8,11 +8,23 @@ from pathlib import Path
 from typing import Any, cast
 
 import duckdb
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from tabular_harness.core.config import Settings
+from tabular_harness.core.ids import new_id
+from tabular_harness.models.entities import Artifact, DatasetSnapshot, Project
+from tabular_harness.services.approach import store_json_artifact, store_text_artifact
+from tabular_harness.services.artifacts import (
+    LocalArtifactStore,
+    create_lineage_edge,
+    next_artifact_version,
+    register_artifact,
+)
 from tabular_harness.services.profiler import quote_ident, read_sql
 
 SUPPORTED_PRIMARY_SUFFIXES = {".csv", ".parquet"}
+MAX_SUPPORTING_TABLE_ARTIFACT_BYTES = 25 * 1024 * 1024
 KEY_NAME_HINTS = ("id", "_id", "sk_id", "case_id", "transactionid", "order_id", "store_nbr", "user_id")
 TIME_NAME_HINTS = ("date", "time", "dt", "timestamp")
 LEAKAGE_NAME_HINTS = ("target", "label", "actual", "result", "final", "after", "post", "status")
@@ -31,6 +43,20 @@ class BenchmarkFileMatch:
     @property
     def found(self) -> bool:
         return bool(self.found_paths)
+
+
+@dataclass(frozen=True)
+class BenchmarkScenarioPackResult:
+    pack: dict[str, Any]
+    report_md: str
+    pack_artifact: Artifact
+    report_artifact: Artifact
+
+
+@dataclass(frozen=True)
+class SupportingTableStoreResult:
+    artifacts: list[Artifact]
+    skipped: list[dict[str, Any]]
 
 
 def catalog_path() -> Path:
@@ -317,6 +343,212 @@ def build_relational_catalog(
     }
 
 
+def store_benchmark_supporting_table_artifacts(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project_id: str,
+    benchmark: dict[str, Any],
+    root: Path,
+    primary_file: Path,
+    relational_catalog_artifact: Artifact,
+    max_files: int = 12,
+    max_bytes: int = MAX_SUPPORTING_TABLE_ARTIFACT_BYTES,
+) -> SupportingTableStoreResult:
+    artifacts: list[Artifact] = []
+    skipped: list[dict[str, Any]] = []
+    table_files = collect_benchmark_table_files(benchmark, root, primary_file, max_tables=max_files + 1)
+    for item in table_files:
+        path = cast(Path, item["path"])
+        if path.resolve() == primary_file.resolve():
+            continue
+        relative = relative_path(root, path)
+        if path.suffix.lower() not in SUPPORTED_PRIMARY_SUFFIXES:
+            skipped.append({"path": relative, "reason": "unsupported_format", "size_bytes": path.stat().st_size})
+            continue
+        size_bytes = path.stat().st_size
+        if size_bytes > max_bytes:
+            skipped.append({"path": relative, "reason": "exceeds_size_limit", "size_bytes": size_bytes})
+            continue
+        table_name = table_name_from_path(relative)
+        artifact_name = f"{benchmark['id']}_{table_name}"
+        version = next_artifact_version(db, project_id, "benchmark_supporting_table", artifact_name)
+        artifact_dir, stored, content_hash = store.store_existing_file(
+            org_id="local-org",
+            project_id=project_id,
+            asset_type="benchmark_supporting_table",
+            name=artifact_name,
+            version=version,
+            source_path=path,
+            filename=path.name,
+            metadata={
+                "project_id": project_id,
+                "benchmark_id": benchmark["id"],
+                "benchmark_name": benchmark.get("name"),
+                "source_url": benchmark.get("source_url"),
+                "relative_path": relative,
+                "table_name": table_name,
+                "role": item.get("role"),
+                "relational_catalog_artifact_id": relational_catalog_artifact.id,
+            },
+        )
+        artifact = register_artifact(
+            db,
+            project_id=project_id,
+            asset_type="benchmark_supporting_table",
+            name=artifact_name,
+            uri=str(artifact_dir),
+            content_hash=content_hash,
+            size_bytes=stored.size_bytes,
+            metadata={
+                "primary_path": str(stored.path),
+                "project_id": project_id,
+                "benchmark_id": benchmark["id"],
+                "benchmark_name": benchmark.get("name"),
+                "source_url": benchmark.get("source_url"),
+                "relative_path": relative,
+                "table_name": table_name,
+                "role": item.get("role"),
+                "relational_catalog_artifact_id": relational_catalog_artifact.id,
+            },
+            version=version,
+        )
+        artifacts.append(artifact)
+        create_lineage_edge(
+            db,
+            project_id=project_id,
+            from_asset_type="artifact",
+            from_asset_id=artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=relational_catalog_artifact.id,
+            relation_type="cataloged_by",
+        )
+    return SupportingTableStoreResult(artifacts=artifacts, skipped=skipped)
+
+
+def create_benchmark_scenario_pack(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    benchmark: dict[str, Any],
+    local_status: dict[str, Any] | None = None,
+    fixture: dict[str, Any] | None = None,
+    dataset: DatasetSnapshot | None = None,
+    supporting_table_artifacts: list[Artifact] | None = None,
+    skipped_supporting_tables: list[dict[str, Any]] | None = None,
+) -> BenchmarkScenarioPackResult:
+    benchmark_id = str(benchmark["id"])
+    dataset = dataset or latest_benchmark_dataset(db, project.id, benchmark_id) or latest_project_dataset(db, project.id)
+    artifact_context = {
+        "dataset_snapshot": latest_project_artifact(db, project.id, "dataset_snapshot"),
+        "benchmark_import_manifest": latest_project_artifact(db, project.id, "benchmark_import_manifest", benchmark_id),
+        "relational_catalog": latest_project_artifact(db, project.id, "relational_catalog", benchmark_id),
+        "data_quality_gate": latest_project_artifact(db, project.id, "data_quality_gate"),
+        "evaluation_scenario_comparison": latest_project_artifact(db, project.id, "evaluation_scenario_comparison"),
+        "evaluation_approval_review": latest_project_artifact(db, project.id, "evaluation_approval_review"),
+        "evaluation_spec": latest_project_artifact(db, project.id, "evaluation_spec"),
+        "split_manifest": latest_project_artifact(db, project.id, "split_manifest"),
+        "baseline_strategy_plan": latest_project_artifact(db, project.id, "baseline_strategy_plan"),
+        "research_plan": latest_project_artifact(db, project.id, "research_plan"),
+    }
+    stored_supporting = supporting_table_artifacts
+    if stored_supporting is None:
+        stored_supporting = list(
+            db.scalars(
+                select(Artifact)
+                .where(
+                    Artifact.project_id == project.id,
+                    Artifact.asset_type == "benchmark_supporting_table",
+                    Artifact.metadata_json.contains(benchmark_id),
+                )
+                .order_by(Artifact.created_at.desc())
+            ).all()
+        )
+    skipped_supporting_tables = skipped_supporting_tables or []
+    scenario = scenario_metadata(benchmark)
+    relational_metadata = artifact_metadata(artifact_context["relational_catalog"])
+    pack: dict[str, Any] = {
+        "schema_version": "benchmark_scenario_pack.v1",
+        "project": {
+            "id": project.id,
+            "name": project.name,
+            "task_type": project.task_type,
+            "target_column": project.target_column,
+            "current_phase": project.current_phase,
+        },
+        "benchmark": benchmark_summary(benchmark),
+        "scenario": scenario,
+        "dataset": dataset_summary(dataset),
+        "local_status": compact_local_status(local_status),
+        "fixture": compact_fixture(fixture),
+        "artifact_context": {key: artifact_ref(value) for key, value in artifact_context.items()},
+        "supporting_table_artifacts": [artifact_ref(artifact) for artifact in stored_supporting],
+        "skipped_supporting_tables": skipped_supporting_tables,
+        "relational_summary": {
+            "table_count": relational_metadata.get("table_count"),
+            "relationship_count": relational_metadata.get("relationship_count"),
+            "table_discovery_truncated": relational_metadata.get("table_discovery_truncated"),
+        },
+        "recommended_workflow": benchmark_workflow_steps(benchmark, scenario),
+        "agent_handoff": benchmark_agent_handoff(benchmark, scenario),
+        "reporting_expectations": benchmark_reporting_expectations(benchmark, scenario),
+    }
+    pack_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="benchmark_scenario_pack",
+        name=f"benchmark_scenario_pack_{benchmark_id}_{new_id('bsp')}",
+        filename="benchmark_scenario_pack.json",
+        payload=pack,
+        metadata={
+            "project_id": project.id,
+            "benchmark_id": benchmark_id,
+            "benchmark_name": benchmark.get("name"),
+            "dataset_snapshot_id": dataset.id if dataset else None,
+            "scenario_kind": scenario["kind"],
+            "table_count": relational_metadata.get("table_count"),
+            "relationship_count": relational_metadata.get("relationship_count"),
+            "supporting_table_artifact_count": len(stored_supporting),
+            "fixture_available": benchmark_id in SUPPORTED_FIXTURE_IDS,
+        },
+    )
+    report_md = render_benchmark_scenario_report(pack)
+    report_artifact = store_text_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="benchmark_scenario_report",
+        name=f"benchmark_scenario_report_{benchmark_id}_{new_id('bsr')}",
+        filename="benchmark_scenario_report.md",
+        text=report_md,
+        metadata={
+            "project_id": project.id,
+            "benchmark_id": benchmark_id,
+            "benchmark_name": benchmark.get("name"),
+            "dataset_snapshot_id": dataset.id if dataset else None,
+            "scenario_kind": scenario["kind"],
+            "pack_artifact_id": pack_artifact.id,
+        },
+    )
+    create_benchmark_scenario_lineage(
+        db,
+        project=project,
+        dataset=dataset,
+        pack_artifact=pack_artifact,
+        report_artifact=report_artifact,
+        context_artifacts=[artifact for artifact in artifact_context.values() if artifact is not None],
+        supporting_artifacts=stored_supporting,
+    )
+    return BenchmarkScenarioPackResult(
+        pack=pack,
+        report_md=report_md,
+        pack_artifact=pack_artifact,
+        report_artifact=report_artifact,
+    )
+
+
 def collect_benchmark_table_files(
     benchmark: dict[str, Any], root: Path, primary_file: Path, *, max_tables: int
 ) -> list[dict[str, Any]]:
@@ -560,6 +792,336 @@ def table_name_from_path(path: str) -> str:
     while "__" in name:
         name = name.replace("__", "_")
     return name or "table"
+
+
+def latest_benchmark_dataset(db: Session, project_id: str, benchmark_id: str) -> DatasetSnapshot | None:
+    return db.scalar(
+        select(DatasetSnapshot)
+        .where(
+            DatasetSnapshot.project_id == project_id,
+            DatasetSnapshot.source_type == "benchmark_catalog",
+            DatasetSnapshot.source_ref.like(f"{benchmark_id}:%"),
+        )
+        .order_by(DatasetSnapshot.created_at.desc())
+    )
+
+
+def latest_project_dataset(db: Session, project_id: str) -> DatasetSnapshot | None:
+    return db.scalar(
+        select(DatasetSnapshot)
+        .where(DatasetSnapshot.project_id == project_id)
+        .order_by(DatasetSnapshot.created_at.desc())
+    )
+
+
+def latest_project_artifact(
+    db: Session, project_id: str, asset_type: str, benchmark_id: str | None = None
+) -> Artifact | None:
+    statement = select(Artifact).where(Artifact.project_id == project_id, Artifact.asset_type == asset_type)
+    if benchmark_id is not None:
+        statement = statement.where(Artifact.metadata_json.contains(benchmark_id))
+    return db.scalar(statement.order_by(Artifact.created_at.desc()))
+
+
+def artifact_metadata(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {}
+    try:
+        return cast(dict[str, Any], json.loads(artifact.metadata_json))
+    except json.JSONDecodeError:
+        return {}
+
+
+def artifact_ref(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {"status": "missing", "artifact_id": None}
+    metadata = artifact_metadata(artifact)
+    return {
+        "status": "available",
+        "artifact_id": artifact.id,
+        "asset_type": artifact.asset_type,
+        "name": artifact.name,
+        "version": artifact.version,
+        "metadata": {
+            key: metadata.get(key)
+            for key in [
+                "benchmark_id",
+                "dataset_snapshot_id",
+                "evaluation_spec_id",
+                "split_manifest_id",
+                "table_count",
+                "relationship_count",
+                "scenario_kind",
+                "relative_path",
+            ]
+            if key in metadata
+        },
+        "preview_url": f"/api/artifacts/{artifact.id}/preview",
+        "download_url": f"/api/artifacts/{artifact.id}/download",
+    }
+
+
+def benchmark_summary(benchmark: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": benchmark["id"],
+        "name": benchmark["name"],
+        "source_kind": benchmark["source_kind"],
+        "source_url": benchmark["source_url"],
+        "task_types": benchmark.get("task_types", []),
+        "modality_tags": benchmark.get("modality_tags", []),
+        "recommended_uses": benchmark.get("recommended_uses", []),
+        "primary_table": benchmark.get("primary_table") or {},
+        "evaluation_notes": benchmark.get("evaluation_notes"),
+        "risk_notes": benchmark.get("risk_notes", []),
+        "fixture_available": benchmark["id"] in SUPPORTED_FIXTURE_IDS,
+        "fixture_notes": fixture_notes(str(benchmark["id"])),
+    }
+
+
+def dataset_summary(dataset: DatasetSnapshot | None) -> dict[str, Any]:
+    if dataset is None:
+        return {"status": "missing", "dataset_snapshot_id": None}
+    return {
+        "status": "available",
+        "dataset_snapshot_id": dataset.id,
+        "artifact_id": dataset.artifact_id,
+        "source_type": dataset.source_type,
+        "source_ref": dataset.source_ref,
+        "row_count": dataset.row_count,
+        "column_count": dataset.column_count,
+        "schema_hash": dataset.schema_hash,
+        "data_hash": dataset.data_hash,
+    }
+
+
+def compact_local_status(local_status: dict[str, Any] | None) -> dict[str, Any]:
+    if local_status is None:
+        return {"status": "unknown"}
+    return {
+        "status": "ready" if local_status.get("ready") else "incomplete",
+        "root_path": local_status.get("root_path"),
+        "required_found_count": local_status.get("required_found_count"),
+        "required_missing_count": local_status.get("required_missing_count"),
+        "recommended_found_count": local_status.get("recommended_found_count"),
+        "recommended_missing_count": local_status.get("recommended_missing_count"),
+    }
+
+
+def compact_fixture(fixture: dict[str, Any] | None) -> dict[str, Any]:
+    if fixture is None:
+        return {"status": "not_generated_in_this_pack"}
+    return {
+        "schema_version": fixture.get("schema_version"),
+        "status": "available",
+        "fixture_matches_expected": fixture.get("fixture_matches_expected"),
+        "generated_file_count": len(fixture.get("generated_files", [])),
+        "skipped_file_count": len(fixture.get("skipped_files", [])),
+        "notes": fixture.get("notes"),
+    }
+
+
+def scenario_metadata(benchmark: dict[str, Any]) -> dict[str, Any]:
+    explicit = benchmark.get("scenario")
+    if isinstance(explicit, dict):
+        return cast(dict[str, Any], explicit)
+    tags = {str(tag) for tag in benchmark.get("modality_tags", [])}
+    if "time_series" in tags:
+        return {
+            "kind": "time_series_forecasting",
+            "validation_focus": "time_split_or_rolling_origin",
+            "feature_focus": ["calendar_features", "lag_features", "rolling_statistics", "known_future_covariates"],
+            "report_focus": ["forecast_horizon_errors", "time_slice_metrics", "leaderboard"],
+        }
+    if "multi_table" in tags:
+        return {
+            "kind": "multi_table_tabular",
+            "validation_focus": "entity_or_time_aware_split_when_available",
+            "feature_focus": ["relational_aggregations", "prediction_time_availability", "leakage_controls"],
+            "report_focus": ["relationship_coverage", "feature_scenario_comparison", "leaderboard"],
+        }
+    return {
+        "kind": "single_table_tabular",
+        "validation_focus": "stratified_or_random_split_sanity",
+        "feature_focus": ["categorical_encoding", "numeric_imputation", "leakage_controls"],
+        "report_focus": ["baseline_sanity", "slice_metrics", "leaderboard"],
+    }
+
+
+def benchmark_workflow_steps(benchmark: dict[str, Any], scenario: dict[str, Any]) -> list[dict[str, Any]]:
+    steps = [
+        {
+            "step": "import_and_profile",
+            "owner": "harness",
+            "expected_artifacts": ["dataset_snapshot", "semantic_catalog", "profile_json", "understanding_md"],
+        },
+        {
+            "step": "data_quality_gate",
+            "owner": "harness",
+            "expected_artifacts": ["data_quality_gate", "data_quality_report"],
+        },
+        {
+            "step": "evaluation_design",
+            "owner": "harness",
+            "expected_artifacts": ["evaluation_scenario_comparison", "evaluation_approval_review", "evaluation_spec", "split_manifest"],
+        },
+        {
+            "step": "research_and_strategy",
+            "owner": "harness_with_future_runner",
+            "expected_artifacts": ["research_plan", "baseline_strategy_plan"],
+        },
+    ]
+    if scenario.get("kind") in {"multi_table_credit_risk", "multi_table_tabular"}:
+        steps.append(
+            {
+                "step": "relational_feature_recipe",
+                "owner": "agent_runner",
+                "expected_artifacts": ["feature_recipe", "agent_task_report", "visualization_spec"],
+                "guardrails": [
+                    "aggregate supporting tables inside train folds",
+                    "exclude holdout/test tables from training features",
+                    "confirm prediction-time availability before joins",
+                ],
+            }
+        )
+    if scenario.get("kind") in {"retail_time_series", "time_series_forecasting"}:
+        steps.append(
+            {
+                "step": "time_series_feature_recipe",
+                "owner": "agent_runner",
+                "expected_artifacts": ["feature_recipe", "run_report", "visualization_spec"],
+                "guardrails": [
+                    "derive lag and rolling features causally",
+                    "respect forecast horizon and split manifest",
+                    "separate known-future covariates from historical observations",
+                ],
+            }
+        )
+    steps.append(
+        {
+            "step": "report_and_visualize",
+            "owner": "harness",
+            "expected_artifacts": ["benchmark_scenario_report", "report", "visualization_spec", "insight_set"],
+        }
+    )
+    return steps
+
+
+def benchmark_agent_handoff(benchmark: dict[str, Any], scenario: dict[str, Any]) -> dict[str, Any]:
+    primary_table = benchmark.get("primary_table") or {}
+    return {
+        "may_use_benchmark_context": True,
+        "may_claim_external_benchmark_score": False,
+        "fixture_score_policy": "Fixture results are product smoke checks, not benchmark performance claims.",
+        "must_respect_split_manifest": True,
+        "must_not_use_holdout_tables_for_training": True,
+        "primary_entity_id_column": primary_table.get("entity_id_column"),
+        "time_column": primary_table.get("time_column"),
+        "group_column": primary_table.get("group_column"),
+        "scenario_kind": scenario.get("kind"),
+        "recommended_skill_queries": [
+            f"{scenario.get('kind')} feature recipe leakage validation",
+            f"{benchmark.get('name')} common validation pitfalls",
+        ],
+    }
+
+
+def benchmark_reporting_expectations(benchmark: dict[str, Any], scenario: dict[str, Any]) -> list[str]:
+    expectations = [
+        "Separate fixture smoke results from real benchmark or production performance claims.",
+        "Show which EvaluationSpec and SplitManifest constrained every metric.",
+        "Report unresolved assumptions and whether they block deployment.",
+        "Keep reports understandable inside Tablex without external dashboards.",
+    ]
+    expectations.extend(str(item).replace("_", " ") for item in scenario.get("report_focus", []))
+    if benchmark.get("risk_notes"):
+        expectations.append("Explicitly address benchmark risk notes and prediction-time availability.")
+    return expectations
+
+
+def render_benchmark_scenario_report(pack: dict[str, Any]) -> str:
+    benchmark = pack["benchmark"]
+    scenario = pack["scenario"]
+    dataset = pack["dataset"]
+    relational = pack["relational_summary"]
+    lines = [
+        f"# Benchmark Scenario Report: {benchmark['name']}",
+        "",
+        f"- Scenario kind: {scenario.get('kind')}",
+        f"- Project: {pack['project']['name']} ({pack['project']['id']})",
+        f"- DatasetSnapshot: {dataset.get('dataset_snapshot_id') or 'missing'}",
+        f"- Local status: {pack['local_status'].get('status')}",
+        f"- Relational tables: {relational.get('table_count') or 'unknown'}",
+        f"- Inferred relationships: {relational.get('relationship_count') or 0}",
+        f"- Supporting table artifacts: {len(pack['supporting_table_artifacts'])}",
+        "",
+        "## Intended Use",
+        "",
+    ]
+    uses = benchmark.get("recommended_uses") or []
+    lines.extend([f"- {use}" for use in uses] or ["- Benchmark smoke and workflow validation."])
+    lines.extend(["", "## Recommended Workflow", ""])
+    for step in pack["recommended_workflow"]:
+        lines.append(f"- {step['step']}: {', '.join(step.get('expected_artifacts', []))}")
+    lines.extend(["", "## Agent Handoff", ""])
+    handoff = pack["agent_handoff"]
+    for key in [
+        "fixture_score_policy",
+        "must_respect_split_manifest",
+        "must_not_use_holdout_tables_for_training",
+        "scenario_kind",
+    ]:
+        lines.append(f"- {key}: {handoff.get(key)}")
+    lines.extend(["", "## Artifact Context", ""])
+    for key, ref in pack["artifact_context"].items():
+        lines.append(f"- {key}: {ref.get('status')} {ref.get('artifact_id') or ''}".rstrip())
+    lines.extend(["", "## Reporting Expectations", ""])
+    lines.extend([f"- {item}" for item in pack["reporting_expectations"]])
+    risk_notes = benchmark.get("risk_notes") or []
+    if risk_notes:
+        lines.extend(["", "## Risk Notes", ""])
+        lines.extend([f"- {item}" for item in risk_notes])
+    return "\n".join(lines).strip() + "\n"
+
+
+def create_benchmark_scenario_lineage(
+    db: Session,
+    *,
+    project: Project,
+    dataset: DatasetSnapshot | None,
+    pack_artifact: Artifact,
+    report_artifact: Artifact,
+    context_artifacts: list[Artifact],
+    supporting_artifacts: list[Artifact],
+) -> None:
+    if dataset:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="dataset_snapshot",
+            from_asset_id=dataset.id,
+            to_asset_type="artifact",
+            to_asset_id=pack_artifact.id,
+            relation_type="informs",
+        )
+    for artifact in [*context_artifacts, *supporting_artifacts]:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=pack_artifact.id,
+            relation_type="informs",
+        )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=pack_artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=report_artifact.id,
+        relation_type="summarizes",
+    )
 
 
 def render_download_instructions(benchmark: dict[str, Any], default_root: Path) -> str:

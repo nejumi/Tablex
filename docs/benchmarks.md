@@ -71,6 +71,12 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/uci_bank
   -d '{}'
 ```
 
+Create a scenario pack/report for the imported benchmark context:
+
+```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/uci_bank_marketing/scenario-pack
+```
+
 Run the fixture smoke harness for a project:
 
 ```bash
@@ -79,7 +85,7 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/kaggle_h
   -d '{"overwrite":false}'
 ```
 
-The smoke harness generates the fixture, imports the benchmark primary table, runs DataQualityGate, creates EvaluationScenarioComparison and EvaluationApprovalReview artifacts, approves the spec when no explicit blockers remain, generates a SplitManifest, and stores a BaselineStrategyPlan. It does not run the full baseline model.
+The smoke harness generates the fixture, imports the benchmark primary table, runs DataQualityGate, creates EvaluationScenarioComparison and EvaluationApprovalReview artifacts, approves the spec when no explicit blockers remain, generates a SplitManifest, stores a BaselineStrategyPlan, creates a controlled ResearchPlan, and writes BenchmarkScenarioPack/Report artifacts. It does not run the full baseline model.
 
 The import creates:
 
@@ -87,8 +93,16 @@ The import creates:
 - a `DatasetSnapshot` with `source_type=benchmark_catalog`
 - a `benchmark_import_manifest` artifact that records required/recommended file status
 - a `relational_catalog` artifact with table profiles, key candidates, time candidates, leakage-name suspects, and inferred join graph
+- `benchmark_supporting_table` artifacts for small supporting CSV/Parquet files, with large files skipped rather than copied blindly
 - an `import_benchmark_dataset` job record
 - lineage from the manifest artifact to the DatasetSnapshot
+
+The scenario pack creates:
+
+- a `benchmark_scenario_pack` JSON artifact shaped by `schemas/benchmark_scenario_pack.schema.json`
+- a `benchmark_scenario_report` Markdown artifact previewable in the UI
+- runner handoff notes for SplitManifest discipline, holdout-table exclusion, fixture score policy, and recommended Skill/research query directions
+- report expectations for leaderboard, assumptions, relational coverage, time-series slices, or other scenario-specific views
 
 ## Scope
 
