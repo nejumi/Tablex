@@ -51,6 +51,7 @@ The product name may still change. Internal package names and database tables st
 - Evaluation Approval Review v0 with artifact-backed approval blockers, assumption-backed proceed notes, review lineage, and UI preview before approving an EvaluationSpec.
 - Controlled Research Planning v0 with ResearchPlan artifacts that turn project context, quality gates, evaluation specs, benchmark context, and cross-project Skill assets into controlled query candidates, source policy, expected evidence, and reporting requirements.
 - Research Source Pack v1 with project/library/benchmark source candidates, citation requirements, freshness expectations, source risk policy, Evidence, Report, Lineage, and AgentTaskContract handoff without executing network search.
+- Controlled Research Runner Stub v1 with Research Source Pack execution contracts, research run manifests, findings reports, source citation manifests, Evidence, VisualizationSpec, and lineage without external network access.
 - Leaderboard backed by ExperimentRun metrics.
 - React UI with project list, dataset upload, assumptions, evaluation, approach, experiments, leaderboard, reports, assets, jobs, and lineage tabs.
 - AgentRunner interface with Noop/LocalStub and Codex CLI skeleton.

@@ -176,6 +176,7 @@ from tabular_harness.services.reporting import (
     create_project_visualization_dashboard,
     generate_project_insights,
 )
+from tabular_harness.services.research_runner import run_research_source_pack_local_stub
 from tabular_harness.services.research_sources import create_research_source_pack
 from tabular_harness.worker.jobs import create_default_worker
 
@@ -2006,6 +2007,66 @@ def generate_project_research_source_pack(
     return job_to_dict(job)
 
 
+@router.post("/api/research-source-packs/{artifact_id}/run-local-stub", response_model=JobRead)
+def run_research_source_pack_stub_endpoint(
+    artifact_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    source_pack_artifact = db.get(Artifact, artifact_id)
+    if source_pack_artifact is None:
+        raise HTTPException(status_code=404, detail="Research Source Pack artifact not found")
+    if source_pack_artifact.asset_type != "research_source_pack":
+        raise HTTPException(status_code=400, detail="Artifact is not a research_source_pack")
+    if source_pack_artifact.project_id is None:
+        raise HTTPException(status_code=400, detail="Research Source Pack artifact is not project-scoped")
+    project = require_project(db, source_pack_artifact.project_id)
+    job = create_job(
+        db,
+        job_type="run_research_source_pack_stub",
+        project_id=project.id,
+        input_payload={"research_source_pack_artifact_id": source_pack_artifact.id},
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "runner": "local_stub_research_runner",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = run_research_source_pack_local_stub(
+            db,
+            store=store,
+            project=project,
+            source_pack_artifact=source_pack_artifact,
+            job=job,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "research_source_pack_artifact_id": source_pack_artifact.id,
+                "research_run_manifest_artifact_id": result.manifest_artifact.id,
+                "research_findings_report_id": result.findings_report.id,
+                "research_findings_report_artifact_id": result.findings_report_artifact.id,
+                "source_citation_manifest_artifact_id": result.citation_manifest_artifact.id,
+                "visualization_id": result.visualization.id,
+                "visualization_artifact_id": result.visualization_artifact.id,
+                "evidence_id": result.evidence.id,
+                "artifact_ids": result.artifact_ids,
+                "runner": result.manifest["runner"],
+                "execution_status": result.manifest["execution_status"],
+                "query_count": result.manifest["query_count"],
+                "external_network_accessed": result.manifest["external_network_accessed"],
+                "connector_credentials_materialized": result.manifest["connector_credentials_materialized"],
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
 @router.post("/api/projects/{project_id}/approach/research-briefs", response_model=JobRead)
 def generate_project_research_brief(
     project_id: str,
@@ -3751,6 +3812,9 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "citation_audit_report_artifact_id": output.get("citation_audit_report_artifact_id"),
         "citation_evidence_id": output.get("citation_evidence_id"),
         "citation_visualization_id": output.get("citation_visualization_id"),
+        "research_run_manifest_artifact_id": output.get("research_run_manifest_artifact_id"),
+        "research_findings_report_id": output.get("research_findings_report_id"),
+        "research_findings_report_artifact_id": output.get("research_findings_report_artifact_id"),
         "research_source_pack_artifact_id": output.get("research_source_pack_artifact_id"),
         "research_source_report_id": output.get("research_source_report_id"),
         "recommended_approach_count": output.get("recommended_approach_count"),

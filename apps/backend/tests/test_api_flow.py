@@ -327,6 +327,29 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "Research Source Pack" in source_pack_preview
     assert "Connector credentials" in source_pack_preview or "connector credentials" in source_pack_preview
 
+    research_stub_response = client.post(
+        f"/api/research-source-packs/{source_pack_job['output']['research_source_pack_artifact_id']}/run-local-stub"
+    )
+    assert research_stub_response.status_code == 200, research_stub_response.text
+    research_stub_job = research_stub_response.json()
+    assert research_stub_job["status"] == "succeeded"
+    assert research_stub_job["output"]["research_run_manifest_artifact_id"]
+    assert research_stub_job["output"]["research_findings_report_id"]
+    assert research_stub_job["output"]["research_findings_report_artifact_id"]
+    assert research_stub_job["output"]["source_citation_manifest_artifact_id"]
+    assert research_stub_job["output"]["visualization_id"]
+    assert research_stub_job["output"]["evidence_id"]
+    assert research_stub_job["output"]["external_network_accessed"] is False
+    assert research_stub_job["output"]["connector_credentials_materialized"] is False
+
+    research_stub_report_response = client.get(
+        f"/api/artifacts/{research_stub_job['output']['research_findings_report_artifact_id']}/preview"
+    )
+    assert research_stub_report_response.status_code == 200
+    research_stub_report = research_stub_report_response.json()["preview"]
+    assert "Controlled Research Runner Stub" in research_stub_report
+    assert "External network accessed: false" in research_stub_report
+
     agent_task_plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
     assert agent_task_plan_response.status_code == 200, agent_task_plan_response.text
     agent_task_plan_job = agent_task_plan_response.json()

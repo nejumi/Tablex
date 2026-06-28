@@ -2233,6 +2233,25 @@ function ApproachTab({
                 <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download research source pack">
                   <Download size={16} />
                 </a>
+                <button
+                  className="icon-button"
+                  disabled={busy || artifact.asset_type !== "research_source_pack"}
+                  onClick={() =>
+                    void runAction(async () => {
+                      const job = await api<Job>(`/api/research-source-packs/${artifact.id}/run-local-stub`, {
+                        method: "POST"
+                      });
+                      const reportArtifactId = job.output.research_findings_report_artifact_id;
+                      if (typeof reportArtifactId === "string") {
+                        await loadResearchSourcePreview(reportArtifactId);
+                      }
+                      return job;
+                    })
+                  }
+                  title="Run controlled research stub"
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                </button>
               </div>
             ])}
           />
