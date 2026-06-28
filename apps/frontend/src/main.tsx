@@ -868,6 +868,9 @@ function DataTab({
   const [workflowPreview, setWorkflowPreview] = React.useState<ArtifactPreview | null>(null);
   const [workflowPreviewError, setWorkflowPreviewError] = React.useState<string | null>(null);
   const [workflowPreviewLoadingId, setWorkflowPreviewLoadingId] = React.useState<string | null>(null);
+  const [evidencePreview, setEvidencePreview] = React.useState<ArtifactPreview | null>(null);
+  const [evidencePreviewError, setEvidencePreviewError] = React.useState<string | null>(null);
+  const [evidencePreviewLoadingId, setEvidencePreviewLoadingId] = React.useState<string | null>(null);
 
   async function uploadDataset() {
     if (!file) return;
@@ -952,6 +955,19 @@ function DataTab({
     });
   }
 
+  async function createBenchmarkEvidencePack() {
+    await runAction(async () => {
+      const job = await api<Job>(`/api/projects/${project.id}/benchmarks/evidence-pack`, {
+        method: "POST"
+      });
+      const reportArtifactId = textField(job.output.benchmark_evidence_report_artifact_id);
+      if (reportArtifactId) {
+        await loadEvidencePreview(reportArtifactId);
+      }
+      return job;
+    });
+  }
+
   async function loadQualityPreview(artifactId: string) {
     setQualityPreviewLoadingId(artifactId);
     setQualityPreviewError(null);
@@ -1000,9 +1016,24 @@ function DataTab({
     }
   }
 
+  async function loadEvidencePreview(artifactId: string) {
+    setEvidencePreviewLoadingId(artifactId);
+    setEvidencePreviewError(null);
+    try {
+      setEvidencePreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setEvidencePreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEvidencePreviewLoadingId(null);
+    }
+  }
+
   const datasetArtifacts = artifacts.filter((artifact) => artifact.asset_type === "dataset_snapshot");
   const scenarioArtifacts = artifacts.filter((artifact) =>
     ["benchmark_scenario_pack", "benchmark_scenario_report"].includes(artifact.asset_type)
+  );
+  const evidenceArtifacts = artifacts.filter((artifact) =>
+    ["benchmark_evidence_pack", "benchmark_evidence_report"].includes(artifact.asset_type)
   );
   const relationalArtifacts = artifacts.filter((artifact) => artifact.asset_type === "relational_catalog");
   const qualityArtifacts = artifacts.filter((artifact) =>
@@ -1252,6 +1283,51 @@ function DataTab({
           <pre className="markdown-preview">{workflowPreview.preview}</pre>
         ) : (
           <EmptyInline text={workflowPreview?.reason ?? "Run a public workflow or select a report action to preview results."} />
+        )}
+      </Panel>
+      <Panel title="Benchmark Evidence Packs" icon={<BarChart3 size={18} />}>
+        <div className="toolbar">
+          <button className="secondary-button" disabled={busy} onClick={() => void createBenchmarkEvidencePack()}>
+            {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+            Generate Evidence Pack
+          </button>
+        </div>
+        {evidenceArtifacts.length ? (
+          <Table
+            headers={["Type", "Benchmarks", "Ready", "Created", "Actions"]}
+            rows={evidenceArtifacts.map((artifact) => {
+              const benchmarkIds = Array.isArray(artifact.metadata.benchmark_ids)
+                ? artifact.metadata.benchmark_ids.map((item) => String(item)).join(", ")
+                : "-";
+              return [
+                artifact.asset_type,
+                benchmarkIds || "-",
+                String(artifact.metadata.ready_benchmark_count ?? artifact.metadata.benchmark_count ?? "-"),
+                formatDate(artifact.created_at),
+                <div className="row-actions" key={artifact.id}>
+                  <button
+                    className="icon-button"
+                    disabled={evidencePreviewLoadingId === artifact.id}
+                    onClick={() => void loadEvidencePreview(artifact.id)}
+                    title="Preview benchmark evidence"
+                  >
+                    {evidencePreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                  </button>
+                  <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download benchmark evidence">
+                    <Download size={16} />
+                  </a>
+                </div>
+              ];
+            })}
+          />
+        ) : (
+          <EmptyInline text="Benchmark evidence packs will collect source cards, local status, scenario packs, workflow results, reports, visualizations, and AgentTask handoff state into one in-product report." />
+        )}
+        {evidencePreviewError ? <div className="banner danger">{evidencePreviewError}</div> : null}
+        {evidencePreview?.preview_available ? (
+          <pre className="markdown-preview">{evidencePreview.preview}</pre>
+        ) : (
+          <EmptyInline text={evidencePreview?.reason ?? "Generate or select an evidence pack to inspect benchmark readiness and next actions."} />
         )}
       </Panel>
       <Panel title="Dataset Snapshots" icon={<Database size={18} />}>

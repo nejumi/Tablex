@@ -1310,6 +1310,32 @@ def test_public_benchmark_workflow_rejects_credentialed_source(tmp_path: Path) -
     assert "credential-free" in response.text
 
 
+def test_benchmark_evidence_pack_empty_project(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Empty benchmark evidence", "task_type": "binary_classification"},
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    evidence_response = client.post(f"/api/projects/{project_id}/benchmarks/evidence-pack")
+    assert evidence_response.status_code == 200, evidence_response.text
+    evidence_job = evidence_response.json()
+    assert evidence_job["status"] == "succeeded"
+    assert evidence_job["output"]["benchmark_count"] == 0
+    assert evidence_job["output"]["benchmark_evidence_pack_artifact_id"]
+    assert evidence_job["output"]["benchmark_evidence_report_artifact_id"]
+    assert evidence_job["output"]["visualization_artifact_id"]
+    assert evidence_job["output"]["evidence_id"]
+
+    report_preview_response = client.get(
+        f"/api/artifacts/{evidence_job['output']['benchmark_evidence_report_artifact_id']}/preview"
+    )
+    assert report_preview_response.status_code == 200
+    assert "No benchmark evidence exists yet" in report_preview_response.json()["preview"]
+
+
 def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_response = client.post(
@@ -1369,6 +1395,47 @@ def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:
     scenario_report_preview = scenario_report_preview_response.json()["preview"]
     assert "multi_table_credit_risk" in scenario_report_preview
     assert "Fixture results are product smoke checks" in scenario_report_preview
+
+    evidence_response = client.post(f"/api/projects/{project_id}/benchmarks/evidence-pack")
+    assert evidence_response.status_code == 200, evidence_response.text
+    evidence_job = evidence_response.json()
+    assert evidence_job["status"] == "succeeded"
+    evidence_output = evidence_job["output"]
+    assert evidence_output["benchmark_count"] == 1
+    assert evidence_output["benchmark_ids"] == ["kaggle_home_credit_default_risk"]
+    assert evidence_output["benchmark_evidence_pack_artifact_id"]
+    assert evidence_output["benchmark_evidence_report_id"]
+    assert evidence_output["benchmark_evidence_report_artifact_id"]
+    assert evidence_output["visualization_id"]
+    assert evidence_output["visualization_artifact_id"]
+    assert evidence_output["evidence_id"]
+    assert len(evidence_output["artifact_ids"]) == 3
+
+    evidence_job_artifacts_response = client.get(f"/api/jobs/{evidence_job['id']}/artifacts")
+    assert evidence_job_artifacts_response.status_code == 200
+    evidence_job_artifacts = evidence_job_artifacts_response.json()
+    assert evidence_job_artifacts["summary"]["benchmark_count"] == 1
+    assert evidence_job_artifacts["summary"]["benchmark_evidence_pack_artifact_id"]
+    evidence_asset_types = {item["asset_type"] for item in evidence_job_artifacts["artifacts"]}
+    assert {"benchmark_evidence_pack", "benchmark_evidence_report", "visualization_spec"}.issubset(
+        evidence_asset_types
+    )
+
+    evidence_pack_preview_response = client.get(
+        f"/api/artifacts/{evidence_output['benchmark_evidence_pack_artifact_id']}/preview"
+    )
+    assert evidence_pack_preview_response.status_code == 200
+    evidence_pack_preview = evidence_pack_preview_response.json()["preview"]
+    assert "benchmark_evidence_pack.v1" in evidence_pack_preview
+    assert "benchmark_supporting_table" in evidence_pack_preview
+
+    evidence_report_preview_response = client.get(
+        f"/api/artifacts/{evidence_output['benchmark_evidence_report_artifact_id']}/preview"
+    )
+    assert evidence_report_preview_response.status_code == 200
+    evidence_report_preview = evidence_report_preview_response.json()["preview"]
+    assert "Benchmark Evidence Pack" in evidence_report_preview
+    assert "Home Credit Default Risk" in evidence_report_preview
 
 
 def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None:

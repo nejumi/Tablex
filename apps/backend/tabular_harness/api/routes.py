@@ -116,6 +116,7 @@ from tabular_harness.services.baseline import (
     create_baseline_strategy_plan,
 )
 from tabular_harness.services.baseline import run_baseline as run_baseline_service
+from tabular_harness.services.benchmark_evidence import create_benchmark_evidence_pack
 from tabular_harness.services.benchmarks import (
     benchmark_source_card,
     benchmark_to_dict,
@@ -757,6 +758,54 @@ def create_project_benchmark_scenario_pack(
                 "benchmark_scenario_report_artifact_id": result.report_artifact.id,
                 "dataset_snapshot_id": result.pack["dataset"].get("dataset_snapshot_id"),
                 "supporting_table_artifact_count": len(result.pack["supporting_table_artifacts"]),
+            },
+        )
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/benchmarks/evidence-pack", response_model=JobRead)
+def create_project_benchmark_evidence_pack(
+    project_id: str,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="create_benchmark_evidence_pack",
+        project_id=project_id,
+        input_payload={"project_id": project_id},
+        policy={
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "external_download": "not_performed",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_benchmark_evidence_pack(
+            db,
+            store=store,
+            project=project,
+            settings=request.app.state.settings,
+            job=job,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "benchmark_count": result.pack["benchmark_count"],
+                "benchmark_ids": [entry["benchmark_id"] for entry in result.pack["benchmarks"]],
+                "benchmark_evidence_pack_artifact_id": result.pack_artifact.id,
+                "benchmark_evidence_report_id": result.report.id,
+                "benchmark_evidence_report_artifact_id": result.report_artifact.id,
+                "visualization_id": result.visualization.id,
+                "visualization_artifact_id": result.visualization_artifact.id,
+                "evidence_id": result.evidence.id,
+                "artifact_ids": result.artifact_ids,
             },
         )
     except Exception as exc:
@@ -3594,6 +3643,9 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "model_version_id": output.get("model_version_id"),
         "run_report_id": output.get("run_report_id"),
         "decision_report_id": output.get("decision_report_id"),
+        "benchmark_count": output.get("benchmark_count"),
+        "benchmark_evidence_pack_artifact_id": output.get("benchmark_evidence_pack_artifact_id"),
+        "benchmark_evidence_report_id": output.get("benchmark_evidence_report_id"),
         "task_id": output.get("task_id"),
         "agent_task_contract_artifact_id": output.get("agent_task_contract_artifact_id"),
         "agent_workspace_manifest_artifact_id": output.get("agent_workspace_manifest_artifact_id"),
