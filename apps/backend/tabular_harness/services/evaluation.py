@@ -12,10 +12,12 @@ from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
     Artifact,
+    Assumption,
     DatasetSnapshot,
     EvaluationCandidate,
     EvaluationSpec,
     Project,
+    Question,
     SplitManifest,
 )
 from tabular_harness.services.artifacts import (
@@ -295,6 +297,337 @@ def generate_split_manifest(
         relation_type="uses",
     )
     return split
+
+
+def create_evaluation_scenario_comparison(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    dataset: DatasetSnapshot,
+    candidates: list[EvaluationCandidate],
+) -> Artifact:
+    profile = load_profile_for_dataset(db, dataset)
+    quality_artifact = latest_project_artifact(db, project.id, "data_quality_gate", dataset_id=dataset.id)
+    relational_artifact = latest_project_artifact(db, project.id, "relational_catalog", dataset_id=dataset.id)
+    open_questions = list(
+        db.scalars(
+            select(Question)
+            .where(Question.project_id == project.id, Question.status == "open")
+            .order_by(Question.priority.desc(), Question.created_at)
+            .limit(12)
+        ).all()
+    )
+    risky_assumptions = list(
+        db.scalars(
+            select(Assumption)
+            .where(
+                Assumption.project_id == project.id,
+                Assumption.risk_level.in_(["high", "blocking", "deployment_blocking"]),
+            )
+            .order_by(Assumption.updated_at.desc())
+            .limit(12)
+        ).all()
+    )
+    quality_context = artifact_context(quality_artifact)
+    relational_context = artifact_context(relational_artifact)
+    comparisons = [
+        compare_evaluation_candidate(
+            candidate,
+            profile=profile,
+            quality_context=quality_context,
+            relational_context=relational_context,
+            open_questions=open_questions,
+            risky_assumptions=risky_assumptions,
+        )
+        for candidate in candidates
+    ]
+    recommended = recommended_candidate(comparisons)
+    recommended_candidate_id = str(recommended.get("candidate_id")) if recommended else None
+    recommended_split_type = str(recommended.get("split_type")) if recommended else None
+    recommendation = str(recommended.get("recommendation")) if recommended else "no_candidate"
+    payload: dict[str, Any] = {
+        "schema_version": "evaluation_scenario_comparison.v1",
+        "project": {
+            "id": project.id,
+            "name": project.name,
+            "task_type": project.task_type,
+            "target_column": project.target_column,
+        },
+        "dataset": {
+            "dataset_snapshot_id": dataset.id,
+            "row_count": dataset.row_count,
+            "column_count": dataset.column_count,
+            "source_type": dataset.source_type,
+            "source_ref": dataset.source_ref,
+        },
+        "context": {
+            "target_profile": profile.get("target_profile"),
+            "time_candidates": profile.get("time_candidates", []),
+            "group_candidates": profile.get("group_candidates", []),
+            "leakage_suspects": profile.get("leakage_suspects", []),
+            "quality_gate": quality_context,
+            "relational_catalog": relational_context,
+            "open_questions": [question_context(question) for question in open_questions],
+            "risky_assumptions": [assumption_context(assumption) for assumption in risky_assumptions],
+        },
+        "candidate_comparisons": comparisons,
+        "decision_support": {
+            "recommended_candidate_id": recommended_candidate_id,
+            "recommended_split_type": recommended_split_type,
+            "recommendation": recommendation,
+            "note": "Use this comparison before promoting a candidate. It does not mutate EvaluationSpec.",
+        },
+        "risk_register": comparison_risk_register(profile, quality_context, relational_context, open_questions),
+    }
+    version = next_artifact_version(db, project.id, "evaluation_scenario_comparison", "evaluation_scenario_comparison")
+    artifact_dir, stored, content_hash = store.store_json(
+        org_id="local-org",
+        project_id=project.id,
+        asset_type="evaluation_scenario_comparison",
+        name="evaluation_scenario_comparison",
+        version=version,
+        filename="evaluation_scenario_comparison.json",
+        payload=payload,
+        metadata={
+            "project_id": project.id,
+            "dataset_snapshot_id": dataset.id,
+            "candidate_count": len(candidates),
+            "recommended_candidate_id": recommended_candidate_id,
+        },
+    )
+    artifact = register_artifact(
+        db,
+        project_id=project.id,
+        asset_type="evaluation_scenario_comparison",
+        name="evaluation_scenario_comparison",
+        uri=str(artifact_dir),
+        content_hash=content_hash,
+        size_bytes=stored.size_bytes,
+        metadata={
+            "primary_path": str(stored.path),
+            "project_id": project.id,
+            "dataset_snapshot_id": dataset.id,
+            "candidate_count": len(candidates),
+            "recommended_candidate_id": recommended_candidate_id,
+        },
+        version=version,
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="dataset_snapshot",
+        from_asset_id=dataset.id,
+        to_asset_type="artifact",
+        to_asset_id=artifact.id,
+        relation_type="evaluates_scenarios",
+    )
+    for candidate in candidates[:20]:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="evaluation_candidate",
+            from_asset_id=candidate.id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="compared_in",
+        )
+    return artifact
+
+
+def compare_evaluation_candidate(
+    candidate: EvaluationCandidate,
+    *,
+    profile: dict[str, Any],
+    quality_context: dict[str, Any],
+    relational_context: dict[str, Any],
+    open_questions: list[Question],
+    risky_assumptions: list[Assumption],
+) -> dict[str, Any]:
+    blockers: list[str] = []
+    strengths: list[str] = []
+    risks: list[str] = []
+    time_candidates = [str(item) for item in profile.get("time_candidates", [])]
+    group_candidates = [str(item) for item in profile.get("group_candidates", [])]
+    leakage_suspects = [str(item) for item in profile.get("leakage_suspects", [])]
+    if candidate.split_type == "time":
+        if candidate.time_column:
+            strengths.append(f"Uses time column `{candidate.time_column}` for forward-looking validation.")
+        else:
+            blockers.append("time split candidate has no time_column")
+    if candidate.split_type == "group":
+        if candidate.group_column:
+            strengths.append(f"Keeps group `{candidate.group_column}` on one side of the split.")
+        else:
+            blockers.append("group split candidate has no group_column")
+    if candidate.split_type in {"random", "stratified"} and time_candidates:
+        risks.append("Randomized split may overstate performance because time candidates exist.")
+    if candidate.split_type != "group" and group_candidates:
+        risks.append("Group leakage is possible because repeated entity/group candidates exist.")
+    if candidate.split_type == "stratified" and candidate.stratify_column:
+        strengths.append(f"Stratifies by `{candidate.stratify_column}` for target distribution sanity.")
+    if leakage_suspects:
+        excluded = set(loads_json(candidate.excluded_columns_json, []))
+        missed = sorted(set(leakage_suspects) - excluded)
+        if missed:
+            risks.append(f"Leakage-suspect columns are not excluded: {', '.join(missed[:5])}.")
+        else:
+            strengths.append("Excludes current leakage-suspect columns.")
+    if context_metadata_value(quality_context, "severity") in {"warning", "fail"}:
+        risks.append("DataQualityGate has non-pass severity; review quality artifact before adoption.")
+    if context_metadata_value(relational_context, "table_count", 0) and candidate.split_type != "group":
+        risks.append("Relational tables exist; entity-level leakage should be checked before adoption.")
+    if open_questions:
+        risks.append(f"{len(open_questions)} open questions remain; proceed via assumptions if unanswered.")
+    if risky_assumptions:
+        risks.append(f"{len(risky_assumptions)} high-risk assumptions remain active.")
+    score = candidate.confidence * 100
+    score -= 20 * len(blockers)
+    score -= 7 * min(len(risks), 5)
+    score += 5 * len(strengths)
+    recommendation = "prefer" if not blockers and candidate.status == "primary_candidate" else "alternative"
+    if blockers:
+        recommendation = "reject_until_fixed"
+    return {
+        "candidate_id": candidate.id,
+        "name": candidate.name,
+        "scenario_id": candidate.scenario_id,
+        "split_type": candidate.split_type,
+        "status": candidate.status,
+        "primary_metric": candidate.primary_metric,
+        "risk_level": candidate.risk_level,
+        "confidence": candidate.confidence,
+        "score": round(score, 3),
+        "recommendation": recommendation,
+        "blockers": blockers,
+        "strengths": strengths,
+        "risks": risks,
+        "feasibility": "blocked" if blockers else ("needs_review" if risks else "ready"),
+        "candidate": candidate_to_dict(candidate),
+    }
+
+
+def recommended_candidate(comparisons: list[dict[str, Any]]) -> dict[str, Any] | None:
+    viable = [item for item in comparisons if item["feasibility"] != "blocked"]
+    if not viable:
+        return None
+    return max(viable, key=lambda item: (item["recommendation"] == "prefer", item["score"]))
+
+
+def comparison_risk_register(
+    profile: dict[str, Any],
+    quality_context: dict[str, Any],
+    relational_context: dict[str, Any],
+    open_questions: list[Question],
+) -> list[dict[str, Any]]:
+    risks: list[dict[str, Any]] = []
+    if profile.get("time_candidates"):
+        risks.append(
+            {
+                "topic": "temporal_validation",
+                "risk_level": "medium",
+                "mitigation": "Prefer time split if the candidate time column is prediction chronology.",
+            }
+        )
+    if profile.get("group_candidates"):
+        risks.append(
+            {
+                "topic": "group_leakage",
+                "risk_level": "medium",
+                "mitigation": "Compare group split when repeated entities can cross train/validation.",
+            }
+        )
+    if quality_context.get("status") == "available":
+        risks.append(
+            {
+                "topic": "quality_gate",
+                "risk_level": "medium",
+                "artifact_id": quality_context.get("artifact_id"),
+                "mitigation": "Review DataQualityGate leakage and readiness notes before approval.",
+            }
+        )
+    if context_metadata_value(relational_context, "table_count", 0):
+        risks.append(
+            {
+                "topic": "relational_context",
+                "risk_level": "medium",
+                "artifact_id": relational_context.get("artifact_id"),
+                "mitigation": "Check entity and time availability before joining supporting tables.",
+            }
+        )
+    if open_questions:
+        risks.append(
+            {
+                "topic": "unanswered_questions",
+                "risk_level": "medium",
+                "count": len(open_questions),
+                "mitigation": "Proceed with explicit assumptions or answer high-value questions before approval.",
+            }
+        )
+    return risks
+
+
+def latest_project_artifact(
+    db: Session, project_id: str, asset_type: str, *, dataset_id: str | None = None
+) -> Artifact | None:
+    artifacts = db.scalars(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.asset_type == asset_type)
+        .order_by(Artifact.created_at.desc())
+    ).all()
+    if dataset_id is None:
+        return artifacts[0] if artifacts else None
+    for artifact in artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("dataset_snapshot_id") == dataset_id:
+            return artifact
+    return artifacts[0] if artifacts else None
+
+
+def artifact_context(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {"status": "missing", "artifact_id": None}
+    return {
+        "status": "available",
+        "artifact_id": artifact.id,
+        "asset_type": artifact.asset_type,
+        "name": artifact.name,
+        "version": artifact.version,
+        "metadata": loads_json(artifact.metadata_json, {}),
+        "preview_url": f"/api/artifacts/{artifact.id}/preview",
+        "download_url": f"/api/artifacts/{artifact.id}/download",
+    }
+
+
+def context_metadata_value(context: dict[str, Any], key: str, default: Any = None) -> Any:
+    metadata = context.get("metadata")
+    if isinstance(metadata, dict):
+        return metadata.get(key, default)
+    return default
+
+
+def question_context(question: Question) -> dict[str, Any]:
+    return {
+        "id": question.id,
+        "topic": question.topic,
+        "question": question.question,
+        "risk_level": question.risk_level,
+        "priority": question.priority,
+        "fallback_policy": question.fallback_policy,
+        "can_proceed_without_answer": question.can_proceed_without_answer,
+    }
+
+
+def assumption_context(assumption: Assumption) -> dict[str, Any]:
+    return {
+        "id": assumption.id,
+        "topic": assumption.topic,
+        "statement": assumption.statement,
+        "risk_level": assumption.risk_level,
+        "confidence": assumption.confidence,
+        "status": assumption.status,
+        "fallback_policy": assumption.fallback_policy,
+    }
 
 
 def split_query(spec: EvaluationSpec, source_path: Path, train_fraction: float, seed: int) -> str:

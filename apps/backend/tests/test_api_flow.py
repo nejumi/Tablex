@@ -94,6 +94,20 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert primary["split_type"] == "stratified"
     assert primary["stratify_column"] == "target"
 
+    scenario_compare_response = client.post(f"/api/projects/{project_id}/evaluation/compare")
+    assert scenario_compare_response.status_code == 200, scenario_compare_response.text
+    scenario_compare_job = scenario_compare_response.json()
+    assert scenario_compare_job["status"] == "succeeded"
+    assert scenario_compare_job["output"]["artifact_id"]
+    assert scenario_compare_job["output"]["candidate_count"] >= 2
+    scenario_compare_preview_response = client.get(
+        f"/api/artifacts/{scenario_compare_job['output']['artifact_id']}/preview"
+    )
+    assert scenario_compare_preview_response.status_code == 200
+    scenario_compare_preview = scenario_compare_preview_response.json()["preview"]
+    assert "evaluation_scenario_comparison.v1" in scenario_compare_preview
+    assert "decision_support" in scenario_compare_preview
+
     promote_response = client.post(f"/api/evaluation-candidates/{primary['id']}/promote")
     assert promote_response.status_code == 200
     spec_id = promote_response.json()["id"]
@@ -164,6 +178,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     job_types = [item["job_type"] for item in jobs_response.json()]
     assert "validate_model_package" in job_types
     assert "run_baseline" in job_types
+    assert "compare_evaluation_scenarios" in job_types
 
     approval_job_response = client.post(
         "/api/jobs",
@@ -467,6 +482,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "prediction_replay",
         "data_quality_gate",
         "data_quality_report",
+        "evaluation_scenario_comparison",
         "research_brief",
         "approach_candidate",
         "report",

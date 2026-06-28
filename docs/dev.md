@@ -114,6 +114,14 @@ curl http://localhost:8000/api/datasets/{dataset_snapshot_id}/quality/latest
 
 The quality gate stores `data_quality_gate`, `data_quality_report`, and a quality `visualization_spec`. It materializes high-risk findings as Evidence, Assumptions, Questions, and an Insight. AgentContextPacks include `quality_gate_context` so future Codex/Skill runners can see harness-owned leakage, availability, temporal, duplicate, missingness, and evaluation-readiness constraints before generating features or code.
 
+Evaluation scenario comparison endpoint:
+
+```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/evaluation/compare
+```
+
+This creates or reuses EvaluationCandidates, compares random/stratified/time/group scenarios against the latest DatasetSnapshot, DataQualityGate, RelationalCatalog, open Questions, and high-risk Assumptions, then stores an `evaluation_scenario_comparison` artifact. It is decision support only; it does not mutate or approve an EvaluationSpec.
+
 Benchmark catalog endpoints:
 
 ```bash

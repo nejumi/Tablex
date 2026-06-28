@@ -1266,6 +1266,23 @@ function EvaluationTab({
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const latestQualityGate = artifacts.find((artifact) => artifact.asset_type === "data_quality_gate") ?? null;
+  const scenarioComparisonArtifacts = artifacts.filter((artifact) => artifact.asset_type === "evaluation_scenario_comparison");
+  const [scenarioPreview, setScenarioPreview] = React.useState<ArtifactPreview | null>(null);
+  const [scenarioPreviewError, setScenarioPreviewError] = React.useState<string | null>(null);
+  const [scenarioPreviewLoadingId, setScenarioPreviewLoadingId] = React.useState<string | null>(null);
+
+  async function loadScenarioPreview(artifactId: string) {
+    setScenarioPreviewError(null);
+    setScenarioPreviewLoadingId(artifactId);
+    try {
+      setScenarioPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setScenarioPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScenarioPreviewLoadingId(null);
+    }
+  }
+
   return (
     <div className="stack">
       <div className="toolbar">
@@ -1276,6 +1293,22 @@ function EvaluationTab({
         >
           {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
           Design Candidates
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
+            void runAction(async () => {
+              const job = await api<Job>(`/api/projects/${project.id}/evaluation/compare`, { method: "POST" });
+              const artifactId = job.output.artifact_id;
+              if (typeof artifactId === "string") {
+                await loadScenarioPreview(artifactId);
+              }
+            })
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+          Compare Scenarios
         </button>
       </div>
       <Panel title="Evaluation Candidates" icon={<BarChart3 size={18} />}>
@@ -1329,6 +1362,40 @@ function EvaluationTab({
           </div>
         ) : (
           <EmptyInline text="Primary, alternative, reference random, time-aware, and group-aware evaluation candidates will appear here before any EvaluationSpec is adopted." />
+        )}
+      </Panel>
+      <Panel title="Scenario Comparisons" icon={<ListChecks size={18} />}>
+        {scenarioComparisonArtifacts.length ? (
+          <Table
+            headers={["Comparison", "Recommended", "Candidates", "Created", "Actions"]}
+            rows={scenarioComparisonArtifacts.map((artifact) => [
+              `${artifact.name} v${artifact.version}`,
+              String(artifact.metadata.recommended_candidate_id ?? "-"),
+              String(artifact.metadata.candidate_count ?? "-"),
+              formatDate(artifact.created_at),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={scenarioPreviewLoadingId === artifact.id}
+                  onClick={() => void loadScenarioPreview(artifact.id)}
+                  title="Preview scenario comparison"
+                >
+                  {scenarioPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download scenario comparison">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Scenario comparisons will summarize split feasibility, target distribution sanity, temporal/group leakage concerns, open questions, assumptions, and adoption risks before an EvaluationSpec is promoted." />
+        )}
+        {scenarioPreviewError ? <div className="banner danger">{scenarioPreviewError}</div> : null}
+        {scenarioPreview?.preview_available ? (
+          <pre className="markdown-preview">{scenarioPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={scenarioPreview?.reason ?? "Generate or select a comparison artifact to inspect decision support before adopting the primary EvaluationSpec."} />
         )}
       </Panel>
       <Panel title="Quality Gate Context" icon={<AlertTriangle size={18} />}>

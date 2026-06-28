@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tablex.local/schemas/evaluation_scenario_comparison.schema.json",
+  "title": "EvaluationScenarioComparison",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "dataset",
+    "context",
+    "candidate_comparisons",
+    "decision_support",
+    "risk_register"
+  ],
+  "properties": {
+    "schema_version": { "const": "evaluation_scenario_comparison.v1" },
+    "project": { "type": "object" },
+    "dataset": { "type": "object" },
+    "context": {
+      "type": "object",
+      "properties": {
+        "target_profile": {},
+        "time_candidates": { "type": "array", "items": {} },
+        "group_candidates": { "type": "array", "items": {} },
+        "leakage_suspects": { "type": "array", "items": {} },
+        "quality_gate": { "type": "object" },
+        "relational_catalog": { "type": "object" },
+        "open_questions": { "type": "array", "items": { "type": "object" } },
+        "risky_assumptions": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": true
+    },
+    "candidate_comparisons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "candidate_id",
+          "split_type",
+          "score",
+          "recommendation",
+          "blockers",
+          "risks",
+          "feasibility"
+        ],
+        "properties": {
+          "candidate_id": { "type": "string" },
+          "name": { "type": "string" },
+          "scenario_id": { "type": "string" },
+          "split_type": { "enum": ["random", "stratified", "time", "group"] },
+          "status": { "type": "string" },
+          "primary_metric": { "type": "string" },
+          "risk_level": { "type": "string" },
+          "confidence": { "type": "number" },
+          "score": { "type": "number" },
+          "recommendation": { "type": "string" },
+          "blockers": { "type": "array", "items": { "type": "string" } },
+          "strengths": { "type": "array", "items": { "type": "string" } },
+          "risks": { "type": "array", "items": { "type": "string" } },
+          "feasibility": { "type": "string" },
+          "candidate": { "type": "object" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "decision_support": {
+      "type": "object",
+      "required": ["recommended_candidate_id", "recommended_split_type", "recommendation"],
+      "properties": {
+        "recommended_candidate_id": { "type": ["string", "null"] },
+        "recommended_split_type": { "type": ["string", "null"] },
+        "recommendation": { "type": "string" },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "risk_register": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  },
+  "additionalProperties": true
+}

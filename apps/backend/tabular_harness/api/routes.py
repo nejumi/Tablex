@@ -124,6 +124,7 @@ from tabular_harness.services.evaluation import (
     approve_spec,
     candidate_to_dict,
     create_default_evaluation_candidates,
+    create_evaluation_scenario_comparison,
     generate_split_manifest,
     promote_candidate_to_spec,
     spec_to_dict,
@@ -840,6 +841,48 @@ def design_evaluation(project_id: str, db: Annotated[Session, Depends(get_sessio
         mark_job_running(job)
         candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
         mark_job_succeeded(job, {"evaluation_candidate_ids": [candidate.id for candidate in candidates]})
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/evaluation/compare", response_model=JobRead)
+def compare_evaluation_scenarios(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    dataset = latest_dataset(db, project_id)
+    if dataset is None:
+        raise HTTPException(status_code=400, detail="Upload a dataset before comparing evaluation scenarios")
+    job = create_job(
+        db,
+        job_type="compare_evaluation_scenarios",
+        project_id=project_id,
+        input_payload={"dataset_snapshot_id": dataset.id},
+    )
+    try:
+        mark_job_running(job)
+        candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
+        artifact = create_evaluation_scenario_comparison(
+            db,
+            store=store,
+            project=project,
+            dataset=dataset,
+            candidates=list(candidates),
+        )
+        metadata = loads_json(artifact.metadata_json, {})
+        mark_job_succeeded(
+            job,
+            {
+                "dataset_snapshot_id": dataset.id,
+                "artifact_id": artifact.id,
+                "candidate_count": len(candidates),
+                "recommended_candidate_id": metadata.get("recommended_candidate_id"),
+            },
+        )
     except Exception as exc:
         mark_job_failed(job, str(exc))
         raise
