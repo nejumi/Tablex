@@ -227,6 +227,14 @@ type Job = {
   output: Record<string, unknown>;
 };
 
+type JobArtifactsResponse = {
+  job: Job;
+  summary: Record<string, unknown>;
+  artifact_ids: string[];
+  missing_artifact_ids: string[];
+  artifacts: Artifact[];
+};
+
 type Run = {
   id: string;
   project_id: string;
@@ -661,6 +669,7 @@ function ProjectDetail({
           datasets={datasets}
           artifacts={artifacts}
           benchmarks={benchmarks}
+          jobs={jobs}
           busy={busy}
           runAction={runAction}
         />
@@ -832,6 +841,7 @@ function DataTab({
   datasets,
   artifacts,
   benchmarks,
+  jobs,
   busy,
   runAction
 }: {
@@ -839,6 +849,7 @@ function DataTab({
   datasets: DatasetSnapshot[];
   artifacts: Artifact[];
   benchmarks: BenchmarkDataset[];
+  jobs: Job[];
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
@@ -854,6 +865,9 @@ function DataTab({
   const [scenarioPreview, setScenarioPreview] = React.useState<ArtifactPreview | null>(null);
   const [scenarioPreviewError, setScenarioPreviewError] = React.useState<string | null>(null);
   const [scenarioPreviewLoadingId, setScenarioPreviewLoadingId] = React.useState<string | null>(null);
+  const [workflowPreview, setWorkflowPreview] = React.useState<ArtifactPreview | null>(null);
+  const [workflowPreviewError, setWorkflowPreviewError] = React.useState<string | null>(null);
+  const [workflowPreviewLoadingId, setWorkflowPreviewLoadingId] = React.useState<string | null>(null);
 
   async function uploadDataset() {
     if (!file) return;
@@ -974,6 +988,18 @@ function DataTab({
     }
   }
 
+  async function loadWorkflowPreview(artifactId: string) {
+    setWorkflowPreviewLoadingId(artifactId);
+    setWorkflowPreviewError(null);
+    try {
+      setWorkflowPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setWorkflowPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorkflowPreviewLoadingId(null);
+    }
+  }
+
   const datasetArtifacts = artifacts.filter((artifact) => artifact.asset_type === "dataset_snapshot");
   const scenarioArtifacts = artifacts.filter((artifact) =>
     ["benchmark_scenario_pack", "benchmark_scenario_report"].includes(artifact.asset_type)
@@ -982,6 +1008,7 @@ function DataTab({
   const qualityArtifacts = artifacts.filter((artifact) =>
     ["data_quality_gate", "data_quality_report"].includes(artifact.asset_type)
   );
+  const publicWorkflowJobs = jobs.filter((job) => job.job_type === "run_public_benchmark_workflow");
   const latestDataset = datasets[0] ?? null;
   return (
     <div className="stack">
@@ -1158,6 +1185,73 @@ function DataTab({
           </div>
         ) : (
           <EmptyInline text="Benchmark dataset entries will appear here with local import status, source links, and primary-table metadata." />
+        )}
+      </Panel>
+      <Panel title="Public Workflow Results" icon={<ListChecks size={18} />}>
+        {publicWorkflowJobs.length ? (
+          <Table
+            headers={["Benchmark", "Status", "Run", "Model", "Metric", "Artifacts", "Ended", "Actions"]}
+            rows={publicWorkflowJobs.slice(0, 6).map((job) => {
+              const metrics = job.output.metrics;
+              const metricText =
+                metrics && typeof metrics === "object" && !Array.isArray(metrics)
+                  ? formatMetric(metrics as Record<string, unknown>)
+                  : "-";
+              const runReportArtifactId = textField(job.output.run_report_artifact_id);
+              const decisionReportArtifactId = textField(job.output.decision_report_artifact_id);
+              const scenarioReportArtifactId = textField(job.output.benchmark_scenario_report_artifact_id);
+              const artifactCount = Array.isArray(job.output.artifact_ids) ? job.output.artifact_ids.length : 0;
+              return [
+                String(job.output.benchmark_id ?? "-"),
+                formatJobStatus(job),
+                String(job.output.experiment_run_id ?? "-"),
+                String(job.output.model_version_id ?? "-"),
+                metricText,
+                String(artifactCount),
+                formatDate(job.ended_at),
+                <div className="row-actions" key={job.id}>
+                  <button
+                    className="icon-button"
+                    disabled={!runReportArtifactId || workflowPreviewLoadingId === runReportArtifactId}
+                    onClick={() => {
+                      if (runReportArtifactId) void loadWorkflowPreview(runReportArtifactId);
+                    }}
+                    title="Preview run report"
+                  >
+                    {workflowPreviewLoadingId === runReportArtifactId ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={!decisionReportArtifactId || workflowPreviewLoadingId === decisionReportArtifactId}
+                    onClick={() => {
+                      if (decisionReportArtifactId) void loadWorkflowPreview(decisionReportArtifactId);
+                    }}
+                    title="Preview decision report"
+                  >
+                    {workflowPreviewLoadingId === decisionReportArtifactId ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={!scenarioReportArtifactId || workflowPreviewLoadingId === scenarioReportArtifactId}
+                    onClick={() => {
+                      if (scenarioReportArtifactId) void loadWorkflowPreview(scenarioReportArtifactId);
+                    }}
+                    title="Preview benchmark scenario"
+                  >
+                    {workflowPreviewLoadingId === scenarioReportArtifactId ? <Loader2 className="spin" size={16} /> : <Layers size={16} />}
+                  </button>
+                </div>
+              ];
+            })}
+          />
+        ) : (
+          <EmptyInline text="Credential-free public benchmark workflow results will appear here with run metrics, reports, decision artifacts, and scenario summaries." />
+        )}
+        {workflowPreviewError ? <div className="banner danger">{workflowPreviewError}</div> : null}
+        {workflowPreview?.preview_available ? (
+          <pre className="markdown-preview">{workflowPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={workflowPreview?.reason ?? "Run a public workflow or select a report action to preview results."} />
         )}
       </Panel>
       <Panel title="Dataset Snapshots" icon={<Database size={18} />}>
@@ -2735,6 +2829,13 @@ function formatMetric(metrics: Record<string, unknown>) {
   return `${name}: ${value.toFixed(6)}`;
 }
 
+function formatJobSummaryMetric(summary: Record<string, unknown>) {
+  const name = summary.primary_metric_name;
+  const value = summary.primary_metric_value;
+  if (typeof name !== "string" || typeof value !== "number") return "-";
+  return `${name}: ${value.toFixed(6)}`;
+}
+
 function formatBaseline(metrics: Record<string, unknown>) {
   const baselineType = metrics.baseline_type;
   if (typeof baselineType !== "string") return "-";
@@ -2988,6 +3089,37 @@ function JobsTab({
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
+  const [jobArtifacts, setJobArtifacts] = React.useState<JobArtifactsResponse | null>(null);
+  const [artifactPreview, setArtifactPreview] = React.useState<ArtifactPreview | null>(null);
+  const [artifactError, setArtifactError] = React.useState<string | null>(null);
+  const [loadingJobId, setLoadingJobId] = React.useState<string | null>(null);
+  const [loadingArtifactId, setLoadingArtifactId] = React.useState<string | null>(null);
+
+  async function loadJobArtifacts(jobId: string) {
+    setLoadingJobId(jobId);
+    setArtifactError(null);
+    try {
+      setJobArtifacts(await api<JobArtifactsResponse>(`/api/jobs/${jobId}/artifacts`));
+      setArtifactPreview(null);
+    } catch (err) {
+      setArtifactError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingJobId(null);
+    }
+  }
+
+  async function loadArtifactPreview(artifactId: string) {
+    setLoadingArtifactId(artifactId);
+    setArtifactError(null);
+    try {
+      setArtifactPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setArtifactError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingArtifactId(null);
+    }
+  }
+
   return (
     <div className="stack">
       <div className="toolbar">
@@ -3037,6 +3169,14 @@ function JobsTab({
                 >
                   <RefreshCw size={16} />
                 </button>
+                <button
+                  className="icon-button"
+                  disabled={loadingJobId === job.id}
+                  onClick={() => void loadJobArtifacts(job.id)}
+                  title="Inspect job artifacts"
+                >
+                  {loadingJobId === job.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
               </div>
             ])}
           />
@@ -3058,6 +3198,60 @@ function JobsTab({
           />
         ) : (
           <EmptyInline text="Queued jobs will expose dependency, policy, input, and output context here." />
+        )}
+      </Panel>
+      <Panel title="Job Result Artifacts" icon={<Layers size={18} />}>
+        {artifactError ? <div className="banner danger">{artifactError}</div> : null}
+        {jobArtifacts ? (
+          <div className="stack">
+            <Table
+              headers={["Job", "Benchmark", "Run", "Model", "Metric", "Artifacts", "Missing"]}
+              rows={[
+                [
+                  jobArtifacts.job.id,
+                  String(jobArtifacts.summary.benchmark_id ?? "-"),
+                  String(jobArtifacts.summary.experiment_run_id ?? "-"),
+                  String(jobArtifacts.summary.model_version_id ?? "-"),
+                  formatJobSummaryMetric(jobArtifacts.summary),
+                  String(jobArtifacts.artifacts.length),
+                  String(jobArtifacts.missing_artifact_ids.length)
+                ]
+              ]}
+            />
+            {jobArtifacts.artifacts.length ? (
+              <Table
+                headers={["Type", "Name", "Version", "Size", "Actions"]}
+                rows={jobArtifacts.artifacts.map((artifact) => [
+                  artifact.asset_type,
+                  artifact.name,
+                  `v${artifact.version}`,
+                  formatBytes(artifact.size_bytes),
+                  <div className="row-actions" key={artifact.id}>
+                    <button
+                      className="icon-button"
+                      disabled={loadingArtifactId === artifact.id}
+                      onClick={() => void loadArtifactPreview(artifact.id)}
+                      title="Preview artifact"
+                    >
+                      {loadingArtifactId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                    </button>
+                    <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download artifact">
+                      <Download size={16} />
+                    </a>
+                  </div>
+                ])}
+              />
+            ) : (
+              <EmptyInline text="This job has no artifact ids in its output." />
+            )}
+            {artifactPreview?.preview_available ? (
+              <pre className="markdown-preview">{artifactPreview.preview}</pre>
+            ) : (
+              <EmptyInline text={artifactPreview?.reason ?? "Select an artifact to preview its text, JSON, Markdown, or CSV content."} />
+            )}
+          </div>
+        ) : (
+          <EmptyInline text="Inspect a completed workflow job to see produced artifacts, reports, metrics, and downloads without reading raw JSON." />
         )}
       </Panel>
     </div>

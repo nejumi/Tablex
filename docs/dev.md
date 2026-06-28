@@ -55,7 +55,10 @@ Project job history is available from:
 
 ```bash
 curl http://localhost:8000/api/projects/{project_id}/jobs
+curl http://localhost:8000/api/jobs/{job_id}/artifacts
 ```
+
+`/api/jobs/{job_id}/artifacts` resolves artifact ids from job outputs, summarizes benchmark/run/model/metric context, and returns preview/download-ready Artifact records for workflow jobs.
 
 Queued job orchestration endpoints:
 

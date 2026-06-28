@@ -1100,6 +1100,15 @@ def test_public_benchmark_workflow_runs_baseline_and_reports(tmp_path: Path, mon
         assert len(output["visualization_ids"]) >= 4
         assert len(output["artifact_ids"]) >= 20
 
+        job_artifacts_response = client.get(f"/api/jobs/{workflow_job['id']}/artifacts")
+        assert job_artifacts_response.status_code == 200
+        job_artifacts = job_artifacts_response.json()
+        assert job_artifacts["summary"]["benchmark_id"] == "public_workflow_smoke"
+        assert job_artifacts["summary"]["experiment_run_id"] == output["experiment_run_id"]
+        assert job_artifacts["summary"]["artifact_count"] >= 20
+        assert job_artifacts["missing_artifact_ids"] == []
+        assert any(item["asset_type"] == "decision_report" for item in job_artifacts["artifacts"])
+
         runs_response = client.get(f"/api/projects/{project_id}/runs")
         assert runs_response.status_code == 200
         assert runs_response.json()[0]["id"] == output["experiment_run_id"]

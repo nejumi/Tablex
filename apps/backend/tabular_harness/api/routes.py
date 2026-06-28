@@ -2425,6 +2425,27 @@ def get_job(job_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[s
     return job_to_dict(job)
 
 
+@router.get("/api/jobs/{job_id}/artifacts")
+def get_job_artifacts(job_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    output = loads_json(job.output_json, {})
+    artifact_ids = collect_output_artifact_ids(output)
+    artifacts_by_id = {
+        artifact.id: artifact
+        for artifact in db.scalars(select(Artifact).where(Artifact.id.in_(artifact_ids))).all()
+    } if artifact_ids else {}
+    artifacts = [artifacts_by_id[artifact_id] for artifact_id in artifact_ids if artifact_id in artifacts_by_id]
+    return {
+        "job": job_to_dict(job),
+        "summary": summarize_job_output(output),
+        "artifact_ids": artifact_ids,
+        "missing_artifact_ids": [artifact_id for artifact_id in artifact_ids if artifact_id not in artifacts_by_id],
+        "artifacts": [artifact_to_dict(artifact) for artifact in artifacts],
+    }
+
+
 @router.post("/api/jobs/{job_id}/cancel", response_model=JobRead)
 def cancel_job(job_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
     job = db.get(Job, job_id)
@@ -3299,4 +3320,47 @@ def job_to_dict(job: Job) -> dict[str, Any]:
         "updated_at": job.updated_at.isoformat(),
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "ended_at": job.ended_at.isoformat() if job.ended_at else None,
+    }
+
+
+def collect_output_artifact_ids(value: Any) -> list[str]:
+    collected: list[str] = []
+
+    def visit(node: Any, key: str | None = None) -> None:
+        if isinstance(node, dict):
+            for child_key, child_value in node.items():
+                visit(child_value, str(child_key))
+            return
+        if isinstance(node, list):
+            if key and (key == "artifact_ids" or key.endswith("_artifact_ids")):
+                for item in node:
+                    if isinstance(item, str):
+                        collected.append(item)
+                return
+            for item in node:
+                visit(item, key)
+            return
+        if isinstance(node, str) and key and (key == "artifact_id" or key.endswith("_artifact_id")):
+            collected.append(node)
+
+    visit(value)
+    return list(dict.fromkeys(collected))
+
+
+def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
+    metrics = output.get("metrics") if isinstance(output.get("metrics"), dict) else {}
+    primary_metric_name = metrics.get("primary_metric_name") if isinstance(metrics, dict) else None
+    primary_metric_value = metrics.get("primary_metric_value") if isinstance(metrics, dict) else None
+    return {
+        "benchmark_id": output.get("benchmark_id"),
+        "dataset_snapshot_id": output.get("dataset_snapshot_id"),
+        "evaluation_spec_id": output.get("evaluation_spec_id"),
+        "split_manifest_id": output.get("split_manifest_id"),
+        "experiment_run_id": output.get("experiment_run_id"),
+        "model_version_id": output.get("model_version_id"),
+        "run_report_id": output.get("run_report_id"),
+        "decision_report_id": output.get("decision_report_id"),
+        "primary_metric_name": primary_metric_name,
+        "primary_metric_value": primary_metric_value,
+        "artifact_count": len(collect_output_artifact_ids(output)),
     }
