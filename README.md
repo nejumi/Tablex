@@ -24,6 +24,7 @@ The product name may still change. Internal package names and database tables st
 - Idea-to-AgentTask stub execution with schema-validated AgentResult, report artifacts, evidence, and lineage.
 - Cross-project Asset Library v0 for Skills, FeatureRecipes, EvaluationPatterns, PromptTemplates, and VisualizationTemplates with Project/Idea references.
 - Report & Visualization Workbench v0 with generated Insights, report preview/download, and VisualizationSpec-driven dashboard previews.
+- Decision Dashboard & Report v1 with readiness stages, artifact completeness, risk register, next actions, benchmark fixture policy, and decision visualization specs.
 - Agent Context Pack v0 for preparing schema-validated, harness-owned execution context before Codex/Skill/web-research runner tasks.
 - Job Orchestration v0 with queued jobs, approval gates, dependencies, retry/cancel actions, and a local worker entrypoint.
 - Evaluation Diagnostics v0 with run-level error summaries, slice metrics, score/error bins, worst examples, sanity checks, Markdown diagnostics reports, VisualizationSpecs, Evidence, and Insights.

@@ -19,9 +19,11 @@ from tabular_harness.models.entities import (
     Insight,
     ModelVersion,
     Project,
+    Question,
     Report,
     ResearchBrief,
     SemanticCatalog,
+    SplitManifest,
     VisualizationSpec,
 )
 from tabular_harness.services.artifacts import (
@@ -60,6 +62,16 @@ class ReportResult:
 class VisualizationResult:
     visualization: VisualizationSpec
     artifact: Artifact
+
+
+@dataclass(frozen=True)
+class DecisionDashboardResult:
+    dashboard: dict[str, Any]
+    report: Report
+    dashboard_artifact: Artifact
+    report_artifact: Artifact
+    visualizations: list[VisualizationSpec]
+    artifact_ids: list[str]
 
 
 def generate_research_brief(
@@ -551,6 +563,594 @@ def create_visualization_spec(
         relation_type="materializes",
     )
     return VisualizationResult(visualization=visualization, artifact=artifact)
+
+
+def create_decision_dashboard(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+) -> DecisionDashboardResult:
+    datasets = list(
+        db.scalars(
+            select(DatasetSnapshot).where(DatasetSnapshot.project_id == project.id).order_by(DatasetSnapshot.created_at.desc())
+        ).all()
+    )
+    assumptions = list(
+        db.scalars(select(Assumption).where(Assumption.project_id == project.id).order_by(Assumption.updated_at.desc())).all()
+    )
+    questions = list(
+        db.scalars(select(Question).where(Question.project_id == project.id).order_by(Question.created_at.desc())).all()
+    )
+    evaluation_specs = list(
+        db.scalars(select(EvaluationSpec).where(EvaluationSpec.project_id == project.id).order_by(EvaluationSpec.created_at.desc())).all()
+    )
+    split_manifests = list(
+        db.scalars(select(SplitManifest).where(SplitManifest.project_id == project.id).order_by(SplitManifest.created_at.desc())).all()
+    )
+    runs = list(db.scalars(select(ExperimentRun).where(ExperimentRun.project_id == project.id)).all())
+    model_versions = list(db.scalars(select(ModelVersion).where(ModelVersion.project_id == project.id)).all())
+    insights = list(
+        db.scalars(select(Insight).where(Insight.project_id == project.id).order_by(Insight.created_at.desc())).all()
+    )
+    artifacts = list(
+        db.scalars(select(Artifact).where(Artifact.project_id == project.id).order_by(Artifact.created_at.desc())).all()
+    )
+    artifact_by_type = latest_artifacts_by_type(artifacts)
+    approved_spec = next((spec for spec in evaluation_specs if spec.status == "approved"), None)
+    high_risk_assumptions = [
+        assumption
+        for assumption in assumptions
+        if assumption.risk_level in {"high", "blocking", "deployment_blocking"} or assumption.status in {"challenged", "needs_review"}
+    ]
+    open_questions = [question for question in questions if question.status == "open"]
+    readiness_stages = decision_readiness_stages(
+        datasets=datasets,
+        approved_spec=approved_spec,
+        split_manifests=split_manifests,
+        runs=runs,
+        model_versions=model_versions,
+        high_risk_assumptions=high_risk_assumptions,
+        open_questions=open_questions,
+        artifacts_by_type=artifact_by_type,
+    )
+    artifact_completeness = decision_artifact_completeness(artifact_by_type)
+    risk_register = decision_risk_register(
+        assumptions=high_risk_assumptions,
+        open_questions=open_questions,
+        artifacts_by_type=artifact_by_type,
+    )
+    next_actions = decision_next_actions(readiness_stages, artifact_completeness, risk_register)
+    visualization_specs = decision_visualization_specs(
+        readiness_stages=readiness_stages,
+        artifact_completeness=artifact_completeness,
+        risk_register=risk_register,
+    )
+    dashboard: dict[str, Any] = {
+        "schema_version": "decision_dashboard.v1",
+        "project": {
+            "id": project.id,
+            "name": project.name,
+            "task_type": project.task_type,
+            "target_column": project.target_column,
+            "current_phase": project.current_phase,
+        },
+        "summary": {
+            "dataset_count": len(datasets),
+            "approved_evaluation_spec_id": approved_spec.id if approved_spec else None,
+            "split_manifest_count": len(split_manifests),
+            "experiment_run_count": len(runs),
+            "model_version_count": len(model_versions),
+            "insight_count": len(insights),
+            "high_risk_assumption_count": len(high_risk_assumptions),
+            "open_question_count": len(open_questions),
+        },
+        "readiness_stages": readiness_stages,
+        "artifact_completeness": artifact_completeness,
+        "risk_register": risk_register,
+        "next_actions": next_actions,
+        "unresolved_assumptions": [
+            {
+                "id": assumption.id,
+                "statement": assumption.statement,
+                "risk_level": assumption.risk_level,
+                "status": assumption.status,
+                "fallback_policy": assumption.fallback_policy,
+                "confidence": assumption.confidence,
+            }
+            for assumption in high_risk_assumptions[:12]
+        ],
+        "open_questions": [
+            {
+                "id": question.id,
+                "topic": question.topic,
+                "question": question.question,
+                "risk_level": question.risk_level,
+                "fallback_policy": question.fallback_policy,
+            }
+            for question in open_questions[:12]
+        ],
+        "benchmark_context": decision_benchmark_context(artifact_by_type),
+        "visualization_specs": visualization_specs,
+        "artifact_refs": {
+            asset_type: decision_artifact_ref(artifact) for asset_type, artifact in artifact_by_type.items()
+        },
+    }
+    dashboard_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="decision_dashboard",
+        name=f"decision_dashboard_{new_id('dash')}",
+        filename="decision_dashboard.json",
+        payload=dashboard,
+        metadata={
+            "project_id": project.id,
+            "readiness_status": overall_readiness_status(readiness_stages),
+            "high_risk_assumption_count": len(high_risk_assumptions),
+            "open_question_count": len(open_questions),
+        },
+    )
+    report_md = render_decision_report(dashboard)
+    report_artifact = store_text_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="decision_report",
+        name=f"decision_report_{new_id('drptart')}",
+        filename="decision_report.md",
+        text=report_md,
+        metadata={
+            "project_id": project.id,
+            "report_type": "decision_report",
+            "decision_dashboard_artifact_id": dashboard_artifact.id,
+            "readiness_status": overall_readiness_status(readiness_stages),
+        },
+    )
+    report = Report(
+        id=new_id("rpt"),
+        project_id=project.id,
+        report_type="decision_report",
+        title=f"{project.name} Decision Report",
+        summary=first_sentence(report_md),
+        artifact_id=report_artifact.id,
+        source_asset_ids_json=dumps_json(decision_source_assets(dashboard)),
+        status="draft",
+        created_by_type="system",
+    )
+    db.add(report)
+    visualizations = persist_decision_visualizations(
+        db,
+        store=store,
+        project=project,
+        dashboard_artifact=dashboard_artifact,
+        visualization_specs=visualization_specs,
+    )
+    db.flush()
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="project",
+        from_asset_id=project.id,
+        to_asset_type="artifact",
+        to_asset_id=dashboard_artifact.id,
+        relation_type="summarizes_decision_state",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=dashboard_artifact.id,
+        to_asset_type="report",
+        to_asset_id=report.id,
+        relation_type="materializes",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="report",
+        from_asset_id=report.id,
+        to_asset_type="artifact",
+        to_asset_id=report_artifact.id,
+        relation_type="materializes",
+    )
+    for artifact in artifact_by_type.values():
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=dashboard_artifact.id,
+            relation_type="informs",
+        )
+    artifact_ids = [dashboard_artifact.id, report_artifact.id, *[visualization.artifact_id for visualization in visualizations]]
+    return DecisionDashboardResult(
+        dashboard=dashboard,
+        report=report,
+        dashboard_artifact=dashboard_artifact,
+        report_artifact=report_artifact,
+        visualizations=visualizations,
+        artifact_ids=artifact_ids,
+    )
+
+
+def latest_artifacts_by_type(artifacts: list[Artifact]) -> dict[str, Artifact]:
+    by_type: dict[str, Artifact] = {}
+    for artifact in artifacts:
+        by_type.setdefault(artifact.asset_type, artifact)
+    return by_type
+
+
+def decision_readiness_stages(
+    *,
+    datasets: list[DatasetSnapshot],
+    approved_spec: EvaluationSpec | None,
+    split_manifests: list[SplitManifest],
+    runs: list[ExperimentRun],
+    model_versions: list[ModelVersion],
+    high_risk_assumptions: list[Assumption],
+    open_questions: list[Question],
+    artifacts_by_type: dict[str, Artifact],
+) -> list[dict[str, Any]]:
+    return [
+        stage("Data", bool(datasets), len(datasets), "Latest DatasetSnapshot is available." if datasets else "Upload or import data."),
+        stage(
+            "Quality",
+            "data_quality_gate" in artifacts_by_type,
+            1 if "data_quality_gate" in artifacts_by_type else 0,
+            "DataQualityGate exists." if "data_quality_gate" in artifacts_by_type else "Run data quality analysis.",
+        ),
+        stage(
+            "Assumptions",
+            not high_risk_assumptions and not any(question.fallback_policy == "block_until_answered" for question in open_questions),
+            len(high_risk_assumptions) + len(open_questions),
+            "No blocking assumptions/questions." if not high_risk_assumptions else "Review high-risk assumptions and open questions.",
+        ),
+        stage(
+            "Evaluation",
+            bool(approved_spec and split_manifests),
+            len(split_manifests),
+            "Approved EvaluationSpec and SplitManifest exist." if approved_spec and split_manifests else "Approve EvaluationSpec and generate SplitManifest.",
+        ),
+        stage(
+            "Research",
+            "research_plan" in artifacts_by_type,
+            1 if "research_plan" in artifacts_by_type else 0,
+            "ResearchPlan exists." if "research_plan" in artifacts_by_type else "Generate controlled ResearchPlan.",
+        ),
+        stage(
+            "Strategy",
+            "baseline_strategy_plan" in artifacts_by_type or "experiment_plan" in artifacts_by_type,
+            int("baseline_strategy_plan" in artifacts_by_type) + int("experiment_plan" in artifacts_by_type),
+            "Strategy artifacts exist." if "baseline_strategy_plan" in artifacts_by_type else "Create baseline or experiment strategy plan.",
+        ),
+        stage(
+            "Experiments",
+            bool(runs and model_versions),
+            len(runs),
+            "Runs and ModelVersions exist." if runs and model_versions else "Run baseline or agent task.",
+        ),
+        stage(
+            "Reporting",
+            "decision_report" in artifacts_by_type or "report" in artifacts_by_type,
+            int("decision_report" in artifacts_by_type) + int("report" in artifacts_by_type),
+            "Reports exist." if "decision_report" in artifacts_by_type or "report" in artifacts_by_type else "Generate decision report.",
+        ),
+    ]
+
+
+def stage(name: str, ready: bool, count: int, detail: str) -> dict[str, Any]:
+    return {
+        "stage": name,
+        "status": "ready" if ready else "needs_attention",
+        "count": count,
+        "detail": detail,
+    }
+
+
+def decision_artifact_completeness(artifacts_by_type: dict[str, Artifact]) -> list[dict[str, Any]]:
+    required = [
+        ("dataset_snapshot", "Data imported or uploaded"),
+        ("semantic_catalog", "Semantic catalog generated"),
+        ("data_quality_gate", "Quality and leakage gate"),
+        ("evaluation_scenario_comparison", "Evaluation scenario comparison"),
+        ("evaluation_approval_review", "Evaluation approval review"),
+        ("evaluation_spec", "Approved evaluation spec artifact"),
+        ("split_manifest", "Split manifest"),
+        ("research_plan", "Controlled research plan"),
+        ("baseline_strategy_plan", "Baseline strategy plan"),
+        ("benchmark_scenario_pack", "Benchmark scenario pack when benchmark data is used"),
+        ("experiment_run", "Experiment run record artifact when available"),
+        ("evaluation_diagnostics", "Evaluation diagnostics after a run"),
+        ("insight_set", "Generated insight set"),
+        ("visualization_spec", "Portable visualization specs"),
+        ("decision_report", "Decision report"),
+    ]
+    return [
+        {
+            "asset_type": asset_type,
+            "label": label,
+            "status": "available" if asset_type in artifacts_by_type else "missing",
+            "artifact_id": artifacts_by_type[asset_type].id if asset_type in artifacts_by_type else None,
+        }
+        for asset_type, label in required
+    ]
+
+
+def decision_risk_register(
+    *,
+    assumptions: list[Assumption],
+    open_questions: list[Question],
+    artifacts_by_type: dict[str, Artifact],
+) -> list[dict[str, Any]]:
+    risks: list[dict[str, Any]] = []
+    for assumption in assumptions[:10]:
+        risks.append(
+            {
+                "risk_type": "assumption",
+                "id": assumption.id,
+                "severity": assumption.risk_level,
+                "summary": assumption.statement,
+                "status": assumption.status,
+                "fallback_policy": assumption.fallback_policy,
+            }
+        )
+    for question in open_questions[:10]:
+        risks.append(
+            {
+                "risk_type": "open_question",
+                "id": question.id,
+                "severity": question.risk_level,
+                "summary": question.question,
+                "status": question.status,
+                "fallback_policy": question.fallback_policy,
+            }
+        )
+    quality_metadata = artifact_metadata(artifacts_by_type.get("data_quality_gate"))
+    severity = quality_metadata.get("severity")
+    if severity in {"warning", "fail", "blocked"}:
+        risks.append(
+            {
+                "risk_type": "data_quality",
+                "id": artifacts_by_type["data_quality_gate"].id,
+                "severity": severity,
+                "summary": "DataQualityGate has warnings or blockers; inspect leakage, missingness, identity, and temporal findings.",
+                "status": "needs_review",
+                "fallback_policy": "scenario_compare",
+            }
+        )
+    benchmark = artifacts_by_type.get("benchmark_scenario_pack")
+    if benchmark:
+        risks.append(
+            {
+                "risk_type": "benchmark_fixture_policy",
+                "id": benchmark.id,
+                "severity": "medium",
+                "summary": "Fixture results validate workflow only and must not be reported as benchmark performance.",
+                "status": "active",
+                "fallback_policy": "require_before_deployment",
+            }
+        )
+    return risks
+
+
+def decision_next_actions(
+    readiness_stages: list[dict[str, Any]],
+    artifact_completeness: list[dict[str, Any]],
+    risk_register: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    for item in artifact_completeness:
+        if item["status"] == "missing" and item["asset_type"] in {
+            "data_quality_gate",
+            "evaluation_scenario_comparison",
+            "split_manifest",
+            "research_plan",
+            "baseline_strategy_plan",
+        }:
+            actions.append(
+                {
+                    "priority": 90 - len(actions) * 5,
+                    "action": f"Create {item['label']}",
+                    "reason": f"`{item['asset_type']}` is missing from the project artifact set.",
+                }
+            )
+    if risk_register:
+        actions.insert(
+            0,
+            {
+                "priority": 95,
+                "action": "Review high-risk assumptions, open questions, and quality warnings",
+                "reason": "Decision readiness depends on explicitly managed risks.",
+            },
+        )
+    if all(stage_item["status"] == "ready" for stage_item in readiness_stages):
+        actions.append(
+            {
+                "priority": 40,
+                "action": "Prepare a human decision review",
+                "reason": "Core stages are ready; summarize tradeoffs before deployment or deeper agent work.",
+            }
+        )
+    return actions[:8]
+
+
+def decision_benchmark_context(artifacts_by_type: dict[str, Artifact]) -> dict[str, Any]:
+    pack_artifact = artifacts_by_type.get("benchmark_scenario_pack")
+    if pack_artifact is None:
+        return {"status": "not_present", "fixture_policy": "No benchmark scenario pack is attached."}
+    metadata = artifact_metadata(pack_artifact)
+    return {
+        "status": "available",
+        "benchmark_id": metadata.get("benchmark_id"),
+        "scenario_kind": metadata.get("scenario_kind"),
+        "artifact_id": pack_artifact.id,
+        "fixture_policy": "Fixture results are product smoke checks, not benchmark performance claims.",
+        "preview_url": f"/api/artifacts/{pack_artifact.id}/preview",
+    }
+
+
+def decision_visualization_specs(
+    *,
+    readiness_stages: list[dict[str, Any]],
+    artifact_completeness: list[dict[str, Any]],
+    risk_register: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    risk_counts: dict[str, int] = {}
+    for risk in risk_register:
+        severity = str(risk.get("severity") or "unknown")
+        risk_counts[severity] = risk_counts.get(severity, 0) + 1
+    return [
+        {
+            "schema_version": "visualization_spec.v1",
+            "title": "Decision Readiness Stages",
+            "chart_type": "stage_status",
+            "data": readiness_stages,
+            "encoding": {"stage": "stage", "status": "status", "count": "count", "detail": "detail"},
+            "empty_state": "Run workflow steps to populate decision readiness stages.",
+        },
+        {
+            "schema_version": "visualization_spec.v1",
+            "title": "Decision Artifact Completeness",
+            "chart_type": "category_bars",
+            "data": [
+                {"label": item["asset_type"], "count": 1 if item["status"] == "available" else 0}
+                for item in artifact_completeness
+            ],
+            "encoding": {"x": "label", "y": "count"},
+            "empty_state": "Artifacts will appear as the project workflow progresses.",
+        },
+        {
+            "schema_version": "visualization_spec.v1",
+            "title": "Decision Risk Summary",
+            "chart_type": "category_bars",
+            "data": [{"label": severity, "count": count} for severity, count in sorted(risk_counts.items())],
+            "encoding": {"x": "label", "y": "count"},
+            "empty_state": "No decision risks are currently registered.",
+        },
+    ]
+
+
+def persist_decision_visualizations(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    dashboard_artifact: Artifact,
+    visualization_specs: list[dict[str, Any]],
+) -> list[VisualizationSpec]:
+    visualizations: list[VisualizationSpec] = []
+    for spec in visualization_specs:
+        artifact = store_json_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="visualization_spec",
+            name=f"decision_visualization_{new_id('vizart')}",
+            filename="decision_visualization.json",
+            payload=spec,
+            metadata={
+                "project_id": project.id,
+                "chart_type": spec["chart_type"],
+                "decision_dashboard_artifact_id": dashboard_artifact.id,
+            },
+        )
+        visualization = VisualizationSpec(
+            id=new_id("viz"),
+            project_id=project.id,
+            title=str(spec["title"]),
+            chart_type=str(spec["chart_type"]),
+            spec_json=dumps_json(spec),
+            source_artifact_id=dashboard_artifact.id,
+            artifact_id=artifact.id,
+            status="draft",
+            created_by_type="system",
+        )
+        db.add(visualization)
+        visualizations.append(visualization)
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=dashboard_artifact.id,
+            to_asset_type="visualization_spec",
+            to_asset_id=visualization.id,
+            relation_type="visualizes",
+        )
+    return visualizations
+
+
+def decision_artifact_ref(artifact: Artifact) -> dict[str, Any]:
+    return {
+        "artifact_id": artifact.id,
+        "asset_type": artifact.asset_type,
+        "name": artifact.name,
+        "version": artifact.version,
+        "preview_url": f"/api/artifacts/{artifact.id}/preview",
+        "download_url": f"/api/artifacts/{artifact.id}/download",
+    }
+
+
+def overall_readiness_status(readiness_stages: list[dict[str, Any]]) -> str:
+    if all(item["status"] == "ready" for item in readiness_stages):
+        return "ready"
+    if any(item["stage"] in {"Data", "Evaluation"} and item["status"] != "ready" for item in readiness_stages):
+        return "blocked"
+    return "needs_attention"
+
+
+def decision_source_assets(dashboard: dict[str, Any]) -> list[dict[str, str]]:
+    refs = dashboard.get("artifact_refs", {})
+    if not isinstance(refs, dict):
+        return []
+    source_assets = []
+    for value in refs.values():
+        if isinstance(value, dict) and value.get("artifact_id") and value.get("asset_type"):
+            source_assets.append({"asset_type": str(value["asset_type"]), "asset_id": str(value["artifact_id"])})
+    return source_assets[:20]
+
+
+def render_decision_report(dashboard: dict[str, Any]) -> str:
+    lines = [
+        f"# {dashboard['project']['name']} Decision Report",
+        "",
+        "## Summary",
+        "",
+    ]
+    for key, value in dashboard["summary"].items():
+        lines.append(f"- {key}: {value}")
+    lines.extend(["", "## Readiness Stages", ""])
+    for item in dashboard["readiness_stages"]:
+        lines.append(f"- {item['stage']}: {item['status']} ({item['detail']})")
+    lines.extend(["", "## Next Actions", ""])
+    if dashboard["next_actions"]:
+        for action in dashboard["next_actions"]:
+            lines.append(f"- P{action['priority']}: {action['action']} - {action['reason']}")
+    else:
+        lines.append("- No immediate next action was generated.")
+    lines.extend(["", "## Risks", ""])
+    if dashboard["risk_register"]:
+        for risk in dashboard["risk_register"][:12]:
+            lines.append(f"- {risk['severity']} {risk['risk_type']}: {risk['summary']}")
+    else:
+        lines.append("- No high-priority decision risks are currently registered.")
+    lines.extend(["", "## Artifact Completeness", ""])
+    for item in dashboard["artifact_completeness"]:
+        lines.append(f"- {item['asset_type']}: {item['status']}")
+    benchmark = dashboard["benchmark_context"]
+    lines.extend(
+        [
+            "",
+            "## Benchmark Context",
+            "",
+            f"- Status: {benchmark.get('status')}",
+            f"- Benchmark: {benchmark.get('benchmark_id') or '-'}",
+            f"- Scenario: {benchmark.get('scenario_kind') or '-'}",
+            f"- Fixture policy: {benchmark.get('fixture_policy')}",
+        ]
+    )
+    return "\n".join(lines).strip() + "\n"
 
 
 def latest_semantic_columns(db: Session, dataset: DatasetSnapshot | None) -> list[dict[str, Any]]:

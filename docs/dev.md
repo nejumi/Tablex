@@ -186,6 +186,7 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/reports/draft \
   -d '{"report_type":"project_summary"}'
 curl -X POST http://localhost:8000/api/projects/{project_id}/visualizations/generate
 curl -X POST http://localhost:8000/api/projects/{project_id}/insights/generate
+curl -X POST http://localhost:8000/api/projects/{project_id}/decision-dashboard/generate
 curl http://localhost:8000/api/projects/{project_id}/reports
 curl http://localhost:8000/api/projects/{project_id}/visualizations
 curl http://localhost:8000/api/projects/{project_id}/insights
@@ -194,6 +195,8 @@ curl -L -o report.md http://localhost:8000/api/reports/{report_id}/download
 ```
 
 `/visualizations/generate` creates a small dashboard set, not just one chart: project readiness metric cards, assumption risk bars, evaluation readiness stages, and leaderboard primary-metric bars. `/insights/generate` stores an `insight_set` artifact, `Insight` records, Evidence records, and lineage edges so report statements remain inspectable in the workbench.
+
+`/decision-dashboard/generate` creates a `decision_dashboard` JSON artifact shaped by `schemas/decision_dashboard.schema.json`, a `decision_report` Markdown artifact, a Report record, and three decision `visualization_spec` records. It summarizes readiness stages, artifact completeness, high-risk assumptions/questions, benchmark fixture policy, next actions, and report/visualization expectations.
 
 Approach Ideas are not fixed recipes. They are evidence-backed proposals with `AgentTaskContract` payloads for future Codex, Skill-library, and controlled web or literature research runners. The harness still owns EvaluationSpec, SplitManifest, artifacts, lineage, safety controls, and report outputs.
 

@@ -467,6 +467,30 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert report_preview_by_id_response.status_code == 200
     assert "## Visualizations" in report_preview_by_id_response.json()["preview"]
 
+    decision_response = client.post(f"/api/projects/{project_id}/decision-dashboard/generate")
+    assert decision_response.status_code == 200, decision_response.text
+    decision_job = decision_response.json()
+    assert decision_job["status"] == "succeeded"
+    assert decision_job["output"]["schema_version"] == "decision_dashboard.v1"
+    assert decision_job["output"]["decision_dashboard_artifact_id"]
+    assert decision_job["output"]["decision_report_artifact_id"]
+    assert decision_job["output"]["report_id"]
+    assert len(decision_job["output"]["visualization_ids"]) == 3
+
+    decision_dashboard_preview_response = client.get(
+        f"/api/artifacts/{decision_job['output']['decision_dashboard_artifact_id']}/preview"
+    )
+    assert decision_dashboard_preview_response.status_code == 200
+    decision_dashboard_preview = decision_dashboard_preview_response.json()["preview"]
+    assert "decision_dashboard.v1" in decision_dashboard_preview
+    assert "readiness_stages" in decision_dashboard_preview
+
+    decision_report_preview_response = client.get(f"/api/reports/{decision_job['output']['report_id']}/preview")
+    assert decision_report_preview_response.status_code == 200
+    decision_report_preview = decision_report_preview_response.json()["preview"]
+    assert "Decision Report" in decision_report_preview
+    assert "## Readiness Stages" in decision_report_preview
+
     runs_response = client.get(f"/api/projects/{project_id}/runs")
     assert runs_response.status_code == 200
     assert runs_response.json()[0]["runner_type"] == "local_baseline"
@@ -532,6 +556,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "experiment_comparison",
         "experiment_comparison_report",
         "run_report",
+        "decision_dashboard",
+        "decision_report",
         "agent_workspace_manifest",
         "agent_context_pack",
         "agent_task_report",

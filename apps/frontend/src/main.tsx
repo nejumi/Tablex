@@ -713,6 +713,7 @@ function ProjectDetail({
         <ReportsTab
           project={project}
           reports={reports}
+          artifacts={artifacts}
           visualizations={visualizations}
           insights={insights}
           busy={busy}
@@ -2156,6 +2157,7 @@ function ExperimentsTab({
 function ReportsTab({
   project,
   reports,
+  artifacts,
   visualizations,
   insights,
   busy,
@@ -2163,6 +2165,7 @@ function ReportsTab({
 }: {
   project: Project;
   reports: Report[];
+  artifacts: Artifact[];
   visualizations: VisualizationSpec[];
   insights: Insight[];
   busy: boolean;
@@ -2171,12 +2174,27 @@ function ReportsTab({
   const [reportPreview, setReportPreview] = React.useState<ArtifactPreview | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const decisionArtifacts = artifacts.filter((artifact) =>
+    ["decision_dashboard", "decision_report"].includes(artifact.asset_type)
+  );
 
   async function loadReportPreview(reportId: string) {
     setPreviewLoadingId(reportId);
     setPreviewError(null);
     try {
       setReportPreview(await api<ArtifactPreview>(`/api/reports/${reportId}/preview`));
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPreviewLoadingId(null);
+    }
+  }
+
+  async function loadArtifactPreview(artifactId: string) {
+    setPreviewLoadingId(artifactId);
+    setPreviewError(null);
+    try {
+      setReportPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2222,6 +2240,23 @@ function ReportsTab({
         >
           {busy ? <Loader2 className="spin" size={16} /> : <Lightbulb size={16} />}
           Generate Insights
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
+            void runAction(async () => {
+              const job = await api<Job>(`/api/projects/${project.id}/decision-dashboard/generate`, { method: "POST" });
+              const reportId = job.output.report_id;
+              if (typeof reportId === "string") {
+                await loadReportPreview(reportId);
+              }
+              return job;
+            })
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+          Decision Dashboard
         </button>
       </div>
       <Panel title="Insights" icon={<Lightbulb size={18} />}>
@@ -2288,6 +2323,35 @@ function ReportsTab({
           />
         ) : (
           <EmptyInline text="Project reports will summarize data understanding, assumptions, evaluation design, approach candidates, runs, visualizations, and next decisions." />
+        )}
+      </Panel>
+      <Panel title="Decision Artifacts" icon={<ListChecks size={18} />}>
+        {decisionArtifacts.length ? (
+          <Table
+            headers={["Type", "Status", "Risks", "Questions", "Artifact", "Actions"]}
+            rows={decisionArtifacts.map((artifact) => [
+              artifact.asset_type,
+              String(artifact.metadata.readiness_status ?? "-"),
+              String(artifact.metadata.high_risk_assumption_count ?? "-"),
+              String(artifact.metadata.open_question_count ?? "-"),
+              artifact.id,
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={previewLoadingId === artifact.id}
+                  onClick={() => void loadArtifactPreview(artifact.id)}
+                  title="Preview decision artifact"
+                >
+                  {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download decision artifact">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Decision dashboard artifacts will summarize readiness stages, artifact completeness, risks, next actions, benchmark fixture policy, and visualization specs." />
         )}
       </Panel>
       <Panel title="Report Preview" icon={<FileText size={18} />}>

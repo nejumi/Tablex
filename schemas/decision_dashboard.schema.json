@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DecisionDashboard",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "summary",
+    "readiness_stages",
+    "artifact_completeness",
+    "risk_register",
+    "next_actions",
+    "unresolved_assumptions",
+    "open_questions",
+    "benchmark_context",
+    "visualization_specs",
+    "artifact_refs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "decision_dashboard.v1"
+    },
+    "project": {
+      "type": "object"
+    },
+    "summary": {
+      "type": "object"
+    },
+    "readiness_stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage", "status", "count", "detail"],
+        "properties": {
+          "stage": { "type": "string" },
+          "status": { "type": "string" },
+          "count": { "type": "number" },
+          "detail": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "artifact_completeness": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "risk_register": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "next_actions": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "unresolved_assumptions": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "benchmark_context": {
+      "type": "object"
+    },
+    "visualization_specs": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "artifact_refs": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

@@ -384,6 +384,7 @@ class JobCreate(BaseModel):
         "draft_project_report",
         "create_visualization_spec",
         "generate_insights",
+        "generate_decision_dashboard",
         "prepare_agent_context",
         "analyze_evaluation_diagnostics",
         "create_experiment_plan",

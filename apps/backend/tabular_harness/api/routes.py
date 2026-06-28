@@ -83,6 +83,7 @@ from tabular_harness.schemas import (
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
 from tabular_harness.services.approach import (
+    create_decision_dashboard,
     create_research_plan,
     draft_project_report,
     generate_approach_candidates,
@@ -1686,6 +1687,38 @@ def generate_insights_endpoint(
                 "insight_ids": [insight.id for insight in result.insights],
                 "artifact_id": result.artifact.id,
                 "evidence_ids": result.evidence_ids,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/decision-dashboard/generate", response_model=JobRead)
+def generate_decision_dashboard_endpoint(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(db, job_type="generate_decision_dashboard", project_id=project_id, input_payload={})
+    try:
+        mark_job_running(job)
+        result = create_decision_dashboard(db, store=store, project=project)
+        dashboard_metadata = loads_json(result.dashboard_artifact.metadata_json, {})
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.dashboard["schema_version"],
+                "readiness_status": dashboard_metadata.get("readiness_status"),
+                "report_id": result.report.id,
+                "decision_dashboard_artifact_id": result.dashboard_artifact.id,
+                "decision_report_artifact_id": result.report_artifact.id,
+                "visualization_ids": [visualization.id for visualization in result.visualizations],
+                "artifact_ids": result.artifact_ids,
+                "next_action_count": len(result.dashboard["next_actions"]),
+                "risk_count": len(result.dashboard["risk_register"]),
             },
         )
     except ValueError as exc:
