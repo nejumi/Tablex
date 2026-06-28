@@ -618,6 +618,7 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     assert any(item["id"] == "kaggle_home_credit_default_risk" for item in benchmarks)
     uci_benchmark = next(item for item in benchmarks if item["id"] == "uci_bank_marketing")
     assert uci_benchmark["local_status"]["ready"] is False
+    assert uci_benchmark["fixture_available"] is True
     assert "Do not paste Kaggle credentials" in next(
         item["download_instructions"] for item in benchmarks if item["id"] == "kaggle_home_credit_default_risk"
     )
@@ -633,16 +634,13 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     assert import_missing_response.status_code == 400
     assert "Missing required benchmark files" in import_missing_response.text
 
-    benchmark_dir = tmp_path / "data" / "benchmarks" / "uci_bank_marketing"
-    benchmark_dir.mkdir(parents=True)
-    (benchmark_dir / "bank-full.csv").write_text(
-        "age;job;duration;y\n"
-        "40;admin.;300;yes\n"
-        "41;technician;120;no\n"
-        "42;admin.;90;no\n"
-        "43;services;240;yes\n",
-        encoding="utf-8",
-    )
+    fixture_response = client.post("/api/benchmarks/uci_bank_marketing/fixtures/generate", json={"overwrite": True})
+    assert fixture_response.status_code == 200, fixture_response.text
+    fixture = fixture_response.json()
+    assert fixture["schema_version"] == "benchmark_fixture.v1"
+    assert fixture["fixture_matches_expected"] is True
+    assert fixture["local_status"]["ready"] is True
+    assert any(item["path"] == "bank-full.csv" for item in fixture["generated_files"])
 
     status_response = client.get("/api/benchmarks/uci_bank_marketing/local-status")
     assert status_response.status_code == 200
@@ -654,7 +652,7 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     assert payload["primary_file"] == "bank-full.csv"
     assert payload["dataset_snapshot"]["source_type"] == "benchmark_catalog"
     assert payload["dataset_snapshot"]["source_ref"] == "uci_bank_marketing:bank-full.csv"
-    assert payload["dataset_snapshot"]["row_count"] == 4
+    assert payload["dataset_snapshot"]["row_count"] == 8
     assert payload["artifact"]["metadata"]["benchmark_id"] == "uci_bank_marketing"
     assert payload["import_manifest_artifact"]["asset_type"] == "benchmark_import_manifest"
     assert payload["relational_catalog_artifact"]["asset_type"] == "relational_catalog"
@@ -671,6 +669,47 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     relational_preview_response = client.get(f"/api/artifacts/{payload['relational_catalog_artifact']['id']}/preview")
     assert relational_preview_response.status_code == 200
     assert "relational_catalog.v1" in relational_preview_response.json()["preview"]
+
+
+def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Home Credit fixture smoke", "task_type": "binary_classification"},
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    smoke_response = client.post(
+        f"/api/projects/{project_id}/benchmarks/kaggle_home_credit_default_risk/fixture-smoke",
+        json={"overwrite": True},
+    )
+    assert smoke_response.status_code == 200, smoke_response.text
+    smoke_job = smoke_response.json()
+    assert smoke_job["status"] == "succeeded"
+    output = smoke_job["output"]
+    assert output["fixture"]["local_status"]["ready"] is True
+    assert output["fixture"]["fixture_matches_expected"] is True
+    assert output["dataset_snapshot_id"]
+    assert output["quality_gate"]["schema_version"] == "data_quality_gate.v1"
+    assert output["evaluation_scenario_comparison_artifact_id"]
+    assert output["approval_review_artifact_id"]
+    assert output["split_manifest_id"]
+    assert output["baseline_strategy_plan_artifact_id"]
+    assert len(output["artifact_ids"]) >= 9
+
+    artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
+    assert artifacts_response.status_code == 200
+    asset_types = {item["asset_type"] for item in artifacts_response.json()}
+    assert {
+        "benchmark_import_manifest",
+        "relational_catalog",
+        "data_quality_gate",
+        "evaluation_scenario_comparison",
+        "evaluation_approval_review",
+        "split_manifest",
+        "baseline_strategy_plan",
+    }.issubset(asset_types)
 
 
 def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None:

@@ -153,6 +153,10 @@ class BenchmarkImportRequest(BaseModel):
     target_column: str | None = None
 
 
+class BenchmarkFixtureRequest(BaseModel):
+    overwrite: bool = False
+
+
 class BenchmarkDatasetRead(BaseModel):
     id: str
     name: str
@@ -172,6 +176,8 @@ class BenchmarkDatasetRead(BaseModel):
     risk_notes: list[str] = Field(default_factory=list)
     default_local_path: str
     download_instructions: str
+    fixture_available: bool = False
+    fixture_notes: str | None = None
     local_status: dict[str, Any] | None = None
 
 
@@ -197,6 +203,20 @@ class BenchmarkImportResponse(BaseModel):
     relational_catalog_artifact: ArtifactRead
     profile_job_id: str
     primary_file: str
+
+
+class BenchmarkFixtureResponse(BaseModel):
+    schema_version: str
+    benchmark_id: str
+    benchmark_name: str
+    root_path: str
+    overwrite: bool
+    generated_files: list[dict[str, Any]]
+    skipped_files: list[dict[str, Any]]
+    fixture_matches_expected: bool
+    local_status: dict[str, Any]
+    credential_policy: dict[str, Any]
+    notes: str | None = None
 
 
 class SemanticCatalogRead(BaseModel):
@@ -351,6 +371,7 @@ class JobCreate(BaseModel):
         "compare_evaluation_scenarios",
         "review_evaluation_approval",
         "build_split_manifest",
+        "run_benchmark_fixture_smoke",
         "run_baseline",
         "plan_baseline_strategy",
         "validate_model_package",

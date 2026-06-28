@@ -49,6 +49,20 @@ curl http://localhost:8000/api/benchmarks
 curl http://localhost:8000/api/benchmarks/kaggle_home_credit_default_risk/local-status
 ```
 
+Generate a credential-free local fixture for supported benchmarks:
+
+```bash
+curl -X POST http://localhost:8000/api/benchmarks/kaggle_home_credit_default_risk/fixtures/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"overwrite":false}'
+```
+
+Supported v0 fixtures:
+
+- `kaggle_home_credit_default_risk`: tiny multi-table credit-risk fixture.
+- `kaggle_store_sales_forecasting`: tiny retail time-series fixture.
+- `uci_bank_marketing`: tiny single-table semicolon-delimited fixture.
+
 Import the primary table into a project:
 
 ```bash
@@ -56,6 +70,16 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/uci_bank
   -H 'Content-Type: application/json' \
   -d '{}'
 ```
+
+Run the fixture smoke harness for a project:
+
+```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/kaggle_home_credit_default_risk/fixture-smoke \
+  -H 'Content-Type: application/json' \
+  -d '{"overwrite":false}'
+```
+
+The smoke harness generates the fixture, imports the benchmark primary table, runs DataQualityGate, creates EvaluationScenarioComparison and EvaluationApprovalReview artifacts, approves the spec when no explicit blockers remain, generates a SplitManifest, and stores a BaselineStrategyPlan. It does not run the full baseline model.
 
 The import creates:
 
@@ -69,5 +93,7 @@ The import creates:
 ## Scope
 
 v0 creates one primary-table DatasetSnapshot and a relational catalog for the local bundle. Multi-table joins remain explicit future work for FeatureRecipes and AgentTasks. The relational catalog gives future runners table profile and join-planning context without copying every supporting table into the artifact store.
+
+Fixtures are synthetic and deliberately small. They are for product smoke tests, not benchmark scoring, leaderboard claims, model quality comparison, or literature-backed baseline selection.
 
 These datasets are benchmarks and smoke-test fixtures, not a fixed modeling strategy. Baselines and agent tasks should still inspect the current task, data semantics, EvaluationSpec, SplitManifest, quality gates, relevant Skills, and timely research before choosing an approach.

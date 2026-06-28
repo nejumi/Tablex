@@ -17,6 +17,7 @@ JOB_TYPES = {
     "compare_evaluation_scenarios",
     "review_evaluation_approval",
     "build_split_manifest",
+    "run_benchmark_fixture_smoke",
     "run_baseline",
     "plan_baseline_strategy",
     "run_agent_task",

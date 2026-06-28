@@ -50,6 +50,8 @@ from tabular_harness.schemas import (
     AssetVersionRead,
     AssumptionRead,
     BenchmarkDatasetRead,
+    BenchmarkFixtureRequest,
+    BenchmarkFixtureResponse,
     BenchmarkImportRequest,
     BenchmarkImportResponse,
     BenchmarkLocalStatusRead,
@@ -109,6 +111,7 @@ from tabular_harness.services.benchmarks import (
     benchmark_to_dict,
     build_import_manifest,
     build_relational_catalog,
+    generate_benchmark_fixture,
     get_benchmark_dataset,
     inspect_benchmark_local_files,
     list_benchmark_datasets,
@@ -199,6 +202,24 @@ def benchmark_local_status(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return inspect_benchmark_local_files(benchmark, root)
+
+
+@router.post("/api/benchmarks/{benchmark_id}/fixtures/generate", response_model=BenchmarkFixtureResponse)
+def generate_benchmark_fixture_endpoint(
+    benchmark_id: str,
+    payload: BenchmarkFixtureRequest,
+    request: Request,
+) -> dict[str, Any]:
+    try:
+        return generate_benchmark_fixture(
+            request.app.state.settings,
+            benchmark_id,
+            overwrite=payload.overwrite,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/api/projects", response_model=list[ProjectRead])
@@ -560,6 +581,129 @@ def import_benchmark_dataset(
         "profile_job_id": job.id,
         "primary_file": primary_relative_path,
     }
+
+
+@router.post("/api/projects/{project_id}/benchmarks/{benchmark_id}/fixture-smoke", response_model=JobRead)
+def run_benchmark_fixture_smoke(
+    project_id: str,
+    benchmark_id: str,
+    payload: BenchmarkFixtureRequest,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="run_benchmark_fixture_smoke",
+        project_id=project_id,
+        input_payload={"benchmark_id": benchmark_id, "overwrite": payload.overwrite},
+        policy={
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "external_download": "not_required_for_fixture",
+        },
+    )
+    try:
+        mark_job_running(job)
+        fixture = generate_benchmark_fixture(
+            request.app.state.settings,
+            benchmark_id,
+            overwrite=payload.overwrite,
+        )
+        if not fixture["fixture_matches_expected"]:
+            raise ValueError(
+                "Existing benchmark files do not match the Tablex fixture. "
+                "Use overwrite=true to replace fixture files, or run normal benchmark import manually."
+            )
+        import_result = import_benchmark_dataset(
+            project_id,
+            benchmark_id,
+            BenchmarkImportRequest(target_column=None),
+            request,
+            db,
+            store,
+        )
+        dataset_id = import_result["dataset_snapshot"]["id"]
+        dataset = db.get(DatasetSnapshot, dataset_id)
+        if dataset is None:
+            raise ValueError("Fixture import did not produce a DatasetSnapshot")
+        quality = analyze_dataset_quality(db, store=store, project=project, dataset=dataset)
+        candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
+        comparison_artifact = create_evaluation_scenario_comparison(
+            db,
+            store=store,
+            project=project,
+            dataset=dataset,
+            candidates=list(candidates),
+        )
+        primary_candidate = next((item for item in candidates if item.status == "primary_candidate"), candidates[0])
+        spec = promote_candidate_to_spec(db, store=store, candidate=primary_candidate)
+        review = create_evaluation_approval_review(db, store=store, spec=spec, approval_intent=True)
+        if review.blocked:
+            raise ValueError("Fixture EvaluationSpec approval was blocked")
+        approve_spec(spec)
+        approved_artifact = write_spec_artifact(db, store, spec)
+        create_lineage_edge(
+            db,
+            project_id=spec.project_id,
+            from_asset_type="artifact",
+            from_asset_id=review.artifact.id,
+            to_asset_type="evaluation_spec",
+            to_asset_id=spec.id,
+            relation_type="supports_approval",
+        )
+        create_lineage_edge(
+            db,
+            project_id=spec.project_id,
+            from_asset_type="evaluation_spec",
+            from_asset_id=spec.id,
+            to_asset_type="artifact",
+            to_asset_id=approved_artifact.id,
+            relation_type="produces",
+        )
+        split = generate_split_manifest(db, store=store, spec=spec)
+        strategy = create_baseline_strategy_plan(
+            db,
+            store=store,
+            project=project,
+            evaluation_spec=spec,
+            split_manifest=split,
+        )
+        artifact_ids = [
+            import_result["artifact"]["id"],
+            import_result["import_manifest_artifact"]["id"],
+            import_result["relational_catalog_artifact"]["id"],
+            *quality.artifact_ids,
+            comparison_artifact.id,
+            review.artifact.id,
+            approved_artifact.id,
+            split.artifact_id,
+            strategy.artifact.id,
+        ]
+        mark_job_succeeded(
+            job,
+            {
+                "benchmark_id": benchmark_id,
+                "fixture": fixture,
+                "dataset_snapshot_id": dataset.id,
+                "quality_gate": quality.gate,
+                "evaluation_candidate_ids": [candidate.id for candidate in candidates],
+                "evaluation_scenario_comparison_artifact_id": comparison_artifact.id,
+                "evaluation_spec_id": spec.id,
+                "approval_review_artifact_id": review.artifact.id,
+                "split_manifest_id": split.id,
+                "baseline_strategy_plan_artifact_id": strategy.artifact.id,
+                "artifact_ids": artifact_ids,
+            },
+        )
+    except HTTPException as exc:
+        mark_job_failed(job, str(exc.detail))
+        raise
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
 
 
 @router.get("/api/projects/{project_id}/datasets", response_model=list[DatasetSnapshotRead])

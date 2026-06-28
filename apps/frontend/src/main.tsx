@@ -86,6 +86,8 @@ type BenchmarkDataset = {
   risk_notes: string[];
   default_local_path: string;
   download_instructions: string;
+  fixture_available: boolean;
+  fixture_notes: string | null;
   local_status: BenchmarkLocalStatus | null;
 };
 
@@ -856,6 +858,26 @@ function DataTab({
     );
   }
 
+  async function generateBenchmarkFixture(benchmark: BenchmarkDataset) {
+    await runAction(() =>
+      api(`/api/benchmarks/${benchmark.id}/fixtures/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ overwrite: false })
+      })
+    );
+  }
+
+  async function runBenchmarkFixtureSmoke(benchmark: BenchmarkDataset) {
+    await runAction(() =>
+      api(`/api/projects/${project.id}/benchmarks/${benchmark.id}/fixture-smoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ overwrite: false })
+      })
+    );
+  }
+
   async function loadQualityPreview(artifactId: string) {
     setQualityPreviewLoadingId(artifactId);
     setQualityPreviewError(null);
@@ -928,6 +950,7 @@ function DataTab({
                         <span className={status?.ready ? "badge" : "badge risk"}>
                           {status?.ready ? "ready" : `${status?.required_missing_count ?? 0} missing`}
                         </span>
+                        {benchmark.fixture_available ? <span className="badge">fixture</span> : null}
                       </div>
                     </div>
                     <a className="icon-link" href={benchmark.source_url} target="_blank" rel="noreferrer" title="Open source">
@@ -968,6 +991,22 @@ function DataTab({
                     <button className="primary-button" disabled={busy} onClick={() => void importBenchmark(benchmark)}>
                       {busy ? <Loader2 className="spin" size={16} /> : <Upload size={16} />}
                       Import
+                    </button>
+                    <button
+                      className="secondary-button"
+                      disabled={busy || !benchmark.fixture_available}
+                      onClick={() => void generateBenchmarkFixture(benchmark)}
+                    >
+                      <Database size={16} />
+                      Fixture
+                    </button>
+                    <button
+                      className="secondary-button"
+                      disabled={busy || !benchmark.fixture_available}
+                      onClick={() => void runBenchmarkFixtureSmoke(benchmark)}
+                    >
+                      <Play size={16} />
+                      Smoke
                     </button>
                     <a className="secondary-button text-link-button" href={benchmark.source_url} target="_blank" rel="noreferrer">
                       Source
