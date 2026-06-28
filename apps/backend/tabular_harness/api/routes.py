@@ -117,6 +117,7 @@ from tabular_harness.services.baseline import (
     create_baseline_strategy_plan,
 )
 from tabular_harness.services.baseline import run_baseline as run_baseline_service
+from tabular_harness.services.benchmark_collection import create_benchmark_collection_plan
 from tabular_harness.services.benchmark_evidence import create_benchmark_evidence_pack
 from tabular_harness.services.benchmarks import (
     benchmark_source_card,
@@ -762,6 +763,60 @@ def create_project_benchmark_scenario_pack(
                 "benchmark_scenario_report_artifact_id": result.report_artifact.id,
                 "dataset_snapshot_id": result.pack["dataset"].get("dataset_snapshot_id"),
                 "supporting_table_artifact_count": len(result.pack["supporting_table_artifacts"]),
+            },
+        )
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/benchmarks/collection-plan", response_model=JobRead)
+def create_project_benchmark_collection_plan(
+    project_id: str,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="create_benchmark_collection_plan",
+        project_id=project_id,
+        input_payload={"project_id": project_id},
+        policy={
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "external_download": "not_performed",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_benchmark_collection_plan(
+            db,
+            store=store,
+            project=project,
+            settings=request.app.state.settings,
+            job=job,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.plan["schema_version"],
+                "benchmark_count": result.plan["summary"]["benchmark_count"],
+                "credentialed_count": result.plan["summary"]["credentialed_count"],
+                "public_direct_count": result.plan["summary"]["public_direct_count"],
+                "fixture_available_count": result.plan["summary"]["fixture_available_count"],
+                "local_ready_count": result.plan["summary"]["local_ready_count"],
+                "multitable_count": result.plan["summary"]["multitable_count"],
+                "time_series_count": result.plan["summary"]["time_series_count"],
+                "benchmark_collection_plan_artifact_id": result.plan_artifact.id,
+                "benchmark_collection_report_id": result.report.id,
+                "benchmark_collection_report_artifact_id": result.report_artifact.id,
+                "visualization_id": result.visualization.id,
+                "visualization_artifact_id": result.visualization_artifact.id,
+                "evidence_id": result.evidence.id,
+                "artifact_ids": result.artifact_ids,
             },
         )
     except Exception as exc:
@@ -3845,6 +3900,9 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "run_report_id": output.get("run_report_id"),
         "decision_report_id": output.get("decision_report_id"),
         "benchmark_count": output.get("benchmark_count"),
+        "benchmark_collection_plan_artifact_id": output.get("benchmark_collection_plan_artifact_id"),
+        "benchmark_collection_report_id": output.get("benchmark_collection_report_id"),
+        "benchmark_collection_report_artifact_id": output.get("benchmark_collection_report_artifact_id"),
         "benchmark_evidence_pack_artifact_id": output.get("benchmark_evidence_pack_artifact_id"),
         "benchmark_evidence_report_id": output.get("benchmark_evidence_report_id"),
         "task_id": output.get("task_id"),
@@ -3875,6 +3933,12 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "research_query_count": output.get("research_query_count"),
         "project_source_count": output.get("project_source_count"),
         "library_source_count": output.get("library_source_count"),
+        "credentialed_count": output.get("credentialed_count"),
+        "public_direct_count": output.get("public_direct_count"),
+        "fixture_available_count": output.get("fixture_available_count"),
+        "local_ready_count": output.get("local_ready_count"),
+        "multitable_count": output.get("multitable_count"),
+        "time_series_count": output.get("time_series_count"),
         "recommended_asset_count": output.get("recommended_asset_count"),
         "materialized_context_count": output.get("materialized_context_count"),
         "materialized_library_asset_count": output.get("materialized_library_asset_count"),

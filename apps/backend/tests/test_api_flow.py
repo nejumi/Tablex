@@ -1071,6 +1071,38 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     assert project_response.status_code == 200
     project_id = project_response.json()["id"]
 
+    collection_response = client.post(f"/api/projects/{project_id}/benchmarks/collection-plan")
+    assert collection_response.status_code == 200, collection_response.text
+    collection_job = collection_response.json()
+    assert collection_job["status"] == "succeeded"
+    assert collection_job["output"]["schema_version"] == "benchmark_collection_plan.v1"
+    assert collection_job["output"]["benchmark_collection_plan_artifact_id"]
+    assert collection_job["output"]["benchmark_collection_report_artifact_id"]
+    assert collection_job["output"]["credentialed_count"] >= 1
+    assert collection_job["output"]["public_direct_count"] >= 1
+    assert collection_job["output"]["multitable_count"] >= 1
+
+    collection_plan_response = client.get(
+        f"/api/artifacts/{collection_job['output']['benchmark_collection_plan_artifact_id']}/download"
+    )
+    assert collection_plan_response.status_code == 200
+    collection_plan = collection_plan_response.json()
+    assert collection_plan["credential_policy"]["secret_access"] == "forbidden"
+    home_credit_plan = next(
+        item for item in collection_plan["benchmarks"] if item["benchmark_id"] == "kaggle_home_credit_default_risk"
+    )
+    assert "credentialed_manual_download_required" in home_credit_plan["collection_status"]
+    openml_plan = next(item for item in collection_plan["benchmarks"] if item["benchmark_id"] == "openml_credit_g")
+    assert "public_workflow_available" in openml_plan["collection_status"]
+
+    collection_report_response = client.get(
+        f"/api/artifacts/{collection_job['output']['benchmark_collection_report_artifact_id']}/preview"
+    )
+    assert collection_report_response.status_code == 200
+    collection_report = collection_report_response.json()["preview"]
+    assert "Benchmark Collection Plan" in collection_report
+    assert "Home Credit Default Risk" in collection_report
+
     import_missing_response = client.post(f"/api/projects/{project_id}/benchmarks/uci_bank_marketing/import", json={})
     assert import_missing_response.status_code == 400
     assert "Missing required benchmark files" in import_missing_response.text

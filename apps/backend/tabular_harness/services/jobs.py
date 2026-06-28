@@ -18,6 +18,7 @@ JOB_TYPES = {
     "review_evaluation_approval",
     "build_split_manifest",
     "run_benchmark_fixture_smoke",
+    "create_benchmark_collection_plan",
     "create_benchmark_evidence_pack",
     "run_public_benchmark_workflow",
     "run_baseline",

@@ -82,6 +82,7 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Data Quality Gate v0 with `data_quality_gate`, `data_quality_report`, schema file, quality visualization, materialized Questions, Assumptions, Evidence, Insight, AgentContextPack context, and Data/Evaluation UI.
 - Controlled Agent Workspace v0 with `agent_workspace_manifest`, workspace context materialization, AgentResult artifact ingestion, runner safety checks, and Approach UI preview.
 - Research Findings Synthesis v1 with latest research source packs, research run manifests, source citation manifests, benchmark/baseline context, Evidence, Report, VisualizationSpec, Lineage, AgentTaskContract inputs, AgentContextPack context, and Approach UI preview/download.
+- Benchmark Collection Plan v1 with Home Credit-centered benchmark source readiness, credential policy, fixture/public workflow status, source audit, recommended initial suite, Report, Evidence, VisualizationSpec, Lineage, and Data UI preview/download.
 - Job skeleton for:
   - `profile_dataset`
   - `infer_assumptions`
@@ -139,4 +140,5 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Data Quality Gate checks are deterministic MVP heuristics. They catch common leakage, missingness, duplicate, ID, time/group, and evaluation-readiness issues, but do not replace domain review or full statistical data validation.
 - Controlled workspaces currently use LocalStubAgentRunner for real execution. CodexCliRunner remains a skeleton until external execution policy, approval, and result ingestion are hardened further.
 - Research Findings Synthesis currently summarizes stub or artifact-backed research outputs. Verified external web/literature retrieval remains controlled-runner future work and must attach source citations before decision-grade claims.
+- Benchmark Collection Plans use catalog source metadata and local readiness; they do not replace real dataset licensing review or credentialed user-managed download flows.
 - Auth is stubbed as local single-user behavior.

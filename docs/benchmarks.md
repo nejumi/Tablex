@@ -90,6 +90,21 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/openml_c
 
 The public workflow runs download, local readiness, primary-table import, profiling, quality gate, evaluation scenario comparison, approval, SplitManifest generation, adaptive BaselineStrategyPlan, baseline execution, diagnostics, run report, visualization dashboard, insights, decision dashboard/report, and BenchmarkScenarioPack. It rejects credentialed sources such as Kaggle competitions because Tablex must not receive or pass account credentials to agents.
 
+Create a project-scoped collection plan across the full catalog:
+
+```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/collection-plan
+```
+
+The collection plan creates `benchmark_collection_plan`, `benchmark_collection_report`, and `visualization_spec` artifacts plus Report, Evidence, and Lineage. It ranks entries by practical use:
+
+- Home Credit Default Risk as the primary real-world multi-table credit-risk benchmark once the user downloads Kaggle files outside Tablex.
+- Home Credit Model Stability as a larger parquet/stability benchmark for later stress tests.
+- OpenML credit-g, UCI Bank Marketing, and UCI Wine Quality as credential-free public smoke tests.
+- Store Sales, M5, Rossmann, and Instacart as time-series, hierarchical, or multi-table planning targets once local files are available.
+
+The plan records `credentialed_manual_download_required`, `public_workflow_available`, `fixture_smoke_available`, and `ready_to_import` statuses without downloading data or storing credentials.
+
 Generate a credential-free local fixture for supported benchmarks:
 
 ```bash

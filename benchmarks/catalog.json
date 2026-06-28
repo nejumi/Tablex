@@ -85,6 +85,17 @@
       "source_url": "https://www.kaggle.com/competitions/home-credit-credit-risk-model-stability",
       "competition_slug": "home-credit-credit-risk-model-stability",
       "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "source_card": {
+        "verified_at": "2026-06-29",
+        "official_sources": [
+          {
+            "title": "Kaggle Home Credit Credit Risk Model Stability competition",
+            "url": "https://www.kaggle.com/competitions/home-credit-credit-risk-model-stability",
+            "source_type": "competition_page"
+          }
+        ],
+        "verification_notes": "Kaggle competition access is account-gated. Tablex records expected local file layout and never stores Kaggle credentials."
+      },
       "task_types": ["binary_classification", "model_stability"],
       "modality_tags": ["multi_table", "credit_risk", "temporal_stability", "parquet"],
       "scale": "large",
@@ -140,6 +151,17 @@
       "source_url": "https://www.kaggle.com/competitions/ieee-fraud-detection",
       "competition_slug": "ieee-fraud-detection",
       "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "source_card": {
+        "verified_at": "2026-06-29",
+        "official_sources": [
+          {
+            "title": "Kaggle IEEE-CIS Fraud Detection competition",
+            "url": "https://www.kaggle.com/competitions/ieee-fraud-detection",
+            "source_type": "competition_page"
+          }
+        ],
+        "verification_notes": "Kaggle competition access is account-gated. Tablex records expected train_transaction/train_identity layout and never stores Kaggle credentials."
+      },
       "task_types": ["binary_classification"],
       "modality_tags": ["fraud", "multi_table", "imbalanced_classification", "identity_features"],
       "scale": "medium",
@@ -181,6 +203,17 @@
       "source_url": "https://www.kaggle.com/competitions/store-sales-time-series-forecasting",
       "competition_slug": "store-sales-time-series-forecasting",
       "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "source_card": {
+        "verified_at": "2026-06-29",
+        "official_sources": [
+          {
+            "title": "Kaggle Store Sales - Time Series Forecasting competition",
+            "url": "https://www.kaggle.com/competitions/store-sales-time-series-forecasting",
+            "source_type": "competition_page"
+          }
+        ],
+        "verification_notes": "Kaggle competition access is account-gated. Tablex records expected local train, stores, oil, holidays, transactions, and test files without storing credentials."
+      },
       "task_types": ["forecasting", "regression"],
       "modality_tags": ["time_series", "retail", "multi_table", "hierarchical"],
       "scale": "medium",
@@ -231,6 +264,17 @@
       "source_url": "https://www.kaggle.com/competitions/m5-forecasting-accuracy",
       "competition_slug": "m5-forecasting-accuracy",
       "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "source_card": {
+        "verified_at": "2026-06-29",
+        "official_sources": [
+          {
+            "title": "Kaggle M5 Forecasting - Accuracy competition",
+            "url": "https://www.kaggle.com/competitions/m5-forecasting-accuracy",
+            "source_type": "competition_page"
+          }
+        ],
+        "verification_notes": "Kaggle competition access is account-gated. Tablex records expected local sales, calendar, prices, and submission files without storing credentials."
+      },
       "task_types": ["forecasting"],
       "modality_tags": ["time_series", "retail", "hierarchical", "wide_table"],
       "scale": "large",
@@ -272,6 +316,17 @@
       "source_url": "https://www.kaggle.com/competitions/rossmann-store-sales",
       "competition_slug": "rossmann-store-sales",
       "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "source_card": {
+        "verified_at": "2026-06-29",
+        "official_sources": [
+          {
+            "title": "Kaggle Rossmann Store Sales competition",
+            "url": "https://www.kaggle.com/competitions/rossmann-store-sales",
+            "source_type": "competition_page"
+          }
+        ],
+        "verification_notes": "Kaggle competition access is account-gated. Tablex records expected local train/store/test files without storing credentials."
+      },
       "task_types": ["forecasting", "regression"],
       "modality_tags": ["time_series", "retail", "store_metadata"],
       "scale": "small",
@@ -313,6 +368,17 @@
       "source_url": "https://www.kaggle.com/competitions/instacart-market-basket-analysis",
       "competition_slug": "instacart-market-basket-analysis",
       "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "source_card": {
+        "verified_at": "2026-06-29",
+        "official_sources": [
+          {
+            "title": "Kaggle Instacart Market Basket Analysis competition",
+            "url": "https://www.kaggle.com/competitions/instacart-market-basket-analysis",
+            "source_type": "competition_page"
+          }
+        ],
+        "verification_notes": "Kaggle competition access is account-gated. Tablex records expected local order/product metadata files without storing credentials."
+      },
       "task_types": ["binary_classification", "recommendation"],
       "modality_tags": ["multi_table", "retail", "basket", "reorder_prediction"],
       "scale": "medium",

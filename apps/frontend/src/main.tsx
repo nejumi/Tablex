@@ -921,6 +921,9 @@ function DataTab({
   const [evidencePreview, setEvidencePreview] = React.useState<ArtifactPreview | null>(null);
   const [evidencePreviewError, setEvidencePreviewError] = React.useState<string | null>(null);
   const [evidencePreviewLoadingId, setEvidencePreviewLoadingId] = React.useState<string | null>(null);
+  const [collectionPreview, setCollectionPreview] = React.useState<ArtifactPreview | null>(null);
+  const [collectionPreviewError, setCollectionPreviewError] = React.useState<string | null>(null);
+  const [collectionPreviewLoadingId, setCollectionPreviewLoadingId] = React.useState<string | null>(null);
 
   async function uploadDataset() {
     if (!file) return;
@@ -1018,6 +1021,19 @@ function DataTab({
     });
   }
 
+  async function createBenchmarkCollectionPlan() {
+    await runAction(async () => {
+      const job = await api<Job>(`/api/projects/${project.id}/benchmarks/collection-plan`, {
+        method: "POST"
+      });
+      const reportArtifactId = textField(job.output.benchmark_collection_report_artifact_id);
+      if (reportArtifactId) {
+        await loadCollectionPreview(reportArtifactId);
+      }
+      return job;
+    });
+  }
+
   async function loadQualityPreview(artifactId: string) {
     setQualityPreviewLoadingId(artifactId);
     setQualityPreviewError(null);
@@ -1078,7 +1094,22 @@ function DataTab({
     }
   }
 
+  async function loadCollectionPreview(artifactId: string) {
+    setCollectionPreviewLoadingId(artifactId);
+    setCollectionPreviewError(null);
+    try {
+      setCollectionPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setCollectionPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCollectionPreviewLoadingId(null);
+    }
+  }
+
   const datasetArtifacts = artifacts.filter((artifact) => artifact.asset_type === "dataset_snapshot");
+  const collectionArtifacts = artifacts.filter((artifact) =>
+    ["benchmark_collection_plan", "benchmark_collection_report"].includes(artifact.asset_type)
+  );
   const scenarioArtifacts = artifacts.filter((artifact) =>
     ["benchmark_scenario_pack", "benchmark_scenario_report"].includes(artifact.asset_type)
   );
@@ -1114,6 +1145,53 @@ function DataTab({
             Analyze Quality
           </button>
         </div>
+      </Panel>
+      <Panel title="Benchmark Collection Plan" icon={<Database size={18} />}>
+        <div className="toolbar">
+          <button className="secondary-button" disabled={busy} onClick={() => void createBenchmarkCollectionPlan()}>
+            {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+            Collection Plan
+          </button>
+          <button className="secondary-button" disabled={busy} onClick={() => void createBenchmarkEvidencePack()}>
+            {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+            Evidence Pack
+          </button>
+        </div>
+        {collectionArtifacts.length ? (
+          <Table
+            headers={["Type", "Benchmarks", "Credentialed", "Public", "Fixtures", "Local Ready", "Created", "Actions"]}
+            rows={collectionArtifacts.map((artifact) => [
+              artifact.asset_type,
+              String(artifact.metadata.benchmark_count ?? "-"),
+              String(artifact.metadata.credentialed_count ?? "-"),
+              String(artifact.metadata.public_direct_count ?? "-"),
+              String(artifact.metadata.fixture_available_count ?? "-"),
+              String(artifact.metadata.local_ready_count ?? "-"),
+              formatDate(artifact.created_at),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={collectionPreviewLoadingId === artifact.id}
+                  onClick={() => void loadCollectionPreview(artifact.id)}
+                  title="Preview benchmark collection plan"
+                >
+                  {collectionPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download benchmark collection plan">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Benchmark collection plans will rank credentialed Kaggle competitions, credential-free public datasets, fixtures, local readiness, and recommended smoke workflows without storing credentials." />
+        )}
+        {collectionPreviewError ? <div className="banner danger">{collectionPreviewError}</div> : null}
+        {collectionPreview?.preview_available ? (
+          <pre className="markdown-preview">{collectionPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={collectionPreview?.reason ?? "Create or select a benchmark collection plan to inspect source readiness, credential policy, and recommended benchmark suite order."} />
+        )}
       </Panel>
       <Panel title="Benchmark Dataset Catalog" icon={<Database size={18} />}>
         {benchmarks.length ? (
