@@ -106,6 +106,18 @@ curl http://localhost:8000/api/datasets/{dataset_snapshot_id}/quality/latest
 
 The quality gate stores `data_quality_gate`, `data_quality_report`, and a quality `visualization_spec`. It materializes high-risk findings as Evidence, Assumptions, Questions, and an Insight. AgentContextPacks include `quality_gate_context` so future Codex/Skill runners can see harness-owned leakage, availability, temporal, duplicate, missingness, and evaluation-readiness constraints before generating features or code.
 
+Benchmark catalog endpoints:
+
+```bash
+curl http://localhost:8000/api/benchmarks
+curl http://localhost:8000/api/benchmarks/uci_bank_marketing/local-status
+curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/uci_bank_marketing/import \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Place extracted benchmark files under `data/benchmarks/{benchmark_id}` or another path below `HARNESS_DATA_DIR/benchmarks`. Kaggle credentials and API tokens are user-managed outside Tablex and must not be pasted into Tablex, AgentTaskContracts, or runner workspaces. The v0 importer profiles one primary CSV/Parquet table and stores a `benchmark_import_manifest` artifact for supporting files. See `docs/benchmarks.md`.
+
 Artifact preview and download are available from:
 
 ```bash
@@ -242,12 +254,12 @@ curl -s -X POST http://localhost:8000/api/projects \
   -d '{"name":"Demo","target_column":"target"}'
 ```
 
-Upload CSV or Parquet through the UI, then run evaluation design from the Evaluation tab.
+Upload CSV or Parquet through the UI, or import a locally prepared benchmark primary table from the Data tab, then run evaluation design from the Evaluation tab.
 
 The current UI flow is:
 
 1. Create a project with a target column.
-2. Upload a CSV or Parquet file from the Data tab.
+2. Upload a CSV or Parquet file from the Data tab, or import from the Benchmark Dataset Catalog.
 3. Run Data Quality analysis from the Data tab and inspect quality gates.
 4. Review or answer generated questions in the Understanding tab.
 5. Review assumptions in the Assumptions tab.

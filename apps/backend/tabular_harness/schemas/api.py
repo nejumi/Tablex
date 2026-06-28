@@ -147,6 +147,57 @@ class DatasetUploadResponse(BaseModel):
     profile_job_id: str
 
 
+class BenchmarkImportRequest(BaseModel):
+    local_path: str | None = None
+    primary_file: str | None = None
+    target_column: str | None = None
+
+
+class BenchmarkDatasetRead(BaseModel):
+    id: str
+    name: str
+    source_kind: str
+    source_url: str
+    competition_slug: str | None = None
+    license_note: str | None = None
+    task_types: list[str]
+    modality_tags: list[str]
+    scale: str | None = None
+    recommended_uses: list[str] = Field(default_factory=list)
+    primary_table: dict[str, Any]
+    required_files: list[dict[str, Any]]
+    recommended_files: list[dict[str, Any]] = Field(default_factory=list)
+    download: dict[str, Any]
+    evaluation_notes: str | None = None
+    risk_notes: list[str] = Field(default_factory=list)
+    default_local_path: str
+    download_instructions: str
+    local_status: dict[str, Any] | None = None
+
+
+class BenchmarkLocalStatusRead(BaseModel):
+    root_path: str
+    exists: bool
+    ready: bool
+    required_found_count: int
+    required_missing_count: int
+    recommended_found_count: int
+    recommended_missing_count: int
+    found_required: list[dict[str, Any]]
+    missing_required: list[dict[str, Any]]
+    found_recommended: list[dict[str, Any]]
+    missing_recommended: list[dict[str, Any]]
+
+
+class BenchmarkImportResponse(BaseModel):
+    benchmark: BenchmarkDatasetRead
+    dataset_snapshot: DatasetSnapshotRead
+    artifact: ArtifactRead
+    import_manifest_artifact: ArtifactRead
+    profile_job_id: str
+    primary_file: str
+
+
 class SemanticCatalogRead(BaseModel):
     id: str
     project_id: str
@@ -310,6 +361,7 @@ class JobCreate(BaseModel):
         "compare_experiments",
         "draft_run_report",
         "analyze_data_quality",
+        "import_benchmark_dataset",
         "run_agent_task",
     ]
     project_id: str | None = None

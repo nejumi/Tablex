@@ -49,6 +49,10 @@ from tabular_harness.schemas import (
     AssetReferenceRead,
     AssetVersionRead,
     AssumptionRead,
+    BenchmarkDatasetRead,
+    BenchmarkImportRequest,
+    BenchmarkImportResponse,
+    BenchmarkLocalStatusRead,
     DatasetSnapshotRead,
     DatasetUploadResponse,
     EvaluationCandidateRead,
@@ -98,6 +102,18 @@ from tabular_harness.services.asset_library import (
     seed_default_assets,
 )
 from tabular_harness.services.baseline import run_baseline as run_baseline_service
+from tabular_harness.services.benchmarks import (
+    benchmark_to_dict,
+    build_import_manifest,
+    get_benchmark_dataset,
+    inspect_benchmark_local_files,
+    list_benchmark_datasets,
+    raw_benchmark_dataset,
+    relative_path,
+    resolve_benchmark_root,
+    select_primary_file,
+    validate_required_files,
+)
 from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
 from tabular_harness.services.evaluation import (
@@ -147,6 +163,35 @@ def app_config(request: Request) -> dict[str, str]:
         "app_display_name": str(settings.app_display_name),
         "architecture_name": "Tabular-first Prediction Meta-Harness",
     }
+
+
+@router.get("/api/benchmarks", response_model=list[BenchmarkDatasetRead])
+def list_benchmarks(request: Request) -> list[dict[str, Any]]:
+    return list_benchmark_datasets(request.app.state.settings)
+
+
+@router.get("/api/benchmarks/{benchmark_id}", response_model=BenchmarkDatasetRead)
+def get_benchmark(benchmark_id: str, request: Request) -> dict[str, Any]:
+    try:
+        return get_benchmark_dataset(benchmark_id, request.app.state.settings)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
+
+
+@router.get("/api/benchmarks/{benchmark_id}/local-status", response_model=BenchmarkLocalStatusRead)
+def benchmark_local_status(
+    benchmark_id: str,
+    request: Request,
+    local_path: str | None = None,
+) -> dict[str, Any]:
+    try:
+        benchmark = raw_benchmark_dataset(benchmark_id)
+        root = resolve_benchmark_root(request.app.state.settings, benchmark_id, local_path)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return inspect_benchmark_local_files(benchmark, root)
 
 
 @router.get("/api/projects", response_model=list[ProjectRead])
@@ -307,6 +352,159 @@ def upload_dataset(
         "dataset_snapshot": dataset_to_dict(dataset),
         "artifact": artifact_to_dict(dataset_artifact),
         "profile_job_id": job.id,
+    }
+
+
+@router.post("/api/projects/{project_id}/benchmarks/{benchmark_id}/import", response_model=BenchmarkImportResponse)
+def import_benchmark_dataset(
+    project_id: str,
+    benchmark_id: str,
+    payload: BenchmarkImportRequest,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    settings = request.app.state.settings
+    try:
+        benchmark = raw_benchmark_dataset(benchmark_id)
+        root = resolve_benchmark_root(settings, benchmark_id, payload.local_path)
+        local_status = validate_required_files(benchmark, root)
+        primary_file = select_primary_file(benchmark, root, payload.primary_file)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    catalog_target = (benchmark.get("primary_table") or {}).get("target_column")
+    effective_target = payload.target_column or catalog_target or project.target_column
+    if effective_target and effective_target != project.target_column:
+        project.target_column = str(effective_target)
+
+    primary_relative_path = relative_path(root, primary_file)
+    job = create_job(
+        db,
+        job_type="import_benchmark_dataset",
+        project_id=project_id,
+        input_payload={
+            "benchmark_id": benchmark_id,
+            "local_path": str(root),
+            "primary_file": primary_relative_path,
+            "target_column": effective_target,
+        },
+        policy={
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "external_download": "user_managed_outside_tablex",
+        },
+    )
+    try:
+        mark_job_running(job)
+        version = next_artifact_version(db, project_id, "dataset_snapshot", f"benchmark_{benchmark_id}")
+        artifact_dir, stored, content_hash = store.store_existing_file(
+            org_id="local-org",
+            project_id=project_id,
+            asset_type="dataset_snapshot",
+            name=f"benchmark_{benchmark_id}",
+            version=version,
+            source_path=primary_file,
+            filename=primary_file.name,
+            metadata={
+                "project_id": project_id,
+                "source_type": "benchmark_catalog",
+                "benchmark_id": benchmark_id,
+                "benchmark_name": benchmark.get("name"),
+                "source_url": benchmark.get("source_url"),
+                "primary_file": primary_relative_path,
+            },
+        )
+        dataset_artifact = register_artifact(
+            db,
+            project_id=project_id,
+            asset_type="dataset_snapshot",
+            name=f"benchmark_{benchmark_id}",
+            uri=str(artifact_dir),
+            content_hash=content_hash,
+            size_bytes=stored.size_bytes,
+            metadata={
+                "primary_path": str(stored.path),
+                "source_type": "benchmark_catalog",
+                "benchmark_id": benchmark_id,
+                "benchmark_name": benchmark.get("name"),
+                "source_url": benchmark.get("source_url"),
+                "primary_file": primary_relative_path,
+                "target_column": effective_target,
+                "project_id": project_id,
+            },
+            version=version,
+        )
+        dataset = profile_dataset_artifact(
+            db,
+            store,
+            project,
+            dataset_artifact,
+            str(effective_target) if effective_target else None,
+            source_type="benchmark_catalog",
+            source_ref=f"{benchmark_id}:{primary_relative_path}",
+        )
+        import_manifest = build_import_manifest(
+            benchmark=benchmark,
+            root=root,
+            primary_file=primary_file,
+            local_status=local_status,
+            target_column=str(effective_target) if effective_target else None,
+        )
+        import_manifest["dataset_snapshot_id"] = dataset.id
+        import_manifest_artifact = store_and_register_json(
+            db,
+            store,
+            project_id=project_id,
+            asset_type="benchmark_import_manifest",
+            name=f"benchmark_import_{benchmark_id}",
+            filename="benchmark_import_manifest.json",
+            payload=import_manifest,
+            metadata={
+                "project_id": project_id,
+                "dataset_snapshot_id": dataset.id,
+                "benchmark_id": benchmark_id,
+                "primary_file": primary_relative_path,
+            },
+        )
+        create_lineage_edge(
+            db,
+            project_id=project_id,
+            from_asset_type="artifact",
+            from_asset_id=import_manifest_artifact.id,
+            to_asset_type="dataset_snapshot",
+            to_asset_id=dataset.id,
+            relation_type="describes_source",
+        )
+        project.current_phase = "UNDERSTANDING_REVIEW"
+        project.updated_at = utc_now()
+        mark_job_succeeded(
+            job,
+            {
+                "benchmark_id": benchmark_id,
+                "dataset_snapshot_id": dataset.id,
+                "artifact_id": dataset_artifact.id,
+                "import_manifest_artifact_id": import_manifest_artifact.id,
+                "primary_file": primary_relative_path,
+                "target_column": effective_target,
+            },
+        )
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise
+
+    benchmark_payload = benchmark_to_dict(benchmark, settings=settings, include_status=True)
+    benchmark_payload["local_status"] = local_status
+    return {
+        "benchmark": benchmark_payload,
+        "dataset_snapshot": dataset_to_dict(dataset),
+        "artifact": artifact_to_dict(dataset_artifact),
+        "import_manifest_artifact": artifact_to_dict(import_manifest_artifact),
+        "profile_job_id": job.id,
+        "primary_file": primary_relative_path,
     }
 
 
@@ -1526,15 +1724,18 @@ def profile_dataset_artifact(
     project: Project,
     dataset_artifact: Artifact,
     target_column: str | None,
+    source_type: str = "upload",
+    source_ref: str | None = None,
 ) -> DatasetSnapshot:
     source_path = artifact_primary_path(dataset_artifact)
     result = profile_tabular_file(source_path, project.id, target_column)
+    artifact_metadata = loads_json(dataset_artifact.metadata_json, {})
     dataset = DatasetSnapshot(
         id=new_id("ds"),
         project_id=project.id,
         artifact_id=dataset_artifact.id,
-        source_type="upload",
-        source_ref=loads_json(dataset_artifact.metadata_json, {}).get("source_filename"),
+        source_type=source_type,
+        source_ref=source_ref if source_ref is not None else artifact_metadata.get("source_filename"),
         row_count=result.row_count,
         column_count=result.column_count,
         schema_hash=result.schema_hash,

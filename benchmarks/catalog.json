@@ -1,0 +1,361 @@
+{
+  "schema_version": "benchmark_catalog.v1",
+  "generated_at": "2026-06-29",
+  "principles": [
+    "Benchmark data is user-managed and imported from local files under HARNESS_DATA_DIR/benchmarks.",
+    "Tablex never stores Kaggle credentials, API tokens, connector secrets, or production write credentials.",
+    "The v0 importer profiles one primary table as a DatasetSnapshot and stores a manifest for supporting tables."
+  ],
+  "datasets": [
+    {
+      "id": "kaggle_home_credit_default_risk",
+      "name": "Home Credit Default Risk",
+      "source_kind": "kaggle_competition",
+      "source_url": "https://www.kaggle.com/competitions/home-credit-default-risk",
+      "competition_slug": "home-credit-default-risk",
+      "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "task_types": ["binary_classification"],
+      "modality_tags": ["multi_table", "credit_risk", "tabular", "imbalanced_classification"],
+      "scale": "medium",
+      "recommended_uses": [
+        "multi-table feature recipe development",
+        "credit-risk leakage and prediction-time availability checks",
+        "evaluation sanity checks for imbalanced binary classification",
+        "agent task contracts that need joins, aggregation, and reportable assumptions"
+      ],
+      "primary_table": {
+        "path": "application_train.csv",
+        "target_column": "TARGET",
+        "entity_id_column": "SK_ID_CURR",
+        "description": "Main labeled application table used for v0 profiling and baseline setup."
+      },
+      "required_files": [
+        {
+          "path": "application_train.csv",
+          "role": "primary_table",
+          "description": "Labeled application rows."
+        }
+      ],
+      "recommended_files": [
+        { "path": "bureau.csv", "role": "supporting_table", "description": "Previous credits reported to credit bureau." },
+        { "path": "bureau_balance.csv", "role": "supporting_table", "description": "Monthly bureau credit status history." },
+        { "path": "previous_application.csv", "role": "supporting_table", "description": "Previous Home Credit applications." },
+        { "path": "POS_CASH_balance.csv", "role": "supporting_table", "description": "POS and cash loan monthly balance history." },
+        { "path": "credit_card_balance.csv", "role": "supporting_table", "description": "Credit card balance history." },
+        { "path": "installments_payments.csv", "role": "supporting_table", "description": "Repayment history." },
+        { "path": "application_test.csv", "role": "holdout_table", "description": "Kaggle test rows without labels." }
+      ],
+      "download": {
+        "method": "kaggle_cli",
+        "requires_account": true,
+        "command": "kaggle competitions download -c home-credit-default-risk -p data/benchmarks/kaggle_home_credit_default_risk --unzip"
+      },
+      "evaluation_notes": "Use application_train.csv for local labeled evaluation. Avoid leaking application_test.csv into feature engineering. Prefer stratified or group-aware validation once row/entity semantics are confirmed.",
+      "risk_notes": [
+        "Credit outcomes are time-sensitive; random splits can overstate production performance.",
+        "Supporting tables may contain post-application information unless prediction-time availability is verified."
+      ]
+    },
+    {
+      "id": "kaggle_home_credit_model_stability",
+      "name": "Home Credit Credit Risk Model Stability",
+      "source_kind": "kaggle_competition",
+      "source_url": "https://www.kaggle.com/competitions/home-credit-credit-risk-model-stability",
+      "competition_slug": "home-credit-credit-risk-model-stability",
+      "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "task_types": ["binary_classification", "model_stability"],
+      "modality_tags": ["multi_table", "credit_risk", "temporal_stability", "parquet"],
+      "scale": "large",
+      "recommended_uses": [
+        "multi-table parquet ingestion stress tests",
+        "temporal stability and drift-sensitive evaluation design",
+        "agent planning for feature recipe selection under many relational tables"
+      ],
+      "primary_table": {
+        "path_candidates": [
+          "parquet_files/train/train_base.parquet",
+          "csv_files/train/train_base.csv",
+          "train_base.parquet",
+          "train_base.csv"
+        ],
+        "target_column": "target",
+        "entity_id_column": "case_id",
+        "time_column": "date_decision",
+        "description": "Base train table. The competition also supplies many depth-0/1/2 relational feature tables."
+      },
+      "required_files": [
+        {
+          "path_candidates": [
+            "parquet_files/train/train_base.parquet",
+            "csv_files/train/train_base.csv",
+            "train_base.parquet",
+            "train_base.csv"
+          ],
+          "role": "primary_table",
+          "description": "Base labeled training table."
+        }
+      ],
+      "recommended_files": [
+        { "glob": "parquet_files/train/*.parquet", "role": "supporting_table", "description": "Parquet train tables for relational features." },
+        { "glob": "parquet_files/train/*/*.parquet", "role": "supporting_table", "description": "Nested parquet train tables when extracted with directory structure." },
+        { "glob": "csv_files/train/*.csv", "role": "supporting_table", "description": "CSV train tables when using the CSV archive." }
+      ],
+      "download": {
+        "method": "kaggle_cli",
+        "requires_account": true,
+        "command": "kaggle competitions download -c home-credit-credit-risk-model-stability -p data/benchmarks/kaggle_home_credit_model_stability --unzip"
+      },
+      "evaluation_notes": "Prefer time-aware stability evaluation when date_decision is available. The v0 importer only profiles the base table; relational feature generation should be an AgentTask with a manifest of supporting tables.",
+      "risk_notes": [
+        "Dataset scale can exceed local memory if all supporting files are eagerly copied.",
+        "Stability metrics need explicit validation windows rather than a single random split."
+      ]
+    },
+    {
+      "id": "kaggle_ieee_cis_fraud_detection",
+      "name": "IEEE-CIS Fraud Detection",
+      "source_kind": "kaggle_competition",
+      "source_url": "https://www.kaggle.com/competitions/ieee-fraud-detection",
+      "competition_slug": "ieee-fraud-detection",
+      "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "task_types": ["binary_classification"],
+      "modality_tags": ["fraud", "multi_table", "imbalanced_classification", "identity_features"],
+      "scale": "medium",
+      "recommended_uses": [
+        "fraud benchmark with severe class imbalance",
+        "join handling between transaction and identity tables",
+        "leakage checks around transaction time and identity availability"
+      ],
+      "primary_table": {
+        "path": "train_transaction.csv",
+        "target_column": "isFraud",
+        "entity_id_column": "TransactionID",
+        "time_column": "TransactionDT",
+        "description": "Main transaction table with target."
+      },
+      "required_files": [
+        { "path": "train_transaction.csv", "role": "primary_table", "description": "Labeled transaction rows." }
+      ],
+      "recommended_files": [
+        { "path": "train_identity.csv", "role": "supporting_table", "description": "Identity features joined by TransactionID." },
+        { "path": "test_transaction.csv", "role": "holdout_table", "description": "Kaggle test transactions." },
+        { "path": "test_identity.csv", "role": "holdout_table", "description": "Kaggle test identity rows." }
+      ],
+      "download": {
+        "method": "kaggle_cli",
+        "requires_account": true,
+        "command": "kaggle competitions download -c ieee-fraud-detection -p data/benchmarks/kaggle_ieee_cis_fraud_detection --unzip"
+      },
+      "evaluation_notes": "Use stratified validation at minimum. Time-based validation with TransactionDT is more realistic if the task is framed as forward fraud detection.",
+      "risk_notes": [
+        "Identity fields are sparse and may be unavailable for all transactions.",
+        "Class imbalance makes accuracy and uncalibrated threshold metrics misleading."
+      ]
+    },
+    {
+      "id": "kaggle_store_sales_forecasting",
+      "name": "Store Sales - Time Series Forecasting",
+      "source_kind": "kaggle_competition",
+      "source_url": "https://www.kaggle.com/competitions/store-sales-time-series-forecasting",
+      "competition_slug": "store-sales-time-series-forecasting",
+      "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "task_types": ["forecasting", "regression"],
+      "modality_tags": ["time_series", "retail", "multi_table", "hierarchical"],
+      "scale": "medium",
+      "recommended_uses": [
+        "time-split and forward validation design",
+        "lag, rolling, calendar, holiday, oil price, and store metadata feature recipes",
+        "forecasting report and visualization workflows"
+      ],
+      "primary_table": {
+        "path": "train.csv",
+        "target_column": "sales",
+        "entity_id_column": "id",
+        "time_column": "date",
+        "group_column": "store_nbr",
+        "description": "Daily family/store sales training table."
+      },
+      "required_files": [
+        { "path": "train.csv", "role": "primary_table", "description": "Labeled historical sales." }
+      ],
+      "recommended_files": [
+        { "path": "stores.csv", "role": "supporting_table", "description": "Store metadata." },
+        { "path": "oil.csv", "role": "supporting_table", "description": "Oil prices." },
+        { "path": "holidays_events.csv", "role": "supporting_table", "description": "Holiday and event calendar." },
+        { "path": "transactions.csv", "role": "supporting_table", "description": "Store transactions by date." },
+        { "path": "test.csv", "role": "holdout_table", "description": "Kaggle forecast horizon rows." }
+      ],
+      "download": {
+        "method": "kaggle_cli",
+        "requires_account": true,
+        "command": "kaggle competitions download -c store-sales-time-series-forecasting -p data/benchmarks/kaggle_store_sales_forecasting --unzip"
+      },
+      "evaluation_notes": "Use time_split or rolling-origin validation. Random splits are a sanity check only and should not be the primary evaluation spec for forecasting.",
+      "risk_notes": [
+        "Promotions, holidays, and external covariates require careful prediction-time availability checks.",
+        "Hierarchical aggregation choices change the business meaning of the metric."
+      ]
+    },
+    {
+      "id": "kaggle_m5_forecasting_accuracy",
+      "name": "M5 Forecasting - Accuracy",
+      "source_kind": "kaggle_competition",
+      "source_url": "https://www.kaggle.com/competitions/m5-forecasting-accuracy",
+      "competition_slug": "m5-forecasting-accuracy",
+      "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "task_types": ["forecasting"],
+      "modality_tags": ["time_series", "retail", "hierarchical", "wide_table"],
+      "scale": "large",
+      "recommended_uses": [
+        "hierarchical forecasting dataset preparation",
+        "wide-to-long transformation AgentTasks",
+        "forecast visualization and report stress tests"
+      ],
+      "primary_table": {
+        "path": "sales_train_validation.csv",
+        "target_column": null,
+        "entity_id_column": "id",
+        "description": "Wide daily sales matrix. A feature recipe should transform d_* columns to long format before modeling."
+      },
+      "required_files": [
+        { "path": "sales_train_validation.csv", "role": "primary_table", "description": "Wide sales history." }
+      ],
+      "recommended_files": [
+        { "path": "calendar.csv", "role": "supporting_table", "description": "Calendar and event metadata." },
+        { "path": "sell_prices.csv", "role": "supporting_table", "description": "Weekly item/store prices." },
+        { "path": "sales_train_evaluation.csv", "role": "supporting_table", "description": "Extended training table when available." },
+        { "path": "sample_submission.csv", "role": "holdout_table", "description": "Submission format." }
+      ],
+      "download": {
+        "method": "kaggle_cli",
+        "requires_account": true,
+        "command": "kaggle competitions download -c m5-forecasting-accuracy -p data/benchmarks/kaggle_m5_forecasting_accuracy --unzip"
+      },
+      "evaluation_notes": "The v0 profiler can inspect the wide table, but baseline training should first create a long-format dataset and a forecast horizon split.",
+      "risk_notes": [
+        "Wide daily columns require transformation before standard tabular baselines.",
+        "Hierarchical evaluation requires metric definitions that are not captured by a simple random split."
+      ]
+    },
+    {
+      "id": "kaggle_rossmann_store_sales",
+      "name": "Rossmann Store Sales",
+      "source_kind": "kaggle_competition",
+      "source_url": "https://www.kaggle.com/competitions/rossmann-store-sales",
+      "competition_slug": "rossmann-store-sales",
+      "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "task_types": ["forecasting", "regression"],
+      "modality_tags": ["time_series", "retail", "store_metadata"],
+      "scale": "small",
+      "recommended_uses": [
+        "fast local time-series smoke tests",
+        "store-level group leakage checks",
+        "lag and calendar feature recipe development"
+      ],
+      "primary_table": {
+        "path": "train.csv",
+        "target_column": "Sales",
+        "entity_id_column": "Store",
+        "time_column": "Date",
+        "group_column": "Store",
+        "description": "Daily store sales training table."
+      },
+      "required_files": [
+        { "path": "train.csv", "role": "primary_table", "description": "Labeled daily store sales." }
+      ],
+      "recommended_files": [
+        { "path": "store.csv", "role": "supporting_table", "description": "Store attributes and competition metadata." },
+        { "path": "test.csv", "role": "holdout_table", "description": "Kaggle test horizon rows." }
+      ],
+      "download": {
+        "method": "kaggle_cli",
+        "requires_account": true,
+        "command": "kaggle competitions download -c rossmann-store-sales -p data/benchmarks/kaggle_rossmann_store_sales --unzip"
+      },
+      "evaluation_notes": "Prefer time_split by Date. Random split is only a coarse smoke test because it mixes future and past observations.",
+      "risk_notes": [
+        "Closed stores and zero sales need explicit target and row inclusion assumptions.",
+        "Store metadata must be joined without using future information."
+      ]
+    },
+    {
+      "id": "kaggle_instacart_market_basket",
+      "name": "Instacart Market Basket Analysis",
+      "source_kind": "kaggle_competition",
+      "source_url": "https://www.kaggle.com/competitions/instacart-market-basket-analysis",
+      "competition_slug": "instacart-market-basket-analysis",
+      "license_note": "Kaggle competition terms apply. Download with a user-managed Kaggle account outside Tablex.",
+      "task_types": ["binary_classification", "recommendation"],
+      "modality_tags": ["multi_table", "retail", "basket", "reorder_prediction"],
+      "scale": "medium",
+      "recommended_uses": [
+        "multi-table entity history and aggregation features",
+        "group-aware validation by user_id/order history",
+        "agent-planned candidate generation for recommendation-like tabular tasks"
+      ],
+      "primary_table": {
+        "path": "order_products__train.csv",
+        "target_column": "reordered",
+        "entity_id_column": "order_id",
+        "description": "Train order-product rows with reordered target."
+      },
+      "required_files": [
+        { "path": "order_products__train.csv", "role": "primary_table", "description": "Train order-product rows." }
+      ],
+      "recommended_files": [
+        { "path": "orders.csv", "role": "supporting_table", "description": "Order metadata including user_id and evaluation set." },
+        { "path": "order_products__prior.csv", "role": "supporting_table", "description": "Prior order-product history." },
+        { "path": "products.csv", "role": "supporting_table", "description": "Product metadata." },
+        { "path": "aisles.csv", "role": "supporting_table", "description": "Aisle metadata." },
+        { "path": "departments.csv", "role": "supporting_table", "description": "Department metadata." }
+      ],
+      "download": {
+        "method": "kaggle_cli",
+        "requires_account": true,
+        "command": "kaggle competitions download -c instacart-market-basket-analysis -p data/benchmarks/kaggle_instacart_market_basket --unzip"
+      },
+      "evaluation_notes": "Prefer group-aware validation by user_id after joining orders.csv. The v0 primary-table import cannot infer user_id until the supporting table is used.",
+      "risk_notes": [
+        "Order history features must not include the target order itself.",
+        "The primary table alone is insufficient for realistic user-level validation."
+      ]
+    },
+    {
+      "id": "uci_bank_marketing",
+      "name": "UCI Bank Marketing",
+      "source_kind": "uci_repository",
+      "source_url": "https://archive.ics.uci.edu/dataset/222/bank+marketing",
+      "license_note": "Use according to the UCI repository terms and source dataset citation.",
+      "task_types": ["binary_classification"],
+      "modality_tags": ["single_table", "marketing", "classification", "small_smoke_test"],
+      "scale": "small",
+      "recommended_uses": [
+        "fast local smoke test without Kaggle competition setup",
+        "categorical preprocessing and target-profile checks",
+        "question/assumption UX checks on a compact business dataset"
+      ],
+      "primary_table": {
+        "path": "bank-full.csv",
+        "target_column": "y",
+        "description": "Full bank marketing table. Semicolon-separated CSV is handled by DuckDB read_csv_auto."
+      },
+      "required_files": [
+        { "path": "bank-full.csv", "role": "primary_table", "description": "Full labeled marketing dataset." }
+      ],
+      "recommended_files": [
+        { "path": "bank.csv", "role": "sample_table", "description": "Smaller sampled table if present." },
+        { "path": "bank-additional-full.csv", "role": "alternative_table", "description": "Additional variant if downloaded." }
+      ],
+      "download": {
+        "method": "manual",
+        "requires_account": false,
+        "command": "Download from UCI, extract bank.zip, and place bank-full.csv under data/benchmarks/uci_bank_marketing/"
+      },
+      "evaluation_notes": "Use stratified validation for the y target. Treat duration carefully because it is often unavailable before a call is completed.",
+      "risk_notes": [
+        "The duration column can be leakage depending on the prediction framing.",
+        "Class imbalance is moderate and should be visible in target profile."
+      ]
+    }
+  ]
+}

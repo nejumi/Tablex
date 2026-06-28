@@ -38,6 +38,8 @@ type DatasetSnapshot = {
   id: string;
   project_id: string;
   artifact_id: string;
+  source_type: string;
+  source_ref: string | null;
   row_count: number | null;
   column_count: number | null;
   schema_hash: string;
@@ -65,6 +67,37 @@ type ArtifactPreview = {
   truncated: boolean;
   size_bytes: number | null;
   reason: string | null;
+};
+
+type BenchmarkDataset = {
+  id: string;
+  name: string;
+  source_kind: string;
+  source_url: string;
+  task_types: string[];
+  modality_tags: string[];
+  scale: string | null;
+  recommended_uses: string[];
+  primary_table: Record<string, unknown>;
+  required_files: Array<Record<string, unknown>>;
+  recommended_files: Array<Record<string, unknown>>;
+  download: Record<string, unknown>;
+  evaluation_notes: string | null;
+  risk_notes: string[];
+  default_local_path: string;
+  download_instructions: string;
+  local_status: BenchmarkLocalStatus | null;
+};
+
+type BenchmarkLocalStatus = {
+  root_path: string;
+  exists: boolean;
+  ready: boolean;
+  required_found_count: number;
+  required_missing_count: number;
+  recommended_found_count: number;
+  recommended_missing_count: number;
+  missing_required: Array<{ expected: string[]; role: string | null; description: string | null }>;
 };
 
 type LibraryAsset = {
@@ -475,6 +508,7 @@ function ProjectDetail({
   const [candidates, setCandidates] = React.useState<EvaluationCandidate[]>([]);
   const [specs, setSpecs] = React.useState<EvaluationSpec[]>([]);
   const [artifacts, setArtifacts] = React.useState<Artifact[]>([]);
+  const [benchmarks, setBenchmarks] = React.useState<BenchmarkDataset[]>([]);
   const [jobs, setJobs] = React.useState<Job[]>([]);
   const [runs, setRuns] = React.useState<Run[]>([]);
   const [leaderboard, setLeaderboard] = React.useState<LeaderboardEntry[]>([]);
@@ -503,6 +537,7 @@ function ProjectDetail({
         candidatesData,
         specsData,
         artifactsData,
+        benchmarksData,
         jobsData,
         runsData,
         leaderboardData,
@@ -524,6 +559,7 @@ function ProjectDetail({
         api<EvaluationCandidate[]>(`/api/projects/${project.id}/evaluation/candidates`),
         api<EvaluationSpec[]>(`/api/projects/${project.id}/evaluation/specs`),
         api<Artifact[]>(`/api/projects/${project.id}/artifacts`),
+        api<BenchmarkDataset[]>(`/api/benchmarks`),
         api<Job[]>(`/api/projects/${project.id}/jobs`),
         api<Run[]>(`/api/projects/${project.id}/runs`),
         api<LeaderboardEntry[]>(`/api/projects/${project.id}/leaderboard`),
@@ -545,6 +581,7 @@ function ProjectDetail({
       setCandidates(candidatesData);
       setSpecs(specsData);
       setArtifacts(artifactsData);
+      setBenchmarks(benchmarksData);
       setJobs(jobsData);
       setRuns(runsData);
       setLeaderboard(leaderboardData);
@@ -593,7 +630,14 @@ function ProjectDetail({
       {error ? <div className="banner danger">{error}</div> : null}
       {tab === "Overview" && <OverviewTab overview={overview} assumptions={assumptions} jobs={jobs} artifacts={artifacts} />}
       {tab === "Data" && (
-        <DataTab project={project} datasets={datasets} artifacts={artifacts} busy={busy} runAction={runAction} />
+        <DataTab
+          project={project}
+          datasets={datasets}
+          artifacts={artifacts}
+          benchmarks={benchmarks}
+          busy={busy}
+          runAction={runAction}
+        />
       )}
       {tab === "Understanding" && (
         <UnderstandingTab
@@ -759,17 +803,20 @@ function DataTab({
   project,
   datasets,
   artifacts,
+  benchmarks,
   busy,
   runAction
 }: {
   project: Project;
   datasets: DatasetSnapshot[];
   artifacts: Artifact[];
+  benchmarks: BenchmarkDataset[];
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const [file, setFile] = React.useState<File | null>(null);
   const [target, setTarget] = React.useState(project.target_column ?? "");
+  const [benchmarkPaths, setBenchmarkPaths] = React.useState<Record<string, string>>({});
   const [qualityPreview, setQualityPreview] = React.useState<ArtifactPreview | null>(null);
   const [qualityPreviewError, setQualityPreviewError] = React.useState<string | null>(null);
   const [qualityPreviewLoadingId, setQualityPreviewLoadingId] = React.useState<string | null>(null);
@@ -786,6 +833,22 @@ function DataTab({
       })
     );
     setFile(null);
+  }
+
+  async function importBenchmark(benchmark: BenchmarkDataset) {
+    const configuredPath = benchmarkPaths[benchmark.id] ?? benchmark.default_local_path;
+    const benchmarkTarget = textField(benchmark.primary_table.target_column);
+    const effectiveTarget = benchmarkTarget ?? (target.trim() || undefined);
+    await runAction(() =>
+      api(`/api/projects/${project.id}/benchmarks/${benchmark.id}/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          local_path: configuredPath.trim() || undefined,
+          target_column: effectiveTarget
+        })
+      })
+    );
   }
 
   async function loadQualityPreview(artifactId: string) {
@@ -829,12 +892,87 @@ function DataTab({
           </button>
         </div>
       </Panel>
+      <Panel title="Benchmark Dataset Catalog" icon={<Database size={18} />}>
+        {benchmarks.length ? (
+          <div className="benchmark-grid">
+            {benchmarks.map((benchmark) => {
+              const status = benchmark.local_status;
+              const benchmarkPath = benchmarkPaths[benchmark.id] ?? benchmark.default_local_path;
+              const targetColumn = textField(benchmark.primary_table.target_column) ?? "-";
+              return (
+                <div className="benchmark-card" key={benchmark.id}>
+                  <div className="benchmark-card-header">
+                    <div>
+                      <div className="mini-card-title">{benchmark.name}</div>
+                      <div className="badge-row">
+                        <span className="badge muted">{benchmark.source_kind}</span>
+                        {benchmark.scale ? <span className="badge muted">{benchmark.scale}</span> : null}
+                        <span className={status?.ready ? "badge" : "badge risk"}>
+                          {status?.ready ? "ready" : `${status?.required_missing_count ?? 0} missing`}
+                        </span>
+                      </div>
+                    </div>
+                    <a className="icon-link" href={benchmark.source_url} target="_blank" rel="noreferrer" title="Open source">
+                      <FileText size={16} />
+                    </a>
+                  </div>
+                  <div className="badge-row">
+                    {benchmark.modality_tags.slice(0, 5).map((tag) => (
+                      <span className="badge muted" key={tag}>
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                  <dl className="facts">
+                    <div>
+                      <dt>Primary</dt>
+                      <dd>{primaryTableLabel(benchmark)}</dd>
+                    </div>
+                    <div>
+                      <dt>Target</dt>
+                      <dd>{targetColumn}</dd>
+                    </div>
+                    <div>
+                      <dt>Required</dt>
+                      <dd>
+                        {status?.required_found_count ?? 0}/{benchmark.required_files.length} files
+                      </dd>
+                    </div>
+                  </dl>
+                  <input
+                    value={benchmarkPath}
+                    onChange={(event) =>
+                      setBenchmarkPaths((current) => ({ ...current, [benchmark.id]: event.target.value }))
+                    }
+                    aria-label={`${benchmark.name} local path`}
+                  />
+                  <div className="button-row">
+                    <button className="primary-button" disabled={busy} onClick={() => void importBenchmark(benchmark)}>
+                      {busy ? <Loader2 className="spin" size={16} /> : <Upload size={16} />}
+                      Import
+                    </button>
+                    <a className="secondary-button text-link-button" href={benchmark.source_url} target="_blank" rel="noreferrer">
+                      Source
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <EmptyInline text="Benchmark dataset entries will appear here with local import status, source links, and primary-table metadata." />
+        )}
+      </Panel>
       <Panel title="Dataset Snapshots" icon={<Database size={18} />}>
         {datasets.length ? (
           <Table
-            headers={["Snapshot", "Rows", "Columns", "Schema Hash"]}
+            headers={["Snapshot", "Source", "Rows", "Columns", "Schema Hash"]}
             rows={datasets.map((dataset) => [
               dataset.id,
+              <div className="cell-stack" key={`${dataset.id}-source`}>
+                <span>{dataset.source_type}</span>
+                <small>{dataset.source_ref ?? "-"}</small>
+              </div>,
               dataset.row_count ?? "-",
               dataset.column_count ?? "-",
               dataset.schema_hash.slice(0, 12)
@@ -892,6 +1030,23 @@ function DataTab({
       </Panel>
     </div>
   );
+}
+
+function textField(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function primaryTableLabel(benchmark: BenchmarkDataset): string {
+  const path = textField(benchmark.primary_table.path);
+  if (path) return path;
+  const candidates = benchmark.primary_table.path_candidates;
+  if (Array.isArray(candidates) && candidates.length) {
+    return candidates
+      .slice(0, 2)
+      .map((item) => String(item))
+      .join(" | ");
+  }
+  return "-";
 }
 
 function UnderstandingTab({

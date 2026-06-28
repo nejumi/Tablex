@@ -516,3 +516,62 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     schema_response = client.get(f"/api/datasets/{dataset_id}/schema")
     assert schema_response.status_code == 200
     assert len(schema_response.json()["columns"]) == 5
+
+
+def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    benchmarks_response = client.get("/api/benchmarks")
+    assert benchmarks_response.status_code == 200, benchmarks_response.text
+    benchmarks = benchmarks_response.json()
+    assert any(item["id"] == "kaggle_home_credit_default_risk" for item in benchmarks)
+    uci_benchmark = next(item for item in benchmarks if item["id"] == "uci_bank_marketing")
+    assert uci_benchmark["local_status"]["ready"] is False
+    assert "Do not paste Kaggle credentials" in next(
+        item["download_instructions"] for item in benchmarks if item["id"] == "kaggle_home_credit_default_risk"
+    )
+
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Benchmark import", "task_type": "binary_classification"},
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    import_missing_response = client.post(f"/api/projects/{project_id}/benchmarks/uci_bank_marketing/import", json={})
+    assert import_missing_response.status_code == 400
+    assert "Missing required benchmark files" in import_missing_response.text
+
+    benchmark_dir = tmp_path / "data" / "benchmarks" / "uci_bank_marketing"
+    benchmark_dir.mkdir(parents=True)
+    (benchmark_dir / "bank-full.csv").write_text(
+        "age;job;duration;y\n"
+        "40;admin.;300;yes\n"
+        "41;technician;120;no\n"
+        "42;admin.;90;no\n"
+        "43;services;240;yes\n",
+        encoding="utf-8",
+    )
+
+    status_response = client.get("/api/benchmarks/uci_bank_marketing/local-status")
+    assert status_response.status_code == 200
+    assert status_response.json()["ready"] is True
+
+    import_response = client.post(f"/api/projects/{project_id}/benchmarks/uci_bank_marketing/import", json={})
+    assert import_response.status_code == 200, import_response.text
+    payload = import_response.json()
+    assert payload["primary_file"] == "bank-full.csv"
+    assert payload["dataset_snapshot"]["source_type"] == "benchmark_catalog"
+    assert payload["dataset_snapshot"]["source_ref"] == "uci_bank_marketing:bank-full.csv"
+    assert payload["dataset_snapshot"]["row_count"] == 4
+    assert payload["artifact"]["metadata"]["benchmark_id"] == "uci_bank_marketing"
+    assert payload["import_manifest_artifact"]["asset_type"] == "benchmark_import_manifest"
+
+    project_after_import = client.get(f"/api/projects/{project_id}")
+    assert project_after_import.status_code == 200
+    assert project_after_import.json()["target_column"] == "y"
+
+    manifest_preview_response = client.get(f"/api/artifacts/{payload['import_manifest_artifact']['id']}/preview")
+    assert manifest_preview_response.status_code == 200
+    assert "benchmark_import_manifest.v1" in manifest_preview_response.json()["preview"]
+    assert "not_stored_or_passed_to_agent" in manifest_preview_response.json()["preview"]

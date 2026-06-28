@@ -486,6 +486,28 @@ td {
   gap: 12px;
 }
 
+.benchmark-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+  gap: 12px;
+}
+
+.benchmark-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.benchmark-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .mini-card {
   display: grid;
   gap: 10px;
@@ -561,6 +583,24 @@ td {
 .row-actions {
   display: flex;
   gap: 6px;
+}
+
+.text-link-button {
+  text-decoration: none;
+}
+
+.cell-stack {
+  display: grid;
+  gap: 2px;
+}
+
+.cell-stack span {
+  font-weight: 650;
+}
+
+.cell-stack small {
+  color: #667085;
+  font-size: 11px;
 }
 
 .preview-block {

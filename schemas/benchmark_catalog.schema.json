@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tablex.local/schemas/benchmark_catalog.schema.json",
+  "title": "BenchmarkCatalog",
+  "type": "object",
+  "required": ["schema_version", "datasets"],
+  "properties": {
+    "schema_version": { "const": "benchmark_catalog.v1" },
+    "generated_at": { "type": "string" },
+    "principles": { "type": "array", "items": { "type": "string" } },
+    "datasets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/benchmark_dataset" }
+    }
+  },
+  "$defs": {
+    "benchmark_dataset": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "source_kind",
+        "source_url",
+        "task_types",
+        "modality_tags",
+        "primary_table",
+        "required_files",
+        "download"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "name": { "type": "string" },
+        "source_kind": { "type": "string" },
+        "source_url": { "type": "string" },
+        "competition_slug": { "type": "string" },
+        "license_note": { "type": "string" },
+        "task_types": { "type": "array", "items": { "type": "string" } },
+        "modality_tags": { "type": "array", "items": { "type": "string" } },
+        "scale": { "type": "string" },
+        "recommended_uses": { "type": "array", "items": { "type": "string" } },
+        "primary_table": { "$ref": "#/$defs/primary_table" },
+        "required_files": { "type": "array", "items": { "$ref": "#/$defs/file_spec" } },
+        "recommended_files": { "type": "array", "items": { "$ref": "#/$defs/file_spec" } },
+        "download": { "$ref": "#/$defs/download" },
+        "evaluation_notes": { "type": "string" },
+        "risk_notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "primary_table": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string" },
+        "path_candidates": { "type": "array", "items": { "type": "string" } },
+        "target_column": { "type": ["string", "null"] },
+        "entity_id_column": { "type": "string" },
+        "time_column": { "type": "string" },
+        "group_column": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "anyOf": [{ "required": ["path"] }, { "required": ["path_candidates"] }]
+    },
+    "file_spec": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string" },
+        "path_candidates": { "type": "array", "items": { "type": "string" } },
+        "glob": { "type": "string" },
+        "role": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "anyOf": [{ "required": ["path"] }, { "required": ["path_candidates"] }, { "required": ["glob"] }]
+    },
+    "download": {
+      "type": "object",
+      "required": ["method", "requires_account", "command"],
+      "properties": {
+        "method": { "type": "string" },
+        "requires_account": { "type": "boolean" },
+        "command": { "type": "string" }
+      }
+    }
+  }
+}
