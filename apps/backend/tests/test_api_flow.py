@@ -152,7 +152,10 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         f"/api/artifacts/{strategy_plan_job['output']['baseline_strategy_plan_artifact_id']}/preview"
     )
     assert strategy_preview_response.status_code == 200
-    assert "baseline_strategy_plan.v1" in strategy_preview_response.json()["preview"]
+    strategy_preview = strategy_preview_response.json()["preview"]
+    assert "baseline_strategy_plan.v1" in strategy_preview
+    assert "adaptive_baseline_planning" in strategy_preview
+    assert "reporting_plan" in strategy_preview
 
     baseline_response = client.post(f"/api/projects/{project_id}/baseline/run")
     assert baseline_response.status_code == 200, baseline_response.text
@@ -703,15 +706,21 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     benchmarks = benchmarks_response.json()
     assert any(item["id"] == "kaggle_home_credit_default_risk" for item in benchmarks)
     assert any(item["id"] == "uci_wine_quality" for item in benchmarks)
+    assert any(item["id"] == "openml_credit_g" for item in benchmarks)
     home_credit_benchmark = next(item for item in benchmarks if item["id"] == "kaggle_home_credit_default_risk")
     assert home_credit_benchmark["source_card"]["access"]["requires_account"] is True
     assert home_credit_benchmark["source_card"]["credential_policy"]["dataset_credentials"] == "user_managed_outside_tablex"
+    assert home_credit_benchmark["source_card"]["table_bundle"]["supporting_table_count"] >= 1
+    assert home_credit_benchmark["source_card"]["source_verification"]["source_count"] >= 1
     uci_benchmark = next(item for item in benchmarks if item["id"] == "uci_bank_marketing")
     assert uci_benchmark["local_status"]["ready"] is False
     assert uci_benchmark["fixture_available"] is True
     assert uci_benchmark["source_card"]["access"]["supports_direct_download"] is True
     assert uci_benchmark["source_card"]["credential_policy"]["dataset_credentials"] == "not_required"
     assert uci_benchmark["scenario"]["kind"] == "single_table_categorical_smoke"
+    openml_benchmark = next(item for item in benchmarks if item["id"] == "openml_credit_g")
+    assert openml_benchmark["source_card"]["table_bundle"]["kind"] == "single_table_bundle"
+    assert openml_benchmark["source_card"]["source_verification"]["access_checked"]["requires_account"] is False
     assert "Do not paste Kaggle credentials" in next(
         item["download_instructions"] for item in benchmarks if item["id"] == "kaggle_home_credit_default_risk"
     )
@@ -925,6 +934,76 @@ def test_public_benchmark_download_extracts_expected_files(tmp_path: Path, monke
         thread.join(timeout=5)
 
 
+def test_public_benchmark_download_places_direct_csv(tmp_path: Path, monkeypatch: Any) -> None:
+    served_dir = tmp_path / "served_direct"
+    served_dir.mkdir()
+    (served_dir / "credit.csv").write_text("feature,class\n1,good\n2,bad\n", encoding="utf-8")
+
+    handler = partial(SimpleHTTPRequestHandler, directory=str(served_dir))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/credit.csv"
+        catalog_path = tmp_path / "catalog.json"
+        catalog_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "benchmark_catalog.v1",
+                    "datasets": [
+                        {
+                            "id": "public_csv_smoke",
+                            "name": "Public CSV Smoke",
+                            "source_kind": "public_test_file",
+                            "source_url": url,
+                            "access": {
+                                "kind": "public_direct_download",
+                                "requires_account": False,
+                                "requires_secret": False,
+                                "supports_direct_download": True,
+                                "download_urls": [
+                                    {
+                                        "url": url,
+                                        "archive_type": "csv",
+                                        "expected_files": ["credit.csv"],
+                                    }
+                                ],
+                            },
+                            "task_types": ["binary_classification"],
+                            "modality_tags": ["single_table", "download_smoke"],
+                            "primary_table": {"path": "credit.csv", "target_column": "class"},
+                            "required_files": [
+                                {"path": "credit.csv", "role": "primary_table", "description": "Downloaded table."}
+                            ],
+                            "download": {
+                                "method": "public_direct_file",
+                                "requires_account": False,
+                                "download_urls": [{"url": url, "archive_type": "csv", "expected_files": ["credit.csv"]}],
+                                "command": "Downloaded by test local HTTP server.",
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("TABLEX_BENCHMARK_CATALOG_PATH", str(catalog_path))
+        client = make_client(tmp_path)
+
+        download_response = client.post("/api/benchmarks/public_csv_smoke/public-download", json={"overwrite": False})
+        assert download_response.status_code == 200, download_response.text
+        job = download_response.json()
+        assert job["status"] == "succeeded"
+        assert job["output"]["extracted_file_count"] == 1
+        assert job["output"]["local_ready"] is True
+
+        benchmark_root = tmp_path / "data" / "benchmarks" / "public_csv_smoke"
+        assert (benchmark_root / "credit.csv").read_text(encoding="utf-8").startswith("feature,class")
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
 def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_response = client.post(
@@ -954,6 +1033,13 @@ def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:
     assert output["benchmark_scenario_pack_artifact_id"]
     assert output["benchmark_scenario_report_artifact_id"]
     assert len(output["artifact_ids"]) >= 16
+
+    strategy_preview_response = client.get(f"/api/artifacts/{output['baseline_strategy_plan_artifact_id']}/preview")
+    assert strategy_preview_response.status_code == 200
+    strategy_preview = strategy_preview_response.json()["preview"]
+    assert "adaptive_baseline_planning" in strategy_preview
+    assert "relational_aggregation_features" in strategy_preview
+    assert "reporting_plan" in strategy_preview
 
     artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
     assert artifacts_response.status_code == 200

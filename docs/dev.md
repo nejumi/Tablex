@@ -33,7 +33,7 @@ curl http://localhost:8000/healthz
 ```
 
 Metadata defaults to `data/metadata/app.db`. Artifacts default to `data/artifacts`.
-The baseline runner uses XGBoost as the strong local baseline. It builds persisted `baseline_plan`, `feature_recipe`, `baseline_report`, `baseline_metrics`, validation prediction, and `model_package.joblib` artifacts. Successful strong baseline runs also create a `ModelVersion` record linked to the package artifact. The runner applies numeric median imputation, categorical ordinal encoding, text TF-IDF, datetime calendar features, and falls back to LogisticRegression/Ridge or majority/mean sanity baselines if the strong run fails. Lag and rolling covariate features are enabled only when the approved EvaluationSpec uses a time split.
+The baseline runner uses XGBoost as the strong local baseline when the dataset signals justify a single-table mixed-type run. It builds persisted `baseline_plan`, `baseline_strategy_plan`, `feature_recipe`, `baseline_report`, `baseline_metrics`, validation prediction, and `model_package.joblib` artifacts. Successful strong baseline runs also create a `ModelVersion` record linked to the package artifact. The runner applies numeric median imputation, categorical ordinal encoding, text TF-IDF, datetime calendar features, and falls back to LogisticRegression/Ridge or majority/mean sanity baselines if the strong run fails. Lag and rolling covariate features are enabled only when the approved EvaluationSpec uses a time split.
 
 Create a baseline strategy artifact without running the model:
 
@@ -41,7 +41,7 @@ Create a baseline strategy artifact without running the model:
 curl -X POST http://localhost:8000/api/projects/{project_id}/baseline/strategy-plan
 ```
 
-The strategy plan records sanity-floor, strong single-table, text TF-IDF, categorical, datetime, time-series, and relational aggregation candidates. Relational aggregation is marked as AgentTask work until join semantics and prediction-time availability are validated.
+The strategy plan records `adaptive_baseline_planning`, sanity-floor, strong single-table, text TF-IDF, categorical, datetime, time-series, and relational aggregation candidates. It also stores runner scope, dependency checks, Skill/library semantic tag matches, next AgentTasks, and reporting/visualization expectations. Relational aggregation is marked as AgentTask work until join semantics and prediction-time availability are validated.
 
 Saved ModelVersion packages can be replay-validated from the Assets tab or with:
 
@@ -141,6 +141,9 @@ curl http://localhost:8000/api/benchmarks/uci_bank_marketing/local-status
 curl -X POST http://localhost:8000/api/benchmarks/uci_wine_quality/public-download \
   -H 'Content-Type: application/json' \
   -d '{"overwrite":false}'
+curl -X POST http://localhost:8000/api/benchmarks/openml_credit_g/public-download \
+  -H 'Content-Type: application/json' \
+  -d '{"overwrite":false}'
 curl -X POST http://localhost:8000/api/benchmarks/uci_bank_marketing/fixtures/generate \
   -H 'Content-Type: application/json' \
   -d '{"overwrite":false}'
@@ -153,7 +156,7 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/kaggle_h
   -d '{"overwrite":false}'
 ```
 
-Place extracted benchmark files under `data/benchmarks/{benchmark_id}` or another path below `HARNESS_DATA_DIR/benchmarks`. Kaggle credentials and API tokens are user-managed outside Tablex and must not be pasted into Tablex, AgentTaskContracts, or runner workspaces. Source-card endpoints distinguish credentialed competition datasets from credential-free public archives such as UCI Bank Marketing and UCI Wine Quality. Public-download endpoints are only enabled for credential-free direct archives; they flatten configured expected zip members into the benchmark root, skip unsafe paths, and store a `benchmark_public_download_manifest` artifact. The importer profiles one primary CSV/Parquet table, stores a `benchmark_import_manifest`, creates a `relational_catalog` artifact with table profiles and inferred join-key context for supporting files, and registers small supporting CSV/Parquet tables as `benchmark_supporting_table` artifacts with a size cap. `scenario-pack` creates `benchmark_scenario_pack` and `benchmark_scenario_report` artifacts that summarize benchmark intent, fixture status, artifact readiness, runner guardrails, and report expectations. Fixture endpoints generate tiny synthetic files for smoke tests only; they do not download or store external benchmark data. See `docs/benchmarks.md`.
+Place extracted benchmark files under `data/benchmarks/{benchmark_id}` or another path below `HARNESS_DATA_DIR/benchmarks`. Kaggle credentials and API tokens are user-managed outside Tablex and must not be pasted into Tablex, AgentTaskContracts, or runner workspaces. Source-card endpoints distinguish credentialed competition datasets from credential-free public archives or direct files such as UCI Bank Marketing, UCI Wine Quality, and OpenML credit-g. Public-download endpoints are only enabled for credential-free direct sources; they flatten configured expected zip members or one configured direct CSV/Parquet file into the benchmark root, skip unsafe paths, and store a `benchmark_public_download_manifest` artifact. The importer profiles one primary CSV/Parquet table, stores a `benchmark_import_manifest`, creates a `relational_catalog` artifact with table profiles and inferred join-key context for supporting files, and registers small supporting CSV/Parquet tables as `benchmark_supporting_table` artifacts with a size cap. `scenario-pack` creates `benchmark_scenario_pack` and `benchmark_scenario_report` artifacts that summarize benchmark intent, fixture status, artifact readiness, runner guardrails, and report expectations. Fixture endpoints generate tiny synthetic files for smoke tests only; they do not download or store external benchmark data. See `docs/benchmarks.md`.
 
 Artifact preview and download are available from:
 

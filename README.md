@@ -15,7 +15,7 @@ The product name may still change. Internal package names and database tables st
 - Question answering with answer history and user-answer evidence.
 - EvaluationCandidate promotion, EvaluationSpec approval, and random/stratified SplitManifest generation.
 - Time/group SplitManifest generation with time-order and group-overlap diagnostics.
-- Strong local baseline v0 with XGBoost, numeric median imputation, categorical ordinal encoding, text TF-IDF, datetime calendar features, and majority/mean or linear fallback metrics.
+- Adaptive strong local baseline v0 with XGBoost when justified by dataset signals, numeric median imputation, categorical ordinal encoding, text TF-IDF, datetime calendar features, time-split lag/rolling covariates, and majority/mean or linear fallback metrics.
 - ModelVersion registration with persisted `model_package.joblib` artifacts for successful strong baseline runs.
 - Model package replay validation that reloads a saved ModelVersion, regenerates validation predictions from DatasetSnapshot and SplitManifest, stores metric deltas, replay predictions, and a validation report as artifacts.
 - Project Job history and ModelVersion validation history visible in the UI.
@@ -33,10 +33,10 @@ The product name may still change. Internal package names and database tables st
 - Agentic Experiment Lifecycle v0 with artifact-backed ExperimentPlans, run reports, diagnostics-aware experiment comparisons, comparison VisualizationSpecs, Evidence, Insights, and UI actions for flexible agent-driven approaches.
 - Data Quality Gate v0 with leakage, prediction-time availability, missingness, duplicate, identity/group, temporal, and evaluation-readiness checks connected to Questions, Assumptions, Evidence, Insights, AgentContextPacks, and Evaluation UI.
 - Controlled Agent Workspace v0 with materialized runner context, workspace manifests, AgentResult artifact ingestion, and workspace preview in the Approach UI.
-- Benchmark Dataset Catalog v1 with Home Credit, fraud, retail forecasting, basket, UCI Bank, and UCI Wine source cards plus managed credential-free public downloads, local primary-table import, relational catalog artifacts, and inferred join-key context without storing external credentials.
+- Benchmark Dataset Catalog v1 with Home Credit, fraud, retail forecasting, basket, UCI, and OpenML source cards plus managed credential-free public archive/direct-file downloads, local primary-table import, relational catalog artifacts, and inferred join-key context without storing external credentials.
 - Benchmark Fixture & Smoke Harness v0 with credential-free Home Credit-like, UCI Bank-like, and retail time-series fixtures plus fixture-driven import/quality/evaluation/baseline strategy smoke.
 - Benchmark Scenario Pack v1 with fixture-aware benchmark_scenario_pack/report artifacts, supporting-table artifact registration for small local bundles, ResearchPlan handoff, and UI preview.
-- Baseline Strategy Planner v0 with artifact-backed candidate strategies, selected/deferred rationale, relational AgentTask handoff notes, and baseline report integration.
+- Baseline Strategy Planner v0 with artifact-backed adaptive candidate strategies, selected/deferred rationale, Skill/library context, reporting/visualization expectations, relational AgentTask handoff notes, and baseline report integration.
 - Evaluation Scenario Comparison v0 with artifact-backed split feasibility, temporal/group leakage, quality gate, relational context, open question, and assumption-risk comparison before EvaluationSpec adoption.
 - Evaluation Approval Review v0 with artifact-backed approval blockers, assumption-backed proceed notes, review lineage, and UI preview before approving an EvaluationSpec.
 - Controlled Research Planning v0 with ResearchPlan artifacts that turn project context, quality gates, evaluation specs, benchmark context, and cross-project Skill assets into controlled query candidates, source policy, expected evidence, and reporting requirements.

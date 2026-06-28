@@ -195,8 +195,10 @@ class BenchmarkSourceCardRead(BaseModel):
     source_kind: str
     source_url: str
     access: dict[str, Any]
+    source_verification: dict[str, Any]
     official_sources: list[dict[str, Any]]
     download: dict[str, Any]
+    table_bundle: dict[str, Any]
     local_layout: dict[str, Any]
     import_readiness: dict[str, Any]
     fixture: dict[str, Any]

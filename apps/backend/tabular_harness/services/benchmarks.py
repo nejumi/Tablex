@@ -171,8 +171,10 @@ def benchmark_source_card(
         "source_kind": benchmark["source_kind"],
         "source_url": benchmark["source_url"],
         "access": benchmark_access(benchmark),
+        "source_verification": benchmark_source_verification(benchmark, source_card),
         "official_sources": official_sources(benchmark, source_card),
         "download": benchmark_download_card(benchmark, source_card),
+        "table_bundle": benchmark_table_bundle(benchmark),
         "local_layout": {
             "default_root": str(default_benchmark_root(settings, benchmark_id)),
             "resolved_root": str(root),
@@ -231,6 +233,63 @@ def official_sources(benchmark: dict[str, Any], source_card: dict[str, Any]) -> 
             "source_type": benchmark["source_kind"],
         }
     ]
+
+
+def benchmark_source_verification(benchmark: dict[str, Any], source_card: dict[str, Any]) -> dict[str, Any]:
+    sources = official_sources(benchmark, source_card)
+    verified_at = source_card.get("verified_at") or benchmark.get("generated_at")
+    return {
+        "status": "verified_from_catalog_sources" if sources else "catalog_entry_only",
+        "verified_at": verified_at,
+        "source_count": len(sources),
+        "source_types": sorted({str(source.get("source_type") or "unknown") for source in sources}),
+        "access_checked": {
+            "requires_account": benchmark_access(benchmark)["requires_account"],
+            "supports_direct_download": benchmark_access(benchmark)["supports_direct_download"],
+            "agent_receives_credentials": False,
+        },
+        "notes": source_card.get(
+            "verification_notes",
+            "Source metadata is catalog-verified; actual benchmark files remain user-managed unless a credential-free public downloader is enabled.",
+        ),
+    }
+
+
+def benchmark_table_bundle(benchmark: dict[str, Any]) -> dict[str, Any]:
+    primary = benchmark.get("primary_table") or {}
+    required = [item for item in benchmark.get("required_files", []) if isinstance(item, dict)]
+    recommended = [item for item in benchmark.get("recommended_files", []) if isinstance(item, dict)]
+    all_specs = [*required, *recommended]
+    roles: dict[str, int] = {}
+    for spec in all_specs:
+        role = str(spec.get("role") or "unspecified")
+        roles[role] = roles.get(role, 0) + 1
+    supporting_count = sum(count for role, count in roles.items() if "supporting" in role)
+    holdout_count = sum(count for role, count in roles.items() if "holdout" in role or "test" in role)
+    return {
+        "kind": "multi_table_bundle" if supporting_count else "single_table_bundle",
+        "primary_table": primary,
+        "required_file_count": len(required),
+        "recommended_file_count": len(recommended),
+        "supporting_table_count": supporting_count,
+        "holdout_table_count": holdout_count,
+        "roles": roles,
+        "join_key_hints": [
+            value
+            for value in [
+                primary.get("entity_id_column"),
+                primary.get("group_column"),
+            ]
+            if value
+        ],
+        "time_column_hint": primary.get("time_column"),
+        "target_column": primary.get("target_column"),
+        "feature_recipe_policy": (
+            "supporting tables require a FeatureRecipe or AgentTask with prediction-time availability checks"
+            if supporting_count
+            else "single-table features can be planned from the profiled DatasetSnapshot"
+        ),
+    }
 
 
 def benchmark_download_card(benchmark: dict[str, Any], source_card: dict[str, Any]) -> dict[str, Any]:
@@ -311,17 +370,28 @@ def download_public_benchmark_archive(
     root.mkdir(parents=True, exist_ok=True)
     downloads_dir = root / "_downloads"
     downloads_dir.mkdir(parents=True, exist_ok=True)
-    archive_path = downloads_dir / public_archive_filename(benchmark_id, url)
+    archive_type = str(url_entry.get("archive_type") or "zip").lower()
+    archive_path = downloads_dir / public_archive_filename(benchmark_id, url, archive_type=archive_type)
     archive = download_file_limited(url, archive_path, max_bytes=max_archive_bytes)
     expected_files = expected_archive_filenames(benchmark, url_entry)
     if not expected_files:
         raise ValueError("No expected files are configured for public archive extraction")
-    extracted, skipped = extract_expected_zip_files(
-        archive_path=archive_path,
-        root=root,
-        expected_files=expected_files,
-        overwrite=overwrite,
-    )
+    if archive_type == "zip":
+        extracted, skipped = extract_expected_zip_files(
+            archive_path=archive_path,
+            root=root,
+            expected_files=expected_files,
+            overwrite=overwrite,
+        )
+    elif archive_type in {"csv", "parquet"}:
+        extracted, skipped = place_direct_public_file(
+            downloaded_path=archive_path,
+            root=root,
+            expected_files=expected_files,
+            overwrite=overwrite,
+        )
+    else:
+        raise ValueError(f"Unsupported public download archive_type: {archive_type}")
     local_status = inspect_benchmark_local_files(benchmark, root)
     if not extracted and not local_status["ready"]:
         raise ValueError("Public archive did not contain required benchmark files")
@@ -333,6 +403,7 @@ def download_public_benchmark_archive(
         "download_url": url,
         "root_path": str(root),
         "overwrite": overwrite,
+        "archive_type": archive_type,
         "archive": archive,
         "expected_files": sorted(expected_files),
         "extracted_files": extracted,
@@ -341,7 +412,7 @@ def download_public_benchmark_archive(
         "credential_policy": benchmark_credential_policy(benchmark),
         "safety": {
             "path_traversal": "zip members with absolute paths or '..' are skipped",
-            "extraction_policy": "only configured expected filenames are flattened into the benchmark root",
+            "extraction_policy": "only configured expected zip members or one direct public file are flattened into the benchmark root",
             "max_archive_bytes": max_archive_bytes,
         },
     }
@@ -363,10 +434,10 @@ def validate_public_download_url(url: str) -> None:
         raise ValueError("Public benchmark download URL must be http(s)")
 
 
-def public_archive_filename(benchmark_id: str, url: str) -> str:
+def public_archive_filename(benchmark_id: str, url: str, *, archive_type: str) -> str:
     name = Path(urlparse(url).path).name or "archive.zip"
     cleaned = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in name)
-    if not cleaned.lower().endswith(".zip"):
+    if archive_type == "zip" and not cleaned.lower().endswith(".zip"):
         cleaned = f"{cleaned}.zip"
     return f"{benchmark_id}_{cleaned}"
 
@@ -458,6 +529,40 @@ def extract_expected_zip_files(
                 }
             )
     return extracted, skipped
+
+
+def place_direct_public_file(
+    *,
+    downloaded_path: Path,
+    root: Path,
+    expected_files: set[str],
+    overwrite: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if len(expected_files) != 1:
+        raise ValueError("Direct public file downloads must configure exactly one expected file")
+    filename = next(iter(expected_files))
+    target = root / Path(filename).name
+    if target.exists() and not overwrite:
+        return [], [{"member": downloaded_path.name, "path": target.name, "reason": "exists"}]
+    digest = hashlib.sha256()
+    size = 0
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with downloaded_path.open("rb") as source, target.open("wb") as output:
+        while True:
+            chunk = source.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            digest.update(chunk)
+            output.write(chunk)
+    return [
+        {
+            "member": downloaded_path.name,
+            "path": target.name,
+            "size_bytes": size,
+            "sha256": digest.hexdigest(),
+        }
+    ], []
 
 
 def inspect_benchmark_local_files(benchmark: dict[str, Any], root: Path) -> dict[str, Any]:

@@ -10,8 +10,10 @@
     "evaluation",
     "context",
     "candidate_strategies",
+    "runner_policy",
     "selected_execution",
-    "risk_register"
+    "risk_register",
+    "reporting_plan"
   ],
   "properties": {
     "schema_version": { "const": "baseline_strategy_plan.v1" },
@@ -23,6 +25,7 @@
       "type": "array",
       "items": { "type": "object" }
     },
+    "runner_policy": { "type": "object" },
     "selected_execution": { "type": "object" },
     "risk_register": {
       "type": "array",
@@ -31,7 +34,8 @@
     "next_agent_tasks": {
       "type": "array",
       "items": { "type": "object" }
-    }
+    },
+    "reporting_plan": { "type": "object" }
   },
   "additionalProperties": true
 }

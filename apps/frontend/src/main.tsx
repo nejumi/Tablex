@@ -99,7 +99,9 @@ type BenchmarkSourceCard = {
   schema_version: string;
   benchmark_id: string;
   access: Record<string, unknown>;
+  source_verification: Record<string, unknown>;
   official_sources: Array<Record<string, unknown>>;
+  table_bundle: Record<string, unknown>;
   import_readiness: {
     local_ready: boolean;
     can_import_now: boolean;
@@ -1005,6 +1007,8 @@ function DataTab({
               const scenarioKind = textField(benchmark.scenario?.kind) ?? "-";
               const access = benchmark.source_card?.access ?? benchmark.access ?? {};
               const accessKind = textField(access.kind) ?? benchmark.source_kind;
+              const verification = benchmark.source_card?.source_verification ?? {};
+              const tableBundle = benchmark.source_card?.table_bundle ?? {};
               const requiresAccount = access.requires_account === true;
               const directDownload = access.supports_direct_download === true;
               const nextActions = benchmark.source_card?.import_readiness.next_actions.slice(0, 2) ?? [];
@@ -1059,9 +1063,19 @@ function DataTab({
                       <dd>{benchmark.source_card?.official_sources.length ?? 1} official refs</dd>
                     </div>
                     <div>
+                      <dt>Verified</dt>
+                      <dd>{textField(verification.verified_at) ?? "-"}</dd>
+                    </div>
+                    <div>
                       <dt>Required</dt>
                       <dd>
                         {status?.required_found_count ?? 0}/{benchmark.required_files.length} files
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Bundle</dt>
+                      <dd>
+                        {Number(tableBundle.supporting_table_count ?? 0)} support / {Number(tableBundle.holdout_table_count ?? 0)} holdout
                       </dd>
                     </div>
                   </dl>
@@ -2117,7 +2131,16 @@ function ExperimentsTab({
         <button
           className="secondary-button"
           disabled={busy}
-          onClick={() => void runAction(() => api(`/api/projects/${project.id}/baseline/strategy-plan`, { method: "POST" }))}
+          onClick={() =>
+            void runAction(async () => {
+              const job = await api<Job>(`/api/projects/${project.id}/baseline/strategy-plan`, { method: "POST" });
+              const artifactId = job.output.baseline_strategy_plan_artifact_id;
+              if (typeof artifactId === "string") {
+                await loadPreview(artifactId);
+              }
+              return job;
+            })
+          }
         >
           {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
           Plan Baseline
@@ -2171,11 +2194,12 @@ function ExperimentsTab({
       <Panel title="Experiment Lifecycle Artifacts" icon={<ListChecks size={18} />}>
         {experimentArtifacts.length ? (
           <Table
-            headers={["Type", "Name", "Version", "Source", "Actions"]}
+            headers={["Type", "Name", "Version", "Strategy", "Source", "Actions"]}
             rows={experimentArtifacts.map((artifact) => [
               artifact.asset_type,
               artifact.name,
               `v${artifact.version}`,
+              formatStrategyArtifact(artifact),
               String(artifact.metadata.run_id ?? artifact.metadata.idea_id ?? artifact.metadata.best_run_id ?? "-"),
               <div className="row-actions" key={artifact.id}>
                 <button
@@ -2695,6 +2719,18 @@ function formatFeatureCount(metrics: Record<string, unknown>) {
   const featureCount = metrics.feature_count;
   if (typeof featureCount !== "number") return "-";
   return featureCount.toString();
+}
+
+function formatStrategyArtifact(artifact: Artifact) {
+  const mode = textField(artifact.metadata.strategy_mode);
+  const assetCount = artifact.metadata.matched_asset_count;
+  const agentTaskCount = artifact.metadata.agent_task_count;
+  const parts = [
+    mode ? mode.replace(/_/g, " ") : null,
+    typeof assetCount === "number" ? `${assetCount} assets` : null,
+    typeof agentTaskCount === "number" && agentTaskCount > 0 ? `${agentTaskCount} agent tasks` : null
+  ].filter(Boolean);
+  return parts.length ? parts.join(" / ") : "-";
 }
 
 function formatContractModes(idea: Idea) {

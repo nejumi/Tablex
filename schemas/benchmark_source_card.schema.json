@@ -9,8 +9,10 @@
     "source_kind",
     "source_url",
     "access",
+    "source_verification",
     "official_sources",
     "download",
+    "table_bundle",
     "local_layout",
     "import_readiness",
     "fixture",
@@ -36,11 +38,13 @@
       ],
       "additionalProperties": true
     },
+    "source_verification": { "type": "object" },
     "official_sources": {
       "type": "array",
       "items": { "type": "object" }
     },
     "download": { "type": "object" },
+    "table_bundle": { "type": "object" },
     "local_layout": { "type": "object" },
     "import_readiness": {
       "type": "object",

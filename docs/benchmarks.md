@@ -18,6 +18,7 @@ Do not paste Kaggle credentials, API tokens, connector credentials, or productio
 | `kaggle_instacart_market_basket` | [Kaggle Instacart Market Basket Analysis](https://www.kaggle.com/competitions/instacart-market-basket-analysis) | Multi-table order history benchmark for aggregation, group validation, and recommendation-like tabular framing. |
 | `uci_bank_marketing` | [UCI Bank Marketing](https://archive.ics.uci.edu/dataset/222/bank+marketing) | Compact single-table smoke test for categorical preprocessing, target profiling, and leakage discussion around `duration`. |
 | `uci_wine_quality` | [UCI Wine Quality](https://archive.ics.uci.edu/dataset/186/wine+quality) | Credential-free public dataset smoke test for regression/ordinal target framing and compact numeric features. |
+| `openml_credit_g` | [OpenML credit-g](https://www.openml.org/d/31) | Credential-free credit-risk smoke test with many categorical fields, asymmetric cost caveat, and public CSV download. |
 
 ## Source Cards
 
@@ -25,11 +26,13 @@ Every catalog entry is exposed with a generated `benchmark_source_card.v1` shape
 
 - `access`: credentialed competition, public direct archive, or manual public source.
 - `official_sources`: source pages and public archive URLs verified for the catalog.
+- `source_verification`: verified date, source count/types, and access checks.
+- `table_bundle`: primary/supporting/holdout table counts, join hints, target hints, and feature-recipe policy.
 - `credential_policy`: secrets and connector credentials are never stored, inserted into prompts, or materialized into runner workspaces.
 - `import_readiness`: whether local files are present and what action should happen next.
 - `fixture`: whether a credential-free synthetic smoke fixture is available.
 
-Kaggle datasets remain user-managed outside Tablex. Public UCI archives are credential-free and can be downloaded by the managed public-download endpoint when `source_card.access.supports_direct_download=true` and `requires_account=false`.
+Kaggle datasets remain user-managed outside Tablex. Public UCI archives and selected OpenML CSV exports are credential-free and can be downloaded by the managed public-download endpoint when `source_card.access.supports_direct_download=true` and `requires_account=false`.
 
 ## Local Layout
 
@@ -64,15 +67,18 @@ curl http://localhost:8000/api/benchmarks/uci_bank_marketing/import-readiness
 curl http://localhost:8000/api/benchmarks/kaggle_home_credit_default_risk/local-status
 ```
 
-Download and safely extract a credential-free public archive:
+Download and safely extract a credential-free public archive or direct public file:
 
 ```bash
 curl -X POST http://localhost:8000/api/benchmarks/uci_wine_quality/public-download \
   -H 'Content-Type: application/json' \
   -d '{"overwrite":false}'
+curl -X POST http://localhost:8000/api/benchmarks/openml_credit_g/public-download \
+  -H 'Content-Type: application/json' \
+  -d '{"overwrite":false}'
 ```
 
-The public downloader only uses catalog-configured URLs. It rejects credentialed sources, enforces a size limit, extracts only configured expected zip filenames, flattens those files into `data/benchmarks/{benchmark_id}`, skips unsafe zip members such as absolute paths or `..`, and stores a `benchmark_public_download_manifest` artifact.
+The public downloader only uses catalog-configured URLs. It rejects credentialed sources, enforces a size limit, extracts only configured expected zip filenames or places one configured direct CSV/Parquet file, flattens those files into `data/benchmarks/{benchmark_id}`, skips unsafe zip members such as absolute paths or `..`, and stores a `benchmark_public_download_manifest` artifact.
 
 Generate a credential-free local fixture for supported benchmarks:
 
@@ -136,4 +142,4 @@ v0 creates one primary-table DatasetSnapshot and a relational catalog for the lo
 
 Fixtures are synthetic and deliberately small. They are for product smoke tests, not benchmark scoring, leaderboard claims, model quality comparison, or literature-backed baseline selection.
 
-These datasets are benchmarks and smoke-test fixtures, not a fixed modeling strategy. Baselines and agent tasks should still inspect the current task, data semantics, EvaluationSpec, SplitManifest, quality gates, relevant Skills, and timely research before choosing an approach.
+These datasets are benchmarks and smoke-test fixtures, not a fixed modeling strategy. BaselineStrategyPlan artifacts now record `adaptive_baseline_planning`, candidate strategies, runner scope, Skill/library context, and reporting/visualization expectations. Baselines and agent tasks should still inspect the current task, data semantics, EvaluationSpec, SplitManifest, quality gates, relevant Skills, and timely research before choosing an approach.

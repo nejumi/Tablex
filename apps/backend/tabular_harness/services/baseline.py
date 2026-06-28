@@ -29,6 +29,7 @@ from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
     Artifact,
+    Asset,
     DatasetSnapshot,
     EvaluationSpec,
     ExperimentRun,
@@ -265,6 +266,11 @@ def run_baseline(
             "split_manifest_id": split_manifest.id,
             "selected_baseline_type": baseline_name,
             "strategy_count": len(baseline_strategy_plan.get("candidate_strategies", [])),
+            "strategy_mode": baseline_strategy_plan.get("context", {}).get("strategy_mode"),
+            "matched_asset_count": baseline_strategy_plan.get("context", {})
+            .get("library_context", {})
+            .get("matched_asset_count"),
+            "agent_task_count": len(baseline_strategy_plan.get("next_agent_tasks", [])),
         },
     )
     recipe_artifact = store_json_artifact(
@@ -1226,6 +1232,11 @@ def create_baseline_strategy_plan(
             "split_manifest_id": split_manifest.id,
             "strategy_count": len(strategy_plan.get("candidate_strategies", [])),
             "selected_baseline_type": strategy_plan["selected_execution"].get("baseline_type"),
+            "strategy_mode": strategy_plan.get("context", {}).get("strategy_mode"),
+            "matched_asset_count": strategy_plan.get("context", {})
+            .get("library_context", {})
+            .get("matched_asset_count"),
+            "agent_task_count": len(strategy_plan.get("next_agent_tasks", [])),
         },
     )
     for from_type, from_id, relation in [
@@ -1264,6 +1275,7 @@ def build_baseline_strategy_plan(
     relational_metadata = loads_json(relational_artifact.metadata_json, {}) if relational_artifact else {}
     table_count = int(relational_metadata.get("table_count") or 0)
     relationship_count = int(relational_metadata.get("relationship_count") or 0)
+    library_context = baseline_library_context(db, baseline_plan, table_count)
     candidates = [
         {
             "id": "sanity_floor",
@@ -1278,8 +1290,9 @@ def build_baseline_strategy_plan(
             "name": "Strong single-table XGBoost baseline",
             "status": "selected_for_local_run",
             "implementation": baseline_plan.get("candidate_model"),
-            "why": "Good pragmatic baseline for mixed numeric, categorical, datetime, and sparse text features before agent-authored modeling.",
+            "why": "Good pragmatic baseline for mixed numeric, categorical, datetime, and sparse text features when the profiled table supports it.",
             "uses": ["numeric_median_imputation", "ordinal_categorical_encoding", "text_tfidf", "datetime_calendar_features"],
+            "selection_policy": "chosen from dataset signals and approved EvaluationSpec, not treated as the only acceptable modeling approach",
         },
         {
             "id": "text_tfidf",
@@ -1316,6 +1329,7 @@ def build_baseline_strategy_plan(
             "table_count": table_count,
             "relationship_count": relationship_count,
             "why": "Supporting tables need join semantics, aggregation windows, and availability checks before becoming model features.",
+            "uses": ["RelationalCatalog", "FeatureRecipe", "SplitManifest", "controlled_agent_workspace"],
         },
     ]
     next_agent_tasks = []
@@ -1359,6 +1373,7 @@ def build_baseline_strategy_plan(
             "stratify_column": evaluation_spec.stratify_column,
         },
         "context": {
+            "strategy_mode": "adaptive_baseline_planning",
             "feature_inventory": {
                 "numeric_count": numeric_count,
                 "categorical_count": categorical_count,
@@ -1366,6 +1381,7 @@ def build_baseline_strategy_plan(
                 "datetime_count": len(datetime_columns),
                 "identifier_count": len(parse_string_list(baseline_plan.get("identifier_columns", []))),
             },
+            "library_context": library_context,
             "quality_gate": artifact_summary(quality_artifact),
             "relational_catalog": artifact_summary(relational_artifact),
             "current_baseline_plan": {
@@ -1376,13 +1392,177 @@ def build_baseline_strategy_plan(
             },
         },
         "candidate_strategies": candidates,
+        "runner_policy": baseline_runner_policy(
+            baseline_plan=baseline_plan,
+            table_count=table_count,
+            relationship_count=relationship_count,
+            library_context=library_context,
+        ),
         "selected_execution": {
             "status": "planned",
             "baseline_type": baseline_plan.get("candidate_model"),
-            "reason": "Local baseline runner can execute the strong single-table candidate now; other candidates may require AgentTask implementation.",
+            "reason": "Local runner can execute the current single-table strong baseline now; richer relational or time-aware variants are proposed as explicit candidate strategies or AgentTasks.",
         },
         "risk_register": baseline_strategy_risks(baseline_plan, quality_artifact, table_count, relationship_count),
         "next_agent_tasks": next_agent_tasks,
+        "reporting_plan": baseline_reporting_plan(
+            baseline_plan=baseline_plan,
+            table_count=table_count,
+            relationship_count=relationship_count,
+        ),
+    }
+
+
+def baseline_library_context(
+    db: Session,
+    baseline_plan: dict[str, Any],
+    table_count: int,
+) -> dict[str, Any]:
+    requested_tags = {
+        "tabular_modeling",
+        "gradient_boosting",
+        "baseline_strategy",
+        "split_manifest",
+    }
+    if baseline_plan.get("text_columns"):
+        requested_tags.update({"text_features", "tfidf"})
+    if baseline_plan.get("datetime_columns") or baseline_plan.get("lag_rolling_specs"):
+        requested_tags.update({"time_features", "datetime_features", "lag_features", "rolling_statistics"})
+    if table_count > 1:
+        requested_tags.update({"relational_features", "multi_table", "leakage_control"})
+    requested_tags.update({"reports", "visualization", "decision_dashboard"})
+
+    assets = db.scalars(select(Asset).where(Asset.status == "active")).all()
+    matched_assets: list[dict[str, Any]] = []
+    for asset in assets:
+        semantic_tags = {str(tag) for tag in loads_json(asset.semantic_tags_json, [])}
+        matched = sorted(semantic_tags & requested_tags)
+        if not matched:
+            continue
+        matched_assets.append(
+            {
+                "asset_id": asset.id,
+                "asset_type": asset.asset_type,
+                "name": asset.name,
+                "latest_version_id": asset.latest_version_id,
+                "matched_semantic_tags": matched,
+            }
+        )
+    matched_assets.sort(key=lambda item: (str(item["asset_type"]), str(item["name"])))
+    return {
+        "requested_semantic_tags": sorted(requested_tags),
+        "matched_assets": matched_assets[:12],
+        "matched_asset_count": len(matched_assets),
+        "seed_hint": None
+        if matched_assets
+        else "Seed the cross-project asset library to attach Skill, FeatureRecipe, EvaluationPattern, and VisualizationTemplate assets.",
+        "research_support_policy": {
+            "mode": "controlled_web_search_or_skill_lookup_when_allowed",
+            "network_default": "disabled_until_runner_policy_allows",
+            "evidence_required": True,
+            "purpose": "Support approach selection with current sources without making Tablex depend on external dashboards.",
+        },
+    }
+
+
+def baseline_runner_policy(
+    *,
+    baseline_plan: dict[str, Any],
+    table_count: int,
+    relationship_count: int,
+    library_context: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "strategy": "adaptive_baseline_planning",
+        "local_runner_scope": {
+            "can_execute_now": True,
+            "candidate_model": baseline_plan.get("candidate_model"),
+            "model_family": baseline_plan.get("model_family"),
+            "feature_families": {
+                "numeric_median_imputation": bool(baseline_plan.get("numeric_columns")),
+                "categorical_ordinal_encoding": bool(baseline_plan.get("categorical_columns")),
+                "text_tfidf": bool(baseline_plan.get("text_columns")),
+                "datetime_calendar": bool(baseline_plan.get("datetime_columns")),
+                "causal_lag_rolling": bool(baseline_plan.get("lag_rolling_specs")),
+            },
+        },
+        "agent_runner_scope": {
+            "required_for_relational_features": table_count > 1,
+            "relationship_count": relationship_count,
+            "expected_outputs": ["feature_recipe", "experiment_plan", "run_report", "visualization_spec"],
+            "guardrails": [
+                "respect SplitManifest",
+                "fit encoders, TF-IDF, joins, and aggregations on train folds only",
+                "do not include validation/test targets in prompts or feature generation",
+                "confirm prediction-time availability before using supporting tables",
+            ],
+        },
+        "dependency_checks": {
+            "xgboost": "available",
+            "scikit_learn": "available",
+            "duckdb": "available",
+            "library_asset_matches": library_context.get("matched_asset_count", 0),
+        },
+    }
+
+
+def baseline_reporting_plan(
+    *,
+    baseline_plan: dict[str, Any],
+    table_count: int,
+    relationship_count: int,
+) -> dict[str, Any]:
+    visualizations: list[dict[str, Any]] = [
+        {
+            "id": "baseline_vs_sanity_floor",
+            "chart_type": "metric_cards",
+            "purpose": "Compare the selected baseline against majority/mean sanity floors.",
+        },
+        {
+            "id": "feature_inventory",
+            "chart_type": "category_bars",
+            "purpose": "Show numeric, categorical, text, datetime, and skipped feature families.",
+        },
+        {
+            "id": "leaderboard_position",
+            "chart_type": "leaderboard_bar",
+            "purpose": "Place the run in the in-product leaderboard without external tracking tools.",
+        },
+    ]
+    if table_count > 1:
+        visualizations.append(
+            {
+                "id": "relational_coverage",
+                "chart_type": "relationship_summary",
+                "purpose": "Show supporting table count and inferred relationship coverage before relational features are trusted.",
+                "table_count": table_count,
+                "relationship_count": relationship_count,
+            }
+        )
+    return {
+        "expected_artifacts": [
+            "baseline_strategy_plan",
+            "baseline_plan",
+            "feature_recipe",
+            "baseline_metrics",
+            "baseline_report",
+            "prediction_output",
+            "model_package",
+            "run_report",
+            "visualization_spec",
+        ],
+        "report_sections": [
+            "Evaluation lock",
+            "Feature recipe rationale",
+            "Sanity floor comparison",
+            "Risk and unresolved assumptions",
+            "Next candidate approaches",
+        ],
+        "visualization_specs": visualizations,
+        "decision_notes": [
+            "Baseline results are evidence for the next approach, not a fixed recipe.",
+            "Relational, text, and time-series feature variants should be scenario-compared when their assumptions materially affect the task.",
+        ],
     }
 
 

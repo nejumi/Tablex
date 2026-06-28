@@ -9,6 +9,7 @@
     "download_url",
     "root_path",
     "overwrite",
+    "archive_type",
     "archive",
     "expected_files",
     "extracted_files",
@@ -25,6 +26,7 @@
     "download_url": { "type": "string" },
     "root_path": { "type": "string" },
     "overwrite": { "type": "boolean" },
+    "archive_type": { "enum": ["zip", "csv", "parquet"] },
     "archive": { "type": "object" },
     "expected_files": {
       "type": "array",

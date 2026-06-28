@@ -495,6 +495,87 @@
         "The target is an ordinal quality score; metric choice should match the chosen problem framing.",
         "The red and white wine tables should not be mixed without an explicit scenario or source indicator."
       ]
+    },
+    {
+      "id": "openml_credit_g",
+      "name": "OpenML credit-g",
+      "source_kind": "openml_dataset",
+      "source_url": "https://www.openml.org/d/31",
+      "access": {
+        "kind": "public_direct_download",
+        "requires_account": false,
+        "requires_secret": false,
+        "supports_direct_download": true,
+        "download_urls": [
+          {
+            "url": "https://www.openml.org/data/get_csv/31/dataset_31_credit-g.csv",
+            "archive_type": "csv",
+            "expected_files": ["dataset_31_credit-g.csv"]
+          }
+        ]
+      },
+      "source_card": {
+        "verified_at": "2026-06-29",
+        "official_sources": [
+          {
+            "title": "OpenML dataset 31: credit-g",
+            "url": "https://www.openml.org/d/31",
+            "source_type": "dataset_page"
+          },
+          {
+            "title": "OpenML data API description for credit-g",
+            "url": "https://www.openml.org/api/v1/json/data/31",
+            "source_type": "metadata_api"
+          },
+          {
+            "title": "OpenML CSV direct endpoint for credit-g",
+            "url": "https://www.openml.org/data/get_csv/31/dataset_31_credit-g.csv",
+            "source_type": "download_file"
+          }
+        ],
+        "verification_notes": "OpenML API reports dataset id 31, format ARFF, public visibility, Public licence, default target attribute class, and a parquet URL; Tablex uses the OpenML CSV endpoint for v0 import."
+      },
+      "license_note": "OpenML metadata lists licence as Public; original source is UCI Statlog German Credit. Preserve dataset citation in reports.",
+      "task_types": ["binary_classification"],
+      "modality_tags": ["single_table", "credit_risk", "categorical", "openml", "small_smoke_test"],
+      "scale": "small",
+      "recommended_uses": [
+        "credential-free credit-risk smoke test",
+        "categorical encoding and imbalanced classification checks",
+        "baseline report and cost-sensitive metric discussion without Kaggle setup"
+      ],
+      "scenario": {
+        "kind": "single_table_credit_risk_public_smoke",
+        "validation_focus": "stratified_split_with_cost_sensitive_metric_question",
+        "feature_focus": ["categorical_encoding", "numeric_imputation", "prediction_time_availability"],
+        "report_focus": ["baseline_sanity", "class_balance", "cost_sensitive_caveat", "leaderboard"]
+      },
+      "primary_table": {
+        "path": "dataset_31_credit-g.csv",
+        "target_column": "class",
+        "description": "OpenML CSV export of German Credit rows with good/bad credit-risk target."
+      },
+      "required_files": [
+        { "path": "dataset_31_credit-g.csv", "role": "primary_table", "description": "OpenML CSV export of credit-g." }
+      ],
+      "recommended_files": [],
+      "download": {
+        "method": "public_direct_file",
+        "requires_account": false,
+        "download_urls": [
+          {
+            "url": "https://www.openml.org/data/get_csv/31/dataset_31_credit-g.csv",
+            "archive_type": "csv",
+            "expected_files": ["dataset_31_credit-g.csv"]
+          }
+        ],
+        "command": "Use the Tablex managed public downloader or download the OpenML CSV endpoint and place dataset_31_credit-g.csv under data/benchmarks/openml_credit_g/"
+      },
+      "evaluation_notes": "Use stratified validation for class. The OpenML description includes a cost matrix; capture a question/assumption before treating accuracy as sufficient.",
+      "risk_notes": [
+        "The good/bad target has asymmetric business costs that are not represented by plain accuracy.",
+        "Several categorical values are encoded as quoted strings; confirm import and encoding behavior in the profile."
+      ]
     }
   ]
 }
