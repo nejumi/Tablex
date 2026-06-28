@@ -161,6 +161,7 @@ Preview is intentionally limited to UTF-8 text-like artifacts such as JSON, Mark
 Approach Studio endpoints:
 
 ```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/approach/research-plan
 curl -X POST http://localhost:8000/api/projects/{project_id}/approach/research-briefs \
   -H 'Content-Type: application/json' \
   -d '{}'
@@ -171,6 +172,8 @@ curl -X POST http://localhost:8000/api/ideas/{idea_id}/prepare-agent-context
 curl http://localhost:8000/api/ideas/{idea_id}/context-packs
 curl -X POST http://localhost:8000/api/ideas/{idea_id}/run-agent-task
 ```
+
+`/approach/research-plan` writes a `research_plan` artifact shaped by `schemas/research_plan.schema.json`. It does not execute network search. It records controlled web/literature query candidates, available and recommended cross-project Skill/FeatureRecipe/EvaluationPattern references, missing asset suggestions, source and credential policy, expected Evidence shape, and report/visualization expectations. ResearchBriefs and generated Ideas reference the latest ResearchPlan when one exists.
 
 `prepare-agent-context` writes an `agent_context_pack` artifact validated by `schemas/agent_context_pack.schema.json`. The pack includes harness-owned data/evaluation references, SplitManifest context, artifact preview/download references, locked cross-project asset references, research policy, safety controls, and the required output contract. It does not pass secrets or connector credentials to the agent.
 
@@ -195,7 +198,7 @@ Approach Ideas are not fixed recipes. They are evidence-backed proposals with `A
 
 `/api/ideas/{idea_id}/run-agent-task` currently uses `LocalStubAgentRunner`. It validates the AgentResult schema and persists `agent_task_report`, `agent_result`, and `visualization_spec` artifacts plus Evidence and Lineage. It does not run real Codex code or external web research yet. Prepare and inspect an AgentContextPack first when validating future runner behavior.
 
-Agent task execution now materializes a controlled workspace under the local artifact root before invoking the runner. The workspace receives harness-owned context files such as AgentContextPack, ExperimentPlan, DataQualityGate, and diagnostics when present. The run stores an `agent_workspace_manifest` artifact, then ingests relative paths declared in `AgentResult.artifacts` into the artifact store. Absolute paths and `..` escapes are rejected.
+Agent task execution now materializes a controlled workspace under the local artifact root before invoking the runner. The workspace receives harness-owned context files such as AgentContextPack, ResearchPlan, ExperimentPlan, DataQualityGate, and diagnostics when present. The run stores an `agent_workspace_manifest` artifact, then ingests relative paths declared in `AgentResult.artifacts` into the artifact store. Absolute paths and `..` escapes are rejected.
 
 Cross-project Asset Library endpoints:
 

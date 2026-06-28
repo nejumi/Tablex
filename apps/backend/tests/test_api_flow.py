@@ -264,6 +264,29 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert retry_response.status_code == 200
     assert retry_response.json()["status"] == "queued"
 
+    seed_assets_response = client.post("/api/assets/seed-defaults")
+    assert seed_assets_response.status_code == 200
+    seeded_assets = seed_assets_response.json()
+    assert len(seeded_assets) >= 5
+    skill_asset = next(item for item in seeded_assets if item["asset_type"] == "skill")
+
+    research_plan_response = client.post(f"/api/projects/{project_id}/approach/research-plan")
+    assert research_plan_response.status_code == 200, research_plan_response.text
+    research_plan_job = research_plan_response.json()
+    assert research_plan_job["status"] == "succeeded"
+    research_plan_artifact_id = research_plan_job["output"]["artifact_id"]
+    assert research_plan_job["output"]["schema_version"] == "research_plan.v1"
+    assert research_plan_job["output"]["query_count"] >= 2
+    assert research_plan_job["output"]["recommended_asset_count"] >= 1
+    assert research_plan_job["output"]["network_default"] == "disabled_until_runner_policy_allows"
+
+    research_plan_preview_response = client.get(f"/api/artifacts/{research_plan_artifact_id}/preview")
+    assert research_plan_preview_response.status_code == 200
+    research_plan_preview = research_plan_preview_response.json()["preview"]
+    assert "research_plan.v1" in research_plan_preview
+    assert "controlled_web_search" in research_plan_preview
+    assert "connector_credentials" in research_plan_preview
+
     research_response = client.post(
         f"/api/projects/{project_id}/approach/research-briefs",
         json={"question": "What flexible approaches should be considered?"},
@@ -278,6 +301,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     brief = briefs_response.json()[0]
     assert "controlled web" in brief["summary_md"].lower() or "web" in brief["summary_md"].lower()
     assert len(brief["recommended_approaches"]) >= 2
+    assert any(source["source_type"] == "research_plan" for source in brief["sources"])
 
     ideas_response = client.post(f"/api/projects/{project_id}/approach/ideas/generate")
     assert ideas_response.status_code == 200, ideas_response.text
@@ -290,13 +314,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     idea = ideas_list_response.json()[0]
     assert idea["status"] == "proposed"
     assert idea["agent_task_contract"]["inputs"]["must_respect_split_manifest"] is True
+    assert idea["agent_task_contract"]["inputs"]["research_plan_artifact_id"] == research_plan_artifact_id
     assert any("secrets" in item for item in idea["agent_task_contract"]["forbidden_actions"])
-
-    seed_assets_response = client.post("/api/assets/seed-defaults")
-    assert seed_assets_response.status_code == 200
-    seeded_assets = seed_assets_response.json()
-    assert len(seeded_assets) >= 5
-    skill_asset = next(item for item in seeded_assets if item["asset_type"] == "skill")
 
     assets_response = client.get("/api/assets")
     assert assets_response.status_code == 200
@@ -357,6 +376,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "connector_credentials" in context_preview
     assert "split_manifest" in context_preview
     assert "quality_gate_context" in context_preview
+    assert "research_plan_context" in context_preview
+    assert research_plan_artifact_id in context_preview
 
     experiment_plan_response = client.post(f"/api/ideas/{idea['id']}/experiment-plan")
     assert experiment_plan_response.status_code == 200, experiment_plan_response.text
@@ -499,6 +520,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "data_quality_report",
         "evaluation_scenario_comparison",
         "evaluation_approval_review",
+        "research_plan",
         "research_brief",
         "approach_candidate",
         "report",
@@ -549,6 +571,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert workspace_preview_response.status_code == 200
     assert "agent_workspace_manifest.v1" in workspace_preview_response.json()["preview"]
     assert "connector_credentials" in workspace_preview_response.json()["preview"]
+    assert "research_plan" in workspace_preview_response.json()["preview"]
 
     package_preview_response = client.get(f"/api/artifacts/{model_package['id']}/preview")
     assert package_preview_response.status_code == 200

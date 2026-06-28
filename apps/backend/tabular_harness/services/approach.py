@@ -10,6 +10,7 @@ from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
     Artifact,
+    Asset,
     Assumption,
     DatasetSnapshot,
     EvaluationSpec,
@@ -34,6 +35,12 @@ from tabular_harness.services.artifacts import (
 @dataclass(frozen=True)
 class ResearchBriefResult:
     brief: ResearchBrief
+    artifact: Artifact
+
+
+@dataclass(frozen=True)
+class ResearchPlanResult:
+    plan: dict[str, Any]
     artifact: Artifact
 
 
@@ -70,7 +77,8 @@ def generate_research_brief(
         "Which prediction approaches should be considered for this tabular task, given the dataset semantics, "
         "evaluation constraints, leakage risks, and available artifact context?"
     )
-    sources = build_research_sources(project, dataset, evaluation_spec)
+    research_plan_artifact = latest_project_artifact(db, project.id, "research_plan")
+    sources = build_research_sources(project, dataset, evaluation_spec, research_plan_artifact)
     key_findings = build_key_findings(project, dataset, evaluation_spec, profile)
     recommended_approaches = build_recommended_approaches(project, profile)
     title = "Approach Research Brief"
@@ -97,6 +105,7 @@ def generate_research_brief(
             "project_id": project.id,
             "dataset_snapshot_id": dataset.id if dataset else None,
             "evaluation_spec_id": evaluation_spec.id if evaluation_spec else None,
+            "research_plan_artifact_id": research_plan_artifact.id if research_plan_artifact else None,
             "question": research_question,
         },
     )
@@ -149,6 +158,142 @@ def generate_research_brief(
     return ResearchBriefResult(brief=brief, artifact=artifact)
 
 
+def create_research_plan(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    dataset: DatasetSnapshot | None,
+    evaluation_spec: EvaluationSpec | None,
+) -> ResearchPlanResult:
+    context_artifacts = {
+        "data_quality_gate": latest_project_artifact(db, project.id, "data_quality_gate"),
+        "relational_catalog": latest_project_artifact(db, project.id, "relational_catalog"),
+        "evaluation_scenario_comparison": latest_project_artifact(db, project.id, "evaluation_scenario_comparison"),
+        "evaluation_approval_review": latest_project_artifact(db, project.id, "evaluation_approval_review"),
+        "baseline_strategy_plan": latest_project_artifact(db, project.id, "baseline_strategy_plan"),
+    }
+    profile = summarize_columns(latest_semantic_columns(db, dataset))
+    library_assets = list(
+        db.scalars(select(Asset).where(Asset.status == "active").order_by(Asset.asset_type, Asset.name).limit(24)).all()
+    )
+    asset_context = [research_asset_context(asset) for asset in library_assets]
+    query_plan = build_research_query_plan(
+        project=project,
+        dataset=dataset,
+        evaluation_spec=evaluation_spec,
+        profile=profile,
+        context_artifacts=context_artifacts,
+    )
+    recommended_references = recommend_research_assets(asset_context, profile, context_artifacts)
+    missing_asset_suggestions = missing_research_asset_suggestions(asset_context, profile, context_artifacts)
+    plan: dict[str, Any] = {
+        "schema_version": "research_plan.v1",
+        "project": {
+            "id": project.id,
+            "name": project.name,
+            "task_type": project.task_type,
+            "target_column": project.target_column,
+            "current_phase": project.current_phase,
+        },
+        "dataset": {
+            "dataset_snapshot_id": dataset.id if dataset else None,
+            "row_count": dataset.row_count if dataset else None,
+            "column_count": dataset.column_count if dataset else None,
+            "source_type": dataset.source_type if dataset else None,
+            "source_ref": dataset.source_ref if dataset else None,
+        },
+        "evaluation": {
+            "evaluation_spec_id": evaluation_spec.id if evaluation_spec else None,
+            "split_type": evaluation_spec.split_type if evaluation_spec else None,
+            "primary_metric": evaluation_spec.primary_metric if evaluation_spec else None,
+            "status": evaluation_spec.status if evaluation_spec else "missing",
+        },
+        "context_artifacts": {
+            key: research_artifact_context(value) for key, value in context_artifacts.items()
+        },
+        "dataset_signals": profile,
+        "source_policy": {
+            "allowed_source_types": [
+                "project_artifacts",
+                "cross_project_asset_library",
+                "controlled_web_search",
+                "literature_search",
+                "benchmark_context",
+            ],
+            "network_default": "disabled_until_runner_policy_allows",
+            "credential_policy": {
+                "secret_access": "forbidden",
+                "connector_credentials": "never_materialized_for_agent",
+                "kaggle_credentials": "user_managed_outside_tablex",
+            },
+            "citation_requirement": "External claims must return citation metadata as Evidence or source-summary artifacts.",
+            "ui_completeness_requirement": "Reports must be understandable in Tablex without external dashboards.",
+        },
+        "query_plan": query_plan,
+        "skill_plan": {
+            "available_assets": asset_context,
+            "recommended_references": recommended_references,
+            "missing_asset_suggestions": missing_asset_suggestions,
+        },
+        "expected_evidence": [
+            {
+                "evidence_type": "source_summary",
+                "strength": "medium",
+                "required_fields": ["title", "url_or_doi", "retrieved_at", "claim", "relevance"],
+            },
+            {
+                "evidence_type": "project_artifact",
+                "strength": "strong",
+                "required_fields": ["artifact_id", "claim", "lineage_relation"],
+            },
+        ],
+        "reporting_requirements": [
+            "Summarize why each selected approach fits the current data and EvaluationSpec.",
+            "Separate benchmark fixture smoke results from real benchmark score claims.",
+            "Report unresolved assumptions, fallback policies, and whether they block deployment.",
+            "Include visualization specifications for leaderboard, slice diagnostics, and error or calibration summaries when relevant.",
+        ],
+        "agent_handoff": {
+            "may_execute_external_search": False,
+            "future_runner": "controlled_research_runner",
+            "required_before_agent_code": [
+                "approved EvaluationSpec",
+                "SplitManifest when implementation starts",
+                "DataQualityGate review",
+                "source policy approval if network search is enabled",
+            ],
+        },
+    }
+    artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="research_plan",
+        name=f"research_plan_{new_id('rplan')}",
+        filename="research_plan.json",
+        payload=plan,
+        metadata={
+            "project_id": project.id,
+            "dataset_snapshot_id": dataset.id if dataset else None,
+            "evaluation_spec_id": evaluation_spec.id if evaluation_spec else None,
+            "query_count": len(query_plan),
+            "recommended_asset_count": len(recommended_references),
+            "network_default": "disabled_until_runner_policy_allows",
+        },
+    )
+    create_research_plan_lineage(
+        db,
+        project=project,
+        artifact=artifact,
+        dataset=dataset,
+        evaluation_spec=evaluation_spec,
+        context_artifacts=context_artifacts,
+        library_assets=library_assets,
+    )
+    return ResearchPlanResult(plan=plan, artifact=artifact)
+
+
 def generate_approach_candidates(
     db: Session,
     *,
@@ -163,6 +308,7 @@ def generate_approach_candidates(
     else:
         profile = summarize_columns(latest_semantic_columns(db, dataset))
         recommended = build_recommended_approaches(project, profile)
+    research_plan_artifact = latest_project_artifact(db, project.id, "research_plan")
     ideas: list[Idea] = []
     artifact_ids: list[str] = []
     for index, approach in enumerate(recommended[:5], start=1):
@@ -174,6 +320,7 @@ def generate_approach_candidates(
             evaluation_spec=evaluation_spec,
             approach=approach,
             research_brief=research_brief,
+            research_plan_artifact=research_plan_artifact,
         )
         payload = {
             "schema_version": "approach_candidate.v1",
@@ -199,6 +346,7 @@ def generate_approach_candidates(
                 "project_id": project.id,
                 "idea_id": idea_id,
                 "research_brief_id": research_brief.id if research_brief else None,
+                "research_plan_artifact_id": research_plan_artifact.id if research_plan_artifact else None,
             },
         )
         idea = Idea(
@@ -418,6 +566,14 @@ def latest_semantic_columns(db: Session, dataset: DatasetSnapshot | None) -> lis
     return cast(list[dict[str, Any]], loads_json(catalog.columns_json, []))
 
 
+def latest_project_artifact(db: Session, project_id: str, asset_type: str) -> Artifact | None:
+    return db.scalar(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.asset_type == asset_type)
+        .order_by(Artifact.created_at.desc())
+    )
+
+
 def summarize_columns(columns: list[dict[str, Any]]) -> dict[str, Any]:
     semantic_counts: dict[str, int] = {}
     roles: dict[str, int] = {}
@@ -444,6 +600,7 @@ def build_research_sources(
     project: Project,
     dataset: DatasetSnapshot | None,
     evaluation_spec: EvaluationSpec | None,
+    research_plan_artifact: Artifact | None = None,
 ) -> list[dict[str, Any]]:
     sources = [
         {
@@ -483,7 +640,247 @@ def build_research_sources(
                 "summary": f"{evaluation_spec.split_type} split with primary metric {evaluation_spec.primary_metric}.",
             }
         )
+    if research_plan_artifact:
+        sources.append(
+            {
+                "source_type": "research_plan",
+                "title": "Controlled ResearchPlan",
+                "ref": research_plan_artifact.id,
+                "summary": "Harness-owned plan for Skill use, controlled web/literature queries, evidence expectations, and reporting outputs.",
+            }
+        )
     return sources
+
+
+def build_research_query_plan(
+    *,
+    project: Project,
+    dataset: DatasetSnapshot | None,
+    evaluation_spec: EvaluationSpec | None,
+    profile: dict[str, Any],
+    context_artifacts: dict[str, Artifact | None],
+) -> list[dict[str, Any]]:
+    task_label = project.task_type or "tabular prediction"
+    target_label = project.target_column or "target"
+    queries = [
+        {
+            "query_id": "tabular_modeling_current_practice",
+            "query": f"{task_label} tabular machine learning gradient boosting baseline evaluation leakage",
+            "purpose": "Identify current high-signal modeling families and evaluation pitfalls for the task.",
+            "priority": 90,
+            "expected_evidence": "source_summary",
+        },
+        {
+            "query_id": "metric_and_validation_design",
+            "query": f"{task_label} {target_label} validation split metric calibration imbalanced tabular",
+            "purpose": "Check metric and validation choices against known task risks.",
+            "priority": 85,
+            "expected_evidence": "source_summary",
+        },
+    ]
+    relational_metadata = artifact_metadata(context_artifacts.get("relational_catalog"))
+    if int(relational_metadata.get("table_count") or 0) > 1:
+        queries.append(
+            {
+                "query_id": "relational_tabular_feature_aggregation",
+                "query": "multi table tabular prediction feature aggregation leakage entity split",
+                "purpose": "Support relational FeatureRecipe and AgentTask planning without fixed joins.",
+                "priority": 82,
+                "expected_evidence": "source_summary",
+            }
+        )
+    if profile.get("has_text"):
+        queries.append(
+            {
+                "query_id": "text_tabular_features",
+                "query": "tabular prediction text features tf-idf leakage train fold validation",
+                "purpose": "Decide whether and how to compare text-derived features.",
+                "priority": 74,
+                "expected_evidence": "source_summary",
+            }
+        )
+    if profile.get("has_datetime") or (evaluation_spec and evaluation_spec.split_type == "time"):
+        queries.append(
+            {
+                "query_id": "time_aware_tabular_features",
+                "query": "time aware tabular features lag rolling statistics leakage validation",
+                "purpose": "Plan causal temporal feature generation and validation windows.",
+                "priority": 78,
+                "expected_evidence": "source_summary",
+            }
+        )
+    if dataset and dataset.source_type == "benchmark_catalog":
+        queries.append(
+            {
+                "query_id": "benchmark_context",
+                "query": f"{dataset.source_ref or 'benchmark'} common approaches leakage validation",
+                "purpose": "Collect benchmark-specific cautions without treating leaderboard recipes as fixed policy.",
+                "priority": 70,
+                "expected_evidence": "source_summary",
+            }
+        )
+    return queries
+
+
+def research_artifact_context(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {"status": "missing", "artifact_id": None}
+    return {
+        "status": "available",
+        "artifact_id": artifact.id,
+        "asset_type": artifact.asset_type,
+        "name": artifact.name,
+        "version": artifact.version,
+        "metadata": artifact_metadata(artifact),
+        "preview_url": f"/api/artifacts/{artifact.id}/preview",
+        "download_url": f"/api/artifacts/{artifact.id}/download",
+    }
+
+
+def artifact_metadata(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {}
+    return cast(dict[str, Any], loads_json(artifact.metadata_json, {}))
+
+
+def research_asset_context(asset: Asset) -> dict[str, Any]:
+    return {
+        "asset_id": asset.id,
+        "asset_type": asset.asset_type,
+        "name": asset.name,
+        "description": asset.description,
+        "tags": loads_json(asset.tags_json, []),
+        "semantic_tags": loads_json(asset.semantic_tags_json, []),
+        "latest_version_id": asset.latest_version_id,
+    }
+
+
+def recommend_research_assets(
+    asset_context: list[dict[str, Any]],
+    profile: dict[str, Any],
+    context_artifacts: dict[str, Artifact | None],
+) -> list[dict[str, Any]]:
+    recommendations: list[dict[str, Any]] = []
+    for asset in asset_context:
+        semantic_tags = {str(tag) for tag in asset.get("semantic_tags", [])}
+        asset_type = str(asset.get("asset_type"))
+        reason = None
+        if "controlled_research" in semantic_tags or asset_type == "skill":
+            reason = "Use to guide controlled research and source-backed approach selection."
+        elif "split_manifest" in semantic_tags and context_artifacts.get("evaluation_scenario_comparison"):
+            reason = "Use to compare feature scenarios under stable evaluation constraints."
+        elif "text_features" in semantic_tags and profile.get("has_text"):
+            reason = "Text-like columns are present."
+        elif "leakage_control" in semantic_tags:
+            reason = "Leakage and prediction-time availability controls are always relevant."
+        if reason:
+            recommendations.append(
+                {
+                    "asset_id": asset["asset_id"],
+                    "asset_type": asset_type,
+                    "latest_version_id": asset.get("latest_version_id"),
+                    "name": asset.get("name"),
+                    "reason": reason,
+                }
+            )
+    return recommendations[:12]
+
+
+def missing_research_asset_suggestions(
+    asset_context: list[dict[str, Any]],
+    profile: dict[str, Any],
+    context_artifacts: dict[str, Artifact | None],
+) -> list[dict[str, Any]]:
+    semantic_tags = {str(tag) for asset in asset_context for tag in asset.get("semantic_tags", [])}
+    suggestions: list[dict[str, Any]] = []
+    if profile.get("has_datetime") and "time_features" not in semantic_tags:
+        suggestions.append(
+            {
+                "asset_type": "feature_recipe",
+                "name": "causal_time_lag_rolling_features",
+                "reason": "Datetime signals exist but no time-feature Skill/FeatureRecipe is registered.",
+            }
+        )
+    relational_metadata = artifact_metadata(context_artifacts.get("relational_catalog"))
+    if int(relational_metadata.get("table_count") or 0) > 1 and "relational_features" not in semantic_tags:
+        suggestions.append(
+            {
+                "asset_type": "feature_recipe",
+                "name": "relational_aggregation_recipe",
+                "reason": "RelationalCatalog has supporting tables but no relational aggregation asset is registered.",
+            }
+        )
+    if "controlled_research" not in semantic_tags:
+        suggestions.append(
+            {
+                "asset_type": "skill",
+                "name": "controlled_literature_review",
+                "reason": "No Skill is registered for source-backed controlled research.",
+            }
+        )
+    return suggestions
+
+
+def create_research_plan_lineage(
+    db: Session,
+    *,
+    project: Project,
+    artifact: Artifact,
+    dataset: DatasetSnapshot | None,
+    evaluation_spec: EvaluationSpec | None,
+    context_artifacts: dict[str, Artifact | None],
+    library_assets: list[Asset],
+) -> None:
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="project",
+        from_asset_id=project.id,
+        to_asset_type="artifact",
+        to_asset_id=artifact.id,
+        relation_type="plans_research",
+    )
+    if dataset:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="dataset_snapshot",
+            from_asset_id=dataset.id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="informs",
+        )
+    if evaluation_spec:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="evaluation_spec",
+            from_asset_id=evaluation_spec.id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="constrains",
+        )
+    for context_artifact in context_artifacts.values():
+        if context_artifact:
+            create_lineage_edge(
+                db,
+                project_id=project.id,
+                from_asset_type="artifact",
+                from_asset_id=context_artifact.id,
+                to_asset_type="artifact",
+                to_asset_id=artifact.id,
+                relation_type="informs",
+            )
+    for asset in library_assets[:12]:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="asset",
+            from_asset_id=asset.id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="suggested_for_research",
+        )
 
 
 def build_key_findings(
@@ -605,6 +1002,7 @@ def build_agent_task_contract(
     evaluation_spec: EvaluationSpec | None,
     approach: dict[str, Any],
     research_brief: ResearchBrief | None,
+    research_plan_artifact: Artifact | None = None,
 ) -> dict[str, Any]:
     return {
         "task_id": f"agt_{idea_id}",
@@ -619,6 +1017,7 @@ def build_agent_task_contract(
             "dataset_snapshot_id": dataset.id if dataset else None,
             "evaluation_spec_id": evaluation_spec.id if evaluation_spec else None,
             "research_brief_id": research_brief.id if research_brief else None,
+            "research_plan_artifact_id": research_plan_artifact.id if research_plan_artifact else None,
             "approach_type": approach["approach_type"],
             "allowed_research_modes": ["project_artifacts", "skill_library", "controlled_web_search"],
             "must_respect_split_manifest": True,

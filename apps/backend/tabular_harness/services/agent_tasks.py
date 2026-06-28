@@ -257,6 +257,7 @@ def copy_context_artifacts(
     refs: list[dict[str, Any]] = []
     for asset_type, name in [
         ("agent_context_pack", "agent_context_pack.json"),
+        ("research_plan", "research_plan.json"),
         ("experiment_plan", "experiment_plan.json"),
         ("baseline_strategy_plan", "baseline_strategy_plan.json"),
         ("data_quality_gate", "data_quality_gate.json"),

@@ -18,6 +18,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Search,
   Upload
 } from "lucide-react";
 import "./styles.css";
@@ -1600,6 +1601,10 @@ function ApproachTab({
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const latestBrief = researchBriefs[0] ?? null;
+  const researchPlanArtifacts = artifacts.filter((artifact) => artifact.asset_type === "research_plan");
+  const [researchPlanPreview, setResearchPlanPreview] = React.useState<ArtifactPreview | null>(null);
+  const [researchPlanPreviewError, setResearchPlanPreviewError] = React.useState<string | null>(null);
+  const [researchPlanPreviewLoadingId, setResearchPlanPreviewLoadingId] = React.useState<string | null>(null);
   const [contextPreview, setContextPreview] = React.useState<ArtifactPreview | null>(null);
   const [contextPreviewError, setContextPreviewError] = React.useState<string | null>(null);
   const [contextPreviewLoadingId, setContextPreviewLoadingId] = React.useState<string | null>(null);
@@ -1619,6 +1624,18 @@ function ApproachTab({
       setContextPreviewError(err instanceof Error ? err.message : String(err));
     } finally {
       setContextPreviewLoadingId(null);
+    }
+  }
+
+  async function loadResearchPlanPreview(artifactId: string) {
+    setResearchPlanPreviewLoadingId(artifactId);
+    setResearchPlanPreviewError(null);
+    try {
+      setResearchPlanPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setResearchPlanPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResearchPlanPreviewLoadingId(null);
     }
   }
 
@@ -1653,6 +1670,23 @@ function ApproachTab({
           className="secondary-button"
           disabled={busy}
           onClick={() =>
+            void runAction(async () => {
+              const job = await api<Job>(`/api/projects/${project.id}/approach/research-plan`, { method: "POST" });
+              const artifactId = job.output.artifact_id;
+              if (typeof artifactId === "string") {
+                await loadResearchPlanPreview(artifactId);
+              }
+              return job;
+            })
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
+          Research Plan
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
             void runAction(() =>
               api(`/api/projects/${project.id}/approach/research-briefs`, {
                 method: "POST",
@@ -1676,6 +1710,41 @@ function ApproachTab({
           Generate Ideas
         </button>
       </div>
+      <Panel title="Research Plans" icon={<Search size={18} />}>
+        {researchPlanArtifacts.length ? (
+          <Table
+            headers={["Plan", "Queries", "Assets", "Network", "Created", "Actions"]}
+            rows={researchPlanArtifacts.map((artifact) => [
+              artifact.name,
+              String(artifact.metadata.query_count ?? "-"),
+              String(artifact.metadata.recommended_asset_count ?? "-"),
+              String(artifact.metadata.network_default ?? "-"),
+              formatDate(artifact.created_at),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={researchPlanPreviewLoadingId === artifact.id}
+                  onClick={() => void loadResearchPlanPreview(artifact.id)}
+                  title="Preview research plan"
+                >
+                  {researchPlanPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download research plan">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Research plans will turn project context, evaluation constraints, quality gates, benchmark context, and library assets into controlled query candidates, Skill references, source policy, expected evidence, and report outputs." />
+        )}
+        {researchPlanPreviewError ? <div className="banner danger">{researchPlanPreviewError}</div> : null}
+        {researchPlanPreview?.preview_available ? (
+          <pre className="markdown-preview">{researchPlanPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={researchPlanPreview?.reason ?? "Generate or select a ResearchPlan to inspect controlled search candidates, Skill references, source policy, evidence expectations, and reporting requirements."} />
+        )}
+      </Panel>
       <Panel title="Research Briefs" icon={<FileText size={18} />}>
         {researchBriefs.length ? (
           <div className="stack">
@@ -1719,6 +1788,10 @@ function ApproachTab({
                   <div>
                     <dt>Research</dt>
                     <dd>{formatContractModes(idea)}</dd>
+                  </div>
+                  <div>
+                    <dt>ResearchPlan</dt>
+                    <dd>{formatContractResearchPlan(idea)}</dd>
                   </div>
                   <div>
                     <dt>Artifact</dt>
@@ -2400,6 +2473,13 @@ function formatContractModes(idea: Idea) {
   const modes = (inputs as Record<string, unknown>).allowed_research_modes;
   if (!Array.isArray(modes)) return "-";
   return modes.map(String).join(", ");
+}
+
+function formatContractResearchPlan(idea: Idea) {
+  const inputs = idea.agent_task_contract.inputs;
+  if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) return "-";
+  const artifactId = (inputs as Record<string, unknown>).research_plan_artifact_id;
+  return typeof artifactId === "string" && artifactId.length ? artifactId : "-";
 }
 
 function latestContextPackArtifact(artifacts: Artifact[], ideaId: string) {

@@ -54,6 +54,7 @@ def prepare_idea_agent_context_pack(
     split_manifest = latest_split_for_spec(db, evaluation_spec.id) if evaluation_spec else None
     quality_gate_artifact = latest_project_artifact(db, project.id, "data_quality_gate")
     relational_catalog_artifact = latest_project_artifact(db, project.id, "relational_catalog")
+    research_plan_artifact = latest_project_artifact(db, project.id, "research_plan")
     artifacts = list(
         db.scalars(
             select(Artifact)
@@ -83,6 +84,7 @@ def prepare_idea_agent_context_pack(
         split_manifest=split_manifest,
         quality_gate_artifact=quality_gate_artifact,
         relational_catalog_artifact=relational_catalog_artifact,
+        research_plan_artifact=research_plan_artifact,
         artifacts=artifacts,
         asset_references=expanded_asset_references(db, asset_references),
     )
@@ -102,6 +104,7 @@ def prepare_idea_agent_context_pack(
             "job_id": job.id if job else None,
             "evaluation_spec_id": evaluation_spec.id if evaluation_spec else None,
             "split_manifest_id": split_manifest.id if split_manifest else None,
+            "research_plan_artifact_id": research_plan_artifact.id if research_plan_artifact else None,
         },
     )
     create_context_lineage(
@@ -112,6 +115,7 @@ def prepare_idea_agent_context_pack(
         dataset=dataset,
         evaluation_spec=evaluation_spec,
         split_manifest=split_manifest,
+        research_plan_artifact=research_plan_artifact,
         asset_references=asset_references,
         job=job,
     )
@@ -128,6 +132,7 @@ def build_agent_context_pack(
     split_manifest: SplitManifest | None,
     quality_gate_artifact: Artifact | None,
     relational_catalog_artifact: Artifact | None,
+    research_plan_artifact: Artifact | None,
     artifacts: list[Artifact],
     asset_references: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -182,6 +187,7 @@ def build_agent_context_pack(
         "evaluation_context": evaluation_context(evaluation_spec, split_manifest),
         "quality_gate_context": quality_gate_context(quality_gate_artifact),
         "relational_context": relational_context(relational_catalog_artifact),
+        "research_plan_context": research_plan_context(research_plan_artifact),
         "artifact_refs": artifact_refs(artifacts),
         "library_asset_references": asset_references,
         "required_outputs": contract_payload["required_outputs"],
@@ -267,6 +273,21 @@ def relational_context(artifact: Artifact | None) -> dict[str, Any]:
     }
 
 
+def research_plan_context(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {"status": "missing", "artifact_id": None}
+    metadata = loads_json(artifact.metadata_json, {})
+    return {
+        "status": "available",
+        "artifact_id": artifact.id,
+        "query_count": metadata.get("query_count"),
+        "recommended_asset_count": metadata.get("recommended_asset_count"),
+        "network_default": metadata.get("network_default"),
+        "preview_url": f"/api/artifacts/{artifact.id}/preview",
+        "download_url": f"/api/artifacts/{artifact.id}/download",
+    }
+
+
 def artifact_refs(artifacts: list[Artifact]) -> list[dict[str, Any]]:
     refs = []
     for artifact in artifacts:
@@ -300,6 +321,10 @@ def compact_artifact_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         "chart_type",
         "task_id",
         "context_pack_id",
+        "research_plan_artifact_id",
+        "query_count",
+        "recommended_asset_count",
+        "network_default",
     }
     return {key: value for key, value in metadata.items() if key in allowlist}
 
@@ -322,6 +347,7 @@ def create_context_lineage(
     dataset: DatasetSnapshot | None,
     evaluation_spec: EvaluationSpec | None,
     split_manifest: SplitManifest | None,
+    research_plan_artifact: Artifact | None,
     asset_references: list[AssetReference],
     job: Job | None,
 ) -> None:
@@ -370,6 +396,16 @@ def create_context_lineage(
             project_id=project.id,
             from_asset_type="split_manifest",
             from_asset_id=split_manifest.id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="included_in_context",
+        )
+    if research_plan_artifact:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=research_plan_artifact.id,
             to_asset_type="artifact",
             to_asset_id=artifact.id,
             relation_type="included_in_context",

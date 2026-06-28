@@ -35,6 +35,7 @@ The product name may still change. Internal package names and database tables st
 - Baseline Strategy Planner v0 with artifact-backed candidate strategies, selected/deferred rationale, relational AgentTask handoff notes, and baseline report integration.
 - Evaluation Scenario Comparison v0 with artifact-backed split feasibility, temporal/group leakage, quality gate, relational context, open question, and assumption-risk comparison before EvaluationSpec adoption.
 - Evaluation Approval Review v0 with artifact-backed approval blockers, assumption-backed proceed notes, review lineage, and UI preview before approving an EvaluationSpec.
+- Controlled Research Planning v0 with ResearchPlan artifacts that turn project context, quality gates, evaluation specs, benchmark context, and cross-project Skill assets into controlled query candidates, source policy, expected evidence, and reporting requirements.
 - Leaderboard backed by ExperimentRun metrics.
 - React UI with project list, dataset upload, assumptions, evaluation, approach, experiments, leaderboard, reports, assets, jobs, and lineage tabs.
 - AgentRunner interface with Noop/LocalStub and Codex CLI skeleton.

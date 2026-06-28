@@ -22,6 +22,7 @@ JOB_TYPES = {
     "plan_baseline_strategy",
     "run_agent_task",
     "validate_model_package",
+    "plan_research",
     "generate_research_brief",
     "generate_approach_candidates",
     "draft_project_report",

@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ResearchPlan",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "dataset",
+    "evaluation",
+    "context_artifacts",
+    "dataset_signals",
+    "source_policy",
+    "query_plan",
+    "skill_plan",
+    "expected_evidence",
+    "reporting_requirements",
+    "agent_handoff"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "research_plan.v1"
+    },
+    "project": {
+      "type": "object"
+    },
+    "dataset": {
+      "type": "object"
+    },
+    "evaluation": {
+      "type": "object"
+    },
+    "context_artifacts": {
+      "type": "object"
+    },
+    "dataset_signals": {
+      "type": "object"
+    },
+    "source_policy": {
+      "type": "object",
+      "required": [
+        "allowed_source_types",
+        "network_default",
+        "credential_policy",
+        "citation_requirement",
+        "ui_completeness_requirement"
+      ],
+      "properties": {
+        "allowed_source_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "network_default": {
+          "type": "string"
+        },
+        "credential_policy": {
+          "type": "object"
+        },
+        "citation_requirement": {
+          "type": "string"
+        },
+        "ui_completeness_requirement": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "query_plan": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "query_id",
+          "query",
+          "purpose",
+          "priority",
+          "expected_evidence"
+        ],
+        "properties": {
+          "query_id": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "number"
+          },
+          "expected_evidence": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "skill_plan": {
+      "type": "object",
+      "required": [
+        "available_assets",
+        "recommended_references",
+        "missing_asset_suggestions"
+      ],
+      "properties": {
+        "available_assets": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "recommended_references": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "missing_asset_suggestions": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "expected_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "reporting_requirements": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "agent_handoff": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

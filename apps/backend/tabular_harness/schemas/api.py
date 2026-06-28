@@ -375,6 +375,7 @@ class JobCreate(BaseModel):
         "run_baseline",
         "plan_baseline_strategy",
         "validate_model_package",
+        "plan_research",
         "generate_research_brief",
         "generate_approach_candidates",
         "draft_project_report",

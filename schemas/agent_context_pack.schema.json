@@ -14,6 +14,7 @@
     "evaluation_context",
     "quality_gate_context",
     "relational_context",
+    "research_plan_context",
     "artifact_refs",
     "library_asset_references",
     "required_outputs",
@@ -51,6 +52,9 @@
       "type": "object"
     },
     "relational_context": {
+      "type": "object"
+    },
+    "research_plan_context": {
       "type": "object"
     },
     "artifact_refs": {

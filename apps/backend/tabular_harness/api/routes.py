@@ -83,6 +83,7 @@ from tabular_harness.schemas import (
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
 from tabular_harness.services.approach import (
+    create_research_plan,
     draft_project_report,
     generate_approach_candidates,
     generate_research_brief,
@@ -1195,6 +1196,51 @@ def get_split_manifest(split_id: str, db: Annotated[Session, Depends(get_session
     if split is None:
         raise HTTPException(status_code=404, detail="SplitManifest not found")
     return split_to_dict(split)
+
+
+@router.post("/api/projects/{project_id}/approach/research-plan", response_model=JobRead)
+def generate_project_research_plan(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    dataset = latest_dataset(db, project_id)
+    spec = latest_approved_spec(db, project_id)
+    job = create_job(
+        db,
+        job_type="plan_research",
+        project_id=project_id,
+        input_payload={"dataset_snapshot_id": dataset.id if dataset else None, "evaluation_spec_id": spec.id if spec else None},
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_research_plan(
+            db,
+            store=store,
+            project=project,
+            dataset=dataset,
+            evaluation_spec=spec,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.plan["schema_version"],
+                "artifact_id": result.artifact.id,
+                "query_count": len(result.plan.get("query_plan", [])),
+                "recommended_asset_count": len(result.plan.get("skill_plan", {}).get("recommended_references", [])),
+                "network_default": result.plan["source_policy"]["network_default"],
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
 
 
 @router.post("/api/projects/{project_id}/approach/research-briefs", response_model=JobRead)
