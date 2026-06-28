@@ -56,6 +56,7 @@ from tabular_harness.schemas import (
     BenchmarkImportRequest,
     BenchmarkImportResponse,
     BenchmarkLocalStatusRead,
+    BenchmarkPublicDownloadRequest,
     BenchmarkSourceCardRead,
     DatasetSnapshotRead,
     DatasetUploadResponse,
@@ -90,6 +91,7 @@ from tabular_harness.services.approach import (
     draft_project_report,
     generate_approach_candidates,
     generate_research_brief,
+    store_json_artifact,
 )
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
@@ -118,6 +120,7 @@ from tabular_harness.services.benchmarks import (
     build_relational_catalog,
     create_benchmark_scenario_pack,
     default_benchmark_root,
+    download_public_benchmark_archive,
     generate_benchmark_fixture,
     get_benchmark_dataset,
     inspect_benchmark_local_files,
@@ -259,6 +262,70 @@ def generate_benchmark_fixture_endpoint(
         raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/benchmarks/{benchmark_id}/public-download", response_model=JobRead)
+def download_public_benchmark_endpoint(
+    benchmark_id: str,
+    payload: BenchmarkPublicDownloadRequest,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    job = create_job(
+        db,
+        job_type="download_public_benchmark_archive",
+        project_id=None,
+        input_payload={"benchmark_id": benchmark_id, "overwrite": payload.overwrite},
+        policy={
+            "network": "enabled_for_catalog_public_archive_only",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+        },
+    )
+    try:
+        mark_job_running(job)
+        manifest = download_public_benchmark_archive(
+            request.app.state.settings,
+            benchmark_id,
+            overwrite=payload.overwrite,
+        )
+        artifact = store_json_artifact(
+            db,
+            store,
+            project_id=None,
+            asset_type="benchmark_public_download_manifest",
+            name=f"benchmark_public_download_{benchmark_id}",
+            filename="benchmark_public_download_manifest.json",
+            payload=manifest,
+            metadata={
+                "benchmark_id": benchmark_id,
+                "download_url": manifest["download_url"],
+                "extracted_file_count": len(manifest["extracted_files"]),
+                "skipped_file_count": len(manifest["skipped_files"]),
+                "local_ready": manifest["local_status"]["ready"],
+            },
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "benchmark_id": benchmark_id,
+                "artifact_id": artifact.id,
+                "schema_version": manifest["schema_version"],
+                "download_url": manifest["download_url"],
+                "root_path": manifest["root_path"],
+                "extracted_file_count": len(manifest["extracted_files"]),
+                "skipped_file_count": len(manifest["skipped_files"]),
+                "local_ready": manifest["local_status"]["ready"],
+            },
+        )
+    except KeyError as exc:
+        mark_job_failed(job, "Benchmark dataset not found")
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
 
 
 @router.get("/api/projects", response_model=list[ProjectRead])

@@ -3,9 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlparse
 
 import duckdb
 from sqlalchemy import select
@@ -25,6 +28,7 @@ from tabular_harness.services.profiler import quote_ident, read_sql
 
 SUPPORTED_PRIMARY_SUFFIXES = {".csv", ".parquet"}
 MAX_SUPPORTING_TABLE_ARTIFACT_BYTES = 25 * 1024 * 1024
+MAX_PUBLIC_ARCHIVE_BYTES = 100 * 1024 * 1024
 KEY_NAME_HINTS = ("id", "_id", "sk_id", "case_id", "transactionid", "order_id", "store_nbr", "user_id")
 TIME_NAME_HINTS = ("date", "time", "dt", "timestamp")
 LEAKAGE_NAME_HINTS = ("target", "label", "actual", "result", "final", "after", "post", "status")
@@ -287,6 +291,173 @@ def benchmark_safety_notes(benchmark: dict[str, Any]) -> list[str]:
     ]
     notes.extend(str(item) for item in benchmark.get("risk_notes", []))
     return notes
+
+
+def download_public_benchmark_archive(
+    settings: Settings,
+    benchmark_id: str,
+    *,
+    overwrite: bool = False,
+    max_archive_bytes: int = MAX_PUBLIC_ARCHIVE_BYTES,
+) -> dict[str, Any]:
+    benchmark = raw_benchmark_dataset(benchmark_id)
+    access = benchmark_access(benchmark)
+    if access["requires_account"] or not access["supports_direct_download"]:
+        raise ValueError("Managed public download is only available for credential-free direct-download benchmarks")
+    url_entry = select_public_download_url(access)
+    url = str(url_entry["url"])
+    validate_public_download_url(url)
+    root = default_benchmark_root(settings, benchmark_id)
+    root.mkdir(parents=True, exist_ok=True)
+    downloads_dir = root / "_downloads"
+    downloads_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = downloads_dir / public_archive_filename(benchmark_id, url)
+    archive = download_file_limited(url, archive_path, max_bytes=max_archive_bytes)
+    expected_files = expected_archive_filenames(benchmark, url_entry)
+    if not expected_files:
+        raise ValueError("No expected files are configured for public archive extraction")
+    extracted, skipped = extract_expected_zip_files(
+        archive_path=archive_path,
+        root=root,
+        expected_files=expected_files,
+        overwrite=overwrite,
+    )
+    local_status = inspect_benchmark_local_files(benchmark, root)
+    if not extracted and not local_status["ready"]:
+        raise ValueError("Public archive did not contain required benchmark files")
+    return {
+        "schema_version": "benchmark_public_download_manifest.v1",
+        "benchmark_id": benchmark_id,
+        "benchmark_name": benchmark["name"],
+        "source_url": benchmark["source_url"],
+        "download_url": url,
+        "root_path": str(root),
+        "overwrite": overwrite,
+        "archive": archive,
+        "expected_files": sorted(expected_files),
+        "extracted_files": extracted,
+        "skipped_files": skipped,
+        "local_status": local_status,
+        "credential_policy": benchmark_credential_policy(benchmark),
+        "safety": {
+            "path_traversal": "zip members with absolute paths or '..' are skipped",
+            "extraction_policy": "only configured expected filenames are flattened into the benchmark root",
+            "max_archive_bytes": max_archive_bytes,
+        },
+    }
+
+
+def select_public_download_url(access: dict[str, Any]) -> dict[str, Any]:
+    urls = access.get("download_urls")
+    if not isinstance(urls, list) or not urls:
+        raise ValueError("No public download URL is configured for this benchmark")
+    for item in urls:
+        if isinstance(item, dict) and isinstance(item.get("url"), str):
+            return cast(dict[str, Any], item)
+    raise ValueError("No valid public download URL is configured for this benchmark")
+
+
+def validate_public_download_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Public benchmark download URL must be http(s)")
+
+
+def public_archive_filename(benchmark_id: str, url: str) -> str:
+    name = Path(urlparse(url).path).name or "archive.zip"
+    cleaned = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in name)
+    if not cleaned.lower().endswith(".zip"):
+        cleaned = f"{cleaned}.zip"
+    return f"{benchmark_id}_{cleaned}"
+
+
+def download_file_limited(url: str, target_path: Path, *, max_bytes: int) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    size = 0
+    with urllib.request.urlopen(url, timeout=30) as response, target_path.open("wb") as output:
+        status = getattr(response, "status", None)
+        if status is not None and int(status) >= 400:
+            raise ValueError(f"Public download failed with HTTP status {status}")
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > max_bytes:
+                raise ValueError(f"Public archive exceeds size limit of {max_bytes} bytes")
+            digest.update(chunk)
+            output.write(chunk)
+    return {
+        "path": str(target_path),
+        "size_bytes": size,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def expected_archive_filenames(benchmark: dict[str, Any], url_entry: dict[str, Any]) -> set[str]:
+    filenames: set[str] = set()
+    expected_files = url_entry.get("expected_files")
+    if isinstance(expected_files, list):
+        filenames.update(Path(str(item)).name for item in expected_files if str(item).strip())
+    for spec in [*benchmark.get("required_files", []), *benchmark.get("recommended_files", [])]:
+        if not isinstance(spec, dict):
+            continue
+        if spec.get("path"):
+            filenames.add(Path(str(spec["path"])).name)
+        for candidate in spec.get("path_candidates", []):
+            filenames.add(Path(str(candidate)).name)
+    return {name for name in filenames if name}
+
+
+def extract_expected_zip_files(
+    *,
+    archive_path: Path,
+    root: Path,
+    expected_files: set[str],
+    overwrite: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    extracted: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    try:
+        archive = zipfile.ZipFile(archive_path)
+    except zipfile.BadZipFile as exc:
+        raise ValueError("Public archive is not a valid zip file") from exc
+    with archive:
+        for member in archive.infolist():
+            if member.is_dir():
+                continue
+            member_path = Path(member.filename)
+            if member_path.is_absolute() or ".." in member_path.parts:
+                skipped.append({"member": member.filename, "reason": "unsafe_path"})
+                continue
+            filename = member_path.name
+            if filename not in expected_files:
+                skipped.append({"member": member.filename, "reason": "not_expected"})
+                continue
+            target = root / filename
+            if target.exists() and not overwrite:
+                skipped.append({"member": member.filename, "path": filename, "reason": "exists"})
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            digest = hashlib.sha256()
+            size = 0
+            with archive.open(member, "r") as source, target.open("wb") as output:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    digest.update(chunk)
+                    output.write(chunk)
+            extracted.append(
+                {
+                    "member": member.filename,
+                    "path": filename,
+                    "size_bytes": size,
+                    "sha256": digest.hexdigest(),
+                }
+            )
+    return extracted, skipped
 
 
 def inspect_benchmark_local_files(benchmark: dict[str, Any], root: Path) -> dict[str, Any]:

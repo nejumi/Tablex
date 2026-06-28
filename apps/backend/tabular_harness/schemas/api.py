@@ -157,6 +157,10 @@ class BenchmarkFixtureRequest(BaseModel):
     overwrite: bool = False
 
 
+class BenchmarkPublicDownloadRequest(BaseModel):
+    overwrite: bool = False
+
+
 class BenchmarkDatasetRead(BaseModel):
     id: str
     name: str

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import json
+import threading
+import zipfile
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 from tabular_harness.core.config import Settings
@@ -827,6 +833,96 @@ def test_public_uci_wine_fixture_source_card_import(tmp_path: Path) -> None:
     manifest_preview = manifest_preview_response.json()["preview"]
     assert "benchmark_import_manifest.v1" in manifest_preview
     assert "public_direct_download" in manifest_preview
+
+
+def test_public_benchmark_download_extracts_expected_files(tmp_path: Path, monkeypatch: Any) -> None:
+    archive_dir = tmp_path / "served"
+    archive_dir.mkdir()
+    archive_path = archive_dir / "public.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("nested/public.csv", "feature,target\n1,0\n2,1\n")
+        archive.writestr("../evil.csv", "feature,target\n9,9\n")
+        archive.writestr("ignored.txt", "ignore me\n")
+
+    handler = partial(SimpleHTTPRequestHandler, directory=str(archive_dir))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/public.zip"
+        catalog_path = tmp_path / "catalog.json"
+        catalog_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "benchmark_catalog.v1",
+                    "datasets": [
+                        {
+                            "id": "public_zip_smoke",
+                            "name": "Public Zip Smoke",
+                            "source_kind": "public_test_archive",
+                            "source_url": url,
+                            "access": {
+                                "kind": "public_direct_download",
+                                "requires_account": False,
+                                "requires_secret": False,
+                                "supports_direct_download": True,
+                                "download_urls": [
+                                    {
+                                        "url": url,
+                                        "archive_type": "zip",
+                                        "expected_files": ["public.csv"],
+                                    }
+                                ],
+                            },
+                            "task_types": ["binary_classification"],
+                            "modality_tags": ["single_table", "download_smoke"],
+                            "primary_table": {"path": "public.csv", "target_column": "target"},
+                            "required_files": [
+                                {"path": "public.csv", "role": "primary_table", "description": "Downloaded table."}
+                            ],
+                            "download": {
+                                "method": "public_archive",
+                                "requires_account": False,
+                                "download_urls": [{"url": url, "archive_type": "zip", "expected_files": ["public.csv"]}],
+                                "command": "Downloaded by test local HTTP server.",
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("TABLEX_BENCHMARK_CATALOG_PATH", str(catalog_path))
+        client = make_client(tmp_path)
+
+        readiness_response = client.get("/api/benchmarks/public_zip_smoke/import-readiness")
+        assert readiness_response.status_code == 200
+        assert readiness_response.json()["can_import_now"] is False
+
+        download_response = client.post("/api/benchmarks/public_zip_smoke/public-download", json={"overwrite": False})
+        assert download_response.status_code == 200, download_response.text
+        job = download_response.json()
+        assert job["status"] == "succeeded"
+        assert job["output"]["extracted_file_count"] == 1
+        assert job["output"]["local_ready"] is True
+        assert job["output"]["artifact_id"]
+
+        benchmark_root = tmp_path / "data" / "benchmarks" / "public_zip_smoke"
+        assert (benchmark_root / "public.csv").read_text(encoding="utf-8").startswith("feature,target")
+        assert not (benchmark_root / "evil.csv").exists()
+
+        status_response = client.get("/api/benchmarks/public_zip_smoke/local-status")
+        assert status_response.status_code == 200
+        assert status_response.json()["ready"] is True
+
+        manifest_preview_response = client.get(f"/api/artifacts/{job['output']['artifact_id']}/preview")
+        assert manifest_preview_response.status_code == 200
+        manifest_preview = manifest_preview_response.json()["preview"]
+        assert "benchmark_public_download_manifest.v1" in manifest_preview
+        assert "unsafe_path" in manifest_preview
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
 
 
 def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:

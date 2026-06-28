@@ -35,6 +35,7 @@ JOB_TYPES = {
     "compare_experiments",
     "draft_run_report",
     "analyze_data_quality",
+    "download_public_benchmark_archive",
     "import_benchmark_dataset",
     "create_benchmark_scenario_pack",
 }

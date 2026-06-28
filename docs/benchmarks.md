@@ -29,7 +29,7 @@ Every catalog entry is exposed with a generated `benchmark_source_card.v1` shape
 - `import_readiness`: whether local files are present and what action should happen next.
 - `fixture`: whether a credential-free synthetic smoke fixture is available.
 
-Kaggle datasets remain user-managed outside Tablex. Public UCI archives are credential-free, but the current harness still expects users or scripts to place extracted files under the local benchmark root before import.
+Kaggle datasets remain user-managed outside Tablex. Public UCI archives are credential-free and can be downloaded by the managed public-download endpoint when `source_card.access.supports_direct_download=true` and `requires_account=false`.
 
 ## Local Layout
 
@@ -63,6 +63,16 @@ curl http://localhost:8000/api/benchmarks/uci_bank_marketing/source-card
 curl http://localhost:8000/api/benchmarks/uci_bank_marketing/import-readiness
 curl http://localhost:8000/api/benchmarks/kaggle_home_credit_default_risk/local-status
 ```
+
+Download and safely extract a credential-free public archive:
+
+```bash
+curl -X POST http://localhost:8000/api/benchmarks/uci_wine_quality/public-download \
+  -H 'Content-Type: application/json' \
+  -d '{"overwrite":false}'
+```
+
+The public downloader only uses catalog-configured URLs. It rejects credentialed sources, enforces a size limit, extracts only configured expected zip filenames, flattens those files into `data/benchmarks/{benchmark_id}`, skips unsafe zip members such as absolute paths or `..`, and stores a `benchmark_public_download_manifest` artifact.
 
 Generate a credential-free local fixture for supported benchmarks:
 

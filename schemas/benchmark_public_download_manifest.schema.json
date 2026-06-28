@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BenchmarkPublicDownloadManifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "benchmark_id",
+    "benchmark_name",
+    "download_url",
+    "root_path",
+    "overwrite",
+    "archive",
+    "expected_files",
+    "extracted_files",
+    "skipped_files",
+    "local_status",
+    "credential_policy",
+    "safety"
+  ],
+  "properties": {
+    "schema_version": { "const": "benchmark_public_download_manifest.v1" },
+    "benchmark_id": { "type": "string" },
+    "benchmark_name": { "type": "string" },
+    "source_url": { "type": "string" },
+    "download_url": { "type": "string" },
+    "root_path": { "type": "string" },
+    "overwrite": { "type": "boolean" },
+    "archive": { "type": "object" },
+    "expected_files": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "extracted_files": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "skipped_files": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "local_status": { "type": "object" },
+    "credential_policy": { "type": "object" },
+    "safety": { "type": "object" }
+  },
+  "additionalProperties": false
+}

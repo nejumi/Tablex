@@ -893,6 +893,16 @@ function DataTab({
     );
   }
 
+  async function downloadPublicBenchmark(benchmark: BenchmarkDataset) {
+    await runAction(() =>
+      api(`/api/benchmarks/${benchmark.id}/public-download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ overwrite: false })
+      })
+    );
+  }
+
   async function runBenchmarkFixtureSmoke(benchmark: BenchmarkDataset) {
     await runAction(() =>
       api(`/api/projects/${project.id}/benchmarks/${benchmark.id}/fixture-smoke`, {
@@ -1081,6 +1091,14 @@ function DataTab({
                     >
                       <Database size={16} />
                       Fixture
+                    </button>
+                    <button
+                      className="secondary-button"
+                      disabled={busy || requiresAccount || !directDownload}
+                      onClick={() => void downloadPublicBenchmark(benchmark)}
+                    >
+                      <Download size={16} />
+                      Public
                     </button>
                     <button
                       className="secondary-button"
