@@ -17,6 +17,8 @@
     "research_plan_context",
     "artifact_refs",
     "library_asset_references",
+    "asset_recommendations",
+    "materialized_library_assets",
     "required_outputs",
     "generated_at"
   ],
@@ -67,6 +69,145 @@
       "type": "array",
       "items": {
         "type": "object"
+      }
+    },
+    "asset_recommendations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "asset_id",
+          "asset_type",
+          "name",
+          "asset_version_id",
+          "artifact_id",
+          "source",
+          "reason"
+        ],
+        "properties": {
+          "asset_id": {
+            "type": "string"
+          },
+          "asset_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "asset_version_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "artifact_id": {
+            "type": "string"
+          },
+          "artifact_filename": {
+            "type": "string"
+          },
+          "artifact_content_hash": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "explicit_reference",
+              "research_plan"
+            ]
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reference_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "relation_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "materialize": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "materialized_library_assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "asset_id",
+          "asset_type",
+          "name",
+          "asset_version_id",
+          "artifact_id",
+          "context_path",
+          "reason"
+        ],
+        "properties": {
+          "asset_id": {
+            "type": "string"
+          },
+          "asset_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "asset_version_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "artifact_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          },
+          "context_path": {
+            "type": "string"
+          },
+          "download_url": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
       }
     },
     "required_outputs": {

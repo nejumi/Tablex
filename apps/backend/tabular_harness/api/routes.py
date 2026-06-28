@@ -1462,6 +1462,8 @@ def prepare_idea_agent_context(
                 "context_pack_id": result.context_pack["id"],
                 "artifact_id": result.artifact.id,
                 "schema_version": result.context_pack["schema_version"],
+                "asset_recommendation_count": len(result.context_pack["asset_recommendations"]),
+                "materialized_library_asset_count": len(result.context_pack["materialized_library_assets"]),
             },
         )
     except ValueError as exc:

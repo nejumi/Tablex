@@ -324,8 +324,12 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert ideas_list_response.status_code == 200
     idea = ideas_list_response.json()[0]
     assert idea["status"] == "proposed"
-    assert idea["agent_task_contract"]["inputs"]["must_respect_split_manifest"] is True
-    assert idea["agent_task_contract"]["inputs"]["research_plan_artifact_id"] == research_plan_artifact_id
+    contract_inputs = idea["agent_task_contract"]["inputs"]
+    assert contract_inputs["must_respect_split_manifest"] is True
+    assert contract_inputs["research_plan_artifact_id"] == research_plan_artifact_id
+    assert len(contract_inputs["recommended_asset_ids"]) >= 4
+    assert len(contract_inputs["recommended_asset_version_ids"]) >= 4
+    assert contract_inputs["research_source_policy"]["network_default"] == "disabled_until_runner_policy_allows"
     assert any("secrets" in item for item in idea["agent_task_contract"]["forbidden_actions"])
 
     assets_response = client.get("/api/assets")
@@ -373,6 +377,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert context_job["status"] == "succeeded"
     assert context_job["output"]["schema_version"] == "agent_context_pack.v1"
     assert context_job["output"]["artifact_id"]
+    assert context_job["output"]["asset_recommendation_count"] >= 4
+    assert context_job["output"]["materialized_library_asset_count"] >= 4
 
     context_packs_response = client.get(f"/api/ideas/{idea['id']}/context-packs")
     assert context_packs_response.status_code == 200
@@ -381,14 +387,22 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
 
     context_preview_response = client.get(f"/api/artifacts/{context_artifact['id']}/preview")
     assert context_preview_response.status_code == 200
-    context_preview = context_preview_response.json()["preview"]
-    assert "agent_context_pack.v1" in context_preview
-    assert "controlled_web_search" in context_preview
-    assert "connector_credentials" in context_preview
-    assert "split_manifest" in context_preview
-    assert "quality_gate_context" in context_preview
-    assert "research_plan_context" in context_preview
-    assert research_plan_artifact_id in context_preview
+    context_download_response = client.get(f"/api/artifacts/{context_artifact['id']}/download")
+    assert context_download_response.status_code == 200
+    context_payload = context_download_response.json()
+    assert context_payload["schema_version"] == "agent_context_pack.v1"
+    assert "controlled_web_search" in context_payload["research_policy"]["allowed_modes"]
+    assert context_payload["safety_controls"]["connector_credentials"] == "never passed to the agent"
+    assert context_payload["evaluation_context"]["split_manifest_id"]
+    assert context_payload["quality_gate_context"]["status"] == "available"
+    assert context_payload["research_plan_context"]["artifact_id"] == research_plan_artifact_id
+    assert len(context_payload["asset_recommendations"]) >= 4
+    assert len(context_payload["materialized_library_assets"]) >= 4
+    assert any(
+        item["context_path"].startswith(".harness/context/library_assets/")
+        for item in context_payload["materialized_library_assets"]
+    )
+    assert any(item["name"] == "xgboost_mixed_type_baseline" for item in context_payload["asset_recommendations"])
 
     experiment_plan_response = client.post(f"/api/ideas/{idea['id']}/experiment-plan")
     assert experiment_plan_response.status_code == 200, experiment_plan_response.text
@@ -606,9 +620,15 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
 
     workspace_preview_response = client.get(f"/api/artifacts/{workspace_manifest['id']}/preview")
     assert workspace_preview_response.status_code == 200
-    assert "agent_workspace_manifest.v1" in workspace_preview_response.json()["preview"]
-    assert "connector_credentials" in workspace_preview_response.json()["preview"]
-    assert "research_plan" in workspace_preview_response.json()["preview"]
+    workspace_download_response = client.get(f"/api/artifacts/{workspace_manifest['id']}/download")
+    assert workspace_download_response.status_code == 200
+    workspace_payload = workspace_download_response.json()
+    assert workspace_payload["schema_version"] == "agent_workspace_manifest.v1"
+    assert workspace_payload["safety"]["connector_credentials"] == "not_materialized"
+    materialized_paths = [item["context_path"] for item in workspace_payload["materialized_sources"]]
+    assert any("research_plan.json" in path for path in materialized_paths)
+    assert any(path.startswith(".harness/context/library_assets/") for path in materialized_paths)
+    assert any(item.get("asset_name") == "xgboost_mixed_type_baseline" for item in workspace_payload["materialized_sources"])
 
     package_preview_response = client.get(f"/api/artifacts/{model_package['id']}/preview")
     assert package_preview_response.status_code == 200

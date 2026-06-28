@@ -28,6 +28,7 @@ from tabular_harness.models.entities import (
 )
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
+    artifact_primary_path,
     create_lineage_edge,
     next_artifact_version,
     register_artifact,
@@ -1623,6 +1624,7 @@ def build_agent_task_contract(
     research_brief: ResearchBrief | None,
     research_plan_artifact: Artifact | None = None,
 ) -> dict[str, Any]:
+    research_contract_inputs = research_plan_contract_inputs(research_plan_artifact)
     return {
         "task_id": f"agt_{idea_id}",
         "task_type": "implement_prediction_approach",
@@ -1640,6 +1642,7 @@ def build_agent_task_contract(
             "approach_type": approach["approach_type"],
             "allowed_research_modes": ["project_artifacts", "skill_library", "controlled_web_search"],
             "must_respect_split_manifest": True,
+            **research_contract_inputs,
         },
         "required_outputs": [
             {
@@ -1691,6 +1694,41 @@ def build_agent_task_contract(
         },
         "autonomy_level": 3,
     }
+
+
+def research_plan_contract_inputs(research_plan_artifact: Artifact | None) -> dict[str, Any]:
+    if research_plan_artifact is None:
+        return {
+            "recommended_asset_ids": [],
+            "recommended_asset_version_ids": [],
+            "research_source_policy": {},
+        }
+    try:
+        payload = loads_json(artifact_primary_path(research_plan_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    skill_plan = payload.get("skill_plan")
+    recommendations = []
+    if isinstance(skill_plan, dict) and isinstance(skill_plan.get("recommended_references"), list):
+        recommendations = [item for item in skill_plan["recommended_references"] if isinstance(item, dict)]
+    source_policy = payload.get("source_policy")
+    return {
+        "recommended_asset_ids": unique_strings(item.get("asset_id") for item in recommendations),
+        "recommended_asset_version_ids": unique_strings(item.get("latest_version_id") for item in recommendations),
+        "research_source_policy": source_policy if isinstance(source_policy, dict) else {},
+    }
+
+
+def unique_strings(values: Any) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if isinstance(value, str) and value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
 
 
 def render_research_brief(

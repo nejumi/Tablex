@@ -255,6 +255,7 @@ def copy_context_artifacts(
     context_dir: Path,
 ) -> list[dict[str, Any]]:
     refs: list[dict[str, Any]] = []
+    context_pack_artifact: Artifact | None = None
     for asset_type, name in [
         ("agent_context_pack", "agent_context_pack.json"),
         ("research_plan", "research_plan.json"),
@@ -267,6 +268,8 @@ def copy_context_artifacts(
         artifact = latest_context_artifact(db, project_id=project_id, idea_id=idea_id, asset_type=asset_type)
         if artifact is None:
             continue
+        if asset_type == "agent_context_pack":
+            context_pack_artifact = artifact
         target = context_dir / name
         shutil.copyfile(artifact_primary_path(artifact), target)
         refs.append(
@@ -276,7 +279,82 @@ def copy_context_artifacts(
                 "context_path": str(target.relative_to(context_dir.parent.parent)),
             }
         )
+    refs.extend(
+        copy_materialized_library_assets(
+            db,
+            context_dir=context_dir,
+            context_pack_artifact=context_pack_artifact,
+        )
+    )
     return refs
+
+
+def copy_materialized_library_assets(
+    db: Session,
+    *,
+    context_dir: Path,
+    context_pack_artifact: Artifact | None,
+) -> list[dict[str, Any]]:
+    if context_pack_artifact is None:
+        return []
+    try:
+        payload = loads_json(artifact_primary_path(context_pack_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    raw_assets = payload.get("materialized_library_assets")
+    if not isinstance(raw_assets, list):
+        return []
+    refs: list[dict[str, Any]] = []
+    for raw in raw_assets:
+        if not isinstance(raw, dict):
+            continue
+        artifact_id = raw.get("artifact_id")
+        if not isinstance(artifact_id, str) or not artifact_id:
+            continue
+        artifact = db.get(Artifact, artifact_id)
+        if artifact is None:
+            continue
+        context_path = raw.get("context_path")
+        if not isinstance(context_path, str) or not context_path:
+            continue
+        relative = safe_context_subpath(context_path)
+        target = context_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(artifact_primary_path(artifact), target)
+        refs.append(
+            {
+                "artifact_id": artifact.id,
+                "asset_type": artifact.asset_type,
+                "context_path": str(target.relative_to(context_dir.parent.parent)),
+                "source": raw.get("source"),
+                "sources": raw.get("sources", []),
+                "asset_id": raw.get("asset_id"),
+                "asset_version_id": raw.get("asset_version_id"),
+                "asset_name": raw.get("name"),
+                "reason": raw.get("reason"),
+                "materialized_from_context_pack_artifact_id": context_pack_artifact.id,
+            }
+        )
+    return refs
+
+
+def safe_context_subpath(context_path: str) -> Path:
+    requested = Path(context_path)
+    if requested.is_absolute() or ".." in requested.parts:
+        raise ValueError(f"Unsafe context materialization path: {context_path}")
+    parts = requested.parts
+    if parts[:2] == (".harness", "context"):
+        parts = parts[2:]
+    elif parts[:1] == ("context",):
+        parts = parts[1:]
+    if not parts:
+        raise ValueError(f"Empty context materialization path: {context_path}")
+    relative = Path(*parts)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"Unsafe context materialization path: {context_path}")
+    return relative
 
 
 def ingest_agent_result_artifacts(

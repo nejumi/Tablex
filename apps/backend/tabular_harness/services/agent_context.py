@@ -27,6 +27,7 @@ from tabular_harness.schemas import AgentTaskContract
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
+    artifact_primary_path,
     artifact_to_dict,
     create_lineage_edge,
 )
@@ -87,6 +88,7 @@ def prepare_idea_agent_context_pack(
         research_plan_artifact=research_plan_artifact,
         artifacts=artifacts,
         asset_references=expanded_asset_references(db, asset_references),
+        asset_recommendations=build_asset_recommendations(db, asset_references, research_plan_artifact),
     )
     Draft202012Validator(load_agent_context_pack_schema()).validate(context_pack)
     artifact = store_json_artifact(
@@ -105,6 +107,8 @@ def prepare_idea_agent_context_pack(
             "evaluation_spec_id": evaluation_spec.id if evaluation_spec else None,
             "split_manifest_id": split_manifest.id if split_manifest else None,
             "research_plan_artifact_id": research_plan_artifact.id if research_plan_artifact else None,
+            "asset_recommendation_count": len(context_pack["asset_recommendations"]),
+            "materialized_library_asset_count": len(context_pack["materialized_library_assets"]),
         },
     )
     create_context_lineage(
@@ -117,6 +121,7 @@ def prepare_idea_agent_context_pack(
         split_manifest=split_manifest,
         research_plan_artifact=research_plan_artifact,
         asset_references=asset_references,
+        asset_recommendations=context_pack["asset_recommendations"],
         job=job,
     )
     return AgentContextPackResult(context_pack=context_pack, artifact=artifact)
@@ -135,11 +140,13 @@ def build_agent_context_pack(
     research_plan_artifact: Artifact | None,
     artifacts: list[Artifact],
     asset_references: list[dict[str, Any]],
+    asset_recommendations: list[dict[str, Any]],
 ) -> dict[str, Any]:
     contract_payload = contract.model_dump(mode="json", by_alias=True)
     allowed_research_modes = contract_payload.get("inputs", {}).get("allowed_research_modes", [])
     if not isinstance(allowed_research_modes, list):
         allowed_research_modes = []
+    materialized_assets = materialized_library_assets(asset_recommendations)
     return {
         "schema_version": "agent_context_pack.v1",
         "id": new_id("acp"),
@@ -162,7 +169,10 @@ def build_agent_context_pack(
         "agent_task_contract": contract_payload,
         "research_policy": {
             "allowed_modes": allowed_research_modes,
-            "skill_library_policy": "Use only explicitly referenced cross-project assets unless the harness attaches more.",
+            "skill_library_policy": (
+                "Use attached library assets as recommendations and citations, not fixed recipes. "
+                "Select the actual approach from project context, evidence, and runner-controlled research policy."
+            ),
             "controlled_web_search_policy": (
                 "External web or literature search is allowed only when runner policy enables network access; "
                 "claims must return citations as Evidence or artifact-backed source summaries."
@@ -190,6 +200,8 @@ def build_agent_context_pack(
         "research_plan_context": research_plan_context(research_plan_artifact),
         "artifact_refs": artifact_refs(artifacts),
         "library_asset_references": asset_references,
+        "asset_recommendations": asset_recommendations,
+        "materialized_library_assets": materialized_assets,
         "required_outputs": contract_payload["required_outputs"],
         "generated_at": project.updated_at.isoformat(),
     }
@@ -338,6 +350,171 @@ def expanded_asset_references(db: Session, references: list[AssetReference]) -> 
     return expanded
 
 
+def build_asset_recommendations(
+    db: Session,
+    references: list[AssetReference],
+    research_plan_artifact: Artifact | None,
+) -> list[dict[str, Any]]:
+    recommendations: list[dict[str, Any]] = []
+    by_version: dict[str, dict[str, Any]] = {}
+
+    def add_recommendation(
+        *,
+        asset: Asset | None,
+        version: AssetVersion | None,
+        source: str,
+        reason: str,
+        reference: AssetReference | None = None,
+    ) -> None:
+        if asset is None or version is None:
+            return
+        artifact = db.get(Artifact, version.artifact_id)
+        if artifact is None:
+            return
+        existing = by_version.get(version.id)
+        if existing is not None:
+            sources = cast(list[str], existing.setdefault("sources", []))
+            if source not in sources:
+                sources.append(source)
+            reasons = cast(list[str], existing.setdefault("reasons", []))
+            if reason and reason not in reasons:
+                reasons.append(reason)
+                existing["reason"] = " ".join(reasons)
+            if reference is not None:
+                reference_ids = cast(list[str], existing.setdefault("reference_ids", []))
+                if reference.id not in reference_ids:
+                    reference_ids.append(reference.id)
+            return
+        metadata = loads_json(artifact.metadata_json, {})
+        primary_path = str(metadata.get("primary_path") or "")
+        artifact_filename = Path(primary_path).name or f"{asset.name}.json"
+        item: dict[str, Any] = {
+            "asset_id": asset.id,
+            "asset_type": asset.asset_type,
+            "name": asset.name,
+            "description": asset.description,
+            "asset_version_id": version.id,
+            "version": version.version,
+            "artifact_id": artifact.id,
+            "artifact_filename": artifact_filename,
+            "artifact_content_hash": artifact.content_hash,
+            "source": source,
+            "sources": [source],
+            "reason": reason,
+            "reasons": [reason] if reason else [],
+            "reference_ids": [reference.id] if reference is not None else [],
+            "relation_type": reference.relation_type if reference is not None else None,
+            "materialize": True,
+        }
+        by_version[version.id] = item
+        recommendations.append(item)
+
+    for reference in references:
+        asset = db.get(Asset, reference.target_asset_id)
+        version = db.get(AssetVersion, reference.target_asset_version_id)
+        add_recommendation(
+            asset=asset,
+            version=version,
+            source="explicit_reference",
+            reason=f"Explicit {reference.source_type} AssetReference for `{reference.relation_type}`.",
+            reference=reference,
+        )
+
+    for item in research_plan_recommended_assets(db, research_plan_artifact):
+        add_recommendation(
+            asset=cast(Asset | None, item.get("asset")),
+            version=cast(AssetVersion | None, item.get("version")),
+            source="research_plan",
+            reason=str(item.get("reason") or "ResearchPlan recommended this library asset for agent planning."),
+        )
+    return recommendations
+
+
+def research_plan_recommended_assets(
+    db: Session,
+    research_plan_artifact: Artifact | None,
+) -> list[dict[str, Any]]:
+    payload = research_plan_payload(research_plan_artifact)
+    skill_plan = payload.get("skill_plan")
+    if not isinstance(skill_plan, dict):
+        return []
+    raw_recommendations = skill_plan.get("recommended_references")
+    if not isinstance(raw_recommendations, list):
+        return []
+    resolved: list[dict[str, Any]] = []
+    for raw in raw_recommendations[:16]:
+        if not isinstance(raw, dict):
+            continue
+        asset_id = raw.get("asset_id")
+        if not isinstance(asset_id, str) or not asset_id:
+            continue
+        asset = db.get(Asset, asset_id)
+        if asset is None:
+            continue
+        version_id = raw.get("latest_version_id")
+        if not isinstance(version_id, str) or not version_id:
+            version_id = asset.latest_version_id
+        version = db.get(AssetVersion, version_id) if version_id else None
+        resolved.append({"asset": asset, "version": version, "reason": raw.get("reason")})
+    return resolved
+
+
+def research_plan_payload(research_plan_artifact: Artifact | None) -> dict[str, Any]:
+    if research_plan_artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(research_plan_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+
+
+def materialized_library_assets(asset_recommendations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    assets: list[dict[str, Any]] = []
+    seen_artifacts: set[str] = set()
+    for recommendation in asset_recommendations:
+        artifact_id = recommendation.get("artifact_id")
+        if not isinstance(artifact_id, str) or not artifact_id or artifact_id in seen_artifacts:
+            continue
+        seen_artifacts.add(artifact_id)
+        filename = materialized_asset_filename(recommendation)
+        assets.append(
+            {
+                "asset_id": recommendation.get("asset_id"),
+                "asset_type": recommendation.get("asset_type"),
+                "name": recommendation.get("name"),
+                "asset_version_id": recommendation.get("asset_version_id"),
+                "version": recommendation.get("version"),
+                "artifact_id": artifact_id,
+                "source": recommendation.get("source"),
+                "sources": recommendation.get("sources", []),
+                "reason": recommendation.get("reason"),
+                "context_path": f".harness/context/library_assets/{filename}",
+                "download_url": f"/api/artifacts/{artifact_id}/download",
+            }
+        )
+    return assets
+
+
+def materialized_asset_filename(recommendation: dict[str, Any]) -> str:
+    original = str(recommendation.get("artifact_filename") or "")
+    suffix = Path(original).suffix if original else ".json"
+    if suffix.lower() not in {".json", ".md", ".txt", ".yaml", ".yml"}:
+        suffix = ".json"
+    parts = [
+        safe_filename_part(str(recommendation.get("asset_type") or "asset")),
+        safe_filename_part(str(recommendation.get("name") or "library_asset")),
+        safe_filename_part(str(recommendation.get("asset_version_id") or "version")),
+    ]
+    return "__".join(parts)[:180] + suffix
+
+
+def safe_filename_part(value: str) -> str:
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
+    cleaned = "".join(char if char in allowed else "_" for char in value).strip("._")
+    return cleaned[:80] or "asset"
+
+
 def create_context_lineage(
     db: Session,
     *,
@@ -349,6 +526,7 @@ def create_context_lineage(
     split_manifest: SplitManifest | None,
     research_plan_artifact: Artifact | None,
     asset_references: list[AssetReference],
+    asset_recommendations: list[dict[str, Any]],
     job: Job | None,
 ) -> None:
     create_lineage_edge(
@@ -419,6 +597,21 @@ def create_context_lineage(
             to_asset_type="artifact",
             to_asset_id=artifact.id,
             relation_type="included_in_context",
+        )
+    seen_versions: set[str] = set()
+    for recommendation in asset_recommendations:
+        version_id = recommendation.get("asset_version_id")
+        if not isinstance(version_id, str) or not version_id or version_id in seen_versions:
+            continue
+        seen_versions.add(version_id)
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="asset_version",
+            from_asset_id=version_id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="recommended_in_context",
         )
 
 
