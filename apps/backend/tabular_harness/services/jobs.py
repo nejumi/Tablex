@@ -33,6 +33,7 @@ JOB_TYPES = {
     "generate_decision_dashboard",
     "prepare_agent_context",
     "prepare_planned_agent_workspace",
+    "review_agent_task_readiness",
     "analyze_evaluation_diagnostics",
     "create_experiment_plan",
     "compare_experiments",

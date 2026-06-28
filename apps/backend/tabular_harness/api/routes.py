@@ -86,6 +86,7 @@ from tabular_harness.schemas import (
 )
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
+from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
 from tabular_harness.services.approach import (
     create_decision_dashboard,
@@ -1750,6 +1751,65 @@ def prepare_planned_agent_workspace_endpoint(
                 "materialized_library_asset_count": result.materialized_library_asset_count,
                 "skipped_source_count": result.skipped_source_count,
                 "workspace_path": result.manifest["workspace_path"],
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/agent-task-contracts/{artifact_id}/readiness-review", response_model=JobRead)
+def review_agent_task_readiness_endpoint(
+    artifact_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    contract_artifact = db.get(Artifact, artifact_id)
+    if contract_artifact is None:
+        raise HTTPException(status_code=404, detail="AgentTaskContract artifact not found")
+    if contract_artifact.asset_type != "agent_task_contract":
+        raise HTTPException(status_code=400, detail="Artifact is not an agent_task_contract")
+    if contract_artifact.project_id is None:
+        raise HTTPException(status_code=400, detail="AgentTaskContract artifact is not project-scoped")
+    project = require_project(db, contract_artifact.project_id)
+    job = create_job(
+        db,
+        job_type="review_agent_task_readiness",
+        project_id=project.id,
+        input_payload={"agent_task_contract_artifact_id": contract_artifact.id},
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "execution": "not_started",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = review_agent_task_readiness(
+            db,
+            store=store,
+            project=project,
+            contract_artifact=contract_artifact,
+            job=job,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.review["schema_version"],
+                "task_id": result.review["task_id"],
+                "agent_task_contract_artifact_id": contract_artifact.id,
+                "agent_task_readiness_review_artifact_id": result.review_artifact.id,
+                "agent_task_readiness_report_artifact_id": result.report_artifact.id,
+                "visualization_id": result.visualization.id,
+                "visualization_artifact_id": result.visualization_artifact.id,
+                "report_id": result.report.id,
+                "artifact_id": result.review_artifact.id,
+                "artifact_ids": result.artifact_ids,
+                "readiness_status": result.review["status"],
+                "blocker_count": result.review["blocker_count"],
+                "warning_count": result.review["warning_count"],
             },
         )
     except ValueError as exc:
@@ -3483,6 +3543,9 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "materialized_context_count": output.get("materialized_context_count"),
         "materialized_library_asset_count": output.get("materialized_library_asset_count"),
         "skipped_source_count": output.get("skipped_source_count"),
+        "readiness_status": output.get("readiness_status"),
+        "blocker_count": output.get("blocker_count"),
+        "warning_count": output.get("warning_count"),
         "primary_metric_name": primary_metric_name,
         "primary_metric_value": primary_metric_value,
         "artifact_count": len(collect_output_artifact_ids(output)),

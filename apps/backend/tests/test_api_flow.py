@@ -384,6 +384,36 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         for item in planned_workspace_job_artifacts["artifacts"]
     )
 
+    readiness_response = client.post(
+        f"/api/agent-task-contracts/{agent_task_plan_job['output']['agent_task_contract_artifact_id']}/readiness-review"
+    )
+    assert readiness_response.status_code == 200, readiness_response.text
+    readiness_job = readiness_response.json()
+    assert readiness_job["status"] == "succeeded"
+    assert readiness_job["output"]["schema_version"] == "agent_task_readiness_review.v1"
+    assert readiness_job["output"]["agent_task_readiness_review_artifact_id"]
+    assert readiness_job["output"]["agent_task_readiness_report_artifact_id"]
+    assert readiness_job["output"]["visualization_artifact_id"]
+    assert readiness_job["output"]["readiness_status"] in {"ready", "ready_with_warnings", "blocked"}
+    assert readiness_job["output"]["blocker_count"] == 0
+
+    readiness_download_response = client.get(
+        f"/api/artifacts/{readiness_job['output']['agent_task_readiness_review_artifact_id']}/download"
+    )
+    assert readiness_download_response.status_code == 200
+    readiness_payload = readiness_download_response.json()
+    assert readiness_payload["schema_version"] == "agent_task_readiness_review.v1"
+    assert readiness_payload["workspace_artifact_id"] == planned_workspace_job["output"][
+        "agent_workspace_manifest_artifact_id"
+    ]
+    assert any(item["check_id"] == "workspace_manifest" for item in readiness_payload["checks"])
+
+    readiness_report_preview_response = client.get(
+        f"/api/artifacts/{readiness_job['output']['agent_task_readiness_report_artifact_id']}/preview"
+    )
+    assert readiness_report_preview_response.status_code == 200
+    assert "Agent Task Readiness Review" in readiness_report_preview_response.json()["preview"]
+
     research_response = client.post(
         f"/api/projects/{project_id}/approach/research-briefs",
         json={"question": "What flexible approaches should be considered?"},
@@ -592,9 +622,14 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         f"/api/artifacts/{decision_job['output']['decision_dashboard_artifact_id']}/preview"
     )
     assert decision_dashboard_preview_response.status_code == 200
-    decision_dashboard_preview = decision_dashboard_preview_response.json()["preview"]
-    assert "decision_dashboard.v1" in decision_dashboard_preview
-    assert "readiness_stages" in decision_dashboard_preview
+    assert decision_dashboard_preview_response.json()["preview_available"] is True
+    decision_dashboard_download_response = client.get(
+        f"/api/artifacts/{decision_job['output']['decision_dashboard_artifact_id']}/download"
+    )
+    assert decision_dashboard_download_response.status_code == 200
+    decision_dashboard_payload = decision_dashboard_download_response.json()
+    assert decision_dashboard_payload["schema_version"] == "decision_dashboard.v1"
+    assert "readiness_stages" in decision_dashboard_payload
 
     decision_report_preview_response = client.get(f"/api/reports/{decision_job['output']['report_id']}/preview")
     assert decision_report_preview_response.status_code == 200
@@ -671,6 +706,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "decision_dashboard",
         "decision_report",
         "agent_workspace_manifest",
+        "agent_task_readiness_review",
+        "agent_task_readiness_report",
         "agent_context_pack",
         "agent_task_report",
         "agent_result",

@@ -2091,6 +2091,25 @@ function ApproachTab({
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <Layers size={16} />}
                 </button>
+                <button
+                  className="icon-button"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction(async () => {
+                      const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/readiness-review`, {
+                        method: "POST"
+                      });
+                      const reportArtifactId = job.output.agent_task_readiness_report_artifact_id ?? job.output.artifact_id;
+                      if (typeof reportArtifactId === "string") {
+                        await loadTaskContractPreview(reportArtifactId);
+                      }
+                      return job;
+                    })
+                  }
+                  title="Review runner readiness"
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
+                </button>
               </div>
             ])}
           />
@@ -2957,12 +2976,19 @@ function formatAgentTaskPlanningSummary(summary: Record<string, unknown>) {
   const assets = summary.recommended_asset_count;
   const contexts = summary.materialized_context_count;
   const libraryAssets = summary.materialized_library_asset_count;
+  const readiness = summary.readiness_status;
+  const blockers = summary.blocker_count;
+  const warnings = summary.warning_count;
   const parts = [
     typeof approaches === "number" ? `${approaches} approaches` : null,
     typeof queries === "number" ? `${queries} queries` : null,
     typeof assets === "number" ? `${assets} assets` : null,
     typeof contexts === "number" ? `${contexts} ctx` : null,
-    typeof libraryAssets === "number" ? `${libraryAssets} library` : null
+    typeof libraryAssets === "number" ? `${libraryAssets} library` : null,
+    typeof readiness === "string" ? readiness.replace(/_/g, " ") : null,
+    typeof blockers === "number" || typeof warnings === "number"
+      ? `${typeof blockers === "number" ? blockers : 0} blockers / ${typeof warnings === "number" ? warnings : 0} warnings`
+      : null
   ].filter(Boolean);
   return parts.length ? parts.join(" / ") : "-";
 }
