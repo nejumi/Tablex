@@ -17,6 +17,19 @@ Do not paste Kaggle credentials, API tokens, connector credentials, or productio
 | `kaggle_rossmann_store_sales` | [Kaggle Rossmann Store Sales](https://www.kaggle.com/competitions/rossmann-store-sales) | Smaller retail time-series benchmark for quick lag/calendar feature and time split smoke tests. |
 | `kaggle_instacart_market_basket` | [Kaggle Instacart Market Basket Analysis](https://www.kaggle.com/competitions/instacart-market-basket-analysis) | Multi-table order history benchmark for aggregation, group validation, and recommendation-like tabular framing. |
 | `uci_bank_marketing` | [UCI Bank Marketing](https://archive.ics.uci.edu/dataset/222/bank+marketing) | Compact single-table smoke test for categorical preprocessing, target profiling, and leakage discussion around `duration`. |
+| `uci_wine_quality` | [UCI Wine Quality](https://archive.ics.uci.edu/dataset/186/wine+quality) | Credential-free public dataset smoke test for regression/ordinal target framing and compact numeric features. |
+
+## Source Cards
+
+Every catalog entry is exposed with a generated `benchmark_source_card.v1` shape. The card separates:
+
+- `access`: credentialed competition, public direct archive, or manual public source.
+- `official_sources`: source pages and public archive URLs verified for the catalog.
+- `credential_policy`: secrets and connector credentials are never stored, inserted into prompts, or materialized into runner workspaces.
+- `import_readiness`: whether local files are present and what action should happen next.
+- `fixture`: whether a credential-free synthetic smoke fixture is available.
+
+Kaggle datasets remain user-managed outside Tablex. Public UCI archives are credential-free, but the current harness still expects users or scripts to place extracted files under the local benchmark root before import.
 
 ## Local Layout
 
@@ -46,6 +59,8 @@ List catalog entries and local file status:
 
 ```bash
 curl http://localhost:8000/api/benchmarks
+curl http://localhost:8000/api/benchmarks/uci_bank_marketing/source-card
+curl http://localhost:8000/api/benchmarks/uci_bank_marketing/import-readiness
 curl http://localhost:8000/api/benchmarks/kaggle_home_credit_default_risk/local-status
 ```
 
@@ -62,6 +77,7 @@ Supported v0 fixtures:
 - `kaggle_home_credit_default_risk`: tiny multi-table credit-risk fixture.
 - `kaggle_store_sales_forecasting`: tiny retail time-series fixture.
 - `uci_bank_marketing`: tiny single-table semicolon-delimited fixture.
+- `uci_wine_quality`: tiny public-source semicolon-delimited wine quality fixture.
 
 Import the primary table into a project:
 

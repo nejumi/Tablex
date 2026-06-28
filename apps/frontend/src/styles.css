@@ -580,6 +580,14 @@ td {
   overflow-wrap: anywhere;
 }
 
+.source-actions {
+  margin: 0;
+  padding-left: 18px;
+  color: #52606f;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .row-actions {
   display: flex;
   gap: 6px;

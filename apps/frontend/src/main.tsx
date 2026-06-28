@@ -80,6 +80,8 @@ type BenchmarkDataset = {
   scale: string | null;
   recommended_uses: string[];
   scenario: Record<string, unknown> | null;
+  access: Record<string, unknown>;
+  source_card: BenchmarkSourceCard | null;
   primary_table: Record<string, unknown>;
   required_files: Array<Record<string, unknown>>;
   recommended_files: Array<Record<string, unknown>>;
@@ -91,6 +93,23 @@ type BenchmarkDataset = {
   fixture_available: boolean;
   fixture_notes: string | null;
   local_status: BenchmarkLocalStatus | null;
+};
+
+type BenchmarkSourceCard = {
+  schema_version: string;
+  benchmark_id: string;
+  access: Record<string, unknown>;
+  official_sources: Array<Record<string, unknown>>;
+  import_readiness: {
+    local_ready: boolean;
+    can_import_now: boolean;
+    missing_required_count: number;
+    next_actions: string[];
+    credential_policy: Record<string, unknown>;
+  };
+  fixture: Record<string, unknown>;
+  credential_policy: Record<string, unknown>;
+  safety_notes: string[];
 };
 
 type BenchmarkLocalStatus = {
@@ -974,6 +993,11 @@ function DataTab({
               const benchmarkPath = benchmarkPaths[benchmark.id] ?? benchmark.default_local_path;
               const targetColumn = textField(benchmark.primary_table.target_column) ?? "-";
               const scenarioKind = textField(benchmark.scenario?.kind) ?? "-";
+              const access = benchmark.source_card?.access ?? benchmark.access ?? {};
+              const accessKind = textField(access.kind) ?? benchmark.source_kind;
+              const requiresAccount = access.requires_account === true;
+              const directDownload = access.supports_direct_download === true;
+              const nextActions = benchmark.source_card?.import_readiness.next_actions.slice(0, 2) ?? [];
               return (
                 <div className="benchmark-card" key={benchmark.id}>
                   <div className="benchmark-card-header">
@@ -986,6 +1010,10 @@ function DataTab({
                           {status?.ready ? "ready" : `${status?.required_missing_count ?? 0} missing`}
                         </span>
                         {benchmark.fixture_available ? <span className="badge">fixture</span> : null}
+                        <span className={requiresAccount ? "badge risk" : "badge"}>
+                          {requiresAccount ? "credentialed" : "credential-free"}
+                        </span>
+                        {directDownload ? <span className="badge">public archive</span> : null}
                       </div>
                     </div>
                     <a className="icon-link" href={benchmark.source_url} target="_blank" rel="noreferrer" title="Open source">
@@ -1013,12 +1041,27 @@ function DataTab({
                       <dd>{scenarioKind.replace(/_/g, " ")}</dd>
                     </div>
                     <div>
+                      <dt>Access</dt>
+                      <dd>{accessKind.replace(/_/g, " ")}</dd>
+                    </div>
+                    <div>
+                      <dt>Sources</dt>
+                      <dd>{benchmark.source_card?.official_sources.length ?? 1} official refs</dd>
+                    </div>
+                    <div>
                       <dt>Required</dt>
                       <dd>
                         {status?.required_found_count ?? 0}/{benchmark.required_files.length} files
                       </dd>
                     </div>
                   </dl>
+                  {nextActions.length ? (
+                    <ul className="source-actions">
+                      {nextActions.map((action) => (
+                        <li key={action}>{action}</li>
+                      ))}
+                    </ul>
+                  ) : null}
                   <input
                     value={benchmarkPath}
                     onChange={(event) =>

@@ -39,6 +39,8 @@
         "scale": { "type": "string" },
         "recommended_uses": { "type": "array", "items": { "type": "string" } },
         "scenario": { "type": "object" },
+        "access": { "type": "object" },
+        "source_card": { "type": "object" },
         "primary_table": { "$ref": "#/$defs/primary_table" },
         "required_files": { "type": "array", "items": { "$ref": "#/$defs/file_spec" } },
         "recommended_files": { "type": "array", "items": { "$ref": "#/$defs/file_spec" } },
@@ -78,7 +80,8 @@
         "method": { "type": "string" },
         "requires_account": { "type": "boolean" },
         "command": { "type": "string" }
-      }
+      },
+      "additionalProperties": true
     }
   }
 }

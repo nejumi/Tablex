@@ -169,6 +169,8 @@ class BenchmarkDatasetRead(BaseModel):
     scale: str | None = None
     recommended_uses: list[str] = Field(default_factory=list)
     scenario: dict[str, Any] | None = None
+    access: dict[str, Any] = Field(default_factory=dict)
+    source_card: dict[str, Any] | None = None
     primary_table: dict[str, Any]
     required_files: list[dict[str, Any]]
     recommended_files: list[dict[str, Any]] = Field(default_factory=list)
@@ -180,6 +182,36 @@ class BenchmarkDatasetRead(BaseModel):
     fixture_available: bool = False
     fixture_notes: str | None = None
     local_status: dict[str, Any] | None = None
+
+
+class BenchmarkSourceCardRead(BaseModel):
+    schema_version: str
+    benchmark_id: str
+    name: str
+    source_kind: str
+    source_url: str
+    access: dict[str, Any]
+    official_sources: list[dict[str, Any]]
+    download: dict[str, Any]
+    local_layout: dict[str, Any]
+    import_readiness: dict[str, Any]
+    fixture: dict[str, Any]
+    credential_policy: dict[str, Any]
+    safety_notes: list[str]
+
+
+class BenchmarkImportReadinessRead(BaseModel):
+    benchmark_id: str
+    benchmark_name: str
+    root_path: str
+    local_ready: bool
+    can_import_now: bool
+    missing_required_count: int
+    missing_recommended_count: int
+    required_files: list[dict[str, Any]]
+    recommended_files: list[dict[str, Any]]
+    next_actions: list[str]
+    credential_policy: dict[str, Any]
 
 
 class BenchmarkLocalStatusRead(BaseModel):

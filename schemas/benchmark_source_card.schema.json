@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BenchmarkSourceCard",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "benchmark_id",
+    "name",
+    "source_kind",
+    "source_url",
+    "access",
+    "official_sources",
+    "download",
+    "local_layout",
+    "import_readiness",
+    "fixture",
+    "credential_policy",
+    "safety_notes"
+  ],
+  "properties": {
+    "schema_version": { "const": "benchmark_source_card.v1" },
+    "benchmark_id": { "type": "string" },
+    "name": { "type": "string" },
+    "source_kind": { "type": "string" },
+    "source_url": { "type": "string" },
+    "access": {
+      "type": "object",
+      "required": [
+        "kind",
+        "requires_account",
+        "requires_secret",
+        "supports_direct_download",
+        "supports_fixture",
+        "data_files_committed",
+        "agent_receives_credentials"
+      ],
+      "additionalProperties": true
+    },
+    "official_sources": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "download": { "type": "object" },
+    "local_layout": { "type": "object" },
+    "import_readiness": {
+      "type": "object",
+      "required": [
+        "benchmark_id",
+        "benchmark_name",
+        "root_path",
+        "local_ready",
+        "can_import_now",
+        "missing_required_count",
+        "next_actions",
+        "credential_policy"
+      ],
+      "additionalProperties": true
+    },
+    "fixture": { "type": "object" },
+    "credential_policy": { "type": "object" },
+    "safety_notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

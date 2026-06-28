@@ -696,13 +696,31 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     assert benchmarks_response.status_code == 200, benchmarks_response.text
     benchmarks = benchmarks_response.json()
     assert any(item["id"] == "kaggle_home_credit_default_risk" for item in benchmarks)
+    assert any(item["id"] == "uci_wine_quality" for item in benchmarks)
+    home_credit_benchmark = next(item for item in benchmarks if item["id"] == "kaggle_home_credit_default_risk")
+    assert home_credit_benchmark["source_card"]["access"]["requires_account"] is True
+    assert home_credit_benchmark["source_card"]["credential_policy"]["dataset_credentials"] == "user_managed_outside_tablex"
     uci_benchmark = next(item for item in benchmarks if item["id"] == "uci_bank_marketing")
     assert uci_benchmark["local_status"]["ready"] is False
     assert uci_benchmark["fixture_available"] is True
+    assert uci_benchmark["source_card"]["access"]["supports_direct_download"] is True
+    assert uci_benchmark["source_card"]["credential_policy"]["dataset_credentials"] == "not_required"
     assert uci_benchmark["scenario"]["kind"] == "single_table_categorical_smoke"
     assert "Do not paste Kaggle credentials" in next(
         item["download_instructions"] for item in benchmarks if item["id"] == "kaggle_home_credit_default_risk"
     )
+
+    source_card_response = client.get("/api/benchmarks/uci_bank_marketing/source-card")
+    assert source_card_response.status_code == 200
+    source_card = source_card_response.json()
+    assert source_card["schema_version"] == "benchmark_source_card.v1"
+    assert source_card["access"]["kind"] == "public_direct_download"
+    assert "bank+marketing.zip" in str(source_card["download"]["download_urls"])
+
+    readiness_response = client.get("/api/benchmarks/uci_bank_marketing/import-readiness")
+    assert readiness_response.status_code == 200
+    assert readiness_response.json()["can_import_now"] is False
+    assert any("fixture" in item.lower() for item in readiness_response.json()["next_actions"])
 
     project_response = client.post(
         "/api/projects",
@@ -763,6 +781,52 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     )
     assert scenario_preview_response.status_code == 200
     assert "Benchmark Scenario Report" in scenario_preview_response.json()["preview"]
+
+
+def test_public_uci_wine_fixture_source_card_import(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    source_card_response = client.get("/api/benchmarks/uci_wine_quality/source-card")
+    assert source_card_response.status_code == 200
+    source_card = source_card_response.json()
+    assert source_card["access"]["requires_account"] is False
+    assert source_card["access"]["supports_direct_download"] is True
+    assert "wine+quality.zip" in str(source_card["download"]["download_urls"])
+    assert source_card["import_readiness"]["can_import_now"] is False
+
+    fixture_response = client.post("/api/benchmarks/uci_wine_quality/fixtures/generate", json={"overwrite": True})
+    assert fixture_response.status_code == 200, fixture_response.text
+    fixture = fixture_response.json()
+    assert fixture["fixture_matches_expected"] is True
+    assert fixture["local_status"]["ready"] is True
+    assert any(item["path"] == "winequality-red.csv" for item in fixture["generated_files"])
+
+    readiness_response = client.get("/api/benchmarks/uci_wine_quality/import-readiness")
+    assert readiness_response.status_code == 200
+    assert readiness_response.json()["can_import_now"] is True
+
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Wine quality public smoke", "task_type": "regression"},
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    import_response = client.post(f"/api/projects/{project_id}/benchmarks/uci_wine_quality/import", json={})
+    assert import_response.status_code == 200, import_response.text
+    payload = import_response.json()
+    assert payload["primary_file"] == "winequality-red.csv"
+    assert payload["dataset_snapshot"]["source_ref"] == "uci_wine_quality:winequality-red.csv"
+    assert payload["dataset_snapshot"]["row_count"] == 8
+    assert payload["artifact"]["metadata"]["benchmark_id"] == "uci_wine_quality"
+    assert payload["relational_catalog_artifact"]["metadata"]["benchmark_id"] == "uci_wine_quality"
+    assert len(payload["supporting_table_artifacts"]) == 1
+
+    manifest_preview_response = client.get(f"/api/artifacts/{payload['import_manifest_artifact']['id']}/preview")
+    assert manifest_preview_response.status_code == 200
+    manifest_preview = manifest_preview_response.json()["preview"]
+    assert "benchmark_import_manifest.v1" in manifest_preview
+    assert "public_direct_download" in manifest_preview
 
 
 def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:

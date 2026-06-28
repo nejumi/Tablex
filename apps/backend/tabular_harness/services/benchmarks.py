@@ -32,6 +32,7 @@ SUPPORTED_FIXTURE_IDS = {
     "kaggle_home_credit_default_risk",
     "kaggle_store_sales_forecasting",
     "uci_bank_marketing",
+    "uci_wine_quality",
 }
 
 
@@ -107,12 +108,20 @@ def raw_benchmark_dataset(benchmark_id: str) -> dict[str, Any]:
 def benchmark_to_dict(benchmark: dict[str, Any], *, settings: Settings, include_status: bool) -> dict[str, Any]:
     default_root = default_benchmark_root(settings, str(benchmark["id"]))
     payload = dict(benchmark)
+    local_status = inspect_benchmark_local_files(benchmark, default_root) if include_status else None
     payload["default_local_path"] = str(default_root)
     payload["download_instructions"] = render_download_instructions(benchmark, default_root)
+    payload["access"] = benchmark_access(benchmark)
     payload["fixture_available"] = benchmark.get("id") in SUPPORTED_FIXTURE_IDS
     payload["fixture_notes"] = fixture_notes(str(benchmark.get("id")))
+    payload["source_card"] = benchmark_source_card(
+        benchmark,
+        settings=settings,
+        local_path=None,
+        local_status=local_status,
+    )
     if include_status:
-        payload["local_status"] = inspect_benchmark_local_files(benchmark, default_root)
+        payload["local_status"] = local_status
     return payload
 
 
@@ -138,6 +147,146 @@ def resolve_benchmark_root(settings: Settings, benchmark_id: str, local_path: st
             "Copy the data under that directory instead of importing arbitrary local paths."
         )
     return root
+
+
+def benchmark_source_card(
+    benchmark: dict[str, Any],
+    *,
+    settings: Settings,
+    local_path: str | None = None,
+    local_status: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    benchmark_id = str(benchmark["id"])
+    root = resolve_benchmark_root(settings, benchmark_id, local_path)
+    status = local_status or inspect_benchmark_local_files(benchmark, root)
+    source_card = as_dict(benchmark.get("source_card"))
+    return {
+        "schema_version": "benchmark_source_card.v1",
+        "benchmark_id": benchmark_id,
+        "name": benchmark["name"],
+        "source_kind": benchmark["source_kind"],
+        "source_url": benchmark["source_url"],
+        "access": benchmark_access(benchmark),
+        "official_sources": official_sources(benchmark, source_card),
+        "download": benchmark_download_card(benchmark, source_card),
+        "local_layout": {
+            "default_root": str(default_benchmark_root(settings, benchmark_id)),
+            "resolved_root": str(root),
+            "primary_table": benchmark.get("primary_table") or {},
+            "required_files": benchmark.get("required_files", []),
+            "recommended_files": benchmark.get("recommended_files", []),
+        },
+        "import_readiness": benchmark_import_readiness(benchmark, root, status),
+        "fixture": {
+            "available": benchmark_id in SUPPORTED_FIXTURE_IDS,
+            "notes": fixture_notes(benchmark_id),
+            "policy": "Fixtures are synthetic smoke data and must not be used for benchmark score claims.",
+        },
+        "credential_policy": benchmark_credential_policy(benchmark),
+        "safety_notes": benchmark_safety_notes(benchmark),
+    }
+
+
+def benchmark_access(benchmark: dict[str, Any]) -> dict[str, Any]:
+    download = as_dict(benchmark.get("download"))
+    configured = as_dict(benchmark.get("access"))
+    requires_account = bool(configured.get("requires_account", download.get("requires_account", False)))
+    download_urls = configured.get("download_urls") or download.get("download_urls") or []
+    if configured.get("kind"):
+        kind = str(configured["kind"])
+    elif requires_account:
+        kind = "credentialed_competition"
+    elif download_urls:
+        kind = "public_direct_download"
+    else:
+        kind = "manual_public"
+    return {
+        "kind": kind,
+        "requires_account": requires_account,
+        "requires_secret": bool(configured.get("requires_secret", requires_account)),
+        "supports_direct_download": bool(configured.get("supports_direct_download", bool(download_urls))),
+        "supports_fixture": benchmark.get("id") in SUPPORTED_FIXTURE_IDS,
+        "data_files_committed": False,
+        "agent_receives_credentials": False,
+        "download_urls": download_urls,
+    }
+
+
+def as_dict(value: Any) -> dict[str, Any]:
+    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+
+
+def official_sources(benchmark: dict[str, Any], source_card: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_sources = source_card.get("official_sources")
+    if isinstance(raw_sources, list) and raw_sources:
+        return [cast(dict[str, Any], item) for item in raw_sources if isinstance(item, dict)]
+    return [
+        {
+            "title": benchmark["name"],
+            "url": benchmark["source_url"],
+            "source_type": benchmark["source_kind"],
+        }
+    ]
+
+
+def benchmark_download_card(benchmark: dict[str, Any], source_card: dict[str, Any]) -> dict[str, Any]:
+    download = dict(as_dict(benchmark.get("download")))
+    configured_download = as_dict(source_card.get("download"))
+    if configured_download:
+        download.update(configured_download)
+    download.setdefault("requires_account", benchmark_access(benchmark)["requires_account"])
+    download.setdefault("download_urls", benchmark_access(benchmark)["download_urls"])
+    return download
+
+
+def benchmark_import_readiness(benchmark: dict[str, Any], root: Path, status: dict[str, Any]) -> dict[str, Any]:
+    local_ready = bool(status.get("ready"))
+    next_actions: list[str] = []
+    access = benchmark_access(benchmark)
+    if local_ready:
+        next_actions.append("Import can run now from the resolved local root.")
+    elif access["supports_fixture"]:
+        next_actions.append("Generate the credential-free fixture for product smoke testing.")
+    if not local_ready:
+        if access["requires_account"]:
+            next_actions.append("Download the benchmark outside Tablex with user-managed credentials, then place files under the local root.")
+        elif access["supports_direct_download"]:
+            next_actions.append("Download the public archive from the official URL, extract it, then place files under the local root.")
+        else:
+            next_actions.append("Prepare the required files manually under the local root.")
+    return {
+        "benchmark_id": benchmark["id"],
+        "benchmark_name": benchmark["name"],
+        "root_path": str(root),
+        "local_ready": local_ready,
+        "can_import_now": local_ready,
+        "missing_required_count": int(status.get("required_missing_count") or 0),
+        "missing_recommended_count": int(status.get("recommended_missing_count") or 0),
+        "required_files": status.get("missing_required", []),
+        "recommended_files": status.get("missing_recommended", []),
+        "next_actions": next_actions,
+        "credential_policy": benchmark_credential_policy(benchmark),
+    }
+
+
+def benchmark_credential_policy(benchmark: dict[str, Any]) -> dict[str, Any]:
+    access = benchmark_access(benchmark)
+    return {
+        "secret_access": "forbidden",
+        "connector_credentials": "never_materialized",
+        "dataset_credentials": "user_managed_outside_tablex" if access["requires_account"] else "not_required",
+        "agent_task_contract_policy": "credentials are never inserted into prompts, AgentTaskContracts, or workspaces",
+    }
+
+
+def benchmark_safety_notes(benchmark: dict[str, Any]) -> list[str]:
+    notes = [
+        "Benchmark data files are user-managed and are not committed to the repository.",
+        "Do not paste credentials into Tablex, prompts, AgentTaskContracts, or runner workspaces.",
+        "Fixture data is for product smoke only and cannot support model quality claims.",
+    ]
+    notes.extend(str(item) for item in benchmark.get("risk_notes", []))
+    return notes
 
 
 def inspect_benchmark_local_files(benchmark: dict[str, Any], root: Path) -> dict[str, Any]:
@@ -261,6 +410,11 @@ def build_import_manifest(
         "benchmark_name": benchmark["name"],
         "source_kind": benchmark["source_kind"],
         "source_url": benchmark["source_url"],
+        "source_access": benchmark_access(benchmark),
+        "official_sources": official_sources(
+            benchmark,
+            as_dict(benchmark.get("source_card")),
+        ),
         "primary_table": {
             **dict(benchmark.get("primary_table") or {}),
             "selected_path": relative_path(root, primary_file),
@@ -867,6 +1021,11 @@ def benchmark_summary(benchmark: dict[str, Any]) -> dict[str, Any]:
         "name": benchmark["name"],
         "source_kind": benchmark["source_kind"],
         "source_url": benchmark["source_url"],
+        "access": benchmark_access(benchmark),
+        "official_sources": official_sources(
+            benchmark,
+            as_dict(benchmark.get("source_card")),
+        ),
         "task_types": benchmark.get("task_types", []),
         "modality_tags": benchmark.get("modality_tags", []),
         "recommended_uses": benchmark.get("recommended_uses", []),
@@ -1050,6 +1209,7 @@ def render_benchmark_scenario_report(pack: dict[str, Any]) -> str:
         f"- Project: {pack['project']['name']} ({pack['project']['id']})",
         f"- DatasetSnapshot: {dataset.get('dataset_snapshot_id') or 'missing'}",
         f"- Local status: {pack['local_status'].get('status')}",
+        f"- Access: {benchmark.get('access', {}).get('kind', benchmark.get('source_kind'))}",
         f"- Relational tables: {relational.get('table_count') or 'unknown'}",
         f"- Inferred relationships: {relational.get('relationship_count') or 0}",
         f"- Supporting table artifacts: {len(pack['supporting_table_artifacts'])}",
@@ -1142,6 +1302,8 @@ def fixture_notes(benchmark_id: str) -> str | None:
         return "Generates a tiny retail time-series fixture with store, holiday, oil, and transaction tables."
     if benchmark_id == "uci_bank_marketing":
         return "Generates a tiny semicolon-delimited bank marketing fixture for fast single-table smoke tests."
+    if benchmark_id == "uci_wine_quality":
+        return "Generates a tiny semicolon-delimited wine quality fixture for credential-free public dataset smoke tests."
     return None
 
 
@@ -1204,6 +1366,8 @@ def fixture_files(benchmark_id: str) -> dict[str, str]:
         return store_sales_fixture_files()
     if benchmark_id == "uci_bank_marketing":
         return uci_bank_fixture_files()
+    if benchmark_id == "uci_wine_quality":
+        return uci_wine_quality_fixture_files()
     raise ValueError(f"No local fixture is available for benchmark: {benchmark_id}")
 
 
@@ -1354,6 +1518,34 @@ def uci_bank_fixture_files() -> dict[str, str]:
             ]
         )
         + "\n"
+    }
+
+
+def uci_wine_quality_fixture_files() -> dict[str, str]:
+    return {
+        "winequality-red.csv": "\n".join(
+            [
+                "fixed acidity;volatile acidity;citric acid;residual sugar;chlorides;free sulfur dioxide;total sulfur dioxide;density;pH;sulphates;alcohol;quality",
+                "7.4;0.70;0.00;1.9;0.076;11;34;0.9978;3.51;0.56;9.4;5",
+                "7.8;0.88;0.00;2.6;0.098;25;67;0.9968;3.20;0.68;9.8;5",
+                "7.8;0.76;0.04;2.3;0.092;15;54;0.9970;3.26;0.65;9.8;5",
+                "11.2;0.28;0.56;1.9;0.075;17;60;0.9980;3.16;0.58;9.8;6",
+                "7.4;0.66;0.00;1.8;0.075;13;40;0.9978;3.51;0.56;9.4;5",
+                "7.9;0.60;0.06;1.6;0.069;15;59;0.9964;3.30;0.46;9.4;5",
+                "7.3;0.65;0.00;1.2;0.065;15;21;0.9946;3.39;0.47;10.0;7",
+                "7.8;0.58;0.02;2.0;0.073;9;18;0.9968;3.36;0.57;9.5;7",
+            ]
+        )
+        + "\n",
+        "winequality-white.csv": "\n".join(
+            [
+                "fixed acidity;volatile acidity;citric acid;residual sugar;chlorides;free sulfur dioxide;total sulfur dioxide;density;pH;sulphates;alcohol;quality",
+                "7.0;0.27;0.36;20.7;0.045;45;170;1.0010;3.00;0.45;8.8;6",
+                "6.3;0.30;0.34;1.6;0.049;14;132;0.9940;3.30;0.49;9.5;6",
+                "8.1;0.28;0.40;6.9;0.050;30;97;0.9951;3.26;0.44;10.1;6",
+            ]
+        )
+        + "\n",
     }
 
 

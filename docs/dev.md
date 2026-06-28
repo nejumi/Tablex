@@ -135,6 +135,8 @@ Benchmark catalog endpoints:
 
 ```bash
 curl http://localhost:8000/api/benchmarks
+curl http://localhost:8000/api/benchmarks/uci_bank_marketing/source-card
+curl http://localhost:8000/api/benchmarks/uci_bank_marketing/import-readiness
 curl http://localhost:8000/api/benchmarks/uci_bank_marketing/local-status
 curl -X POST http://localhost:8000/api/benchmarks/uci_bank_marketing/fixtures/generate \
   -H 'Content-Type: application/json' \
@@ -148,7 +150,7 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/kaggle_h
   -d '{"overwrite":false}'
 ```
 
-Place extracted benchmark files under `data/benchmarks/{benchmark_id}` or another path below `HARNESS_DATA_DIR/benchmarks`. Kaggle credentials and API tokens are user-managed outside Tablex and must not be pasted into Tablex, AgentTaskContracts, or runner workspaces. The importer profiles one primary CSV/Parquet table, stores a `benchmark_import_manifest`, creates a `relational_catalog` artifact with table profiles and inferred join-key context for supporting files, and registers small supporting CSV/Parquet tables as `benchmark_supporting_table` artifacts with a size cap. `scenario-pack` creates `benchmark_scenario_pack` and `benchmark_scenario_report` artifacts that summarize benchmark intent, fixture status, artifact readiness, runner guardrails, and report expectations. Fixture endpoints generate tiny synthetic files for smoke tests only; they do not download or store external benchmark data. See `docs/benchmarks.md`.
+Place extracted benchmark files under `data/benchmarks/{benchmark_id}` or another path below `HARNESS_DATA_DIR/benchmarks`. Kaggle credentials and API tokens are user-managed outside Tablex and must not be pasted into Tablex, AgentTaskContracts, or runner workspaces. Source-card endpoints distinguish credentialed competition datasets from credential-free public archives such as UCI Bank Marketing and UCI Wine Quality. The importer profiles one primary CSV/Parquet table, stores a `benchmark_import_manifest`, creates a `relational_catalog` artifact with table profiles and inferred join-key context for supporting files, and registers small supporting CSV/Parquet tables as `benchmark_supporting_table` artifacts with a size cap. `scenario-pack` creates `benchmark_scenario_pack` and `benchmark_scenario_report` artifacts that summarize benchmark intent, fixture status, artifact readiness, runner guardrails, and report expectations. Fixture endpoints generate tiny synthetic files for smoke tests only; they do not download or store external benchmark data. See `docs/benchmarks.md`.
 
 Artifact preview and download are available from:
 

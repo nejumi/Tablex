@@ -52,9 +52,11 @@ from tabular_harness.schemas import (
     BenchmarkDatasetRead,
     BenchmarkFixtureRequest,
     BenchmarkFixtureResponse,
+    BenchmarkImportReadinessRead,
     BenchmarkImportRequest,
     BenchmarkImportResponse,
     BenchmarkLocalStatusRead,
+    BenchmarkSourceCardRead,
     DatasetSnapshotRead,
     DatasetUploadResponse,
     EvaluationCandidateRead,
@@ -110,6 +112,7 @@ from tabular_harness.services.baseline import (
 )
 from tabular_harness.services.baseline import run_baseline as run_baseline_service
 from tabular_harness.services.benchmarks import (
+    benchmark_source_card,
     benchmark_to_dict,
     build_import_manifest,
     build_relational_catalog,
@@ -191,6 +194,37 @@ def get_benchmark(benchmark_id: str, request: Request) -> dict[str, Any]:
         return get_benchmark_dataset(benchmark_id, request.app.state.settings)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
+
+
+@router.get("/api/benchmarks/{benchmark_id}/source-card", response_model=BenchmarkSourceCardRead)
+def get_benchmark_source_card(
+    benchmark_id: str,
+    request: Request,
+    local_path: str | None = None,
+) -> dict[str, Any]:
+    try:
+        benchmark = raw_benchmark_dataset(benchmark_id)
+        return benchmark_source_card(benchmark, settings=request.app.state.settings, local_path=local_path)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/benchmarks/{benchmark_id}/import-readiness", response_model=BenchmarkImportReadinessRead)
+def get_benchmark_import_readiness(
+    benchmark_id: str,
+    request: Request,
+    local_path: str | None = None,
+) -> dict[str, Any]:
+    try:
+        benchmark = raw_benchmark_dataset(benchmark_id)
+        card = benchmark_source_card(benchmark, settings=request.app.state.settings, local_path=local_path)
+        return cast(dict[str, Any], card["import_readiness"])
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/api/benchmarks/{benchmark_id}/local-status", response_model=BenchmarkLocalStatusRead)
