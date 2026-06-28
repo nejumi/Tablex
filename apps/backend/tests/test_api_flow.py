@@ -493,6 +493,20 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         for run in planned_stub_runs_response.json()
     )
 
+    planned_agent_results_response = client.get(f"/api/projects/{project_id}/agent-task-results")
+    assert planned_agent_results_response.status_code == 200
+    planned_agent_results = planned_agent_results_response.json()
+    planned_result = next(item for item in planned_agent_results if item["job_id"] == planned_stub_job["id"])
+    assert planned_result["source"]["type"] == "agent_task_contract"
+    assert planned_result["artifacts"]["source_citation_manifest"]["id"] == planned_stub_job["output"][
+        "source_citation_manifest_artifact_id"
+    ]
+    assert planned_result["reports"]["citation_audit_report"]["id"] == planned_stub_job["output"][
+        "citation_audit_report_id"
+    ]
+    assert planned_result["citation_audit"]["citation_count"] >= 1
+    assert planned_result["citation_audit"]["external_network_accessed"] is False
+
     research_response = client.post(
         f"/api/projects/{project_id}/approach/research-briefs",
         json={"question": "What flexible approaches should be considered?"},
@@ -652,6 +666,17 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     )
     assert citation_report_response.status_code == 200
     assert "Citation Audit Report" in citation_report_response.json()["preview"]
+
+    agent_results_response = client.get(f"/api/projects/{project_id}/agent-task-results")
+    assert agent_results_response.status_code == 200
+    agent_results = agent_results_response.json()
+    assert len(agent_results) >= 2
+    idea_result = next(item for item in agent_results if item["job_id"] == agent_task_job["id"])
+    assert idea_result["source"] == {"type": "idea", "id": idea["id"]}
+    assert idea_result["experiment_run"]["id"] == agent_task_job["output"]["experiment_run_id"]
+    assert idea_result["artifacts"]["agent_task_report"]["asset_type"] == "agent_task_report"
+    assert idea_result["artifacts"]["citation_audit_report"]["asset_type"] == "citation_audit_report"
+    assert idea_result["evidence"]["citation_audit"]["id"] == agent_task_job["output"]["citation_evidence_id"]
 
     updated_ideas_response = client.get(f"/api/projects/{project_id}/approach/ideas")
     assert updated_ideas_response.status_code == 200

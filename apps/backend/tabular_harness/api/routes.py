@@ -87,6 +87,7 @@ from tabular_harness.schemas import (
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
 from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
+from tabular_harness.services.agent_task_results import list_agent_task_result_summaries
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
 from tabular_harness.services.approach import (
     create_decision_dashboard,
@@ -1942,6 +1943,15 @@ def run_planned_agent_task_stub_endpoint(
         mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
+
+
+@router.get("/api/projects/{project_id}/agent-task-results")
+def list_project_agent_task_results(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> list[dict[str, Any]]:
+    project = require_project(db, project_id)
+    return list_agent_task_result_summaries(db, project=project)
 
 
 @router.post("/api/projects/{project_id}/approach/research-source-pack", response_model=JobRead)

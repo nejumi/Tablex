@@ -341,6 +341,51 @@ type VisualizationSpec = {
   created_at: string;
 };
 
+type AgentTaskResultArtifact = {
+  id: string;
+  asset_type: string;
+  name: string;
+  version: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+type AgentTaskResultReport = {
+  id: string;
+  report_type: string;
+  title: string;
+  artifact_id: string;
+  status: string;
+  created_at: string;
+};
+
+type AgentTaskResult = {
+  job_id: string;
+  job_type: string;
+  job_status: string;
+  created_at: string;
+  source: { type: string; id: string | null };
+  task_id: string | null;
+  agent_status: string | null;
+  agent_final_message: string | null;
+  readiness_status: string | null;
+  requires_human_review: boolean | null;
+  experiment_run: { id: string; status: string; runner_type: string } | null;
+  metrics: Record<string, unknown>;
+  reports: Record<string, AgentTaskResultReport | null>;
+  evidence: Record<string, { id: string; summary: string; strength: string } | null>;
+  visualizations: Record<string, { id: string; title: string; chart_type: string; artifact_id: string } | null>;
+  artifacts: Record<string, AgentTaskResultArtifact | null>;
+  artifact_ids: string[];
+  citation_audit: {
+    source_count: number;
+    citation_count: number;
+    external_network_accessed: boolean;
+    connector_credentials_materialized: boolean;
+    research_source_pack_artifact_id: string | null;
+  };
+};
+
 type Insight = {
   id: string;
   insight_type: string;
@@ -552,6 +597,7 @@ function ProjectDetail({
   const [ideas, setIdeas] = React.useState<Idea[]>([]);
   const [reports, setReports] = React.useState<Report[]>([]);
   const [visualizations, setVisualizations] = React.useState<VisualizationSpec[]>([]);
+  const [agentTaskResults, setAgentTaskResults] = React.useState<AgentTaskResult[]>([]);
   const [insights, setInsights] = React.useState<Insight[]>([]);
   const [libraryAssets, setLibraryAssets] = React.useState<LibraryAsset[]>([]);
   const [projectAssetReferences, setProjectAssetReferences] = React.useState<AssetReference[]>([]);
@@ -580,6 +626,7 @@ function ProjectDetail({
         ideasData,
         reportsData,
         visualizationsData,
+        agentTaskResultsData,
         insightsData,
         libraryAssetsData,
         projectAssetReferencesData,
@@ -602,6 +649,7 @@ function ProjectDetail({
         api<Idea[]>(`/api/projects/${project.id}/approach/ideas`),
         api<Report[]>(`/api/projects/${project.id}/reports`),
         api<VisualizationSpec[]>(`/api/projects/${project.id}/visualizations`),
+        api<AgentTaskResult[]>(`/api/projects/${project.id}/agent-task-results`),
         api<Insight[]>(`/api/projects/${project.id}/insights`),
         api<LibraryAsset[]>(`/api/assets`),
         api<AssetReference[]>(`/api/projects/${project.id}/asset-references`),
@@ -624,6 +672,7 @@ function ProjectDetail({
       setIdeas(ideasData);
       setReports(reportsData);
       setVisualizations(visualizationsData);
+      setAgentTaskResults(agentTaskResultsData);
       setInsights(insightsData);
       setLibraryAssets(libraryAssetsData);
       setProjectAssetReferences(projectAssetReferencesData);
@@ -725,6 +774,7 @@ function ProjectDetail({
           project={project}
           jobs={jobs}
           runs={runs}
+          agentTaskResults={agentTaskResults}
           artifacts={artifacts}
           busy={busy}
           runAction={runAction}
@@ -2472,6 +2522,7 @@ function ExperimentsTab({
   project,
   jobs,
   runs,
+  agentTaskResults,
   artifacts,
   busy,
   runAction
@@ -2479,6 +2530,7 @@ function ExperimentsTab({
   project: Project;
   jobs: Job[];
   runs: Run[];
+  agentTaskResults: AgentTaskResult[];
   artifacts: Artifact[];
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
@@ -2503,6 +2555,10 @@ function ExperimentsTab({
       "baseline_report",
       "baseline_metrics",
       "agent_task_contract",
+      "agent_result",
+      "agent_task_report",
+      "source_citation_manifest",
+      "citation_audit_report",
       "experiment_plan",
       "experiment_comparison",
       "experiment_comparison_report",
@@ -2610,6 +2666,103 @@ function ExperimentsTab({
           />
         ) : (
           <EmptyInline text="Baseline runs, agent task runs, failed repair attempts, metrics, parameters, and linked artifacts will appear here." />
+        )}
+      </Panel>
+      <Panel title="Agent Task Results" icon={<FileText size={18} />}>
+        {agentTaskResults.length ? (
+          <Table
+            headers={["Job", "Source", "Agent", "Readiness", "Experiment", "Citations", "Reports", "Actions"]}
+            rows={agentTaskResults.map((result) => {
+              const reportArtifact = result.artifacts.agent_task_report;
+              const citationReportArtifact = result.artifacts.citation_audit_report;
+              const manifestArtifact = result.artifacts.source_citation_manifest;
+              return [
+                <div className="cell-stack" key={`${result.job_id}-job`}>
+                  <span>{result.job_type.replace(/_/g, " ")}</span>
+                  <small>{formatDate(result.created_at)}</small>
+                </div>,
+                <div className="cell-stack" key={`${result.job_id}-source`}>
+                  <span>{result.source.type.replace(/_/g, " ")}</span>
+                  <small>{result.source.id ?? "-"}</small>
+                </div>,
+                <div className="cell-stack" key={`${result.job_id}-agent`}>
+                  <span className={result.agent_status === "succeeded" ? "badge" : "badge risk"}>
+                    {result.agent_status ?? result.job_status}
+                  </span>
+                  <small>{result.requires_human_review ? "human review" : "review not required"}</small>
+                </div>,
+                result.readiness_status ?? "-",
+                result.experiment_run?.id ?? "-",
+                <div className="cell-stack" key={`${result.job_id}-citations`}>
+                  <span>
+                    {result.citation_audit.source_count} sources / {result.citation_audit.citation_count} citations
+                  </span>
+                  <small>
+                    {result.citation_audit.external_network_accessed ? "external access recorded" : "network off"}
+                  </small>
+                </div>,
+                <div className="cell-stack" key={`${result.job_id}-reports`}>
+                  <span>{result.reports.agent_task_report?.id ?? "-"}</span>
+                  <small>{result.reports.citation_audit_report?.id ?? "no citation report"}</small>
+                </div>,
+                <div className="row-actions" key={`${result.job_id}-actions`}>
+                  <button
+                    className="icon-button"
+                    disabled={!reportArtifact || previewLoadingId === reportArtifact.id}
+                    onClick={() => {
+                      if (reportArtifact) void loadPreview(reportArtifact.id);
+                    }}
+                    title="Preview agent task report"
+                  >
+                    {reportArtifact && previewLoadingId === reportArtifact.id ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <FileText size={16} />
+                    )}
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={!citationReportArtifact || previewLoadingId === citationReportArtifact.id}
+                    onClick={() => {
+                      if (citationReportArtifact) void loadPreview(citationReportArtifact.id);
+                    }}
+                    title="Preview citation audit report"
+                  >
+                    {citationReportArtifact && previewLoadingId === citationReportArtifact.id ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <Eye size={16} />
+                    )}
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={!manifestArtifact || previewLoadingId === manifestArtifact.id}
+                    onClick={() => {
+                      if (manifestArtifact) void loadPreview(manifestArtifact.id);
+                    }}
+                    title="Preview source citation manifest"
+                  >
+                    {manifestArtifact && previewLoadingId === manifestArtifact.id ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <ListChecks size={16} />
+                    )}
+                  </button>
+                  {manifestArtifact ? (
+                    <a
+                      className="icon-link"
+                      href={`${apiBase}/api/artifacts/${manifestArtifact.id}/download`}
+                      title="Download source citation manifest"
+                    >
+                      <Download size={16} />
+                    </a>
+                  ) : null}
+                </div>
+              ];
+            })}
+          />
+        ) : (
+          <EmptyInline text="Agent task outputs, experiment registrations, citation audits, reports, and workspace/readiness artifacts will appear here after a planned or Idea-backed runner task completes." />
         )}
       </Panel>
       <Panel title="Experiment Lifecycle Artifacts" icon={<ListChecks size={18} />}>
