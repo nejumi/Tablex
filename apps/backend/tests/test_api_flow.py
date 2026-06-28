@@ -423,16 +423,29 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert planned_stub_job["output"]["agent_status"] == "succeeded"
     assert planned_stub_job["output"]["readiness_status"] in {"ready", "ready_with_warnings"}
     assert planned_stub_job["output"]["auto_prepared_workspace"] is False
-    assert len(planned_stub_job["output"]["ingested_artifact_ids"]) == 3
+    assert len(planned_stub_job["output"]["ingested_artifact_ids"]) == 5
     assert planned_stub_job["output"]["report_id"]
     assert planned_stub_job["output"]["evidence_id"]
+    assert planned_stub_job["output"]["experiment_run_id"]
+    assert planned_stub_job["output"]["agent_metrics_artifact_id"]
+    assert planned_stub_job["output"]["agent_feature_recipe_artifact_id"]
+    assert len(planned_stub_job["output"]["visualization_ids"]) == 1
     assert planned_stub_job["output"]["requires_human_review"] is True
 
     planned_stub_job_artifacts_response = client.get(f"/api/jobs/{planned_stub_job['id']}/artifacts")
     assert planned_stub_job_artifacts_response.status_code == 200
     planned_stub_job_artifacts = planned_stub_job_artifacts_response.json()
     planned_stub_asset_types = {item["asset_type"] for item in planned_stub_job_artifacts["artifacts"]}
-    assert {"agent_task_report", "agent_result", "visualization_spec"}.issubset(planned_stub_asset_types)
+    assert {"agent_task_report", "agent_result", "visualization_spec", "feature_recipe", "experiment_metrics"}.issubset(
+        planned_stub_asset_types
+    )
+
+    planned_stub_runs_response = client.get(f"/api/projects/{project_id}/runs")
+    assert planned_stub_runs_response.status_code == 200
+    assert any(
+        run["id"] == planned_stub_job["output"]["experiment_run_id"] and run["status"] == "not_executed"
+        for run in planned_stub_runs_response.json()
+    )
 
     research_response = client.post(
         f"/api/projects/{project_id}/approach/research-briefs",
@@ -567,13 +580,24 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert agent_task_job["output"]["requires_human_review"] is True
     assert len(agent_task_job["output"]["artifact_ids"]) >= 4
     assert agent_task_job["output"]["workspace_artifact_id"]
-    assert len(agent_task_job["output"]["ingested_artifact_ids"]) == 3
+    assert len(agent_task_job["output"]["ingested_artifact_ids"]) == 5
     assert agent_task_job["output"]["report_id"]
     assert agent_task_job["output"]["evidence_id"]
+    assert agent_task_job["output"]["experiment_run_id"]
+    assert agent_task_job["output"]["agent_metrics_artifact_id"]
+    assert agent_task_job["output"]["agent_feature_recipe_artifact_id"]
+    assert len(agent_task_job["output"]["visualization_ids"]) == 1
 
     updated_ideas_response = client.get(f"/api/projects/{project_id}/approach/ideas")
     assert updated_ideas_response.status_code == 200
     assert updated_ideas_response.json()[0]["status"] == "agent_stub_completed"
+
+    agent_task_runs_response = client.get(f"/api/projects/{project_id}/runs")
+    assert agent_task_runs_response.status_code == 200
+    assert any(
+        run["id"] == agent_task_job["output"]["experiment_run_id"] and run["runner_type"] == "local_stub"
+        for run in agent_task_runs_response.json()
+    )
 
     visualization_response = client.post(f"/api/projects/{project_id}/visualizations/generate")
     assert visualization_response.status_code == 200, visualization_response.text
@@ -659,14 +683,14 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
 
     runs_response = client.get(f"/api/projects/{project_id}/runs")
     assert runs_response.status_code == 200
-    assert runs_response.json()[0]["runner_type"] == "local_baseline"
-    assert runs_response.json()[0]["model_version_id"] == model_version["id"]
+    baseline_run = next(run for run in runs_response.json() if run["model_version_id"] == model_version["id"])
+    assert baseline_run["runner_type"] == "local_baseline"
 
     leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
     assert leaderboard_response.status_code == 200
     assert leaderboard_response.json()[0]["primary_metric_value"] is not None
 
-    diagnostics_response = client.post(f"/api/runs/{runs_response.json()[0]['id']}/diagnostics")
+    diagnostics_response = client.post(f"/api/runs/{baseline_run['id']}/diagnostics")
     assert diagnostics_response.status_code == 200, diagnostics_response.text
     diagnostics_job = diagnostics_response.json()
     assert diagnostics_job["status"] == "succeeded"
@@ -678,7 +702,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert diagnostics_job["output"]["insight_id"]
     assert diagnostics_job["output"]["evidence_id"]
 
-    run_report_response = client.post(f"/api/runs/{runs_response.json()[0]['id']}/report")
+    run_report_response = client.post(f"/api/runs/{baseline_run['id']}/report")
     assert run_report_response.status_code == 200, run_report_response.text
     run_report_job = run_report_response.json()
     assert run_report_job["status"] == "succeeded"
@@ -690,7 +714,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     comparison_job = comparison_response.json()
     assert comparison_job["status"] == "succeeded"
     assert comparison_job["output"]["comparison"]["schema_version"] == "experiment_comparison.v1"
-    assert comparison_job["output"]["comparison"]["decision"]["best_run_id"] == runs_response.json()[0]["id"]
+    assert comparison_job["output"]["comparison"]["decision"]["best_run_id"] == baseline_run["id"]
     assert len(comparison_job["output"]["artifact_ids"]) >= 2
     assert comparison_job["output"]["report_id"]
     assert comparison_job["output"]["insight_id"]

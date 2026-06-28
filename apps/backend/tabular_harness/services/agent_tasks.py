@@ -14,6 +14,10 @@ from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import Artifact, Evidence, Idea, Job, Project, Report, utc_now
 from tabular_harness.schemas import AgentResult, AgentTaskContract
+from tabular_harness.services.agent_result_ingestion import (
+    AgentResultExperimentIngestion,
+    ingest_agent_result_experiment_outputs,
+)
 from tabular_harness.services.approach import (
     first_sentence,
     store_json_artifact,
@@ -35,6 +39,7 @@ class AgentTaskExecutionResult:
     evidence_id: str
     workspace_artifact_id: str
     ingested_artifact_ids: list[str]
+    experiment_ingestion: AgentResultExperimentIngestion
 
 
 def run_idea_agent_task_stub(
@@ -86,6 +91,16 @@ def run_idea_agent_task_stub(
         job=job,
         workspace_path=workspace_path,
         result=result,
+    )
+    experiment_ingestion = ingest_agent_result_experiment_outputs(
+        db,
+        project=project,
+        job=job,
+        contract=contract,
+        agent_result=result,
+        ingested_artifacts=ingested_artifacts,
+        source_asset_type="idea",
+        source_asset_id=idea.id,
     )
     report_artifact = first_artifact_of_type(ingested_artifacts, "agent_task_report")
     if report_artifact is None:
@@ -189,6 +204,7 @@ def run_idea_agent_task_stub(
         evidence_id=evidence.id,
         workspace_artifact_id=workspace_manifest_artifact.id,
         ingested_artifact_ids=[artifact.id for artifact in ingested_artifacts],
+        experiment_ingestion=experiment_ingestion,
     )
 
 

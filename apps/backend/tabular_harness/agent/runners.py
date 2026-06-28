@@ -71,6 +71,8 @@ class LocalStubAgentRunner(NoopAgentRunner):
         execution_policy: ExecutionPolicy,
     ) -> AgentResult:
         report_md = render_stub_report(task_contract, execution_policy)
+        feature_recipe = render_stub_feature_recipe(task_contract)
+        experiment_metrics = render_stub_experiment_metrics(task_contract)
         visualization_spec = {
             "schema_version": "visualization_spec.v1",
             "title": "Agent Task Output Checklist",
@@ -98,6 +100,8 @@ class LocalStubAgentRunner(NoopAgentRunner):
                 "workspace": workspace_ref.path,
                 "runner": "local_stub",
                 "report_md": report_md,
+                "feature_recipe": feature_recipe,
+                "experiment_metrics": experiment_metrics,
                 "visualization_spec": visualization_spec,
             },
             artifacts=[
@@ -105,6 +109,18 @@ class LocalStubAgentRunner(NoopAgentRunner):
                     "path": "reports/agent_task_report.md",
                     "asset_type": "agent_task_report",
                     "name": f"agent_task_report_{task_contract.task_id}",
+                    "metadata": {"task_id": task_contract.task_id},
+                },
+                {
+                    "path": "artifacts/feature_recipe.json",
+                    "asset_type": "feature_recipe",
+                    "name": f"agent_feature_recipe_{task_contract.task_id}",
+                    "metadata": {"task_id": task_contract.task_id},
+                },
+                {
+                    "path": "artifacts/experiment_metrics.json",
+                    "asset_type": "experiment_metrics",
+                    "name": f"agent_experiment_metrics_{task_contract.task_id}",
                     "metadata": {"task_id": task_contract.task_id},
                 },
                 {
@@ -126,6 +142,8 @@ class LocalStubAgentRunner(NoopAgentRunner):
         write_stub_workspace_outputs(
             workspace=Path(workspace_ref.path),
             report_md=report_md,
+            feature_recipe=feature_recipe,
+            experiment_metrics=experiment_metrics,
             visualization_spec=visualization_spec,
             result=result,
         )
@@ -210,6 +228,8 @@ def write_stub_workspace_outputs(
     *,
     workspace: Path,
     report_md: str,
+    feature_recipe: dict[str, Any],
+    experiment_metrics: dict[str, Any],
     visualization_spec: dict[str, Any],
     result: AgentResult,
 ) -> None:
@@ -218,6 +238,14 @@ def write_stub_workspace_outputs(
     reports_dir.mkdir(parents=True, exist_ok=True)
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     (reports_dir / "agent_task_report.md").write_text(report_md, encoding="utf-8")
+    (artifacts_dir / "feature_recipe.json").write_text(
+        json.dumps(feature_recipe, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    (artifacts_dir / "experiment_metrics.json").write_text(
+        json.dumps(experiment_metrics, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     (artifacts_dir / "visualization_spec.json").write_text(
         json.dumps(visualization_spec, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -226,6 +254,69 @@ def write_stub_workspace_outputs(
         result.model_dump_json(indent=2),
         encoding="utf-8",
     )
+
+
+def render_stub_feature_recipe(contract: AgentTaskContract) -> dict[str, Any]:
+    dataset_context = dict_value(contract.inputs.get("dataset_context"))
+    evaluation_contract = dict_value(contract.inputs.get("evaluation_contract"))
+    return {
+        "recipe_version": "feature_recipe.v1",
+        "recipe_name": "local_stub_planned_feature_recipe",
+        "execution_status": "not_executed",
+        "runner": "local_stub",
+        "task_id": contract.task_id,
+        "dataset_snapshot_id": dataset_context.get("dataset_snapshot_id"),
+        "evaluation_spec_id": evaluation_contract.get("evaluation_spec_id"),
+        "split_manifest_id": split_manifest_id(evaluation_contract),
+        "feature_families": [
+            {
+                "name": "dataset_specific_features",
+                "status": "planned",
+                "notes": "Future runner should select features from project evidence, Skill assets, and approved evaluation constraints.",
+            }
+        ],
+        "safety": {
+            "fit_preprocessing_on_train_only": True,
+            "must_respect_split_manifest": True,
+            "validation_or_test_targets_forbidden": True,
+            "secrets_forbidden": True,
+        },
+    }
+
+
+def render_stub_experiment_metrics(contract: AgentTaskContract) -> dict[str, Any]:
+    dataset_context = dict_value(contract.inputs.get("dataset_context"))
+    evaluation_contract = dict_value(contract.inputs.get("evaluation_contract"))
+    return {
+        "schema_version": "experiment_metrics.v1",
+        "execution_status": "not_executed",
+        "model_code_executed": False,
+        "runner": "local_stub",
+        "task_id": contract.task_id,
+        "dataset_snapshot_id": dataset_context.get("dataset_snapshot_id"),
+        "evaluation_spec_id": evaluation_contract.get("evaluation_spec_id"),
+        "split_manifest_id": split_manifest_id(evaluation_contract),
+        "primary_metric_name": evaluation_contract.get("primary_metric"),
+        "primary_metric_value": None,
+        "secondary_metrics": {},
+        "split_manifest_respected": bool(split_manifest_id(evaluation_contract)),
+        "notes": [
+            "LocalStubAgentRunner does not train or evaluate a model.",
+            "This metrics artifact exists so the harness can test AgentResult ingestion without making benchmark claims.",
+        ],
+    }
+
+
+def split_manifest_id(evaluation_contract: dict[str, Any]) -> str | None:
+    raw_manifest = evaluation_contract.get("split_manifest")
+    if not isinstance(raw_manifest, dict):
+        return None
+    value = raw_manifest.get("split_manifest_id")
+    return value if isinstance(value, str) and value else None
+
+
+def dict_value(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def codex_sandbox(policy: str) -> str:

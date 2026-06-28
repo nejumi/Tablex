@@ -11,6 +11,10 @@ from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json
 from tabular_harness.models.entities import Artifact, Evidence, Job, Project, Report
 from tabular_harness.schemas import AgentResult, AgentTaskContract
+from tabular_harness.services.agent_result_ingestion import (
+    AgentResultExperimentIngestion,
+    ingest_agent_result_experiment_outputs,
+)
 from tabular_harness.services.agent_task_readiness import (
     AgentTaskReadinessResult,
     latest_workspace_manifest_for_contract,
@@ -46,6 +50,7 @@ class PlannedAgentTaskExecutionResult:
     readiness_status: str
     ingested_artifact_ids: list[str]
     auto_prepared_workspace: bool
+    experiment_ingestion: AgentResultExperimentIngestion
 
 
 def run_planned_agent_task_local_stub(
@@ -108,6 +113,16 @@ def run_planned_agent_task_local_stub(
         job=job,
         workspace_path=workspace_path,
         result=result,
+    )
+    experiment_ingestion = ingest_agent_result_experiment_outputs(
+        db,
+        project=project,
+        job=job,
+        contract=contract,
+        agent_result=result,
+        ingested_artifacts=ingested_artifacts,
+        source_asset_type="artifact",
+        source_asset_id=contract_artifact.id,
     )
     report_artifact = first_artifact_of_type(ingested_artifacts, "agent_task_report")
     if report_artifact is None:
@@ -220,6 +235,7 @@ def run_planned_agent_task_local_stub(
         readiness_status=str(readiness.review["status"]),
         ingested_artifact_ids=[artifact.id for artifact in ingested_artifacts],
         auto_prepared_workspace=auto_prepared,
+        experiment_ingestion=experiment_ingestion,
     )
 
 
