@@ -164,6 +164,7 @@ def build_agent_task_contract_payload(
     research_plan_artifact = context_artifacts.get("research_plan")
     research_inputs = research_plan_contract_inputs(research_plan_artifact)
     source_pack_inputs = research_source_pack_contract_inputs(context_artifacts.get("research_source_pack"))
+    synthesis_inputs = research_synthesis_contract_inputs(context_artifacts.get("research_finding_synthesis"))
     source_policy = source_pack_inputs.get("source_policy") or research_inputs.get(
         "research_source_policy",
         {"network_default": "disabled_until_runner_policy_allows"},
@@ -196,6 +197,7 @@ def build_agent_task_contract_payload(
             "recommended_asset_version_ids": research_inputs.get("recommended_asset_version_ids", []),
             "research_source_policy": source_policy,
             "research_source_pack": source_pack_inputs,
+            "research_finding_synthesis": synthesis_inputs,
         },
         "required_outputs": [
             {
@@ -529,6 +531,7 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "baseline_strategy_plan": latest_project_artifact(db, project_id, "baseline_strategy_plan"),
         "research_plan": latest_project_artifact(db, project_id, "research_plan"),
         "research_source_pack": latest_project_artifact(db, project_id, "research_source_pack"),
+        "research_finding_synthesis": latest_project_artifact(db, project_id, "research_finding_synthesis"),
         "evaluation_diagnostics": latest_project_artifact(db, project_id, "evaluation_diagnostics"),
         "decision_dashboard": latest_project_artifact(db, project_id, "decision_dashboard"),
     }
@@ -557,6 +560,28 @@ def research_source_pack_contract_inputs(source_pack_artifact: Artifact | None) 
         "controlled_query_count": len(payload.get("controlled_queries", []))
         if isinstance(payload.get("controlled_queries"), list)
         else 0,
+    }
+
+
+def research_synthesis_contract_inputs(synthesis_artifact: Artifact | None) -> dict[str, Any]:
+    if synthesis_artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(synthesis_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "artifact_id": synthesis_artifact.id,
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else {},
+        "citation_audit": payload.get("citation_audit") if isinstance(payload.get("citation_audit"), dict) else {},
+        "follow_up_requirements": payload.get("follow_up_requirements")
+        if isinstance(payload.get("follow_up_requirements"), list)
+        else [],
+        "agent_task_handoff": payload.get("agent_task_handoff")
+        if isinstance(payload.get("agent_task_handoff"), dict)
+        else {},
     }
 
 

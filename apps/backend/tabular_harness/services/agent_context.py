@@ -56,6 +56,7 @@ def prepare_idea_agent_context_pack(
     quality_gate_artifact = latest_project_artifact(db, project.id, "data_quality_gate")
     relational_catalog_artifact = latest_project_artifact(db, project.id, "relational_catalog")
     research_plan_artifact = latest_project_artifact(db, project.id, "research_plan")
+    research_synthesis_artifact = latest_project_artifact(db, project.id, "research_finding_synthesis")
     artifacts = list(
         db.scalars(
             select(Artifact)
@@ -86,6 +87,7 @@ def prepare_idea_agent_context_pack(
         quality_gate_artifact=quality_gate_artifact,
         relational_catalog_artifact=relational_catalog_artifact,
         research_plan_artifact=research_plan_artifact,
+        research_synthesis_artifact=research_synthesis_artifact,
         artifacts=artifacts,
         asset_references=expanded_asset_references(db, asset_references),
         asset_recommendations=build_asset_recommendations(db, asset_references, research_plan_artifact),
@@ -107,6 +109,9 @@ def prepare_idea_agent_context_pack(
             "evaluation_spec_id": evaluation_spec.id if evaluation_spec else None,
             "split_manifest_id": split_manifest.id if split_manifest else None,
             "research_plan_artifact_id": research_plan_artifact.id if research_plan_artifact else None,
+            "research_finding_synthesis_artifact_id": research_synthesis_artifact.id
+            if research_synthesis_artifact
+            else None,
             "asset_recommendation_count": len(context_pack["asset_recommendations"]),
             "materialized_library_asset_count": len(context_pack["materialized_library_assets"]),
         },
@@ -120,6 +125,7 @@ def prepare_idea_agent_context_pack(
         evaluation_spec=evaluation_spec,
         split_manifest=split_manifest,
         research_plan_artifact=research_plan_artifact,
+        research_synthesis_artifact=research_synthesis_artifact,
         asset_references=asset_references,
         asset_recommendations=context_pack["asset_recommendations"],
         job=job,
@@ -138,6 +144,7 @@ def build_agent_context_pack(
     quality_gate_artifact: Artifact | None,
     relational_catalog_artifact: Artifact | None,
     research_plan_artifact: Artifact | None,
+    research_synthesis_artifact: Artifact | None,
     artifacts: list[Artifact],
     asset_references: list[dict[str, Any]],
     asset_recommendations: list[dict[str, Any]],
@@ -198,6 +205,7 @@ def build_agent_context_pack(
         "quality_gate_context": quality_gate_context(quality_gate_artifact),
         "relational_context": relational_context(relational_catalog_artifact),
         "research_plan_context": research_plan_context(research_plan_artifact),
+        "research_synthesis_context": research_synthesis_context(research_synthesis_artifact),
         "artifact_refs": artifact_refs(artifacts),
         "library_asset_references": asset_references,
         "asset_recommendations": asset_recommendations,
@@ -300,6 +308,38 @@ def research_plan_context(artifact: Artifact | None) -> dict[str, Any]:
     }
 
 
+def research_synthesis_context(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {"status": "missing", "artifact_id": None}
+    metadata = loads_json(artifact.metadata_json, {})
+    payload = research_synthesis_payload(artifact)
+    return {
+        "status": "available",
+        "artifact_id": artifact.id,
+        "finding_count": metadata.get("finding_count"),
+        "citation_count": metadata.get("citation_count"),
+        "external_network_accessed": metadata.get("external_network_accessed"),
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else {},
+        "citation_audit": payload.get("citation_audit") if isinstance(payload.get("citation_audit"), dict) else {},
+        "follow_up_requirements": payload.get("follow_up_requirements")
+        if isinstance(payload.get("follow_up_requirements"), list)
+        else [],
+        "agent_task_handoff": payload.get("agent_task_handoff")
+        if isinstance(payload.get("agent_task_handoff"), dict)
+        else {},
+        "preview_url": f"/api/artifacts/{artifact.id}/preview",
+        "download_url": f"/api/artifacts/{artifact.id}/download",
+    }
+
+
+def research_synthesis_payload(artifact: Artifact) -> dict[str, Any]:
+    try:
+        payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+
+
 def artifact_refs(artifacts: list[Artifact]) -> list[dict[str, Any]]:
     refs = []
     for artifact in artifacts:
@@ -334,7 +374,11 @@ def compact_artifact_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         "task_id",
         "context_pack_id",
         "research_plan_artifact_id",
+        "research_finding_synthesis_artifact_id",
         "query_count",
+        "finding_count",
+        "citation_count",
+        "external_network_accessed",
         "recommended_asset_count",
         "network_default",
     }
@@ -525,6 +569,7 @@ def create_context_lineage(
     evaluation_spec: EvaluationSpec | None,
     split_manifest: SplitManifest | None,
     research_plan_artifact: Artifact | None,
+    research_synthesis_artifact: Artifact | None,
     asset_references: list[AssetReference],
     asset_recommendations: list[dict[str, Any]],
     job: Job | None,
@@ -584,6 +629,16 @@ def create_context_lineage(
             project_id=project.id,
             from_asset_type="artifact",
             from_asset_id=research_plan_artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="included_in_context",
+        )
+    if research_synthesis_artifact:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=research_synthesis_artifact.id,
             to_asset_type="artifact",
             to_asset_id=artifact.id,
             relation_type="included_in_context",

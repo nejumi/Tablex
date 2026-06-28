@@ -91,7 +91,14 @@ def generate_research_brief(
         "evaluation constraints, leakage risks, and available artifact context?"
     )
     research_plan_artifact = latest_project_artifact(db, project.id, "research_plan")
-    sources = build_research_sources(project, dataset, evaluation_spec, research_plan_artifact)
+    research_synthesis_artifact = latest_project_artifact(db, project.id, "research_finding_synthesis")
+    sources = build_research_sources(
+        project,
+        dataset,
+        evaluation_spec,
+        research_plan_artifact,
+        research_synthesis_artifact,
+    )
     key_findings = build_key_findings(project, dataset, evaluation_spec, profile)
     recommended_approaches = build_recommended_approaches(project, profile)
     title = "Approach Research Brief"
@@ -119,6 +126,9 @@ def generate_research_brief(
             "dataset_snapshot_id": dataset.id if dataset else None,
             "evaluation_spec_id": evaluation_spec.id if evaluation_spec else None,
             "research_plan_artifact_id": research_plan_artifact.id if research_plan_artifact else None,
+            "research_finding_synthesis_artifact_id": research_synthesis_artifact.id
+            if research_synthesis_artifact
+            else None,
             "question": research_question,
         },
     )
@@ -325,6 +335,7 @@ def generate_approach_candidates(
         profile = summarize_columns(latest_semantic_columns(db, dataset))
         recommended = build_recommended_approaches(project, profile)
     research_plan_artifact = latest_project_artifact(db, project.id, "research_plan")
+    research_synthesis_artifact = latest_project_artifact(db, project.id, "research_finding_synthesis")
     ideas: list[Idea] = []
     artifact_ids: list[str] = []
     for index, approach in enumerate(recommended[:5], start=1):
@@ -337,6 +348,7 @@ def generate_approach_candidates(
             approach=approach,
             research_brief=research_brief,
             research_plan_artifact=research_plan_artifact,
+            research_synthesis_artifact=research_synthesis_artifact,
         )
         payload = {
             "schema_version": "approach_candidate.v1",
@@ -363,6 +375,9 @@ def generate_approach_candidates(
                 "idea_id": idea_id,
                 "research_brief_id": research_brief.id if research_brief else None,
                 "research_plan_artifact_id": research_plan_artifact.id if research_plan_artifact else None,
+                "research_finding_synthesis_artifact_id": research_synthesis_artifact.id
+                if research_synthesis_artifact
+                else None,
             },
         )
         idea = Idea(
@@ -1205,6 +1220,7 @@ def build_research_sources(
     dataset: DatasetSnapshot | None,
     evaluation_spec: EvaluationSpec | None,
     research_plan_artifact: Artifact | None = None,
+    research_synthesis_artifact: Artifact | None = None,
 ) -> list[dict[str, Any]]:
     sources = [
         {
@@ -1251,6 +1267,20 @@ def build_research_sources(
                 "title": "Controlled ResearchPlan",
                 "ref": research_plan_artifact.id,
                 "summary": "Harness-owned plan for Skill use, controlled web/literature queries, evidence expectations, and reporting outputs.",
+            }
+        )
+    if research_synthesis_artifact:
+        metadata = loads_json(research_synthesis_artifact.metadata_json, {})
+        sources.append(
+            {
+                "source_type": "research_finding_synthesis",
+                "title": "Research Finding Synthesis",
+                "ref": research_synthesis_artifact.id,
+                "summary": (
+                    "Synthesized runner findings, citation audit, follow-up requirements, and AgentTask handoff "
+                    f"context. Findings: {metadata.get('finding_count', 'unknown')}; "
+                    f"citations: {metadata.get('citation_count', 'unknown')}."
+                ),
             }
         )
     return sources
@@ -1623,8 +1653,10 @@ def build_agent_task_contract(
     approach: dict[str, Any],
     research_brief: ResearchBrief | None,
     research_plan_artifact: Artifact | None = None,
+    research_synthesis_artifact: Artifact | None = None,
 ) -> dict[str, Any]:
     research_contract_inputs = research_plan_contract_inputs(research_plan_artifact)
+    research_synthesis_inputs = research_synthesis_contract_inputs(research_synthesis_artifact)
     return {
         "task_id": f"agt_{idea_id}",
         "task_type": "implement_prediction_approach",
@@ -1639,9 +1671,13 @@ def build_agent_task_contract(
             "evaluation_spec_id": evaluation_spec.id if evaluation_spec else None,
             "research_brief_id": research_brief.id if research_brief else None,
             "research_plan_artifact_id": research_plan_artifact.id if research_plan_artifact else None,
+            "research_finding_synthesis_artifact_id": research_synthesis_artifact.id
+            if research_synthesis_artifact
+            else None,
             "approach_type": approach["approach_type"],
             "allowed_research_modes": ["project_artifacts", "skill_library", "controlled_web_search"],
             "must_respect_split_manifest": True,
+            "research_finding_synthesis": research_synthesis_inputs,
             **research_contract_inputs,
         },
         "required_outputs": [
@@ -1718,6 +1754,28 @@ def research_plan_contract_inputs(research_plan_artifact: Artifact | None) -> di
         "recommended_asset_ids": unique_strings(item.get("asset_id") for item in recommendations),
         "recommended_asset_version_ids": unique_strings(item.get("latest_version_id") for item in recommendations),
         "research_source_policy": source_policy if isinstance(source_policy, dict) else {},
+    }
+
+
+def research_synthesis_contract_inputs(synthesis_artifact: Artifact | None) -> dict[str, Any]:
+    if synthesis_artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(synthesis_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "artifact_id": synthesis_artifact.id,
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else {},
+        "citation_audit": payload.get("citation_audit") if isinstance(payload.get("citation_audit"), dict) else {},
+        "follow_up_requirements": payload.get("follow_up_requirements")
+        if isinstance(payload.get("follow_up_requirements"), list)
+        else [],
+        "agent_task_handoff": payload.get("agent_task_handoff")
+        if isinstance(payload.get("agent_task_handoff"), dict)
+        else {},
     }
 
 

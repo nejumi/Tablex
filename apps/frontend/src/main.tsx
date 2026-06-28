@@ -1998,6 +1998,9 @@ function ApproachTab({
   const researchSourceArtifacts = artifacts.filter((artifact) =>
     ["research_source_pack", "research_source_report"].includes(artifact.asset_type)
   );
+  const researchSynthesisArtifacts = artifacts.filter((artifact) =>
+    ["research_finding_synthesis", "research_finding_synthesis_report"].includes(artifact.asset_type)
+  );
   const agentTaskContractArtifacts = artifacts.filter((artifact) => artifact.asset_type === "agent_task_contract");
   const [researchPlanPreview, setResearchPlanPreview] = React.useState<ArtifactPreview | null>(null);
   const [researchPlanPreviewError, setResearchPlanPreviewError] = React.useState<string | null>(null);
@@ -2005,6 +2008,9 @@ function ApproachTab({
   const [researchSourcePreview, setResearchSourcePreview] = React.useState<ArtifactPreview | null>(null);
   const [researchSourcePreviewError, setResearchSourcePreviewError] = React.useState<string | null>(null);
   const [researchSourcePreviewLoadingId, setResearchSourcePreviewLoadingId] = React.useState<string | null>(null);
+  const [researchSynthesisPreview, setResearchSynthesisPreview] = React.useState<ArtifactPreview | null>(null);
+  const [researchSynthesisPreviewError, setResearchSynthesisPreviewError] = React.useState<string | null>(null);
+  const [researchSynthesisPreviewLoadingId, setResearchSynthesisPreviewLoadingId] = React.useState<string | null>(null);
   const [taskContractPreview, setTaskContractPreview] = React.useState<ArtifactPreview | null>(null);
   const [taskContractPreviewError, setTaskContractPreviewError] = React.useState<string | null>(null);
   const [taskContractPreviewLoadingId, setTaskContractPreviewLoadingId] = React.useState<string | null>(null);
@@ -2051,6 +2057,18 @@ function ApproachTab({
       setResearchSourcePreviewError(err instanceof Error ? err.message : String(err));
     } finally {
       setResearchSourcePreviewLoadingId(null);
+    }
+  }
+
+  async function loadResearchSynthesisPreview(artifactId: string) {
+    setResearchSynthesisPreviewLoadingId(artifactId);
+    setResearchSynthesisPreviewError(null);
+    try {
+      setResearchSynthesisPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setResearchSynthesisPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResearchSynthesisPreviewLoadingId(null);
     }
   }
 
@@ -2126,6 +2144,25 @@ function ApproachTab({
         >
           {busy ? <Loader2 className="spin" size={16} /> : <Library size={16} />}
           Source Pack
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
+            void runAction(async () => {
+              const job = await api<Job>(`/api/projects/${project.id}/approach/research-synthesis`, { method: "POST" });
+              const artifactId =
+                job.output.research_finding_synthesis_report_artifact_id ??
+                job.output.research_finding_synthesis_artifact_id;
+              if (typeof artifactId === "string") {
+                await loadResearchSynthesisPreview(artifactId);
+              }
+              return job;
+            })
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <GitBranch size={16} />}
+          Synthesize Research
         </button>
         <button
           className="secondary-button"
@@ -2263,6 +2300,42 @@ function ApproachTab({
           <pre className="markdown-preview">{researchSourcePreview.preview}</pre>
         ) : (
           <EmptyInline text={researchSourcePreview?.reason ?? "Generate or select a Research Source Pack to inspect citation requirements, controlled queries, source policy, and runner handoff expectations."} />
+        )}
+      </Panel>
+      <Panel title="Research Syntheses" icon={<GitBranch size={18} />}>
+        {researchSynthesisArtifacts.length ? (
+          <Table
+            headers={["Type", "Findings", "Citations", "External", "Stub", "Created", "Actions"]}
+            rows={researchSynthesisArtifacts.map((artifact) => [
+              artifact.asset_type,
+              String(artifact.metadata.finding_count ?? "-"),
+              String(artifact.metadata.citation_count ?? "-"),
+              String(artifact.metadata.external_network_accessed ?? "-"),
+              String(artifact.metadata.has_only_stub_findings ?? "-"),
+              formatDate(artifact.created_at),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={researchSynthesisPreviewLoadingId === artifact.id}
+                  onClick={() => void loadResearchSynthesisPreview(artifact.id)}
+                  title="Preview research synthesis"
+                >
+                  {researchSynthesisPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download research synthesis">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Research syntheses will consolidate controlled runner findings, citation audit state, follow-up requirements, and AgentTask handoff notes for flexible approach planning." />
+        )}
+        {researchSynthesisPreviewError ? <div className="banner danger">{researchSynthesisPreviewError}</div> : null}
+        {researchSynthesisPreview?.preview_available ? (
+          <pre className="markdown-preview">{researchSynthesisPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={researchSynthesisPreview?.reason ?? "Synthesize current source packs and runner findings to inspect citation audit status, open requirements, and handoff guidance."} />
         )}
       </Panel>
       <Panel title="Agent Task Contracts" icon={<ListChecks size={18} />}>

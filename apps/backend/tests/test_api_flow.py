@@ -350,6 +350,27 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "Controlled Research Runner Stub" in research_stub_report
     assert "External network accessed: false" in research_stub_report
 
+    research_synthesis_response = client.post(f"/api/projects/{project_id}/approach/research-synthesis")
+    assert research_synthesis_response.status_code == 200, research_synthesis_response.text
+    research_synthesis_job = research_synthesis_response.json()
+    assert research_synthesis_job["status"] == "succeeded"
+    assert research_synthesis_job["output"]["schema_version"] == "research_finding_synthesis.v1"
+    assert research_synthesis_job["output"]["research_finding_synthesis_artifact_id"]
+    assert research_synthesis_job["output"]["research_finding_synthesis_report_id"]
+    assert research_synthesis_job["output"]["research_finding_synthesis_report_artifact_id"]
+    assert research_synthesis_job["output"]["visualization_id"]
+    assert research_synthesis_job["output"]["evidence_id"]
+    assert research_synthesis_job["output"]["external_network_accessed"] is False
+    assert research_synthesis_job["output"]["has_only_stub_findings"] is True
+
+    research_synthesis_report_response = client.get(
+        f"/api/artifacts/{research_synthesis_job['output']['research_finding_synthesis_report_artifact_id']}/preview"
+    )
+    assert research_synthesis_report_response.status_code == 200
+    research_synthesis_report = research_synthesis_report_response.json()["preview"]
+    assert "Research Finding Synthesis" in research_synthesis_report
+    assert "Stub-only findings: true" in research_synthesis_report
+
     agent_task_plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
     assert agent_task_plan_response.status_code == 200, agent_task_plan_response.text
     agent_task_plan_job = agent_task_plan_response.json()
@@ -376,6 +397,12 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert agent_task_contract["inputs"]["research_source_pack"]["artifact_id"] == source_pack_job["output"][
         "research_source_pack_artifact_id"
     ]
+    assert agent_task_contract["inputs"]["research_finding_synthesis"]["artifact_id"] == research_synthesis_job[
+        "output"
+    ]["research_finding_synthesis_artifact_id"]
+    assert agent_task_contract["inputs"]["research_finding_synthesis"]["citation_audit"][
+        "external_network_accessed"
+    ] is False
     assert agent_task_contract["inputs"]["research_source_policy"]["network_default"] == (
         "disabled_until_runner_policy_allows"
     )
@@ -545,6 +572,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "controlled web" in brief["summary_md"].lower() or "web" in brief["summary_md"].lower()
     assert len(brief["recommended_approaches"]) >= 2
     assert any(source["source_type"] == "research_plan" for source in brief["sources"])
+    assert any(source["source_type"] == "research_finding_synthesis" for source in brief["sources"])
 
     ideas_response = client.post(f"/api/projects/{project_id}/approach/ideas/generate")
     assert ideas_response.status_code == 200, ideas_response.text
@@ -559,6 +587,10 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     contract_inputs = idea["agent_task_contract"]["inputs"]
     assert contract_inputs["must_respect_split_manifest"] is True
     assert contract_inputs["research_plan_artifact_id"] == research_plan_artifact_id
+    assert (
+        contract_inputs["research_finding_synthesis"]["artifact_id"]
+        == research_synthesis_job["output"]["research_finding_synthesis_artifact_id"]
+    )
     assert len(contract_inputs["recommended_asset_ids"]) >= 4
     assert len(contract_inputs["recommended_asset_version_ids"]) >= 4
     assert contract_inputs["research_source_policy"]["network_default"] == "disabled_until_runner_policy_allows"
@@ -628,6 +660,11 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert context_payload["evaluation_context"]["split_manifest_id"]
     assert context_payload["quality_gate_context"]["status"] == "available"
     assert context_payload["research_plan_context"]["artifact_id"] == research_plan_artifact_id
+    assert (
+        context_payload["research_synthesis_context"]["artifact_id"]
+        == research_synthesis_job["output"]["research_finding_synthesis_artifact_id"]
+    )
+    assert context_payload["research_synthesis_context"]["citation_audit"]["external_network_accessed"] is False
     assert len(context_payload["asset_recommendations"]) >= 4
     assert len(context_payload["materialized_library_assets"]) >= 4
     assert any(

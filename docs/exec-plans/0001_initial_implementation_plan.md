@@ -81,6 +81,7 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Agentic Experiment Lifecycle v0 with `experiment_plan`, `run_report`, `experiment_comparison`, `experiment_comparison_report`, schema files, Reports, VisualizationSpecs, Evidence, Insights, and UI actions.
 - Data Quality Gate v0 with `data_quality_gate`, `data_quality_report`, schema file, quality visualization, materialized Questions, Assumptions, Evidence, Insight, AgentContextPack context, and Data/Evaluation UI.
 - Controlled Agent Workspace v0 with `agent_workspace_manifest`, workspace context materialization, AgentResult artifact ingestion, runner safety checks, and Approach UI preview.
+- Research Findings Synthesis v1 with latest research source packs, research run manifests, source citation manifests, benchmark/baseline context, Evidence, Report, VisualizationSpec, Lineage, AgentTaskContract inputs, AgentContextPack context, and Approach UI preview/download.
 - Job skeleton for:
   - `profile_dataset`
   - `infer_assumptions`
@@ -137,4 +138,5 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - ExperimentPlans are artifact-backed contracts, not executable AutoML plans. Real Codex execution, Skill installation, and controlled web/literature search still need production runner integration.
 - Data Quality Gate checks are deterministic MVP heuristics. They catch common leakage, missingness, duplicate, ID, time/group, and evaluation-readiness issues, but do not replace domain review or full statistical data validation.
 - Controlled workspaces currently use LocalStubAgentRunner for real execution. CodexCliRunner remains a skeleton until external execution policy, approval, and result ingestion are hardened further.
+- Research Findings Synthesis currently summarizes stub or artifact-backed research outputs. Verified external web/literature retrieval remains controlled-runner future work and must attach source citations before decision-grade claims.
 - Auth is stubbed as local single-user behavior.

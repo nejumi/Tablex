@@ -15,6 +15,7 @@
     "quality_gate_context",
     "relational_context",
     "research_plan_context",
+    "research_synthesis_context",
     "artifact_refs",
     "library_asset_references",
     "asset_recommendations",
@@ -57,6 +58,9 @@
       "type": "object"
     },
     "research_plan_context": {
+      "type": "object"
+    },
+    "research_synthesis_context": {
       "type": "object"
     },
     "artifact_refs": {

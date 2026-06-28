@@ -178,6 +178,7 @@ from tabular_harness.services.reporting import (
 )
 from tabular_harness.services.research_runner import run_research_source_pack_local_stub
 from tabular_harness.services.research_sources import create_research_source_pack
+from tabular_harness.services.research_synthesis import create_research_finding_synthesis
 from tabular_harness.worker.jobs import create_default_worker
 
 router = APIRouter()
@@ -2067,6 +2068,50 @@ def run_research_source_pack_stub_endpoint(
     return job_to_dict(job)
 
 
+@router.post("/api/projects/{project_id}/approach/research-synthesis", response_model=JobRead)
+def create_project_research_synthesis(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="create_research_synthesis",
+        project_id=project.id,
+        input_payload={},
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_research_finding_synthesis(db, store=store, project=project, job=job)
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.synthesis["schema_version"],
+                "research_finding_synthesis_artifact_id": result.artifact.id,
+                "research_finding_synthesis_report_id": result.report.id,
+                "research_finding_synthesis_report_artifact_id": result.report_artifact.id,
+                "visualization_id": result.visualization.id,
+                "visualization_artifact_id": result.visualization_artifact.id,
+                "evidence_id": result.evidence.id,
+                "artifact_ids": result.artifact_ids,
+                "finding_count": result.synthesis["summary"]["finding_count"],
+                "citation_count": result.synthesis["citation_audit"]["citation_count"],
+                "external_network_accessed": result.synthesis["citation_audit"]["external_network_accessed"],
+                "has_only_stub_findings": result.synthesis["summary"]["has_only_stub_findings"],
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
 @router.post("/api/projects/{project_id}/approach/research-briefs", response_model=JobRead)
 def generate_project_research_brief(
     project_id: str,
@@ -3817,6 +3862,15 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "research_findings_report_artifact_id": output.get("research_findings_report_artifact_id"),
         "research_source_pack_artifact_id": output.get("research_source_pack_artifact_id"),
         "research_source_report_id": output.get("research_source_report_id"),
+        "research_finding_synthesis_artifact_id": output.get("research_finding_synthesis_artifact_id"),
+        "research_finding_synthesis_report_id": output.get("research_finding_synthesis_report_id"),
+        "research_finding_synthesis_report_artifact_id": output.get(
+            "research_finding_synthesis_report_artifact_id"
+        ),
+        "finding_count": output.get("finding_count"),
+        "citation_count": output.get("citation_count"),
+        "external_network_accessed": output.get("external_network_accessed"),
+        "has_only_stub_findings": output.get("has_only_stub_findings"),
         "recommended_approach_count": output.get("recommended_approach_count"),
         "research_query_count": output.get("research_query_count"),
         "project_source_count": output.get("project_source_count"),

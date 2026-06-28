@@ -29,6 +29,7 @@ JOB_TYPES = {
     "plan_research",
     "create_research_source_pack",
     "run_research_source_pack_stub",
+    "create_research_synthesis",
     "generate_research_brief",
     "generate_approach_candidates",
     "draft_project_report",
