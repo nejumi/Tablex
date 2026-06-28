@@ -220,6 +220,8 @@ curl -X POST http://localhost:8000/api/ideas/{idea_id}/asset-references \
 
 Project workspaces keep project-specific outputs. Reusable Skills, FeatureRecipes, EvaluationPatterns, PromptTemplates, and VisualizationTemplates live in the cross-project Asset Library and are attached through locked `AssetReference` records.
 
+The default seed pack includes reusable assets for controlled approach research, mixed-type XGBoost-style tabular baselines, train-fold TF-IDF text features, causal time lag/rolling features, relational aggregation, time/entity validation reviews, evaluation diagnostics interpretation, decision reports, and readiness dashboard visualizations. ResearchPlan generation recommends these assets from data signals and available artifacts such as RelationalCatalog, BenchmarkScenarioPack, EvaluationDiagnostics, and DecisionDashboard.
+
 Useful environment variables:
 
 ```bash

@@ -2959,11 +2959,12 @@ function LibraryTab({
       <Panel title="Cross-project Asset Library" icon={<Library size={18} />}>
         {assets.length ? (
           <Table
-            headers={["Type", "Name", "Tags", "Latest Version", "Status", "Actions"]}
+            headers={["Type", "Name", "Tags", "Semantic", "Latest Version", "Status", "Actions"]}
             rows={assets.map((asset) => [
               asset.asset_type.replace(/_/g, " "),
               asset.name,
               asset.tags.join(", ") || "-",
+              asset.semantic_tags.slice(0, 5).join(", ") || "-",
               asset.latest_version_id ?? "-",
               referencedAssetIds.has(asset.id) ? "referenced" : asset.status,
               <button

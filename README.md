@@ -23,6 +23,7 @@ The product name may still change. Internal package names and database tables st
 - Approach Studio v0 with ResearchBrief, Idea, Report, and VisualizationSpec objects for flexible, evidence-backed modeling proposals.
 - Idea-to-AgentTask stub execution with schema-validated AgentResult, report artifacts, evidence, and lineage.
 - Cross-project Asset Library v0 for Skills, FeatureRecipes, EvaluationPatterns, PromptTemplates, and VisualizationTemplates with Project/Idea references.
+- Cross-project Skill & FeatureRecipe Pack v1 with reusable tabular boosting, TF-IDF, time lag/rolling, relational aggregation, diagnostics, and decision reporting assets.
 - Report & Visualization Workbench v0 with generated Insights, report preview/download, and VisualizationSpec-driven dashboard previews.
 - Decision Dashboard & Report v1 with readiness stages, artifact completeness, risk register, next actions, benchmark fixture policy, and decision visualization specs.
 - Agent Context Pack v0 for preparing schema-validated, harness-owned execution context before Codex/Skill/web-research runner tasks.

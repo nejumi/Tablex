@@ -183,7 +183,10 @@ def create_research_plan(
         "relational_catalog": latest_project_artifact(db, project.id, "relational_catalog"),
         "evaluation_scenario_comparison": latest_project_artifact(db, project.id, "evaluation_scenario_comparison"),
         "evaluation_approval_review": latest_project_artifact(db, project.id, "evaluation_approval_review"),
+        "evaluation_diagnostics": latest_project_artifact(db, project.id, "evaluation_diagnostics"),
         "baseline_strategy_plan": latest_project_artifact(db, project.id, "baseline_strategy_plan"),
+        "benchmark_scenario_pack": latest_project_artifact(db, project.id, "benchmark_scenario_pack"),
+        "decision_dashboard": latest_project_artifact(db, project.id, "decision_dashboard"),
     }
     profile = summarize_columns(latest_semantic_columns(db, dataset))
     library_assets = list(
@@ -1361,18 +1364,34 @@ def recommend_research_assets(
     context_artifacts: dict[str, Artifact | None],
 ) -> list[dict[str, Any]]:
     recommendations: list[dict[str, Any]] = []
+    relational_metadata = artifact_metadata(context_artifacts.get("relational_catalog"))
+    has_relational_context = int(relational_metadata.get("table_count") or 0) > 1
     for asset in asset_context:
         semantic_tags = {str(tag) for tag in asset.get("semantic_tags", [])}
         asset_type = str(asset.get("asset_type"))
         reason = None
-        if "controlled_research" in semantic_tags or asset_type == "skill":
+        if "decision_dashboard" in semantic_tags and context_artifacts.get("decision_dashboard"):
+            reason = "DecisionDashboard exists, so decision reporting and readiness visualization assets are relevant."
+        elif "evaluation_diagnostics" in semantic_tags and context_artifacts.get("evaluation_diagnostics"):
+            reason = "Evaluation diagnostics exist and should be interpreted for reportable model evidence."
+        elif "relational_features" in semantic_tags and (
+            has_relational_context or context_artifacts.get("benchmark_scenario_pack")
+        ):
+            reason = "Relational or benchmark scenario context is available."
+        elif "time_features" in semantic_tags and profile.get("has_datetime"):
+            reason = "Datetime signals are present and need causal temporal feature controls."
+        elif "text_features" in semantic_tags and profile.get("has_text"):
+            reason = "Text-like columns are present."
+        elif {"gradient_boosting", "xgboost", "tabular_modeling"} & semantic_tags:
+            reason = "Strong tabular baseline planning should consider mixed-type gradient boosting when evaluation is ready."
+        elif "controlled_research" in semantic_tags:
             reason = "Use to guide controlled research and source-backed approach selection."
         elif "split_manifest" in semantic_tags and context_artifacts.get("evaluation_scenario_comparison"):
             reason = "Use to compare feature scenarios under stable evaluation constraints."
-        elif "text_features" in semantic_tags and profile.get("has_text"):
-            reason = "Text-like columns are present."
         elif "leakage_control" in semantic_tags:
             reason = "Leakage and prediction-time availability controls are always relevant."
+        elif asset_type == "skill":
+            reason = "General Skill asset available for runner planning under harness policy."
         if reason:
             recommendations.append(
                 {

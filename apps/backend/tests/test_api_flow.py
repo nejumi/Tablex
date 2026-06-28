@@ -267,7 +267,16 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     seed_assets_response = client.post("/api/assets/seed-defaults")
     assert seed_assets_response.status_code == 200
     seeded_assets = seed_assets_response.json()
-    assert len(seeded_assets) >= 5
+    assert len(seeded_assets) >= 15
+    seeded_asset_names = {item["name"] for item in seeded_assets}
+    assert {
+        "tabular_gradient_boosting_strategy",
+        "xgboost_mixed_type_baseline",
+        "text_tfidf_train_fold_recipe",
+        "causal_time_lag_rolling_features",
+        "relational_aggregation_recipe",
+        "decision_report_prompt",
+    }.issubset(seeded_asset_names)
     skill_asset = next(item for item in seeded_assets if item["asset_type"] == "skill")
 
     research_plan_response = client.post(f"/api/projects/{project_id}/approach/research-plan")
@@ -277,7 +286,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     research_plan_artifact_id = research_plan_job["output"]["artifact_id"]
     assert research_plan_job["output"]["schema_version"] == "research_plan.v1"
     assert research_plan_job["output"]["query_count"] >= 2
-    assert research_plan_job["output"]["recommended_asset_count"] >= 1
+    assert research_plan_job["output"]["recommended_asset_count"] >= 4
     assert research_plan_job["output"]["network_default"] == "disabled_until_runner_policy_allows"
 
     research_plan_preview_response = client.get(f"/api/artifacts/{research_plan_artifact_id}/preview")
@@ -286,6 +295,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "research_plan.v1" in research_plan_preview
     assert "controlled_web_search" in research_plan_preview
     assert "connector_credentials" in research_plan_preview
+    assert "xgboost_mixed_type_baseline" in research_plan_preview
+    assert "causal_time_lag_rolling_features" in research_plan_preview
 
     research_response = client.post(
         f"/api/projects/{project_id}/approach/research-briefs",
