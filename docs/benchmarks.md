@@ -80,6 +80,16 @@ curl -X POST http://localhost:8000/api/benchmarks/openml_credit_g/public-downloa
 
 The public downloader only uses catalog-configured URLs. It rejects credentialed sources, enforces a size limit, extracts only configured expected zip filenames or places one configured direct CSV/Parquet file, flattens those files into `data/benchmarks/{benchmark_id}`, skips unsafe zip members such as absolute paths or `..`, and stores a `benchmark_public_download_manifest` artifact.
 
+Run a full credential-free public benchmark workflow:
+
+```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/openml_credit_g/public-workflow \
+  -H 'Content-Type: application/json' \
+  -d '{"overwrite":false}'
+```
+
+The public workflow runs download, local readiness, primary-table import, profiling, quality gate, evaluation scenario comparison, approval, SplitManifest generation, adaptive BaselineStrategyPlan, baseline execution, diagnostics, run report, visualization dashboard, insights, decision dashboard/report, and BenchmarkScenarioPack. It rejects credentialed sources such as Kaggle competitions because Tablex must not receive or pass account credentials to agents.
+
 Generate a credential-free local fixture for supported benchmarks:
 
 ```bash

@@ -915,6 +915,16 @@ function DataTab({
     );
   }
 
+  async function runPublicBenchmarkWorkflow(benchmark: BenchmarkDataset) {
+    await runAction(() =>
+      api(`/api/projects/${project.id}/benchmarks/${benchmark.id}/public-workflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ overwrite: false })
+      })
+    );
+  }
+
   async function createBenchmarkScenarioPack(benchmark: BenchmarkDataset) {
     await runAction(async () => {
       const job = await api<Job>(`/api/projects/${project.id}/benchmarks/${benchmark.id}/scenario-pack`, {
@@ -1113,6 +1123,14 @@ function DataTab({
                     >
                       <Download size={16} />
                       Public
+                    </button>
+                    <button
+                      className="secondary-button"
+                      disabled={busy || requiresAccount || !directDownload}
+                      onClick={() => void runPublicBenchmarkWorkflow(benchmark)}
+                    >
+                      <Play size={16} />
+                      Flow
                     </button>
                     <button
                       className="secondary-button"
@@ -2094,7 +2112,15 @@ function ExperimentsTab({
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const experimentJobs = jobs.filter((job) =>
-    ["plan_baseline_strategy", "run_baseline", "run_agent_task", "create_experiment_plan", "compare_experiments", "draft_run_report"].includes(job.job_type)
+    [
+      "plan_baseline_strategy",
+      "run_baseline",
+      "run_public_benchmark_workflow",
+      "run_agent_task",
+      "create_experiment_plan",
+      "compare_experiments",
+      "draft_run_report"
+    ].includes(job.job_type)
   );
   const experimentArtifacts = artifacts.filter((artifact) =>
     [

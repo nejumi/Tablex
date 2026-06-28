@@ -1004,6 +1004,150 @@ def test_public_benchmark_download_places_direct_csv(tmp_path: Path, monkeypatch
         thread.join(timeout=5)
 
 
+def test_public_benchmark_workflow_runs_baseline_and_reports(tmp_path: Path, monkeypatch: Any) -> None:
+    served_dir = tmp_path / "served_workflow"
+    served_dir.mkdir()
+    rows = ["feature_num,feature_cat,note,class"]
+    for index in range(40):
+        label = "good" if index % 2 == 0 else "bad"
+        category = "low" if index % 3 == 0 else "high"
+        note = "steady payer" if label == "good" else "late payment"
+        rows.append(f"{index},{category},{note},{label}")
+    (served_dir / "workflow.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    handler = partial(SimpleHTTPRequestHandler, directory=str(served_dir))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/workflow.csv"
+        catalog_path = tmp_path / "catalog.json"
+        catalog_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "benchmark_catalog.v1",
+                    "datasets": [
+                        {
+                            "id": "public_workflow_smoke",
+                            "name": "Public Workflow Smoke",
+                            "source_kind": "public_test_file",
+                            "source_url": url,
+                            "access": {
+                                "kind": "public_direct_download",
+                                "requires_account": False,
+                                "requires_secret": False,
+                                "supports_direct_download": True,
+                                "download_urls": [
+                                    {
+                                        "url": url,
+                                        "archive_type": "csv",
+                                        "expected_files": ["workflow.csv"],
+                                    }
+                                ],
+                            },
+                            "task_types": ["binary_classification"],
+                            "modality_tags": ["single_table", "download_smoke"],
+                            "scenario": {
+                                "kind": "single_table_public_workflow_smoke",
+                                "validation_focus": "stratified_split",
+                                "feature_focus": ["numeric_imputation", "categorical_encoding", "text_tfidf"],
+                                "report_focus": ["baseline_sanity", "leaderboard"],
+                            },
+                            "primary_table": {"path": "workflow.csv", "target_column": "class"},
+                            "required_files": [
+                                {"path": "workflow.csv", "role": "primary_table", "description": "Downloaded table."}
+                            ],
+                            "download": {
+                                "method": "public_direct_file",
+                                "requires_account": False,
+                                "download_urls": [{"url": url, "archive_type": "csv", "expected_files": ["workflow.csv"]}],
+                                "command": "Downloaded by test local HTTP server.",
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("TABLEX_BENCHMARK_CATALOG_PATH", str(catalog_path))
+        client = make_client(tmp_path)
+        project_response = client.post(
+            "/api/projects",
+            json={"name": "Public benchmark workflow", "task_type": "binary_classification"},
+        )
+        assert project_response.status_code == 200
+        project_id = project_response.json()["id"]
+
+        workflow_response = client.post(
+            f"/api/projects/{project_id}/benchmarks/public_workflow_smoke/public-workflow",
+            json={"overwrite": False},
+        )
+        assert workflow_response.status_code == 200, workflow_response.text
+        workflow_job = workflow_response.json()
+        assert workflow_job["status"] == "succeeded"
+        output = workflow_job["output"]
+        assert output["download_manifest_artifact_id"]
+        assert output["dataset_snapshot_id"]
+        assert output["evaluation_spec_id"]
+        assert output["split_manifest_id"]
+        assert output["baseline_strategy_plan_artifact_id"]
+        assert output["experiment_run_id"]
+        assert output["metrics"]["model_baseline_attempted"] is True
+        assert output["run_report_artifact_id"]
+        assert output["decision_dashboard_artifact_id"]
+        assert output["decision_report_artifact_id"]
+        assert output["benchmark_scenario_pack_artifact_id"]
+        assert len(output["visualization_ids"]) >= 4
+        assert len(output["artifact_ids"]) >= 20
+
+        runs_response = client.get(f"/api/projects/{project_id}/runs")
+        assert runs_response.status_code == 200
+        assert runs_response.json()[0]["id"] == output["experiment_run_id"]
+
+        artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
+        assert artifacts_response.status_code == 200
+        asset_types = {item["asset_type"] for item in artifacts_response.json()}
+        assert {
+            "benchmark_import_manifest",
+            "relational_catalog",
+            "baseline_strategy_plan",
+            "baseline_report",
+            "baseline_metrics",
+            "evaluation_diagnostics",
+            "evaluation_diagnostics_report",
+            "run_report",
+            "visualization_spec",
+            "insight_set",
+            "decision_dashboard",
+            "decision_report",
+            "benchmark_scenario_pack",
+        }.issubset(asset_types)
+
+        decision_preview_response = client.get(f"/api/artifacts/{output['decision_report_artifact_id']}/preview")
+        assert decision_preview_response.status_code == 200
+        assert "Decision Report" in decision_preview_response.json()["preview"]
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_public_benchmark_workflow_rejects_credentialed_source(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Credentialed benchmark workflow", "task_type": "binary_classification"},
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    response = client.post(
+        f"/api/projects/{project_id}/benchmarks/kaggle_home_credit_default_risk/public-workflow",
+        json={"overwrite": False},
+    )
+    assert response.status_code == 400
+    assert "credential-free" in response.text
+
+
 def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_response = client.post(
