@@ -307,6 +307,42 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "xgboost_mixed_type_baseline" in research_plan_preview
     assert "causal_time_lag_rolling_features" in research_plan_preview
 
+    agent_task_plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
+    assert agent_task_plan_response.status_code == 200, agent_task_plan_response.text
+    agent_task_plan_job = agent_task_plan_response.json()
+    assert agent_task_plan_job["status"] == "succeeded"
+    assert agent_task_plan_job["output"]["schema_version"] == "agent_task_planning.v1"
+    assert agent_task_plan_job["output"]["agent_task_contract_artifact_id"]
+    assert agent_task_plan_job["output"]["recommended_approach_count"] >= 2
+    assert agent_task_plan_job["output"]["research_query_count"] >= 2
+    assert agent_task_plan_job["output"]["recommended_asset_count"] >= 4
+
+    agent_task_plan_preview_response = client.get(
+        f"/api/artifacts/{agent_task_plan_job['output']['agent_task_contract_artifact_id']}/preview"
+    )
+    assert agent_task_plan_preview_response.status_code == 200
+    assert agent_task_plan_preview_response.json()["preview_available"] is True
+    agent_task_plan_download_response = client.get(
+        f"/api/artifacts/{agent_task_plan_job['output']['agent_task_contract_artifact_id']}/download"
+    )
+    assert agent_task_plan_download_response.status_code == 200
+    agent_task_contract = agent_task_plan_download_response.json()
+    assert agent_task_contract["inputs"]["schema_version"] == "agent_task_planning.v1"
+    assert len(agent_task_contract["inputs"]["recommended_approach_candidates"]) >= 2
+    assert "reporting_requirements" in agent_task_contract["inputs"]
+    assert any(
+        item["name"] == "xgboost_mixed_type_baseline"
+        for item in agent_task_contract["inputs"]["library_recommendations"]
+    )
+
+    agent_task_job_artifacts_response = client.get(f"/api/jobs/{agent_task_plan_job['id']}/artifacts")
+    assert agent_task_job_artifacts_response.status_code == 200
+    agent_task_job_artifacts = agent_task_job_artifacts_response.json()
+    assert agent_task_job_artifacts["summary"]["task_id"] == agent_task_plan_job["output"]["task_id"]
+    assert agent_task_job_artifacts["summary"]["recommended_approach_count"] >= 2
+    assert agent_task_job_artifacts["missing_artifact_ids"] == []
+    assert agent_task_job_artifacts["artifacts"][0]["asset_type"] == "agent_task_contract"
+
     research_response = client.post(
         f"/api/projects/{project_id}/approach/research-briefs",
         json={"question": "What flexible approaches should be considered?"},
@@ -579,6 +615,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "evaluation_scenario_comparison",
         "evaluation_approval_review",
         "research_plan",
+        "agent_task_contract",
         "research_brief",
         "approach_candidate",
         "report",

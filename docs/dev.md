@@ -216,6 +216,17 @@ The Reports tab renders `visualization_spec.v1` records with typed UI previews f
 
 Approach Ideas are not fixed recipes. They are evidence-backed proposals with `AgentTaskContract` payloads for future Codex, Skill-library, and controlled web or literature research runners. The harness still owns EvaluationSpec, SplitManifest, artifacts, lineage, safety controls, and report outputs.
 
+`/api/projects/{project_id}/approach/agent-task-plan` creates a runner-ready `agent_task_contract` artifact without executing Codex or any external network call:
+
+```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/approach/agent-task-plan \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+curl http://localhost:8000/api/jobs/{job_id}/artifacts
+```
+
+The generated contract carries `agent_task_planning.v1` inputs: dataset/profile context, approved evaluation and SplitManifest constraints, open assumptions/questions, benchmark and relational context, Skill/library recommendations, flexible approach candidates, controlled research queries, reporting requirements, and artifact expectations. It is planning context, not a fixed baseline recipe.
+
 `/api/ideas/{idea_id}/run-agent-task` currently uses `LocalStubAgentRunner`. It validates the AgentResult schema and persists `agent_task_report`, `agent_result`, and `visualization_spec` artifacts plus Evidence and Lineage. It does not run real Codex code or external web research yet. Prepare and inspect an AgentContextPack first when validating future runner behavior.
 
 Agent task execution now materializes a controlled workspace under the local artifact root before invoking the runner. The workspace receives harness-owned context files such as AgentContextPack, ResearchPlan, ExperimentPlan, DataQualityGate, diagnostics, and recommended cross-project library asset artifacts under `.harness/context/library_assets/` when present. The run stores an `agent_workspace_manifest` artifact with source asset/version/reason metadata, then ingests relative paths declared in `AgentResult.artifacts` into the artifact store. Absolute paths and `..` escapes are rejected.
@@ -236,7 +247,7 @@ curl -X POST http://localhost:8000/api/ideas/{idea_id}/asset-references \
 
 Project workspaces keep project-specific outputs. Reusable Skills, FeatureRecipes, EvaluationPatterns, PromptTemplates, and VisualizationTemplates live in the cross-project Asset Library and are attached through locked `AssetReference` records.
 
-The default seed pack includes reusable assets for controlled approach research, mixed-type XGBoost-style tabular baselines, train-fold TF-IDF text features, causal time lag/rolling features, relational aggregation, time/entity validation reviews, evaluation diagnostics interpretation, decision reports, and readiness dashboard visualizations. ResearchPlan generation recommends these assets from data signals and available artifacts such as RelationalCatalog, BenchmarkScenarioPack, EvaluationDiagnostics, and DecisionDashboard. AgentTaskContracts carry recommended asset ids plus source policy, while AgentContextPacks and controlled workspaces materialize the corresponding asset version artifacts for runner handoff.
+The default seed pack includes reusable assets for controlled approach research, mixed-type XGBoost-style tabular baselines, train-fold TF-IDF text features, causal time lag/rolling features, relational aggregation, time/entity validation reviews, evaluation diagnostics interpretation, decision reports, and readiness dashboard visualizations. ResearchPlan and AgentTask planning recommend these assets from data signals and available artifacts such as RelationalCatalog, BenchmarkScenarioPack, EvaluationDiagnostics, and DecisionDashboard. AgentTaskContracts carry recommended asset ids plus source policy, while AgentContextPacks and controlled workspaces materialize the corresponding asset version artifacts for runner handoff.
 
 Useful environment variables:
 
@@ -322,12 +333,12 @@ The current UI flow is:
 6. Design evaluation candidates in the Evaluation tab, using the quality gate context.
 7. Promote and approve an EvaluationSpec.
 8. Generate a SplitManifest.
-9. Generate a Research Brief and flexible Approach Ideas from the Approach tab.
+9. Generate a ResearchPlan, AgentTaskContract, Research Brief, and flexible Approach Ideas from the Approach tab.
 10. Seed or attach reusable assets from the Library tab.
 11. Prepare and preview AgentContextPacks from the Approach tab before agent execution.
 12. Create and preview ExperimentPlans from the Approach tab.
 13. Review, approve, cancel, retry, or process queued jobs from the Jobs tab.
-14. Plan Baseline from the Experiments tab to inspect candidate strategies and deferred AgentTask work.
+14. Plan Agent Task or Plan Baseline from the Experiments tab to inspect flexible runner contracts, candidate strategies, and deferred AgentTask work.
 15. Run Baseline from the Experiments tab as a sanity floor or reference run.
 16. Draft run reports and compare experiments from the Experiments tab.
 17. Generate Insights, draft Reports, and create Visualization Dashboard specs from the Reports tab.

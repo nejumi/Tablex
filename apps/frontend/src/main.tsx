@@ -1869,9 +1869,13 @@ function ApproachTab({
 }) {
   const latestBrief = researchBriefs[0] ?? null;
   const researchPlanArtifacts = artifacts.filter((artifact) => artifact.asset_type === "research_plan");
+  const agentTaskContractArtifacts = artifacts.filter((artifact) => artifact.asset_type === "agent_task_contract");
   const [researchPlanPreview, setResearchPlanPreview] = React.useState<ArtifactPreview | null>(null);
   const [researchPlanPreviewError, setResearchPlanPreviewError] = React.useState<string | null>(null);
   const [researchPlanPreviewLoadingId, setResearchPlanPreviewLoadingId] = React.useState<string | null>(null);
+  const [taskContractPreview, setTaskContractPreview] = React.useState<ArtifactPreview | null>(null);
+  const [taskContractPreviewError, setTaskContractPreviewError] = React.useState<string | null>(null);
+  const [taskContractPreviewLoadingId, setTaskContractPreviewLoadingId] = React.useState<string | null>(null);
   const [contextPreview, setContextPreview] = React.useState<ArtifactPreview | null>(null);
   const [contextPreviewError, setContextPreviewError] = React.useState<string | null>(null);
   const [contextPreviewLoadingId, setContextPreviewLoadingId] = React.useState<string | null>(null);
@@ -1903,6 +1907,18 @@ function ApproachTab({
       setResearchPlanPreviewError(err instanceof Error ? err.message : String(err));
     } finally {
       setResearchPlanPreviewLoadingId(null);
+    }
+  }
+
+  async function loadTaskContractPreview(artifactId: string) {
+    setTaskContractPreviewLoadingId(artifactId);
+    setTaskContractPreviewError(null);
+    try {
+      setTaskContractPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setTaskContractPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTaskContractPreviewLoadingId(null);
     }
   }
 
@@ -1949,6 +1965,27 @@ function ApproachTab({
         >
           {busy ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
           Research Plan
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
+            void runAction(async () => {
+              const job = await api<Job>(`/api/projects/${project.id}/approach/agent-task-plan`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({})
+              });
+              const artifactId = job.output.agent_task_contract_artifact_id ?? job.output.artifact_id;
+              if (typeof artifactId === "string") {
+                await loadTaskContractPreview(artifactId);
+              }
+              return job;
+            })
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+          Plan Agent Task
         </button>
         <button
           className="secondary-button"
@@ -2010,6 +2047,42 @@ function ApproachTab({
           <pre className="markdown-preview">{researchPlanPreview.preview}</pre>
         ) : (
           <EmptyInline text={researchPlanPreview?.reason ?? "Generate or select a ResearchPlan to inspect controlled search candidates, Skill references, source policy, evidence expectations, and reporting requirements."} />
+        )}
+      </Panel>
+      <Panel title="Agent Task Contracts" icon={<ListChecks size={18} />}>
+        {agentTaskContractArtifacts.length ? (
+          <Table
+            headers={["Task", "Dataset", "Spec", "Approaches", "Queries", "Assets", "Actions"]}
+            rows={agentTaskContractArtifacts.map((artifact) => [
+              String(artifact.metadata.task_id ?? artifact.name),
+              String(artifact.metadata.dataset_snapshot_id ?? "-"),
+              String(artifact.metadata.evaluation_spec_id ?? "-"),
+              String(artifact.metadata.recommended_approach_count ?? "-"),
+              String(artifact.metadata.research_query_count ?? "-"),
+              String(artifact.metadata.recommended_asset_count ?? "-"),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={taskContractPreviewLoadingId === artifact.id}
+                  onClick={() => void loadTaskContractPreview(artifact.id)}
+                  title="Preview agent task contract"
+                >
+                  {taskContractPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download agent task contract">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="AgentTaskContracts will combine dataset context, approved evaluation constraints, assumptions, Skill/library recommendations, research queries, reporting requirements, and artifact expectations for future runners." />
+        )}
+        {taskContractPreviewError ? <div className="banner danger">{taskContractPreviewError}</div> : null}
+        {taskContractPreview?.preview_available ? (
+          <pre className="markdown-preview">{taskContractPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={taskContractPreview?.reason ?? "Plan or select an AgentTaskContract to inspect the exact flexible runner contract before execution."} />
         )}
       </Panel>
       <Panel title="Research Briefs" icon={<FileText size={18} />}>
@@ -2208,6 +2281,7 @@ function ExperimentsTab({
   const experimentJobs = jobs.filter((job) =>
     [
       "plan_baseline_strategy",
+      "plan_agent_task",
       "run_baseline",
       "run_public_benchmark_workflow",
       "run_agent_task",
@@ -2223,6 +2297,7 @@ function ExperimentsTab({
       "feature_recipe",
       "baseline_report",
       "baseline_metrics",
+      "agent_task_contract",
       "experiment_plan",
       "experiment_comparison",
       "experiment_comparison_report",
@@ -2264,6 +2339,27 @@ function ExperimentsTab({
         >
           {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
           Plan Baseline
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
+            void runAction(async () => {
+              const job = await api<Job>(`/api/projects/${project.id}/approach/agent-task-plan`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({})
+              });
+              const artifactId = job.output.agent_task_contract_artifact_id ?? job.output.artifact_id;
+              if (typeof artifactId === "string") {
+                await loadPreview(artifactId);
+              }
+              return job;
+            })
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+          Plan Agent Task
         </button>
         <button
           className="secondary-button"
@@ -2836,6 +2932,18 @@ function formatJobSummaryMetric(summary: Record<string, unknown>) {
   return `${name}: ${value.toFixed(6)}`;
 }
 
+function formatAgentTaskPlanningSummary(summary: Record<string, unknown>) {
+  const approaches = summary.recommended_approach_count;
+  const queries = summary.research_query_count;
+  const assets = summary.recommended_asset_count;
+  const parts = [
+    typeof approaches === "number" ? `${approaches} approaches` : null,
+    typeof queries === "number" ? `${queries} queries` : null,
+    typeof assets === "number" ? `${assets} assets` : null
+  ].filter(Boolean);
+  return parts.length ? parts.join(" / ") : "-";
+}
+
 function formatBaseline(metrics: Record<string, unknown>) {
   const baselineType = metrics.baseline_type;
   if (typeof baselineType !== "string") return "-";
@@ -3205,14 +3313,16 @@ function JobsTab({
         {jobArtifacts ? (
           <div className="stack">
             <Table
-              headers={["Job", "Benchmark", "Run", "Model", "Metric", "Artifacts", "Missing"]}
+              headers={["Job", "Benchmark", "Task", "Run", "Model", "Metric", "Plan", "Artifacts", "Missing"]}
               rows={[
                 [
                   jobArtifacts.job.id,
                   String(jobArtifacts.summary.benchmark_id ?? "-"),
+                  String(jobArtifacts.summary.task_id ?? "-"),
                   String(jobArtifacts.summary.experiment_run_id ?? "-"),
                   String(jobArtifacts.summary.model_version_id ?? "-"),
                   formatJobSummaryMetric(jobArtifacts.summary),
+                  formatAgentTaskPlanningSummary(jobArtifacts.summary),
                   String(jobArtifacts.artifacts.length),
                   String(jobArtifacts.missing_artifact_ids.length)
                 ]

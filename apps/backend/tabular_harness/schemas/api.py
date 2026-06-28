@@ -416,6 +416,7 @@ class JobCreate(BaseModel):
         "run_baseline",
         "plan_baseline_strategy",
         "validate_model_package",
+        "plan_agent_task",
         "plan_research",
         "generate_research_brief",
         "generate_approach_candidates",
@@ -441,6 +442,11 @@ class JobCreate(BaseModel):
     priority: int = Field(default=50, ge=0, le=100)
     max_attempts: int = Field(default=1, ge=1, le=10)
     approval_required: bool = False
+
+
+class AgentTaskPlanCreate(BaseModel):
+    objective: str | None = None
+    task_type: str = "implement_prediction_approach"
 
 
 class JobRead(BaseModel):

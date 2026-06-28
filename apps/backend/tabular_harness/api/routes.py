@@ -40,6 +40,7 @@ from tabular_harness.models.entities import (
     utc_now,
 )
 from tabular_harness.schemas import (
+    AgentTaskPlanCreate,
     AnswerRead,
     ArtifactPreviewRead,
     ArtifactRead,
@@ -84,6 +85,7 @@ from tabular_harness.schemas import (
     VisualizationSpecRead,
 )
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
+from tabular_harness.services.agent_task_planner import plan_project_agent_task
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
 from tabular_harness.services.approach import (
     create_decision_dashboard,
@@ -1636,6 +1638,59 @@ def generate_project_research_plan(
                 "query_count": len(result.plan.get("query_plan", [])),
                 "recommended_asset_count": len(result.plan.get("skill_plan", {}).get("recommended_references", [])),
                 "network_default": result.plan["source_policy"]["network_default"],
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/approach/agent-task-plan", response_model=JobRead)
+def plan_project_agent_task_endpoint(
+    project_id: str,
+    payload: AgentTaskPlanCreate,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="plan_agent_task",
+        project_id=project_id,
+        input_payload={"objective": payload.objective, "task_type": payload.task_type},
+        policy={
+            "network": "disabled_until_runner_policy_allows",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = plan_project_agent_task(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            objective=payload.objective,
+            task_type=payload.task_type,
+        )
+        inputs = cast(dict[str, Any], result.contract["inputs"])
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": inputs["schema_version"],
+                "task_id": result.contract["task_id"],
+                "agent_task_contract_artifact_id": result.artifact.id,
+                "artifact_id": result.artifact.id,
+                "artifact_ids": [result.artifact.id],
+                "dataset_snapshot_id": result.dataset_snapshot_id,
+                "evaluation_spec_id": result.evaluation_spec_id,
+                "split_manifest_id": result.split_manifest_id,
+                "recommended_approach_count": len(inputs["recommended_approach_candidates"]),
+                "research_query_count": len(inputs["research_queries"]),
+                "recommended_asset_count": len(inputs["library_recommendations"]),
+                "artifact_expectation_count": len(inputs["artifact_expectations"]),
             },
         )
     except ValueError as exc:
@@ -3360,6 +3415,11 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "model_version_id": output.get("model_version_id"),
         "run_report_id": output.get("run_report_id"),
         "decision_report_id": output.get("decision_report_id"),
+        "task_id": output.get("task_id"),
+        "agent_task_contract_artifact_id": output.get("agent_task_contract_artifact_id"),
+        "recommended_approach_count": output.get("recommended_approach_count"),
+        "research_query_count": output.get("research_query_count"),
+        "recommended_asset_count": output.get("recommended_asset_count"),
         "primary_metric_name": primary_metric_name,
         "primary_metric_value": primary_metric_value,
         "artifact_count": len(collect_output_artifact_ids(output)),
