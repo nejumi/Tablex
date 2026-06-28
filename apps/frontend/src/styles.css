@@ -645,6 +645,21 @@ td {
   font-size: 12px;
 }
 
+.viz-label {
+  display: grid;
+  gap: 2px;
+}
+
+.viz-label span {
+  color: #2d3642;
+  font-weight: 700;
+}
+
+.viz-label small {
+  color: #667085;
+  font-size: 11px;
+}
+
 .viz-bar-track {
   height: 12px;
   border-radius: 6px;

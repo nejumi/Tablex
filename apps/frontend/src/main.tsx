@@ -2453,26 +2453,7 @@ function VisualizationPreview({ visualization }: { visualization: VisualizationS
   }
 
   if (visualization.chart_type === "category_bars") {
-    const rows = visualizationDataRows(visualization);
-    const values = rows.map((row) => numberValue(row.count)).filter((value): value is number => value !== null);
-    const maxValue = Math.max(...values, 0);
-    if (!rows.length || maxValue <= 0) return <EmptyInline text={visualizationEmptyState(visualization)} />;
-    return (
-      <div className="viz-preview">
-        {rows.map((row) => {
-          const value = numberValue(row.count) ?? 0;
-          return (
-            <div key={String(row.label ?? "category")} className="viz-row">
-              <div className="viz-label">{String(row.label ?? "-")}</div>
-              <div className="viz-bar-track">
-                <div className="viz-bar" style={{ width: `${Math.max(4, (value / maxValue) * 100)}%` }} />
-              </div>
-              <div className="viz-value">{value}</div>
-            </div>
-          );
-        })}
-      </div>
-    );
+    return <BarVisualization visualization={visualization} fallbackLabelField="label" fallbackValueField="count" />;
   }
 
   if (visualization.chart_type === "stage_status") {
@@ -2493,26 +2474,71 @@ function VisualizationPreview({ visualization }: { visualization: VisualizationS
     );
   }
 
-  const rows = visualizationRows(visualization);
-  const values = rows
-    .map((row) => row.primary_metric_value)
-    .filter((value): value is number => typeof value === "number");
-  const maxValue = Math.max(...values, 0);
-  if (!rows.length || maxValue <= 0) {
-    return <EmptyInline text={visualizationEmptyState(visualization)} />;
+  if (visualization.chart_type === "artifact_checklist") {
+    const rows = visualizationDataRows(visualization);
+    if (!rows.length) return <EmptyInline text={visualizationEmptyState(visualization)} />;
+    return (
+      <Table
+        headers={["Output", "Schema", "Status"]}
+        rows={rows.map((row) => [
+          String(row.path ?? "-"),
+          String(row.schema ?? "-"),
+          <span className={String(row.status) === "planned" ? "badge muted" : "badge"} key={String(row.path)}>
+            {String(row.status ?? "-")}
+          </span>
+        ])}
+      />
+    );
   }
+
+  if (hasBarEncoding(visualization)) {
+    return <BarVisualization visualization={visualization} fallbackLabelField="run_id" fallbackValueField="primary_metric_value" />;
+  }
+
+  const rows = visualizationDataRows(visualization);
+  if (!rows.length) return <EmptyInline text={visualizationEmptyState(visualization)} />;
+  return (
+    <Table
+      headers={Object.keys(rows[0]).slice(0, 4)}
+      rows={rows.slice(0, 8).map((row) => Object.keys(rows[0]).slice(0, 4).map((key) => formatVizValue(row[key])))}
+    />
+  );
+}
+
+function BarVisualization({
+  visualization,
+  fallbackLabelField,
+  fallbackValueField
+}: {
+  visualization: VisualizationSpec;
+  fallbackLabelField: string;
+  fallbackValueField: string;
+}) {
+  const rows = visualizationDataRows(visualization);
+  const encoding = visualizationEncoding(visualization);
+  const labelField = encodingField(encoding.x, fallbackLabelField);
+  const valueField = encodingField(encoding.y, fallbackValueField);
+  const colorField = encodingField(encoding.color, "");
+  const values = rows.map((row) => numberValue(row[valueField])).filter((value): value is number => value !== null);
+  const maxValue = Math.max(...values.map((value) => Math.abs(value)), 0);
+  if (!rows.length || maxValue <= 0) return <EmptyInline text={visualizationEmptyState(visualization)} />;
   return (
     <div className="viz-preview">
-      {rows.map((row) => {
-        const value = typeof row.primary_metric_value === "number" ? row.primary_metric_value : 0;
-        const width = maxValue > 0 ? Math.max(4, (value / maxValue) * 100) : 4;
+      {rows.map((row, index) => {
+        const label = String(row[labelField] ?? row.label ?? row.run_id ?? row.stage ?? `row ${index + 1}`);
+        const value = numberValue(row[valueField]) ?? 0;
+        const width = maxValue > 0 ? Math.max(4, (Math.abs(value) / maxValue) * 100) : 4;
+        const colorValue = colorField ? row[colorField] : null;
         return (
-          <div key={row.run_id} className="viz-row">
-            <div className="viz-label">{row.run_id}</div>
+          <div key={`${label}-${index}`} className="viz-row">
+            <div className="viz-label">
+              <span>{label}</span>
+              {colorValue != null ? <small>{String(colorValue)}</small> : null}
+            </div>
             <div className="viz-bar-track">
               <div className="viz-bar" style={{ width: `${width}%` }} />
             </div>
-            <div className="viz-value">{value.toFixed(6)}</div>
+            <div className="viz-value">{formatVizValue(value)}</div>
           </div>
         );
       })}
@@ -2687,20 +2713,6 @@ function latestIdeaArtifact(artifacts: Artifact[], ideaId: string, assetType: st
   });
 }
 
-type VisualizationRow = {
-  run_id: string;
-  primary_metric_value?: number | null;
-};
-
-function visualizationRows(visualization: VisualizationSpec): VisualizationRow[] {
-  return visualizationDataRows(visualization)
-    .map((row) => ({
-      run_id: String(row.run_id ?? "run"),
-      primary_metric_value:
-        typeof row.primary_metric_value === "number" ? row.primary_metric_value : null
-    }));
-}
-
 function visualizationDataRows(visualization: VisualizationSpec): Array<Record<string, unknown>> {
   const rows = visualization.spec.data;
   if (!Array.isArray(rows)) return [];
@@ -2718,6 +2730,20 @@ function visualizationEmptyState(visualization: VisualizationSpec) {
 
 function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function visualizationEncoding(visualization: VisualizationSpec): Record<string, unknown> {
+  const encoding = visualization.spec.encoding;
+  return encoding && typeof encoding === "object" && !Array.isArray(encoding) ? (encoding as Record<string, unknown>) : {};
+}
+
+function encodingField(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function hasBarEncoding(visualization: VisualizationSpec) {
+  const encoding = visualizationEncoding(visualization);
+  return typeof encoding.x === "string" && typeof encoding.y === "string";
 }
 
 function formatVizValue(value: unknown) {
