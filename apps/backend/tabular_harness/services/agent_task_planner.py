@@ -35,7 +35,11 @@ from tabular_harness.services.approach import (
     store_json_artifact,
     summarize_columns,
 )
-from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
+from tabular_harness.services.artifacts import (
+    LocalArtifactStore,
+    artifact_primary_path,
+    create_lineage_edge,
+)
 from tabular_harness.services.asset_library import seed_default_assets
 
 
@@ -159,6 +163,11 @@ def build_agent_task_contract_payload(
 ) -> dict[str, Any]:
     research_plan_artifact = context_artifacts.get("research_plan")
     research_inputs = research_plan_contract_inputs(research_plan_artifact)
+    source_pack_inputs = research_source_pack_contract_inputs(context_artifacts.get("research_source_pack"))
+    source_policy = source_pack_inputs.get("source_policy") or research_inputs.get(
+        "research_source_policy",
+        {"network_default": "disabled_until_runner_policy_allows"},
+    )
     return {
         "task_id": new_id("agt"),
         "task_type": task_type,
@@ -185,10 +194,8 @@ def build_agent_task_contract_payload(
             "must_respect_split_manifest": True,
             "recommended_asset_ids": research_inputs.get("recommended_asset_ids", []),
             "recommended_asset_version_ids": research_inputs.get("recommended_asset_version_ids", []),
-            "research_source_policy": research_inputs.get(
-                "research_source_policy",
-                {"network_default": "disabled_until_runner_policy_allows"},
-            ),
+            "research_source_policy": source_policy,
+            "research_source_pack": source_pack_inputs,
         },
         "required_outputs": [
             {
@@ -521,8 +528,35 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "evaluation_approval_review": latest_project_artifact(db, project_id, "evaluation_approval_review"),
         "baseline_strategy_plan": latest_project_artifact(db, project_id, "baseline_strategy_plan"),
         "research_plan": latest_project_artifact(db, project_id, "research_plan"),
+        "research_source_pack": latest_project_artifact(db, project_id, "research_source_pack"),
         "evaluation_diagnostics": latest_project_artifact(db, project_id, "evaluation_diagnostics"),
         "decision_dashboard": latest_project_artifact(db, project_id, "decision_dashboard"),
+    }
+
+
+def research_source_pack_contract_inputs(source_pack_artifact: Artifact | None) -> dict[str, Any]:
+    if source_pack_artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(source_pack_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    source_policy = payload.get("source_policy") if isinstance(payload.get("source_policy"), dict) else {}
+    citation_requirements = (
+        payload.get("citation_requirements") if isinstance(payload.get("citation_requirements"), dict) else {}
+    )
+    return {
+        "artifact_id": source_pack_artifact.id,
+        "source_policy": source_policy,
+        "citation_requirements": citation_requirements,
+        "freshness_expectations": payload.get("freshness_expectations")
+        if isinstance(payload.get("freshness_expectations"), dict)
+        else {},
+        "controlled_query_count": len(payload.get("controlled_queries", []))
+        if isinstance(payload.get("controlled_queries"), list)
+        else 0,
     }
 
 

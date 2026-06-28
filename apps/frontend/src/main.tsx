@@ -1945,10 +1945,16 @@ function ApproachTab({
 }) {
   const latestBrief = researchBriefs[0] ?? null;
   const researchPlanArtifacts = artifacts.filter((artifact) => artifact.asset_type === "research_plan");
+  const researchSourceArtifacts = artifacts.filter((artifact) =>
+    ["research_source_pack", "research_source_report"].includes(artifact.asset_type)
+  );
   const agentTaskContractArtifacts = artifacts.filter((artifact) => artifact.asset_type === "agent_task_contract");
   const [researchPlanPreview, setResearchPlanPreview] = React.useState<ArtifactPreview | null>(null);
   const [researchPlanPreviewError, setResearchPlanPreviewError] = React.useState<string | null>(null);
   const [researchPlanPreviewLoadingId, setResearchPlanPreviewLoadingId] = React.useState<string | null>(null);
+  const [researchSourcePreview, setResearchSourcePreview] = React.useState<ArtifactPreview | null>(null);
+  const [researchSourcePreviewError, setResearchSourcePreviewError] = React.useState<string | null>(null);
+  const [researchSourcePreviewLoadingId, setResearchSourcePreviewLoadingId] = React.useState<string | null>(null);
   const [taskContractPreview, setTaskContractPreview] = React.useState<ArtifactPreview | null>(null);
   const [taskContractPreviewError, setTaskContractPreviewError] = React.useState<string | null>(null);
   const [taskContractPreviewLoadingId, setTaskContractPreviewLoadingId] = React.useState<string | null>(null);
@@ -1983,6 +1989,18 @@ function ApproachTab({
       setResearchPlanPreviewError(err instanceof Error ? err.message : String(err));
     } finally {
       setResearchPlanPreviewLoadingId(null);
+    }
+  }
+
+  async function loadResearchSourcePreview(artifactId: string) {
+    setResearchSourcePreviewLoadingId(artifactId);
+    setResearchSourcePreviewError(null);
+    try {
+      setResearchSourcePreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setResearchSourcePreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResearchSourcePreviewLoadingId(null);
     }
   }
 
@@ -2041,6 +2059,23 @@ function ApproachTab({
         >
           {busy ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
           Research Plan
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
+            void runAction(async () => {
+              const job = await api<Job>(`/api/projects/${project.id}/approach/research-source-pack`, { method: "POST" });
+              const artifactId = job.output.research_source_report_artifact_id ?? job.output.research_source_pack_artifact_id;
+              if (typeof artifactId === "string") {
+                await loadResearchSourcePreview(artifactId);
+              }
+              return job;
+            })
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <Library size={16} />}
+          Source Pack
         </button>
         <button
           className="secondary-button"
@@ -2123,6 +2158,42 @@ function ApproachTab({
           <pre className="markdown-preview">{researchPlanPreview.preview}</pre>
         ) : (
           <EmptyInline text={researchPlanPreview?.reason ?? "Generate or select a ResearchPlan to inspect controlled search candidates, Skill references, source policy, evidence expectations, and reporting requirements."} />
+        )}
+      </Panel>
+      <Panel title="Research Source Packs" icon={<Library size={18} />}>
+        {researchSourceArtifacts.length ? (
+          <Table
+            headers={["Type", "Queries", "Project Sources", "Library Sources", "Network", "Created", "Actions"]}
+            rows={researchSourceArtifacts.map((artifact) => [
+              artifact.asset_type,
+              String(artifact.metadata.query_count ?? "-"),
+              String(artifact.metadata.project_source_count ?? "-"),
+              String(artifact.metadata.library_source_count ?? "-"),
+              String(artifact.metadata.network_default ?? "-"),
+              formatDate(artifact.created_at),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={researchSourcePreviewLoadingId === artifact.id}
+                  onClick={() => void loadResearchSourcePreview(artifact.id)}
+                  title="Preview research source pack"
+                >
+                  {researchSourcePreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download research source pack">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Research source packs will turn ResearchPlan query candidates, project artifacts, benchmark context, Skill assets, source policy, freshness expectations, and citation requirements into runner-ready evidence slots." />
+        )}
+        {researchSourcePreviewError ? <div className="banner danger">{researchSourcePreviewError}</div> : null}
+        {researchSourcePreview?.preview_available ? (
+          <pre className="markdown-preview">{researchSourcePreview.preview}</pre>
+        ) : (
+          <EmptyInline text={researchSourcePreview?.reason ?? "Generate or select a Research Source Pack to inspect citation requirements, controlled queries, source policy, and runner handoff expectations."} />
         )}
       </Panel>
       <Panel title="Agent Task Contracts" icon={<ListChecks size={18} />}>

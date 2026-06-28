@@ -180,6 +180,7 @@ Approach Studio endpoints:
 
 ```bash
 curl -X POST http://localhost:8000/api/projects/{project_id}/approach/research-plan
+curl -X POST http://localhost:8000/api/projects/{project_id}/approach/research-source-pack
 curl -X POST http://localhost:8000/api/projects/{project_id}/approach/research-briefs \
   -H 'Content-Type: application/json' \
   -d '{}'
@@ -192,6 +193,8 @@ curl -X POST http://localhost:8000/api/ideas/{idea_id}/run-agent-task
 ```
 
 `/approach/research-plan` writes a `research_plan` artifact shaped by `schemas/research_plan.schema.json`. It does not execute network search. It records controlled web/literature query candidates, available and recommended cross-project Skill/FeatureRecipe/EvaluationPattern references, missing asset suggestions, source and credential policy, expected Evidence shape, and report/visualization expectations. ResearchBriefs and generated Ideas reference the latest ResearchPlan when one exists.
+
+`/approach/research-source-pack` writes `research_source_pack` and `research_source_report` artifacts, a Report record, Evidence, and Lineage. It turns the latest ResearchPlan, project artifacts, recommended cross-project library assets, and benchmark source cards into a controlled source handoff for future Codex, Skill, or web/literature research runners. The endpoint does not execute network search; it records controlled query candidates, required citation fields, source risk policy, freshness expectations, and connector-credential restrictions. New AgentTaskContracts include the latest source pack id, source policy, citation requirements, and freshness expectations in their planning inputs.
 
 `prepare-agent-context` writes an `agent_context_pack` artifact validated by `schemas/agent_context_pack.schema.json`. The pack includes harness-owned data/evaluation references, SplitManifest context, artifact preview/download references, locked cross-project asset references, ResearchPlan-recommended library assets, research policy, safety controls, and the required output contract. Library assets are recommendations and citations for runner planning, not fixed recipes that the harness forces the runner to execute. It does not pass secrets or connector credentials to the agent.
 

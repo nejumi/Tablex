@@ -175,6 +175,7 @@ from tabular_harness.services.reporting import (
     create_project_visualization_dashboard,
     generate_project_insights,
 )
+from tabular_harness.services.research_sources import create_research_source_pack
 from tabular_harness.worker.jobs import create_default_worker
 
 router = APIRouter()
@@ -1931,6 +1932,58 @@ def run_planned_agent_task_stub_endpoint(
     return job_to_dict(job)
 
 
+@router.post("/api/projects/{project_id}/approach/research-source-pack", response_model=JobRead)
+def generate_project_research_source_pack(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    dataset = latest_dataset(db, project_id)
+    spec = latest_approved_spec(db, project_id)
+    job = create_job(
+        db,
+        job_type="create_research_source_pack",
+        project_id=project_id,
+        input_payload={"dataset_snapshot_id": dataset.id if dataset else None, "evaluation_spec_id": spec.id if spec else None},
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_research_source_pack(
+            db,
+            store=store,
+            project=project,
+            dataset=dataset,
+            evaluation_spec=spec,
+            job=job,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.pack["schema_version"],
+                "research_plan_artifact_id": result.research_plan_artifact.id,
+                "research_source_pack_artifact_id": result.pack_artifact.id,
+                "research_source_report_id": result.report.id,
+                "research_source_report_artifact_id": result.report_artifact.id,
+                "evidence_id": result.evidence.id,
+                "query_count": len(result.pack.get("controlled_queries", [])),
+                "project_source_count": len(result.pack.get("project_sources", [])),
+                "library_source_count": len(result.pack.get("library_sources", [])),
+                "network_default": result.pack["source_policy"]["network_default"],
+                "artifact_ids": [result.pack_artifact.id, result.report_artifact.id],
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
 @router.post("/api/projects/{project_id}/approach/research-briefs", response_model=JobRead)
 def generate_project_research_brief(
     project_id: str,
@@ -3659,8 +3712,12 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "agent_workspace_manifest_artifact_id": output.get("agent_workspace_manifest_artifact_id"),
         "agent_metrics_artifact_id": output.get("agent_metrics_artifact_id"),
         "agent_feature_recipe_artifact_id": output.get("agent_feature_recipe_artifact_id"),
+        "research_source_pack_artifact_id": output.get("research_source_pack_artifact_id"),
+        "research_source_report_id": output.get("research_source_report_id"),
         "recommended_approach_count": output.get("recommended_approach_count"),
         "research_query_count": output.get("research_query_count"),
+        "project_source_count": output.get("project_source_count"),
+        "library_source_count": output.get("library_source_count"),
         "recommended_asset_count": output.get("recommended_asset_count"),
         "materialized_context_count": output.get("materialized_context_count"),
         "materialized_library_asset_count": output.get("materialized_library_asset_count"),

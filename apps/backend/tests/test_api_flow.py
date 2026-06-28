@@ -307,6 +307,26 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "xgboost_mixed_type_baseline" in research_plan_preview
     assert "causal_time_lag_rolling_features" in research_plan_preview
 
+    source_pack_response = client.post(f"/api/projects/{project_id}/approach/research-source-pack")
+    assert source_pack_response.status_code == 200, source_pack_response.text
+    source_pack_job = source_pack_response.json()
+    assert source_pack_job["status"] == "succeeded"
+    assert source_pack_job["output"]["schema_version"] == "research_source_pack.v1"
+    assert source_pack_job["output"]["research_plan_artifact_id"] == research_plan_artifact_id
+    assert source_pack_job["output"]["research_source_pack_artifact_id"]
+    assert source_pack_job["output"]["research_source_report_artifact_id"]
+    assert source_pack_job["output"]["project_source_count"] >= 1
+    assert source_pack_job["output"]["library_source_count"] >= 4
+    assert source_pack_job["output"]["network_default"] == "disabled_until_runner_policy_allows"
+
+    source_pack_preview_response = client.get(
+        f"/api/artifacts/{source_pack_job['output']['research_source_report_artifact_id']}/preview"
+    )
+    assert source_pack_preview_response.status_code == 200
+    source_pack_preview = source_pack_preview_response.json()["preview"]
+    assert "Research Source Pack" in source_pack_preview
+    assert "Connector credentials" in source_pack_preview or "connector credentials" in source_pack_preview
+
     agent_task_plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
     assert agent_task_plan_response.status_code == 200, agent_task_plan_response.text
     agent_task_plan_job = agent_task_plan_response.json()
@@ -330,6 +350,12 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert agent_task_contract["inputs"]["schema_version"] == "agent_task_planning.v1"
     assert len(agent_task_contract["inputs"]["recommended_approach_candidates"]) >= 2
     assert "reporting_requirements" in agent_task_contract["inputs"]
+    assert agent_task_contract["inputs"]["research_source_pack"]["artifact_id"] == source_pack_job["output"][
+        "research_source_pack_artifact_id"
+    ]
+    assert agent_task_contract["inputs"]["research_source_policy"]["network_default"] == (
+        "disabled_until_runner_policy_allows"
+    )
     assert any(
         item["name"] == "xgboost_mixed_type_baseline"
         for item in agent_task_contract["inputs"]["library_recommendations"]

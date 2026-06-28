@@ -420,6 +420,7 @@ class JobCreate(BaseModel):
         "validate_model_package",
         "plan_agent_task",
         "plan_research",
+        "create_research_source_pack",
         "generate_research_brief",
         "generate_approach_candidates",
         "draft_project_report",
