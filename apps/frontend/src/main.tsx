@@ -2110,6 +2110,26 @@ function ApproachTab({
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
                 </button>
+                <button
+                  className="icon-button"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction(async () => {
+                      const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/run-local-stub`, {
+                        method: "POST"
+                      });
+                      const ingested = job.output.ingested_artifact_ids;
+                      const reportArtifactId = Array.isArray(ingested) ? textField(ingested[0]) : null;
+                      if (reportArtifactId) {
+                        await loadTaskContractPreview(reportArtifactId);
+                      }
+                      return job;
+                    })
+                  }
+                  title="Run local stub"
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                </button>
               </div>
             ])}
           />

@@ -22,6 +22,7 @@ JOB_TYPES = {
     "run_baseline",
     "plan_baseline_strategy",
     "run_agent_task",
+    "run_planned_agent_task_stub",
     "validate_model_package",
     "plan_agent_task",
     "plan_research",

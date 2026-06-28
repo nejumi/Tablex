@@ -414,6 +414,26 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert readiness_report_preview_response.status_code == 200
     assert "Agent Task Readiness Review" in readiness_report_preview_response.json()["preview"]
 
+    planned_stub_response = client.post(
+        f"/api/agent-task-contracts/{agent_task_plan_job['output']['agent_task_contract_artifact_id']}/run-local-stub"
+    )
+    assert planned_stub_response.status_code == 200, planned_stub_response.text
+    planned_stub_job = planned_stub_response.json()
+    assert planned_stub_job["status"] == "succeeded"
+    assert planned_stub_job["output"]["agent_status"] == "succeeded"
+    assert planned_stub_job["output"]["readiness_status"] in {"ready", "ready_with_warnings"}
+    assert planned_stub_job["output"]["auto_prepared_workspace"] is False
+    assert len(planned_stub_job["output"]["ingested_artifact_ids"]) == 3
+    assert planned_stub_job["output"]["report_id"]
+    assert planned_stub_job["output"]["evidence_id"]
+    assert planned_stub_job["output"]["requires_human_review"] is True
+
+    planned_stub_job_artifacts_response = client.get(f"/api/jobs/{planned_stub_job['id']}/artifacts")
+    assert planned_stub_job_artifacts_response.status_code == 200
+    planned_stub_job_artifacts = planned_stub_job_artifacts_response.json()
+    planned_stub_asset_types = {item["asset_type"] for item in planned_stub_job_artifacts["artifacts"]}
+    assert {"agent_task_report", "agent_result", "visualization_spec"}.issubset(planned_stub_asset_types)
+
     research_response = client.post(
         f"/api/projects/{project_id}/approach/research-briefs",
         json={"question": "What flexible approaches should be considered?"},
@@ -769,6 +789,24 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     schema_response = client.get(f"/api/datasets/{dataset_id}/schema")
     assert schema_response.status_code == 200
     assert len(schema_response.json()["columns"]) == 5
+
+
+def test_planned_agent_task_stub_rejects_blocked_readiness(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Blocked planned task", "target_column": "target", "task_type": "binary_classification"},
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
+    assert plan_response.status_code == 200, plan_response.text
+    contract_artifact_id = plan_response.json()["output"]["agent_task_contract_artifact_id"]
+
+    run_response = client.post(f"/api/agent-task-contracts/{contract_artifact_id}/run-local-stub")
+    assert run_response.status_code == 400
+    assert "readiness has blockers" in run_response.json()["detail"]
 
 
 def test_evaluation_approval_blocks_required_unanswered_question(tmp_path: Path) -> None:

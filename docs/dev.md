@@ -224,6 +224,7 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/approach/agent-task
   -d '{}'
 curl -X POST http://localhost:8000/api/agent-task-contracts/{artifact_id}/prepare-workspace
 curl -X POST http://localhost:8000/api/agent-task-contracts/{artifact_id}/readiness-review
+curl -X POST http://localhost:8000/api/agent-task-contracts/{artifact_id}/run-local-stub
 curl http://localhost:8000/api/jobs/{job_id}/artifacts
 ```
 
@@ -232,6 +233,8 @@ The generated contract carries `agent_task_planning.v1` inputs: dataset/profile 
 `/api/agent-task-contracts/{artifact_id}/prepare-workspace` materializes a controlled workspace from the contract without starting a runner. The workspace contains `.harness/task_contract.json`, `.harness/agent_result.schema.json`, `.harness/execution_policy.json`, context artifacts, recommended library asset artifacts, and a README. It stores an `agent_workspace_manifest` artifact with source counts, skipped sources, safety policy, and lineage.
 
 `/api/agent-task-contracts/{artifact_id}/readiness-review` checks whether the contract and optional workspace are ready for runner execution. It stores `agent_task_readiness_review`, `agent_task_readiness_report`, and `visualization_spec` artifacts plus a Report record. The review separates blockers from warnings across evaluation locks, target context, required outputs, safety policy, assumptions/questions, context artifacts, library assets, workspace manifest, and reporting expectations.
+
+`/api/agent-task-contracts/{artifact_id}/run-local-stub` prepares a workspace if needed, regenerates readiness review, refuses execution when blockers exist, then runs `LocalStubAgentRunner` with network disabled. It ingests declared `AgentResult.artifacts` into the artifact store and registers a Report, Evidence, and Lineage. It does not execute Codex, external research, or model training.
 
 `/api/ideas/{idea_id}/run-agent-task` currently uses `LocalStubAgentRunner`. It validates the AgentResult schema and persists `agent_task_report`, `agent_result`, and `visualization_spec` artifacts plus Evidence and Lineage. It does not run real Codex code or external web research yet. Prepare and inspect an AgentContextPack first when validating future runner behavior.
 

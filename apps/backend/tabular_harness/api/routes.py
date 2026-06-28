@@ -165,6 +165,7 @@ from tabular_harness.services.jobs import (
     cancel_job as cancel_job_service,
 )
 from tabular_harness.services.model_versions import validate_model_version_package
+from tabular_harness.services.planned_agent_execution import run_planned_agent_task_local_stub
 from tabular_harness.services.planned_agent_workspace import (
     prepare_workspace_from_contract_artifact,
 )
@@ -1810,6 +1811,65 @@ def review_agent_task_readiness_endpoint(
                 "readiness_status": result.review["status"],
                 "blocker_count": result.review["blocker_count"],
                 "warning_count": result.review["warning_count"],
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/agent-task-contracts/{artifact_id}/run-local-stub", response_model=JobRead)
+def run_planned_agent_task_stub_endpoint(
+    artifact_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    contract_artifact = db.get(Artifact, artifact_id)
+    if contract_artifact is None:
+        raise HTTPException(status_code=404, detail="AgentTaskContract artifact not found")
+    if contract_artifact.asset_type != "agent_task_contract":
+        raise HTTPException(status_code=400, detail="Artifact is not an agent_task_contract")
+    if contract_artifact.project_id is None:
+        raise HTTPException(status_code=400, detail="AgentTaskContract artifact is not project-scoped")
+    project = require_project(db, contract_artifact.project_id)
+    job = create_job(
+        db,
+        job_type="run_planned_agent_task_stub",
+        project_id=project.id,
+        input_payload={"agent_task_contract_artifact_id": contract_artifact.id},
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "runner": "local_stub",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = run_planned_agent_task_local_stub(
+            db,
+            store=store,
+            project=project,
+            contract_artifact=contract_artifact,
+            job=job,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "agent_task_contract_artifact_id": contract_artifact.id,
+                "task_id": result.agent_result.task_id,
+                "agent_status": result.agent_result.status,
+                "agent_final_message": result.agent_result.final_message,
+                "agent_workspace_manifest_artifact_id": result.workspace_artifact_id,
+                "agent_task_readiness_review_artifact_id": result.readiness_artifact_id,
+                "readiness_status": result.readiness_status,
+                "artifact_ids": result.artifact_ids,
+                "ingested_artifact_ids": result.ingested_artifact_ids,
+                "report_id": result.report_id,
+                "evidence_id": result.evidence_id,
+                "requires_human_review": result.agent_result.requires_human_review,
+                "auto_prepared_workspace": result.auto_prepared_workspace,
             },
         )
     except ValueError as exc:
@@ -3546,6 +3606,9 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "readiness_status": output.get("readiness_status"),
         "blocker_count": output.get("blocker_count"),
         "warning_count": output.get("warning_count"),
+        "agent_status": output.get("agent_status"),
+        "evidence_id": output.get("evidence_id"),
+        "requires_human_review": output.get("requires_human_review"),
         "primary_metric_name": primary_metric_name,
         "primary_metric_value": primary_metric_value,
         "artifact_count": len(collect_output_artifact_ids(output)),
