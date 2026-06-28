@@ -73,6 +73,9 @@ class LocalStubAgentRunner(NoopAgentRunner):
         report_md = render_stub_report(task_contract, execution_policy)
         feature_recipe = render_stub_feature_recipe(task_contract)
         experiment_metrics = render_stub_experiment_metrics(task_contract)
+        source_citation_manifest = render_stub_source_citation_manifest(task_contract, execution_policy)
+        citation_audit_report = render_stub_citation_audit_report(source_citation_manifest)
+        citation_visualization_spec = render_stub_citation_visualization(source_citation_manifest)
         visualization_spec = {
             "schema_version": "visualization_spec.v1",
             "title": "Agent Task Output Checklist",
@@ -103,6 +106,8 @@ class LocalStubAgentRunner(NoopAgentRunner):
                 "feature_recipe": feature_recipe,
                 "experiment_metrics": experiment_metrics,
                 "visualization_spec": visualization_spec,
+                "source_citation_manifest": source_citation_manifest,
+                "citation_audit_report": citation_audit_report,
             },
             artifacts=[
                 {
@@ -135,8 +140,29 @@ class LocalStubAgentRunner(NoopAgentRunner):
                     "name": f"agent_task_visualization_{task_contract.task_id}",
                     "metadata": {"task_id": task_contract.task_id},
                 },
+                {
+                    "path": "artifacts/source_citation_manifest.json",
+                    "asset_type": "source_citation_manifest",
+                    "name": f"source_citation_manifest_{task_contract.task_id}",
+                    "metadata": {"task_id": task_contract.task_id},
+                },
+                {
+                    "path": "reports/citation_audit_report.md",
+                    "asset_type": "citation_audit_report",
+                    "name": f"citation_audit_report_{task_contract.task_id}",
+                    "metadata": {"task_id": task_contract.task_id},
+                },
+                {
+                    "path": "artifacts/citation_visualization_spec.json",
+                    "asset_type": "visualization_spec",
+                    "name": f"citation_visualization_{task_contract.task_id}",
+                    "metadata": {"task_id": task_contract.task_id, "visualization_role": "citation_audit"},
+                },
             ],
             warnings=["No Codex or external research execution was performed."],
+            evidence_sources=source_citation_manifest["evidence_sources"],
+            citations=source_citation_manifest["citations"],
+            report_citations=source_citation_manifest["report_citations"],
             requires_human_review=True,
         )
         write_stub_workspace_outputs(
@@ -145,6 +171,9 @@ class LocalStubAgentRunner(NoopAgentRunner):
             feature_recipe=feature_recipe,
             experiment_metrics=experiment_metrics,
             visualization_spec=visualization_spec,
+            source_citation_manifest=source_citation_manifest,
+            citation_audit_report=citation_audit_report,
+            citation_visualization_spec=citation_visualization_spec,
             result=result,
         )
         validate_against_schema(result.model_dump(mode="json"), output_schema)
@@ -231,6 +260,9 @@ def write_stub_workspace_outputs(
     feature_recipe: dict[str, Any],
     experiment_metrics: dict[str, Any],
     visualization_spec: dict[str, Any],
+    source_citation_manifest: dict[str, Any],
+    citation_audit_report: str,
+    citation_visualization_spec: dict[str, Any],
     result: AgentResult,
 ) -> None:
     reports_dir = workspace / "reports"
@@ -248,6 +280,15 @@ def write_stub_workspace_outputs(
     )
     (artifacts_dir / "visualization_spec.json").write_text(
         json.dumps(visualization_spec, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    (artifacts_dir / "source_citation_manifest.json").write_text(
+        json.dumps(source_citation_manifest, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    (reports_dir / "citation_audit_report.md").write_text(citation_audit_report, encoding="utf-8")
+    (artifacts_dir / "citation_visualization_spec.json").write_text(
+        json.dumps(citation_visualization_spec, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     (artifacts_dir / "agent_result.json").write_text(
@@ -307,6 +348,150 @@ def render_stub_experiment_metrics(contract: AgentTaskContract) -> dict[str, Any
     }
 
 
+def render_stub_source_citation_manifest(
+    contract: AgentTaskContract,
+    policy: ExecutionPolicy,
+) -> dict[str, Any]:
+    source_pack = dict_value(contract.inputs.get("research_source_pack"))
+    source_policy = dict_value(contract.inputs.get("research_source_policy")) or dict_value(
+        source_pack.get("source_policy")
+    )
+    source_pack_artifact_id = source_pack.get("artifact_id")
+    source_id = "research_source_pack" if isinstance(source_pack_artifact_id, str) else "runner_source_policy"
+    evidence_sources = [
+        {
+            "source_id": source_id,
+            "source_type": "harness_artifact" if isinstance(source_pack_artifact_id, str) else "runner_policy",
+            "title": "Research Source Pack" if isinstance(source_pack_artifact_id, str) else "Runner source policy",
+            "url": None,
+            "artifact_id": source_pack_artifact_id if isinstance(source_pack_artifact_id, str) else None,
+            "summary": (
+                "Harness-provided source policy and citation requirements were available to the runner."
+                if isinstance(source_pack_artifact_id, str)
+                else "No Research Source Pack artifact was supplied; only runner policy was audited."
+            ),
+            "verification_status": "local_artifact" if isinstance(source_pack_artifact_id, str) else "policy_placeholder",
+            "retrieved_at": None,
+            "freshness": "not_applicable",
+            "risk_level": "low" if isinstance(source_pack_artifact_id, str) else "medium",
+            "metadata": {
+                "controlled_query_count": source_pack.get("controlled_query_count"),
+                "network_policy": policy.network,
+            },
+        }
+    ]
+    citations = [
+        {
+            "citation_id": "cit_local_stub_no_external_search",
+            "source_id": source_id,
+            "claim": "LocalStubAgentRunner did not access external network, retrieve literature, or validate modeling claims.",
+            "usage_context": "citation_audit",
+            "confidence": 1.0,
+            "requires_follow_up": True,
+            "metadata": {
+                "execution_status": "not_executed",
+                "network_policy": policy.network,
+                "connector_credentials_materialized": False,
+            },
+        }
+    ]
+    return {
+        "schema_version": "source_citation_manifest.v1",
+        "task_id": contract.task_id,
+        "runner": "local_stub",
+        "execution_status": "not_executed",
+        "external_network_accessed": False,
+        "connector_credentials_materialized": False,
+        "research_source_pack_artifact_id": source_pack_artifact_id if isinstance(source_pack_artifact_id, str) else None,
+        "source_policy": source_policy,
+        "citation_requirements": list_value(source_pack.get("citation_requirements")),
+        "freshness_expectations": dict_value(source_pack.get("freshness_expectations")),
+        "evidence_sources": evidence_sources,
+        "citations": citations,
+        "report_citations": [
+            {
+                "section": "Stub Result",
+                "citation_ids": [citation["citation_id"] for citation in citations],
+                "note": "This citation records source-policy compliance only; it is not model evidence.",
+            }
+        ],
+        "audit": {
+            "real_sources_retrieved": 0,
+            "policy_sources_available": len(evidence_sources),
+            "network_policy": policy.network,
+            "requires_human_review": True,
+        },
+    }
+
+
+def render_stub_citation_audit_report(manifest: dict[str, Any]) -> str:
+    lines = [
+        "# Citation Audit Report",
+        "",
+        f"- Task: {manifest.get('task_id')}",
+        f"- Runner: {manifest.get('runner')}",
+        f"- Execution status: {manifest.get('execution_status')}",
+        f"- External network accessed: {str(manifest.get('external_network_accessed')).lower()}",
+        f"- Connector credentials materialized: {str(manifest.get('connector_credentials_materialized')).lower()}",
+        f"- Research Source Pack artifact: {manifest.get('research_source_pack_artifact_id') or 'none'}",
+        "",
+        "## Evidence Sources",
+    ]
+    for source in list_value(manifest.get("evidence_sources")):
+        if isinstance(source, dict):
+            lines.append(
+                f"- `{source.get('source_id')}`: {source.get('title')} "
+                f"({source.get('verification_status')})"
+            )
+    lines.extend(["", "## Citations"])
+    for citation in list_value(manifest.get("citations")):
+        if isinstance(citation, dict):
+            lines.append(f"- `{citation.get('citation_id')}`: {citation.get('claim')}")
+    lines.extend(
+        [
+            "",
+            "## Follow-up",
+            "",
+            "- A real runner must attach source summaries and citations before external claims are treated as evidence.",
+            "- Connector credentials and secrets are not present in this citation audit.",
+        ]
+    )
+    return "\n".join(lines).strip() + "\n"
+
+
+def render_stub_citation_visualization(manifest: dict[str, Any]) -> dict[str, Any]:
+    source_count = len(list_value(manifest.get("evidence_sources")))
+    citation_count = len(list_value(manifest.get("citations")))
+    external_accessed = bool(manifest.get("external_network_accessed"))
+    return {
+        "schema_version": "visualization_spec.v1",
+        "title": "Citation Audit",
+        "chart_type": "stage_status",
+        "data": [
+            {
+                "stage": "Source policy",
+                "status": "ready" if manifest.get("source_policy") else "warning",
+                "count": source_count,
+                "detail": "Harness source policy captured for runner handoff.",
+            },
+            {
+                "stage": "Citations",
+                "status": "warning" if citation_count == 0 else "ready",
+                "count": citation_count,
+                "detail": "LocalStub records audit citations but no external source claims.",
+            },
+            {
+                "stage": "External access",
+                "status": "warning" if external_accessed else "ready",
+                "count": 1 if external_accessed else 0,
+                "detail": "Network remains disabled for LocalStub execution.",
+            },
+        ],
+        "encoding": {"x": "stage", "color": "status", "tooltip": ["stage", "status", "detail"]},
+        "empty_state": "Citation audit will appear after an AgentResult is ingested.",
+    }
+
+
 def split_manifest_id(evaluation_contract: dict[str, Any]) -> str | None:
     raw_manifest = evaluation_contract.get("split_manifest")
     if not isinstance(raw_manifest, dict):
@@ -317,6 +502,10 @@ def split_manifest_id(evaluation_contract: dict[str, Any]) -> str | None:
 
 def dict_value(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def list_value(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
 
 
 def codex_sandbox(policy: str) -> str:
@@ -364,6 +553,19 @@ def render_stub_report(contract: AgentTaskContract, policy: ExecutionPolicy) -> 
     lines.extend([f"- {item}" for item in contract.quality_checks])
     lines.extend(["", "## Forbidden Actions"])
     lines.extend([f"- {item}" for item in contract.forbidden_actions])
+    source_pack = dict_value(contract.inputs.get("research_source_pack"))
+    source_pack_artifact_id = source_pack.get("artifact_id") if isinstance(source_pack.get("artifact_id"), str) else None
+    lines.extend(
+        [
+            "",
+            "## Source Policy and Citation Audit",
+            "",
+            f"- Research Source Pack artifact: {source_pack_artifact_id or 'none'}",
+            "- Citation audit artifact: `artifacts/source_citation_manifest.json`",
+            "- Citation audit report: `reports/citation_audit_report.md`",
+            "- External network execution: not performed by LocalStubAgentRunner.",
+        ]
+    )
     lines.extend(
         [
             "",

@@ -617,5 +617,8 @@ class AgentResult(BaseModel):
     patch_summary: str | None = None
     proposed_assumption_updates: list[dict[str, Any]] = Field(default_factory=list)
     proposed_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_sources: list[dict[str, Any]] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    report_citations: list[dict[str, Any]] = Field(default_factory=list)
     proposed_questions: list[dict[str, Any]] = Field(default_factory=list)
     requires_human_review: bool = False

@@ -82,6 +82,150 @@
         "type": "object"
       }
     },
+    "evidence_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "source_id",
+          "source_type",
+          "title",
+          "verification_status"
+        ],
+        "properties": {
+          "source_id": {
+            "type": "string"
+          },
+          "source_type": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artifact_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verification_status": {
+            "type": "string",
+            "enum": [
+              "local_artifact",
+              "verified",
+              "unverified",
+              "not_accessed",
+              "policy_placeholder"
+            ]
+          },
+          "retrieved_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "freshness": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "risk_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "citation_id",
+          "source_id",
+          "claim"
+        ],
+        "properties": {
+          "citation_id": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "claim": {
+            "type": "string"
+          },
+          "usage_context": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "requires_follow_up": {
+            "type": "boolean"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "report_citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "section",
+          "citation_ids"
+        ],
+        "properties": {
+          "section": {
+            "type": "string"
+          },
+          "citation_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "proposed_questions": {
       "type": "array",
       "items": {

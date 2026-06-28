@@ -1921,6 +1921,18 @@ def run_planned_agent_task_stub_endpoint(
                 "experiment_run_id": result.experiment_ingestion.experiment_run_id,
                 "agent_metrics_artifact_id": result.experiment_ingestion.metrics_artifact_id,
                 "agent_feature_recipe_artifact_id": result.experiment_ingestion.feature_recipe_artifact_id,
+                "source_citation_manifest_artifact_id": (
+                    result.experiment_ingestion.citation_manifest_artifact_id
+                ),
+                "citation_audit_report_id": result.experiment_ingestion.citation_audit_report_id,
+                "citation_audit_report_artifact_id": (
+                    result.experiment_ingestion.citation_audit_report_artifact_id
+                ),
+                "citation_evidence_id": result.experiment_ingestion.citation_evidence_id,
+                "citation_visualization_id": result.experiment_ingestion.citation_visualization_id,
+                "citation_visualization_artifact_id": (
+                    result.experiment_ingestion.citation_visualization_artifact_id
+                ),
                 "visualization_ids": result.experiment_ingestion.visualization_ids,
                 "requires_human_review": result.agent_result.requires_human_review,
                 "auto_prepared_workspace": result.auto_prepared_workspace,
@@ -2204,6 +2216,18 @@ def run_idea_agent_task(
                 "experiment_run_id": result.experiment_ingestion.experiment_run_id,
                 "agent_metrics_artifact_id": result.experiment_ingestion.metrics_artifact_id,
                 "agent_feature_recipe_artifact_id": result.experiment_ingestion.feature_recipe_artifact_id,
+                "source_citation_manifest_artifact_id": (
+                    result.experiment_ingestion.citation_manifest_artifact_id
+                ),
+                "citation_audit_report_id": result.experiment_ingestion.citation_audit_report_id,
+                "citation_audit_report_artifact_id": (
+                    result.experiment_ingestion.citation_audit_report_artifact_id
+                ),
+                "citation_evidence_id": result.experiment_ingestion.citation_evidence_id,
+                "citation_visualization_id": result.experiment_ingestion.citation_visualization_id,
+                "citation_visualization_artifact_id": (
+                    result.experiment_ingestion.citation_visualization_artifact_id
+                ),
                 "visualization_ids": result.experiment_ingestion.visualization_ids,
                 "requires_human_review": result.agent_result.requires_human_review,
             },
@@ -3712,6 +3736,11 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "agent_workspace_manifest_artifact_id": output.get("agent_workspace_manifest_artifact_id"),
         "agent_metrics_artifact_id": output.get("agent_metrics_artifact_id"),
         "agent_feature_recipe_artifact_id": output.get("agent_feature_recipe_artifact_id"),
+        "source_citation_manifest_artifact_id": output.get("source_citation_manifest_artifact_id"),
+        "citation_audit_report_id": output.get("citation_audit_report_id"),
+        "citation_audit_report_artifact_id": output.get("citation_audit_report_artifact_id"),
+        "citation_evidence_id": output.get("citation_evidence_id"),
+        "citation_visualization_id": output.get("citation_visualization_id"),
         "research_source_pack_artifact_id": output.get("research_source_pack_artifact_id"),
         "research_source_report_id": output.get("research_source_report_id"),
         "recommended_approach_count": output.get("recommended_approach_count"),

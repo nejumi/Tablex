@@ -94,6 +94,7 @@ def run_idea_agent_task_stub(
     )
     experiment_ingestion = ingest_agent_result_experiment_outputs(
         db,
+        store=store,
         project=project,
         job=job,
         contract=contract,

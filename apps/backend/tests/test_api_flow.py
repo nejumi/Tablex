@@ -449,22 +449,42 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert planned_stub_job["output"]["agent_status"] == "succeeded"
     assert planned_stub_job["output"]["readiness_status"] in {"ready", "ready_with_warnings"}
     assert planned_stub_job["output"]["auto_prepared_workspace"] is False
-    assert len(planned_stub_job["output"]["ingested_artifact_ids"]) == 5
+    assert len(planned_stub_job["output"]["ingested_artifact_ids"]) == 8
     assert planned_stub_job["output"]["report_id"]
     assert planned_stub_job["output"]["evidence_id"]
     assert planned_stub_job["output"]["experiment_run_id"]
     assert planned_stub_job["output"]["agent_metrics_artifact_id"]
     assert planned_stub_job["output"]["agent_feature_recipe_artifact_id"]
+    assert planned_stub_job["output"]["source_citation_manifest_artifact_id"]
+    assert planned_stub_job["output"]["citation_audit_report_id"]
+    assert planned_stub_job["output"]["citation_audit_report_artifact_id"]
+    assert planned_stub_job["output"]["citation_evidence_id"]
+    assert planned_stub_job["output"]["citation_visualization_id"]
+    assert planned_stub_job["output"]["citation_visualization_artifact_id"]
     assert len(planned_stub_job["output"]["visualization_ids"]) == 1
     assert planned_stub_job["output"]["requires_human_review"] is True
+
+    planned_citation_preview_response = client.get(
+        f"/api/artifacts/{planned_stub_job['output']['citation_audit_report_artifact_id']}/preview"
+    )
+    assert planned_citation_preview_response.status_code == 200
+    planned_citation_preview = planned_citation_preview_response.json()["preview"]
+    assert "Citation Audit Report" in planned_citation_preview
+    assert "External network accessed: false" in planned_citation_preview
 
     planned_stub_job_artifacts_response = client.get(f"/api/jobs/{planned_stub_job['id']}/artifacts")
     assert planned_stub_job_artifacts_response.status_code == 200
     planned_stub_job_artifacts = planned_stub_job_artifacts_response.json()
     planned_stub_asset_types = {item["asset_type"] for item in planned_stub_job_artifacts["artifacts"]}
-    assert {"agent_task_report", "agent_result", "visualization_spec", "feature_recipe", "experiment_metrics"}.issubset(
-        planned_stub_asset_types
-    )
+    assert {
+        "agent_task_report",
+        "agent_result",
+        "visualization_spec",
+        "feature_recipe",
+        "experiment_metrics",
+        "source_citation_manifest",
+        "citation_audit_report",
+    }.issubset(planned_stub_asset_types)
 
     planned_stub_runs_response = client.get(f"/api/projects/{project_id}/runs")
     assert planned_stub_runs_response.status_code == 200
@@ -606,13 +626,32 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert agent_task_job["output"]["requires_human_review"] is True
     assert len(agent_task_job["output"]["artifact_ids"]) >= 4
     assert agent_task_job["output"]["workspace_artifact_id"]
-    assert len(agent_task_job["output"]["ingested_artifact_ids"]) == 5
+    assert len(agent_task_job["output"]["ingested_artifact_ids"]) == 8
     assert agent_task_job["output"]["report_id"]
     assert agent_task_job["output"]["evidence_id"]
     assert agent_task_job["output"]["experiment_run_id"]
     assert agent_task_job["output"]["agent_metrics_artifact_id"]
     assert agent_task_job["output"]["agent_feature_recipe_artifact_id"]
+    assert agent_task_job["output"]["source_citation_manifest_artifact_id"]
+    assert agent_task_job["output"]["citation_audit_report_id"]
+    assert agent_task_job["output"]["citation_audit_report_artifact_id"]
+    assert agent_task_job["output"]["citation_evidence_id"]
+    assert agent_task_job["output"]["citation_visualization_id"]
     assert len(agent_task_job["output"]["visualization_ids"]) == 1
+
+    citation_manifest_response = client.get(
+        f"/api/artifacts/{agent_task_job['output']['source_citation_manifest_artifact_id']}/download"
+    )
+    assert citation_manifest_response.status_code == 200
+    citation_manifest = citation_manifest_response.json()
+    assert citation_manifest["schema_version"] == "source_citation_manifest.v1"
+    assert citation_manifest["connector_credentials_materialized"] is False
+
+    citation_report_response = client.get(
+        f"/api/reports/{agent_task_job['output']['citation_audit_report_id']}/preview"
+    )
+    assert citation_report_response.status_code == 200
+    assert "Citation Audit Report" in citation_report_response.json()["preview"]
 
     updated_ideas_response = client.get(f"/api/projects/{project_id}/approach/ideas")
     assert updated_ideas_response.status_code == 200
