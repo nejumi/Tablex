@@ -2072,6 +2072,25 @@ function ApproachTab({
                 <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download agent task contract">
                   <Download size={16} />
                 </a>
+                <button
+                  className="icon-button"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction(async () => {
+                      const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/prepare-workspace`, {
+                        method: "POST"
+                      });
+                      const workspaceArtifactId = job.output.agent_workspace_manifest_artifact_id ?? job.output.artifact_id;
+                      if (typeof workspaceArtifactId === "string") {
+                        await loadWorkspacePreview(workspaceArtifactId);
+                      }
+                      return job;
+                    })
+                  }
+                  title="Prepare controlled workspace"
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <Layers size={16} />}
+                </button>
               </div>
             ])}
           />
@@ -2936,10 +2955,14 @@ function formatAgentTaskPlanningSummary(summary: Record<string, unknown>) {
   const approaches = summary.recommended_approach_count;
   const queries = summary.research_query_count;
   const assets = summary.recommended_asset_count;
+  const contexts = summary.materialized_context_count;
+  const libraryAssets = summary.materialized_library_asset_count;
   const parts = [
     typeof approaches === "number" ? `${approaches} approaches` : null,
     typeof queries === "number" ? `${queries} queries` : null,
-    typeof assets === "number" ? `${assets} assets` : null
+    typeof assets === "number" ? `${assets} assets` : null,
+    typeof contexts === "number" ? `${contexts} ctx` : null,
+    typeof libraryAssets === "number" ? `${libraryAssets} library` : null
   ].filter(Boolean);
   return parts.length ? parts.join(" / ") : "-";
 }

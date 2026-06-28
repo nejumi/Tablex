@@ -26,6 +26,7 @@ The product name may still change. Internal package names and database tables st
 - Cross-project Skill & FeatureRecipe Pack v1 with reusable tabular boosting, TF-IDF, time lag/rolling, relational aggregation, diagnostics, and decision reporting assets.
 - Agent Skill Handoff v1 with ResearchPlan-recommended library asset ids in AgentTaskContracts, AgentContextPack asset recommendations, and workspace materialization under `.harness/context/library_assets/`.
 - Adaptive AgentTask Planning v1 with artifact-backed runner contracts that bundle dataset/profile context, evaluation constraints, assumptions, benchmark context, Skill/library recommendations, flexible approach candidates, research queries, reporting requirements, and artifact expectations.
+- Planned Agent Workspace Handoff v1 for materializing planner-generated AgentTaskContracts into controlled `.harness` workspaces with context artifacts, library assets, execution policy, manifests, and lineage before runner execution.
 - Report & Visualization Workbench v1 with generated Insights, report preview/download, and typed VisualizationSpec rendering for metric cards, bars, stages, leaderboards, diagnostics, and agent checklists.
 - Decision Dashboard & Report v1 with readiness stages, artifact completeness, risk register, next actions, benchmark fixture policy, and decision visualization specs.
 - Agent Context Pack v0 for preparing schema-validated, harness-owned execution context before Codex/Skill/web-research runner tasks.

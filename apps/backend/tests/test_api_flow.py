@@ -343,6 +343,47 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert agent_task_job_artifacts["missing_artifact_ids"] == []
     assert agent_task_job_artifacts["artifacts"][0]["asset_type"] == "agent_task_contract"
 
+    planned_workspace_response = client.post(
+        f"/api/agent-task-contracts/{agent_task_plan_job['output']['agent_task_contract_artifact_id']}/prepare-workspace"
+    )
+    assert planned_workspace_response.status_code == 200, planned_workspace_response.text
+    planned_workspace_job = planned_workspace_response.json()
+    assert planned_workspace_job["status"] == "succeeded"
+    assert planned_workspace_job["output"]["schema_version"] == "agent_workspace_manifest.v1"
+    assert planned_workspace_job["output"]["agent_workspace_manifest_artifact_id"]
+    assert planned_workspace_job["output"]["agent_task_contract_artifact_id"] == agent_task_plan_job["output"][
+        "agent_task_contract_artifact_id"
+    ]
+    assert planned_workspace_job["output"]["materialized_context_count"] >= 4
+    assert planned_workspace_job["output"]["materialized_library_asset_count"] >= 4
+
+    planned_workspace_download_response = client.get(
+        f"/api/artifacts/{planned_workspace_job['output']['agent_workspace_manifest_artifact_id']}/download"
+    )
+    assert planned_workspace_download_response.status_code == 200
+    planned_workspace_manifest = planned_workspace_download_response.json()
+    assert planned_workspace_manifest["source_contract_artifact_id"] == agent_task_plan_job["output"][
+        "agent_task_contract_artifact_id"
+    ]
+    assert ".harness/task_contract.json" in planned_workspace_manifest["files"]
+    assert ".harness/agent_result.schema.json" in planned_workspace_manifest["files"]
+    assert ".harness/execution_policy.json" in planned_workspace_manifest["files"]
+    assert "README.md" in planned_workspace_manifest["files"]
+    assert any(
+        item["context_path"].startswith(".harness/context/library_assets/")
+        for item in planned_workspace_manifest["materialized_sources"]
+    )
+
+    planned_workspace_job_artifacts_response = client.get(f"/api/jobs/{planned_workspace_job['id']}/artifacts")
+    assert planned_workspace_job_artifacts_response.status_code == 200
+    planned_workspace_job_artifacts = planned_workspace_job_artifacts_response.json()
+    assert planned_workspace_job_artifacts["summary"]["agent_workspace_manifest_artifact_id"]
+    assert planned_workspace_job_artifacts["summary"]["materialized_library_asset_count"] >= 4
+    assert any(
+        item["asset_type"] == "agent_workspace_manifest"
+        for item in planned_workspace_job_artifacts["artifacts"]
+    )
+
     research_response = client.post(
         f"/api/projects/{project_id}/approach/research-briefs",
         json={"question": "What flexible approaches should be considered?"},

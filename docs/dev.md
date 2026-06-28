@@ -222,10 +222,13 @@ Approach Ideas are not fixed recipes. They are evidence-backed proposals with `A
 curl -X POST http://localhost:8000/api/projects/{project_id}/approach/agent-task-plan \
   -H 'Content-Type: application/json' \
   -d '{}'
+curl -X POST http://localhost:8000/api/agent-task-contracts/{artifact_id}/prepare-workspace
 curl http://localhost:8000/api/jobs/{job_id}/artifacts
 ```
 
 The generated contract carries `agent_task_planning.v1` inputs: dataset/profile context, approved evaluation and SplitManifest constraints, open assumptions/questions, benchmark and relational context, Skill/library recommendations, flexible approach candidates, controlled research queries, reporting requirements, and artifact expectations. It is planning context, not a fixed baseline recipe.
+
+`/api/agent-task-contracts/{artifact_id}/prepare-workspace` materializes a controlled workspace from the contract without starting a runner. The workspace contains `.harness/task_contract.json`, `.harness/agent_result.schema.json`, `.harness/execution_policy.json`, context artifacts, recommended library asset artifacts, and a README. It stores an `agent_workspace_manifest` artifact with source counts, skipped sources, safety policy, and lineage.
 
 `/api/ideas/{idea_id}/run-agent-task` currently uses `LocalStubAgentRunner`. It validates the AgentResult schema and persists `agent_task_report`, `agent_result`, and `visualization_spec` artifacts plus Evidence and Lineage. It does not run real Codex code or external web research yet. Prepare and inspect an AgentContextPack first when validating future runner behavior.
 
@@ -335,7 +338,7 @@ The current UI flow is:
 8. Generate a SplitManifest.
 9. Generate a ResearchPlan, AgentTaskContract, Research Brief, and flexible Approach Ideas from the Approach tab.
 10. Seed or attach reusable assets from the Library tab.
-11. Prepare and preview AgentContextPacks from the Approach tab before agent execution.
+11. Prepare and preview AgentContextPacks or planned AgentTask workspaces from the Approach tab before agent execution.
 12. Create and preview ExperimentPlans from the Approach tab.
 13. Review, approve, cancel, retry, or process queued jobs from the Jobs tab.
 14. Plan Agent Task or Plan Baseline from the Experiments tab to inspect flexible runner contracts, candidate strategies, and deferred AgentTask work.

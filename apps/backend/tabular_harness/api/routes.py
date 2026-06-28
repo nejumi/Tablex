@@ -164,6 +164,9 @@ from tabular_harness.services.jobs import (
     cancel_job as cancel_job_service,
 )
 from tabular_harness.services.model_versions import validate_model_version_package
+from tabular_harness.services.planned_agent_workspace import (
+    prepare_workspace_from_contract_artifact,
+)
 from tabular_harness.services.profiler import profile_tabular_file
 from tabular_harness.services.reporting import (
     create_project_visualization_dashboard,
@@ -1691,6 +1694,62 @@ def plan_project_agent_task_endpoint(
                 "research_query_count": len(inputs["research_queries"]),
                 "recommended_asset_count": len(inputs["library_recommendations"]),
                 "artifact_expectation_count": len(inputs["artifact_expectations"]),
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/agent-task-contracts/{artifact_id}/prepare-workspace", response_model=JobRead)
+def prepare_planned_agent_workspace_endpoint(
+    artifact_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    contract_artifact = db.get(Artifact, artifact_id)
+    if contract_artifact is None:
+        raise HTTPException(status_code=404, detail="AgentTaskContract artifact not found")
+    if contract_artifact.asset_type != "agent_task_contract":
+        raise HTTPException(status_code=400, detail="Artifact is not an agent_task_contract")
+    if contract_artifact.project_id is None:
+        raise HTTPException(status_code=400, detail="AgentTaskContract artifact is not project-scoped")
+    project = require_project(db, contract_artifact.project_id)
+    job = create_job(
+        db,
+        job_type="prepare_planned_agent_workspace",
+        project_id=project.id,
+        input_payload={"agent_task_contract_artifact_id": contract_artifact.id},
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "execution": "not_started",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = prepare_workspace_from_contract_artifact(
+            db,
+            store=store,
+            project=project,
+            contract_artifact=contract_artifact,
+            job=job,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.manifest["schema_version"],
+                "task_id": result.manifest["task_id"],
+                "agent_task_contract_artifact_id": contract_artifact.id,
+                "agent_workspace_manifest_artifact_id": result.artifact.id,
+                "artifact_id": result.artifact.id,
+                "artifact_ids": [result.artifact.id],
+                "materialized_context_count": result.materialized_context_count,
+                "materialized_library_asset_count": result.materialized_library_asset_count,
+                "skipped_source_count": result.skipped_source_count,
+                "workspace_path": result.manifest["workspace_path"],
             },
         )
     except ValueError as exc:
@@ -3417,9 +3476,13 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "decision_report_id": output.get("decision_report_id"),
         "task_id": output.get("task_id"),
         "agent_task_contract_artifact_id": output.get("agent_task_contract_artifact_id"),
+        "agent_workspace_manifest_artifact_id": output.get("agent_workspace_manifest_artifact_id"),
         "recommended_approach_count": output.get("recommended_approach_count"),
         "research_query_count": output.get("research_query_count"),
         "recommended_asset_count": output.get("recommended_asset_count"),
+        "materialized_context_count": output.get("materialized_context_count"),
+        "materialized_library_asset_count": output.get("materialized_library_asset_count"),
+        "skipped_source_count": output.get("skipped_source_count"),
         "primary_metric_name": primary_metric_name,
         "primary_metric_value": primary_metric_value,
         "artifact_count": len(collect_output_artifact_ids(output)),
