@@ -820,6 +820,9 @@ function DataTab({
   const [qualityPreview, setQualityPreview] = React.useState<ArtifactPreview | null>(null);
   const [qualityPreviewError, setQualityPreviewError] = React.useState<string | null>(null);
   const [qualityPreviewLoadingId, setQualityPreviewLoadingId] = React.useState<string | null>(null);
+  const [relationalPreview, setRelationalPreview] = React.useState<ArtifactPreview | null>(null);
+  const [relationalPreviewError, setRelationalPreviewError] = React.useState<string | null>(null);
+  const [relationalPreviewLoadingId, setRelationalPreviewLoadingId] = React.useState<string | null>(null);
 
   async function uploadDataset() {
     if (!file) return;
@@ -863,7 +866,20 @@ function DataTab({
     }
   }
 
+  async function loadRelationalPreview(artifactId: string) {
+    setRelationalPreviewLoadingId(artifactId);
+    setRelationalPreviewError(null);
+    try {
+      setRelationalPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setRelationalPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRelationalPreviewLoadingId(null);
+    }
+  }
+
   const datasetArtifacts = artifacts.filter((artifact) => artifact.asset_type === "dataset_snapshot");
+  const relationalArtifacts = artifacts.filter((artifact) => artifact.asset_type === "relational_catalog");
   const qualityArtifacts = artifacts.filter((artifact) =>
     ["data_quality_gate", "data_quality_report"].includes(artifact.asset_type)
   );
@@ -990,6 +1006,41 @@ function DataTab({
           />
         ) : (
           <EmptyInline text="Raw uploaded files are stored in the local artifact store with content hashes." />
+        )}
+      </Panel>
+      <Panel title="Relational Catalogs" icon={<GitBranch size={18} />}>
+        {relationalArtifacts.length ? (
+          <Table
+            headers={["Benchmark", "Tables", "Relationships", "Actions"]}
+            rows={relationalArtifacts.map((artifact) => [
+              String(artifact.metadata.benchmark_id ?? artifact.name),
+              String(artifact.metadata.table_count ?? "-"),
+              String(artifact.metadata.relationship_count ?? "-"),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={relationalPreviewLoadingId === artifact.id}
+                  onClick={() => void loadRelationalPreview(artifact.id)}
+                  title="Preview relational catalog"
+                >
+                  {relationalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download relational catalog">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Benchmark imports with supporting tables will register relational catalogs with table profiles and inferred join keys." />
+        )}
+      </Panel>
+      <Panel title="Relational Catalog Preview" icon={<FileText size={18} />}>
+        {relationalPreviewError ? <div className="banner danger">{relationalPreviewError}</div> : null}
+        {relationalPreview?.preview_available ? (
+          <pre className="markdown-preview">{relationalPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={relationalPreview?.reason ?? "Select a relational catalog to inspect table profiles, key candidates, and inferred join graph."} />
         )}
       </Panel>
       <Panel title="Data Quality Gates" icon={<ListChecks size={18} />}>

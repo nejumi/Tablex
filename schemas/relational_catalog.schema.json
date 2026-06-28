@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tablex.local/schemas/relational_catalog.schema.json",
+  "title": "RelationalCatalog",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "benchmark_id",
+    "primary_table",
+    "table_count",
+    "tables",
+    "relationships",
+    "evaluation_guidance",
+    "risk_notes"
+  ],
+  "properties": {
+    "schema_version": { "const": "relational_catalog.v1" },
+    "benchmark_id": { "type": "string" },
+    "benchmark_name": { "type": "string" },
+    "source_url": { "type": "string" },
+    "dataset_snapshot_id": { "type": "string" },
+    "primary_table": { "type": "object" },
+    "local_root": { "type": "string" },
+    "table_count": { "type": "integer" },
+    "table_limit": { "type": "integer" },
+    "table_discovery_truncated": { "type": "boolean" },
+    "tables": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/table_profile" }
+    },
+    "relationships": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/relationship" }
+    },
+    "target_locations": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "evaluation_guidance": { "type": "object" },
+    "risk_notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "agent_context_notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "table_profile": {
+      "type": "object",
+      "required": ["table_name", "path", "role", "is_primary", "status"],
+      "properties": {
+        "table_name": { "type": "string" },
+        "path": { "type": "string" },
+        "role": { "type": "string" },
+        "is_primary": { "type": "boolean" },
+        "format": { "type": "string" },
+        "size_bytes": { "type": ["integer", "null"] },
+        "status": { "type": "string" },
+        "error": { "type": "string" },
+        "row_count": { "type": ["integer", "null"] },
+        "column_count": { "type": ["integer", "null"] },
+        "schema_hash": { "type": ["string", "null"] },
+        "columns": { "type": "array", "items": { "type": "string" } },
+        "column_profiles": { "type": "array", "items": { "type": "object" } },
+        "key_candidates": { "type": "array", "items": { "type": "object" } },
+        "time_candidates": { "type": "array", "items": { "type": "string" } },
+        "target_column_present": { "type": "boolean" },
+        "leakage_name_suspects": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "required": ["left_table", "right_table", "left_column", "right_column", "relation_type", "confidence"],
+      "properties": {
+        "left_table": { "type": "string" },
+        "right_table": { "type": "string" },
+        "left_column": { "type": "string" },
+        "right_column": { "type": "string" },
+        "relation_type": { "type": "string" },
+        "confidence": { "type": "number" },
+        "evidence": { "type": "string" }
+      }
+    }
+  },
+  "additionalProperties": true
+}

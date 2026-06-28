@@ -53,6 +53,7 @@ def prepare_idea_agent_context_pack(
     evaluation_spec = db.get(EvaluationSpec, idea.evaluation_spec_id) if idea.evaluation_spec_id else latest_approved_spec(db, project.id)
     split_manifest = latest_split_for_spec(db, evaluation_spec.id) if evaluation_spec else None
     quality_gate_artifact = latest_project_artifact(db, project.id, "data_quality_gate")
+    relational_catalog_artifact = latest_project_artifact(db, project.id, "relational_catalog")
     artifacts = list(
         db.scalars(
             select(Artifact)
@@ -81,6 +82,7 @@ def prepare_idea_agent_context_pack(
         evaluation_spec=evaluation_spec,
         split_manifest=split_manifest,
         quality_gate_artifact=quality_gate_artifact,
+        relational_catalog_artifact=relational_catalog_artifact,
         artifacts=artifacts,
         asset_references=expanded_asset_references(db, asset_references),
     )
@@ -125,6 +127,7 @@ def build_agent_context_pack(
     evaluation_spec: EvaluationSpec | None,
     split_manifest: SplitManifest | None,
     quality_gate_artifact: Artifact | None,
+    relational_catalog_artifact: Artifact | None,
     artifacts: list[Artifact],
     asset_references: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -178,6 +181,7 @@ def build_agent_context_pack(
         "data_context": dataset_context(dataset),
         "evaluation_context": evaluation_context(evaluation_spec, split_manifest),
         "quality_gate_context": quality_gate_context(quality_gate_artifact),
+        "relational_context": relational_context(relational_catalog_artifact),
         "artifact_refs": artifact_refs(artifacts),
         "library_asset_references": asset_references,
         "required_outputs": contract_payload["required_outputs"],
@@ -243,6 +247,21 @@ def quality_gate_context(artifact: Artifact | None) -> dict[str, Any]:
         "status": "available",
         "artifact_id": artifact.id,
         "severity": metadata.get("severity"),
+        "preview_url": f"/api/artifacts/{artifact.id}/preview",
+        "download_url": f"/api/artifacts/{artifact.id}/download",
+    }
+
+
+def relational_context(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {"status": "missing", "artifact_id": None}
+    metadata = loads_json(artifact.metadata_json, {})
+    return {
+        "status": "available",
+        "artifact_id": artifact.id,
+        "table_count": metadata.get("table_count"),
+        "relationship_count": metadata.get("relationship_count"),
+        "benchmark_id": metadata.get("benchmark_id"),
         "preview_url": f"/api/artifacts/{artifact.id}/preview",
         "download_url": f"/api/artifacts/{artifact.id}/download",
     }

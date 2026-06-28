@@ -62,11 +62,12 @@ The import creates:
 - a `dataset_snapshot` artifact copied from the benchmark primary table
 - a `DatasetSnapshot` with `source_type=benchmark_catalog`
 - a `benchmark_import_manifest` artifact that records required/recommended file status
+- a `relational_catalog` artifact with table profiles, key candidates, time candidates, leakage-name suspects, and inferred join graph
 - an `import_benchmark_dataset` job record
 - lineage from the manifest artifact to the DatasetSnapshot
 
 ## Scope
 
-v0 profiles one primary CSV/Parquet table. Multi-table joins remain explicit future work for FeatureRecipes and AgentTasks. The catalog still records supporting files so future runners can plan joins and aggregations without guessing dataset layout.
+v0 creates one primary-table DatasetSnapshot and a relational catalog for the local bundle. Multi-table joins remain explicit future work for FeatureRecipes and AgentTasks. The relational catalog gives future runners table profile and join-planning context without copying every supporting table into the artifact store.
 
 These datasets are benchmarks and smoke-test fixtures, not a fixed modeling strategy. Baselines and agent tasks should still inspect the current task, data semantics, EvaluationSpec, SplitManifest, quality gates, relevant Skills, and timely research before choosing an approach.

@@ -116,7 +116,7 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/uci_bank
   -d '{}'
 ```
 
-Place extracted benchmark files under `data/benchmarks/{benchmark_id}` or another path below `HARNESS_DATA_DIR/benchmarks`. Kaggle credentials and API tokens are user-managed outside Tablex and must not be pasted into Tablex, AgentTaskContracts, or runner workspaces. The v0 importer profiles one primary CSV/Parquet table and stores a `benchmark_import_manifest` artifact for supporting files. See `docs/benchmarks.md`.
+Place extracted benchmark files under `data/benchmarks/{benchmark_id}` or another path below `HARNESS_DATA_DIR/benchmarks`. Kaggle credentials and API tokens are user-managed outside Tablex and must not be pasted into Tablex, AgentTaskContracts, or runner workspaces. The v0 importer profiles one primary CSV/Parquet table, stores a `benchmark_import_manifest`, and creates a `relational_catalog` artifact with table profiles and inferred join-key context for supporting files. See `docs/benchmarks.md`.
 
 Artifact preview and download are available from:
 

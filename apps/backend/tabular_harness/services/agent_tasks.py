@@ -259,6 +259,7 @@ def copy_context_artifacts(
         ("agent_context_pack", "agent_context_pack.json"),
         ("experiment_plan", "experiment_plan.json"),
         ("data_quality_gate", "data_quality_gate.json"),
+        ("relational_catalog", "relational_catalog.json"),
         ("evaluation_diagnostics", "evaluation_diagnostics.json"),
     ]:
         artifact = latest_context_artifact(db, project_id=project_id, idea_id=idea_id, asset_type=asset_type)

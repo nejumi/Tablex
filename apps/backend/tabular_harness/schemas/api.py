@@ -194,6 +194,7 @@ class BenchmarkImportResponse(BaseModel):
     dataset_snapshot: DatasetSnapshotRead
     artifact: ArtifactRead
     import_manifest_artifact: ArtifactRead
+    relational_catalog_artifact: ArtifactRead
     profile_job_id: str
     primary_file: str
 

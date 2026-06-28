@@ -105,6 +105,7 @@ from tabular_harness.services.baseline import run_baseline as run_baseline_servi
 from tabular_harness.services.benchmarks import (
     benchmark_to_dict,
     build_import_manifest,
+    build_relational_catalog,
     get_benchmark_dataset,
     inspect_benchmark_local_files,
     list_benchmark_datasets,
@@ -470,6 +471,31 @@ def import_benchmark_dataset(
                 "primary_file": primary_relative_path,
             },
         )
+        relational_catalog = build_relational_catalog(
+            benchmark=benchmark,
+            root=root,
+            primary_file=primary_file,
+            local_status=local_status,
+            target_column=str(effective_target) if effective_target else None,
+        )
+        relational_catalog["dataset_snapshot_id"] = dataset.id
+        relational_catalog_artifact = store_and_register_json(
+            db,
+            store,
+            project_id=project_id,
+            asset_type="relational_catalog",
+            name=f"relational_catalog_{benchmark_id}",
+            filename="relational_catalog.json",
+            payload=relational_catalog,
+            metadata={
+                "project_id": project_id,
+                "dataset_snapshot_id": dataset.id,
+                "benchmark_id": benchmark_id,
+                "table_count": relational_catalog["table_count"],
+                "relationship_count": len(relational_catalog["relationships"]),
+                "primary_file": primary_relative_path,
+            },
+        )
         create_lineage_edge(
             db,
             project_id=project_id,
@@ -478,6 +504,24 @@ def import_benchmark_dataset(
             to_asset_type="dataset_snapshot",
             to_asset_id=dataset.id,
             relation_type="describes_source",
+        )
+        create_lineage_edge(
+            db,
+            project_id=project_id,
+            from_asset_type="dataset_snapshot",
+            from_asset_id=dataset.id,
+            to_asset_type="artifact",
+            to_asset_id=relational_catalog_artifact.id,
+            relation_type="profiles_table_bundle",
+        )
+        create_lineage_edge(
+            db,
+            project_id=project_id,
+            from_asset_type="artifact",
+            from_asset_id=import_manifest_artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=relational_catalog_artifact.id,
+            relation_type="summarizes_bundle",
         )
         project.current_phase = "UNDERSTANDING_REVIEW"
         project.updated_at = utc_now()
@@ -488,8 +532,11 @@ def import_benchmark_dataset(
                 "dataset_snapshot_id": dataset.id,
                 "artifact_id": dataset_artifact.id,
                 "import_manifest_artifact_id": import_manifest_artifact.id,
+                "relational_catalog_artifact_id": relational_catalog_artifact.id,
                 "primary_file": primary_relative_path,
                 "target_column": effective_target,
+                "table_count": relational_catalog["table_count"],
+                "relationship_count": len(relational_catalog["relationships"]),
             },
         )
     except Exception as exc:
@@ -503,6 +550,7 @@ def import_benchmark_dataset(
         "dataset_snapshot": dataset_to_dict(dataset),
         "artifact": artifact_to_dict(dataset_artifact),
         "import_manifest_artifact": artifact_to_dict(import_manifest_artifact),
+        "relational_catalog_artifact": artifact_to_dict(relational_catalog_artifact),
         "profile_job_id": job.id,
         "primary_file": primary_relative_path,
     }

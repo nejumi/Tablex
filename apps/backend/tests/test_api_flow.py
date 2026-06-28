@@ -566,6 +566,7 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     assert payload["dataset_snapshot"]["row_count"] == 4
     assert payload["artifact"]["metadata"]["benchmark_id"] == "uci_bank_marketing"
     assert payload["import_manifest_artifact"]["asset_type"] == "benchmark_import_manifest"
+    assert payload["relational_catalog_artifact"]["asset_type"] == "relational_catalog"
 
     project_after_import = client.get(f"/api/projects/{project_id}")
     assert project_after_import.status_code == 200
@@ -575,3 +576,53 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     assert manifest_preview_response.status_code == 200
     assert "benchmark_import_manifest.v1" in manifest_preview_response.json()["preview"]
     assert "not_stored_or_passed_to_agent" in manifest_preview_response.json()["preview"]
+
+    relational_preview_response = client.get(f"/api/artifacts/{payload['relational_catalog_artifact']['id']}/preview")
+    assert relational_preview_response.status_code == 200
+    assert "relational_catalog.v1" in relational_preview_response.json()["preview"]
+
+
+def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Home Credit tiny", "task_type": "binary_classification"},
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    benchmark_dir = tmp_path / "data" / "benchmarks" / "kaggle_home_credit_default_risk"
+    benchmark_dir.mkdir(parents=True)
+    (benchmark_dir / "application_train.csv").write_text(
+        "SK_ID_CURR,TARGET,AMT_INCOME_TOTAL\n"
+        "100001,1,120000\n"
+        "100002,0,90000\n"
+        "100003,0,110000\n",
+        encoding="utf-8",
+    )
+    (benchmark_dir / "bureau.csv").write_text(
+        "SK_ID_CURR,SK_ID_BUREAU,CREDIT_ACTIVE\n"
+        "100001,200001,Active\n"
+        "100001,200002,Closed\n"
+        "100002,200003,Closed\n",
+        encoding="utf-8",
+    )
+
+    import_response = client.post(
+        f"/api/projects/{project_id}/benchmarks/kaggle_home_credit_default_risk/import",
+        json={},
+    )
+    assert import_response.status_code == 200, import_response.text
+    output_job_response = client.get(f"/api/projects/{project_id}/jobs")
+    assert output_job_response.status_code == 200
+    import_job = next(item for item in output_job_response.json() if item["job_type"] == "import_benchmark_dataset")
+    assert import_job["output"]["table_count"] == 2
+    assert import_job["output"]["relationship_count"] >= 1
+
+    relational_artifact_id = import_response.json()["relational_catalog_artifact"]["id"]
+    relational_preview_response = client.get(f"/api/artifacts/{relational_artifact_id}/preview")
+    assert relational_preview_response.status_code == 200
+    preview = relational_preview_response.json()["preview"]
+    assert "relational_catalog.v1" in preview
+    assert "SK_ID_CURR" in preview
+    assert "shared_key_name" in preview

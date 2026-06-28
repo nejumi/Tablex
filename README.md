@@ -30,7 +30,7 @@ The product name may still change. Internal package names and database tables st
 - Agentic Experiment Lifecycle v0 with artifact-backed ExperimentPlans, run reports, diagnostics-aware experiment comparisons, comparison VisualizationSpecs, Evidence, Insights, and UI actions for flexible agent-driven approaches.
 - Data Quality Gate v0 with leakage, prediction-time availability, missingness, duplicate, identity/group, temporal, and evaluation-readiness checks connected to Questions, Assumptions, Evidence, Insights, AgentContextPacks, and Evaluation UI.
 - Controlled Agent Workspace v0 with materialized runner context, workspace manifests, AgentResult artifact ingestion, and workspace preview in the Approach UI.
-- Benchmark Dataset Catalog v0 with Home Credit, fraud, retail forecasting, basket, and UCI smoke-test entries plus local primary-table import into DatasetSnapshot artifacts without storing external credentials.
+- Benchmark Dataset Catalog v0 with Home Credit, fraud, retail forecasting, basket, and UCI smoke-test entries plus local primary-table import, relational catalog artifacts, and inferred join-key context without storing external credentials.
 - Leaderboard backed by ExperimentRun metrics.
 - React UI with project list, dataset upload, assumptions, evaluation, approach, experiments, leaderboard, reports, assets, jobs, and lineage tabs.
 - AgentRunner interface with Noop/LocalStub and Codex CLI skeleton.
