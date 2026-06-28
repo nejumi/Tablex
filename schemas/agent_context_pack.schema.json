@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentContextPack",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "project",
+    "idea",
+    "agent_task_contract",
+    "research_policy",
+    "safety_controls",
+    "data_context",
+    "evaluation_context",
+    "quality_gate_context",
+    "artifact_refs",
+    "library_asset_references",
+    "required_outputs",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "agent_context_pack.v1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "project": {
+      "type": "object"
+    },
+    "idea": {
+      "type": "object"
+    },
+    "agent_task_contract": {
+      "type": "object"
+    },
+    "research_policy": {
+      "type": "object"
+    },
+    "safety_controls": {
+      "type": "object"
+    },
+    "data_context": {
+      "type": "object"
+    },
+    "evaluation_context": {
+      "type": "object"
+    },
+    "quality_gate_context": {
+      "type": "object"
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "library_asset_references": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "required_outputs": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "generated_at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

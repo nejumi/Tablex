@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ForwardValidationResult",
+  "type": "object",
+  "required": [
+    "forward_validation_id",
+    "project_id",
+    "model_version_id",
+    "prediction_set_id",
+    "actuals_ingestion_id",
+    "forward_metrics",
+    "local_metrics",
+    "conclusion"
+  ],
+  "properties": {
+    "forward_validation_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "model_version_id": {
+      "type": "string"
+    },
+    "prediction_set_id": {
+      "type": "string"
+    },
+    "actuals_ingestion_id": {
+      "type": "string"
+    },
+    "evaluation_candidate_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "evaluation_spec_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "forward_metrics": {
+      "type": "object"
+    },
+    "local_metrics": {
+      "type": "object"
+    },
+    "metric_gap": {
+      "type": "object"
+    },
+    "rank_consistency": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "slice_consistency": {
+      "type": "object"
+    },
+    "calibration_gap": {
+      "type": "object"
+    },
+    "conclusion": {
+      "type": "string",
+      "enum": [
+        "consistent",
+        "mildly_degraded",
+        "evaluation_mismatch",
+        "possible_leakage",
+        "concept_drift",
+        "insufficient_actuals"
+      ]
+    },
+    "recommended_actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

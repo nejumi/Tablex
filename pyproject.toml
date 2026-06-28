@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tabular-harness"
+version = "0.1.0"
+description = "Self-contained tabular-first prediction meta-harness"
+requires-python = ">=3.10"
+dependencies = [
+  "alembic>=1.13",
+  "duckdb>=1.0",
+  "fastapi>=0.111",
+  "joblib>=1.4",
+  "jsonschema>=4.22",
+  "python-multipart>=0.0.9",
+  "scikit-learn>=1.4",
+  "sqlalchemy>=2.0",
+  "uvicorn[standard]>=0.30",
+  "xgboost>=2.0",
+]
+
+[project.scripts]
+tablex-worker = "tabular_harness.worker.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27",
+  "mypy>=1.10",
+  "pytest>=8.2,<9",
+  "ruff>=0.5",
+  "types-jsonschema>=4.22",
+]
+
+[tool.setuptools.packages.find]
+where = ["apps/backend"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+plugins = []
+strict = true
+warn_unused_configs = true
+exclude = ["alembic/"]
+
+[[tool.mypy.overrides]]
+module = ["joblib.*", "scipy.*", "sklearn.*", "xgboost.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["apps/backend/tests"]
+pythonpath = ["apps/backend"]

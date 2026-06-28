@@ -1,0 +1,9 @@
+.git
+data
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/node_modules
+apps/frontend/dist
+.mypy_cache
+

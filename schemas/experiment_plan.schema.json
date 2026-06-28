@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExperimentPlan",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "project",
+    "idea",
+    "readiness",
+    "research_governance",
+    "evaluation_lock",
+    "approach_selection",
+    "runner_contract",
+    "expected_artifacts",
+    "review_questions",
+    "next_steps"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "experiment_plan.v1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "project": {
+      "type": "object",
+      "required": ["id", "name", "target_column"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "task_type": {"type": ["string", "null"]},
+        "target_column": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "idea": {
+      "type": "object",
+      "required": ["id", "title", "approach_type", "hypothesis", "risk_level", "confidence"],
+      "additionalProperties": true
+    },
+    "readiness": {
+      "type": "object",
+      "required": ["status", "blocking_items", "non_blocking_warnings"],
+      "properties": {
+        "status": {"type": "string"},
+        "blocking_items": {"type": "array", "items": {"type": "string"}},
+        "non_blocking_warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "research_governance": {
+      "type": "object",
+      "required": ["source_policy", "citation_requirement"],
+      "additionalProperties": true
+    },
+    "evaluation_lock": {
+      "type": "object",
+      "required": ["status", "evaluation_spec_id", "split_manifest_id", "destructive_changes_allowed"],
+      "additionalProperties": true
+    },
+    "approach_selection": {
+      "type": "object",
+      "required": ["selection_policy", "scenario_comparisons", "acceptance_criteria"],
+      "additionalProperties": true
+    },
+    "runner_contract": {
+      "type": "object",
+      "required": ["agent_task_contract", "workspace_policy"],
+      "additionalProperties": true
+    },
+    "expected_artifacts": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "review_questions": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "next_steps": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": true
+}

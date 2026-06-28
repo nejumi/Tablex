@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReflectionEvent",
+  "type": "object",
+  "required": [
+    "reflection_event_id",
+    "project_id",
+    "event_type",
+    "severity",
+    "summary",
+    "recommended_actions",
+    "requires_approval",
+    "status"
+  ],
+  "properties": {
+    "reflection_event_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "assumption_updated",
+        "evaluation_recommended_change",
+        "leakage_suspect_promoted",
+        "model_deprecated",
+        "retraining_recommended",
+        "monitoring_warning"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "warning",
+        "high",
+        "blocking"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "recommended_actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "affected_asset_refs": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "requires_approval": {
+      "type": "boolean"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "acknowledged",
+        "actioned",
+        "dismissed",
+        "resolved"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

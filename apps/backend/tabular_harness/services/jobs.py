@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from tabular_harness.core.ids import new_id
+from tabular_harness.core.json import dumps_json, loads_json
+from tabular_harness.models.entities import Job, utc_now
+
+JOB_TYPES = {
+    "profile_dataset",
+    "infer_assumptions",
+    "design_evaluation_candidates",
+    "build_split_manifest",
+    "run_baseline",
+    "run_agent_task",
+    "validate_model_package",
+    "generate_research_brief",
+    "generate_approach_candidates",
+    "draft_project_report",
+    "create_visualization_spec",
+    "generate_insights",
+    "prepare_agent_context",
+    "analyze_evaluation_diagnostics",
+    "create_experiment_plan",
+    "compare_experiments",
+    "draft_run_report",
+    "analyze_data_quality",
+}
+
+TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}
+RUNNABLE_STATUSES = {"queued"}
+APPROVAL_REQUIRED_JOB_TYPES = {"run_agent_task"}
+
+
+def create_job(
+    db: Session,
+    *,
+    job_type: str,
+    project_id: str | None,
+    input_payload: dict[str, Any] | None = None,
+    context: dict[str, Any] | None = None,
+    policy: dict[str, Any] | None = None,
+    dependency_job_ids: list[str] | None = None,
+    priority: int = 50,
+    max_attempts: int = 1,
+    approval_required: bool = False,
+    run_after: datetime | None = None,
+) -> Job:
+    if job_type not in JOB_TYPES:
+        raise ValueError(f"Unsupported job type: {job_type}")
+    effective_policy = policy or {}
+    requires_approval = approval_required or job_requires_approval(job_type, effective_policy)
+    job = Job(
+        id=new_id("job"),
+        project_id=project_id,
+        job_type=job_type,
+        status="approval_required" if requires_approval else "queued",
+        priority=priority,
+        max_attempts=max_attempts,
+        input_json=dumps_json(input_payload or {}),
+        output_json="{}",
+        context_json=dumps_json(context or {}),
+        policy_json=dumps_json(effective_policy),
+        dependency_job_ids_json=dumps_json(dependency_job_ids or []),
+        approval_required=requires_approval,
+        run_after=run_after,
+    )
+    db.add(job)
+    db.flush()
+    return job
+
+
+def mark_job_running(job: Job) -> None:
+    job.status = "running"
+    job.attempt_count += 1
+    job.error_message = None
+    job.started_at = utc_now()
+    job.updated_at = utc_now()
+
+
+def mark_job_succeeded(job: Job, output: dict[str, Any] | None = None) -> None:
+    job.status = "succeeded"
+    job.output_json = dumps_json(output or {})
+    job.locked_by = None
+    job.locked_at = None
+    job.ended_at = utc_now()
+    job.updated_at = utc_now()
+
+
+def mark_job_failed(job: Job, error_message: str, output: dict[str, Any] | None = None) -> None:
+    job.status = "failed"
+    job.error_message = error_message
+    job.output_json = dumps_json(output or {})
+    job.locked_by = None
+    job.locked_at = None
+    job.ended_at = utc_now()
+    job.updated_at = utc_now()
+
+
+def approve_job(job: Job, *, approved_by: str = "local-user") -> None:
+    if job.status != "approval_required":
+        return
+    job.status = "queued"
+    job.approved_by = approved_by
+    job.approved_at = utc_now()
+    job.updated_at = utc_now()
+
+
+def cancel_job(job: Job, *, cancelled_by: str = "local-user") -> None:
+    if job.status in TERMINAL_STATUSES:
+        return
+    job.status = "cancelled"
+    job.cancelled_by = cancelled_by
+    job.locked_by = None
+    job.locked_at = None
+    job.ended_at = utc_now()
+    job.updated_at = utc_now()
+
+
+def retry_job(job: Job) -> None:
+    if job.status not in {"failed", "cancelled", "timed_out"}:
+        raise ValueError("Only failed, cancelled, or timed_out jobs can be retried")
+    if job.attempt_count >= job.max_attempts:
+        raise ValueError("Job has reached max_attempts")
+    job.status = "queued"
+    job.error_message = None
+    job.output_json = "{}"
+    job.locked_by = None
+    job.locked_at = None
+    job.ended_at = None
+    job.updated_at = utc_now()
+
+
+def acquire_next_job(
+    db: Session,
+    *,
+    worker_id: str,
+    job_types: set[str] | None = None,
+) -> Job | None:
+    now = utc_now()
+    stmt = select(Job).where(Job.status.in_(RUNNABLE_STATUSES)).order_by(Job.priority.desc(), Job.created_at)
+    if job_types:
+        stmt = stmt.where(Job.job_type.in_(job_types))
+    candidates = db.scalars(stmt.limit(50)).all()
+    for job in candidates:
+        if job.run_after and job.run_after > now:
+            continue
+        if not dependencies_satisfied(db, job):
+            continue
+        job.locked_by = worker_id
+        job.locked_at = now
+        job.updated_at = now
+        db.flush()
+        return job
+    return None
+
+
+def dependencies_satisfied(db: Session, job: Job) -> bool:
+    dependency_ids = loads_json(job.dependency_job_ids_json, [])
+    if not dependency_ids:
+        return True
+    dependencies = db.scalars(select(Job).where(Job.id.in_([str(item) for item in dependency_ids]))).all()
+    statuses = {dependency.id: dependency.status for dependency in dependencies}
+    return all(statuses.get(str(job_id)) == "succeeded" for job_id in dependency_ids)
+
+
+def job_requires_approval(job_type: str, policy: dict[str, Any]) -> bool:
+    if job_type in APPROVAL_REQUIRED_JOB_TYPES:
+        return True
+    if policy.get("network") in {"restricted", "full"}:
+        return True
+    if policy.get("allow_external_network") is True:
+        return True
+    if policy.get("allow_production_write") is True:
+        return True
+    return False

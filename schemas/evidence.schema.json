@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence",
+  "type": "object",
+  "required": [
+    "evidence_id",
+    "project_id",
+    "evidence_type",
+    "summary",
+    "strength"
+  ],
+  "properties": {
+    "evidence_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "evidence_type": {
+      "type": "string",
+      "enum": [
+        "user_answer",
+        "column_name_inference",
+        "schema_inference",
+        "eda_pattern",
+        "leakage_probe",
+        "split_comparison",
+        "baseline_result",
+        "experiment_result",
+        "forward_validation",
+        "drift_monitoring",
+        "external_research",
+        "cross_project_prior"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "strength": {
+      "type": "string",
+      "enum": [
+        "weak",
+        "medium",
+        "strong",
+        "decisive"
+      ]
+    },
+    "source_artifact_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

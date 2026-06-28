@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentWorkspaceManifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "idea_id",
+    "job_id",
+    "workspace_path",
+    "task_id",
+    "execution_policy",
+    "materialized_sources",
+    "files",
+    "safety"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "agent_workspace_manifest.v1"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "idea_id": {
+      "type": "string"
+    },
+    "job_id": {
+      "type": "string"
+    },
+    "workspace_path": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "execution_policy": {
+      "type": "object"
+    },
+    "materialized_sources": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "files": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "safety": {
+      "type": "object",
+      "required": ["secret_access", "connector_credentials", "network", "must_respect_split_manifest"],
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

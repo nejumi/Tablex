@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentResult",
+  "type": "object",
+  "required": [
+    "task_id",
+    "status",
+    "final_message",
+    "outputs",
+    "artifacts",
+    "warnings"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "failed",
+        "needs_approval"
+      ]
+    },
+    "final_message": {
+      "type": "string"
+    },
+    "outputs": {
+      "type": "object"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "asset_type"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "asset_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "failure_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "patch_summary": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "proposed_assumption_updates": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "proposed_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "proposed_questions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "requires_human_review": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

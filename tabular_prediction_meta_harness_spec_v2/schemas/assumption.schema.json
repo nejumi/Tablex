@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Assumption",
+  "type": "object",
+  "required": [
+    "assumption_id",
+    "project_id",
+    "topic",
+    "statement",
+    "status",
+    "confidence",
+    "risk_level",
+    "fallback_policy"
+  ],
+  "properties": {
+    "assumption_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "topic": {
+      "type": "string"
+    },
+    "subject_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "subject_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "statement": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "inferred",
+        "adopted",
+        "confirmed",
+        "challenged",
+        "revised",
+        "deprecated"
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "blocking",
+        "deployment_blocking"
+      ]
+    },
+    "fallback_policy": {
+      "type": "string",
+      "enum": [
+        "infer_and_continue",
+        "conservative_default",
+        "exclude_until_confirmed",
+        "scenario_compare",
+        "require_before_deployment",
+        "block_until_answered"
+      ]
+    },
+    "requires_user_confirmation": {
+      "type": "boolean"
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "used_in": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

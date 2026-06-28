@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentTaskContract",
+  "type": "object",
+  "required": [
+    "task_id",
+    "task_type",
+    "project_id",
+    "objective",
+    "inputs",
+    "required_outputs",
+    "quality_checks",
+    "forbidden_actions"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "task_type": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "objective": {
+      "type": "string"
+    },
+    "inputs": {
+      "type": "object"
+    },
+    "required_outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "schema"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "quality_checks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "forbidden_actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "context_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "output_schema_path": {
+      "type": "string"
+    },
+    "assumption_context": {
+      "type": "object"
+    },
+    "autonomy_level": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExperimentComparison",
+  "type": "object",
+  "required": ["schema_version", "project_id", "runs", "decision", "governance"],
+  "properties": {
+    "schema_version": {
+      "const": "experiment_comparison.v1"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rank", "run_id", "runner_type", "primary_metric_name", "primary_metric_value"],
+        "additionalProperties": true
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": ["best_run_id", "recommendation", "deployment_blockers"],
+      "properties": {
+        "best_run_id": {"type": ["string", "null"]},
+        "recommendation": {"type": "string"},
+        "deployment_blockers": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "governance": {
+      "type": "object",
+      "required": ["evaluation_owned_by_harness", "external_tracker_dependency", "requires_diagnostics_for_decision"],
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

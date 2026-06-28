@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EvaluationSpec",
+  "type": "object",
+  "required": [
+    "id",
+    "project_id",
+    "dataset_snapshot_id",
+    "split_type",
+    "primary_metric",
+    "excluded_columns",
+    "rationale"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "dataset_snapshot_id": {
+      "type": "string"
+    },
+    "split_type": {
+      "type": "string",
+      "enum": [
+        "random",
+        "stratified",
+        "time",
+        "group",
+        "time_group",
+        "rolling",
+        "leave_group_out",
+        "custom"
+      ]
+    },
+    "primary_metric": {
+      "type": "string"
+    },
+    "secondary_metrics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "time_column": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "group_column": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stratify_column": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "excluded_columns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rationale": {
+      "type": "string"
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "blocking"
+      ]
+    },
+    "source_evaluation_candidate_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "assumption_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "approved",
+        "deprecated",
+        "proposed_after_reflection"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

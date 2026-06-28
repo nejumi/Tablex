@@ -1,0 +1,45 @@
+{
+  "task_id": "task_sample_001",
+  "task_type": "draft_data_understanding",
+  "project_id": "__PROJECT_ID__",
+  "objective": "dataset sampleとschemaを読み、Data Understandingのdraftを作成してください。",
+  "inputs": {
+    "schema_path": "data/schema.json",
+    "sample_path": "data/sample.parquet",
+    "project_context_path": ".harness/project_context.json",
+    "assumptions_path": "data/assumptions.yaml",
+    "evidence_path": "data/evidence.json"
+  },
+  "required_outputs": [
+    {
+      "path": "outputs/result.json",
+      "schema": "task_contracts/agent_result.schema.json"
+    },
+    {
+      "path": "reports/understanding_draft.md",
+      "schema": "markdown"
+    }
+  ],
+  "quality_checks": [
+    "target理解、欠損、リーク候補、評価方針候補、人間への質問を含める",
+    "根拠のない断定を避ける",
+    "未回答事項は推測、risk、fallback policyとして明示する"
+  ],
+  "forbidden_actions": [
+    "workspace外のファイルを読む",
+    "外部ネットワークへアクセスする",
+    "secretを探す"
+  ],
+  "context_files": [
+    "AGENTS.md",
+    "harness.yaml"
+  ],
+  "output_schema_path": "task_contracts/agent_result.schema.json",
+  "assumption_context": {
+    "active_assumptions_path": "data/assumptions.yaml",
+    "evidence_path": "data/evidence.json",
+    "unanswered_questions_path": "data/unanswered_questions.json",
+    "fallback_policy_path": "data/fallback_policies.json"
+  },
+  "autonomy_level": 2
+}

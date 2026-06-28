@@ -1,0 +1,2501 @@
+import React from "react";
+import ReactDOM from "react-dom/client";
+import {
+  AlertTriangle,
+  BarChart3,
+  Check,
+  Database,
+  Download,
+  Eye,
+  FileText,
+  GitBranch,
+  Layers,
+  Library,
+  Lightbulb,
+  ListChecks,
+  Loader2,
+  PieChart,
+  Play,
+  Plus,
+  RefreshCw,
+  Upload
+} from "lucide-react";
+import "./styles.css";
+
+type Project = {
+  id: string;
+  name: string;
+  description: string | null;
+  task_type: string | null;
+  target_column: string | null;
+  current_phase: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type DatasetSnapshot = {
+  id: string;
+  project_id: string;
+  artifact_id: string;
+  row_count: number | null;
+  column_count: number | null;
+  schema_hash: string;
+  created_at: string;
+};
+
+type Artifact = {
+  id: string;
+  asset_type: string;
+  name: string;
+  version: number;
+  size_bytes: number | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+type ArtifactPreview = {
+  id: string;
+  asset_type: string;
+  name: string;
+  filename: string;
+  content_type: string;
+  preview_available: boolean;
+  preview: string | null;
+  truncated: boolean;
+  size_bytes: number | null;
+  reason: string | null;
+};
+
+type LibraryAsset = {
+  id: string;
+  asset_type: string;
+  name: string;
+  description: string | null;
+  scope: string;
+  tags: string[];
+  semantic_tags: string[];
+  latest_version_id: string | null;
+  visibility: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type AssetReference = {
+  id: string;
+  source_type: string;
+  source_id: string;
+  target_asset_id: string;
+  target_asset_version_id: string;
+  relation_type: string;
+  locked: boolean;
+  created_at: string;
+  asset: LibraryAsset | null;
+};
+
+type Question = {
+  id: string;
+  topic: string | null;
+  question: string;
+  why_it_matters: string;
+  default_assumption: string | null;
+  choices: string[];
+  risk_level: string;
+  value_of_answer: string;
+  fallback_policy: string;
+  status: string;
+};
+
+type Assumption = {
+  id: string;
+  topic: string;
+  statement: string;
+  status: string;
+  confidence: number;
+  risk_level: string;
+  fallback_policy: string;
+  evidence: Array<{ summary: string; strength: string }>;
+};
+
+type EvaluationCandidate = {
+  id: string;
+  name: string;
+  split_type: string;
+  primary_metric: string;
+  status: string;
+  risk_level: string;
+  confidence: number;
+  rationale_md: string;
+  excluded_columns: string[];
+  time_column: string | null;
+  group_column: string | null;
+  stratify_column: string | null;
+};
+
+type EvaluationSpec = {
+  id: string;
+  name: string;
+  split_type: string;
+  primary_metric: string;
+  status: string;
+  risk_level: string;
+  source_evaluation_candidate_id: string | null;
+};
+
+type Job = {
+  id: string;
+  job_type: string;
+  status: string;
+  priority: number;
+  attempt_count: number;
+  max_attempts: number;
+  input: Record<string, unknown>;
+  context: Record<string, unknown>;
+  policy: Record<string, unknown>;
+  dependency_job_ids: string[];
+  error_message: string | null;
+  approval_required: boolean;
+  approved_by: string | null;
+  approved_at: string | null;
+  cancelled_by: string | null;
+  run_after: string | null;
+  locked_by: string | null;
+  locked_at: string | null;
+  created_at: string;
+  started_at: string | null;
+  ended_at: string | null;
+  output: Record<string, unknown>;
+};
+
+type Run = {
+  id: string;
+  project_id: string;
+  dataset_snapshot_id: string | null;
+  evaluation_spec_id: string | null;
+  split_manifest_id: string | null;
+  model_version_id: string | null;
+  runner_type: string;
+  status: string;
+  metrics: Record<string, unknown>;
+  summary_md: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+};
+
+type LeaderboardEntry = {
+  rank: number;
+  run_id: string;
+  status: string;
+  runner_type: string;
+  primary_metric_name: string | null;
+  primary_metric_value: number | null;
+  metrics: Record<string, unknown>;
+  evaluation_spec_id: string | null;
+  split_manifest_id: string | null;
+  model_version_id: string | null;
+};
+
+type ModelVersion = {
+  id: string;
+  name: string;
+  version: number;
+  model_family: string;
+  model_type: string;
+  task_type: string;
+  artifact_id: string;
+  experiment_run_id: string;
+  primary_metric_name: string | null;
+  primary_metric_value: number | null;
+  status: string;
+  created_at: string;
+};
+
+type ModelValidation = {
+  job: Job;
+  model_version_id: string;
+  validation_status: string | null;
+  max_abs_metric_delta: number | null;
+  metrics: Record<string, unknown>;
+  artifacts: Artifact[];
+  created_at: string;
+  ended_at: string | null;
+};
+
+type ResearchBrief = {
+  id: string;
+  title: string;
+  question: string;
+  summary_md: string;
+  sources: Array<Record<string, unknown>>;
+  key_findings: string[];
+  recommended_approaches: Array<Record<string, unknown>>;
+  artifact_id: string | null;
+  status: string;
+  created_at: string;
+};
+
+type Idea = {
+  id: string;
+  title: string;
+  hypothesis: string;
+  approach_type: string;
+  rationale_md: string;
+  feature_strategy: Record<string, unknown>;
+  modeling_strategy: Record<string, unknown>;
+  evaluation_notes_md: string | null;
+  expected_artifacts: string[];
+  agent_task_contract: Record<string, unknown>;
+  confidence: number;
+  risk_level: string;
+  status: string;
+  priority: number;
+  artifact_id: string | null;
+  created_at: string;
+};
+
+type Report = {
+  id: string;
+  report_type: string;
+  title: string;
+  summary: string;
+  artifact_id: string;
+  status: string;
+  created_at: string;
+};
+
+type VisualizationSpec = {
+  id: string;
+  title: string;
+  chart_type: string;
+  spec: Record<string, unknown>;
+  artifact_id: string;
+  status: string;
+  created_at: string;
+};
+
+type Insight = {
+  id: string;
+  insight_type: string;
+  title: string;
+  summary: string;
+  severity: string;
+  confidence: number;
+  status: string;
+  source_asset_ids: Array<{ asset_type: string; asset_id: string }>;
+  evidence_ids: string[];
+  artifact_id: string;
+  created_at: string;
+};
+
+type Overview = {
+  project: Project;
+  counts: Record<string, number>;
+  next_actions: string[];
+  latest_dataset_snapshot_id: string | null;
+  high_risk_assumptions: Assumption[];
+  recent_artifacts: Artifact[];
+  recent_jobs: Job[];
+};
+
+type LineageEdge = {
+  id: string;
+  from_asset_type: string;
+  from_asset_id: string;
+  to_asset_type: string;
+  to_asset_id: string;
+  relation_type: string;
+};
+
+const apiBase = import.meta.env.VITE_API_BASE ?? "";
+const tabs = [
+  "Overview",
+  "Data",
+  "Understanding",
+  "Assumptions",
+  "Evaluation",
+  "Approach",
+  "Experiments",
+  "Leaderboard",
+  "Reports",
+  "Assets",
+  "Library",
+  "Jobs",
+  "Lineage"
+] as const;
+type Tab = (typeof tabs)[number];
+
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${apiBase}${path}`, init);
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || response.statusText);
+  }
+  return response.json() as Promise<T>;
+}
+
+function App() {
+  const [projects, setProjects] = React.useState<Project[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = React.useState<string | null>(null);
+  const [tab, setTab] = React.useState<Tab>("Overview");
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const refreshProjects = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api<Project[]>("/api/projects");
+      setProjects(data);
+      if (!selectedProjectId && data[0]) {
+        setSelectedProjectId(data[0].id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedProjectId]);
+
+  React.useEffect(() => {
+    void refreshProjects();
+  }, [refreshProjects]);
+
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">T</div>
+          <div>
+            <div className="brand-name">Tablex</div>
+            <div className="brand-subtitle">Prediction workbench</div>
+          </div>
+        </div>
+        <div className="nav-label">Projects</div>
+        <div className="project-list">
+          {projects.map((project) => (
+            <button
+              key={project.id}
+              className={project.id === selectedProjectId ? "project-item active" : "project-item"}
+              onClick={() => {
+                setSelectedProjectId(project.id);
+                setTab("Overview");
+              }}
+            >
+              <span>{project.name}</span>
+              <small>{project.current_phase}</small>
+            </button>
+          ))}
+        </div>
+        <CreateProjectForm onCreated={refreshProjects} />
+      </aside>
+      <main className="main">
+        <header className="topbar">
+          <div>
+            <h1>{selectedProject ? selectedProject.name : "Projects"}</h1>
+            <p>{selectedProject?.description || "Evaluation-first workspace for tabular prediction tasks."}</p>
+          </div>
+          <button className="icon-button" onClick={() => void refreshProjects()} title="Refresh projects">
+            <RefreshCw size={18} />
+          </button>
+        </header>
+        {error ? <div className="banner danger">{error}</div> : null}
+        {loading ? <LoadingBlock label="Loading projects" /> : null}
+        {!loading && !selectedProject ? (
+          <EmptyState
+            icon={<Database size={28} />}
+            title="Create the first prediction project"
+            body="Projects hold dataset snapshots, assumptions, evaluation designs, artifacts, jobs, and lineage for one prediction task."
+          />
+        ) : null}
+        {selectedProject ? (
+          <>
+            <nav className="tabs">
+              {tabs.map((item) => (
+                <button key={item} className={item === tab ? "tab active" : "tab"} onClick={() => setTab(item)}>
+                  {item}
+                </button>
+              ))}
+            </nav>
+            <ProjectDetail project={selectedProject} tab={tab} onProjectChanged={refreshProjects} />
+          </>
+        ) : null}
+      </main>
+    </div>
+  );
+}
+
+function CreateProjectForm({ onCreated }: { onCreated: () => Promise<void> }) {
+  const [name, setName] = React.useState("");
+  const [target, setTarget] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) return;
+    setBusy(true);
+    await api<Project>("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim(), target_column: target.trim() || null })
+    });
+    setName("");
+    setTarget("");
+    setBusy(false);
+    await onCreated();
+  }
+
+  return (
+    <form className="create-form" onSubmit={(event) => void submit(event)}>
+      <input value={name} onChange={(event) => setName(event.target.value)} placeholder="New project name" />
+      <input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Target column" />
+      <button className="primary-button" disabled={busy || !name.trim()}>
+        {busy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+        Create
+      </button>
+    </form>
+  );
+}
+
+function ProjectDetail({
+  project,
+  tab,
+  onProjectChanged
+}: {
+  project: Project;
+  tab: Tab;
+  onProjectChanged: () => Promise<void>;
+}) {
+  const [overview, setOverview] = React.useState<Overview | null>(null);
+  const [datasets, setDatasets] = React.useState<DatasetSnapshot[]>([]);
+  const [questions, setQuestions] = React.useState<Question[]>([]);
+  const [assumptions, setAssumptions] = React.useState<Assumption[]>([]);
+  const [candidates, setCandidates] = React.useState<EvaluationCandidate[]>([]);
+  const [specs, setSpecs] = React.useState<EvaluationSpec[]>([]);
+  const [artifacts, setArtifacts] = React.useState<Artifact[]>([]);
+  const [jobs, setJobs] = React.useState<Job[]>([]);
+  const [runs, setRuns] = React.useState<Run[]>([]);
+  const [leaderboard, setLeaderboard] = React.useState<LeaderboardEntry[]>([]);
+  const [modelVersions, setModelVersions] = React.useState<ModelVersion[]>([]);
+  const [validationsByModelVersion, setValidationsByModelVersion] = React.useState<Record<string, ModelValidation[]>>({});
+  const [researchBriefs, setResearchBriefs] = React.useState<ResearchBrief[]>([]);
+  const [ideas, setIdeas] = React.useState<Idea[]>([]);
+  const [reports, setReports] = React.useState<Report[]>([]);
+  const [visualizations, setVisualizations] = React.useState<VisualizationSpec[]>([]);
+  const [insights, setInsights] = React.useState<Insight[]>([]);
+  const [libraryAssets, setLibraryAssets] = React.useState<LibraryAsset[]>([]);
+  const [projectAssetReferences, setProjectAssetReferences] = React.useState<AssetReference[]>([]);
+  const [lineage, setLineage] = React.useState<LineageEdge[]>([]);
+  const [understanding, setUnderstanding] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const refresh = React.useCallback(async () => {
+    setError(null);
+    try {
+      const [
+        overviewData,
+        datasetsData,
+        questionsData,
+        assumptionsData,
+        candidatesData,
+        specsData,
+        artifactsData,
+        jobsData,
+        runsData,
+        leaderboardData,
+        modelVersionsData,
+        researchBriefsData,
+        ideasData,
+        reportsData,
+        visualizationsData,
+        insightsData,
+        libraryAssetsData,
+        projectAssetReferencesData,
+        lineageData,
+        understandingData
+      ] = await Promise.all([
+        api<Overview>(`/api/projects/${project.id}/overview`),
+        api<DatasetSnapshot[]>(`/api/projects/${project.id}/datasets`),
+        api<Question[]>(`/api/projects/${project.id}/questions`),
+        api<Assumption[]>(`/api/projects/${project.id}/assumptions`),
+        api<EvaluationCandidate[]>(`/api/projects/${project.id}/evaluation/candidates`),
+        api<EvaluationSpec[]>(`/api/projects/${project.id}/evaluation/specs`),
+        api<Artifact[]>(`/api/projects/${project.id}/artifacts`),
+        api<Job[]>(`/api/projects/${project.id}/jobs`),
+        api<Run[]>(`/api/projects/${project.id}/runs`),
+        api<LeaderboardEntry[]>(`/api/projects/${project.id}/leaderboard`),
+        api<ModelVersion[]>(`/api/projects/${project.id}/model-versions`),
+        api<ResearchBrief[]>(`/api/projects/${project.id}/approach/research-briefs`),
+        api<Idea[]>(`/api/projects/${project.id}/approach/ideas`),
+        api<Report[]>(`/api/projects/${project.id}/reports`),
+        api<VisualizationSpec[]>(`/api/projects/${project.id}/visualizations`),
+        api<Insight[]>(`/api/projects/${project.id}/insights`),
+        api<LibraryAsset[]>(`/api/assets`),
+        api<AssetReference[]>(`/api/projects/${project.id}/asset-references`),
+        api<LineageEdge[]>(`/api/projects/${project.id}/lineage`),
+        api<{ markdown: string | null }>(`/api/projects/${project.id}/understanding/latest`)
+      ]);
+      setOverview(overviewData);
+      setDatasets(datasetsData);
+      setQuestions(questionsData);
+      setAssumptions(assumptionsData);
+      setCandidates(candidatesData);
+      setSpecs(specsData);
+      setArtifacts(artifactsData);
+      setJobs(jobsData);
+      setRuns(runsData);
+      setLeaderboard(leaderboardData);
+      setModelVersions(modelVersionsData);
+      setResearchBriefs(researchBriefsData);
+      setIdeas(ideasData);
+      setReports(reportsData);
+      setVisualizations(visualizationsData);
+      setInsights(insightsData);
+      setLibraryAssets(libraryAssetsData);
+      setProjectAssetReferences(projectAssetReferencesData);
+      const validationEntries = await Promise.all(
+        modelVersionsData.map(async (modelVersion) => {
+          const validations = await api<ModelValidation[]>(`/api/model-versions/${modelVersion.id}/validations`);
+          return [modelVersion.id, validations] as const;
+        })
+      );
+      setValidationsByModelVersion(Object.fromEntries(validationEntries));
+      setLineage(lineageData);
+      setUnderstanding(understandingData.markdown);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [project.id]);
+
+  React.useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  async function runAction(action: () => Promise<unknown>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      await refresh();
+      await onProjectChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="detail">
+      {error ? <div className="banner danger">{error}</div> : null}
+      {tab === "Overview" && <OverviewTab overview={overview} assumptions={assumptions} jobs={jobs} artifacts={artifacts} />}
+      {tab === "Data" && (
+        <DataTab project={project} datasets={datasets} artifacts={artifacts} busy={busy} runAction={runAction} />
+      )}
+      {tab === "Understanding" && (
+        <UnderstandingTab
+          understanding={understanding}
+          questions={questions}
+          busy={busy}
+          runAction={() => runAction(() => api(`/api/projects/${project.id}/understanding/run`, { method: "POST" }))}
+          answerQuestion={(questionId, answerValue, answerText) =>
+            runAction(() =>
+              api(`/api/questions/${questionId}/answer`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ answer_value: answerValue, answer_text: answerText || null })
+              })
+            )
+          }
+        />
+      )}
+      {tab === "Assumptions" && (
+        <AssumptionsTab
+          assumptions={assumptions}
+          questions={questions}
+          busy={busy}
+          runAction={() => runAction(() => api(`/api/projects/${project.id}/assumptions/infer`, { method: "POST" }))}
+        />
+      )}
+      {tab === "Evaluation" && (
+        <EvaluationTab
+          project={project}
+          candidates={candidates}
+          specs={specs}
+          artifacts={artifacts}
+          busy={busy}
+          runAction={runAction}
+        />
+      )}
+      {tab === "Approach" && (
+        <ApproachTab
+          project={project}
+          researchBriefs={researchBriefs}
+          ideas={ideas}
+          artifacts={artifacts}
+          busy={busy}
+          runAction={runAction}
+        />
+      )}
+      {tab === "Experiments" && (
+        <ExperimentsTab
+          project={project}
+          jobs={jobs}
+          runs={runs}
+          artifacts={artifacts}
+          busy={busy}
+          runAction={runAction}
+        />
+      )}
+      {tab === "Leaderboard" && (
+        <LeaderboardTab
+          specs={specs}
+          artifacts={artifacts}
+          leaderboard={leaderboard}
+          busy={busy}
+          runAction={runAction}
+        />
+      )}
+      {tab === "Reports" && (
+        <ReportsTab
+          project={project}
+          reports={reports}
+          visualizations={visualizations}
+          insights={insights}
+          busy={busy}
+          runAction={runAction}
+        />
+      )}
+      {tab === "Assets" && (
+        <AssetsTab
+          artifacts={artifacts}
+          modelVersions={modelVersions}
+          validationsByModelVersion={validationsByModelVersion}
+          busy={busy}
+          runAction={runAction}
+        />
+      )}
+      {tab === "Library" && (
+        <LibraryTab
+          project={project}
+          assets={libraryAssets}
+          references={projectAssetReferences}
+          busy={busy}
+          runAction={runAction}
+        />
+      )}
+      {tab === "Jobs" && <JobsTab jobs={jobs} busy={busy} runAction={runAction} />}
+      {tab === "Lineage" && <LineageTab lineage={lineage} />}
+    </section>
+  );
+}
+
+function OverviewTab({
+  overview,
+  assumptions,
+  jobs,
+  artifacts
+}: {
+  overview: Overview | null;
+  assumptions: Assumption[];
+  jobs: Job[];
+  artifacts: Artifact[];
+}) {
+  if (!overview) return <LoadingBlock label="Loading overview" />;
+  return (
+    <div className="stack">
+      <div className="metric-grid">
+        <Metric label="Phase" value={overview.project.current_phase} />
+        <Metric label="Datasets" value={overview.counts.datasets ?? 0} />
+        <Metric label="Assumptions" value={overview.counts.assumptions ?? 0} />
+        <Metric label="Ideas" value={overview.counts.ideas ?? 0} />
+      </div>
+      <Panel title="Next Actions" icon={<ListChecks size={18} />}>
+        <ul className="clean-list">
+          {overview.next_actions.map((action) => (
+            <li key={action}>{action}</li>
+          ))}
+        </ul>
+      </Panel>
+      <div className="two-column">
+        <Panel title="High Risk Assumptions" icon={<AlertTriangle size={18} />}>
+          {assumptions.filter((item) => ["high", "blocking", "deployment_blocking"].includes(item.risk_level)).length ? (
+            <Table
+              headers={["Statement", "Risk", "Policy", "Status"]}
+              rows={assumptions
+                .filter((item) => ["high", "blocking", "deployment_blocking"].includes(item.risk_level))
+                .map((item) => [item.statement, item.risk_level, item.fallback_policy, item.status])}
+            />
+          ) : (
+            <EmptyInline text="High-risk assumptions will appear here after dataset understanding runs." />
+          )}
+        </Panel>
+        <Panel title="Recent Activity" icon={<Play size={18} />}>
+          {jobs.length ? (
+            <Table headers={["Job", "Status"]} rows={jobs.slice(0, 5).map((job) => [job.job_type, job.status])} />
+          ) : (
+            <EmptyInline text="Jobs from profiling, evaluation design, split generation, and agent tasks will appear here." />
+          )}
+        </Panel>
+      </div>
+      <Panel title="Recent Artifacts" icon={<FileText size={18} />}>
+        {artifacts.length ? (
+          <Table
+            headers={["Type", "Name", "Version"]}
+            rows={artifacts.slice(0, 8).map((artifact) => [artifact.asset_type, artifact.name, `v${artifact.version}`])}
+          />
+        ) : (
+          <EmptyInline text="Dataset snapshots, profiles, reports, evaluation specs, and split manifests will be registered here." />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function DataTab({
+  project,
+  datasets,
+  artifacts,
+  busy,
+  runAction
+}: {
+  project: Project;
+  datasets: DatasetSnapshot[];
+  artifacts: Artifact[];
+  busy: boolean;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  const [file, setFile] = React.useState<File | null>(null);
+  const [target, setTarget] = React.useState(project.target_column ?? "");
+  const [qualityPreview, setQualityPreview] = React.useState<ArtifactPreview | null>(null);
+  const [qualityPreviewError, setQualityPreviewError] = React.useState<string | null>(null);
+  const [qualityPreviewLoadingId, setQualityPreviewLoadingId] = React.useState<string | null>(null);
+
+  async function uploadDataset() {
+    if (!file) return;
+    const body = new FormData();
+    body.append("file", file);
+    if (target.trim()) body.append("target_column", target.trim());
+    await runAction(() =>
+      api(`/api/projects/${project.id}/datasets/upload`, {
+        method: "POST",
+        body
+      })
+    );
+    setFile(null);
+  }
+
+  async function loadQualityPreview(artifactId: string) {
+    setQualityPreviewLoadingId(artifactId);
+    setQualityPreviewError(null);
+    try {
+      setQualityPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setQualityPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setQualityPreviewLoadingId(null);
+    }
+  }
+
+  const datasetArtifacts = artifacts.filter((artifact) => artifact.asset_type === "dataset_snapshot");
+  const qualityArtifacts = artifacts.filter((artifact) =>
+    ["data_quality_gate", "data_quality_report"].includes(artifact.asset_type)
+  );
+  const latestDataset = datasets[0] ?? null;
+  return (
+    <div className="stack">
+      <Panel title="Dataset Upload" icon={<Upload size={18} />}>
+        <div className="upload-row">
+          <input type="file" accept=".csv,.parquet" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+          <input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Target column" />
+          <button className="primary-button" disabled={!file || busy} onClick={() => void uploadDataset()}>
+            {busy ? <Loader2 className="spin" size={16} /> : <Upload size={16} />}
+            Upload
+          </button>
+          <button
+            className="secondary-button"
+            disabled={!latestDataset || busy}
+            onClick={() =>
+              latestDataset
+                ? void runAction(() => api(`/api/datasets/${latestDataset.id}/quality/run`, { method: "POST" }))
+                : undefined
+            }
+          >
+            {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+            Analyze Quality
+          </button>
+        </div>
+      </Panel>
+      <Panel title="Dataset Snapshots" icon={<Database size={18} />}>
+        {datasets.length ? (
+          <Table
+            headers={["Snapshot", "Rows", "Columns", "Schema Hash"]}
+            rows={datasets.map((dataset) => [
+              dataset.id,
+              dataset.row_count ?? "-",
+              dataset.column_count ?? "-",
+              dataset.schema_hash.slice(0, 12)
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Uploaded CSV or Parquet files will become DatasetSnapshot assets with schema, row count, and lineage." />
+        )}
+      </Panel>
+      <Panel title="Source Artifacts" icon={<FileText size={18} />}>
+        {datasetArtifacts.length ? (
+          <Table
+            headers={["Artifact", "Version", "Size"]}
+            rows={datasetArtifacts.map((artifact) => [artifact.name, `v${artifact.version}`, formatBytes(artifact.size_bytes)])}
+          />
+        ) : (
+          <EmptyInline text="Raw uploaded files are stored in the local artifact store with content hashes." />
+        )}
+      </Panel>
+      <Panel title="Data Quality Gates" icon={<ListChecks size={18} />}>
+        {qualityArtifacts.length ? (
+          <Table
+            headers={["Type", "Name", "Severity", "Dataset", "Actions"]}
+            rows={qualityArtifacts.map((artifact) => [
+              artifact.asset_type,
+              artifact.name,
+              String(artifact.metadata.severity ?? "-"),
+              String(artifact.metadata.dataset_snapshot_id ?? "-"),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={qualityPreviewLoadingId === artifact.id}
+                  onClick={() => void loadQualityPreview(artifact.id)}
+                  title="Preview data quality artifact"
+                >
+                  {qualityPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download data quality artifact">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Data quality gates will summarize leakage, missingness, identity, time/group, duplicate, and evaluation readiness risks for each DatasetSnapshot." />
+        )}
+      </Panel>
+      <Panel title="Data Quality Preview" icon={<FileText size={18} />}>
+        {qualityPreviewError ? <div className="banner danger">{qualityPreviewError}</div> : null}
+        {qualityPreview?.preview_available ? (
+          <pre className="markdown-preview">{qualityPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={qualityPreview?.reason ?? "Analyze quality or select a quality artifact to inspect gates, guidance, and agent-context notes."} />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function UnderstandingTab({
+  understanding,
+  questions,
+  busy,
+  runAction,
+  answerQuestion
+}: {
+  understanding: string | null;
+  questions: Question[];
+  busy: boolean;
+  runAction: () => Promise<void>;
+  answerQuestion: (questionId: string, answerValue: string, answerText: string) => Promise<void>;
+}) {
+  return (
+    <div className="stack">
+      <div className="toolbar">
+        <button className="secondary-button" disabled={busy} onClick={() => void runAction()}>
+          {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+          Run Understanding
+        </button>
+      </div>
+      <Panel title="Data Understanding Report" icon={<FileText size={18} />}>
+        {understanding ? (
+          <pre className="markdown-preview">{understanding}</pre>
+        ) : (
+          <EmptyInline text="Executive summary, target profile, data quality findings, leakage risks, recommended evaluation direction, questions, and assumptions will appear here." />
+        )}
+      </Panel>
+      <Panel title="Questions For Human" icon={<ListChecks size={18} />}>
+        {questions.length ? (
+          <div className="question-list">
+            {questions.map((question) => (
+              <QuestionCard
+                key={question.id}
+                question={question}
+                busy={busy}
+                answerQuestion={answerQuestion}
+              />
+            ))}
+          </div>
+        ) : (
+          <EmptyInline text="Questions about target definition, row semantics, prediction-time availability, time structure, group structure, and metrics will appear here." />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function QuestionCard({
+  question,
+  busy,
+  answerQuestion
+}: {
+  question: Question;
+  busy: boolean;
+  answerQuestion: (questionId: string, answerValue: string, answerText: string) => Promise<void>;
+}) {
+  const [answerValue, setAnswerValue] = React.useState(question.choices[0] ?? "");
+  const [answerText, setAnswerText] = React.useState("");
+
+  return (
+    <div className="question-card">
+      <div>
+        <div className="question-title">{question.question}</div>
+        <div className="question-meta">
+          <span className="badge risk">{question.risk_level}</span>
+          <span className="badge muted">{question.value_of_answer}</span>
+          <span className="badge muted">{question.fallback_policy}</span>
+          <span className="badge">{question.status}</span>
+        </div>
+        <p>{question.why_it_matters}</p>
+      </div>
+      <div className="answer-row">
+        <select value={answerValue} onChange={(event) => setAnswerValue(event.target.value)} disabled={question.status === "answered"}>
+          {question.choices.map((choice) => (
+            <option key={choice} value={choice}>
+              {choice}
+            </option>
+          ))}
+        </select>
+        <input
+          value={answerText}
+          onChange={(event) => setAnswerText(event.target.value)}
+          placeholder="Answer note"
+          disabled={question.status === "answered"}
+        />
+        <button
+          className="secondary-button"
+          disabled={busy || question.status === "answered" || !answerValue}
+          onClick={() => void answerQuestion(question.id, answerValue, answerText)}
+        >
+          <Check size={16} />
+          Answer
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AssumptionsTab({
+  assumptions,
+  questions,
+  busy,
+  runAction
+}: {
+  assumptions: Assumption[];
+  questions: Question[];
+  busy: boolean;
+  runAction: () => Promise<void>;
+}) {
+  return (
+    <div className="stack">
+      <div className="toolbar">
+        <button className="secondary-button" disabled={busy} onClick={() => void runAction()}>
+          {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+          Apply Fallbacks
+        </button>
+      </div>
+      <Panel title="Assumptions" icon={<AlertTriangle size={18} />}>
+        {assumptions.length ? (
+          <Table
+            headers={["Statement", "Confidence", "Risk", "Fallback", "Status"]}
+            rows={assumptions.map((assumption) => [
+              assumption.statement,
+              `${Math.round(assumption.confidence * 100)}%`,
+              assumption.risk_level,
+              assumption.fallback_policy,
+              assumption.status
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Inferred, adopted, confirmed, challenged, and deployment-blocking assumptions will be tracked with confidence, risk, fallback policy, and evidence." />
+        )}
+      </Panel>
+      <Panel title="Evidence Links" icon={<GitBranch size={18} />}>
+        {assumptions.some((assumption) => assumption.evidence.length) ? (
+          <Table
+            headers={["Assumption", "Evidence", "Strength"]}
+            rows={assumptions.flatMap((assumption) =>
+              assumption.evidence.map((evidence) => [assumption.id, evidence.summary, evidence.strength])
+            )}
+          />
+        ) : (
+          <EmptyInline text={`Open questions: ${questions.length}. Evidence supporting or contradicting assumptions will appear here.`} />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function EvaluationTab({
+  project,
+  candidates,
+  specs,
+  artifacts,
+  busy,
+  runAction
+}: {
+  project: Project;
+  candidates: EvaluationCandidate[];
+  specs: EvaluationSpec[];
+  artifacts: Artifact[];
+  busy: boolean;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  const latestQualityGate = artifacts.find((artifact) => artifact.asset_type === "data_quality_gate") ?? null;
+  return (
+    <div className="stack">
+      <div className="toolbar">
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() => void runAction(() => api(`/api/projects/${project.id}/evaluation/design`, { method: "POST" }))}
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+          Design Candidates
+        </button>
+      </div>
+      <Panel title="Evaluation Candidates" icon={<BarChart3 size={18} />}>
+        {candidates.length ? (
+          <div className="card-grid">
+            {candidates.map((candidate) => (
+              <div key={candidate.id} className="mini-card">
+                <div className="mini-card-title">{candidate.name}</div>
+                <div className="badge-row">
+                  <span className="badge">{candidate.status}</span>
+                  <span className="badge muted">{candidate.split_type}</span>
+                  <span className="badge risk">{candidate.risk_level}</span>
+                </div>
+                <p>{candidate.rationale_md}</p>
+                <dl className="facts">
+                  <div>
+                    <dt>Metric</dt>
+                    <dd>{candidate.primary_metric}</dd>
+                  </div>
+                  <div>
+                    <dt>Stratify</dt>
+                    <dd>{candidate.stratify_column || "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Time</dt>
+                    <dd>{candidate.time_column || "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Group</dt>
+                    <dd>{candidate.group_column || "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Excluded</dt>
+                    <dd>{candidate.excluded_columns.length || "-"}</dd>
+                  </div>
+                </dl>
+                <button
+                  className="secondary-button"
+                  disabled={busy || candidate.status === "promoted_to_spec"}
+                  onClick={() =>
+                    void runAction(() =>
+                      api(`/api/evaluation-candidates/${candidate.id}/promote`, { method: "POST" })
+                    )
+                  }
+                >
+                  <Check size={16} />
+                  Promote
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyInline text="Primary, alternative, reference random, time-aware, and group-aware evaluation candidates will appear here before any EvaluationSpec is adopted." />
+        )}
+      </Panel>
+      <Panel title="Quality Gate Context" icon={<AlertTriangle size={18} />}>
+        {latestQualityGate ? (
+          <Table
+            headers={["Gate", "Severity", "Dataset", "Preview"]}
+            rows={[
+              [
+                latestQualityGate.name,
+                String(latestQualityGate.metadata.severity ?? "-"),
+                String(latestQualityGate.metadata.dataset_snapshot_id ?? "-"),
+                <a className="icon-link" key={latestQualityGate.id} href={`${apiBase}/api/artifacts/${latestQualityGate.id}/download`} title="Download quality gate">
+                  <Download size={16} />
+                </a>
+              ]
+            ]}
+          />
+        ) : (
+          <EmptyInline text="Run data quality analysis from the Data tab to expose leakage, availability, missingness, identity, time/group, duplicate, and evaluation readiness findings before adopting an EvaluationSpec." />
+        )}
+      </Panel>
+      <Panel title="Evaluation Specs" icon={<Check size={18} />}>
+        {specs.length ? (
+          <Table
+            headers={["Spec", "Split", "Metric", "Status", "Actions"]}
+            rows={specs.map((spec) => [
+              spec.id,
+              spec.split_type,
+              spec.primary_metric,
+              spec.status,
+              <div className="row-actions" key={spec.id}>
+                <button
+                  className="icon-button"
+                  disabled={busy || spec.status === "approved"}
+                  onClick={() => void runAction(() => api(`/api/evaluation-specs/${spec.id}/approve`, { method: "POST" }))}
+                  title="Approve EvaluationSpec"
+                >
+                  <Check size={16} />
+                </button>
+                <button
+                  className="icon-button"
+                  disabled={busy || spec.status !== "approved" || !["random", "stratified", "time", "group"].includes(spec.split_type)}
+                  onClick={() =>
+                    void runAction(() => api(`/api/evaluation-specs/${spec.id}/generate-split`, { method: "POST" }))
+                  }
+                  title="Generate SplitManifest"
+                >
+                  <GitBranch size={16} />
+                </button>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Adopted primary EvaluationSpecs will appear here. Baselines should use an approved spec and generated SplitManifest." />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function ApproachTab({
+  project,
+  researchBriefs,
+  ideas,
+  artifacts,
+  busy,
+  runAction
+}: {
+  project: Project;
+  researchBriefs: ResearchBrief[];
+  ideas: Idea[];
+  artifacts: Artifact[];
+  busy: boolean;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  const latestBrief = researchBriefs[0] ?? null;
+  const [contextPreview, setContextPreview] = React.useState<ArtifactPreview | null>(null);
+  const [contextPreviewError, setContextPreviewError] = React.useState<string | null>(null);
+  const [contextPreviewLoadingId, setContextPreviewLoadingId] = React.useState<string | null>(null);
+  const [planPreview, setPlanPreview] = React.useState<ArtifactPreview | null>(null);
+  const [planPreviewError, setPlanPreviewError] = React.useState<string | null>(null);
+  const [planPreviewLoadingId, setPlanPreviewLoadingId] = React.useState<string | null>(null);
+  const [workspacePreview, setWorkspacePreview] = React.useState<ArtifactPreview | null>(null);
+  const [workspacePreviewError, setWorkspacePreviewError] = React.useState<string | null>(null);
+  const [workspacePreviewLoadingId, setWorkspacePreviewLoadingId] = React.useState<string | null>(null);
+
+  async function loadContextPreview(artifactId: string) {
+    setContextPreviewLoadingId(artifactId);
+    setContextPreviewError(null);
+    try {
+      setContextPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setContextPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setContextPreviewLoadingId(null);
+    }
+  }
+
+  async function loadPlanPreview(artifactId: string) {
+    setPlanPreviewLoadingId(artifactId);
+    setPlanPreviewError(null);
+    try {
+      setPlanPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setPlanPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPlanPreviewLoadingId(null);
+    }
+  }
+
+  async function loadWorkspacePreview(artifactId: string) {
+    setWorkspacePreviewLoadingId(artifactId);
+    setWorkspacePreviewError(null);
+    try {
+      setWorkspacePreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setWorkspacePreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorkspacePreviewLoadingId(null);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <div className="toolbar">
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
+            void runAction(() =>
+              api(`/api/projects/${project.id}/approach/research-briefs`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({})
+              })
+            )
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+          Research Brief
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
+            void runAction(() => api(`/api/projects/${project.id}/approach/ideas/generate`, { method: "POST" }))
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <Lightbulb size={16} />}
+          Generate Ideas
+        </button>
+      </div>
+      <Panel title="Research Briefs" icon={<FileText size={18} />}>
+        {researchBriefs.length ? (
+          <div className="stack">
+            <Table
+              headers={["Brief", "Status", "Sources", "Recommendations", "Artifact"]}
+              rows={researchBriefs.map((brief) => [
+                brief.title,
+                brief.status,
+                brief.sources.length,
+                brief.recommended_approaches.length,
+                brief.artifact_id ?? "-"
+              ])}
+            />
+            {latestBrief ? <pre className="markdown-preview">{latestBrief.summary_md}</pre> : null}
+          </div>
+        ) : (
+          <EmptyInline text="Research briefs will summarize project artifacts, evaluation constraints, Skill hooks, and future controlled web or literature search requirements before proposing approaches." />
+        )}
+      </Panel>
+      <Panel title="Approach Candidates" icon={<Lightbulb size={18} />}>
+        {ideas.length ? (
+          <div className="card-grid">
+            {ideas.map((idea) => (
+              <div key={idea.id} className="mini-card">
+                <div className="mini-card-title">{idea.title}</div>
+                <div className="badge-row">
+                  <span className="badge">{idea.status}</span>
+                  <span className="badge muted">{idea.approach_type.replace(/_/g, " ")}</span>
+                  <span className="badge risk">{idea.risk_level}</span>
+                </div>
+                <p>{idea.hypothesis}</p>
+                <dl className="facts">
+                  <div>
+                    <dt>Confidence</dt>
+                    <dd>{Math.round(idea.confidence * 100)}%</dd>
+                  </div>
+                  <div>
+                    <dt>Priority</dt>
+                    <dd>{idea.priority}</dd>
+                  </div>
+                  <div>
+                    <dt>Research</dt>
+                    <dd>{formatContractModes(idea)}</dd>
+                  </div>
+                  <div>
+                    <dt>Artifact</dt>
+                    <dd>{idea.artifact_id ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Context</dt>
+                    <dd>{latestContextPackArtifact(artifacts, idea.id)?.id ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Plan</dt>
+                    <dd>{latestExperimentPlanArtifact(artifacts, idea.id)?.id ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Workspace</dt>
+                    <dd>{latestAgentWorkspaceArtifact(artifacts, idea.id)?.id ?? "-"}</dd>
+                  </div>
+                </dl>
+                <pre className="compact-json">{truncateJson(idea.agent_task_contract)}</pre>
+                <div className="button-row">
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() =>
+                      void runAction(() => api(`/api/ideas/${idea.id}/prepare-agent-context`, { method: "POST" }))
+                    }
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+                    Prepare Context
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={!latestContextPackArtifact(artifacts, idea.id) || contextPreviewLoadingId === latestContextPackArtifact(artifacts, idea.id)?.id}
+                    onClick={() => {
+                      const contextArtifact = latestContextPackArtifact(artifacts, idea.id);
+                      if (contextArtifact) void loadContextPreview(contextArtifact.id);
+                    }}
+                    title="Preview context pack"
+                  >
+                    {contextPreviewLoadingId === latestContextPackArtifact(artifacts, idea.id)?.id ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <Eye size={16} />
+                    )}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() =>
+                      void runAction(() => api(`/api/ideas/${idea.id}/experiment-plan`, { method: "POST" }))
+                    }
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+                    Plan
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={!latestExperimentPlanArtifact(artifacts, idea.id) || planPreviewLoadingId === latestExperimentPlanArtifact(artifacts, idea.id)?.id}
+                    onClick={() => {
+                      const planArtifact = latestExperimentPlanArtifact(artifacts, idea.id);
+                      if (planArtifact) void loadPlanPreview(planArtifact.id);
+                    }}
+                    title="Preview experiment plan"
+                  >
+                    {planPreviewLoadingId === latestExperimentPlanArtifact(artifacts, idea.id)?.id ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <Eye size={16} />
+                    )}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() =>
+                      void runAction(() => api(`/api/ideas/${idea.id}/run-agent-task`, { method: "POST" }))
+                    }
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                    Run Stub Task
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={!latestAgentWorkspaceArtifact(artifacts, idea.id) || workspacePreviewLoadingId === latestAgentWorkspaceArtifact(artifacts, idea.id)?.id}
+                    onClick={() => {
+                      const workspaceArtifact = latestAgentWorkspaceArtifact(artifacts, idea.id);
+                      if (workspaceArtifact) void loadWorkspacePreview(workspaceArtifact.id);
+                    }}
+                    title="Preview workspace manifest"
+                  >
+                    {workspacePreviewLoadingId === latestAgentWorkspaceArtifact(artifacts, idea.id)?.id ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <Eye size={16} />
+                    )}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyInline text="Flexible candidate approaches will appear here as evidence-backed Ideas with AgentTaskContract payloads for Codex, Skills, and controlled research." />
+        )}
+      </Panel>
+      <Panel title="Agent Context Pack Preview" icon={<FileText size={18} />}>
+        {contextPreviewError ? <div className="banner danger">{contextPreviewError}</div> : null}
+        {contextPreview?.preview_available ? (
+          <pre className="markdown-preview">{contextPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={contextPreview?.reason ?? "Prepare and preview an AgentContextPack to inspect the exact harness-owned context before agent execution."} />
+        )}
+      </Panel>
+      <Panel title="Experiment Plan Preview" icon={<ListChecks size={18} />}>
+        {planPreviewError ? <div className="banner danger">{planPreviewError}</div> : null}
+        {planPreview?.preview_available ? (
+          <pre className="markdown-preview">{planPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={planPreview?.reason ?? "Create and preview an ExperimentPlan to inspect runner-ready approach choices, scenario comparisons, evaluation locks, and research governance."} />
+        )}
+      </Panel>
+      <Panel title="Agent Workspace Preview" icon={<Layers size={18} />}>
+        {workspacePreviewError ? <div className="banner danger">{workspacePreviewError}</div> : null}
+        {workspacePreview?.preview_available ? (
+          <pre className="markdown-preview">{workspacePreview.preview}</pre>
+        ) : (
+          <EmptyInline text={workspacePreview?.reason ?? "Run the stub task to materialize a controlled workspace manifest with copied context, execution policy, and safety controls."} />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function ExperimentsTab({
+  project,
+  jobs,
+  runs,
+  artifacts,
+  busy,
+  runAction
+}: {
+  project: Project;
+  jobs: Job[];
+  runs: Run[];
+  artifacts: Artifact[];
+  busy: boolean;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  const experimentJobs = jobs.filter((job) =>
+    ["run_baseline", "run_agent_task", "create_experiment_plan", "compare_experiments", "draft_run_report"].includes(job.job_type)
+  );
+  const experimentArtifacts = artifacts.filter((artifact) =>
+    ["experiment_plan", "experiment_comparison", "experiment_comparison_report", "run_report"].includes(artifact.asset_type)
+  );
+  const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
+
+  async function loadPreview(artifactId: string) {
+    setPreviewLoadingId(artifactId);
+    setPreviewError(null);
+    try {
+      setPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPreviewLoadingId(null);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <div className="toolbar">
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() => void runAction(() => api(`/api/projects/${project.id}/baseline/run`, { method: "POST" }))}
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+          Run Baseline
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() => void runAction(() => api(`/api/projects/${project.id}/experiments/compare`, { method: "POST" }))}
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+          Compare Runs
+        </button>
+      </div>
+      <Panel title="Experiment Runs" icon={<Play size={18} />}>
+        {runs.length ? (
+          <Table
+            headers={["Run", "Runner", "Status", "Model", "ModelVersion", "Features", "Primary Metric", "Spec", "Split", "Actions"]}
+            rows={runs.map((run) => [
+              run.id,
+              run.runner_type,
+              run.status,
+              formatBaseline(run.metrics),
+              run.model_version_id ?? "-",
+              formatFeatureCount(run.metrics),
+              formatMetric(run.metrics),
+              run.evaluation_spec_id ?? "-",
+              run.split_manifest_id ?? "-",
+              <button
+                className="icon-button"
+                disabled={busy}
+                key={run.id}
+                onClick={() => void runAction(() => api(`/api/runs/${run.id}/report`, { method: "POST" }))}
+                title="Draft run report"
+              >
+                {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+              </button>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Baseline runs, agent task runs, failed repair attempts, metrics, parameters, and linked artifacts will appear here." />
+        )}
+      </Panel>
+      <Panel title="Experiment Lifecycle Artifacts" icon={<ListChecks size={18} />}>
+        {experimentArtifacts.length ? (
+          <Table
+            headers={["Type", "Name", "Version", "Source", "Actions"]}
+            rows={experimentArtifacts.map((artifact) => [
+              artifact.asset_type,
+              artifact.name,
+              `v${artifact.version}`,
+              String(artifact.metadata.run_id ?? artifact.metadata.idea_id ?? artifact.metadata.best_run_id ?? "-"),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={previewLoadingId === artifact.id}
+                  onClick={() => void loadPreview(artifact.id)}
+                  title="Preview experiment artifact"
+                >
+                  {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download experiment artifact">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Experiment plans, run reports, comparison artifacts, and comparison reports will appear here as the agentic experiment loop progresses." />
+        )}
+      </Panel>
+      <Panel title="Experiment Artifact Preview" icon={<FileText size={18} />}>
+        {previewError ? <div className="banner danger">{previewError}</div> : null}
+        {preview?.preview_available ? (
+          <pre className="markdown-preview">{preview.preview}</pre>
+        ) : (
+          <EmptyInline text={preview?.reason ?? "Select an experiment lifecycle artifact to inspect plans, run reports, or comparisons inside the workbench."} />
+        )}
+      </Panel>
+      <Panel title="Recent Experiment Jobs" icon={<ListChecks size={18} />}>
+        {experimentJobs.length ? (
+          <Table headers={["Job", "Status", "Output"]} rows={experimentJobs.map((job) => [job.job_type, job.status, JSON.stringify(job.output)])} />
+        ) : (
+          <EmptyInline text="Baseline and agent task job status will appear here." />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function ReportsTab({
+  project,
+  reports,
+  visualizations,
+  insights,
+  busy,
+  runAction
+}: {
+  project: Project;
+  reports: Report[];
+  visualizations: VisualizationSpec[];
+  insights: Insight[];
+  busy: boolean;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  const [reportPreview, setReportPreview] = React.useState<ArtifactPreview | null>(null);
+  const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+
+  async function loadReportPreview(reportId: string) {
+    setPreviewLoadingId(reportId);
+    setPreviewError(null);
+    try {
+      setReportPreview(await api<ArtifactPreview>(`/api/reports/${reportId}/preview`));
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPreviewLoadingId(null);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <div className="toolbar">
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
+            void runAction(() =>
+              api(`/api/projects/${project.id}/reports/draft`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ report_type: "project_summary" })
+              })
+            )
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+          Draft Report
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
+            void runAction(() => api(`/api/projects/${project.id}/visualizations/generate`, { method: "POST" }))
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
+          Visualization Dashboard
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
+            void runAction(() => api(`/api/projects/${project.id}/insights/generate`, { method: "POST" }))
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <Lightbulb size={16} />}
+          Generate Insights
+        </button>
+      </div>
+      <Panel title="Insights" icon={<Lightbulb size={18} />}>
+        {insights.length ? (
+          <div className="card-grid">
+            {insights.map((insight) => (
+              <div key={insight.id} className="mini-card insight-card">
+                <div className="mini-card-title">{insight.title}</div>
+                <div className="badge-row">
+                  <span className="badge">{insight.status}</span>
+                  <span className="badge muted">{insight.insight_type.replace(/_/g, " ")}</span>
+                  <span className="badge risk">{insight.severity}</span>
+                </div>
+                <p>{insight.summary}</p>
+                <dl className="facts">
+                  <div>
+                    <dt>Confidence</dt>
+                    <dd>{Math.round(insight.confidence * 100)}%</dd>
+                  </div>
+                  <div>
+                    <dt>Sources</dt>
+                    <dd>{insight.source_asset_ids.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Evidence</dt>
+                    <dd>{insight.evidence_ids.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Artifact</dt>
+                    <dd>{insight.artifact_id}</dd>
+                  </div>
+                </dl>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyInline text="Generated insights will summarize data readiness, assumption risk, evaluation readiness, approach progress, and experiment signals with evidence and lineage." />
+        )}
+      </Panel>
+      <Panel title="Reports" icon={<FileText size={18} />}>
+        {reports.length ? (
+          <Table
+            headers={["Title", "Type", "Status", "Artifact", "Created", "Actions"]}
+            rows={reports.map((report) => [
+              report.title,
+              report.report_type,
+              report.status,
+              report.artifact_id,
+              formatDate(report.created_at),
+              <div className="row-actions" key={report.id}>
+                <button
+                  className="icon-button"
+                  disabled={previewLoadingId === report.id}
+                  onClick={() => void loadReportPreview(report.id)}
+                  title="Preview report"
+                >
+                  {previewLoadingId === report.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/reports/${report.id}/download`} title="Download report">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Project reports will summarize data understanding, assumptions, evaluation design, approach candidates, runs, visualizations, and next decisions." />
+        )}
+      </Panel>
+      <Panel title="Report Preview" icon={<FileText size={18} />}>
+        {previewError ? <div className="banner danger">{previewError}</div> : null}
+        {reportPreview?.preview_available ? (
+          <pre className="markdown-preview">{reportPreview.preview}</pre>
+        ) : (
+          <EmptyInline text={reportPreview?.reason ?? "Select a report preview action to inspect the Markdown report inside the workbench."} />
+        )}
+      </Panel>
+      <Panel title="Visualization Dashboard" icon={<BarChart3 size={18} />}>
+        {visualizations.length ? (
+          <div className="stack">
+            <Table
+              headers={["Title", "Type", "Status", "Rows", "Artifact"]}
+              rows={visualizations.map((visualization) => [
+                visualization.title,
+                visualization.chart_type,
+                visualization.status,
+                visualizationDataRows(visualization).length,
+                visualization.artifact_id
+              ])}
+            />
+            <div className="viz-grid">
+              {visualizations.slice(0, 6).map((visualization) => (
+                <div key={visualization.id} className="viz-card">
+                  <div className="mini-card-title">{visualization.title}</div>
+                  <VisualizationPreview visualization={visualization} />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <EmptyInline text="Portable visualization specs for leaderboard, diagnostics, slices, and report figures will appear here." />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function VisualizationPreview({ visualization }: { visualization: VisualizationSpec }) {
+  if (visualization.chart_type === "metric_cards") {
+    const rows = visualizationDataRows(visualization);
+    if (!rows.length) return <EmptyInline text={visualizationEmptyState(visualization)} />;
+    return (
+      <div className="metric-grid compact">
+        {rows.map((row, index) => (
+          <Metric
+            key={`${String(row.label ?? "metric")}-${index}`}
+            label={String(row.label ?? "Metric")}
+            value={formatVizValue(row.value)}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (visualization.chart_type === "category_bars") {
+    const rows = visualizationDataRows(visualization);
+    const values = rows.map((row) => numberValue(row.count)).filter((value): value is number => value !== null);
+    const maxValue = Math.max(...values, 0);
+    if (!rows.length || maxValue <= 0) return <EmptyInline text={visualizationEmptyState(visualization)} />;
+    return (
+      <div className="viz-preview">
+        {rows.map((row) => {
+          const value = numberValue(row.count) ?? 0;
+          return (
+            <div key={String(row.label ?? "category")} className="viz-row">
+              <div className="viz-label">{String(row.label ?? "-")}</div>
+              <div className="viz-bar-track">
+                <div className="viz-bar" style={{ width: `${Math.max(4, (value / maxValue) * 100)}%` }} />
+              </div>
+              <div className="viz-value">{value}</div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  if (visualization.chart_type === "stage_status") {
+    const rows = visualizationDataRows(visualization);
+    if (!rows.length) return <EmptyInline text={visualizationEmptyState(visualization)} />;
+    return (
+      <Table
+        headers={["Stage", "Status", "Count", "Detail"]}
+        rows={rows.map((row) => [
+          String(row.stage ?? "-"),
+          <span className={String(row.status) === "ready" ? "badge" : "badge risk"} key={String(row.stage)}>
+            {String(row.status ?? "-")}
+          </span>,
+          String(row.count ?? "-"),
+          String(row.detail ?? "-")
+        ])}
+      />
+    );
+  }
+
+  const rows = visualizationRows(visualization);
+  const values = rows
+    .map((row) => row.primary_metric_value)
+    .filter((value): value is number => typeof value === "number");
+  const maxValue = Math.max(...values, 0);
+  if (!rows.length || maxValue <= 0) {
+    return <EmptyInline text={visualizationEmptyState(visualization)} />;
+  }
+  return (
+    <div className="viz-preview">
+      {rows.map((row) => {
+        const value = typeof row.primary_metric_value === "number" ? row.primary_metric_value : 0;
+        const width = maxValue > 0 ? Math.max(4, (value / maxValue) * 100) : 4;
+        return (
+          <div key={row.run_id} className="viz-row">
+            <div className="viz-label">{row.run_id}</div>
+            <div className="viz-bar-track">
+              <div className="viz-bar" style={{ width: `${width}%` }} />
+            </div>
+            <div className="viz-value">{value.toFixed(6)}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LeaderboardTab({
+  specs,
+  artifacts,
+  leaderboard,
+  busy,
+  runAction
+}: {
+  specs: EvaluationSpec[];
+  artifacts: Artifact[];
+  leaderboard: LeaderboardEntry[];
+  busy: boolean;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  const splitManifests = artifacts.filter((artifact) => artifact.asset_type === "split_manifest");
+  const diagnosticArtifacts = artifacts.filter((artifact) =>
+    ["evaluation_diagnostics", "evaluation_diagnostics_report"].includes(artifact.asset_type)
+  );
+  const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
+
+  async function loadPreview(artifactId: string) {
+    setPreviewLoadingId(artifactId);
+    setPreviewError(null);
+    try {
+      setPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPreviewLoadingId(null);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <Panel title="Leaderboard" icon={<BarChart3 size={18} />}>
+        {leaderboard.length ? (
+          <Table
+            headers={["Rank", "Run", "Runner", "Model", "ModelVersion", "Metric", "Value", "Spec", "Split", "Actions"]}
+            rows={leaderboard.map((entry) => [
+              entry.rank,
+              entry.run_id,
+              entry.runner_type,
+              formatBaseline(entry.metrics),
+              entry.model_version_id ?? "-",
+              entry.primary_metric_name ?? "-",
+              entry.primary_metric_value == null ? "-" : entry.primary_metric_value.toFixed(6),
+              entry.evaluation_spec_id ?? "-",
+              entry.split_manifest_id ?? "-",
+              <button
+                className="icon-button"
+                disabled={busy}
+                key={entry.run_id}
+                onClick={() => void runAction(() => api(`/api/runs/${entry.run_id}/diagnostics`, { method: "POST" }))}
+                title="Analyze evaluation diagnostics"
+              >
+                {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+              </button>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Runs will be ranked here with primary metric, secondary metrics, evaluation spec version, split manifest version, and decision status." />
+        )}
+      </Panel>
+      <Panel title="Evaluation Context" icon={<Layers size={18} />}>
+        <Table
+          headers={["Approved Specs", "Split Manifests"]}
+          rows={[[specs.filter((spec) => spec.status === "approved").length, splitManifests.length]]}
+        />
+      </Panel>
+      <Panel title="Evaluation Diagnostics" icon={<ListChecks size={18} />}>
+        {diagnosticArtifacts.length ? (
+          <Table
+            headers={["Type", "Name", "Version", "Run", "Actions"]}
+            rows={diagnosticArtifacts.map((artifact) => [
+              artifact.asset_type,
+              artifact.name,
+              `v${artifact.version}`,
+              String(artifact.metadata.run_id ?? "-"),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={previewLoadingId === artifact.id}
+                  onClick={() => void loadPreview(artifact.id)}
+                  title="Preview diagnostics"
+                >
+                  {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a
+                  className="icon-link"
+                  href={`${apiBase}/api/artifacts/${artifact.id}/download`}
+                  title="Download diagnostics"
+                >
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Evaluation diagnostics, slice metrics, error bins, worst examples, and split sanity checks will appear here after analyzing a run." />
+        )}
+      </Panel>
+      <Panel title="Diagnostics Preview" icon={<FileText size={18} />}>
+        {previewError ? <div className="banner danger">{previewError}</div> : null}
+        {preview?.preview_available ? (
+          <pre className="markdown-preview">{preview.preview}</pre>
+        ) : (
+          <EmptyInline text={preview?.reason ?? "Select a diagnostics artifact to preview JSON or Markdown inside the workbench."} />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function formatMetric(metrics: Record<string, unknown>) {
+  const name = metrics.primary_metric_name;
+  const value = metrics.primary_metric_value;
+  if (typeof name !== "string" || typeof value !== "number") return "-";
+  return `${name}: ${value.toFixed(6)}`;
+}
+
+function formatBaseline(metrics: Record<string, unknown>) {
+  const baselineType = metrics.baseline_type;
+  if (typeof baselineType !== "string") return "-";
+  return baselineType.replace(/_/g, " ");
+}
+
+function formatFeatureCount(metrics: Record<string, unknown>) {
+  const featureCount = metrics.feature_count;
+  if (typeof featureCount !== "number") return "-";
+  return featureCount.toString();
+}
+
+function formatContractModes(idea: Idea) {
+  const inputs = idea.agent_task_contract.inputs;
+  if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) return "-";
+  const modes = (inputs as Record<string, unknown>).allowed_research_modes;
+  if (!Array.isArray(modes)) return "-";
+  return modes.map(String).join(", ");
+}
+
+function latestContextPackArtifact(artifacts: Artifact[], ideaId: string) {
+  return latestIdeaArtifact(artifacts, ideaId, "agent_context_pack");
+}
+
+function latestExperimentPlanArtifact(artifacts: Artifact[], ideaId: string) {
+  return latestIdeaArtifact(artifacts, ideaId, "experiment_plan");
+}
+
+function latestAgentWorkspaceArtifact(artifacts: Artifact[], ideaId: string) {
+  return latestIdeaArtifact(artifacts, ideaId, "agent_workspace_manifest");
+}
+
+function latestIdeaArtifact(artifacts: Artifact[], ideaId: string, assetType: string) {
+  return artifacts.find((artifact) => {
+    const metadataIdeaId = artifact.metadata.idea_id;
+    return artifact.asset_type === assetType && metadataIdeaId === ideaId;
+  });
+}
+
+type VisualizationRow = {
+  run_id: string;
+  primary_metric_value?: number | null;
+};
+
+function visualizationRows(visualization: VisualizationSpec): VisualizationRow[] {
+  return visualizationDataRows(visualization)
+    .map((row) => ({
+      run_id: String(row.run_id ?? "run"),
+      primary_metric_value:
+        typeof row.primary_metric_value === "number" ? row.primary_metric_value : null
+    }));
+}
+
+function visualizationDataRows(visualization: VisualizationSpec): Array<Record<string, unknown>> {
+  const rows = visualization.spec.data;
+  if (!Array.isArray(rows)) return [];
+  return rows.filter(
+    (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row)
+  );
+}
+
+function visualizationEmptyState(visualization: VisualizationSpec) {
+  const emptyState = visualization.spec.empty_state;
+  return typeof emptyState === "string"
+    ? emptyState
+    : "Visualization spec is ready; run more workflow steps to render this view.";
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function formatVizValue(value: unknown) {
+  if (typeof value === "number") return Number.isInteger(value) ? value : value.toFixed(4);
+  if (typeof value === "string") return value;
+  return "-";
+}
+
+function AssetsTab({
+  artifacts,
+  modelVersions,
+  validationsByModelVersion,
+  busy,
+  runAction
+}: {
+  artifacts: Artifact[];
+  modelVersions: ModelVersion[];
+  validationsByModelVersion: Record<string, ModelValidation[]>;
+  busy: boolean;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
+  const validationRows = modelVersions.flatMap((modelVersion) =>
+    (validationsByModelVersion[modelVersion.id] ?? []).map((validation) => ({
+      modelVersion,
+      validation
+    }))
+  );
+
+  async function loadPreview(artifactId: string) {
+    setPreviewLoadingId(artifactId);
+    setPreviewError(null);
+    try {
+      setPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPreviewLoadingId(null);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <Panel title="Model Versions" icon={<Layers size={18} />}>
+        {modelVersions.length ? (
+          <Table
+            headers={["Name", "Version", "Type", "Metric", "Latest Validation", "Package", "Actions"]}
+            rows={modelVersions.map((modelVersion) => {
+              const latestValidation = getLatestValidation(validationsByModelVersion[modelVersion.id] ?? []);
+              return [
+                modelVersion.name,
+                `v${modelVersion.version}`,
+                modelVersion.model_type.replace(/_/g, " "),
+                formatModelMetric(modelVersion),
+                formatValidationSummary(latestValidation),
+                modelVersion.artifact_id,
+                <button
+                  className="icon-button"
+                  disabled={busy}
+                  key={modelVersion.id}
+                  onClick={() =>
+                    void runAction(() =>
+                      api(`/api/model-versions/${modelVersion.id}/validate`, { method: "POST" })
+                    )
+                  }
+                  title="Validate model package replay"
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+                </button>
+              ];
+            })}
+          />
+        ) : (
+          <EmptyInline text="Trained model versions, package artifacts, evaluation context, and selected metrics will appear here." />
+        )}
+      </Panel>
+      <Panel title="Model Package Validation History" icon={<ListChecks size={18} />}>
+        {validationRows.length ? (
+          <Table
+            headers={["ModelVersion", "Job", "Status", "Max Delta", "Artifacts", "Ended"]}
+            rows={validationRows.map(({ modelVersion, validation }) => [
+              `${modelVersion.name} v${modelVersion.version}`,
+              validation.job.id,
+              validation.validation_status ?? validation.job.status,
+              formatDelta(validation.max_abs_metric_delta),
+              validation.artifacts.map((artifact) => `${artifact.asset_type}:${artifact.id}`).join(", ") || "-",
+              formatDate(validation.ended_at)
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Model package replay validations will appear here with metric deltas, replay prediction artifacts, and validation reports." />
+        )}
+      </Panel>
+      <Panel title="Project Assets" icon={<Library size={18} />}>
+        {artifacts.length ? (
+          <Table
+            headers={["Type", "Name", "Version", "Size", "Actions"]}
+            rows={artifacts.map((artifact) => [
+              artifact.asset_type,
+              artifact.name,
+              `v${artifact.version}`,
+              formatBytes(artifact.size_bytes),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={previewLoadingId === artifact.id}
+                  onClick={() => void loadPreview(artifact.id)}
+                  title="Preview artifact"
+                >
+                  {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a
+                  className="icon-link"
+                  href={`${apiBase}/api/artifacts/${artifact.id}/download`}
+                  title="Download artifact"
+                >
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Project artifacts and cross-project asset references for Skills, EvaluationPatterns, PromptTemplates, and VisualizationTemplates will appear here." />
+        )}
+      </Panel>
+      <Panel title="Artifact Preview" icon={<FileText size={18} />}>
+        {previewError ? <div className="banner danger">{previewError}</div> : null}
+        {preview ? (
+          preview.preview_available ? (
+            <div className="preview-block">
+              <div className="preview-meta">
+                <span className="badge">{preview.content_type}</span>
+                <span className="badge muted">{formatBytes(preview.size_bytes)}</span>
+                {preview.truncated ? <span className="badge risk">truncated</span> : null}
+              </div>
+              <pre className="markdown-preview">{preview.preview}</pre>
+            </div>
+          ) : (
+            <EmptyInline text={preview.reason ?? "Preview is not available for this artifact."} />
+          )
+        ) : (
+          <EmptyInline text="Select an artifact preview action to inspect JSON, Markdown, CSV, or text outputs without leaving the workbench." />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function formatModelMetric(modelVersion: ModelVersion) {
+  if (!modelVersion.primary_metric_name || modelVersion.primary_metric_value == null) return "-";
+  return `${modelVersion.primary_metric_name}: ${modelVersion.primary_metric_value.toFixed(6)}`;
+}
+
+function JobsTab({
+  jobs,
+  busy,
+  runAction
+}: {
+  jobs: Job[];
+  busy: boolean;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  return (
+    <div className="stack">
+      <div className="toolbar">
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() => void runAction(() => api("/api/worker/run-once", { method: "POST" }))}
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+          Run Worker Once
+        </button>
+      </div>
+      <Panel title="Job History" icon={<ListChecks size={18} />}>
+        {jobs.length ? (
+          <Table
+            headers={["Job", "Type", "Status", "Attempts", "Priority", "Started", "Ended", "Actions"]}
+            rows={jobs.map((job) => [
+              job.id,
+              job.job_type,
+              formatJobStatus(job),
+              `${job.attempt_count}/${job.max_attempts}`,
+              job.priority,
+              formatDate(job.started_at),
+              formatDate(job.ended_at),
+              <div className="row-actions" key={job.id}>
+                <button
+                  className="icon-button"
+                  disabled={busy || job.status !== "approval_required"}
+                  onClick={() => void runAction(() => api(`/api/jobs/${job.id}/approve`, { method: "POST" }))}
+                  title="Approve job"
+                >
+                  <Check size={16} />
+                </button>
+                <button
+                  className="icon-button"
+                  disabled={busy || isTerminalJob(job)}
+                  onClick={() => void runAction(() => api(`/api/jobs/${job.id}/cancel`, { method: "POST" }))}
+                  title="Cancel job"
+                >
+                  <AlertTriangle size={16} />
+                </button>
+                <button
+                  className="icon-button"
+                  disabled={busy || !canRetryJob(job)}
+                  onClick={() => void runAction(() => api(`/api/jobs/${job.id}/retry`, { method: "POST" }))}
+                  title="Retry job"
+                >
+                  <RefreshCw size={16} />
+                </button>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Profiling, assumption inference, evaluation design, split generation, baseline, validation, agent task, and queued worker jobs will appear here." />
+        )}
+      </Panel>
+      <Panel title="Job Detail Context" icon={<FileText size={18} />}>
+        {jobs.length ? (
+          <Table
+            headers={["Job", "Dependencies", "Policy", "Input", "Output"]}
+            rows={jobs.slice(0, 8).map((job) => [
+              job.id,
+              job.dependency_job_ids.join(", ") || "-",
+              truncateJson(job.policy),
+              truncateJson(job.input),
+              job.error_message ? job.error_message : truncateJson(job.output)
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Queued jobs will expose dependency, policy, input, and output context here." />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function formatJobStatus(job: Job) {
+  const status = job.error_message ? `${job.status}: ${job.error_message}` : job.status;
+  if (job.approval_required && job.status === "queued") return `${status} / approved`;
+  if (job.approval_required) return `${status} / approval required`;
+  return status;
+}
+
+function isTerminalJob(job: Job) {
+  return ["succeeded", "failed", "cancelled", "timed_out"].includes(job.status);
+}
+
+function canRetryJob(job: Job) {
+  return ["failed", "cancelled", "timed_out"].includes(job.status) && job.attempt_count < job.max_attempts;
+}
+
+function LibraryTab({
+  project,
+  assets,
+  references,
+  busy,
+  runAction
+}: {
+  project: Project;
+  assets: LibraryAsset[];
+  references: AssetReference[];
+  busy: boolean;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  const referencedAssetIds = new Set(references.map((reference) => reference.target_asset_id));
+  return (
+    <div className="stack">
+      <div className="toolbar">
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() => void runAction(() => api("/api/assets/seed-defaults", { method: "POST" }))}
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <Library size={16} />}
+          Seed Library
+        </button>
+      </div>
+      <Panel title="Cross-project Asset Library" icon={<Library size={18} />}>
+        {assets.length ? (
+          <Table
+            headers={["Type", "Name", "Tags", "Latest Version", "Status", "Actions"]}
+            rows={assets.map((asset) => [
+              asset.asset_type.replace(/_/g, " "),
+              asset.name,
+              asset.tags.join(", ") || "-",
+              asset.latest_version_id ?? "-",
+              referencedAssetIds.has(asset.id) ? "referenced" : asset.status,
+              <button
+                className="icon-button"
+                disabled={busy || !asset.latest_version_id || referencedAssetIds.has(asset.id)}
+                key={asset.id}
+                onClick={() =>
+                  void runAction(() =>
+                    api(`/api/projects/${project.id}/asset-references`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        target_asset_id: asset.id,
+                        target_asset_version_id: asset.latest_version_id,
+                        relation_type: "uses"
+                      })
+                    })
+                  )
+                }
+                title="Reference from project"
+              >
+                <Plus size={16} />
+              </button>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Reusable Skills, FeatureRecipes, EvaluationPatterns, PromptTemplates, and VisualizationTemplates will appear here after seeding or registration." />
+        )}
+      </Panel>
+      <Panel title="Project Asset References" icon={<GitBranch size={18} />}>
+        {references.length ? (
+          <Table
+            headers={["Asset", "Type", "Relation", "Locked", "Version"]}
+            rows={references.map((reference) => [
+              reference.asset?.name ?? reference.target_asset_id,
+              reference.asset?.asset_type ?? "-",
+              reference.relation_type,
+              reference.locked ? "yes" : "no",
+              reference.target_asset_version_id
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Project-level locked references to cross-project assets will appear here." />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function getLatestValidation(validations: ModelValidation[]) {
+  return validations[0] ?? null;
+}
+
+function formatValidationSummary(validation: ModelValidation | null) {
+  if (!validation) return "-";
+  const status = validation.validation_status ?? validation.job.status;
+  return `${status} / delta ${formatDelta(validation.max_abs_metric_delta)}`;
+}
+
+function formatDelta(value: number | null) {
+  if (value == null) return "-";
+  return value.toExponential(2);
+}
+
+function formatDate(value: string | null) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
+}
+
+function truncateJson(value: Record<string, unknown>) {
+  const serialized = JSON.stringify(value);
+  if (serialized.length <= 180) return serialized;
+  return `${serialized.slice(0, 177)}...`;
+}
+
+function LineageTab({ lineage }: { lineage: LineageEdge[] }) {
+  return (
+    <Panel title="Lineage Edges" icon={<GitBranch size={18} />}>
+      {lineage.length ? (
+        <Table
+          headers={["From", "Relation", "To"]}
+          rows={lineage.map((edge) => [
+            `${edge.from_asset_type}:${edge.from_asset_id}`,
+            edge.relation_type,
+            `${edge.to_asset_type}:${edge.to_asset_id}`
+          ])}
+        />
+      ) : (
+        <EmptyInline text="DatasetSnapshot, SemanticCatalog, EvaluationSpec, SplitManifest, ExperimentRun, Report, AssetReference, and artifact lineage will appear here." />
+      )}
+    </Panel>
+  );
+}
+
+function Panel({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div className="panel-title">
+          {icon}
+          <h2>{title}</h2>
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function Table({ headers, rows }: { headers: string[]; rows: Array<Array<React.ReactNode>> }) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            {headers.map((header) => (
+              <th key={header}>{header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.map((cell, cellIndex) => (
+                <td key={cellIndex}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EmptyState({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
+  return (
+    <div className="empty-state">
+      {icon}
+      <h2>{title}</h2>
+      <p>{body}</p>
+    </div>
+  );
+}
+
+function EmptyInline({ text }: { text: string }) {
+  return <div className="empty-inline">{text}</div>;
+}
+
+function LoadingBlock({ label }: { label: string }) {
+  return (
+    <div className="loading">
+      <Loader2 className="spin" size={18} />
+      {label}
+    </div>
+  );
+}
+
+function formatBytes(value: number | null) {
+  if (!value) return "-";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);

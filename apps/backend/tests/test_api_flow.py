@@ -1,0 +1,518 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+from tabular_harness.core.config import Settings
+from tabular_harness.main import create_app
+
+
+def make_client(tmp_path: Path) -> TestClient:
+    settings = Settings(
+        app_display_name="Tablex",
+        data_dir=tmp_path / "data",
+        database_url=f"sqlite:///{tmp_path / 'data' / 'metadata' / 'app.db'}",
+        artifact_root=tmp_path / "data" / "artifacts",
+        max_upload_bytes=100 * 1024 * 1024,
+        cors_origins=("http://localhost:5173",),
+    )
+    return TestClient(create_app(settings))
+
+
+def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Demo", "target_column": "target", "task_type": "binary_classification"},
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    csv_bytes = (
+        b"customer_id,created_at,feature,target,final_status\n"
+        b"c1,2026-01-01,10,1,won\n"
+        b"c1,2026-01-02,11,0,lost\n"
+        b"c2,2026-01-03,13,1,won\n"
+        b"c2,2026-01-04,9,0,lost\n"
+        b"c3,2026-01-05,8,1,won\n"
+        b"c3,2026-01-06,7,0,lost\n"
+    )
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("demo.csv", csv_bytes, "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+    dataset_id = upload_response.json()["dataset_snapshot"]["id"]
+    assert upload_response.json()["dataset_snapshot"]["row_count"] == 6
+
+    quality_response = client.post(f"/api/datasets/{dataset_id}/quality/run")
+    assert quality_response.status_code == 200, quality_response.text
+    quality_job = quality_response.json()
+    assert quality_job["status"] == "succeeded"
+    assert len(quality_job["output"]["artifact_ids"]) == 3
+    quality_gate = quality_job["output"]["gate"]
+    assert quality_gate["schema_version"] == "data_quality_gate.v1"
+    assert quality_gate["summary"]["severity"] in {"warning", "pass"}
+    assert "final_status" in quality_gate["evaluation_guidance"]["excluded_columns"]
+    assert quality_job["output"]["insight_id"]
+
+    latest_quality_response = client.get(f"/api/datasets/{dataset_id}/quality/latest")
+    assert latest_quality_response.status_code == 200
+    quality_artifact_id = latest_quality_response.json()["id"]
+    quality_preview_response = client.get(f"/api/artifacts/{quality_artifact_id}/preview")
+    assert quality_preview_response.status_code == 200
+    assert "data_quality_gate.v1" in quality_preview_response.json()["preview"]
+
+    assumptions_response = client.get(f"/api/projects/{project_id}/assumptions")
+    assert assumptions_response.status_code == 200
+    assumptions = assumptions_response.json()
+    assert any(item["fallback_policy"] == "exclude_until_confirmed" for item in assumptions)
+
+    understanding_response = client.get(f"/api/projects/{project_id}/understanding/latest")
+    assert understanding_response.status_code == 200
+    assert "Data Understanding" in understanding_response.json()["markdown"]
+
+    questions_response = client.get(f"/api/projects/{project_id}/questions")
+    assert questions_response.status_code == 200
+    first_question = questions_response.json()[0]
+    answer_response = client.post(
+        f"/api/questions/{first_question['id']}/answer",
+        json={"answer_value": first_question["choices"][0], "answer_text": "integration test"},
+    )
+    assert answer_response.status_code == 200
+    assert answer_response.json()["question_id"] == first_question["id"]
+
+    design_response = client.post(f"/api/projects/{project_id}/evaluation/design")
+    assert design_response.status_code == 200
+    assert design_response.json()["status"] == "succeeded"
+
+    candidates_response = client.get(f"/api/projects/{project_id}/evaluation/candidates")
+    assert candidates_response.status_code == 200
+    candidates = candidates_response.json()
+    primary = next(item for item in candidates if item["status"] == "primary_candidate")
+    assert primary["split_type"] == "stratified"
+    assert primary["stratify_column"] == "target"
+
+    promote_response = client.post(f"/api/evaluation-candidates/{primary['id']}/promote")
+    assert promote_response.status_code == 200
+    spec_id = promote_response.json()["id"]
+
+    approve_response = client.post(f"/api/evaluation-specs/{spec_id}/approve")
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "approved"
+
+    split_response = client.post(f"/api/evaluation-specs/{spec_id}/generate-split")
+    assert split_response.status_code == 200, split_response.text
+    split = split_response.json()
+    assert split["train_count"] > 0
+    assert split["valid_count"] > 0
+    assert split["project_id"] == project_id
+
+    baseline_response = client.post(f"/api/projects/{project_id}/baseline/run")
+    assert baseline_response.status_code == 200, baseline_response.text
+    baseline_job = baseline_response.json()
+    assert baseline_job["status"] == "succeeded"
+    assert baseline_job["output"]["experiment_run_id"]
+    assert baseline_job["output"]["model_version_id"]
+    baseline_metrics = baseline_job["output"]["metrics"]
+    assert baseline_metrics["model_baseline_attempted"] is True
+    assert baseline_metrics["baseline_type"] in {"xgboost_classifier", "logistic_regression", "majority_classifier"}
+    assert baseline_metrics["primary_metric_value"] >= 0
+    assert len(baseline_job["output"]["artifact_ids"]) >= 6
+
+    model_response = client.get(f"/api/model-versions/{baseline_job['output']['model_version_id']}")
+    assert model_response.status_code == 200, model_response.text
+    model_version = model_response.json()
+    assert model_version["model_family"] == "xgboost"
+    assert model_version["model_type"] == "xgboost_classifier"
+    assert model_version["artifact_id"]
+
+    model_versions_response = client.get(f"/api/projects/{project_id}/model-versions")
+    assert model_versions_response.status_code == 200
+    assert model_versions_response.json()[0]["id"] == model_version["id"]
+
+    validate_response = client.post(f"/api/model-versions/{model_version['id']}/validate")
+    assert validate_response.status_code == 200, validate_response.text
+    validate_job = validate_response.json()
+    assert validate_job["status"] == "succeeded"
+    assert validate_job["output"]["model_version_id"] == model_version["id"]
+    assert validate_job["output"]["metrics"]["max_abs_metric_delta"] <= 1e-9
+    assert len(validate_job["output"]["artifact_ids"]) == 3
+
+    validation_history_response = client.get(f"/api/model-versions/{model_version['id']}/validations")
+    assert validation_history_response.status_code == 200
+    validation_history = validation_history_response.json()
+    assert validation_history[0]["job"]["id"] == validate_job["id"]
+    assert validation_history[0]["validation_status"] == "passed"
+    assert validation_history[0]["max_abs_metric_delta"] <= 1e-9
+    assert len(validation_history[0]["artifacts"]) == 3
+
+    jobs_response = client.get(f"/api/projects/{project_id}/jobs")
+    assert jobs_response.status_code == 200
+    job_types = [item["job_type"] for item in jobs_response.json()]
+    assert "validate_model_package" in job_types
+    assert "run_baseline" in job_types
+
+    approval_job_response = client.post(
+        "/api/jobs",
+        json={
+            "job_type": "run_agent_task",
+            "project_id": project_id,
+            "input": {"purpose": "approval gate integration test"},
+            "policy": {"network": "restricted"},
+            "max_attempts": 2,
+        },
+    )
+    assert approval_job_response.status_code == 200, approval_job_response.text
+    approval_job = approval_job_response.json()
+    assert approval_job["status"] == "approval_required"
+    assert approval_job["approval_required"] is True
+
+    approve_job_response = client.post(f"/api/jobs/{approval_job['id']}/approve")
+    assert approve_job_response.status_code == 200
+    assert approve_job_response.json()["status"] == "queued"
+    assert approve_job_response.json()["approved_by"] == "local-user"
+
+    worker_response = client.post("/api/worker/run-once")
+    assert worker_response.status_code == 200, worker_response.text
+    assert worker_response.json()["id"] == approval_job["id"]
+    assert worker_response.json()["status"] == "succeeded"
+    assert worker_response.json()["attempt_count"] == 1
+
+    dependency_a_response = client.post(
+        "/api/jobs",
+        json={"job_type": "infer_assumptions", "project_id": project_id, "input": {"name": "dependency-a"}},
+    )
+    assert dependency_a_response.status_code == 200
+    dependency_a = dependency_a_response.json()
+    dependency_b_response = client.post(
+        "/api/jobs",
+        json={
+            "job_type": "draft_project_report",
+            "project_id": project_id,
+            "input": {"name": "dependency-b"},
+            "dependency_job_ids": [dependency_a["id"]],
+            "priority": 100,
+        },
+    )
+    assert dependency_b_response.status_code == 200
+    dependency_b = dependency_b_response.json()
+    first_dependency_worker_response = client.post("/api/worker/run-once")
+    assert first_dependency_worker_response.status_code == 200
+    assert first_dependency_worker_response.json()["id"] == dependency_a["id"]
+    second_dependency_worker_response = client.post("/api/worker/run-once")
+    assert second_dependency_worker_response.status_code == 200
+    assert second_dependency_worker_response.json()["id"] == dependency_b["id"]
+
+    cancel_retry_response = client.post(
+        "/api/jobs",
+        json={
+            "job_type": "infer_assumptions",
+            "project_id": project_id,
+            "input": {"purpose": "cancel-retry integration test"},
+            "max_attempts": 2,
+        },
+    )
+    assert cancel_retry_response.status_code == 200
+    cancel_retry_job = cancel_retry_response.json()
+    cancel_response = client.post(f"/api/jobs/{cancel_retry_job['id']}/cancel")
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "cancelled"
+    retry_response = client.post(f"/api/jobs/{cancel_retry_job['id']}/retry")
+    assert retry_response.status_code == 200
+    assert retry_response.json()["status"] == "queued"
+
+    research_response = client.post(
+        f"/api/projects/{project_id}/approach/research-briefs",
+        json={"question": "What flexible approaches should be considered?"},
+    )
+    assert research_response.status_code == 200, research_response.text
+    research_job = research_response.json()
+    assert research_job["status"] == "succeeded"
+    assert research_job["output"]["research_brief_id"]
+
+    briefs_response = client.get(f"/api/projects/{project_id}/approach/research-briefs")
+    assert briefs_response.status_code == 200
+    brief = briefs_response.json()[0]
+    assert "controlled web" in brief["summary_md"].lower() or "web" in brief["summary_md"].lower()
+    assert len(brief["recommended_approaches"]) >= 2
+
+    ideas_response = client.post(f"/api/projects/{project_id}/approach/ideas/generate")
+    assert ideas_response.status_code == 200, ideas_response.text
+    ideas_job = ideas_response.json()
+    assert ideas_job["status"] == "succeeded"
+    assert len(ideas_job["output"]["idea_ids"]) >= 2
+
+    ideas_list_response = client.get(f"/api/projects/{project_id}/approach/ideas")
+    assert ideas_list_response.status_code == 200
+    idea = ideas_list_response.json()[0]
+    assert idea["status"] == "proposed"
+    assert idea["agent_task_contract"]["inputs"]["must_respect_split_manifest"] is True
+    assert any("secrets" in item for item in idea["agent_task_contract"]["forbidden_actions"])
+
+    seed_assets_response = client.post("/api/assets/seed-defaults")
+    assert seed_assets_response.status_code == 200
+    seeded_assets = seed_assets_response.json()
+    assert len(seeded_assets) >= 5
+    skill_asset = next(item for item in seeded_assets if item["asset_type"] == "skill")
+
+    assets_response = client.get("/api/assets")
+    assert assets_response.status_code == 200
+    assert any(item["name"] == skill_asset["name"] for item in assets_response.json())
+
+    versions_response = client.get(f"/api/assets/{skill_asset['id']}/versions")
+    assert versions_response.status_code == 200
+    skill_version = versions_response.json()[0]
+    assert skill_version["asset_id"] == skill_asset["id"]
+
+    project_ref_response = client.post(
+        f"/api/projects/{project_id}/asset-references",
+        json={
+            "target_asset_id": skill_asset["id"],
+            "target_asset_version_id": skill_version["id"],
+            "relation_type": "uses_for_research",
+        },
+    )
+    assert project_ref_response.status_code == 200, project_ref_response.text
+    assert project_ref_response.json()["asset"]["asset_type"] == "skill"
+
+    idea_ref_response = client.post(
+        f"/api/ideas/{idea['id']}/asset-references",
+        json={
+            "target_asset_id": skill_asset["id"],
+            "target_asset_version_id": skill_version["id"],
+            "relation_type": "uses_for_agent_task",
+        },
+    )
+    assert idea_ref_response.status_code == 200, idea_ref_response.text
+    assert idea_ref_response.json()["source_type"] == "idea"
+
+    project_refs_response = client.get(f"/api/projects/{project_id}/asset-references")
+    assert project_refs_response.status_code == 200
+    assert project_refs_response.json()[0]["asset"]["name"] == skill_asset["name"]
+
+    skill_preview_response = client.get(f"/api/artifacts/{skill_version['artifact_id']}/preview")
+    assert skill_preview_response.status_code == 200
+    assert skill_preview_response.json()["preview_available"] is True
+
+    context_response = client.post(f"/api/ideas/{idea['id']}/prepare-agent-context")
+    assert context_response.status_code == 200, context_response.text
+    context_job = context_response.json()
+    assert context_job["status"] == "succeeded"
+    assert context_job["output"]["schema_version"] == "agent_context_pack.v1"
+    assert context_job["output"]["artifact_id"]
+
+    context_packs_response = client.get(f"/api/ideas/{idea['id']}/context-packs")
+    assert context_packs_response.status_code == 200
+    context_artifact = context_packs_response.json()[0]
+    assert context_artifact["id"] == context_job["output"]["artifact_id"]
+
+    context_preview_response = client.get(f"/api/artifacts/{context_artifact['id']}/preview")
+    assert context_preview_response.status_code == 200
+    context_preview = context_preview_response.json()["preview"]
+    assert "agent_context_pack.v1" in context_preview
+    assert "controlled_web_search" in context_preview
+    assert "connector_credentials" in context_preview
+    assert "split_manifest" in context_preview
+    assert "quality_gate_context" in context_preview
+
+    experiment_plan_response = client.post(f"/api/ideas/{idea['id']}/experiment-plan")
+    assert experiment_plan_response.status_code == 200, experiment_plan_response.text
+    experiment_plan_job = experiment_plan_response.json()
+    assert experiment_plan_job["status"] == "succeeded"
+    assert experiment_plan_job["output"]["plan_id"]
+    assert experiment_plan_job["output"]["artifact_id"]
+    assert experiment_plan_job["output"]["readiness"]["status"] == "ready_for_runner"
+
+    experiment_plans_response = client.get(f"/api/ideas/{idea['id']}/experiment-plans")
+    assert experiment_plans_response.status_code == 200
+    experiment_plan_artifact = experiment_plans_response.json()[0]
+    assert experiment_plan_artifact["id"] == experiment_plan_job["output"]["artifact_id"]
+
+    experiment_plan_preview_response = client.get(f"/api/artifacts/{experiment_plan_artifact['id']}/preview")
+    assert experiment_plan_preview_response.status_code == 200
+    assert "experiment_plan.v1" in experiment_plan_preview_response.json()["preview"]
+    assert "source_policy" in experiment_plan_preview_response.json()["preview"]
+
+    agent_task_response = client.post(f"/api/ideas/{idea['id']}/run-agent-task")
+    assert agent_task_response.status_code == 200, agent_task_response.text
+    agent_task_job = agent_task_response.json()
+    assert agent_task_job["status"] == "succeeded"
+    assert agent_task_job["output"]["idea_id"] == idea["id"]
+    assert agent_task_job["output"]["agent_status"] == "succeeded"
+    assert agent_task_job["output"]["requires_human_review"] is True
+    assert len(agent_task_job["output"]["artifact_ids"]) >= 4
+    assert agent_task_job["output"]["workspace_artifact_id"]
+    assert len(agent_task_job["output"]["ingested_artifact_ids"]) == 3
+    assert agent_task_job["output"]["report_id"]
+    assert agent_task_job["output"]["evidence_id"]
+
+    updated_ideas_response = client.get(f"/api/projects/{project_id}/approach/ideas")
+    assert updated_ideas_response.status_code == 200
+    assert updated_ideas_response.json()[0]["status"] == "agent_stub_completed"
+
+    visualization_response = client.post(f"/api/projects/{project_id}/visualizations/generate")
+    assert visualization_response.status_code == 200, visualization_response.text
+    visualization_job = visualization_response.json()
+    assert visualization_job["status"] == "succeeded"
+    assert len(visualization_job["output"]["visualization_ids"]) >= 4
+
+    visualizations_response = client.get(f"/api/projects/{project_id}/visualizations")
+    assert visualizations_response.status_code == 200
+    visualizations = visualizations_response.json()
+    chart_types = {item["chart_type"] for item in visualizations}
+    assert {"metric_cards", "category_bars", "stage_status", "leaderboard_bar"}.issubset(chart_types)
+    leaderboard_visualization = next(item for item in visualizations if item["chart_type"] == "leaderboard_bar")
+    assert leaderboard_visualization["spec"]["schema_version"] == "visualization_spec.v1"
+
+    insights_response = client.post(f"/api/projects/{project_id}/insights/generate")
+    assert insights_response.status_code == 200, insights_response.text
+    insights_job = insights_response.json()
+    assert insights_job["status"] == "succeeded"
+    assert len(insights_job["output"]["insight_ids"]) >= 5
+    assert len(insights_job["output"]["evidence_ids"]) >= 5
+
+    insights_list_response = client.get(f"/api/projects/{project_id}/insights")
+    assert insights_list_response.status_code == 200
+    insight = insights_list_response.json()[0]
+    assert insight["artifact_id"] == insights_job["output"]["artifact_id"]
+    assert insight["evidence_ids"]
+
+    insight_preview_response = client.get(f"/api/artifacts/{insight['artifact_id']}/preview")
+    assert insight_preview_response.status_code == 200
+    assert "insight_set.v1" in insight_preview_response.json()["preview"]
+
+    report_response = client.post(
+        f"/api/projects/{project_id}/reports/draft",
+        json={"title": "Integration report", "report_type": "project_summary"},
+    )
+    assert report_response.status_code == 200, report_response.text
+    report_job = report_response.json()
+    assert report_job["status"] == "succeeded"
+
+    reports_response = client.get(f"/api/projects/{project_id}/reports")
+    assert reports_response.status_code == 200
+    report = reports_response.json()[0]
+    assert report["artifact_id"] == report_job["output"]["artifact_id"]
+
+    report_preview_response = client.get(f"/api/artifacts/{report['artifact_id']}/preview")
+    assert report_preview_response.status_code == 200
+    assert "Project Report" in report_preview_response.json()["preview"]
+    assert "## Insights" in report_preview_response.json()["preview"]
+
+    report_preview_by_id_response = client.get(f"/api/reports/{report['id']}/preview")
+    assert report_preview_by_id_response.status_code == 200
+    assert "## Visualizations" in report_preview_by_id_response.json()["preview"]
+
+    runs_response = client.get(f"/api/projects/{project_id}/runs")
+    assert runs_response.status_code == 200
+    assert runs_response.json()[0]["runner_type"] == "local_baseline"
+    assert runs_response.json()[0]["model_version_id"] == model_version["id"]
+
+    leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
+    assert leaderboard_response.status_code == 200
+    assert leaderboard_response.json()[0]["primary_metric_value"] is not None
+
+    diagnostics_response = client.post(f"/api/runs/{runs_response.json()[0]['id']}/diagnostics")
+    assert diagnostics_response.status_code == 200, diagnostics_response.text
+    diagnostics_job = diagnostics_response.json()
+    assert diagnostics_job["status"] == "succeeded"
+    assert len(diagnostics_job["output"]["artifact_ids"]) == 3
+    diagnostics_payload = diagnostics_job["output"]["diagnostics"]
+    assert diagnostics_payload["schema_version"] == "evaluation_diagnostics.v1"
+    assert diagnostics_payload["task_kind"] == "classification"
+    assert diagnostics_payload["summary"]["count"] > 0
+    assert diagnostics_job["output"]["insight_id"]
+    assert diagnostics_job["output"]["evidence_id"]
+
+    run_report_response = client.post(f"/api/runs/{runs_response.json()[0]['id']}/report")
+    assert run_report_response.status_code == 200, run_report_response.text
+    run_report_job = run_report_response.json()
+    assert run_report_job["status"] == "succeeded"
+    assert run_report_job["output"]["report_id"]
+    assert run_report_job["output"]["artifact_id"]
+
+    comparison_response = client.post(f"/api/projects/{project_id}/experiments/compare")
+    assert comparison_response.status_code == 200, comparison_response.text
+    comparison_job = comparison_response.json()
+    assert comparison_job["status"] == "succeeded"
+    assert comparison_job["output"]["comparison"]["schema_version"] == "experiment_comparison.v1"
+    assert comparison_job["output"]["comparison"]["decision"]["best_run_id"] == runs_response.json()[0]["id"]
+    assert len(comparison_job["output"]["artifact_ids"]) >= 2
+    assert comparison_job["output"]["report_id"]
+    assert comparison_job["output"]["insight_id"]
+
+    artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
+    assert artifacts_response.status_code == 200
+    asset_types = {item["asset_type"] for item in artifacts_response.json()}
+    assert {
+        "baseline_plan",
+        "feature_recipe",
+        "model_package",
+        "model_validation_report",
+        "model_validation_metrics",
+        "prediction_replay",
+        "data_quality_gate",
+        "data_quality_report",
+        "research_brief",
+        "approach_candidate",
+        "report",
+        "visualization_spec",
+        "insight_set",
+        "evaluation_diagnostics",
+        "evaluation_diagnostics_report",
+        "experiment_plan",
+        "experiment_comparison",
+        "experiment_comparison_report",
+        "run_report",
+        "agent_workspace_manifest",
+        "agent_context_pack",
+        "agent_task_report",
+        "agent_result",
+    }.issubset(asset_types)
+    artifacts = artifacts_response.json()
+    validation_report = next(item for item in artifacts if item["asset_type"] == "model_validation_report")
+    model_package = next(item for item in artifacts if item["asset_type"] == "model_package")
+    diagnostics_report = next(item for item in artifacts if item["asset_type"] == "evaluation_diagnostics_report")
+    run_report = next(item for item in artifacts if item["asset_type"] == "run_report")
+    experiment_comparison = next(item for item in artifacts if item["asset_type"] == "experiment_comparison")
+    workspace_manifest = next(item for item in artifacts if item["asset_type"] == "agent_workspace_manifest")
+
+    preview_response = client.get(f"/api/artifacts/{validation_report['id']}/preview")
+    assert preview_response.status_code == 200
+    assert preview_response.json()["preview_available"] is True
+    assert "Model Package Validation Report" in preview_response.json()["preview"]
+
+    diagnostics_preview_response = client.get(f"/api/artifacts/{diagnostics_report['id']}/preview")
+    assert diagnostics_preview_response.status_code == 200
+    assert "Evaluation Diagnostics" in diagnostics_preview_response.json()["preview"]
+
+    run_report_preview_response = client.get(f"/api/artifacts/{run_report['id']}/preview")
+    assert run_report_preview_response.status_code == 200
+    assert "Run Report" in run_report_preview_response.json()["preview"]
+
+    comparison_preview_response = client.get(f"/api/artifacts/{experiment_comparison['id']}/preview")
+    assert comparison_preview_response.status_code == 200
+    assert "experiment_comparison.v1" in comparison_preview_response.json()["preview"]
+
+    workspace_preview_response = client.get(f"/api/artifacts/{workspace_manifest['id']}/preview")
+    assert workspace_preview_response.status_code == 200
+    assert "agent_workspace_manifest.v1" in workspace_preview_response.json()["preview"]
+    assert "connector_credentials" in workspace_preview_response.json()["preview"]
+
+    package_preview_response = client.get(f"/api/artifacts/{model_package['id']}/preview")
+    assert package_preview_response.status_code == 200
+    assert package_preview_response.json()["preview_available"] is False
+
+    download_response = client.get(f"/api/artifacts/{validation_report['id']}/download")
+    assert download_response.status_code == 200
+    assert b"Model Package Validation Report" in download_response.content
+
+    lineage_response = client.get(f"/api/projects/{project_id}/lineage")
+    assert lineage_response.status_code == 200
+    assert any(item["to_asset_type"] == "model_version" for item in lineage_response.json())
+
+    schema_response = client.get(f"/api/datasets/{dataset_id}/schema")
+    assert schema_response.status_code == 200
+    assert len(schema_response.json()["columns"]) == 5

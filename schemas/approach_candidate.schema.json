@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApproachCandidate",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "hypothesis",
+    "approach_type",
+    "rationale_md",
+    "feature_strategy",
+    "modeling_strategy",
+    "evaluation_notes_md",
+    "agent_task_contract"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "approach_candidate.v1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "hypothesis": {
+      "type": "string"
+    },
+    "approach_type": {
+      "type": "string"
+    },
+    "rationale_md": {
+      "type": "string"
+    },
+    "feature_strategy": {
+      "type": "object"
+    },
+    "modeling_strategy": {
+      "type": "object"
+    },
+    "evaluation_notes_md": {
+      "type": "string"
+    },
+    "agent_task_contract": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

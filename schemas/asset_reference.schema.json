@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AssetReference",
+  "type": "object",
+  "required": [
+    "source_type",
+    "source_id",
+    "target_asset_id",
+    "target_asset_version_id",
+    "relation_type",
+    "locked"
+  ],
+  "properties": {
+    "source_type": {
+      "type": "string"
+    },
+    "source_id": {
+      "type": "string"
+    },
+    "target_asset_id": {
+      "type": "string"
+    },
+    "target_asset_version_id": {
+      "type": "string"
+    },
+    "relation_type": {
+      "type": "string",
+      "enum": [
+        "uses",
+        "derived_from",
+        "promoted_from",
+        "supersedes",
+        "evaluates_with",
+        "visualizes_with",
+        "generated_by"
+      ]
+    },
+    "locked": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

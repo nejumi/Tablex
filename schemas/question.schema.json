@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HumanQuestion",
+  "type": "object",
+  "required": [
+    "question_id",
+    "question",
+    "why_it_matters",
+    "default_assumption",
+    "impact_if_wrong",
+    "choices",
+    "priority",
+    "risk_level",
+    "value_of_answer",
+    "can_proceed_without_answer",
+    "fallback_policy"
+  ],
+  "properties": {
+    "question_id": {
+      "type": "string"
+    },
+    "question": {
+      "type": "string"
+    },
+    "why_it_matters": {
+      "type": "string"
+    },
+    "default_assumption": {
+      "type": "string"
+    },
+    "impact_if_wrong": {
+      "type": "string"
+    },
+    "choices": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "priority": {
+      "type": "integer"
+    },
+    "related_columns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blocks_next_phase": {
+      "type": "boolean"
+    },
+    "topic": {
+      "type": "string"
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "blocking",
+        "deployment_blocking"
+      ]
+    },
+    "value_of_answer": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "very_high"
+      ]
+    },
+    "can_proceed_without_answer": {
+      "type": "boolean"
+    },
+    "fallback_policy": {
+      "type": "string",
+      "enum": [
+        "infer_and_continue",
+        "conservative_default",
+        "exclude_until_confirmed",
+        "scenario_compare",
+        "require_before_deployment",
+        "block_until_answered"
+      ]
+    },
+    "related_assumption_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

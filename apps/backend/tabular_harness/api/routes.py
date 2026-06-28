@@ -1,0 +1,2213 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Annotated, Any, cast
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from tabular_harness.api.deps import get_artifact_store, get_session
+from tabular_harness.core.ids import new_id
+from tabular_harness.core.json import dumps_json, loads_json
+from tabular_harness.models.entities import (
+    Answer,
+    Artifact,
+    Asset,
+    AssetReference,
+    AssetVersion,
+    Assumption,
+    AssumptionEvidenceLink,
+    DatasetSnapshot,
+    EvaluationCandidate,
+    EvaluationSpec,
+    Evidence,
+    ExperimentRun,
+    Idea,
+    Insight,
+    Job,
+    LineageEdge,
+    ModelVersion,
+    Project,
+    Question,
+    Report,
+    ResearchBrief,
+    SemanticCatalog,
+    SplitManifest,
+    VisualizationSpec,
+    utc_now,
+)
+from tabular_harness.schemas import (
+    AnswerRead,
+    ArtifactPreviewRead,
+    ArtifactRead,
+    AssetCreate,
+    AssetRead,
+    AssetReferenceCreate,
+    AssetReferenceRead,
+    AssetVersionRead,
+    AssumptionRead,
+    DatasetSnapshotRead,
+    DatasetUploadResponse,
+    EvaluationCandidateRead,
+    EvaluationSpecRead,
+    EvidenceCreate,
+    IdeaRead,
+    InsightRead,
+    JobCreate,
+    JobRead,
+    ModelValidationRead,
+    ModelVersionRead,
+    ProjectCreate,
+    ProjectOverview,
+    ProjectRead,
+    ProjectUpdate,
+    QuestionAnswerCreate,
+    QuestionRead,
+    ReportCreate,
+    ReportRead,
+    ResearchBriefCreate,
+    ResearchBriefRead,
+    SemanticCatalogRead,
+    SplitManifestRead,
+    VisualizationSpecRead,
+)
+from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
+from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
+from tabular_harness.services.approach import (
+    draft_project_report,
+    generate_approach_candidates,
+    generate_research_brief,
+)
+from tabular_harness.services.artifacts import (
+    LocalArtifactStore,
+    artifact_primary_path,
+    artifact_to_dict,
+    create_lineage_edge,
+    next_artifact_version,
+    register_artifact,
+)
+from tabular_harness.services.asset_library import (
+    asset_reference_to_dict,
+    asset_to_dict,
+    asset_version_to_dict,
+    create_asset_reference,
+    create_library_asset,
+    seed_default_assets,
+)
+from tabular_harness.services.baseline import run_baseline as run_baseline_service
+from tabular_harness.services.data_quality import analyze_dataset_quality
+from tabular_harness.services.diagnostics import analyze_run_diagnostics
+from tabular_harness.services.evaluation import (
+    approve_spec,
+    candidate_to_dict,
+    create_default_evaluation_candidates,
+    generate_split_manifest,
+    promote_candidate_to_spec,
+    spec_to_dict,
+)
+from tabular_harness.services.experiment_lifecycle import (
+    compare_project_experiments,
+    create_experiment_plan_for_idea,
+    draft_run_report,
+)
+from tabular_harness.services.jobs import (
+    approve_job,
+    create_job,
+    mark_job_failed,
+    mark_job_running,
+    mark_job_succeeded,
+    retry_job,
+)
+from tabular_harness.services.jobs import (
+    cancel_job as cancel_job_service,
+)
+from tabular_harness.services.model_versions import validate_model_version_package
+from tabular_harness.services.profiler import profile_tabular_file
+from tabular_harness.services.reporting import (
+    create_project_visualization_dashboard,
+    generate_project_insights,
+)
+from tabular_harness.worker.jobs import create_default_worker
+
+router = APIRouter()
+
+
+@router.get("/healthz")
+def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@router.get("/api/config")
+def app_config(request: Request) -> dict[str, str]:
+    settings = request.app.state.settings
+    return {
+        "app_display_name": str(settings.app_display_name),
+        "architecture_name": "Tabular-first Prediction Meta-Harness",
+    }
+
+
+@router.get("/api/projects", response_model=list[ProjectRead])
+def list_projects(db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    projects = db.scalars(select(Project).order_by(Project.created_at.desc())).all()
+    return [project_to_dict(project) for project in projects]
+
+
+@router.post("/api/projects", response_model=ProjectRead)
+def create_project(payload: ProjectCreate, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    project = Project(
+        id=new_id("p"),
+        name=payload.name,
+        description=payload.description,
+        task_type=payload.task_type,
+        target_column=payload.target_column,
+        current_phase="DRAFT",
+    )
+    db.add(project)
+    db.flush()
+    return project_to_dict(project)
+
+
+@router.get("/api/projects/{project_id}", response_model=ProjectRead)
+def get_project(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    return project_to_dict(project)
+
+
+@router.patch("/api/projects/{project_id}", response_model=ProjectRead)
+def update_project(
+    project_id: str,
+    payload: ProjectUpdate,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    data = payload.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(project, key, value)
+    project.updated_at = utc_now()
+    db.flush()
+    return project_to_dict(project)
+
+
+@router.post("/api/projects/{project_id}/archive", response_model=ProjectRead)
+def archive_project(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    project.status = "archived"
+    project.updated_at = utc_now()
+    return project_to_dict(project)
+
+
+@router.get("/api/projects/{project_id}/overview", response_model=ProjectOverview)
+def project_overview(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    latest_dataset = db.scalar(
+        select(DatasetSnapshot)
+        .where(DatasetSnapshot.project_id == project_id)
+        .order_by(DatasetSnapshot.created_at.desc())
+    )
+    recent_artifacts = db.scalars(
+        select(Artifact).where(Artifact.project_id == project_id).order_by(Artifact.created_at.desc()).limit(8)
+    ).all()
+    recent_jobs = db.scalars(
+        select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc()).limit(8)
+    ).all()
+    high_risk = db.scalars(
+        select(Assumption)
+        .where(Assumption.project_id == project_id, Assumption.risk_level.in_(["high", "blocking", "deployment_blocking"]))
+        .order_by(Assumption.updated_at.desc())
+        .limit(8)
+    ).all()
+    counts = {
+        "datasets": count_rows(db, DatasetSnapshot, project_id),
+        "artifacts": count_rows(db, Artifact, project_id),
+        "questions": count_rows(db, Question, project_id),
+        "assumptions": count_rows(db, Assumption, project_id),
+        "evaluation_candidates": count_rows(db, EvaluationCandidate, project_id),
+        "evaluation_specs": count_rows(db, EvaluationSpec, project_id),
+        "experiment_runs": count_rows(db, ExperimentRun, project_id),
+        "model_versions": count_rows(db, ModelVersion, project_id),
+        "jobs": count_rows(db, Job, project_id),
+        "research_briefs": count_rows(db, ResearchBrief, project_id),
+        "ideas": count_rows(db, Idea, project_id),
+        "reports": count_rows(db, Report, project_id),
+        "visualizations": count_rows(db, VisualizationSpec, project_id),
+        "insights": count_rows(db, Insight, project_id),
+    }
+    return {
+        "project": project_to_dict(project),
+        "counts": counts,
+        "next_actions": next_actions(project, counts),
+        "latest_dataset_snapshot_id": latest_dataset.id if latest_dataset else None,
+        "high_risk_assumptions": [assumption_to_dict(db, item) for item in high_risk],
+        "recent_artifacts": [artifact_to_dict(item) for item in recent_artifacts],
+        "recent_jobs": [job_to_dict(item) for item in recent_jobs],
+    }
+
+
+@router.post("/api/projects/{project_id}/datasets/upload", response_model=DatasetUploadResponse)
+def upload_dataset(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+    file: Annotated[UploadFile, File()],
+    target_column: Annotated[str | None, Form()] = None,
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".csv", ".parquet"}:
+        raise HTTPException(status_code=400, detail="Only CSV and Parquet uploads are supported")
+
+    effective_target = target_column or project.target_column
+    if target_column and target_column != project.target_column:
+        project.target_column = target_column
+    version = next_artifact_version(db, project_id, "dataset_snapshot", "uploaded_dataset")
+    artifact_dir, stored, content_hash = store.store_stream(
+        org_id="local-org",
+        project_id=project_id,
+        asset_type="dataset_snapshot",
+        name="uploaded_dataset",
+        version=version,
+        filename=file.filename or f"dataset{suffix}",
+        stream=file.file,
+        metadata={"project_id": project_id, "source_filename": file.filename},
+    )
+    dataset_artifact = register_artifact(
+        db,
+        project_id=project_id,
+        asset_type="dataset_snapshot",
+        name="uploaded_dataset",
+        uri=str(artifact_dir),
+        content_hash=content_hash,
+        size_bytes=stored.size_bytes,
+        metadata={
+            "primary_path": str(stored.path),
+            "source_filename": file.filename,
+            "project_id": project_id,
+        },
+        version=version,
+    )
+    job = create_job(
+        db,
+        job_type="profile_dataset",
+        project_id=project_id,
+        input_payload={"artifact_id": dataset_artifact.id, "target_column": effective_target},
+    )
+    try:
+        mark_job_running(job)
+        dataset = profile_dataset_artifact(db, store, project, dataset_artifact, effective_target)
+        project.current_phase = "UNDERSTANDING_REVIEW"
+        project.updated_at = utc_now()
+        mark_job_succeeded(job, {"dataset_snapshot_id": dataset.id})
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise
+    return {
+        "dataset_snapshot": dataset_to_dict(dataset),
+        "artifact": artifact_to_dict(dataset_artifact),
+        "profile_job_id": job.id,
+    }
+
+
+@router.get("/api/projects/{project_id}/datasets", response_model=list[DatasetSnapshotRead])
+def list_project_datasets(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    datasets = db.scalars(
+        select(DatasetSnapshot).where(DatasetSnapshot.project_id == project_id).order_by(DatasetSnapshot.created_at.desc())
+    ).all()
+    return [dataset_to_dict(item) for item in datasets]
+
+
+@router.get("/api/datasets/{dataset_id}", response_model=DatasetSnapshotRead)
+def get_dataset(dataset_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    dataset = require_dataset(db, dataset_id)
+    return dataset_to_dict(dataset)
+
+
+@router.get("/api/datasets/{dataset_id}/schema", response_model=SemanticCatalogRead)
+def get_dataset_schema(dataset_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    dataset = require_dataset(db, dataset_id)
+    catalog = db.scalar(
+        select(SemanticCatalog)
+        .where(SemanticCatalog.dataset_snapshot_id == dataset.id)
+        .order_by(SemanticCatalog.created_at.desc())
+    )
+    if catalog is None:
+        raise HTTPException(status_code=404, detail="Semantic catalog not found")
+    return semantic_catalog_to_dict(catalog)
+
+
+@router.get("/api/datasets/{dataset_id}/sample")
+def get_dataset_sample(dataset_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    dataset = require_dataset(db, dataset_id)
+    profile = latest_profile_for_dataset(db, dataset)
+    return {"rows": profile.get("sample_rows", [])}
+
+
+@router.post("/api/datasets/{dataset_id}/quality/run", response_model=JobRead)
+def run_dataset_quality(
+    dataset_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    dataset = require_dataset(db, dataset_id)
+    project = require_project(db, dataset.project_id)
+    job = create_job(
+        db,
+        job_type="analyze_data_quality",
+        project_id=project.id,
+        input_payload={"dataset_snapshot_id": dataset.id},
+    )
+    try:
+        mark_job_running(job)
+        result = analyze_dataset_quality(db, store=store, project=project, dataset=dataset)
+        mark_job_succeeded(
+            job,
+            {
+                "dataset_snapshot_id": dataset.id,
+                "artifact_ids": result.artifact_ids,
+                "gate": result.gate,
+                "evidence_ids": result.evidence_ids,
+                "assumption_ids": result.assumption_ids,
+                "question_ids": result.question_ids,
+                "insight_id": result.insight_id,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.get("/api/datasets/{dataset_id}/quality/latest", response_model=ArtifactRead)
+def latest_dataset_quality(dataset_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    dataset = require_dataset(db, dataset_id)
+    artifacts = db.scalars(
+        select(Artifact)
+        .where(Artifact.project_id == dataset.project_id, Artifact.asset_type == "data_quality_gate")
+        .order_by(Artifact.created_at.desc())
+    ).all()
+    for artifact in artifacts:
+        if loads_json(artifact.metadata_json, {}).get("dataset_snapshot_id") == dataset.id:
+            return artifact_to_dict(artifact)
+    raise HTTPException(status_code=404, detail="Data quality gate not found")
+
+
+@router.post("/api/datasets/{dataset_id}/profile", response_model=JobRead)
+def rerun_profile(dataset_id: str, db: Annotated[Session, Depends(get_session)], store: Annotated[LocalArtifactStore, Depends(get_artifact_store)]) -> dict[str, Any]:
+    dataset = require_dataset(db, dataset_id)
+    project = require_project(db, dataset.project_id)
+    artifact = db.get(Artifact, dataset.artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Dataset artifact not found")
+    job = create_job(
+        db,
+        job_type="profile_dataset",
+        project_id=project.id,
+        input_payload={"dataset_snapshot_id": dataset.id, "artifact_id": artifact.id},
+    )
+    try:
+        mark_job_running(job)
+        profile_dataset_artifact(db, store, project, artifact, project.target_column)
+        mark_job_succeeded(job, {"dataset_snapshot_id": dataset.id})
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/understanding/run", response_model=JobRead)
+def run_understanding(project_id: str, db: Annotated[Session, Depends(get_session)], store: Annotated[LocalArtifactStore, Depends(get_artifact_store)]) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    dataset = latest_dataset(db, project_id)
+    if dataset is None:
+        raise HTTPException(status_code=400, detail="Upload a dataset before running understanding")
+    artifact = db.get(Artifact, dataset.artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Dataset artifact not found")
+    job = create_job(db, job_type="profile_dataset", project_id=project_id, input_payload={"dataset_snapshot_id": dataset.id})
+    try:
+        mark_job_running(job)
+        profile_dataset_artifact(db, store, project, artifact, project.target_column)
+        mark_job_succeeded(job, {"dataset_snapshot_id": dataset.id})
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise
+    return job_to_dict(job)
+
+
+@router.get("/api/projects/{project_id}/understanding/latest")
+def latest_understanding(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    require_project(db, project_id)
+    artifacts = db.scalars(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.asset_type.in_(["eda_profile", "understanding_report"]))
+        .order_by(Artifact.created_at.desc())
+    ).all()
+    report = next((item for item in artifacts if item.asset_type == "understanding_report"), None)
+    profile = next((item for item in artifacts if item.asset_type == "eda_profile"), None)
+    return {
+        "profile_artifact": artifact_to_dict(profile) if profile else None,
+        "report_artifact": artifact_to_dict(report) if report else None,
+        "markdown": artifact_primary_path(report).read_text(encoding="utf-8") if report else None,
+    }
+
+
+@router.get("/api/projects/{project_id}/questions", response_model=list[QuestionRead])
+def list_questions(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    questions = db.scalars(
+        select(Question).where(Question.project_id == project_id).order_by(Question.priority.desc(), Question.created_at)
+    ).all()
+    return [question_to_dict(item) for item in questions]
+
+
+@router.post("/api/questions/{question_id}/answer", response_model=AnswerRead)
+def answer_question(
+    question_id: str,
+    payload: QuestionAnswerCreate,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    question = db.get(Question, question_id)
+    if question is None:
+        raise HTTPException(status_code=404, detail="Question not found")
+    answer = Answer(
+        id=new_id("ans"),
+        question_id=question.id,
+        answer_value=payload.answer_value,
+        answer_text=payload.answer_text,
+    )
+    db.add(answer)
+    question.status = "answered"
+
+    evidence = Evidence(
+        id=new_id("ev"),
+        project_id=question.project_id,
+        evidence_type="user_answer",
+        summary=f"Answer to question `{question.id}`: {payload.answer_value}",
+        strength="decisive",
+        metadata_json=dumps_json(
+            {
+                "question_id": question.id,
+                "topic": question.topic,
+                "answer_text": payload.answer_text,
+            }
+        ),
+    )
+    db.add(evidence)
+
+    if question.related_assumption_id:
+        assumption = db.get(Assumption, question.related_assumption_id)
+        if assumption is not None:
+            assumption.status = "confirmed"
+            assumption.confidence = max(assumption.confidence, 0.9)
+            assumption.updated_at = utc_now()
+            db.add(
+                AssumptionEvidenceLink(
+                    id=new_id("ael"),
+                    assumption_id=assumption.id,
+                    evidence_id=evidence.id,
+                    effect="supports",
+                    weight=1.0,
+                )
+            )
+    db.flush()
+    return answer_to_dict(answer)
+
+
+@router.get("/api/projects/{project_id}/assumptions", response_model=list[AssumptionRead])
+def list_assumptions(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    assumptions = db.scalars(
+        select(Assumption).where(Assumption.project_id == project_id).order_by(Assumption.risk_level.desc(), Assumption.created_at)
+    ).all()
+    return [assumption_to_dict(db, item) for item in assumptions]
+
+
+@router.post("/api/projects/{project_id}/assumptions/infer", response_model=JobRead)
+def infer_assumptions(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    require_project(db, project_id)
+    job = create_job(db, job_type="infer_assumptions", project_id=project_id, input_payload={"apply_unanswered_fallbacks": True})
+    mark_job_running(job)
+    unresolved = db.scalars(select(Question).where(Question.project_id == project_id, Question.status == "open")).all()
+    mark_job_succeeded(job, {"unanswered_questions": len(unresolved), "policy": "fallbacks_already_materialized_in_assumptions"})
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/evidence")
+def create_evidence(project_id: str, payload: EvidenceCreate, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    require_project(db, project_id)
+    evidence = Evidence(
+        id=new_id("ev"),
+        project_id=project_id,
+        evidence_type=payload.evidence_type,
+        summary=payload.summary,
+        strength=payload.strength,
+        source_artifact_id=payload.source_artifact_id,
+        metadata_json=dumps_json(payload.metadata),
+    )
+    db.add(evidence)
+    db.flush()
+    return evidence_to_dict(evidence)
+
+
+@router.post("/api/assumptions/{assumption_id}/confirm", response_model=AssumptionRead)
+def confirm_assumption(assumption_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    assumption = require_assumption(db, assumption_id)
+    assumption.status = "confirmed"
+    assumption.confidence = max(assumption.confidence, 0.9)
+    assumption.updated_at = utc_now()
+    return assumption_to_dict(db, assumption)
+
+
+@router.post("/api/assumptions/{assumption_id}/reject", response_model=AssumptionRead)
+def reject_assumption(assumption_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    assumption = require_assumption(db, assumption_id)
+    assumption.status = "challenged"
+    assumption.confidence = min(assumption.confidence, 0.35)
+    assumption.updated_at = utc_now()
+    return assumption_to_dict(db, assumption)
+
+
+@router.get("/api/assumptions/{assumption_id}/evidence")
+def list_assumption_evidence(assumption_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    assumption = require_assumption(db, assumption_id)
+    links = db.scalars(select(AssumptionEvidenceLink).where(AssumptionEvidenceLink.assumption_id == assumption.id)).all()
+    if not links:
+        return []
+    evidence = db.scalars(select(Evidence).where(Evidence.id.in_([link.evidence_id for link in links]))).all()
+    return [evidence_to_dict(item) for item in evidence]
+
+
+@router.post("/api/projects/{project_id}/evaluation/design", response_model=JobRead)
+def design_evaluation(project_id: str, db: Annotated[Session, Depends(get_session)], store: Annotated[LocalArtifactStore, Depends(get_artifact_store)]) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    dataset = latest_dataset(db, project_id)
+    if dataset is None:
+        raise HTTPException(status_code=400, detail="Upload a dataset before designing evaluation")
+    job = create_job(db, job_type="design_evaluation_candidates", project_id=project_id, input_payload={"dataset_snapshot_id": dataset.id})
+    try:
+        mark_job_running(job)
+        candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
+        mark_job_succeeded(job, {"evaluation_candidate_ids": [candidate.id for candidate in candidates]})
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise
+    return job_to_dict(job)
+
+
+@router.get("/api/projects/{project_id}/evaluation/candidates", response_model=list[EvaluationCandidateRead])
+def list_evaluation_candidates(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    candidates = db.scalars(
+        select(EvaluationCandidate).where(EvaluationCandidate.project_id == project_id).order_by(EvaluationCandidate.created_at.desc())
+    ).all()
+    return [candidate_to_dict(item) for item in candidates]
+
+
+@router.post("/api/evaluation-candidates/{candidate_id}/promote", response_model=EvaluationSpecRead)
+def promote_evaluation_candidate(candidate_id: str, db: Annotated[Session, Depends(get_session)], store: Annotated[LocalArtifactStore, Depends(get_artifact_store)]) -> dict[str, Any]:
+    candidate = db.get(EvaluationCandidate, candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="EvaluationCandidate not found")
+    spec = promote_candidate_to_spec(db, store=store, candidate=candidate)
+    return spec_to_dict(spec)
+
+
+@router.get("/api/projects/{project_id}/evaluation/specs", response_model=list[EvaluationSpecRead])
+def list_evaluation_specs(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    specs = db.scalars(
+        select(EvaluationSpec).where(EvaluationSpec.project_id == project_id).order_by(EvaluationSpec.created_at.desc())
+    ).all()
+    return [spec_to_dict(item) for item in specs]
+
+
+@router.get("/api/evaluation-specs/{spec_id}", response_model=EvaluationSpecRead)
+def get_evaluation_spec(spec_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    spec = require_eval_spec(db, spec_id)
+    return spec_to_dict(spec)
+
+
+@router.post("/api/evaluation-specs/{spec_id}/approve", response_model=EvaluationSpecRead)
+def approve_evaluation_spec(spec_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    spec = require_eval_spec(db, spec_id)
+    try:
+        approve_spec(spec)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return spec_to_dict(spec)
+
+
+@router.post("/api/evaluation-specs/{spec_id}/generate-split", response_model=SplitManifestRead)
+def generate_split(spec_id: str, db: Annotated[Session, Depends(get_session)], store: Annotated[LocalArtifactStore, Depends(get_artifact_store)]) -> dict[str, Any]:
+    spec = require_eval_spec(db, spec_id)
+    job = create_job(db, job_type="build_split_manifest", project_id=spec.project_id, input_payload={"evaluation_spec_id": spec.id})
+    try:
+        mark_job_running(job)
+        split = generate_split_manifest(db, store=store, spec=spec)
+        mark_job_succeeded(job, {"split_manifest_id": split.id})
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return split_to_dict(split)
+
+
+@router.get("/api/split-manifests/{split_id}", response_model=SplitManifestRead)
+def get_split_manifest(split_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    split = db.get(SplitManifest, split_id)
+    if split is None:
+        raise HTTPException(status_code=404, detail="SplitManifest not found")
+    return split_to_dict(split)
+
+
+@router.post("/api/projects/{project_id}/approach/research-briefs", response_model=JobRead)
+def generate_project_research_brief(
+    project_id: str,
+    payload: ResearchBriefCreate,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    dataset = latest_dataset(db, project_id)
+    spec = latest_approved_spec(db, project_id)
+    job = create_job(
+        db,
+        job_type="generate_research_brief",
+        project_id=project_id,
+        input_payload={"dataset_snapshot_id": dataset.id if dataset else None, "evaluation_spec_id": spec.id if spec else None},
+    )
+    try:
+        mark_job_running(job)
+        result = generate_research_brief(
+            db,
+            store=store,
+            project=project,
+            dataset=dataset,
+            evaluation_spec=spec,
+            question=payload.question,
+        )
+        mark_job_succeeded(job, {"research_brief_id": result.brief.id, "artifact_id": result.artifact.id})
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.get("/api/projects/{project_id}/approach/research-briefs", response_model=list[ResearchBriefRead])
+def list_project_research_briefs(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    briefs = db.scalars(
+        select(ResearchBrief).where(ResearchBrief.project_id == project_id).order_by(ResearchBrief.created_at.desc())
+    ).all()
+    return [research_brief_to_dict(item) for item in briefs]
+
+
+@router.post("/api/projects/{project_id}/approach/ideas/generate", response_model=JobRead)
+def generate_project_approach_ideas(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    dataset = latest_dataset(db, project_id)
+    spec = latest_approved_spec(db, project_id)
+    brief = latest_research_brief(db, project_id)
+    job = create_job(
+        db,
+        job_type="generate_approach_candidates",
+        project_id=project_id,
+        input_payload={
+            "dataset_snapshot_id": dataset.id if dataset else None,
+            "evaluation_spec_id": spec.id if spec else None,
+            "research_brief_id": brief.id if brief else None,
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = generate_approach_candidates(
+            db,
+            store=store,
+            project=project,
+            research_brief=brief,
+            dataset=dataset,
+            evaluation_spec=spec,
+        )
+        mark_job_succeeded(
+            job,
+            {"idea_ids": [idea.id for idea in result.ideas], "artifact_ids": result.artifact_ids},
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.get("/api/projects/{project_id}/approach/ideas", response_model=list[IdeaRead])
+def list_project_ideas(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    ideas = db.scalars(select(Idea).where(Idea.project_id == project_id).order_by(Idea.priority.desc(), Idea.created_at.desc())).all()
+    return [idea_to_dict(item) for item in ideas]
+
+
+@router.post("/api/ideas/{idea_id}/prepare-agent-context", response_model=JobRead)
+def prepare_idea_agent_context(
+    idea_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    idea = db.get(Idea, idea_id)
+    if idea is None:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    project = require_project(db, idea.project_id)
+    job = create_job(
+        db,
+        job_type="prepare_agent_context",
+        project_id=project.id,
+        input_payload={"idea_id": idea.id},
+    )
+    try:
+        mark_job_running(job)
+        result = prepare_idea_agent_context_pack(db, store=store, project=project, idea=idea, job=job)
+        mark_job_succeeded(
+            job,
+            {
+                "idea_id": idea.id,
+                "context_pack_id": result.context_pack["id"],
+                "artifact_id": result.artifact.id,
+                "schema_version": result.context_pack["schema_version"],
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.get("/api/ideas/{idea_id}/context-packs", response_model=list[ArtifactRead])
+def list_idea_agent_context_packs(idea_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    idea = db.get(Idea, idea_id)
+    if idea is None:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    artifacts = db.scalars(
+        select(Artifact)
+        .where(Artifact.project_id == idea.project_id, Artifact.asset_type == "agent_context_pack")
+        .order_by(Artifact.created_at.desc())
+    ).all()
+    return [artifact_to_dict(artifact) for artifact in artifacts if loads_json(artifact.metadata_json, {}).get("idea_id") == idea.id]
+
+
+@router.post("/api/ideas/{idea_id}/experiment-plan", response_model=JobRead)
+def create_idea_experiment_plan(
+    idea_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    idea = db.get(Idea, idea_id)
+    if idea is None:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    project = require_project(db, idea.project_id)
+    job = create_job(
+        db,
+        job_type="create_experiment_plan",
+        project_id=project.id,
+        input_payload={"idea_id": idea.id},
+    )
+    try:
+        mark_job_running(job)
+        result = create_experiment_plan_for_idea(db, store=store, project=project, idea=idea, job=job)
+        mark_job_succeeded(
+            job,
+            {
+                "idea_id": idea.id,
+                "plan_id": result.plan["id"],
+                "artifact_id": result.artifact.id,
+                "evidence_id": result.evidence_id,
+                "insight_id": result.insight_id,
+                "readiness": result.plan["readiness"],
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.get("/api/ideas/{idea_id}/experiment-plans", response_model=list[ArtifactRead])
+def list_idea_experiment_plans(idea_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    idea = db.get(Idea, idea_id)
+    if idea is None:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    artifacts = db.scalars(
+        select(Artifact)
+        .where(Artifact.project_id == idea.project_id, Artifact.asset_type == "experiment_plan")
+        .order_by(Artifact.created_at.desc())
+    ).all()
+    return [artifact_to_dict(artifact) for artifact in artifacts if loads_json(artifact.metadata_json, {}).get("idea_id") == idea.id]
+
+
+@router.post("/api/ideas/{idea_id}/run-agent-task", response_model=JobRead)
+def run_idea_agent_task(
+    idea_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    idea = db.get(Idea, idea_id)
+    if idea is None:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    project = require_project(db, idea.project_id)
+    job = create_job(
+        db,
+        job_type="run_agent_task",
+        project_id=project.id,
+        input_payload={"idea_id": idea.id, "task_contract": loads_json(idea.agent_task_contract_json, {})},
+    )
+    try:
+        mark_job_running(job)
+        result = run_idea_agent_task_stub(db, store=store, project=project, idea=idea, job=job)
+        mark_job_succeeded(
+            job,
+            {
+                "idea_id": idea.id,
+                "agent_status": result.agent_result.status,
+                "agent_final_message": result.agent_result.final_message,
+                "artifact_ids": result.artifact_ids,
+                "workspace_artifact_id": result.workspace_artifact_id,
+                "ingested_artifact_ids": result.ingested_artifact_ids,
+                "report_id": result.report_id,
+                "evidence_id": result.evidence_id,
+                "requires_human_review": result.agent_result.requires_human_review,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/reports/draft", response_model=JobRead)
+def draft_report_endpoint(
+    project_id: str,
+    payload: ReportCreate,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="draft_project_report",
+        project_id=project_id,
+        input_payload={"title": payload.title, "report_type": payload.report_type},
+    )
+    try:
+        mark_job_running(job)
+        result = draft_project_report(
+            db,
+            store=store,
+            project=project,
+            title=payload.title,
+            report_type=payload.report_type,
+        )
+        mark_job_succeeded(job, {"report_id": result.report.id, "artifact_id": result.artifact.id})
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.get("/api/projects/{project_id}/reports", response_model=list[ReportRead])
+def list_project_reports(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    reports = db.scalars(select(Report).where(Report.project_id == project_id).order_by(Report.created_at.desc())).all()
+    return [report_to_dict(item) for item in reports]
+
+
+@router.get("/api/reports/{report_id}/preview", response_model=ArtifactPreviewRead)
+def preview_report(report_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    report = db.get(Report, report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    artifact = db.get(Artifact, report.artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Report artifact not found")
+    path = artifact_primary_path(artifact)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Artifact file not found")
+    return artifact_preview_to_dict(artifact, path)
+
+
+@router.get("/api/reports/{report_id}/download")
+def download_report(report_id: str, db: Annotated[Session, Depends(get_session)]) -> FileResponse:
+    report = db.get(Report, report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    artifact = db.get(Artifact, report.artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Report artifact not found")
+    path = artifact_primary_path(artifact)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Artifact file not found")
+    return FileResponse(path=path, filename=path.name)
+
+
+@router.post("/api/projects/{project_id}/visualizations/generate", response_model=JobRead)
+def generate_visualization_endpoint(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(db, job_type="create_visualization_spec", project_id=project_id, input_payload={})
+    try:
+        mark_job_running(job)
+        result = create_project_visualization_dashboard(db, store=store, project=project)
+        mark_job_succeeded(
+            job,
+            {
+                "visualization_id": result.visualizations[0].id if result.visualizations else None,
+                "visualization_ids": [visualization.id for visualization in result.visualizations],
+                "artifact_ids": result.artifact_ids,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.get("/api/projects/{project_id}/visualizations", response_model=list[VisualizationSpecRead])
+def list_project_visualizations(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    visualizations = db.scalars(
+        select(VisualizationSpec).where(VisualizationSpec.project_id == project_id).order_by(VisualizationSpec.created_at.desc())
+    ).all()
+    return [visualization_to_dict(item) for item in visualizations]
+
+
+@router.post("/api/projects/{project_id}/insights/generate", response_model=JobRead)
+def generate_insights_endpoint(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(db, job_type="generate_insights", project_id=project_id, input_payload={})
+    try:
+        mark_job_running(job)
+        result = generate_project_insights(db, store=store, project=project)
+        mark_job_succeeded(
+            job,
+            {
+                "insight_ids": [insight.id for insight in result.insights],
+                "artifact_id": result.artifact.id,
+                "evidence_ids": result.evidence_ids,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.get("/api/projects/{project_id}/insights", response_model=list[InsightRead])
+def list_project_insights(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    insights = db.scalars(select(Insight).where(Insight.project_id == project_id).order_by(Insight.created_at.desc())).all()
+    return [insight_to_dict(item) for item in insights]
+
+
+@router.post("/api/projects/{project_id}/baseline/run", response_model=JobRead)
+def run_baseline_endpoint(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    spec = latest_approved_spec(db, project_id)
+    if spec is None:
+        raise HTTPException(status_code=400, detail="Approve an EvaluationSpec before running baseline")
+    split = latest_split_for_spec(db, spec.id)
+    if split is None:
+        raise HTTPException(status_code=400, detail="Generate a SplitManifest before running baseline")
+    job = create_job(
+        db,
+        job_type="run_baseline",
+        project_id=project_id,
+        input_payload={"evaluation_spec_id": spec.id, "split_manifest_id": split.id},
+    )
+    try:
+        mark_job_running(job)
+        result = run_baseline_service(
+            db,
+            store=store,
+            project=project,
+            evaluation_spec=spec,
+            split_manifest=split,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "experiment_run_id": result.run.id,
+                "model_version_id": result.model_version_id,
+                "artifact_ids": result.artifact_ids,
+                "metrics": result.metrics,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.get("/api/projects/{project_id}/runs")
+def list_runs(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    runs = db.scalars(select(ExperimentRun).where(ExperimentRun.project_id == project_id).order_by(ExperimentRun.started_at.desc())).all()
+    return [
+        {
+            "id": run.id,
+            "project_id": run.project_id,
+            "dataset_snapshot_id": run.dataset_snapshot_id,
+            "evaluation_spec_id": run.evaluation_spec_id,
+            "split_manifest_id": run.split_manifest_id,
+            "model_version_id": run.model_version_id,
+            "runner_type": run.runner_type,
+            "status": run.status,
+            "metrics": loads_json(run.metrics_json, {}),
+            "summary_md": run.summary_md,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "ended_at": run.ended_at.isoformat() if run.ended_at else None,
+        }
+        for run in runs
+    ]
+
+
+@router.post("/api/projects/{project_id}/experiments/compare", response_model=JobRead)
+def compare_project_experiments_endpoint(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(db, job_type="compare_experiments", project_id=project_id, input_payload={})
+    try:
+        mark_job_running(job)
+        result = compare_project_experiments(db, store=store, project=project)
+        mark_job_succeeded(
+            job,
+            {
+                "artifact_ids": result.artifact_ids,
+                "comparison": result.comparison,
+                "visualization_id": result.visualization_id,
+                "report_id": result.report_id,
+                "evidence_id": result.evidence_id,
+                "insight_id": result.insight_id,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/runs/{run_id}/report", response_model=JobRead)
+def draft_run_report_endpoint(
+    run_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    run = db.get(ExperimentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="ExperimentRun not found")
+    job = create_job(db, job_type="draft_run_report", project_id=run.project_id, input_payload={"run_id": run.id})
+    try:
+        mark_job_running(job)
+        result = draft_run_report(db, store=store, run=run)
+        mark_job_succeeded(
+            job,
+            {
+                "run_id": run.id,
+                "report_id": result.report.id,
+                "artifact_id": result.artifact.id,
+                "evidence_id": result.evidence_id,
+                "insight_id": result.insight_id,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/runs/{run_id}/diagnostics", response_model=JobRead)
+def analyze_run_diagnostics_endpoint(
+    run_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    run = db.get(ExperimentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="ExperimentRun not found")
+    job = create_job(
+        db,
+        job_type="analyze_evaluation_diagnostics",
+        project_id=run.project_id,
+        input_payload={"run_id": run.id},
+    )
+    try:
+        mark_job_running(job)
+        result = analyze_run_diagnostics(db, store=store, run=run)
+        mark_job_succeeded(
+            job,
+            {
+                "run_id": run.id,
+                "artifact_ids": result.artifact_ids,
+                "diagnostics": result.diagnostics,
+                "insight_id": result.insight_id,
+                "evidence_id": result.evidence_id,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.get("/api/projects/{project_id}/leaderboard")
+def leaderboard(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    runs = db.scalars(
+        select(ExperimentRun).where(ExperimentRun.project_id == project_id, ExperimentRun.status == "succeeded")
+    ).all()
+    sorted_runs = sorted(runs, key=leaderboard_sort_key)
+    return [
+        {
+            "rank": index + 1,
+            "run_id": run.id,
+            "status": run.status,
+            "runner_type": run.runner_type,
+            "primary_metric_name": loads_json(run.metrics_json, {}).get("primary_metric_name"),
+            "primary_metric_value": loads_json(run.metrics_json, {}).get("primary_metric_value"),
+            "metrics": loads_json(run.metrics_json, {}),
+            "evaluation_spec_id": run.evaluation_spec_id,
+            "split_manifest_id": run.split_manifest_id,
+            "model_version_id": run.model_version_id,
+        }
+        for index, run in enumerate(sorted_runs)
+    ]
+
+
+@router.get("/api/projects/{project_id}/model-versions", response_model=list[ModelVersionRead])
+def list_model_versions(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    model_versions = db.scalars(
+        select(ModelVersion).where(ModelVersion.project_id == project_id).order_by(ModelVersion.created_at.desc())
+    ).all()
+    return [model_version_to_dict(item) for item in model_versions]
+
+
+@router.get("/api/model-versions/{model_version_id}", response_model=ModelVersionRead)
+def get_model_version(model_version_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    model_version = db.get(ModelVersion, model_version_id)
+    if model_version is None:
+        raise HTTPException(status_code=404, detail="ModelVersion not found")
+    return model_version_to_dict(model_version)
+
+
+@router.post("/api/model-versions/{model_version_id}/validate", response_model=JobRead)
+def validate_model_version(
+    model_version_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    model_version = db.get(ModelVersion, model_version_id)
+    if model_version is None:
+        raise HTTPException(status_code=404, detail="ModelVersion not found")
+    job = create_job(
+        db,
+        job_type="validate_model_package",
+        project_id=model_version.project_id,
+        input_payload={"model_version_id": model_version.id},
+    )
+    try:
+        mark_job_running(job)
+        result = validate_model_version_package(db, store=store, model_version=model_version)
+        mark_job_succeeded(
+            job,
+            {
+                "model_version_id": result.model_version.id,
+                "artifact_ids": result.artifact_ids,
+                "metrics": result.metrics,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.get("/api/model-versions/{model_version_id}/validations", response_model=list[ModelValidationRead])
+def list_model_version_validations(
+    model_version_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> list[dict[str, Any]]:
+    model_version = db.get(ModelVersion, model_version_id)
+    if model_version is None:
+        raise HTTPException(status_code=404, detail="ModelVersion not found")
+    jobs = db.scalars(
+        select(Job)
+        .where(Job.project_id == model_version.project_id, Job.job_type == "validate_model_package")
+        .order_by(Job.created_at.desc())
+    ).all()
+    validation_jobs = []
+    for job in jobs:
+        job_input = loads_json(job.input_json, {})
+        job_output = loads_json(job.output_json, {})
+        if job_input.get("model_version_id") == model_version_id or job_output.get("model_version_id") == model_version_id:
+            validation_jobs.append(job)
+    return [model_validation_to_dict(db, item, model_version_id) for item in validation_jobs]
+
+
+@router.get("/api/projects/{project_id}/artifacts", response_model=list[ArtifactRead])
+def list_artifacts(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    artifacts = db.scalars(select(Artifact).where(Artifact.project_id == project_id).order_by(Artifact.created_at.desc())).all()
+    return [artifact_to_dict(item) for item in artifacts]
+
+
+@router.get("/api/artifacts/{artifact_id}", response_model=ArtifactRead)
+def get_artifact(artifact_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    artifact = db.get(Artifact, artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return artifact_to_dict(artifact)
+
+
+@router.get("/api/artifacts/{artifact_id}/download")
+def download_artifact(artifact_id: str, db: Annotated[Session, Depends(get_session)]) -> FileResponse:
+    artifact = db.get(Artifact, artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    path = artifact_primary_path(artifact)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Artifact file not found")
+    return FileResponse(path=path, filename=path.name)
+
+
+@router.get("/api/artifacts/{artifact_id}/preview", response_model=ArtifactPreviewRead)
+def preview_artifact(artifact_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    artifact = db.get(Artifact, artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    path = artifact_primary_path(artifact)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Artifact file not found")
+    return artifact_preview_to_dict(artifact, path)
+
+
+@router.get("/api/projects/{project_id}/lineage")
+def list_lineage(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    edges = db.scalars(select(LineageEdge).where(LineageEdge.project_id == project_id).order_by(LineageEdge.created_at)).all()
+    return [
+        {
+            "id": edge.id,
+            "from_asset_type": edge.from_asset_type,
+            "from_asset_id": edge.from_asset_id,
+            "to_asset_type": edge.to_asset_type,
+            "to_asset_id": edge.to_asset_id,
+            "relation_type": edge.relation_type,
+            "metadata": loads_json(edge.metadata_json, {}),
+            "created_at": edge.created_at.isoformat(),
+        }
+        for edge in edges
+    ]
+
+
+@router.get("/api/projects/{project_id}/jobs", response_model=list[JobRead])
+def list_project_jobs(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    jobs = db.scalars(select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc())).all()
+    return [job_to_dict(item) for item in jobs]
+
+
+@router.post("/api/jobs", response_model=JobRead)
+def enqueue_job(payload: JobCreate, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    if payload.project_id:
+        require_project(db, payload.project_id)
+    job = create_job(
+        db,
+        job_type=payload.job_type,
+        project_id=payload.project_id,
+        input_payload=payload.input,
+        context=payload.context,
+        policy=payload.policy,
+        dependency_job_ids=payload.dependency_job_ids,
+        priority=payload.priority,
+        max_attempts=payload.max_attempts,
+        approval_required=payload.approval_required,
+    )
+    return job_to_dict(job)
+
+
+@router.get("/api/jobs/{job_id}", response_model=JobRead)
+def get_job(job_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job_to_dict(job)
+
+
+@router.post("/api/jobs/{job_id}/cancel", response_model=JobRead)
+def cancel_job(job_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    cancel_job_service(job)
+    return job_to_dict(job)
+
+
+@router.post("/api/jobs/{job_id}/approve", response_model=JobRead)
+def approve_job_endpoint(job_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    approve_job(job)
+    return job_to_dict(job)
+
+
+@router.post("/api/jobs/{job_id}/retry", response_model=JobRead)
+def retry_job_endpoint(job_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        retry_job(job)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/worker/run-once", response_model=JobRead | None)
+def run_worker_once(db: Annotated[Session, Depends(get_session)]) -> dict[str, Any] | None:
+    worker = create_default_worker()
+    job = worker.run_next_job(db)
+    if job is None:
+        return None
+    return job_to_dict(job)
+
+
+@router.post("/api/assets/seed-defaults", response_model=list[AssetRead])
+def seed_assets_endpoint(
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> list[dict[str, Any]]:
+    assets = seed_default_assets(db, store)
+    return [asset_to_dict(asset) for asset in assets]
+
+
+@router.get("/api/assets", response_model=list[AssetRead])
+def list_assets(
+    db: Annotated[Session, Depends(get_session)],
+    asset_type: str | None = None,
+) -> list[dict[str, Any]]:
+    stmt = select(Asset).order_by(Asset.asset_type, Asset.name)
+    if asset_type:
+        stmt = select(Asset).where(Asset.asset_type == asset_type).order_by(Asset.name)
+    assets = db.scalars(stmt).all()
+    return [asset_to_dict(asset) for asset in assets]
+
+
+@router.post("/api/assets", response_model=AssetRead)
+def create_asset_endpoint(
+    payload: AssetCreate,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    asset = create_library_asset(db, store=store, payload=payload.model_dump())
+    return asset_to_dict(asset)
+
+
+@router.get("/api/assets/{asset_id}/versions", response_model=list[AssetVersionRead])
+def list_asset_versions(asset_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    asset = db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    versions = db.scalars(select(AssetVersion).where(AssetVersion.asset_id == asset_id).order_by(AssetVersion.created_at.desc())).all()
+    return [asset_version_to_dict(version) for version in versions]
+
+
+@router.get("/api/projects/{project_id}/asset-references", response_model=list[AssetReferenceRead])
+def list_project_asset_references(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    references = db.scalars(
+        select(AssetReference).where(AssetReference.source_type == "project", AssetReference.source_id == project_id)
+    ).all()
+    return [expanded_asset_reference_to_dict(db, reference) for reference in references]
+
+
+@router.post("/api/projects/{project_id}/asset-references", response_model=AssetReferenceRead)
+def create_project_asset_reference(
+    project_id: str,
+    payload: AssetReferenceCreate,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    require_project(db, project_id)
+    try:
+        reference = create_asset_reference(
+            db,
+            source_type="project",
+            source_id=project_id,
+            target_asset_id=payload.target_asset_id,
+            target_asset_version_id=payload.target_asset_version_id,
+            relation_type=payload.relation_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    create_lineage_edge(
+        db,
+        project_id=project_id,
+        from_asset_type="project",
+        from_asset_id=project_id,
+        to_asset_type="library_asset",
+        to_asset_id=payload.target_asset_id,
+        relation_type=payload.relation_type,
+    )
+    return expanded_asset_reference_to_dict(db, reference)
+
+
+@router.get("/api/ideas/{idea_id}/asset-references", response_model=list[AssetReferenceRead])
+def list_idea_asset_references(idea_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    idea = db.get(Idea, idea_id)
+    if idea is None:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    references = db.scalars(
+        select(AssetReference).where(AssetReference.source_type == "idea", AssetReference.source_id == idea_id)
+    ).all()
+    return [expanded_asset_reference_to_dict(db, reference) for reference in references]
+
+
+@router.post("/api/ideas/{idea_id}/asset-references", response_model=AssetReferenceRead)
+def create_idea_asset_reference(
+    idea_id: str,
+    payload: AssetReferenceCreate,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    idea = db.get(Idea, idea_id)
+    if idea is None:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    try:
+        reference = create_asset_reference(
+            db,
+            source_type="idea",
+            source_id=idea_id,
+            target_asset_id=payload.target_asset_id,
+            target_asset_version_id=payload.target_asset_version_id,
+            relation_type=payload.relation_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    create_lineage_edge(
+        db,
+        project_id=idea.project_id,
+        from_asset_type="idea",
+        from_asset_id=idea_id,
+        to_asset_type="library_asset",
+        to_asset_id=payload.target_asset_id,
+        relation_type=payload.relation_type,
+    )
+    return expanded_asset_reference_to_dict(db, reference)
+
+
+def profile_dataset_artifact(
+    db: Session,
+    store: LocalArtifactStore,
+    project: Project,
+    dataset_artifact: Artifact,
+    target_column: str | None,
+) -> DatasetSnapshot:
+    source_path = artifact_primary_path(dataset_artifact)
+    result = profile_tabular_file(source_path, project.id, target_column)
+    dataset = DatasetSnapshot(
+        id=new_id("ds"),
+        project_id=project.id,
+        artifact_id=dataset_artifact.id,
+        source_type="upload",
+        source_ref=loads_json(dataset_artifact.metadata_json, {}).get("source_filename"),
+        row_count=result.row_count,
+        column_count=result.column_count,
+        schema_hash=result.schema_hash,
+        data_hash=dataset_artifact.content_hash,
+    )
+    db.add(dataset)
+    db.flush()
+
+    profile_artifact = store_and_register_json(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="eda_profile",
+        name="profile",
+        filename="profile.json",
+        payload=result.profile,
+        metadata={"project_id": project.id, "dataset_snapshot_id": dataset.id},
+    )
+    understanding_artifact = store_and_register_text(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="understanding_report",
+        name="understanding",
+        filename="understanding.md",
+        text=result.understanding_md,
+        metadata={"project_id": project.id, "dataset_snapshot_id": dataset.id},
+    )
+    semantic_artifact = store_and_register_json(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="semantic_catalog",
+        name="semantic_catalog",
+        filename="semantic_catalog.json",
+        payload=result.semantic_catalog,
+        metadata={"project_id": project.id, "dataset_snapshot_id": dataset.id},
+    )
+    store_and_register_json(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="question_set",
+        name="questions",
+        filename="questions.json",
+        payload=result.questions,
+        metadata={"project_id": project.id, "dataset_snapshot_id": dataset.id},
+    )
+    store_and_register_json(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="assumption_set",
+        name="assumptions",
+        filename="assumptions.json",
+        payload=result.assumptions,
+        metadata={"project_id": project.id, "dataset_snapshot_id": dataset.id},
+    )
+    store_and_register_json(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="evidence_set",
+        name="evidence",
+        filename="evidence.json",
+        payload=result.evidence,
+        metadata={"project_id": project.id, "dataset_snapshot_id": dataset.id},
+    )
+
+    catalog = SemanticCatalog(
+        id=new_id("scat"),
+        project_id=project.id,
+        dataset_snapshot_id=dataset.id,
+        artifact_id=semantic_artifact.id,
+        columns_json=dumps_json(result.semantic_catalog),
+    )
+    db.add(catalog)
+    evidence_records = []
+    for item in result.evidence:
+        evidence = Evidence(
+            id=item["id"],
+            project_id=project.id,
+            evidence_type=item["evidence_type"],
+            summary=item["summary"],
+            strength=item["strength"],
+            source_artifact_id=profile_artifact.id,
+            metadata_json=dumps_json(item.get("metadata") or {}),
+        )
+        db.add(evidence)
+        evidence_records.append(evidence)
+    assumption_records = []
+    for item in result.assumptions:
+        assumption = Assumption(
+            id=item["id"],
+            project_id=project.id,
+            topic=item["topic"],
+            subject_type=item.get("subject_type"),
+            subject_ref=item.get("subject_ref"),
+            statement=item["statement"],
+            status=item["status"],
+            confidence=float(item["confidence"]),
+            risk_level=item["risk_level"],
+            fallback_policy=item["fallback_policy"],
+            requires_user_confirmation=bool(item.get("requires_user_confirmation")),
+            created_by_type="system",
+        )
+        db.add(assumption)
+        assumption_records.append(assumption)
+    for item in result.questions:
+        question = Question(
+            id=item["id"],
+            project_id=project.id,
+            question_set_id=item["question_set_id"],
+            topic=item.get("topic"),
+            question=item["question"],
+            why_it_matters=item["why_it_matters"],
+            default_assumption=item.get("default_assumption"),
+            impact_if_wrong=item.get("impact_if_wrong"),
+            choices_json=dumps_json(item.get("choices") or []),
+            priority=int(item.get("priority") or 50),
+            risk_level=item["risk_level"],
+            value_of_answer=item["value_of_answer"],
+            can_proceed_without_answer=bool(item["can_proceed_without_answer"]),
+            fallback_policy=item["fallback_policy"],
+            related_assumption_id=item.get("related_assumption_id"),
+            blocks_next_phase=bool(item.get("blocks_next_phase")),
+        )
+        db.add(question)
+    db.flush()
+    if evidence_records:
+        for assumption in assumption_records:
+            db.add(
+                AssumptionEvidenceLink(
+                    id=new_id("ael"),
+                    assumption_id=assumption.id,
+                    evidence_id=evidence_records[0].id,
+                    effect="supports",
+                    weight=1.0,
+                )
+            )
+    for artifact in [dataset_artifact, profile_artifact, understanding_artifact, semantic_artifact]:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="dataset_snapshot",
+            from_asset_id=dataset.id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="produces",
+        )
+    return dataset
+
+
+def store_and_register_json(
+    db: Session,
+    store: LocalArtifactStore,
+    *,
+    project_id: str,
+    asset_type: str,
+    name: str,
+    filename: str,
+    payload: Any,
+    metadata: dict[str, Any],
+) -> Artifact:
+    version = next_artifact_version(db, project_id, asset_type, name)
+    artifact_dir, stored, content_hash = store.store_json(
+        org_id="local-org",
+        project_id=project_id,
+        asset_type=asset_type,
+        name=name,
+        version=version,
+        filename=filename,
+        payload=payload,
+        metadata=metadata,
+    )
+    return register_artifact(
+        db,
+        project_id=project_id,
+        asset_type=asset_type,
+        name=name,
+        uri=str(artifact_dir),
+        content_hash=content_hash,
+        size_bytes=stored.size_bytes,
+        metadata={**metadata, "primary_path": str(stored.path)},
+        version=version,
+    )
+
+
+def store_and_register_text(
+    db: Session,
+    store: LocalArtifactStore,
+    *,
+    project_id: str,
+    asset_type: str,
+    name: str,
+    filename: str,
+    text: str,
+    metadata: dict[str, Any],
+) -> Artifact:
+    version = next_artifact_version(db, project_id, asset_type, name)
+    artifact_dir, stored, content_hash = store.store_text(
+        org_id="local-org",
+        project_id=project_id,
+        asset_type=asset_type,
+        name=name,
+        version=version,
+        filename=filename,
+        text=text,
+        metadata=metadata,
+    )
+    return register_artifact(
+        db,
+        project_id=project_id,
+        asset_type=asset_type,
+        name=name,
+        uri=str(artifact_dir),
+        content_hash=content_hash,
+        size_bytes=stored.size_bytes,
+        metadata={**metadata, "primary_path": str(stored.path)},
+        version=version,
+    )
+
+
+def require_project(db: Session, project_id: str) -> Project:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+def require_dataset(db: Session, dataset_id: str) -> DatasetSnapshot:
+    dataset = db.get(DatasetSnapshot, dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="DatasetSnapshot not found")
+    return dataset
+
+
+def require_assumption(db: Session, assumption_id: str) -> Assumption:
+    assumption = db.get(Assumption, assumption_id)
+    if assumption is None:
+        raise HTTPException(status_code=404, detail="Assumption not found")
+    return assumption
+
+
+def require_eval_spec(db: Session, spec_id: str) -> EvaluationSpec:
+    spec = db.get(EvaluationSpec, spec_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="EvaluationSpec not found")
+    return spec
+
+
+def latest_dataset(db: Session, project_id: str) -> DatasetSnapshot | None:
+    return db.scalar(
+        select(DatasetSnapshot).where(DatasetSnapshot.project_id == project_id).order_by(DatasetSnapshot.created_at.desc())
+    )
+
+
+def latest_approved_spec(db: Session, project_id: str) -> EvaluationSpec | None:
+    return db.scalar(
+        select(EvaluationSpec)
+        .where(EvaluationSpec.project_id == project_id, EvaluationSpec.status == "approved")
+        .order_by(EvaluationSpec.created_at.desc())
+    )
+
+
+def latest_split_for_spec(db: Session, spec_id: str) -> SplitManifest | None:
+    return db.scalar(
+        select(SplitManifest)
+        .where(SplitManifest.evaluation_spec_id == spec_id)
+        .order_by(SplitManifest.created_at.desc())
+    )
+
+
+def latest_research_brief(db: Session, project_id: str) -> ResearchBrief | None:
+    return db.scalar(
+        select(ResearchBrief).where(ResearchBrief.project_id == project_id).order_by(ResearchBrief.created_at.desc())
+    )
+
+
+def latest_profile_for_dataset(db: Session, dataset: DatasetSnapshot) -> dict[str, Any]:
+    artifact = db.scalar(
+        select(Artifact)
+        .where(Artifact.project_id == dataset.project_id, Artifact.asset_type == "eda_profile")
+        .order_by(Artifact.created_at.desc())
+    )
+    if artifact is None:
+        return {}
+    return cast(
+        dict[str, Any],
+        json.loads(artifact_primary_path(artifact).read_text(encoding="utf-8")),
+    )
+
+
+def count_rows(db: Session, model: type[Any], project_id: str) -> int:
+    return int(db.scalar(select(func.count()).select_from(model).where(model.project_id == project_id)) or 0)
+
+
+def leaderboard_sort_key(run: ExperimentRun) -> tuple[int, float]:
+    metrics = loads_json(run.metrics_json, {})
+    metric_name = metrics.get("primary_metric_name")
+    metric_value = metrics.get("primary_metric_value")
+    if metric_value is None:
+        return (1, 0.0)
+    value = float(metric_value)
+    if metric_name in {"rmse", "mae", "log_loss"}:
+        return (0, value)
+    return (0, -value)
+
+
+def next_actions(project: Project, counts: dict[str, int]) -> list[str]:
+    actions: list[str] = []
+    if counts["datasets"] == 0:
+        actions.append("Upload a CSV or Parquet dataset.")
+    if counts["questions"] > 0 and counts["assumptions"] > 0:
+        actions.append("Review open questions and high-risk assumptions.")
+    if counts["evaluation_candidates"] == 0 and counts["datasets"] > 0:
+        actions.append("Design evaluation candidates.")
+    if counts["evaluation_specs"] == 0 and counts["evaluation_candidates"] > 0:
+        actions.append("Promote and approve an EvaluationSpec.")
+    if not actions:
+        actions.append("Run the next job from the project tabs.")
+    return actions
+
+
+def project_to_dict(project: Project) -> dict[str, Any]:
+    return {
+        "id": project.id,
+        "org_id": project.org_id,
+        "name": project.name,
+        "description": project.description,
+        "task_type": project.task_type,
+        "target_column": project.target_column,
+        "current_phase": project.current_phase,
+        "status": project.status,
+        "created_at": project.created_at.isoformat(),
+        "updated_at": project.updated_at.isoformat(),
+    }
+
+
+def dataset_to_dict(dataset: DatasetSnapshot) -> dict[str, Any]:
+    return {
+        "id": dataset.id,
+        "project_id": dataset.project_id,
+        "artifact_id": dataset.artifact_id,
+        "source_type": dataset.source_type,
+        "source_ref": dataset.source_ref,
+        "row_count": dataset.row_count,
+        "column_count": dataset.column_count,
+        "schema_hash": dataset.schema_hash,
+        "data_hash": dataset.data_hash,
+        "created_at": dataset.created_at.isoformat(),
+    }
+
+
+def semantic_catalog_to_dict(catalog: SemanticCatalog) -> dict[str, Any]:
+    return {
+        "id": catalog.id,
+        "project_id": catalog.project_id,
+        "dataset_snapshot_id": catalog.dataset_snapshot_id,
+        "artifact_id": catalog.artifact_id,
+        "columns": loads_json(catalog.columns_json, []),
+        "created_at": catalog.created_at.isoformat(),
+    }
+
+
+def question_to_dict(question: Question) -> dict[str, Any]:
+    return {
+        "id": question.id,
+        "project_id": question.project_id,
+        "question_set_id": question.question_set_id,
+        "topic": question.topic,
+        "question": question.question,
+        "why_it_matters": question.why_it_matters,
+        "default_assumption": question.default_assumption,
+        "impact_if_wrong": question.impact_if_wrong,
+        "choices": loads_json(question.choices_json, []),
+        "status": question.status,
+        "priority": question.priority,
+        "risk_level": question.risk_level,
+        "value_of_answer": question.value_of_answer,
+        "can_proceed_without_answer": question.can_proceed_without_answer,
+        "fallback_policy": question.fallback_policy,
+        "related_assumption_id": question.related_assumption_id,
+        "blocks_next_phase": question.blocks_next_phase,
+        "created_at": question.created_at.isoformat(),
+    }
+
+
+def answer_to_dict(answer: Answer) -> dict[str, Any]:
+    return {
+        "id": answer.id,
+        "question_id": answer.question_id,
+        "answered_by": answer.answered_by,
+        "answer_value": answer.answer_value,
+        "answer_text": answer.answer_text,
+        "created_at": answer.created_at.isoformat(),
+    }
+
+
+def assumption_to_dict(db: Session, assumption: Assumption) -> dict[str, Any]:
+    links = db.scalars(select(AssumptionEvidenceLink).where(AssumptionEvidenceLink.assumption_id == assumption.id)).all()
+    evidence: list[dict[str, Any]] = []
+    if links:
+        evidence_records = db.scalars(select(Evidence).where(Evidence.id.in_([link.evidence_id for link in links]))).all()
+        evidence = [evidence_to_dict(item) for item in evidence_records]
+    return {
+        "id": assumption.id,
+        "project_id": assumption.project_id,
+        "topic": assumption.topic,
+        "subject_type": assumption.subject_type,
+        "subject_ref": assumption.subject_ref,
+        "statement": assumption.statement,
+        "status": assumption.status,
+        "confidence": assumption.confidence,
+        "risk_level": assumption.risk_level,
+        "fallback_policy": assumption.fallback_policy,
+        "requires_user_confirmation": assumption.requires_user_confirmation,
+        "evidence": evidence,
+        "created_at": assumption.created_at.isoformat(),
+        "updated_at": assumption.updated_at.isoformat(),
+    }
+
+
+def evidence_to_dict(evidence: Evidence) -> dict[str, Any]:
+    return {
+        "id": evidence.id,
+        "project_id": evidence.project_id,
+        "evidence_type": evidence.evidence_type,
+        "summary": evidence.summary,
+        "strength": evidence.strength,
+        "source_artifact_id": evidence.source_artifact_id,
+        "metadata": loads_json(evidence.metadata_json, {}),
+        "created_at": evidence.created_at.isoformat(),
+    }
+
+
+def split_to_dict(split: SplitManifest) -> dict[str, Any]:
+    return {
+        "id": split.id,
+        "project_id": split.project_id,
+        "evaluation_spec_id": split.evaluation_spec_id,
+        "artifact_id": split.artifact_id,
+        "train_count": split.train_count,
+        "valid_count": split.valid_count,
+        "test_count": split.test_count,
+        "summary": loads_json(split.summary_json, {}),
+        "created_at": split.created_at.isoformat(),
+    }
+
+
+def model_version_to_dict(model_version: ModelVersion) -> dict[str, Any]:
+    return {
+        "id": model_version.id,
+        "project_id": model_version.project_id,
+        "experiment_run_id": model_version.experiment_run_id,
+        "dataset_snapshot_id": model_version.dataset_snapshot_id,
+        "evaluation_spec_id": model_version.evaluation_spec_id,
+        "split_manifest_id": model_version.split_manifest_id,
+        "artifact_id": model_version.artifact_id,
+        "name": model_version.name,
+        "version": model_version.version,
+        "model_family": model_version.model_family,
+        "model_type": model_version.model_type,
+        "task_type": model_version.task_type,
+        "target_column": model_version.target_column,
+        "primary_metric_name": model_version.primary_metric_name,
+        "primary_metric_value": model_version.primary_metric_value,
+        "metrics": loads_json(model_version.metrics_json, {}),
+        "params": loads_json(model_version.params_json, {}),
+        "status": model_version.status,
+        "created_at": model_version.created_at.isoformat(),
+    }
+
+
+def research_brief_to_dict(brief: ResearchBrief) -> dict[str, Any]:
+    return {
+        "id": brief.id,
+        "project_id": brief.project_id,
+        "dataset_snapshot_id": brief.dataset_snapshot_id,
+        "evaluation_spec_id": brief.evaluation_spec_id,
+        "title": brief.title,
+        "question": brief.question,
+        "summary_md": brief.summary_md,
+        "sources": loads_json(brief.sources_json, []),
+        "key_findings": loads_json(brief.key_findings_json, []),
+        "recommended_approaches": loads_json(brief.recommended_approaches_json, []),
+        "artifact_id": brief.artifact_id,
+        "status": brief.status,
+        "created_by_type": brief.created_by_type,
+        "created_at": brief.created_at.isoformat(),
+    }
+
+
+def idea_to_dict(idea: Idea) -> dict[str, Any]:
+    return {
+        "id": idea.id,
+        "project_id": idea.project_id,
+        "dataset_snapshot_id": idea.dataset_snapshot_id,
+        "evaluation_spec_id": idea.evaluation_spec_id,
+        "research_brief_id": idea.research_brief_id,
+        "title": idea.title,
+        "hypothesis": idea.hypothesis,
+        "approach_type": idea.approach_type,
+        "rationale_md": idea.rationale_md,
+        "feature_strategy": loads_json(idea.feature_strategy_json, {}),
+        "modeling_strategy": loads_json(idea.modeling_strategy_json, {}),
+        "evaluation_notes_md": idea.evaluation_notes_md,
+        "expected_artifacts": loads_json(idea.expected_artifacts_json, []),
+        "agent_task_contract": loads_json(idea.agent_task_contract_json, {}),
+        "confidence": idea.confidence,
+        "risk_level": idea.risk_level,
+        "status": idea.status,
+        "priority": idea.priority,
+        "artifact_id": idea.artifact_id,
+        "created_by_type": idea.created_by_type,
+        "created_at": idea.created_at.isoformat(),
+        "updated_at": idea.updated_at.isoformat(),
+    }
+
+
+def report_to_dict(report: Report) -> dict[str, Any]:
+    return {
+        "id": report.id,
+        "project_id": report.project_id,
+        "report_type": report.report_type,
+        "title": report.title,
+        "summary": report.summary,
+        "artifact_id": report.artifact_id,
+        "source_asset_ids": loads_json(report.source_asset_ids_json, []),
+        "status": report.status,
+        "created_by_type": report.created_by_type,
+        "created_at": report.created_at.isoformat(),
+    }
+
+
+def visualization_to_dict(visualization: VisualizationSpec) -> dict[str, Any]:
+    return {
+        "id": visualization.id,
+        "project_id": visualization.project_id,
+        "title": visualization.title,
+        "chart_type": visualization.chart_type,
+        "spec": loads_json(visualization.spec_json, {}),
+        "source_artifact_id": visualization.source_artifact_id,
+        "artifact_id": visualization.artifact_id,
+        "status": visualization.status,
+        "created_by_type": visualization.created_by_type,
+        "created_at": visualization.created_at.isoformat(),
+    }
+
+
+def insight_to_dict(insight: Insight) -> dict[str, Any]:
+    return {
+        "id": insight.id,
+        "project_id": insight.project_id,
+        "insight_type": insight.insight_type,
+        "title": insight.title,
+        "summary": insight.summary,
+        "severity": insight.severity,
+        "confidence": insight.confidence,
+        "status": insight.status,
+        "source_asset_ids": loads_json(insight.source_asset_ids_json, []),
+        "evidence_ids": loads_json(insight.evidence_ids_json, []),
+        "artifact_id": insight.artifact_id,
+        "created_by_type": insight.created_by_type,
+        "created_at": insight.created_at.isoformat(),
+    }
+
+
+def expanded_asset_reference_to_dict(db: Session, reference: AssetReference) -> dict[str, Any]:
+    asset = db.get(Asset, reference.target_asset_id)
+    version = db.get(AssetVersion, reference.target_asset_version_id)
+    return asset_reference_to_dict(reference, asset=asset, version=version)
+
+
+def model_validation_to_dict(db: Session, job: Job, model_version_id: str) -> dict[str, Any]:
+    output = loads_json(job.output_json, {})
+    metrics = output.get("metrics") if isinstance(output.get("metrics"), dict) else {}
+    artifact_ids = output.get("artifact_ids") if isinstance(output.get("artifact_ids"), list) else []
+    artifacts: list[Artifact] = []
+    if artifact_ids:
+        artifacts = list(
+            db.scalars(
+                select(Artifact).where(Artifact.id.in_([str(artifact_id) for artifact_id in artifact_ids]))
+            ).all()
+        )
+    validation_status = metrics.get("validation_status") if isinstance(metrics.get("validation_status"), str) else None
+    max_delta = metrics.get("max_abs_metric_delta")
+    return {
+        "job": job_to_dict(job),
+        "model_version_id": model_version_id,
+        "validation_status": validation_status,
+        "max_abs_metric_delta": float(max_delta) if isinstance(max_delta, int | float) else None,
+        "metrics": metrics,
+        "artifacts": [artifact_to_dict(artifact) for artifact in artifacts],
+        "created_at": job.created_at.isoformat(),
+        "ended_at": job.ended_at.isoformat() if job.ended_at else None,
+    }
+
+
+def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 20_000) -> dict[str, Any]:
+    suffix = path.suffix.lower()
+    text_suffixes = {".csv", ".json", ".md", ".txt", ".yaml", ".yml", ".tsv", ".log"}
+    base = {
+        "id": artifact.id,
+        "asset_type": artifact.asset_type,
+        "name": artifact.name,
+        "filename": path.name,
+        "size_bytes": artifact.size_bytes,
+    }
+    if suffix not in text_suffixes:
+        return {
+            **base,
+            "content_type": "binary",
+            "preview_available": False,
+            "preview": None,
+            "truncated": False,
+            "reason": "Preview is only available for text, JSON, Markdown, and delimited text artifacts.",
+        }
+
+    raw = path.open("rb").read(limit_bytes + 1)
+    truncated = len(raw) > limit_bytes
+    if truncated:
+        raw = raw[:limit_bytes]
+    try:
+        preview = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return {
+            **base,
+            "content_type": "binary",
+            "preview_available": False,
+            "preview": None,
+            "truncated": truncated,
+            "reason": "Artifact is not valid UTF-8 text.",
+        }
+    if suffix == ".json" and not truncated:
+        try:
+            preview = json.dumps(json.loads(preview), indent=2, ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
+    return {
+        **base,
+        "content_type": suffix.removeprefix(".") or "text",
+        "preview_available": True,
+        "preview": preview,
+        "truncated": truncated,
+        "reason": None,
+    }
+
+
+def job_to_dict(job: Job) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "project_id": job.project_id,
+        "job_type": job.job_type,
+        "status": job.status,
+        "priority": job.priority,
+        "attempt_count": job.attempt_count,
+        "max_attempts": job.max_attempts,
+        "input": loads_json(job.input_json, {}),
+        "output": loads_json(job.output_json, {}),
+        "context": loads_json(job.context_json, {}),
+        "policy": loads_json(job.policy_json, {}),
+        "dependency_job_ids": loads_json(job.dependency_job_ids_json, []),
+        "error_message": job.error_message,
+        "approval_required": job.approval_required,
+        "approved_by": job.approved_by,
+        "approved_at": job.approved_at.isoformat() if job.approved_at else None,
+        "cancelled_by": job.cancelled_by,
+        "run_after": job.run_after.isoformat() if job.run_after else None,
+        "locked_by": job.locked_by,
+        "locked_at": job.locked_at.isoformat() if job.locked_at else None,
+        "created_at": job.created_at.isoformat(),
+        "updated_at": job.updated_at.isoformat(),
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "ended_at": job.ended_at.isoformat() if job.ended_at else None,
+    }

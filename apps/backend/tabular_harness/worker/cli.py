@@ -1,0 +1,35 @@
+from __future__ import annotations
+
+import argparse
+import time
+
+from tabular_harness.core.config import get_settings
+from tabular_harness.db.session import create_engine_for_settings, create_session_factory, init_db
+from tabular_harness.worker.jobs import create_default_worker
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the local Tablex worker.")
+    parser.add_argument("--once", action="store_true", help="Process at most one queued job and exit.")
+    parser.add_argument("--interval", type=float, default=2.0, help="Polling interval in seconds.")
+    parser.add_argument("--worker-id", default="local-worker", help="Worker identifier for job locks.")
+    args = parser.parse_args()
+
+    settings = get_settings()
+    engine = create_engine_for_settings(settings)
+    init_db(engine)
+    session_factory = create_session_factory(engine)
+    worker = create_default_worker(worker_id=args.worker_id)
+
+    while True:
+        with session_factory() as session:
+            job = worker.run_next_job(session)
+            session.commit()
+            if args.once:
+                return
+        if job is None:
+            time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    main()

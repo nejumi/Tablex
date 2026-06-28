@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DataQualityGate",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "project_id",
+    "dataset_snapshot_id",
+    "summary",
+    "checks",
+    "quality_gates",
+    "evaluation_guidance",
+    "agent_context_notes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "data_quality_gate.v1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "dataset_snapshot_id": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "object",
+      "required": ["severity", "headline", "status_counts", "risk_score"],
+      "additionalProperties": true
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "check_id",
+          "category",
+          "status",
+          "risk_level",
+          "title",
+          "details",
+          "affected_columns",
+          "fallback_policy"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "quality_gates": {
+      "type": "object",
+      "required": ["evaluation_ready", "runner_ready", "deployment_ready", "blockers"],
+      "additionalProperties": true
+    },
+    "evaluation_guidance": {
+      "type": "object",
+      "required": ["excluded_columns", "split_recommendations", "required_question_topics"],
+      "additionalProperties": true
+    },
+    "agent_context_notes": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": true
+}

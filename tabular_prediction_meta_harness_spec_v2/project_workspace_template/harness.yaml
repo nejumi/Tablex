@@ -1,0 +1,22 @@
+project:
+  id: "__PROJECT_ID__"
+  name: "__PROJECT_NAME__"
+
+agent:
+  runner: "codex_cli"
+  output_contract: "outputs/result.json"
+
+security:
+  network: "disabled"
+  secret_access: false
+  production_write: false
+
+evaluation:
+  spec_path: "data/evaluation_spec.yaml"
+  split_manifest_path: "data/split_manifest.parquet"
+
+assumptions:
+  path: "data/assumptions.yaml"
+  evidence_path: "data/evidence.json"
+  unanswered_questions_path: "data/unanswered_questions.json"
+  autonomy_level: 2
