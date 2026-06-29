@@ -1079,8 +1079,13 @@ def build_notebook_evidence_bundle(
         "summary": {
             "title": summary.get("title"),
             "overview": summary.get("overview"),
+            "primary_metric_name": summary.get("primary_metric_name"),
+            "primary_metric_value": summary.get("primary_metric_value"),
             "eda_quality_score": summary.get("eda_quality_score"),
             "target_readiness": summary.get("target_readiness"),
+            "result_interpretation": summary.get("result_interpretation", {}),
+            "metric_comparison": summary.get("metric_comparison", {}),
+            "sanity_floor": summary.get("sanity_floor", {}),
             "figure_count": len(figures),
             "guardrail_count": len(summary.get("evaluation_guardrails", []))
             if isinstance(summary.get("evaluation_guardrails"), list)
@@ -1092,6 +1097,9 @@ def build_notebook_evidence_bundle(
         "figures": figures,
         "tables": {
             "analysis_brief": summary.get("analysis_brief", {}),
+            "result_interpretation": summary.get("result_interpretation", {}),
+            "metric_comparison": summary.get("metric_comparison", {}),
+            "sanity_floor": summary.get("sanity_floor", {}),
             "quality_rubric": summary.get("quality_rubric", []),
             "analysis_storyboard": summary.get("analysis_storyboard", []),
             "eda_playbook": summary.get("eda_playbook", []),
@@ -1167,16 +1175,30 @@ def build_notebook_evidence_figure_specs(
                 "figure_id": "diagnostics_readiness",
                 "title": "Diagnostics Readiness",
                 "description": "Whether the model notebook has enough evidence for human review.",
-                "svg": svg_bar_chart(
+                "svg": svg_metric_cards(
                     title="Diagnostics readiness",
                     rows=[
-                        {"label": "metric available", "value": 1 if summary.get("primary_metric_value") is not None else 0},
-                        {"label": "prediction rows", "value": int(prediction_summary.get("row_count") or 0)},
-                        {"label": "feature families", "value": len(feature_rows)},
-                        {"label": "findings", "value": len(findings)},
+                        {
+                            "label": "Primary metric",
+                            "value": f"{summary.get('primary_metric_name') or 'metric'}={_format_metric(summary.get('primary_metric_value'))}",
+                            "detail": "approved EvaluationSpec metric",
+                        },
+                        {
+                            "label": "Predictions",
+                            "value": f"{int(prediction_summary.get('row_count') or 0):,}",
+                            "detail": "validation rows summarized",
+                        },
+                        {
+                            "label": "Diagnostics",
+                            "value": str(summary.get("evidence_readiness") or "unknown").replace("_", " "),
+                            "detail": str(summary.get("diagnostics_coverage") or "coverage not recorded")[:72],
+                        },
+                        {
+                            "label": "Quality",
+                            "value": str(summary.get("evidence_quality_score") or 0),
+                            "detail": f"{len(findings)} finding(s), {len(feature_rows)} feature families",
+                        },
                     ],
-                    value_format="integer",
-                    empty_message="No model diagnostic evidence is available yet.",
                 ),
             },
             {
@@ -1392,6 +1414,41 @@ def svg_bar_chart(
     return svg_chart_shell(title=title, width=width, height=height, body="\n".join(body))
 
 
+def svg_metric_cards(*, title: str, rows: list[dict[str, Any]]) -> str:
+    width = 900
+    card_width = 196
+    card_height = 118
+    gap = 18
+    left = 28
+    top = 76
+    normalized_rows = [
+        {
+            "label": str(row.get("label") or "Metric")[:30],
+            "value": str(row.get("value") or "-")[:32],
+            "detail": str(row.get("detail") or "")[:84],
+        }
+        for row in rows[:4]
+    ]
+    body: list[str] = []
+    if not normalized_rows:
+        body.append('<text x="42" y="120" fill="#52606f" font-size="18">No model diagnostic evidence is available yet.</text>')
+    for index, row in enumerate(normalized_rows):
+        x = left + index * (card_width + gap)
+        detail_lines = wrap_svg_text(row["detail"], 34, 2)
+        body.extend(
+            [
+                f'<rect x="{x}" y="{top}" width="{card_width}" height="{card_height}" rx="14" fill="#ffffff" stroke="#dbe3f3"/>',
+                f'<text x="{x + 16}" y="{top + 30}" fill="#52606f" font-size="13" font-weight="700">{escape(row["label"])}</text>',
+                f'<text x="{x + 16}" y="{top + 62}" fill="#10183f" font-size="20" font-weight="800">{escape(row["value"])}</text>',
+            ]
+        )
+        for line_index, line in enumerate(detail_lines):
+            body.append(
+                f'<text x="{x + 16}" y="{top + 88 + line_index * 18}" fill="#52606f" font-size="12">{escape(line)}</text>'
+            )
+    return svg_chart_shell(title=title, width=width, height=230, body="\n".join(body))
+
+
 def svg_message_chart(*, title: str, message: str, subtitle: str) -> str:
     body = (
         f'<text x="42" y="108" fill="#20304f" font-size="22">{escape(message)}</text>'
@@ -1426,6 +1483,29 @@ def format_svg_value(value: float, value_format: str) -> str:
     return f"{value:.4g}"
 
 
+def wrap_svg_text(value: str, width: int, max_lines: int) -> list[str]:
+    words = value.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        current = word[:width]
+        if len(lines) >= max_lines:
+            break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    if len(lines) == max_lines and words:
+        joined = " ".join(words)
+        if len(joined) > sum(len(line) for line in lines):
+            lines[-1] = f"{lines[-1].rstrip('.')[: max(0, width - 3)]}..."
+    return lines
+
+
 def render_notebook_evidence_html(bundle: dict[str, Any], figure_specs: list[dict[str, str]]) -> str:
     summary = cast(dict[str, Any], bundle["summary"])
     tables = cast(dict[str, Any], bundle["tables"])
@@ -1442,6 +1522,7 @@ def render_notebook_evidence_html(bundle: dict[str, Any], figure_specs: list[dic
     ]
     prompts = _list_value(tables.get("codex_navigation_prompts"))
     questions = _list_value(tables.get("analysis_questions"))
+    interpretation = _dict_value(tables.get("result_interpretation") or summary.get("result_interpretation"))
     guardrails = [
         cast(dict[str, Any], item) for item in _list_value(tables.get("evaluation_guardrails")) if isinstance(item, dict)
     ]
@@ -1470,6 +1551,8 @@ def render_notebook_evidence_html(bundle: dict[str, Any], figure_specs: list[dic
     .brief {{ border-left:5px solid var(--teal); background:var(--wash); border-radius:10px; padding:14px; }}
     .story-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }}
     .story-card {{ border:1px solid var(--line); border-radius:10px; background:var(--wash); padding:12px; }}
+    .result-callout {{ border:1px solid var(--line); border-left:5px solid var(--teal); border-radius:10px; background:#fff; padding:14px; }}
+    .result-callout strong {{ display:block; margin-bottom:8px; font-size:18px; }}
     .story-card strong,.playbook-row strong {{ display:block; margin-bottom:6px; }}
     .playbook-row {{ border-left:4px solid var(--teal); margin:8px 0; padding:10px 12px; background:var(--wash); border-radius:8px; }}
     .prompt {{ display:inline-block; margin:4px; border:1px solid var(--line); border-radius:999px; background:var(--wash); padding:7px 10px; color:var(--ink); font-size:12px; font-weight:700; }}
@@ -1499,6 +1582,7 @@ def render_notebook_evidence_html(bundle: dict[str, Any], figure_specs: list[dic
       {_metric_card("Questions", summary.get("analysis_question_count", 0))}
       {_metric_card("Runtime", bundle["runtime_execution_status"])}
     </section>
+    {_result_interpretation_html(interpretation)}
     <section class="panel">
       <h2>Read this first</h2>
       <p>{escape(str(brief.get("why_it_matters") or ""))}</p>
@@ -3866,12 +3950,19 @@ def _model_diagnostics_summary(
         feature_rows=feature_rows,
         findings=findings,
     )
+    sanity_floor = _dict_value(metrics.get("sanity_floor"))
+    metric_comparison = _model_metric_comparison(
+        primary_metric_name=primary_metric_name,
+        primary_metric_value=primary_metric_value,
+        sanity_floor=sanity_floor,
+    )
     brief = _model_diagnostics_analysis_brief(
         run=run,
         primary_metric_name=primary_metric_name,
         primary_metric_value=primary_metric_value,
         prediction_summary=prediction_summary,
         evidence_state=evidence_state,
+        metric_comparison=metric_comparison,
     )
     overview = (
         f"Generated model diagnostics notebook for run {run.id}. "
@@ -3898,6 +3989,13 @@ def _model_diagnostics_summary(
         "primary_metric_name": primary_metric_name or None,
         "primary_metric_value": _optional_float(primary_metric_value),
         "metric_rows": _metric_rows(metrics, validation),
+        "sanity_floor": sanity_floor,
+        "metric_comparison": metric_comparison,
+        "result_interpretation": _model_result_interpretation(
+            evidence_state=evidence_state,
+            metric_comparison=metric_comparison,
+            findings=findings,
+        ),
         "feature_family_rows": feature_rows,
         "prediction_summary": prediction_summary,
         "diagnostics_summary": diagnostics_summary,
@@ -3968,6 +4066,103 @@ def _model_diagnostics_evidence_state(
     }
 
 
+def _model_metric_comparison(
+    *,
+    primary_metric_name: str,
+    primary_metric_value: object,
+    sanity_floor: dict[str, Any],
+) -> dict[str, Any]:
+    metric_name = primary_metric_name or str(sanity_floor.get("primary_metric_name") or "")
+    current = _optional_float(primary_metric_value)
+    floor = _optional_float(sanity_floor.get(metric_name)) if metric_name else None
+    if floor is None:
+        floor = _optional_float(sanity_floor.get("primary_metric_value"))
+    higher_is_better = metric_name not in {"rmse", "mae", "log_loss", "mape", "mean_absolute_error"}
+    delta = None if current is None or floor is None else current - floor
+    relative_delta = None if delta is None or floor is None or floor == 0.0 else delta / abs(floor)
+    if delta is None:
+        status = "missing_sanity_floor" if current is not None else "missing_metric"
+    elif higher_is_better:
+        status = "beats_sanity_floor" if delta > 0 else "below_sanity_floor"
+    else:
+        status = "beats_sanity_floor" if delta < 0 else "below_sanity_floor"
+    return {
+        "metric_name": metric_name or None,
+        "current_value": current,
+        "floor_value": floor,
+        "floor_value_text": _format_metric(floor),
+        "delta": delta,
+        "relative_delta": relative_delta,
+        "higher_is_better": higher_is_better,
+        "status": status,
+    }
+
+
+def _model_result_interpretation(
+    *,
+    evidence_state: dict[str, Any],
+    metric_comparison: dict[str, Any],
+    findings: list[dict[str, str]],
+) -> dict[str, Any]:
+    status = str(metric_comparison.get("status") or "missing_metric")
+    metric_name = str(metric_comparison.get("metric_name") or "primary metric")
+    current = _format_metric(metric_comparison.get("current_value"))
+    floor = _format_metric(metric_comparison.get("floor_value"))
+    delta = _format_signed_metric(metric_comparison.get("delta"))
+    if status == "beats_sanity_floor":
+        verdict = "clears_sanity_floor"
+        headline = f"{metric_name} clears the sanity floor"
+        narrative = (
+            f"The run reports {metric_name}={current} versus sanity floor {floor} ({delta}). "
+            "Treat this as permission to inspect behavior, not as a final decision."
+        )
+    elif status == "below_sanity_floor":
+        verdict = "does_not_clear_sanity_floor"
+        headline = f"{metric_name} does not clear the sanity floor"
+        narrative = (
+            f"The run reports {metric_name}={current} versus sanity floor {floor} ({delta}). "
+            "Do not optimize around this result until the baseline or evaluation setup is repaired."
+        )
+    elif status == "missing_sanity_floor":
+        verdict = "missing_sanity_floor"
+        headline = "Metric is recorded, but sanity floor comparison is missing"
+        narrative = (
+            f"The run reports {metric_name}={current}, but the comparable sanity floor is not available in "
+            "the run metrics. Read this as incomplete decision evidence."
+        )
+    else:
+        verdict = "missing_metric"
+        headline = "No primary metric is available"
+        narrative = "The run cannot be interpreted as model evidence until the primary metric is recorded."
+    next_action = _model_result_next_action(evidence_state=evidence_state, findings=findings)
+    return {
+        "verdict": verdict,
+        "headline": headline,
+        "narrative": narrative,
+        "next_action": next_action,
+        "metric_comparison": metric_comparison,
+    }
+
+
+def _model_result_next_action(
+    *,
+    evidence_state: dict[str, Any],
+    findings: list[dict[str, str]],
+) -> str:
+    if not evidence_state.get("has_predictions"):
+        return "Persist validation predictions before asking for feature importance, calibration, or slice analysis."
+    if not evidence_state.get("has_diagnostics"):
+        return "Run evaluation diagnostics to materialize slice metrics, score bins, and worst examples."
+    high_or_medium = [
+        item
+        for item in findings
+        if str(item.get("severity") or "") in {"high", "medium"} and str(item.get("next_action") or "")
+    ]
+    if high_or_medium:
+        return str(high_or_medium[0]["next_action"])
+    return "Create one targeted Codex follow-up for feature importance, permutation importance, calibration, or slice review."
+
+
 def _model_diagnostics_analysis_brief(
     *,
     run: ExperimentRun,
@@ -3975,6 +4170,7 @@ def _model_diagnostics_analysis_brief(
     primary_metric_value: object,
     prediction_summary: dict[str, Any],
     evidence_state: dict[str, Any],
+    metric_comparison: dict[str, Any],
 ) -> dict[str, Any]:
     readiness = str(evidence_state["readiness"])
     prediction_rows = int(evidence_state["prediction_rows"])
@@ -4003,7 +4199,7 @@ def _model_diagnostics_analysis_brief(
         "profile_boundary": (
             f"Run {run.id}; primary metric "
             f"{primary_metric_name or 'unknown'}={_format_metric(primary_metric_value)}; "
-            f"prediction rows={prediction_rows}."
+            f"prediction rows={prediction_rows}; sanity floor={metric_comparison.get('floor_value_text') or 'not available'}."
         ),
         "read_this_first": [
             {
@@ -4013,8 +4209,11 @@ def _model_diagnostics_analysis_brief(
             },
             {
                 "title": "Metric and split context",
-                "why": "A single metric only matters if it matches the approved EvaluationSpec and split.",
-                "artifact_hint": f"Primary metric: {primary_metric_name or 'unknown'}={_format_metric(primary_metric_value)}.",
+                "why": "A single metric only matters if it matches the approved EvaluationSpec, split, and sanity floor.",
+                "artifact_hint": (
+                    f"Primary metric: {primary_metric_name or 'unknown'}={_format_metric(primary_metric_value)}; "
+                    f"sanity floor: {metric_comparison.get('floor_value_text') or 'not available'}."
+                ),
             },
             {
                 "title": "Prediction coverage",
@@ -5352,6 +5551,13 @@ def _format_metric(value: object) -> str:
     return f"{number:.6g}"
 
 
+def _format_signed_metric(value: object) -> str:
+    number = _optional_float(value)
+    if number is None:
+        return "-"
+    return f"{number:+.6g}"
+
+
 def _metric_cell(value: object) -> str:
     if isinstance(value, float):
         return f"{value:.6g}"
@@ -5478,6 +5684,30 @@ def _guardrail_rows(guardrails: list[dict[str, Any]]) -> str:
             "</div>"
         )
     return "".join(output)
+
+
+def _result_interpretation_html(interpretation: dict[str, Any]) -> str:
+    if not interpretation:
+        return ""
+    comparison = _dict_value(interpretation.get("metric_comparison"))
+    comparison_line = ""
+    if comparison:
+        comparison_line = (
+            f"<p><strong>Sanity floor:</strong> "
+            f"{escape(str(comparison.get('metric_name') or 'primary metric'))} "
+            f"{escape(_format_metric(comparison.get('current_value')))} vs "
+            f"{escape(_format_metric(comparison.get('floor_value')))} "
+            f"({escape(_format_signed_metric(comparison.get('delta')))}).</p>"
+        )
+    return (
+        '<section class="panel result-callout">'
+        "<h2>Result interpretation</h2>"
+        f"<strong>{escape(str(interpretation.get('headline') or 'Review result evidence'))}</strong>"
+        f"<p>{escape(str(interpretation.get('narrative') or 'No interpretation recorded.'))}</p>"
+        f"{comparison_line}"
+        f"<p><strong>Next one action:</strong> {escape(str(interpretation.get('next_action') or 'Choose one focused follow-up.'))}</p>"
+        "</section>"
+    )
 
 
 def _read_order_rows(rows: list[dict[str, Any]]) -> str:

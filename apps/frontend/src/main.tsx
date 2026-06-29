@@ -7651,15 +7651,27 @@ function NotebooksTab({
                         "Which evidence is still too weak to trust?"
                       ]
                   ).slice(0, 4).map((prompt) => (
-                    <button
-                      className="secondary-button"
-                      disabled={busy || guideBusy}
-                      key={prompt}
-                      onClick={() => void askNotebookGuide(prompt)}
-                    >
-                      {guideBusy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
-                      {prompt}
-                    </button>
+                    (() => {
+                      const createsTask = isNotebookFollowUpTaskPrompt(prompt);
+                      return (
+                        <button
+                          className="secondary-button"
+                          disabled={busy || guideBusy}
+                          key={prompt}
+                          title={createsTask ? "Create a targeted follow-up task" : "Ask the analysis guide"}
+                          onClick={() => void askNotebookGuide(prompt)}
+                        >
+                          {guideBusy ? (
+                            <Loader2 className="spin" size={16} />
+                          ) : createsTask ? (
+                            <ListChecks size={16} />
+                          ) : (
+                            <MessageSquare size={16} />
+                          )}
+                          {prompt}
+                        </button>
+                      );
+                    })()
                   ))}
                 </div>
                 <form

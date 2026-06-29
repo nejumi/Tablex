@@ -863,6 +863,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert result_notebook_preview_response.status_code == 200
     result_notebook_preview = result_notebook_preview_response.json()
     assert "Notebook Evidence Review" in result_notebook_preview["preview"]
+    assert "Result interpretation" in result_notebook_preview["preview"]
+    assert "Sanity floor" in result_notebook_preview["preview"]
     assert "Readiness verdict" in result_notebook_preview["preview"]
     assert "Ask Codex next" in result_notebook_preview["preview"]
 
@@ -1864,6 +1866,9 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert model_evidence_html_response.status_code == 200
     model_evidence_html = model_evidence_html_response.json()
     assert "Notebook Evidence Review" in model_evidence_html["preview"]
+    assert "Result interpretation" in model_evidence_html["preview"]
+    assert "Sanity floor" in model_evidence_html["preview"]
+    assert "Primary metric" in model_evidence_html["preview"]
     assert "Readiness verdict" in model_evidence_html["preview"]
     assert "Prediction coverage" in model_evidence_html["preview"]
     assert "Diagnostics readiness" in model_evidence_html["preview"]

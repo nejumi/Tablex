@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from tabular_harness.services.analysis_notebooks import (
+    _model_metric_comparison,
     _notebook_content_signal,
     _notebook_recommendation_reason,
     _notebook_recommendation_score,
@@ -72,3 +73,23 @@ def test_evidence_ready_model_diagnostics_can_beat_data_understanding() -> None:
 
     assert model_content["readiness"] == "evidence_ready"
     assert model_score > data_score
+
+
+def test_model_metric_comparison_respects_metric_direction() -> None:
+    auc_comparison = _model_metric_comparison(
+        primary_metric_name="pr_auc",
+        primary_metric_value=0.42,
+        sanity_floor={"primary_metric_name": "pr_auc", "primary_metric_value": 0.2, "pr_auc": 0.2},
+    )
+    rmse_comparison = _model_metric_comparison(
+        primary_metric_name="rmse",
+        primary_metric_value=2.1,
+        sanity_floor={"primary_metric_name": "rmse", "primary_metric_value": 3.0, "rmse": 3.0},
+    )
+
+    assert auc_comparison["status"] == "beats_sanity_floor"
+    assert auc_comparison["delta"] > 0
+    assert auc_comparison["higher_is_better"] is True
+    assert rmse_comparison["status"] == "beats_sanity_floor"
+    assert rmse_comparison["delta"] < 0
+    assert rmse_comparison["higher_is_better"] is False
