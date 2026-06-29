@@ -20,13 +20,14 @@ Everything else is supporting detail.
 - Moved focus evidence and secondary navigation into collapsed supporting detail.
 - Reworked Guided Journey to show only the current stage by default.
 - Moved the full journey stage map and stage evidence into a collapsed `Journey map`.
+- Grouped secondary project tabs under `More` so the primary workflow tabs stay visible without clipping.
+- Reduced Portal Recent Updates to the top entries, with older raw updates collapsed.
 - Preserved existing actions, tabs, Agent Chat, journey snapshot, and stage navigation.
 - Added LocalePack keys for Now/Why/Do/Journey map in English and Japanese.
 - Verified the Project first viewport with Playwright Firefox.
 
 ## Deferred Work
 
-- Redesign the long tab row into grouped primary/secondary navigation instead of a horizontally clipped rail.
-- Apply the same progressive-disclosure rule to Portal recent updates, Notebook Center, Agent Task Results, and artifact shelves.
+- Apply the same progressive-disclosure rule to Notebook Center, Agent Task Results, and artifact shelves.
 - Add a compact "agent suggested next read" surface inside Notebook Center.
 - Add UI-level tests or snapshots once the project has a stable frontend test harness.

@@ -273,7 +273,7 @@ textarea {
 .tabs {
   display: flex;
   gap: 4px;
-  overflow-x: auto;
+  overflow: visible;
   border-bottom: 1px solid var(--border);
   margin-bottom: 18px;
 }
@@ -291,6 +291,50 @@ textarea {
 
 .tab.active {
   border-bottom-color: var(--accent);
+  color: var(--text-strong);
+}
+
+.tab-more {
+  position: relative;
+}
+
+.tab-more summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.tab-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.tab-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  display: grid;
+  min-width: 180px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 16px 32px var(--shadow);
+  padding: 6px;
+}
+
+.tab-menu-item {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 9px 10px;
+  color: var(--muted-strong);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+}
+
+.tab-menu-item:hover,
+.tab-menu-item.active {
+  background: var(--surface-hover);
   color: var(--text-strong);
 }
 
@@ -811,6 +855,14 @@ textarea {
   margin-top: 4px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.portal-project-list.compact {
+  padding-top: 10px;
+}
+
+.portal-update-more {
+  margin-top: 10px;
 }
 
 .portal-idea-form {

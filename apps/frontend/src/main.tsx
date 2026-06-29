@@ -60,6 +60,7 @@ const englishMessages = {
   portalSubtitle: "Cross-project health, recent activity, and ideas captured for follow-up.",
   projectPortfolio: "Project portfolio",
   recentUpdates: "Recent updates",
+  olderUpdates: "older updates",
   ideaInbox: "Idea inbox",
   ideaInboxHint: "Capture product or analysis ideas here; promote them into project work when ready.",
   ideaInboxPlaceholder: "Drop a UX, modeling, data, or reporting idea for later follow-up",
@@ -70,6 +71,7 @@ const englishMessages = {
   activeProjects: "Active",
   totalJobs: "Jobs",
   totalArtifacts: "Artifacts",
+  moreTabs: "More",
   projects: "Projects",
   refreshProjects: "Refresh projects",
   loadingProjects: "Loading projects",
@@ -205,6 +207,7 @@ const japaneseMessages: LocaleMessages = {
   portalSubtitle: "Project横断の状態、最近の更新、追っかけ対応するideaを確認します。",
   projectPortfolio: "Project portfolio",
   recentUpdates: "最近の更新",
+  olderUpdates: "件の過去更新",
   ideaInbox: "Idea inbox",
   ideaInboxHint: "UX、modeling、data、reportingの思いつきをここに残し、後でproject workへ昇格します。",
   ideaInboxPlaceholder: "後で対応したいUX、モデリング、データ、レポート案を書く",
@@ -215,6 +218,7 @@ const japaneseMessages: LocaleMessages = {
   activeProjects: "Active",
   totalJobs: "Jobs",
   totalArtifacts: "Artifacts",
+  moreTabs: "その他",
   projects: "プロジェクト",
   refreshProjects: "プロジェクトを更新",
   loadingProjects: "プロジェクトを読み込み中",
@@ -1189,6 +1193,9 @@ const tabItems = [
   { id: "Lineage", labelKey: "tabLineage" }
 ] as const satisfies ReadonlyArray<{ id: string; labelKey: keyof LocaleMessages }>;
 type Tab = (typeof tabItems)[number]["id"];
+const secondaryTabIds = new Set<Tab>(["Leaderboard", "Assets", "Library", "Jobs", "Lineage"]);
+const primaryTabItems = tabItems.filter((item) => !secondaryTabIds.has(item.id));
+const secondaryTabItems = tabItems.filter((item) => secondaryTabIds.has(item.id));
 
 function tabFromString(value: string | null | undefined, fallback: Tab): Tab {
   const match = tabItems.find((item) => item.id === value);
@@ -1704,7 +1711,7 @@ function App() {
         {activeProject ? (
           <>
             <nav className="tabs">
-              {tabItems.map((item) => (
+              {primaryTabItems.map((item) => (
                 <button
                   key={item.id}
                   className={item.id === tab ? "tab active" : "tab"}
@@ -1713,6 +1720,23 @@ function App() {
                   {text[item.labelKey]}
                 </button>
               ))}
+              <details className="tab-more" open={secondaryTabItems.some((item) => item.id === tab)}>
+                <summary className={secondaryTabItems.some((item) => item.id === tab) ? "tab active" : "tab"}>
+                  {text.moreTabs}
+                </summary>
+                <div className="tab-menu">
+                  {secondaryTabItems.map((item) => (
+                    <button
+                      key={item.id}
+                      className={item.id === tab ? "tab-menu-item active" : "tab-menu-item"}
+                      onClick={() => setTab(item.id)}
+                      type="button"
+                    >
+                      {text[item.labelKey]}
+                    </button>
+                  ))}
+                </div>
+              </details>
             </nav>
             <ProjectDetail
               project={activeProject}
@@ -1770,6 +1794,8 @@ function PortalView({
           created_at: project.updated_at,
           target_tab: "Overview"
         }));
+  const primaryUpdates = recentUpdates.slice(0, 3);
+  const secondaryUpdates = recentUpdates.slice(3, 10);
 
   async function addIdea(event: React.FormEvent) {
     event.preventDefault();
@@ -1814,7 +1840,7 @@ function PortalView({
             </div>
           </div>
           <div className="portal-project-list">
-            {recentUpdates.slice(0, 8).map((update, index) => (
+            {primaryUpdates.map((update, index) => (
               <button
                 key={`${update.type}-${update.project_id ?? "cross"}-${index}-${update.created_at}`}
                 className="portal-project-card"
@@ -1832,6 +1858,33 @@ function PortalView({
               </button>
             ))}
           </div>
+          {secondaryUpdates.length ? (
+            <details className="supporting-details portal-update-more">
+              <summary>
+                <span>{text.viewDetails}</span>
+                <small>{secondaryUpdates.length} {text.olderUpdates}</small>
+              </summary>
+              <div className="portal-project-list compact">
+                {secondaryUpdates.map((update, index) => (
+                  <button
+                    key={`${update.type}-${update.project_id ?? "cross"}-${index + 3}-${update.created_at}`}
+                    className="portal-project-card"
+                    onClick={() => {
+                      if (update.project_id) onOpenProject(update.project_id);
+                    }}
+                    type="button"
+                    disabled={!update.project_id}
+                  >
+                    <span>
+                      <strong>{update.title}</strong>
+                      <small>{update.summary} · {new Date(update.created_at).toLocaleString()}</small>
+                    </span>
+                    {update.project_id ? <span className="secondary-button">{text.openProject}</span> : null}
+                  </button>
+                ))}
+              </div>
+            </details>
+          ) : null}
         </div>
 
         <div className="panel">
