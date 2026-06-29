@@ -74,6 +74,29 @@ const englishMessages = {
   tabLibrary: "Library",
   tabJobs: "Jobs",
   tabLineage: "Lineage",
+  focusGuideTitle: "Focus Guide",
+  recommendedFocus: "Recommended focus",
+  whyThisMatters: "Why this matters",
+  goToFocus: "Go to focus",
+  focusEvidence: "Signals",
+  otherUsefulViews: "Useful next views",
+  viewDetails: "Show supporting detail",
+  hideDetails: "Hide supporting detail",
+  atAGlance: "At a glance",
+  focusUploadData: "Upload or import a dataset",
+  focusUploadDataReason: "The project cannot build understanding, assumptions, evaluation, or agent tasks until a DatasetSnapshot exists.",
+  focusUnderstandData: "Understand the data before choosing a target or evaluation",
+  focusUnderstandDataReason: "The next useful decision depends on schema, target candidates, leakage risk, missingness, and semantic assumptions.",
+  focusAssumptions: "Resolve risky assumptions",
+  focusAssumptionsReason: "High-risk assumptions can silently invalidate evaluation or feature design if they are not reviewed.",
+  focusEvaluation: "Lock a reliable evaluation design",
+  focusEvaluationReason: "Modeling and agent work should stay downstream of EvaluationSpec and SplitManifest constraints.",
+  focusApproach: "Plan the next flexible agent approach",
+  focusApproachReason: "The harness has enough context to ask Codex for a scoped approach without forcing a fixed recipe.",
+  focusExperiments: "Run or inspect experiments",
+  focusExperimentsReason: "The project needs run evidence, diagnostics, and reports before comparing approaches.",
+  focusReports: "Read the decision report",
+  focusReportsReason: "Reports summarize readiness, risks, evidence, and next actions without requiring raw artifact inspection.",
   settings: "User Settings",
   settingsHint: "Language, locale packs, and display preferences are stored locally for this workbench.",
   language: "Language",
@@ -137,6 +160,29 @@ const japaneseMessages: LocaleMessages = {
   tabLibrary: "ライブラリ",
   tabJobs: "ジョブ",
   tabLineage: "リネージ",
+  focusGuideTitle: "Focus Guide",
+  recommendedFocus: "推奨フォーカス",
+  whyThisMatters: "なぜ重要か",
+  goToFocus: "移動",
+  focusEvidence: "判断シグナル",
+  otherUsefulViews: "次に役立つ画面",
+  viewDetails: "補足詳細を表示",
+  hideDetails: "補足詳細を隠す",
+  atAGlance: "概況",
+  focusUploadData: "データをuploadまたはimportする",
+  focusUploadDataReason: "DatasetSnapshotがないと、data understanding、仮定、評価設計、agent taskを進められません。",
+  focusUnderstandData: "targetや評価を決める前にデータを理解する",
+  focusUnderstandDataReason: "schema、target候補、leakage risk、missingness、semantic assumptionsを見てから次の意思決定をします。",
+  focusAssumptions: "リスクの高い仮定を確認する",
+  focusAssumptionsReason: "高リスクの仮定を放置すると、評価や特徴量設計が静かに壊れる可能性があります。",
+  focusEvaluation: "信頼できる評価設計を固定する",
+  focusEvaluationReason: "modelingやagent作業はEvaluationSpecとSplitManifestの制約の下に置くべきです。",
+  focusApproach: "次の柔軟なagent approachを計画する",
+  focusApproachReason: "固定recipeにせず、現時点の証拠を渡してCodexにスコープ付きで考えさせられます。",
+  focusExperiments: "実験を実行または確認する",
+  focusExperimentsReason: "approachを比較する前に、run evidence、diagnostics、reportが必要です。",
+  focusReports: "decision reportを読む",
+  focusReportsReason: "raw artifactを追わなくても、readiness、risk、evidence、next actionを把握できます。",
   settings: "ユーザー設定",
   settingsHint: "言語、locale pack、表示設定をこのworkbenchのlocal設定として保存します。",
   language: "言語",
@@ -795,6 +841,14 @@ const tabItems = [
 ] as const satisfies ReadonlyArray<{ id: string; labelKey: keyof LocaleMessages }>;
 type Tab = (typeof tabItems)[number]["id"];
 
+type FocusRecommendation = {
+  tab: Tab;
+  title: string;
+  reason: string;
+  evidence: string[];
+  secondaryTabs: Tab[];
+};
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, init);
   if (!response.ok) {
@@ -802,6 +856,113 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(detail || response.statusText);
   }
   return response.json() as Promise<T>;
+}
+
+function tabLabel(tab: Tab, text: LocaleMessages) {
+  const item = tabItems.find((candidate) => candidate.id === tab);
+  return item ? text[item.labelKey] : tab;
+}
+
+function isHighRiskAssumption(assumption: Assumption) {
+  return ["high", "blocking", "deployment_blocking"].includes(assumption.risk_level);
+}
+
+function buildFocusRecommendation({
+  text,
+  project,
+  datasets,
+  understanding,
+  assumptions,
+  candidates,
+  specs,
+  runs,
+  reports,
+  jobs,
+  artifacts
+}: {
+  text: LocaleMessages;
+  project: Project;
+  datasets: DatasetSnapshot[];
+  understanding: string | null;
+  assumptions: Assumption[];
+  candidates: EvaluationCandidate[];
+  specs: EvaluationSpec[];
+  runs: Run[];
+  reports: Report[];
+  jobs: Job[];
+  artifacts: Artifact[];
+}): FocusRecommendation {
+  const highRiskAssumptions = assumptions.filter(isHighRiskAssumption);
+  const approvedSpecs = specs.filter((spec) => spec.status === "approved");
+  const succeededJobs = jobs.filter((job) => job.status === "succeeded");
+
+  if (!datasets.length) {
+    return {
+      tab: "Data",
+      title: text.focusUploadData,
+      reason: text.focusUploadDataReason,
+      evidence: [`0 DatasetSnapshots`, `phase: ${formatWorkflowState(project.current_phase)}`],
+      secondaryTabs: ["Understanding", "Approach"]
+    };
+  }
+
+  if (!understanding) {
+    return {
+      tab: "Understanding",
+      title: text.focusUnderstandData,
+      reason: text.focusUnderstandDataReason,
+      evidence: [`${datasets.length} DatasetSnapshots`, "understanding report missing"],
+      secondaryTabs: ["Data", "Assumptions"]
+    };
+  }
+
+  if (highRiskAssumptions.length) {
+    return {
+      tab: "Assumptions",
+      title: text.focusAssumptions,
+      reason: text.focusAssumptionsReason,
+      evidence: [`${highRiskAssumptions.length} high-risk assumptions`, `${assumptions.length} total assumptions`],
+      secondaryTabs: ["Understanding", "Evaluation"]
+    };
+  }
+
+  if (!approvedSpecs.length) {
+    return {
+      tab: "Evaluation",
+      title: text.focusEvaluation,
+      reason: text.focusEvaluationReason,
+      evidence: [`${candidates.length} candidates`, `${approvedSpecs.length} approved specs`],
+      secondaryTabs: ["Assumptions", "Approach"]
+    };
+  }
+
+  if (!runs.length) {
+    return {
+      tab: "Approach",
+      title: text.focusApproach,
+      reason: text.focusApproachReason,
+      evidence: [`${approvedSpecs.length} approved specs`, `${succeededJobs.length} succeeded jobs`],
+      secondaryTabs: ["Experiments", "Assets"]
+    };
+  }
+
+  if (!reports.length) {
+    return {
+      tab: "Experiments",
+      title: text.focusExperiments,
+      reason: text.focusExperimentsReason,
+      evidence: [`${runs.length} experiment runs`, `${artifacts.length} artifacts`],
+      secondaryTabs: ["Leaderboard", "Reports"]
+    };
+  }
+
+  return {
+    tab: "Reports",
+    title: text.focusReports,
+    reason: text.focusReportsReason,
+    evidence: [`${reports.length} reports`, `${runs.length} experiment runs`],
+    secondaryTabs: ["Leaderboard", "Lineage"]
+  };
 }
 
 function App() {
@@ -909,7 +1070,7 @@ function App() {
               }}
             >
               <span>{project.name}</span>
-              <small>{project.current_phase}</small>
+              <small>{formatWorkflowState(project.current_phase)}</small>
             </button>
           ))}
         </div>
@@ -964,7 +1125,13 @@ function App() {
                 </button>
               ))}
             </nav>
-            <ProjectDetail project={selectedProject} tab={tab} text={text} onProjectChanged={refreshProjects} />
+            <ProjectDetail
+              project={selectedProject}
+              tab={tab}
+              text={text}
+              onTabChange={setTab}
+              onProjectChanged={refreshProjects}
+            />
           </>
         ) : null}
       </main>
@@ -1140,11 +1307,13 @@ function ProjectDetail({
   project,
   tab,
   text,
+  onTabChange,
   onProjectChanged
 }: {
   project: Project;
   tab: Tab;
   text: LocaleMessages;
+  onTabChange: (tab: Tab) => void;
   onProjectChanged: () => Promise<void>;
 }) {
   const [overview, setOverview] = React.useState<Overview | null>(null);
@@ -1173,6 +1342,23 @@ function ProjectDetail({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [agentChatMessages, setAgentChatMessages] = React.useState<Array<{ role: "user" | "system"; text: string }>>([]);
+  const focusRecommendation = React.useMemo(
+    () =>
+      buildFocusRecommendation({
+        text,
+        project,
+        datasets,
+        understanding,
+        assumptions,
+        candidates,
+        specs,
+        runs,
+        reports,
+        jobs,
+        artifacts
+      }),
+    [text, project, datasets, understanding, assumptions, candidates, specs, runs, reports, jobs, artifacts]
+  );
 
   const refresh = React.useCallback(async () => {
     setError(null);
@@ -1313,7 +1499,25 @@ function ProjectDetail({
   return (
     <section className="detail">
       {error ? <div className="banner danger">{error}</div> : null}
-      {tab === "Overview" && <OverviewTab overview={overview} assumptions={assumptions} jobs={jobs} artifacts={artifacts} />}
+      <FocusGuide recommendation={focusRecommendation} currentTab={tab} text={text} onTabChange={onTabChange} />
+      <AgentChatDock
+        busy={busy}
+        text={text}
+        messages={agentChatMessages}
+        latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
+        onSubmit={submitAgentChat}
+      />
+      {tab === "Overview" && (
+        <OverviewTab
+          overview={overview}
+          assumptions={assumptions}
+          jobs={jobs}
+          artifacts={artifacts}
+          text={text}
+          focusRecommendation={focusRecommendation}
+          onTabChange={onTabChange}
+        />
+      )}
       {tab === "Data" && (
         <DataTab
           project={project}
@@ -1422,13 +1626,60 @@ function ProjectDetail({
       )}
       {tab === "Jobs" && <JobsTab jobs={jobs} busy={busy} runAction={runAction} />}
       {tab === "Lineage" && <LineageTab lineage={lineage} />}
-      <AgentChatDock
-        busy={busy}
-        text={text}
-        messages={agentChatMessages}
-        latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
-        onSubmit={submitAgentChat}
-      />
+    </section>
+  );
+}
+
+function FocusGuide({
+  recommendation,
+  currentTab,
+  text,
+  onTabChange
+}: {
+  recommendation: FocusRecommendation;
+  currentTab: Tab;
+  text: LocaleMessages;
+  onTabChange: (tab: Tab) => void;
+}) {
+  const isCurrent = currentTab === recommendation.tab;
+
+  return (
+    <section className="focus-guide" aria-label={text.focusGuideTitle}>
+      <div className="focus-guide-copy">
+        <div className="focus-guide-eyebrow">
+          <Lightbulb size={16} />
+          {text.focusGuideTitle}
+        </div>
+        <h2>{recommendation.title}</h2>
+        <p>{recommendation.reason}</p>
+        <div className="focus-evidence" aria-label={text.focusEvidence}>
+          <span>{text.focusEvidence}</span>
+          {recommendation.evidence.map((item) => (
+            <strong key={item}>{item}</strong>
+          ))}
+        </div>
+      </div>
+      <div className="focus-guide-actions">
+        <button
+          className="primary-button"
+          disabled={isCurrent}
+          onClick={() => onTabChange(recommendation.tab)}
+          type="button"
+        >
+          <Search size={16} />
+          {isCurrent ? text.recommendedFocus : `${text.goToFocus}: ${tabLabel(recommendation.tab, text)}`}
+        </button>
+        <div className="focus-secondary">
+          <span>{text.otherUsefulViews}</span>
+          <div>
+            {recommendation.secondaryTabs.map((tab) => (
+              <button className="secondary-button" key={tab} onClick={() => onTabChange(tab)} type="button">
+                {tabLabel(tab, text)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
@@ -1567,60 +1818,88 @@ function OverviewTab({
   overview,
   assumptions,
   jobs,
-  artifacts
+  artifacts,
+  text,
+  focusRecommendation,
+  onTabChange
 }: {
   overview: Overview | null;
   assumptions: Assumption[];
   jobs: Job[];
   artifacts: Artifact[];
+  text: LocaleMessages;
+  focusRecommendation: FocusRecommendation;
+  onTabChange: (tab: Tab) => void;
 }) {
   if (!overview) return <LoadingBlock label="Loading overview" />;
+  const highRiskAssumptions = assumptions.filter(isHighRiskAssumption);
+  const recentJobs = jobs.slice(0, 5);
+  const recentArtifacts = artifacts.slice(0, 8);
+
   return (
     <div className="stack">
-      <div className="metric-grid">
-        <Metric label="Phase" value={overview.project.current_phase} />
-        <Metric label="Datasets" value={overview.counts.datasets ?? 0} />
-        <Metric label="Assumptions" value={overview.counts.assumptions ?? 0} />
-        <Metric label="Ideas" value={overview.counts.ideas ?? 0} />
-      </div>
+      <Panel title={text.atAGlance} icon={<BarChart3 size={18} />}>
+        <div className="metric-grid compact">
+          <Metric label="Phase" value={formatWorkflowState(overview.project.current_phase)} />
+          <Metric label="Datasets" value={overview.counts.datasets ?? 0} />
+          <Metric label="Assumptions" value={overview.counts.assumptions ?? 0} />
+          <Metric label="Runs" value={overview.counts.runs ?? 0} />
+        </div>
+      </Panel>
       <Panel title="Next Actions" icon={<ListChecks size={18} />}>
         <ul className="clean-list">
-          {overview.next_actions.map((action) => (
+          <li>
+            <button className="inline-action" onClick={() => onTabChange(focusRecommendation.tab)} type="button">
+              {text.recommendedFocus}: {focusRecommendation.title}
+            </button>
+          </li>
+          {overview.next_actions.slice(0, 3).map((action) => (
             <li key={action}>{action}</li>
           ))}
         </ul>
       </Panel>
-      <div className="two-column">
-        <Panel title="High Risk Assumptions" icon={<AlertTriangle size={18} />}>
-          {assumptions.filter((item) => ["high", "blocking", "deployment_blocking"].includes(item.risk_level)).length ? (
-            <Table
-              headers={["Statement", "Risk", "Policy", "Status"]}
-              rows={assumptions
-                .filter((item) => ["high", "blocking", "deployment_blocking"].includes(item.risk_level))
-                .map((item) => [item.statement, item.risk_level, item.fallback_policy, item.status])}
-            />
-          ) : (
-            <EmptyInline text="High-risk assumptions will appear here after dataset understanding runs." />
-          )}
-        </Panel>
-        <Panel title="Recent Activity" icon={<Play size={18} />}>
-          {jobs.length ? (
-            <Table headers={["Job", "Status"]} rows={jobs.slice(0, 5).map((job) => [job.job_type, job.status])} />
-          ) : (
-            <EmptyInline text="Jobs from profiling, evaluation design, split generation, and agent tasks will appear here." />
-          )}
-        </Panel>
-      </div>
-      <Panel title="Recent Artifacts" icon={<FileText size={18} />}>
-        {artifacts.length ? (
-          <Table
-            headers={["Type", "Name", "Version"]}
-            rows={artifacts.slice(0, 8).map((artifact) => [artifact.asset_type, artifact.name, `v${artifact.version}`])}
-          />
-        ) : (
-          <EmptyInline text="Dataset snapshots, profiles, reports, evaluation specs, and split manifests will be registered here." />
-        )}
-      </Panel>
+      <details className="supporting-details">
+        <summary>
+          <span>{text.viewDetails}</span>
+          <small>
+            {highRiskAssumptions.length} risks / {recentJobs.length} jobs / {recentArtifacts.length} artifacts
+          </small>
+        </summary>
+        <div className="supporting-details-body">
+          <Panel title="High Risk Assumptions" icon={<AlertTriangle size={18} />}>
+            {highRiskAssumptions.length ? (
+              <Table
+                headers={["Statement", "Risk", "Policy", "Status"]}
+                rows={highRiskAssumptions.map((item) => [
+                  item.statement,
+                  item.risk_level,
+                  item.fallback_policy,
+                  item.status
+                ])}
+              />
+            ) : (
+              <EmptyInline text="High-risk assumptions will appear here after dataset understanding runs." />
+            )}
+          </Panel>
+          <Panel title="Recent Activity" icon={<Play size={18} />}>
+            {recentJobs.length ? (
+              <Table headers={["Job", "Status"]} rows={recentJobs.map((job) => [job.job_type, job.status])} />
+            ) : (
+              <EmptyInline text="Jobs from profiling, evaluation design, split generation, and agent tasks will appear here." />
+            )}
+          </Panel>
+          <Panel title="Recent Artifacts" icon={<FileText size={18} />}>
+            {recentArtifacts.length ? (
+              <Table
+                headers={["Type", "Name", "Version"]}
+                rows={recentArtifacts.map((artifact) => [artifact.asset_type, artifact.name, `v${artifact.version}`])}
+              />
+            ) : (
+              <EmptyInline text="Dataset snapshots, profiles, reports, evaluation specs, and split manifests will be registered here." />
+            )}
+          </Panel>
+        </div>
+      </details>
     </div>
   );
 }
@@ -5023,6 +5302,16 @@ function formatJobStatus(job: Job) {
   if (job.approval_required && job.status === "queued") return `${status} / approved`;
   if (job.approval_required) return `${status} / approval required`;
   return status;
+}
+
+function formatWorkflowState(value: string | null) {
+  if (!value) return "-";
+  return value
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 function isTerminalJob(job: Job) {

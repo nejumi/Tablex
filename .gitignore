@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.playwright-cli/
 apps/backend/*.egg-info/
 apps/frontend/node_modules/
 apps/frontend/dist/
