@@ -351,6 +351,14 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     assert any(output["schema"] == "visualization_spec.v1" for output in followup_contract["required_outputs"])
     assert any("Do not invent" in check for check in followup_contract["quality_checks"])
     assert followup_contract["inputs"]["notebook_followup"]["diagnostic_targets"]
+    artifacts_after_followup = client.get(f"/api/projects/{project_id}/artifacts").json()
+    followup_artifact = next(item for item in artifacts_after_followup if item["id"] == followup_action["artifact_id"])
+    followup_summary = followup_artifact["metadata"]["agent_task_contract_summary"]
+    assert followup_summary["schema_version"] == "agent_task_contract_summary.v1"
+    assert followup_summary["task_type"] == "notebook_followup_diagnostics"
+    assert followup_summary["label"] == "Materialize notebook diagnostics"
+    assert followup_summary["required_output_count"] >= 5
+    assert followup_artifact["metadata"]["objective_summary"]
 
     guide_chat_response = client.post(
         f"/api/projects/{project_id}/agent-chat",

@@ -3011,6 +3011,82 @@ td {
   padding-top: 14px;
 }
 
+.runner-handoff-focus {
+  scroll-margin-top: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
+  gap: 18px;
+  align-items: stretch;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border-strong));
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--surface) 94%, transparent), color-mix(in srgb, var(--surface-hover) 88%, transparent)),
+    var(--surface);
+  box-shadow: 0 18px 50px var(--shadow);
+  padding: 18px;
+}
+
+.runner-handoff-focus.empty {
+  grid-template-columns: minmax(0, 1fr);
+  border-color: var(--border-strong);
+  box-shadow: none;
+}
+
+.runner-handoff-main {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+}
+
+.runner-handoff-main h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.runner-handoff-main p,
+.runner-next-action strong {
+  margin: 0;
+  color: var(--muted-strong);
+  line-height: 1.55;
+}
+
+.runner-handoff-side {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.runner-handoff-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.runner-next-action {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.runner-next-action span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.runner-handoff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .approach-detail-groups {
   display: grid;
   gap: 10px;
@@ -3120,6 +3196,7 @@ td {
   .analysis-story-card-grid,
   .strategy-hero,
   .strategy-handoff,
+  .runner-handoff-focus,
   .decision-report-hero,
   .decision-report-score,
   .decision-read-grid {

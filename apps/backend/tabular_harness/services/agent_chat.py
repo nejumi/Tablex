@@ -403,11 +403,14 @@ def notebook_followup_focus_areas(normalized: str) -> list[str]:
         "worst_examples": ["worst", "failure", "error example", "bad example", "失敗", "誤分類", "ワースト"],
         "diagnostics": ["diagnostic", "diagnostics", "診断"],
     }
-    return [
+    focuses = [
         focus
         for focus, aliases in focus_map.items()
         if any(alias in normalized for alias in aliases)
     ]
+    if len(focuses) > 1:
+        focuses = [focus for focus in focuses if focus != "diagnostics"]
+    return focuses
 
 
 def is_notebook_followup_task_request(normalized: str, *, has_scoped_source: bool) -> bool:

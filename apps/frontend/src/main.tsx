@@ -4731,6 +4731,10 @@ function numberField(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function recordField(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
 function primaryTableLabel(benchmark: BenchmarkDataset): string {
   const path = textField(benchmark.primary_table.path);
   if (path) return path;
@@ -5349,7 +5353,7 @@ function StrategyBriefPanel({
 }) {
   if (!brief) {
     return (
-      <section id="approach-handoff" className="strategy-brief-panel">
+      <section id="strategy-brief-focus" className="strategy-brief-panel">
         <div>
           <div className="eyebrow">{text.strategyBriefTitle}</div>
           <h2>{project.name}</h2>
@@ -5375,7 +5379,7 @@ function StrategyBriefPanel({
   ];
 
   return (
-    <section id="approach-handoff" className="strategy-brief-panel">
+    <section id="strategy-brief-focus" className="strategy-brief-panel">
       <div className="strategy-hero">
         <div className="strategy-hero-copy">
           <img src="/mascot/tablee-hero.png" alt="" aria-hidden="true" className="strategy-hero-mascot" />
@@ -5421,6 +5425,99 @@ function StrategyBriefPanel({
           <span className="badge">open-ended</span>
           <span className="badge muted">split locked: {formatBooleanPath(brief.codex_handoff, ["autonomy_policy", "must_respect_split_manifest"])}</span>
           <span className="badge muted">network: {formatNestedPath(brief.codex_handoff, ["autonomy_policy", "network_default"])}</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RunnerHandoffFocus({
+  artifact,
+  busy,
+  onPreview,
+  onReadiness,
+  onWorkspace,
+  onRunStub,
+  onRunCodex
+}: {
+  artifact: Artifact | null;
+  busy: boolean;
+  onPreview: (artifact: Artifact) => void;
+  onReadiness: (artifact: Artifact) => void;
+  onWorkspace: (artifact: Artifact) => void;
+  onRunStub: (artifact: Artifact) => void;
+  onRunCodex: (artifact: Artifact) => void;
+}) {
+  if (!artifact) {
+    return (
+      <section id="approach-handoff" className="runner-handoff-focus empty">
+        <div>
+          <div className="eyebrow">Runner handoff</div>
+          <h2>No controlled runner task yet</h2>
+          <p>Ask Tablee for one focused action after data understanding or evaluation design. Tablex will keep the contract, artifacts, lineage, and safety rules in the harness.</p>
+        </div>
+      </section>
+    );
+  }
+  const summary = recordField(artifact.metadata.agent_task_contract_summary);
+  const taskType = textField(summary.task_type) ?? textField(artifact.metadata.task_type) ?? "agent_task";
+  const label = textField(summary.label) ?? textField(artifact.metadata.runner_handoff_label) ?? taskType.replace(/_/g, " ");
+  const objective = textField(summary.objective_summary) ?? textField(artifact.metadata.objective_summary) ?? "Open the contract preview to inspect the runner objective.";
+  const nextAction = textField(summary.next_action) ?? "Review readiness before execution.";
+  const requiredOutputs = numberField(summary.required_output_count) ?? numberField(artifact.metadata.required_output_count) ?? 0;
+  const qualityChecks = numberField(summary.quality_check_count) ?? numberField(artifact.metadata.quality_check_count) ?? 0;
+  const contextCount =
+    numberField(summary.notebook_followup_context_count) ?? numberField(artifact.metadata.notebook_followup_context_count) ?? 0;
+  const evaluationStatus = textField(summary.evaluation_status) ?? textField(artifact.metadata.evaluation_status) ?? "missing";
+  const splitRequired = Boolean(summary.split_manifest_required ?? artifact.metadata.split_manifest_required);
+
+  return (
+    <section id="approach-handoff" className="runner-handoff-focus" aria-label="Runner handoff focus">
+      <div className="runner-handoff-main">
+        <div className="eyebrow">Runner handoff</div>
+        <h2>{label}</h2>
+        <p>{objective}</p>
+        <div className="badge-row">
+          <span className="badge">{taskType.replace(/_/g, " ")}</span>
+          <span className={evaluationStatus === "approved" ? "badge" : "badge warning"}>
+            evaluation: {evaluationStatus.replace(/_/g, " ")}
+          </span>
+          <span className={splitRequired ? "badge" : "badge muted"}>
+            split manifest: {splitRequired ? "must respect" : "not locked"}
+          </span>
+        </div>
+      </div>
+      <div className="runner-handoff-side">
+        <div className="runner-handoff-metrics">
+          <Metric label="Outputs" value={requiredOutputs} />
+          <Metric label="Checks" value={qualityChecks} />
+          <Metric label="Context" value={contextCount} />
+        </div>
+        <div className="runner-next-action">
+          <span>Next</span>
+          <strong>{nextAction}</strong>
+        </div>
+        <div className="runner-handoff-actions">
+          <button className="primary-button" disabled={busy} onClick={() => onReadiness(artifact)}>
+            {busy ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
+            Review readiness
+          </button>
+          <button className="secondary-button" disabled={busy} onClick={() => onPreview(artifact)}>
+            <Eye size={16} />
+            Preview contract
+          </button>
+          <button className="secondary-button" disabled={busy} onClick={() => onWorkspace(artifact)}>
+            {busy ? <Loader2 className="spin" size={16} /> : <Layers size={16} />}
+            Workspace
+          </button>
+          <button className="secondary-button" disabled={busy} onClick={() => onRunStub(artifact)}>
+            {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+            Local stub
+          </button>
+          <button className="secondary-button" disabled={busy} onClick={() => onRunCodex(artifact)}>
+            {busy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
+            Codex
+          </button>
         </div>
       </div>
     </section>
@@ -5521,7 +5618,10 @@ function ApproachTab({
   const researchSynthesisArtifacts = artifacts.filter((artifact) =>
     ["research_finding_synthesis", "research_finding_synthesis_report"].includes(artifact.asset_type)
   );
-  const agentTaskContractArtifacts = artifacts.filter((artifact) => artifact.asset_type === "agent_task_contract");
+  const agentTaskContractArtifacts = artifacts
+    .filter((artifact) => artifact.asset_type === "agent_task_contract")
+    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime());
+  const latestAgentTaskContract = agentTaskContractArtifacts[0] ?? null;
   const researchContextCount = researchPlanArtifacts.length + researchSourceArtifacts.length + researchSynthesisArtifacts.length;
   const runnerHandoffCount = agentTaskContractArtifacts.length + researchBriefs.length + ideas.length;
   const [researchPlanPreview, setResearchPlanPreview] = React.useState<ArtifactPreview | null>(null);
@@ -5631,6 +5731,56 @@ function ApproachTab({
     }
   }
 
+  async function previewContract(artifact: Artifact) {
+    await loadTaskContractPreview(artifact.id);
+  }
+
+  async function prepareContractWorkspace(artifact: Artifact) {
+    const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/prepare-workspace`, {
+      method: "POST"
+    });
+    const workspaceArtifactId = job.output.agent_workspace_manifest_artifact_id ?? job.output.artifact_id;
+    if (typeof workspaceArtifactId === "string") {
+      await loadWorkspacePreview(workspaceArtifactId);
+    }
+    return job;
+  }
+
+  async function reviewContractReadiness(artifact: Artifact) {
+    const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/readiness-review`, {
+      method: "POST"
+    });
+    const reportArtifactId = job.output.agent_task_readiness_report_artifact_id ?? job.output.artifact_id;
+    if (typeof reportArtifactId === "string") {
+      await loadTaskContractPreview(reportArtifactId);
+    }
+    return job;
+  }
+
+  async function runContractLocalStub(artifact: Artifact) {
+    const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/run-local-stub`, {
+      method: "POST"
+    });
+    const ingested = job.output.ingested_artifact_ids;
+    const reportArtifactId = Array.isArray(ingested) ? textField(ingested[0]) : null;
+    if (reportArtifactId) {
+      await loadTaskContractPreview(reportArtifactId);
+    }
+    return job;
+  }
+
+  async function runContractCodex(artifact: Artifact) {
+    const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/run-codex`, {
+      method: "POST"
+    });
+    const ingested = job.output.ingested_artifact_ids;
+    const reportArtifactId = Array.isArray(ingested) ? textField(ingested[0]) : null;
+    if (reportArtifactId) {
+      await loadTaskContractPreview(reportArtifactId);
+    }
+    return job;
+  }
+
   return (
     <div className="stack">
       <StrategyBriefPanel
@@ -5640,6 +5790,15 @@ function ApproachTab({
         text={text}
         onAction={onStrategyAction}
         onSave={() => runAction(() => api(`/api/projects/${project.id}/approach/strategy-brief`, { method: "POST" }))}
+      />
+      <RunnerHandoffFocus
+        artifact={latestAgentTaskContract}
+        busy={busy}
+        onPreview={(artifact) => void previewContract(artifact)}
+        onReadiness={(artifact) => void runAction(() => reviewContractReadiness(artifact))}
+        onWorkspace={(artifact) => void runAction(() => prepareContractWorkspace(artifact))}
+        onRunStub={(artifact) => void runAction(() => runContractLocalStub(artifact))}
+        onRunCodex={(artifact) => void runAction(() => runContractCodex(artifact))}
       />
       <div className="toolbar">
         <button
@@ -5898,7 +6057,7 @@ function ApproachTab({
                 <button
                   className="icon-button"
                   disabled={taskContractPreviewLoadingId === artifact.id}
-                  onClick={() => void loadTaskContractPreview(artifact.id)}
+                  onClick={() => void previewContract(artifact)}
                   title="Preview agent task contract"
                 >
                   {taskContractPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
@@ -5909,18 +6068,7 @@ function ApproachTab({
                 <button
                   className="icon-button"
                   disabled={busy}
-                  onClick={() =>
-                    void runAction(async () => {
-                      const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/prepare-workspace`, {
-                        method: "POST"
-                      });
-                      const workspaceArtifactId = job.output.agent_workspace_manifest_artifact_id ?? job.output.artifact_id;
-                      if (typeof workspaceArtifactId === "string") {
-                        await loadWorkspacePreview(workspaceArtifactId);
-                      }
-                      return job;
-                    })
-                  }
+                  onClick={() => void runAction(() => prepareContractWorkspace(artifact))}
                   title="Prepare controlled workspace"
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <Layers size={16} />}
@@ -5928,18 +6076,7 @@ function ApproachTab({
                 <button
                   className="icon-button"
                   disabled={busy}
-                  onClick={() =>
-                    void runAction(async () => {
-                      const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/readiness-review`, {
-                        method: "POST"
-                      });
-                      const reportArtifactId = job.output.agent_task_readiness_report_artifact_id ?? job.output.artifact_id;
-                      if (typeof reportArtifactId === "string") {
-                        await loadTaskContractPreview(reportArtifactId);
-                      }
-                      return job;
-                    })
-                  }
+                  onClick={() => void runAction(() => reviewContractReadiness(artifact))}
                   title="Review runner readiness"
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
@@ -5947,19 +6084,7 @@ function ApproachTab({
                 <button
                   className="icon-button"
                   disabled={busy}
-                  onClick={() =>
-                    void runAction(async () => {
-                      const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/run-local-stub`, {
-                        method: "POST"
-                      });
-                      const ingested = job.output.ingested_artifact_ids;
-                      const reportArtifactId = Array.isArray(ingested) ? textField(ingested[0]) : null;
-                      if (reportArtifactId) {
-                        await loadTaskContractPreview(reportArtifactId);
-                      }
-                      return job;
-                    })
-                  }
+                  onClick={() => void runAction(() => runContractLocalStub(artifact))}
                   title="Run local stub"
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
@@ -5967,19 +6092,7 @@ function ApproachTab({
                 <button
                   className="icon-button"
                   disabled={busy}
-                  onClick={() =>
-                    void runAction(async () => {
-                      const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/run-codex`, {
-                        method: "POST"
-                      });
-                      const ingested = job.output.ingested_artifact_ids;
-                      const reportArtifactId = Array.isArray(ingested) ? textField(ingested[0]) : null;
-                      if (reportArtifactId) {
-                        await loadTaskContractPreview(reportArtifactId);
-                      }
-                      return job;
-                    })
-                  }
+                  onClick={() => void runAction(() => runContractCodex(artifact))}
                   title="Run Codex CLI"
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}

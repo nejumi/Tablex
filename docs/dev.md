@@ -547,3 +547,5 @@ When an AgentTaskContract is planned after an Adaptive Strategy Brief exists, th
 Notebook and Analysis Story prompts that ask Tablex to add diagnostics, feature importance, permutation importance, PDP, calibration, threshold review, score bins, slice metrics, or worst-example analysis are routed to a harness-owned `notebook_followup_diagnostics` AgentTaskContract.
 
 The chat response should stay human-readable and route the user to `Approach` / `approach-handoff`. The contract must preserve EvaluationSpec and SplitManifest, use notebook/run/prediction artifacts only as evidence, and write an evidence-gap report instead of inventing diagnostics when required artifacts are missing.
+
+The Approach tab treats `approach-handoff` as the focused Runner Handoff surface. Latest AgentTaskContracts store `agent_task_contract_summary` metadata so the UI can show the task type, objective summary, evaluation state, output/check counts, and next execution choice before opening the raw JSON preview.

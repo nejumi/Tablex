@@ -102,6 +102,7 @@ def plan_project_agent_task(
         task_type=task_type,
     )
     validate_agent_task_contract(contract)
+    contract_summary = agent_task_contract_summary(contract)
     artifact = store_json_artifact(
         db,
         store,
@@ -122,6 +123,15 @@ def plan_project_agent_task(
             "recommended_asset_count": len(asset_recommendations),
             "artifact_expectation_count": len(contract["inputs"]["artifact_expectations"]),
             "benchmark_id": benchmark_context(context_artifacts).get("benchmark_id"),
+            "task_type": contract["task_type"],
+            "objective_summary": contract_summary["objective_summary"],
+            "runner_handoff_label": contract_summary["label"],
+            "required_output_count": contract_summary["required_output_count"],
+            "quality_check_count": contract_summary["quality_check_count"],
+            "evaluation_status": contract_summary["evaluation_status"],
+            "split_manifest_required": contract_summary["split_manifest_required"],
+            "notebook_followup_context_count": contract_summary["notebook_followup_context_count"],
+            "agent_task_contract_summary": contract_summary,
         },
     )
     create_planner_lineage(
@@ -254,6 +264,90 @@ def build_agent_task_contract_payload(
         },
         "autonomy_level": 3,
     }
+
+
+def agent_task_contract_summary(contract: dict[str, Any]) -> dict[str, Any]:
+    inputs = contract["inputs"] if isinstance(contract.get("inputs"), dict) else {}
+    evaluation_raw = inputs.get("evaluation_contract")
+    notebook_followup_raw = inputs.get("notebook_followup")
+    evaluation = cast(dict[str, Any], evaluation_raw) if isinstance(evaluation_raw, dict) else {}
+    notebook_followup = cast(dict[str, Any], notebook_followup_raw) if isinstance(notebook_followup_raw, dict) else {}
+    task_type = str(contract.get("task_type") or "agent_task")
+    return {
+        "schema_version": "agent_task_contract_summary.v1",
+        "task_id": str(contract.get("task_id") or ""),
+        "task_type": task_type,
+        "label": agent_task_contract_label(task_type),
+        "objective_summary": objective_summary_for_task(task_type, str(contract.get("objective") or "")),
+        "required_output_count": len(contract.get("required_outputs", []))
+        if isinstance(contract.get("required_outputs"), list)
+        else 0,
+        "quality_check_count": len(contract.get("quality_checks", []))
+        if isinstance(contract.get("quality_checks"), list)
+        else 0,
+        "evaluation_status": str(evaluation.get("status") or "missing"),
+        "primary_metric": evaluation.get("primary_metric"),
+        "split_manifest_required": bool(inputs.get("must_respect_split_manifest")),
+        "notebook_followup_context_count": safe_int(notebook_followup.get("context_artifact_count")) if notebook_followup else 0,
+        "next_action": agent_task_contract_next_action(task_type),
+    }
+
+
+def agent_task_contract_label(task_type: str) -> str:
+    labels = {
+        "author_analysis_notebook": "Author a source-backed analysis notebook",
+        "notebook_followup_diagnostics": "Materialize notebook diagnostics",
+        "revise_evaluation_design": "Review evaluation design",
+        "implement_prediction_approach": "Plan a project-specific approach",
+    }
+    return labels.get(task_type, task_type.replace("_", " "))
+
+
+def agent_task_contract_next_action(task_type: str) -> str:
+    if task_type == "notebook_followup_diagnostics":
+        return "Review readiness, then run the controlled runner only if model, prediction, or split evidence exists."
+    if task_type == "author_analysis_notebook":
+        return "Review the authoring brief and run Codex when the current evidence is sufficient."
+    if task_type == "revise_evaluation_design":
+        return "Review Evaluation before replacing or approving any metric or split design."
+    return "Review readiness, prepare the workspace, then choose local stub or Codex execution."
+
+
+def objective_summary_for_task(task_type: str, objective: str) -> str:
+    if task_type == "notebook_followup_diagnostics":
+        focus = objective_followup_focus(objective)
+        focus_text = f" for {focus}" if focus else ""
+        return (
+            f"Materialize artifact-backed notebook diagnostics{focus_text}. Use the current Analysis Story, "
+            "notebook/run evidence, EvaluationSpec, and SplitManifest; if model, prediction, or split evidence "
+            "is missing, write the evidence gap instead of fake charts."
+        )
+    return compact_objective(objective)
+
+
+def objective_followup_focus(objective: str) -> str:
+    marker = "follow-up diagnostics task for "
+    if marker not in objective:
+        return ""
+    tail = objective.split(marker, 1)[1].split(".", 1)[0]
+    return tail.replace("_", " ").strip()
+
+
+def compact_objective(value: str, limit: int = 360) -> str:
+    compacted = " ".join(value.split())
+    if len(compacted) <= limit:
+        return compacted
+    return compacted[: limit - 1].rstrip() + "..."
+
+
+def safe_int(value: object) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return 0
 
 
 def required_outputs_for_task(task_type: str) -> list[dict[str, str]]:
