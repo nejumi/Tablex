@@ -192,6 +192,7 @@ from tabular_harness.services.planned_agent_workspace import (
 from tabular_harness.services.profiler import profile_tabular_file
 from tabular_harness.services.project_guidance import (
     build_project_guidance,
+    create_guided_journey_comparison,
     create_guided_journey_snapshot,
 )
 from tabular_harness.services.relational_feature_diagnostics import (
@@ -779,6 +780,48 @@ def save_project_guided_journey_snapshot(
                 "artifact_ids": result.artifact_ids,
                 "current_stage_id": result.snapshot["current_stage_id"],
                 "recommended_focus_key": result.snapshot["recommended_focus_key"],
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/guidance/snapshots/compare", response_model=JobRead)
+def compare_project_guided_journey_snapshots(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="compare_guided_journey_snapshots",
+        project_id=project_id,
+        input_payload={},
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_guided_journey_comparison(db, store=store, project=project)
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.comparison["schema_version"],
+                "guided_journey_comparison_artifact_id": result.artifact.id,
+                "guided_journey_comparison_report_id": result.report.id,
+                "guided_journey_comparison_report_artifact_id": result.report_artifact.id,
+                "visualization_id": result.visualization.id,
+                "visualization_artifact_id": result.visualization_artifact.id,
+                "artifact_id": result.artifact.id,
+                "artifact_ids": result.artifact_ids,
+                "changed_stage_count": result.comparison["summary"]["changed_stage_count"],
+                "recommended_focus_changed": result.comparison["summary"]["recommended_focus_changed"],
             },
         )
     except ValueError as exc:

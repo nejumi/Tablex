@@ -70,11 +70,13 @@ Project Guidance is available from:
 ```bash
 curl http://localhost:8000/api/projects/{project_id}/guidance
 curl -X POST http://localhost:8000/api/projects/{project_id}/guidance/snapshot
+curl -X POST http://localhost:8000/api/projects/{project_id}/guidance/snapshots/compare
 ```
 
 The response is `project_guidance.v1`. It is harness-owned decision support for the UI Focus Guide: one recommended focus, primary/secondary actions, state summary, supporting counts, and AgentRunner guidance. Actions can navigate, call a safe harness endpoint, or create a scoped AgentTaskContract. Approach-stage guidance should preserve flexibility by giving Codex a bounded prompt and current evidence rather than forcing a fixed modeling recipe.
 The same response also includes `journey_stages` and `current_stage_id` for the Guided Journey rail. Stage statuses are `done`, `current`, `next`, `blocked`, or `waiting`; stage actions reuse `ProjectGuidanceAction` so the UI can open the relevant tab, call a harness endpoint, or create a scoped AgentTaskContract while leaving approach selection open-ended.
 `/guidance/snapshot` saves the current Guided Journey state as a `guided_journey_snapshot` JSON artifact, `guided_journey_report` Markdown artifact/Report, and `visualization_spec` stage-status artifact with lineage. It is useful before asking Codex for a larger next task or when capturing a decision checkpoint for review.
+`/guidance/snapshots/compare` compares the latest two saved Guided Journey snapshots and stores `guided_journey_comparison`, `guided_journey_comparison_report`, and a comparison `visualization_spec` with lineage from both source snapshots. The Reports tab surfaces these in Guidance History.
 
 Queued job orchestration endpoints:
 

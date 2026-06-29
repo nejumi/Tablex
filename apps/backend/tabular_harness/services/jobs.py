@@ -28,6 +28,7 @@ JOB_TYPES = {
     "plan_baseline_strategy",
     "create_adaptive_strategy_brief",
     "save_guided_journey_snapshot",
+    "compare_guided_journey_snapshots",
     "run_agent_task",
     "run_planned_agent_task_stub",
     "validate_model_package",

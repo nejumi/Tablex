@@ -89,6 +89,24 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     assert report_preview_response.status_code == 200, report_preview_response.text
     assert "Guided Journey" in report_preview_response.json()["preview"]
 
+    second_snapshot_response = client.post(f"/api/projects/{project_id}/guidance/snapshot")
+    assert second_snapshot_response.status_code == 200, second_snapshot_response.text
+
+    comparison_response = client.post(f"/api/projects/{project_id}/guidance/snapshots/compare")
+    assert comparison_response.status_code == 200, comparison_response.text
+    comparison_job = comparison_response.json()
+    assert comparison_job["status"] == "succeeded"
+    assert comparison_job["job_type"] == "compare_guided_journey_snapshots"
+    assert comparison_job["output"]["schema_version"] == "guided_journey_comparison.v1"
+    assert comparison_job["output"]["guided_journey_comparison_artifact_id"]
+    assert comparison_job["output"]["guided_journey_comparison_report_id"]
+
+    comparison_preview_response = client.get(
+        f"/api/reports/{comparison_job['output']['guided_journey_comparison_report_id']}/preview"
+    )
+    assert comparison_preview_response.status_code == 200, comparison_preview_response.text
+    assert "Guided Journey Comparison" in comparison_preview_response.json()["preview"]
+
 
 def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     client = make_client(tmp_path)

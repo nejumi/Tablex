@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.ids import new_id
-from tabular_harness.core.json import dumps_json
+from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
     Artifact,
     Assumption,
@@ -28,12 +28,27 @@ from tabular_harness.models.entities import (
     utc_now,
 )
 from tabular_harness.services.approach import store_json_artifact, store_text_artifact
-from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
+from tabular_harness.services.artifacts import (
+    LocalArtifactStore,
+    artifact_primary_path,
+    create_lineage_edge,
+)
 
 
 @dataclass(frozen=True)
 class GuidedJourneySnapshotResult:
     snapshot: dict[str, Any]
+    artifact: Artifact
+    report: Report
+    report_artifact: Artifact
+    visualization: VisualizationSpec
+    visualization_artifact: Artifact
+    artifact_ids: list[str]
+
+
+@dataclass(frozen=True)
+class GuidedJourneyComparisonResult:
+    comparison: dict[str, Any]
     artifact: Artifact
     report: Report
     report_artifact: Artifact
@@ -248,6 +263,237 @@ def create_guided_journey_snapshot(
     )
 
 
+def create_guided_journey_comparison(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+) -> GuidedJourneyComparisonResult:
+    snapshot_artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "guided_journey_snapshot")
+            .order_by(Artifact.created_at.desc())
+            .limit(2)
+        ).all()
+    )
+    if len(snapshot_artifacts) < 2:
+        raise ValueError("At least two guided journey snapshots are required for comparison")
+    current_artifact, previous_artifact = snapshot_artifacts[0], snapshot_artifacts[1]
+    previous = load_guided_journey_snapshot(previous_artifact)
+    current = load_guided_journey_snapshot(current_artifact)
+    comparison = build_guided_journey_comparison(
+        previous=previous,
+        current=current,
+        previous_artifact=previous_artifact,
+        current_artifact=current_artifact,
+    )
+    suffix = new_id("journeycmp")
+    artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="guided_journey_comparison",
+        name=f"guided_journey_comparison_{suffix}",
+        filename="guided_journey_comparison.json",
+        payload=comparison,
+        metadata={
+            "project_id": project.id,
+            "previous_snapshot_artifact_id": previous_artifact.id,
+            "current_snapshot_artifact_id": current_artifact.id,
+            "changed_stage_count": comparison["summary"]["changed_stage_count"],
+            "current_stage_changed": comparison["summary"]["current_stage_changed"],
+            "recommended_focus_changed": comparison["summary"]["recommended_focus_changed"],
+        },
+    )
+    report_md = render_guided_journey_comparison_report(comparison)
+    report_artifact = store_text_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="guided_journey_comparison_report",
+        name=f"guided_journey_comparison_report_{suffix}",
+        filename="guided_journey_comparison_report.md",
+        text=report_md,
+        metadata={
+            "project_id": project.id,
+            "guided_journey_comparison_artifact_id": artifact.id,
+            "previous_snapshot_artifact_id": previous_artifact.id,
+            "current_snapshot_artifact_id": current_artifact.id,
+        },
+    )
+    report = Report(
+        id=new_id("rpt"),
+        project_id=project.id,
+        report_type="guided_journey_comparison_report",
+        title=f"{project.name} Guided Journey Comparison",
+        summary=first_sentence(report_md),
+        artifact_id=report_artifact.id,
+        source_asset_ids_json=dumps_json(
+            [
+                {"asset_type": "artifact", "asset_id": previous_artifact.id},
+                {"asset_type": "artifact", "asset_id": current_artifact.id},
+                {"asset_type": "artifact", "asset_id": artifact.id},
+            ]
+        ),
+        status="draft",
+        created_by_type="system",
+    )
+    db.add(report)
+    visualization_payload = build_guided_journey_comparison_visualization_spec(comparison)
+    visualization_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="visualization_spec",
+        name=f"guided_journey_comparison_visualization_{suffix}",
+        filename="guided_journey_comparison_visualization.json",
+        payload=visualization_payload,
+        metadata={
+            "project_id": project.id,
+            "source_artifact_id": artifact.id,
+            "chart_type": visualization_payload["chart_type"],
+            "visualization_scope": "guided_journey_comparison",
+        },
+    )
+    visualization = VisualizationSpec(
+        id=new_id("viz"),
+        project_id=project.id,
+        title=visualization_payload["title"],
+        chart_type=visualization_payload["chart_type"],
+        spec_json=dumps_json(visualization_payload["spec"]),
+        source_artifact_id=artifact.id,
+        artifact_id=visualization_artifact.id,
+        status="draft",
+        created_by_type="system",
+    )
+    db.add(visualization)
+    db.flush()
+    for source_artifact in (previous_artifact, current_artifact):
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=source_artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="compared_in",
+        )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=report_artifact.id,
+        relation_type="summarized_by",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=artifact.id,
+        to_asset_type="report",
+        to_asset_id=report.id,
+        relation_type="materializes",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=artifact.id,
+        to_asset_type="visualization_spec",
+        to_asset_id=visualization.id,
+        relation_type="visualized_by",
+    )
+    return GuidedJourneyComparisonResult(
+        comparison=comparison,
+        artifact=artifact,
+        report=report,
+        report_artifact=report_artifact,
+        visualization=visualization,
+        visualization_artifact=visualization_artifact,
+        artifact_ids=[artifact.id, report_artifact.id, visualization_artifact.id],
+    )
+
+
+def load_guided_journey_snapshot(artifact: Artifact) -> dict[str, Any]:
+    payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+    if not isinstance(payload, dict) or payload.get("schema_version") != "guided_journey_snapshot.v1":
+        raise ValueError(f"Artifact {artifact.id} is not a guided journey snapshot")
+    return payload
+
+
+def build_guided_journey_comparison(
+    *,
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    previous_artifact: Artifact,
+    current_artifact: Artifact,
+) -> dict[str, Any]:
+    previous_stages = stage_map(previous)
+    current_stages = stage_map(current)
+    stage_ids = [stage["id"] for stage in previous["guidance"]["journey_stages"]]
+    stage_ids.extend(stage_id for stage_id in current_stages if stage_id not in previous_stages)
+    stage_changes = []
+    for stage_id in stage_ids:
+        before = previous_stages.get(stage_id)
+        after = current_stages.get(stage_id)
+        before_status = before.get("status") if before else None
+        after_status = after.get("status") if after else None
+        stage_changes.append(
+            {
+                "stage_id": stage_id,
+                "stage": str((after or before or {}).get("label") or stage_id),
+                "from_status": before_status,
+                "to_status": after_status,
+                "status_changed": before_status != after_status,
+                "from_evidence": before.get("evidence", []) if before else [],
+                "to_evidence": after.get("evidence", []) if after else [],
+                "summary": str((after or before or {}).get("summary") or ""),
+            }
+        )
+    previous_focus = str(previous.get("recommended_focus_key") or previous["guidance"]["recommended_focus"]["focus_key"])
+    current_focus = str(current.get("recommended_focus_key") or current["guidance"]["recommended_focus"]["focus_key"])
+    return {
+        "schema_version": "guided_journey_comparison.v1",
+        "project_id": current["project_id"],
+        "project_name": current["project_name"],
+        "generated_at": utc_now().isoformat(),
+        "previous_snapshot": snapshot_ref(previous, previous_artifact),
+        "current_snapshot": snapshot_ref(current, current_artifact),
+        "summary": {
+            "changed_stage_count": sum(1 for item in stage_changes if item["status_changed"]),
+            "current_stage_changed": previous.get("current_stage_id") != current.get("current_stage_id"),
+            "recommended_focus_changed": previous_focus != current_focus,
+            "previous_focus_key": previous_focus,
+            "current_focus_key": current_focus,
+        },
+        "stage_changes": stage_changes,
+        "policy": {
+            "artifact_first": True,
+            "external_dashboard_required": False,
+            "comparison_scope": "latest_two_saved_guided_journey_snapshots",
+        },
+    }
+
+
+def stage_map(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {str(stage["id"]): stage for stage in snapshot["guidance"]["journey_stages"]}
+
+
+def snapshot_ref(snapshot: dict[str, Any], artifact: Artifact) -> dict[str, Any]:
+    return {
+        "artifact_id": artifact.id,
+        "created_at": artifact.created_at.isoformat(),
+        "current_stage_id": snapshot.get("current_stage_id"),
+        "current_stage_label": snapshot.get("current_stage_label"),
+        "recommended_focus_key": snapshot.get("recommended_focus_key"),
+        "recommended_focus_title": snapshot.get("recommended_focus_title"),
+        "status_counts": snapshot.get("status_counts", {}),
+    }
+
+
 def render_guided_journey_report(snapshot: dict[str, Any]) -> str:
     guidance = snapshot["guidance"]
     focus = guidance["recommended_focus"]
@@ -295,6 +541,50 @@ def render_guided_journey_report(snapshot: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_guided_journey_comparison_report(comparison: dict[str, Any]) -> str:
+    summary = comparison["summary"]
+    lines = [
+        f"# Guided Journey Comparison: {comparison['project_name']}",
+        "",
+        "## Summary",
+        "",
+        f"- Changed stages: {summary['changed_stage_count']}",
+        f"- Current stage changed: {summary['current_stage_changed']}",
+        f"- Recommended focus changed: {summary['recommended_focus_changed']}",
+        f"- Previous focus: {summary['previous_focus_key']}",
+        f"- Current focus: {summary['current_focus_key']}",
+        "",
+        "## Snapshots",
+        "",
+        f"- Previous: {comparison['previous_snapshot']['artifact_id']} ({comparison['previous_snapshot']['current_stage_label']})",
+        f"- Current: {comparison['current_snapshot']['artifact_id']} ({comparison['current_snapshot']['current_stage_label']})",
+        "",
+        "## Stage Changes",
+        "",
+        "| Stage | Previous | Current | Changed | Summary |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for change in comparison["stage_changes"]:
+        lines.append(
+            "| "
+            f"{change['stage']} | "
+            f"{change.get('from_status') or '-'} | "
+            f"{change.get('to_status') or '-'} | "
+            f"{change['status_changed']} | "
+            f"{change['summary']} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Policy",
+            "",
+            "- This comparison uses saved Guided Journey snapshots only.",
+            "- It records navigation and readiness changes, not a forced modeling recipe.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
 def build_guided_journey_visualization_spec(snapshot: dict[str, Any]) -> dict[str, Any]:
     rows = [
         {
@@ -318,6 +608,33 @@ def build_guided_journey_visualization_spec(snapshot: dict[str, Any]) -> dict[st
         },
         "encoding": {"stage": "stage", "status": "status", "count": "count", "detail": "detail"},
         "empty_state": "Save a guided journey snapshot after project guidance is available.",
+    }
+
+
+def build_guided_journey_comparison_visualization_spec(comparison: dict[str, Any]) -> dict[str, Any]:
+    rows = [
+        {
+            "stage": change["stage"],
+            "status": "changed" if change["status_changed"] else "ready",
+            "count": 1 if change["status_changed"] else 0,
+            "detail": f"{change.get('from_status') or '-'} -> {change.get('to_status') or '-'}",
+        }
+        for change in comparison["stage_changes"]
+    ]
+    return {
+        "schema_version": "visualization_spec.v1",
+        "title": f"Guided Journey Comparison: {comparison['project_name']}",
+        "chart_type": "stage_status",
+        "data": rows,
+        "spec": {
+            "schema_version": "guided_journey_comparison_stage_status.v1",
+            "previous_snapshot_artifact_id": comparison["previous_snapshot"]["artifact_id"],
+            "current_snapshot_artifact_id": comparison["current_snapshot"]["artifact_id"],
+            "changed_stage_count": comparison["summary"]["changed_stage_count"],
+            "recommended_focus_changed": comparison["summary"]["recommended_focus_changed"],
+        },
+        "encoding": {"stage": "stage", "status": "status", "count": "count", "detail": "detail"},
+        "empty_state": "Save at least two guided journey snapshots before comparing progress.",
     }
 
 

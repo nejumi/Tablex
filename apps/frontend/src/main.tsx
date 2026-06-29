@@ -5246,6 +5246,16 @@ function ReportsTab({
   const decisionArtifacts = artifacts.filter((artifact) =>
     ["decision_dashboard", "decision_report"].includes(artifact.asset_type)
   );
+  const guidedJourneyArtifacts = artifacts.filter((artifact) =>
+    [
+      "guided_journey_snapshot",
+      "guided_journey_report",
+      "guided_journey_comparison",
+      "guided_journey_comparison_report"
+    ].includes(artifact.asset_type)
+  );
+  const guidedJourneySnapshots = guidedJourneyArtifacts.filter((artifact) => artifact.asset_type === "guided_journey_snapshot");
+  const guidedJourneyComparisons = guidedJourneyArtifacts.filter((artifact) => artifact.asset_type === "guided_journey_comparison");
 
   async function loadReportPreview(reportId: string) {
     setPreviewLoadingId(reportId);
@@ -5329,6 +5339,23 @@ function ReportsTab({
           {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
           Decision Dashboard
         </button>
+        <button
+          className="secondary-button"
+          disabled={busy || guidedJourneySnapshots.length < 2}
+          onClick={() =>
+            void runAction(async () => {
+              const job = await api<Job>(`/api/projects/${project.id}/guidance/snapshots/compare`, { method: "POST" });
+              const reportId = job.output.guided_journey_comparison_report_id;
+              if (typeof reportId === "string") {
+                await loadReportPreview(reportId);
+              }
+              return job;
+            })
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <GitBranch size={16} />}
+          Compare Journey
+        </button>
       </div>
       <Panel title="Insights" icon={<Lightbulb size={18} />}>
         {insights.length ? (
@@ -5394,6 +5421,54 @@ function ReportsTab({
           />
         ) : (
           <EmptyInline text="Project reports will summarize data understanding, assumptions, evaluation design, approach candidates, runs, visualizations, and next decisions." />
+        )}
+      </Panel>
+      <Panel title="Guidance History" icon={<GitBranch size={18} />}>
+        {guidedJourneyArtifacts.length ? (
+          <div className="stack">
+            <Table
+              headers={["Type", "Stage", "Focus", "Version", "Created", "Actions"]}
+              rows={guidedJourneyArtifacts.slice(0, 10).map((artifact) => [
+                artifact.asset_type,
+                String(artifact.metadata.current_stage_id ?? "-"),
+                String(
+                  artifact.metadata.recommended_focus_key ??
+                    artifact.metadata.recommended_focus_changed ??
+                    artifact.metadata.changed_stage_count ??
+                    "-"
+                ),
+                `v${artifact.version}`,
+                formatDate(artifact.created_at),
+                <div className="row-actions" key={artifact.id}>
+                  <button
+                    className="icon-button"
+                    disabled={previewLoadingId === artifact.id}
+                    onClick={() => void loadArtifactPreview(artifact.id)}
+                    title="Preview guidance artifact"
+                  >
+                    {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                  </button>
+                  <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download guidance artifact">
+                    <Download size={16} />
+                  </a>
+                </div>
+              ])}
+            />
+            <div className="metric-grid compact">
+              <Metric label="Snapshots" value={guidedJourneySnapshots.length} />
+              <Metric label="Comparisons" value={guidedJourneyComparisons.length} />
+              <Metric
+                label="Latest stage"
+                value={String(guidedJourneySnapshots[0]?.metadata.current_stage_id ?? "-")}
+              />
+              <Metric
+                label="Latest focus"
+                value={String(guidedJourneySnapshots[0]?.metadata.recommended_focus_key ?? "-")}
+              />
+            </div>
+          </div>
+        ) : (
+          <EmptyInline text="Saved Guided Journey snapshots and comparisons will appear here with previews, downloads, and lineage-backed reports." />
         )}
       </Panel>
       <Panel title="Decision Artifacts" icon={<ListChecks size={18} />}>
