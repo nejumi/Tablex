@@ -558,6 +558,12 @@ type ArtifactPreview = {
   reason: string | null;
 };
 
+type EvidenceReaderMetric = {
+  label: string;
+  value: React.ReactNode;
+  tone?: "ready" | "warning" | "risk" | "muted";
+};
+
 type NotebookIndexItem = {
   notebook_artifact_id: string;
   notebook_kind: string;
@@ -1307,7 +1313,7 @@ const tabItems = [
   { id: "Lineage", labelKey: "tabLineage" }
 ] as const satisfies ReadonlyArray<{ id: string; labelKey: keyof LocaleMessages }>;
 type Tab = (typeof tabItems)[number]["id"];
-const secondaryTabIds = new Set<Tab>(["Leaderboard", "Assets", "Library", "Jobs", "Lineage"]);
+const secondaryTabIds = new Set<Tab>(["Assets", "Library", "Jobs", "Lineage"]);
 const primaryTabItems = tabItems.filter((item) => !secondaryTabIds.has(item.id));
 const secondaryTabItems = tabItems.filter((item) => secondaryTabIds.has(item.id));
 
@@ -3323,6 +3329,120 @@ function jobHeadline(job: Job) {
   return `${job.job_type.replace(/_/g, " ")} is ${job.status}`;
 }
 
+function FocusedEvidenceReader({
+  id,
+  eyebrow,
+  title,
+  body,
+  status,
+  statusTone = "muted",
+  metrics,
+  nextLabel,
+  nextDetail,
+  nextButtonLabel,
+  nextDisabled = false,
+  onNext,
+  previewTitle = "Evidence preview",
+  preview,
+  previewError,
+  previewLoading,
+  previewEmpty,
+  previewSourceType = "artifact",
+  previewSourceId,
+  boundary
+}: {
+  id: string;
+  eyebrow: string;
+  title: string;
+  body: string;
+  status: string;
+  statusTone?: EvidenceReaderMetric["tone"];
+  metrics: EvidenceReaderMetric[];
+  nextLabel: string;
+  nextDetail: string;
+  nextButtonLabel: string;
+  nextDisabled?: boolean;
+  onNext?: () => void;
+  previewTitle?: string;
+  preview: ArtifactPreview | null;
+  previewError?: string | null;
+  previewLoading?: boolean;
+  previewEmpty: string;
+  previewSourceType?: "artifact" | "report";
+  previewSourceId?: string;
+  boundary: string;
+}) {
+  return (
+    <section id={id} className="evidence-reader" aria-label={eyebrow}>
+      <div className="evidence-reader-head">
+        <div className="evidence-reader-copy">
+          <div className="eyebrow">{eyebrow}</div>
+          <h2>{title}</h2>
+          <p>{body}</p>
+          <div className="badge-row">
+            <span className={evidenceMetricClass(statusTone)}>{status}</span>
+            <span className="badge muted">{boundary}</span>
+          </div>
+        </div>
+        <div className="evidence-reader-metrics">
+          {metrics.map((metric) => (
+            <div className={evidenceMetricCardClass(metric.tone)} key={metric.label}>
+              <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="evidence-reader-action">
+        <div>
+          <span>Next</span>
+          <strong>{nextLabel}</strong>
+          <p>{nextDetail}</p>
+        </div>
+        <button className="primary-button" disabled={nextDisabled} onClick={onNext} type="button">
+          {previewLoading ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
+          {nextButtonLabel}
+        </button>
+      </div>
+      <div className="evidence-reader-preview">
+        <div className="evidence-reader-preview-head">
+          <div className="eyebrow">Read this first</div>
+          <h3>{previewTitle}</h3>
+        </div>
+        {previewError ? <div className="banner danger">{previewError}</div> : null}
+        {previewLoading ? (
+          <div className="banner muted">
+            <Loader2 className="spin" size={16} />
+            Loading evidence...
+          </div>
+        ) : null}
+        {preview?.preview_available ? (
+          isVisualArtifactPreview(preview) ? (
+            <VisualArtifactPreview preview={preview} />
+          ) : isHtmlArtifactPreview(preview) ? (
+            <HtmlArtifactPreview preview={preview} />
+          ) : (
+            <TranslatablePreview preview={preview} sourceType={previewSourceType} sourceId={previewSourceId ?? preview.id} />
+          )
+        ) : (
+          <EmptyInline text={preview?.reason ?? previewEmpty} />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function evidenceMetricClass(tone: EvidenceReaderMetric["tone"] = "muted") {
+  if (tone === "ready") return "badge success";
+  if (tone === "warning") return "badge warning";
+  if (tone === "risk") return "badge risk";
+  return "badge muted";
+}
+
+function evidenceMetricCardClass(tone: EvidenceReaderMetric["tone"] = "muted") {
+  return `evidence-reader-metric ${tone}`;
+}
+
 function TranslatablePreview({
   preview,
   sourceType = "artifact",
@@ -3892,30 +4012,22 @@ function DataTab({
   const publicWorkflowJobs = jobs.filter((job) => job.job_type === "run_public_benchmark_workflow");
   const latestDataset = datasets[0] ?? null;
   const latestProfileArtifact = profileArtifacts[0] ?? null;
-  const latestQualityArtifact = qualityArtifacts[0] ?? null;
+  const latestQualityReportArtifact = qualityArtifacts.find((artifact) => artifact.asset_type === "data_quality_report") ?? null;
+  const latestQualityGateArtifact = qualityArtifacts.find((artifact) => artifact.asset_type === "data_quality_gate") ?? null;
+  const latestQualityArtifact = latestQualityReportArtifact ?? latestQualityGateArtifact;
+  const dataEvidenceArtifact = latestQualityReportArtifact ?? latestQualityGateArtifact ?? latestProfileArtifact;
   const latestRelationalCatalog = relationalArtifacts[0] ?? null;
   const latestRelationalHint = relationalHintArtifacts.find((artifact) => artifact.asset_type === "relational_schema_hint") ?? null;
-  const relationalEvidenceLabel = latestRelationalCatalog
-    ? "relational catalog ready"
-    : latestRelationalHint
-      ? "uploaded ER evidence"
-      : "not mapped yet";
-  const dataFocusHeadline = latestDataset
-    ? "Read the data evidence before deciding the next modeling move"
-    : "Start by uploading or importing a dataset";
-  const dataFocusReason = latestDataset
-    ? "Tablex should first establish row meaning, target availability, relational structure, quality risk, and evaluation constraints. Detailed catalogs stay available below, but the first decision is whether the data evidence is trustworthy enough for runner work."
-    : "A project can exist before target selection. Upload CSV/Parquet or import a benchmark first, then let Data Understanding propose target candidates, assumptions, and evaluation choices.";
+  const dataFocusRelationalArtifactId = latestRelationalCatalog?.id ?? latestRelationalHint?.id ?? null;
   const dataFocusNextAction = !latestDataset
     ? "Upload or import data"
     : !latestProfileArtifact
       ? "Run profiling from upload/import"
       : !latestQualityArtifact
         ? "Analyze quality"
-        : !latestRelationalCatalog && benchmarks.some((benchmark) => benchmark.source_card?.table_bundle)
-          ? "Import relational benchmark"
-          : "Review ER evidence";
-  const dataFocusRelationalArtifactId = latestRelationalCatalog?.id ?? latestRelationalHint?.id ?? null;
+        : dataFocusRelationalArtifactId
+          ? "Review ER evidence"
+          : "Review quality evidence";
   const dataFocusButtonLabel = !latestDataset
     ? "Upload Data"
     : !latestQualityArtifact
@@ -3923,7 +4035,45 @@ function DataTab({
       : dataFocusRelationalArtifactId
         ? "Open ER Map"
         : "Review Details";
-  const dataFocusButtonDisabled = !latestDataset || busy || Boolean(latestQualityArtifact && !dataFocusRelationalArtifactId);
+  const dataFocusButtonDisabled = !latestDataset || busy;
+  const dataEvidenceStatus = latestQualityArtifact
+    ? String(latestQualityArtifact.metadata.severity ?? "quality recorded").replace(/_/g, " ")
+    : latestProfileArtifact
+      ? "profile ready"
+      : latestDataset
+        ? "needs quality"
+        : "needs data";
+  const dataEvidenceTone: EvidenceReaderMetric["tone"] = latestQualityArtifact
+    ? String(latestQualityArtifact.metadata.severity ?? "").toLowerCase().includes("high") ||
+      String(latestQualityArtifact.metadata.severity ?? "").toLowerCase().includes("block")
+      ? "risk"
+      : "ready"
+    : latestDataset
+      ? "warning"
+      : "risk";
+  const dataEvidenceTitle = latestQualityReportArtifact
+    ? "Read the latest quality review before modeling"
+    : latestQualityGateArtifact
+      ? "Quality gates are recorded; review the risk evidence"
+      : latestDataset
+        ? "Profile exists; quality evidence is the next useful read"
+        : "Start with a dataset, then let evidence guide the next move";
+  const dataEvidenceBody = latestDataset
+    ? "The first useful decision is whether this data is trustworthy enough for evaluation and runner work. Tablex keeps row counts, profile scope, target status, quality risks, and relational evidence visible before any modeling claim."
+    : "A project can exist before target selection. Upload CSV/Parquet or import a benchmark first, then let Data Understanding propose target candidates, assumptions, and evaluation choices.";
+  const dataEvidenceNextDetail = !latestDataset
+    ? "Create a DatasetSnapshot. Target selection can wait until the data has been inspected."
+    : !latestQualityArtifact
+      ? "Run the quality gate so leakage, missingness, duplicates, identity columns, and evaluation blockers become explicit evidence."
+      : "Read the quality evidence first. Then inspect relational evidence only if the row meaning depends on tables or joins.";
+  const dataEvidencePreviewTitle = latestQualityReportArtifact
+    ? "Latest quality report"
+    : latestQualityGateArtifact
+      ? "Latest quality gate"
+      : latestProfileArtifact
+        ? "Latest profile artifact"
+        : "No data evidence yet";
+  const autoLoadedDataEvidenceRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
     const preferredArtifact = latestRelationalCatalog ?? latestRelationalHint;
@@ -3944,6 +4094,25 @@ function DataTab({
         setRelationalPreviewLoadingId(null);
       });
   }, [latestRelationalCatalog, latestRelationalHint, relationalPreview?.id]);
+
+  React.useEffect(() => {
+    if (!dataEvidenceArtifact) return;
+    if (qualityPreview?.id === dataEvidenceArtifact.id) return;
+    if (autoLoadedDataEvidenceRef.current === dataEvidenceArtifact.id) return;
+    autoLoadedDataEvidenceRef.current = dataEvidenceArtifact.id;
+    setQualityPreviewLoadingId(dataEvidenceArtifact.id);
+    setQualityPreviewError(null);
+    api<ArtifactPreview>(`/api/artifacts/${dataEvidenceArtifact.id}/preview`)
+      .then((preview) => {
+        setQualityPreview(preview);
+      })
+      .catch((err: unknown) => {
+        setQualityPreviewError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        setQualityPreviewLoadingId(null);
+      });
+  }, [dataEvidenceArtifact, qualityPreview?.id]);
 
   return (
     <div className="stack">
@@ -3969,58 +4138,42 @@ function DataTab({
           </button>
         </div>
       </Panel>
-      <section id="data-focus" className="data-focus-panel" aria-label="Data evidence focus">
-        <div className="data-focus-copy">
-          <div className="eyebrow">Data evidence now</div>
-          <h2>{dataFocusHeadline}</h2>
-          <p>{dataFocusReason}</p>
-          <div className="badge-row">
-            <span className={latestDataset ? "badge" : "badge risk"}>{latestDataset ? "dataset ready" : "needs data"}</span>
-            <span className={latestProfileArtifact ? "badge" : "badge muted"}>
-              {latestProfileArtifact ? String(latestProfileArtifact.metadata.profile_mode ?? "profiled").replace(/_/g, " ") : "profile pending"}
-            </span>
-            <span className={latestQualityArtifact ? "badge" : "badge warning"}>
-              {latestQualityArtifact ? String(latestQualityArtifact.metadata.severity ?? "quality recorded") : "quality not checked"}
-            </span>
-            <span className={latestRelationalCatalog || latestRelationalHint ? "badge" : "badge muted"}>
-              {relationalEvidenceLabel}
-            </span>
-          </div>
-        </div>
-        <div className="data-focus-aside">
-          <Metric label="Rows" value={latestDataset?.row_count ?? "-"} />
-          <Metric label="Columns" value={latestDataset?.column_count ?? "-"} />
-          <Metric label="Profiles" value={profileArtifacts.length} />
-          <Metric label="Quality" value={qualityArtifacts.length ? qualityArtifacts.length : "none"} />
-          <div className="data-focus-action">
-            <span>Next</span>
-            <strong>{dataFocusNextAction}</strong>
-            <button
-              className="secondary-button"
-              disabled={dataFocusButtonDisabled}
-              onClick={() => {
-                if (!latestDataset) return;
-                if (!latestQualityArtifact) {
-                  void runAction(() => api(`/api/datasets/${latestDataset.id}/quality/run`, { method: "POST" }));
-                  return;
-                }
-                if (dataFocusRelationalArtifactId) {
-                  void loadRelationalPreview(dataFocusRelationalArtifactId);
-                }
-              }}
-            >
-              {busy ? (
-                <Loader2 className="spin" size={16} />
-              ) : latestQualityArtifact && dataFocusRelationalArtifactId ? (
-                <Eye size={16} />
-              ) : (
-                <ListChecks size={16} />
-              )}
-              {dataFocusButtonLabel}
-            </button>
-          </div>
-        </div>
-      </section>
+      <FocusedEvidenceReader
+        id="data-focus"
+        eyebrow="Data Evidence Reader"
+        title={dataEvidenceTitle}
+        body={dataEvidenceBody}
+        status={dataEvidenceStatus}
+        statusTone={dataEvidenceTone}
+        metrics={[
+          { label: "Rows", value: latestDataset?.row_count ?? "-", tone: latestDataset ? "ready" : "risk" },
+          { label: "Columns", value: latestDataset?.column_count ?? "-", tone: latestDataset ? "ready" : "risk" },
+          { label: "Profiles", value: profileArtifacts.length, tone: latestProfileArtifact ? "ready" : "muted" },
+          { label: "Quality", value: qualityArtifacts.length ? qualityArtifacts.length : "none", tone: latestQualityArtifact ? "ready" : "warning" }
+        ]}
+        nextLabel={dataFocusNextAction}
+        nextDetail={dataEvidenceNextDetail}
+        nextButtonLabel={dataFocusButtonLabel}
+        nextDisabled={dataFocusButtonDisabled}
+        onNext={() => {
+          if (!latestDataset) return;
+          if (!latestQualityArtifact) {
+            void runAction(() => api(`/api/datasets/${latestDataset.id}/quality/run`, { method: "POST" }));
+            return;
+          }
+          if (dataFocusRelationalArtifactId) {
+            void loadRelationalPreview(dataFocusRelationalArtifactId);
+          } else if (dataEvidenceArtifact) {
+            void loadQualityPreview(dataEvidenceArtifact.id);
+          }
+        }}
+        previewTitle={dataEvidencePreviewTitle}
+        preview={qualityPreview}
+        previewError={qualityPreviewError}
+        previewLoading={Boolean(qualityPreviewLoadingId)}
+        previewEmpty="Upload data or run the quality gate to see the first evidence artifact here."
+        boundary="No silent row or feature dropping"
+      />
       <details className="data-supporting-shelves data-supporting-shelves-primary">
         <summary>
           <span>Supporting data shelves</span>
@@ -5157,6 +5310,7 @@ function EvaluationTab({
   const [approvalPreview, setApprovalPreview] = React.useState<ArtifactPreview | null>(null);
   const [approvalPreviewError, setApprovalPreviewError] = React.useState<string | null>(null);
   const [approvalPreviewLoadingId, setApprovalPreviewLoadingId] = React.useState<string | null>(null);
+  const autoPreviewedScenarioRef = React.useRef<string | null>(null);
 
   async function loadScenarioPreview(artifactId: string) {
     setScenarioPreviewError(null);
@@ -5182,8 +5336,134 @@ function EvaluationTab({
     }
   }
 
+  const latestScenarioComparison = scenarioComparisonArtifacts[0] ?? null;
+  const latestApprovedSpec = specs.find((spec) => spec.status === "approved") ?? null;
+  const latestSpec = latestApprovedSpec ?? specs[0] ?? null;
+  const promotableCandidate =
+    candidates.find((candidate) => candidate.status === "primary_candidate") ??
+    candidates.find((candidate) => candidate.status === "alternative") ??
+    candidates[0] ??
+    null;
+  const evaluationStatus = latestApprovedSpec
+    ? "approved spec"
+    : latestScenarioComparison
+      ? "comparison ready"
+      : candidates.length
+        ? "candidates drafted"
+        : "needs design";
+  const evaluationStatusTone: EvidenceReaderMetric["tone"] = latestApprovedSpec ? "ready" : candidates.length ? "warning" : "risk";
+  const evaluationReaderTitle = latestApprovedSpec
+    ? "Evaluation is approved; keep every run behind this contract"
+    : latestScenarioComparison
+      ? "Read the scenario comparison before promoting a primary spec"
+      : candidates.length
+        ? "Compare evaluation scenarios before adopting a split"
+        : "Draft evaluation candidates before modeling claims";
+  const evaluationReaderBody =
+    "Tablex should keep metrics, split logic, leakage exclusions, and adoption risk visible before any leaderboard or runner result is trusted. Codex can propose approaches, but the harness owns EvaluationSpec and SplitManifest.";
+  const evaluationNextLabel = !candidates.length
+    ? "Design candidates"
+    : !latestScenarioComparison
+      ? "Compare scenarios"
+      : !latestSpec
+        ? "Promote primary candidate"
+        : latestSpec.status !== "approved"
+          ? "Approve EvaluationSpec"
+          : "Generate SplitManifest";
+  const evaluationNextDetail = !candidates.length
+    ? "Create primary, alternative, and reference candidates so the tradeoff is explicit."
+    : !latestScenarioComparison
+      ? "Compare random/stratified/time/group feasibility against assumptions and quality risk."
+      : !latestSpec
+        ? "Promote only after reading the comparison; promotion is explicit and recorded."
+        : latestSpec.status !== "approved"
+          ? "Approval should remain a deliberate harness action, not an implicit chat side effect."
+          : "Split generation is the handoff contract for downstream experiments and Codex runner work.";
+  const evaluationButtonDisabled =
+    busy ||
+    (!candidates.length
+      ? false
+      : !latestScenarioComparison
+        ? false
+        : !latestSpec
+          ? !promotableCandidate
+          : latestSpec.status === "approved"
+            ? !["random", "stratified", "time", "group"].includes(latestSpec.split_type)
+            : false);
+
+  React.useEffect(() => {
+    if (!latestScenarioComparison) return;
+    if (scenarioPreview?.id === latestScenarioComparison.id) return;
+    if (autoPreviewedScenarioRef.current === latestScenarioComparison.id) return;
+    autoPreviewedScenarioRef.current = latestScenarioComparison.id;
+    setScenarioPreviewLoadingId(latestScenarioComparison.id);
+    setScenarioPreviewError(null);
+    api<ArtifactPreview>(`/api/artifacts/${latestScenarioComparison.id}/preview`)
+      .then((preview) => {
+        setScenarioPreview(preview);
+      })
+      .catch((err: unknown) => {
+        setScenarioPreviewError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        setScenarioPreviewLoadingId(null);
+      });
+  }, [latestScenarioComparison, scenarioPreview?.id]);
+
   return (
     <div className="stack">
+      <FocusedEvidenceReader
+        id="evaluation-design"
+        eyebrow="Evaluation Evidence Reader"
+        title={evaluationReaderTitle}
+        body={evaluationReaderBody}
+        status={evaluationStatus}
+        statusTone={evaluationStatusTone}
+        metrics={[
+          { label: "Candidates", value: candidates.length, tone: candidates.length ? "ready" : "risk" },
+          { label: "Specs", value: specs.length, tone: specs.length ? "ready" : "muted" },
+          { label: "Comparison", value: latestScenarioComparison ? "ready" : "missing", tone: latestScenarioComparison ? "ready" : "warning" },
+          { label: "Quality", value: latestQualityGate ? "ready" : "missing", tone: latestQualityGate ? "ready" : "warning" }
+        ]}
+        nextLabel={evaluationNextLabel}
+        nextDetail={evaluationNextDetail}
+        nextButtonLabel={evaluationNextLabel}
+        nextDisabled={evaluationButtonDisabled}
+        onNext={() => {
+          if (!candidates.length) {
+            void runAction(() => api(`/api/projects/${project.id}/evaluation/design`, { method: "POST" }));
+            return;
+          }
+          if (!latestScenarioComparison) {
+            void runAction(async () => {
+              const job = await api<Job>(`/api/projects/${project.id}/evaluation/compare`, { method: "POST" });
+              const artifactId = job.output.artifact_id;
+              if (typeof artifactId === "string") {
+                await loadScenarioPreview(artifactId);
+              }
+              return job;
+            });
+            return;
+          }
+          if (!latestSpec && promotableCandidate) {
+            void runAction(() => api(`/api/evaluation-candidates/${promotableCandidate.id}/promote`, { method: "POST" }));
+            return;
+          }
+          if (latestSpec && latestSpec.status !== "approved") {
+            void runAction(() => api(`/api/evaluation-specs/${latestSpec.id}/approve`, { method: "POST" }));
+            return;
+          }
+          if (latestSpec) {
+            void runAction(() => api(`/api/evaluation-specs/${latestSpec.id}/generate-split`, { method: "POST" }));
+          }
+        }}
+        previewTitle={latestScenarioComparison ? "Latest scenario comparison" : "Evaluation decision evidence"}
+        preview={scenarioPreview}
+        previewError={scenarioPreviewError}
+        previewLoading={Boolean(scenarioPreviewLoadingId)}
+        previewEmpty="Design and compare evaluation candidates to get a readable scenario comparison here."
+        boundary="Approval and SplitManifest stay explicit"
+      />
       <div className="toolbar">
         <button
           className="secondary-button"
@@ -5210,7 +5490,7 @@ function EvaluationTab({
           Compare Scenarios
         </button>
       </div>
-      <Panel id="evaluation-design" title="Evaluation Candidates" icon={<BarChart3 size={18} />}>
+      <Panel id="evaluation-candidates" title="Evaluation Candidates" icon={<BarChart3 size={18} />}>
         {candidates.length ? (
           <div className="card-grid">
             {candidates.map((candidate) => (
@@ -7632,6 +7912,18 @@ function ReportsTab({
     (decisionReport?.available
       ? "Decision report is available for review."
       : "Generate a decision report to synthesize the current project evidence.");
+  const reportStatusTone: EvidenceReaderMetric["tone"] =
+    readinessStatus === "ready" || readinessStatus === "decision_ready"
+      ? "ready"
+      : readinessStatus === "blocked" || readinessStatus === "missing"
+        ? "risk"
+        : "warning";
+  const reportReaderBody =
+    "This is the project-level reading surface: current evidence, coverage gaps, risks, and next actions in one place. Reports summarize evidence; they do not invent missing experiment or approval evidence.";
+  const reportNextLabel = currentDecisionReportId ? "Read the current decision report" : "Generate the first decision report";
+  const reportNextDetail = currentDecisionReportId
+    ? "Use this report to choose the next controlled human or runner action before scanning raw artifacts."
+    : "Synthesize Data Review, assumptions, evaluation, notebooks, experiments, runner outputs, citations, and lineage into a single in-product report.";
   const autoPreviewedReportRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
@@ -7690,47 +7982,39 @@ function ReportsTab({
 
   return (
     <div className="stack">
-      <section id="decision-report" className="decision-report-hero">
-        <div className="decision-report-copy">
-          <div className="eyebrow">Current decision report</div>
-          <h3>{readinessHeadline}</h3>
-          <p>
-            Tablex synthesizes Data Review, assumptions, evaluation design, notebooks, experiments, runner outputs,
-            citation audits, lineage, and next actions into one in-product report.
-          </p>
-          <div className="badge-row">
-            <span className={decisionReportStatusClass(readinessStatus)}>{readinessStatus.replace(/_/g, " ")}</span>
-            {decisionReport?.generated_at ? <span className="badge muted">{formatDate(decisionReport.generated_at)}</span> : null}
-            {currentDecisionBundle ? <span className="badge muted">{currentDecisionBundle.schema_version}</span> : null}
-          </div>
-          <div className="row-actions">
-            <button className="primary-button" disabled={busy} onClick={() => void runAction(generateDecisionReport)}>
-              {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
-              Generate Decision Report
-            </button>
-            <button
-              className="secondary-button"
-              disabled={!currentDecisionReportId || previewLoadingId === currentDecisionReportId}
-              onClick={() => currentDecisionReportId && void loadReportPreview(currentDecisionReportId)}
-            >
-              {previewLoadingId === currentDecisionReportId ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-              Open Current
-            </button>
-            {currentDecisionReportId ? (
-              <a className="icon-link" href={`${apiBase}/api/reports/${currentDecisionReportId}/download`} title="Download decision report">
-                <Download size={16} />
-              </a>
-            ) : null}
-          </div>
-        </div>
-        <div className="decision-report-score">
-          <Metric label="Ready" value={String(coverage.ready_count ?? 0)} />
-          <Metric label="Needs attention" value={String(coverage.attention_count ?? 0)} />
-          <Metric label="Missing" value={String(coverage.missing_count ?? 0)} />
-          <Metric label="Sources" value={String(currentDecisionBundle?.source_assets.length ?? 0)} />
-        </div>
-        <img src="/mascot/tablee-avatar.svg" alt="" aria-hidden="true" className="decision-report-mascot" />
-      </section>
+      <FocusedEvidenceReader
+        id="decision-report"
+        eyebrow="Decision Report Reader"
+        title={readinessHeadline}
+        body={reportReaderBody}
+        status={readinessStatus.replace(/_/g, " ")}
+        statusTone={reportStatusTone}
+        metrics={[
+          { label: "Ready", value: String(coverage.ready_count ?? 0), tone: "ready" },
+          { label: "Needs attention", value: String(coverage.attention_count ?? 0), tone: Number(coverage.attention_count ?? 0) ? "warning" : "muted" },
+          { label: "Missing", value: String(coverage.missing_count ?? 0), tone: Number(coverage.missing_count ?? 0) ? "risk" : "muted" },
+          { label: "Sources", value: String(currentDecisionBundle?.source_assets.length ?? 0), tone: currentDecisionBundle?.source_assets.length ? "ready" : "muted" }
+        ]}
+        nextLabel={reportNextLabel}
+        nextDetail={reportNextDetail}
+        nextButtonLabel={currentDecisionReportId ? "Open Current" : "Generate Decision Report"}
+        nextDisabled={busy || Boolean(currentDecisionReportId && previewLoadingId === currentDecisionReportId)}
+        onNext={() => {
+          if (currentDecisionReportId) {
+            void loadReportPreview(currentDecisionReportId);
+          } else {
+            void runAction(generateDecisionReport);
+          }
+        }}
+        previewTitle={currentDecisionReportId ? "Current report text" : "No decision report yet"}
+        preview={reportPreview}
+        previewError={previewError}
+        previewLoading={Boolean(previewLoadingId)}
+        previewEmpty="Generate a decision report to read the current project state here."
+        previewSourceType={reportPreviewSource?.type ?? "report"}
+        previewSourceId={reportPreviewSource?.id ?? currentDecisionReportId ?? undefined}
+        boundary="Reports are summaries, not approval"
+      />
       {currentDecisionBundle ? (
         <Panel title="Read This First" icon={<FileText size={18} />}>
           <div className="decision-read-grid">
@@ -7796,22 +8080,6 @@ function ReportsTab({
           </div>
         ) : (
           <EmptyInline text="Evidence coverage will appear after the decision report bundle is generated." />
-        )}
-      </Panel>
-      <Panel title="Full Report Text" icon={<FileText size={18} />}>
-        {previewError ? <div className="banner danger">{previewError}</div> : null}
-        {reportPreview?.preview_available ? (
-          isHtmlArtifactPreview(reportPreview) ? (
-            <HtmlArtifactPreview preview={reportPreview} />
-          ) : (
-            <TranslatablePreview
-              preview={reportPreview}
-              sourceType={reportPreviewSource?.type ?? "artifact"}
-              sourceId={reportPreviewSource?.id ?? reportPreview.id}
-            />
-          )
-        ) : (
-          <EmptyInline text={reportPreview?.reason ?? "Generate a decision report to read the current project state here."} />
         )}
       </Panel>
       <details className="report-supporting-details">
@@ -8679,9 +8947,52 @@ function LeaderboardTab({
       setPreviewLoadingId(null);
     }
   }
+  const approvedSpecCount = specs.filter((spec) => spec.status === "approved").length;
+  const topEntry = leaderboard[0] ?? null;
+  const leaderboardStatus = leaderboard.length
+    ? approvedSpecCount && splitManifests.length
+      ? "comparable"
+      : "needs context"
+    : "no runs yet";
+  const leaderboardTone: EvidenceReaderMetric["tone"] = leaderboard.length
+    ? approvedSpecCount && splitManifests.length
+      ? "ready"
+      : "warning"
+    : "muted";
 
   return (
     <div className="stack">
+      <FocusedEvidenceReader
+        id="leaderboard-focus"
+        eyebrow="Leaderboard Reader"
+        title={leaderboard.length ? "Compare runs only inside the evaluation contract" : "No leaderboard evidence yet"}
+        body="Leaderboard values are useful only when the metric, EvaluationSpec, SplitManifest, and diagnostics are visible. Tablex keeps this as evidence for decisions, not a race to the highest number."
+        status={leaderboardStatus}
+        statusTone={leaderboardTone}
+        metrics={[
+          { label: "Runs", value: leaderboard.length, tone: leaderboard.length ? "ready" : "muted" },
+          { label: "Approved specs", value: approvedSpecCount, tone: approvedSpecCount ? "ready" : "warning" },
+          { label: "Split manifests", value: splitManifests.length, tone: splitManifests.length ? "ready" : "warning" },
+          { label: "Diagnostics", value: diagnosticArtifacts.length, tone: diagnosticArtifacts.length ? "ready" : "muted" }
+        ]}
+        nextLabel={topEntry ? "Review diagnostics for the leading run" : "Create run evidence from Experiments"}
+        nextDetail={
+          topEntry
+            ? "A top metric is not enough. Generate diagnostics, slice checks, and split sanity evidence before trusting the rank."
+            : "Run a baseline or agent task after evaluation is approved; the leaderboard should stay empty until comparable run evidence exists."
+        }
+        nextButtonLabel={topEntry ? "Analyze Top Run" : "Waiting for Runs"}
+        nextDisabled={busy || !topEntry}
+        onNext={() => {
+          if (topEntry) void runAction(() => api(`/api/runs/${topEntry.run_id}/diagnostics`, { method: "POST" }));
+        }}
+        previewTitle="Diagnostics preview"
+        preview={preview}
+        previewError={previewError}
+        previewLoading={Boolean(previewLoadingId)}
+        previewEmpty="Analyze a run or select a diagnostics artifact to read the evaluation evidence here."
+        boundary="Ranks require the same evaluation contract"
+      />
       <Panel title="Leaderboard" icon={<BarChart3 size={18} />}>
         {leaderboard.length ? (
           <Table
@@ -8714,7 +9025,7 @@ function LeaderboardTab({
       <Panel title="Evaluation Context" icon={<Layers size={18} />}>
         <Table
           headers={["Approved Specs", "Split Manifests"]}
-          rows={[[specs.filter((spec) => spec.status === "approved").length, splitManifests.length]]}
+          rows={[[approvedSpecCount, splitManifests.length]]}
         />
       </Panel>
       <Panel title="Evaluation Diagnostics" icon={<ListChecks size={18} />}>
