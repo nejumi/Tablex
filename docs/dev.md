@@ -252,6 +252,15 @@ Approach Ideas are not fixed recipes. They are evidence-backed proposals with `A
 
 The project UI includes a persistent Agent Chat dock across project tabs. Submitting text there does not send users to an external Codex surface; it creates a harness-owned `AgentTaskContract` using the current project context, so later Codex/LocalStub runners still operate through Tablex approvals, artifacts, lineage, safety policy, and reporting requirements.
 
+The top-right User Settings icon stores local workbench preferences in browser `localStorage`. Display theme supports Light and Dark through `document.documentElement.dataset.theme`. Language settings are LocalePack-based rather than a fixed language enum: built-in packs are `en-US` and `ja-JP`, and any missing locale can be added as a local dynamic pack that falls back to English for untranslated keys. App shell, tabs, common actions, create-project controls, settings, and persistent Agent Chat copy are LocalePack-driven. Creating a localization task from settings posts `task_type=generate_locale_pack` to `/api/projects/{project_id}/approach/agent-task-plan`; it produces a harness-owned AgentTaskContract and must not include secrets or connector credentials.
+
+Locale scope is intentionally tiered:
+
+- Tier 1: App chrome, navigation tabs, global controls, form placeholders, settings, and chat affordances should be LocalePack-driven.
+- Tier 2: Reusable panel titles, table headers, tooltips, and empty-state guidance should move into LocalePacks as components are split out.
+- Tier 3: Artifact/report/runner-generated content should not be silently UI-translated. It should be localized by creating explicit translated Report/Artifact assets with lineage.
+- Tier 4: Dataset values, column names, status enum values, IDs, artifact names, schema names, and runner contract fields remain source data unless a task explicitly creates a mapped display layer.
+
 `/api/projects/{project_id}/approach/agent-task-plan` creates a runner-ready `agent_task_contract` artifact without executing Codex or any external network call:
 
 ```bash

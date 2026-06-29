@@ -16,15 +16,281 @@ import {
   ListChecks,
   Loader2,
   MessageSquare,
+  Moon,
   PieChart,
   Play,
   Plus,
   RefreshCw,
   Search,
   Send,
+  Settings as SettingsIcon,
+  Sun,
   Upload
 } from "lucide-react";
 import "./styles.css";
+
+type DisplayTheme = "light" | "dark";
+type LocaleDirection = "ltr" | "rtl";
+type LocaleSource = "built_in" | "dynamic";
+
+type UserSettings = {
+  locale: string;
+  requestedLocale: string;
+  dynamicLanguageRequest: string;
+  displayTheme: DisplayTheme;
+};
+
+const userSettingsStorageKey = "tablex.userSettings.v1";
+const dynamicLocaleStorageKey = "tablex.dynamicLocalePacks.v1";
+
+const defaultUserSettings: UserSettings = {
+  locale: "en-US",
+  requestedLocale: "",
+  dynamicLanguageRequest: "",
+  displayTheme: "light"
+};
+
+const englishMessages = {
+  predictionWorkbench: "Prediction workbench",
+  projects: "Projects",
+  refreshProjects: "Refresh projects",
+  loadingProjects: "Loading projects",
+  projectDescription: "Evaluation-first workspace for tabular prediction tasks.",
+  createFirstProject: "Create the first prediction project",
+  createFirstProjectBody:
+    "Projects hold dataset snapshots, assumptions, evaluation designs, artifacts, jobs, and lineage for one prediction task.",
+  newProjectName: "New project name",
+  create: "Create",
+  tabOverview: "Overview",
+  tabData: "Data",
+  tabUnderstanding: "Understanding",
+  tabAssumptions: "Assumptions",
+  tabEvaluation: "Evaluation",
+  tabApproach: "Approach",
+  tabExperiments: "Experiments",
+  tabLeaderboard: "Leaderboard",
+  tabReports: "Reports",
+  tabAssets: "Assets",
+  tabLibrary: "Library",
+  tabJobs: "Jobs",
+  tabLineage: "Lineage",
+  settings: "User Settings",
+  settingsHint: "Language, locale packs, and display preferences are stored locally for this workbench.",
+  language: "Language",
+  localeCatalog: "Locale catalog",
+  localePack: "Locale pack",
+  activeLocale: "Active locale",
+  english: "English",
+  japanese: "Japanese",
+  dynamic: "Dynamic / generated",
+  requestedLocale: "Other locale or language",
+  requestedLocalePlaceholder: "e.g. fr-FR, es-ES, Korean, pt-BR",
+  addDynamicLocale: "Use dynamic locale",
+  localeFallbackHint: "Missing translations fall back to English until a generated pack is reviewed.",
+  dynamicLanguageRequest: "Dynamic language request",
+  localizationRequestPlaceholder: "Tone, terminology, audience, or locale-specific formatting",
+  appearance: "Appearance",
+  lightTheme: "Light",
+  darkTheme: "Dark",
+  createLocalizationTask: "Create AgentTask",
+  localizationTaskHint:
+    "Creates a harness-owned AgentTaskContract so Codex can later generate or revise a locale pack.",
+  localizationTaskCreated: "Localization AgentTaskContract created.",
+  noProjectForLocalization: "Select a project before creating a localization AgentTask.",
+  agentChatTitle: "Agent Chat",
+  agentChatSubtitle: "Codex-ready runner channel",
+  agentChatPlaceholder: "Ask for the next experiment, feature idea, diagnosis, or report",
+  createAgentTaskContract: "Create AgentTaskContract",
+  downloadLatestAgentTaskContract: "Download latest AgentTaskContract",
+  agentTaskContractCreated: "AgentTaskContract created.",
+  close: "Close"
+};
+
+type LocaleMessages = typeof englishMessages;
+
+const japaneseMessages: LocaleMessages = {
+  predictionWorkbench: "予測ワークベンチ",
+  projects: "プロジェクト",
+  refreshProjects: "プロジェクトを更新",
+  loadingProjects: "プロジェクトを読み込み中",
+  projectDescription: "表データ予測課題のためのEvaluation-firstワークスペースです。",
+  createFirstProject: "最初の予測プロジェクトを作成",
+  createFirstProjectBody:
+    "ProjectにはDatasetSnapshot、Assumption、評価設計、artifact、job、lineageを保持します。",
+  newProjectName: "新しいプロジェクト名",
+  create: "作成",
+  tabOverview: "概要",
+  tabData: "データ",
+  tabUnderstanding: "理解",
+  tabAssumptions: "仮定",
+  tabEvaluation: "評価",
+  tabApproach: "アプローチ",
+  tabExperiments: "実験",
+  tabLeaderboard: "リーダーボード",
+  tabReports: "レポート",
+  tabAssets: "アセット",
+  tabLibrary: "ライブラリ",
+  tabJobs: "ジョブ",
+  tabLineage: "リネージ",
+  settings: "ユーザー設定",
+  settingsHint: "言語、locale pack、表示設定をこのworkbenchのlocal設定として保存します。",
+  language: "言語",
+  localeCatalog: "Locale catalog",
+  localePack: "Locale pack",
+  activeLocale: "現在のlocale",
+  english: "英語",
+  japanese: "日本語",
+  dynamic: "動的 / 生成",
+  requestedLocale: "その他のlocaleまたは言語",
+  requestedLocalePlaceholder: "例: fr-FR, es-ES, Korean, pt-BR",
+  addDynamicLocale: "動的localeを使う",
+  localeFallbackHint: "未翻訳キーは、生成packがreviewされるまで英語fallbackで表示します。",
+  dynamicLanguageRequest: "動的言語リクエスト",
+  localizationRequestPlaceholder: "トーン、用語、対象ユーザー、locale固有の表記など",
+  appearance: "表示",
+  lightTheme: "Light",
+  darkTheme: "Dark",
+  createLocalizationTask: "AgentTaskを作成",
+  localizationTaskHint:
+    "Codexが将来locale packを生成・更新できるよう、Tablex管理のAgentTaskContractを作成します。",
+  localizationTaskCreated: "Localization AgentTaskContractを作成しました。",
+  noProjectForLocalization: "Localization AgentTaskを作成する前にProjectを選択してください。",
+  agentChatTitle: "Agent Chat",
+  agentChatSubtitle: "Codex対応runnerチャネル",
+  agentChatPlaceholder: "次の実験、特徴量案、診断、レポートを依頼する",
+  createAgentTaskContract: "AgentTaskContractを作成",
+  downloadLatestAgentTaskContract: "最新のAgentTaskContractをダウンロード",
+  agentTaskContractCreated: "AgentTaskContractを作成しました。",
+  close: "閉じる"
+};
+
+type LocalePack = {
+  locale: string;
+  label: string;
+  nativeLabel: string;
+  direction: LocaleDirection;
+  source: LocaleSource;
+  fallbackLocale: string;
+  messages: Partial<LocaleMessages>;
+};
+
+const builtinLocalePacks: LocalePack[] = [
+  {
+    locale: "en-US",
+    label: "English",
+    nativeLabel: "English",
+    direction: "ltr",
+    source: "built_in",
+    fallbackLocale: "en-US",
+    messages: englishMessages
+  },
+  {
+    locale: "ja-JP",
+    label: "Japanese",
+    nativeLabel: "日本語",
+    direction: "ltr",
+    source: "built_in",
+    fallbackLocale: "en-US",
+    messages: japaneseMessages
+  }
+];
+
+function loadUserSettings(): UserSettings {
+  try {
+    const raw = window.localStorage.getItem(userSettingsStorageKey);
+    if (!raw) return defaultUserSettings;
+    const parsed = JSON.parse(raw) as Partial<UserSettings> & {
+      language?: string;
+      customLanguage?: string;
+    };
+    const migratedLocale =
+      typeof parsed.locale === "string"
+        ? normalizeLocale(parsed.locale)
+        : parsed.language === "ja"
+          ? "ja-JP"
+          : parsed.language === "dynamic" && typeof parsed.customLanguage === "string" && parsed.customLanguage.trim()
+            ? normalizeLocale(parsed.customLanguage)
+            : "en-US";
+    return {
+      locale: migratedLocale,
+      requestedLocale:
+        typeof parsed.requestedLocale === "string"
+          ? parsed.requestedLocale
+          : typeof parsed.customLanguage === "string"
+            ? parsed.customLanguage
+            : "",
+      dynamicLanguageRequest:
+        typeof parsed.dynamicLanguageRequest === "string" ? parsed.dynamicLanguageRequest : "",
+      displayTheme: parsed.displayTheme === "dark" ? "dark" : "light"
+    };
+  } catch {
+    return defaultUserSettings;
+  }
+}
+
+function normalizeLocale(value: string) {
+  return value.trim().replace("_", "-") || "en-US";
+}
+
+function localeLabel(locale: string) {
+  return normalizeLocale(locale)
+    .split("-")
+    .filter(Boolean)
+    .map((part, index) => (index === 0 ? part.toLowerCase() : part.toUpperCase()))
+    .join("-");
+}
+
+function loadDynamicLocalePacks(): LocalePack[] {
+  try {
+    const raw = window.localStorage.getItem(dynamicLocaleStorageKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Partial<LocalePack>[];
+    return parsed
+      .map((pack) => ({
+        locale: typeof pack.locale === "string" ? normalizeLocale(pack.locale) : "",
+        label: typeof pack.label === "string" ? pack.label : "",
+        nativeLabel: typeof pack.nativeLabel === "string" ? pack.nativeLabel : "",
+        direction: pack.direction === "rtl" ? ("rtl" as const) : ("ltr" as const),
+        source: "dynamic" as const,
+        fallbackLocale: "en-US",
+        messages: typeof pack.messages === "object" && pack.messages ? pack.messages : {}
+      }))
+      .filter((pack) => pack.locale && !builtinLocalePacks.some((builtin) => builtin.locale === pack.locale));
+  } catch {
+    return [];
+  }
+}
+
+function mergeLocalePacks(dynamicLocalePacks: LocalePack[]) {
+  const seen = new Set<string>();
+  return [...builtinLocalePacks, ...dynamicLocalePacks].filter((pack) => {
+    if (seen.has(pack.locale)) return false;
+    seen.add(pack.locale);
+    return true;
+  });
+}
+
+function copyForLocale(locale: string, localePacks: LocalePack[]): LocaleMessages {
+  const pack = localePacks.find((candidate) => candidate.locale === locale);
+  return { ...englishMessages, ...(pack?.messages ?? {}) };
+}
+
+function resolveLocalePack(locale: string, localePacks: LocalePack[]) {
+  return localePacks.find((pack) => pack.locale === locale) ?? builtinLocalePacks[0];
+}
+
+function createDynamicLocalePack(localeInput: string): LocalePack {
+  const locale = localeLabel(localeInput);
+  return {
+    locale,
+    label: locale,
+    nativeLabel: locale,
+    direction: "ltr",
+    source: "dynamic",
+    fallbackLocale: "en-US",
+    messages: {}
+  };
+}
 
 type Project = {
   id: string;
@@ -479,22 +745,22 @@ type LineageEdge = {
 };
 
 const apiBase = import.meta.env.VITE_API_BASE ?? "";
-const tabs = [
-  "Overview",
-  "Data",
-  "Understanding",
-  "Assumptions",
-  "Evaluation",
-  "Approach",
-  "Experiments",
-  "Leaderboard",
-  "Reports",
-  "Assets",
-  "Library",
-  "Jobs",
-  "Lineage"
-] as const;
-type Tab = (typeof tabs)[number];
+const tabItems = [
+  { id: "Overview", labelKey: "tabOverview" },
+  { id: "Data", labelKey: "tabData" },
+  { id: "Understanding", labelKey: "tabUnderstanding" },
+  { id: "Assumptions", labelKey: "tabAssumptions" },
+  { id: "Evaluation", labelKey: "tabEvaluation" },
+  { id: "Approach", labelKey: "tabApproach" },
+  { id: "Experiments", labelKey: "tabExperiments" },
+  { id: "Leaderboard", labelKey: "tabLeaderboard" },
+  { id: "Reports", labelKey: "tabReports" },
+  { id: "Assets", labelKey: "tabAssets" },
+  { id: "Library", labelKey: "tabLibrary" },
+  { id: "Jobs", labelKey: "tabJobs" },
+  { id: "Lineage", labelKey: "tabLineage" }
+] as const satisfies ReadonlyArray<{ id: string; labelKey: keyof LocaleMessages }>;
+type Tab = (typeof tabItems)[number]["id"];
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, init);
@@ -509,8 +775,22 @@ function App() {
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = React.useState<string | null>(null);
   const [tab, setTab] = React.useState<Tab>("Overview");
+  const [userSettings, setUserSettings] = React.useState<UserSettings>(() => loadUserSettings());
+  const [dynamicLocalePacks, setDynamicLocalePacks] = React.useState<LocalePack[]>(() => loadDynamicLocalePacks());
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const localePacks = React.useMemo(() => mergeLocalePacks(dynamicLocalePacks), [dynamicLocalePacks]);
+  const activeLocale = resolveLocalePack(userSettings.locale, localePacks);
+  const text = copyForLocale(activeLocale.locale, localePacks);
+
+  React.useEffect(() => {
+    window.localStorage.setItem(userSettingsStorageKey, JSON.stringify(userSettings));
+    window.localStorage.setItem(dynamicLocaleStorageKey, JSON.stringify(dynamicLocalePacks));
+    document.documentElement.lang = activeLocale.locale;
+    document.documentElement.dir = activeLocale.direction;
+    document.documentElement.dataset.theme = userSettings.displayTheme;
+  }, [activeLocale.direction, activeLocale.locale, dynamicLocalePacks, userSettings]);
 
   const refreshProjects = React.useCallback(async () => {
     setLoading(true);
@@ -534,6 +814,45 @@ function App() {
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
 
+  async function createLocalizationTask(settings: UserSettings) {
+    if (!selectedProjectId) {
+      throw new Error(text.noProjectForLocalization);
+    }
+    const targetLocale = resolveLocalePack(settings.locale, localePacks);
+    const extraRequest = settings.dynamicLanguageRequest.trim();
+    await api<Job>(`/api/projects/${selectedProjectId}/approach/agent-task-plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task_type: "generate_locale_pack",
+        objective: [
+          `Design a Tablex UI locale pack for ${targetLocale.locale} (${targetLocale.label}).`,
+          "Preserve PRODUCT_NAME neutrality, harness-owned safety controls, and existing AgentTask terminology.",
+          `Use ${targetLocale.fallbackLocale} as fallback and keep missing keys safe to render.`,
+          "Return translation keys, copy guidance, locale metadata, fallback behavior, and implementation notes as artifacts.",
+          extraRequest ? `Additional user request: ${extraRequest}` : null
+        ]
+          .filter(Boolean)
+          .join(" ")
+      })
+    });
+    setError(null);
+    await refreshProjects();
+  }
+
+  function ensureDynamicLocale(localeInput: string) {
+    const nextPack = createDynamicLocalePack(localeInput);
+    setDynamicLocalePacks((current) => {
+      if (localePacks.some((pack) => pack.locale === nextPack.locale)) return current;
+      return [...current, nextPack];
+    });
+    setUserSettings((current) => ({
+      ...current,
+      locale: nextPack.locale,
+      requestedLocale: nextPack.locale
+    }));
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -541,10 +860,10 @@ function App() {
           <div className="brand-mark">T</div>
           <div>
             <div className="brand-name">Tablex</div>
-            <div className="brand-subtitle">Prediction workbench</div>
+            <div className="brand-subtitle">{text.predictionWorkbench}</div>
           </div>
         </div>
-        <div className="nav-label">Projects</div>
+        <div className="nav-label">{text.projects}</div>
         <div className="project-list">
           {projects.map((project) => (
             <button
@@ -560,37 +879,58 @@ function App() {
             </button>
           ))}
         </div>
-        <CreateProjectForm onCreated={refreshProjects} />
+        <CreateProjectForm text={text} onCreated={refreshProjects} />
       </aside>
       <main className="main">
         <header className="topbar">
           <div>
-            <h1>{selectedProject ? selectedProject.name : "Projects"}</h1>
-            <p>{selectedProject?.description || "Evaluation-first workspace for tabular prediction tasks."}</p>
+            <h1>{selectedProject ? selectedProject.name : text.projects}</h1>
+            <p>{selectedProject?.description || text.projectDescription}</p>
           </div>
-          <button className="icon-button" onClick={() => void refreshProjects()} title="Refresh projects">
-            <RefreshCw size={18} />
-          </button>
+          <div className="topbar-actions">
+            <button className="icon-button" onClick={() => void refreshProjects()} title={text.refreshProjects}>
+              <RefreshCw size={18} />
+            </button>
+            <button className="icon-button" onClick={() => setSettingsOpen(true)} title={text.settings}>
+              <SettingsIcon size={18} />
+            </button>
+          </div>
         </header>
+        {settingsOpen ? (
+          <UserSettingsPanel
+            settings={userSettings}
+            text={text}
+            activeLocale={activeLocale}
+            localePacks={localePacks}
+            onChange={setUserSettings}
+            onEnsureDynamicLocale={ensureDynamicLocale}
+            onClose={() => setSettingsOpen(false)}
+            onCreateLocalizationTask={createLocalizationTask}
+          />
+        ) : null}
         {error ? <div className="banner danger">{error}</div> : null}
-        {loading ? <LoadingBlock label="Loading projects" /> : null}
+        {loading ? <LoadingBlock label={text.loadingProjects} /> : null}
         {!loading && !selectedProject ? (
           <EmptyState
             icon={<Database size={28} />}
-            title="Create the first prediction project"
-            body="Projects hold dataset snapshots, assumptions, evaluation designs, artifacts, jobs, and lineage for one prediction task."
+            title={text.createFirstProject}
+            body={text.createFirstProjectBody}
           />
         ) : null}
         {selectedProject ? (
           <>
             <nav className="tabs">
-              {tabs.map((item) => (
-                <button key={item} className={item === tab ? "tab active" : "tab"} onClick={() => setTab(item)}>
-                  {item}
+              {tabItems.map((item) => (
+                <button
+                  key={item.id}
+                  className={item.id === tab ? "tab active" : "tab"}
+                  onClick={() => setTab(item.id)}
+                >
+                  {text[item.labelKey]}
                 </button>
               ))}
             </nav>
-            <ProjectDetail project={selectedProject} tab={tab} onProjectChanged={refreshProjects} />
+            <ProjectDetail project={selectedProject} tab={tab} text={text} onProjectChanged={refreshProjects} />
           </>
         ) : null}
       </main>
@@ -598,7 +938,141 @@ function App() {
   );
 }
 
-function CreateProjectForm({ onCreated }: { onCreated: () => Promise<void> }) {
+function UserSettingsPanel({
+  settings,
+  text,
+  activeLocale,
+  localePacks,
+  onChange,
+  onEnsureDynamicLocale,
+  onClose,
+  onCreateLocalizationTask
+}: {
+  settings: UserSettings;
+  text: LocaleMessages;
+  activeLocale: LocalePack;
+  localePacks: LocalePack[];
+  onChange: (settings: UserSettings) => void;
+  onEnsureDynamicLocale: (localeInput: string) => void;
+  onClose: () => void;
+  onCreateLocalizationTask: (settings: UserSettings) => Promise<void>;
+}) {
+  const [busy, setBusy] = React.useState(false);
+  const [status, setStatus] = React.useState<string | null>(null);
+
+  function update(patch: Partial<UserSettings>) {
+    setStatus(null);
+    onChange({ ...settings, ...patch });
+  }
+
+  function addDynamicLocale() {
+    const localeInput = settings.requestedLocale.trim();
+    if (!localeInput) return;
+    onEnsureDynamicLocale(localeInput);
+    setStatus(`${text.activeLocale}: ${localeLabel(localeInput)}`);
+  }
+
+  async function createTask() {
+    setBusy(true);
+    setStatus(null);
+    try {
+      await onCreateLocalizationTask(settings);
+      setStatus(text.localizationTaskCreated);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <aside className="settings-panel" aria-label={text.settings}>
+      <div className="settings-panel-header">
+        <div>
+          <h2>{text.settings}</h2>
+          <p>{text.settingsHint}</p>
+        </div>
+        <button className="icon-button" onClick={onClose} title={text.close}>
+          <Check size={16} />
+        </button>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-label-row">
+          <span>{text.localeCatalog}</span>
+          <strong>{activeLocale.source === "built_in" ? text.localePack : text.dynamic}</strong>
+        </div>
+        <label>
+          <span>{text.language}</span>
+          <select value={settings.locale} onChange={(event) => update({ locale: event.target.value })}>
+            {localePacks.map((pack) => (
+              <option key={pack.locale} value={pack.locale}>
+                {pack.nativeLabel} ({pack.locale})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{text.requestedLocale}</span>
+          <input
+            value={settings.requestedLocale}
+            onChange={(event) => update({ requestedLocale: event.target.value })}
+            placeholder={text.requestedLocalePlaceholder}
+          />
+        </label>
+        <button className="secondary-button" disabled={!settings.requestedLocale.trim()} onClick={addDynamicLocale}>
+          {text.addDynamicLocale}
+        </button>
+        <p className="settings-hint">{text.localeFallbackHint}</p>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-label-row">
+          <span>{text.appearance}</span>
+          <strong>{settings.displayTheme === "dark" ? text.darkTheme : text.lightTheme}</strong>
+        </div>
+        <div className="segmented-control" role="group" aria-label={text.appearance}>
+          <button
+            className={settings.displayTheme === "light" ? "active" : ""}
+            onClick={() => update({ displayTheme: "light" })}
+            type="button"
+          >
+            <Sun size={15} />
+            {text.lightTheme}
+          </button>
+          <button
+            className={settings.displayTheme === "dark" ? "active" : ""}
+            onClick={() => update({ displayTheme: "dark" })}
+            type="button"
+          >
+            <Moon size={15} />
+            {text.darkTheme}
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <label>
+          <span>{text.dynamicLanguageRequest}</span>
+          <textarea
+            value={settings.dynamicLanguageRequest}
+            onChange={(event) => update({ dynamicLanguageRequest: event.target.value })}
+            placeholder={text.localizationRequestPlaceholder}
+            rows={4}
+          />
+        </label>
+        <p className="settings-hint">{text.localizationTaskHint}</p>
+        <button className="primary-button" disabled={busy} onClick={() => void createTask()}>
+          {busy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
+          {text.createLocalizationTask}
+        </button>
+        {status ? <div className="settings-status">{status}</div> : null}
+      </div>
+    </aside>
+  );
+}
+
+function CreateProjectForm({ text, onCreated }: { text: LocaleMessages; onCreated: () => Promise<void> }) {
   const [name, setName] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
@@ -618,10 +1092,10 @@ function CreateProjectForm({ onCreated }: { onCreated: () => Promise<void> }) {
 
   return (
     <form className="create-form" onSubmit={(event) => void submit(event)}>
-      <input value={name} onChange={(event) => setName(event.target.value)} placeholder="New project name" />
+      <input value={name} onChange={(event) => setName(event.target.value)} placeholder={text.newProjectName} />
       <button className="primary-button" disabled={busy || !name.trim()}>
         {busy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
-        Create
+        {text.create}
       </button>
     </form>
   );
@@ -630,10 +1104,12 @@ function CreateProjectForm({ onCreated }: { onCreated: () => Promise<void> }) {
 function ProjectDetail({
   project,
   tab,
+  text,
   onProjectChanged
 }: {
   project: Project;
   tab: Tab;
+  text: LocaleMessages;
   onProjectChanged: () => Promise<void>;
 }) {
   const [overview, setOverview] = React.useState<Overview | null>(null);
@@ -782,7 +1258,10 @@ function ProjectDetail({
         ...current.slice(-4),
         {
           role: "system",
-          text: typeof artifactId === "string" ? `AgentTaskContract ${artifactId} created.` : "AgentTaskContract created."
+          text:
+            typeof artifactId === "string"
+              ? `${text.agentTaskContractCreated} ${artifactId}`
+              : text.agentTaskContractCreated
         }
       ]);
       await refresh();
@@ -910,6 +1389,7 @@ function ProjectDetail({
       {tab === "Lineage" && <LineageTab lineage={lineage} />}
       <AgentChatDock
         busy={busy}
+        text={text}
         messages={agentChatMessages}
         latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
         onSubmit={submitAgentChat}
@@ -920,11 +1400,13 @@ function ProjectDetail({
 
 function AgentChatDock({
   busy,
+  text,
   messages,
   latestContract,
   onSubmit
 }: {
   busy: boolean;
+  text: LocaleMessages;
   messages: Array<{ role: "user" | "system"; text: string }>;
   latestContract: Artifact | null;
   onSubmit: (objective: string) => Promise<void>;
@@ -945,12 +1427,16 @@ function AgentChatDock({
         <div>
           <div className="agent-chat-title">
             <MessageSquare size={16} />
-            Agent Chat
+            {text.agentChatTitle}
           </div>
-          <small>Codex-ready runner channel</small>
+          <small>{text.agentChatSubtitle}</small>
         </div>
         {latestContract ? (
-          <a className="icon-link" href={`${apiBase}/api/artifacts/${latestContract.id}/download`} title="Download latest AgentTaskContract">
+          <a
+            className="icon-link"
+            href={`${apiBase}/api/artifacts/${latestContract.id}/download`}
+            title={text.downloadLatestAgentTaskContract}
+          >
             <Download size={16} />
           </a>
         ) : null}
@@ -968,10 +1454,10 @@ function AgentChatDock({
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="Ask for the next experiment, feature idea, diagnosis, or report"
+          placeholder={text.agentChatPlaceholder}
           rows={4}
         />
-        <button className="primary-button icon-only" disabled={busy || !draft.trim()} title="Create AgentTaskContract">
+        <button className="primary-button icon-only" disabled={busy || !draft.trim()} title={text.createAgentTaskContract}>
           {busy ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
         </button>
       </form>
