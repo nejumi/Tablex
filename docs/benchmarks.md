@@ -192,7 +192,8 @@ The import creates:
 - a `DatasetSnapshot` with `source_type=benchmark_catalog`
 - a `benchmark_import_manifest` artifact that records required/recommended file status
 - a `relational_catalog` artifact with table profiles, key candidates, time candidates, leakage-name suspects, and inferred join graph
-- `benchmark_supporting_table` artifacts for small supporting CSV/Parquet files, with large files skipped rather than copied blindly
+- `benchmark_supporting_table` artifacts for small supporting CSV/Parquet files
+- large local benchmark supporting tables registered as `local_benchmark_reference` artifacts instead of being copied into the artifact store; holdout/test tables remain excluded from feature artifacts
 - an `import_benchmark_dataset` job record
 - lineage from the manifest artifact to the DatasetSnapshot
 

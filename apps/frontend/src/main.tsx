@@ -3347,6 +3347,7 @@ function DataTab({
   const [relationalPreview, setRelationalPreview] = React.useState<ArtifactPreview | null>(null);
   const [relationalPreviewError, setRelationalPreviewError] = React.useState<string | null>(null);
   const [relationalPreviewLoadingId, setRelationalPreviewLoadingId] = React.useState<string | null>(null);
+  const autoLoadedRelationalCatalogRef = React.useRef<string | null>(null);
   const [scenarioPreview, setScenarioPreview] = React.useState<ArtifactPreview | null>(null);
   const [scenarioPreviewError, setScenarioPreviewError] = React.useState<string | null>(null);
   const [scenarioPreviewLoadingId, setScenarioPreviewLoadingId] = React.useState<string | null>(null);
@@ -3658,6 +3659,27 @@ function DataTab({
   );
   const publicWorkflowJobs = jobs.filter((job) => job.job_type === "run_public_benchmark_workflow");
   const latestDataset = datasets[0] ?? null;
+  const latestRelationalCatalog = relationalArtifacts[0] ?? null;
+
+  React.useEffect(() => {
+    if (!latestRelationalCatalog) return;
+    if (relationalPreview?.id === latestRelationalCatalog.id) return;
+    if (autoLoadedRelationalCatalogRef.current === latestRelationalCatalog.id) return;
+    autoLoadedRelationalCatalogRef.current = latestRelationalCatalog.id;
+    setRelationalPreviewLoadingId(latestRelationalCatalog.id);
+    setRelationalPreviewError(null);
+    api<ArtifactPreview>(`/api/artifacts/${latestRelationalCatalog.id}/preview`)
+      .then((preview) => {
+        setRelationalPreview(preview);
+      })
+      .catch((err: unknown) => {
+        setRelationalPreviewError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        setRelationalPreviewLoadingId(null);
+      });
+  }, [latestRelationalCatalog, relationalPreview?.id]);
+
   return (
     <div className="stack">
       <Panel title="Dataset Upload" icon={<Upload size={18} />}>
@@ -4243,8 +4265,14 @@ function DataTab({
           <EmptyInline text="Relational scenario diagnostics will compare primary-only, safe relational preview, deferred feature, and evaluation-readiness scenarios without running a fixed model strategy." />
         )}
       </Panel>
-      <Panel title="Relational Preview" icon={<FileText size={18} />}>
+      <Panel title="Relational Preview" icon={<GitBranch size={18} />}>
         {relationalPreviewError ? <div className="banner danger">{relationalPreviewError}</div> : null}
+        {relationalPreviewLoadingId ? (
+          <div className="banner muted">
+            <Loader2 className="spin" size={16} />
+            Loading relational map...
+          </div>
+        ) : null}
         {relationalPreview?.preview_available ? (
           isRelationalCatalogPreview(relationalPreview) ? (
             <RelationalCatalogPreview preview={relationalPreview} />
@@ -4254,7 +4282,7 @@ function DataTab({
             <TranslatablePreview preview={relationalPreview} />
           )
         ) : (
-          <EmptyInline text={relationalPreview?.reason ?? "Select a relational catalog to see an ER-style table graph. Feature plans, recipes, and scenario diagnostics open here as reports or advanced artifacts."} />
+          <EmptyInline text={relationalPreview?.reason ?? "Import a multi-table benchmark to see the relationship map here. Advanced JSON stays folded under the ER diagram."} />
         )}
       </Panel>
       <Panel title="Benchmark Scenario Packs" icon={<Layers size={18} />}>

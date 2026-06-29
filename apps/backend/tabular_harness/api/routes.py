@@ -4013,7 +4013,8 @@ def preview_artifact(artifact_id: str, db: Annotated[Session, Depends(get_sessio
     path = artifact_primary_path(artifact)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file not found")
-    return artifact_preview_to_dict(artifact, path)
+    limit_bytes = 500_000 if artifact.asset_type == "relational_catalog" else 20_000
+    return artifact_preview_to_dict(artifact, path, limit_bytes=limit_bytes)
 
 
 @router.post("/api/artifacts/{artifact_id}/translate", response_model=TranslationRead)

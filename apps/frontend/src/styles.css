@@ -1153,6 +1153,15 @@ td {
   color: var(--warning);
 }
 
+.banner.muted {
+  align-items: center;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  display: flex;
+  gap: 8px;
+}
+
 .empty-state {
   display: grid;
   place-items: center;

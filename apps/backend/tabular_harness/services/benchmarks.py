@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from tabular_harness.core.config import Settings
 from tabular_harness.core.ids import new_id
+from tabular_harness.core.json import dumps_json
 from tabular_harness.models.entities import Artifact, DatasetSnapshot, Project
 from tabular_harness.services.approach import store_json_artifact, store_text_artifact
 from tabular_harness.services.artifacts import (
@@ -868,13 +869,30 @@ def store_benchmark_supporting_table_artifacts(
         if path.suffix.lower() not in SUPPORTED_PRIMARY_SUFFIXES:
             skipped.append({"path": relative, "reason": "unsupported_format", "size_bytes": path.stat().st_size})
             continue
-        size_bytes = path.stat().st_size
-        if size_bytes > max_bytes:
-            skipped.append({"path": relative, "reason": "exceeds_size_limit", "size_bytes": size_bytes})
+        if str(item.get("role") or "") == "holdout_table":
+            skipped.append({"path": relative, "reason": "holdout_table_excluded_from_feature_artifacts", "size_bytes": path.stat().st_size})
             continue
+        size_bytes = path.stat().st_size
         table_name = table_name_from_path(relative)
         artifact_name = f"{benchmark['id']}_{table_name}"
         version = next_artifact_version(db, project_id, "benchmark_supporting_table", artifact_name)
+        if size_bytes > max_bytes:
+            artifact = register_large_benchmark_table_reference(
+                db,
+                project_id=project_id,
+                benchmark=benchmark,
+                root=root,
+                path=path,
+                relative=relative,
+                table_name=table_name,
+                role=str(item.get("role") or "supporting_table"),
+                relational_catalog_artifact=relational_catalog_artifact,
+                version=version,
+                size_bytes=size_bytes,
+                max_copy_bytes=max_bytes,
+            )
+            artifacts.append(artifact)
+            continue
         artifact_dir, stored, content_hash = store.store_existing_file(
             org_id="local-org",
             project_id=project_id,
@@ -926,6 +944,77 @@ def store_benchmark_supporting_table_artifacts(
             relation_type="cataloged_by",
         )
     return SupportingTableStoreResult(artifacts=artifacts, skipped=skipped)
+
+
+def register_large_benchmark_table_reference(
+    db: Session,
+    *,
+    project_id: str,
+    benchmark: dict[str, Any],
+    root: Path,
+    path: Path,
+    relative: str,
+    table_name: str,
+    role: str,
+    relational_catalog_artifact: Artifact,
+    version: int,
+    size_bytes: int,
+    max_copy_bytes: int,
+) -> Artifact:
+    resolved_path = path.resolve()
+    resolved_root = root.resolve()
+    if not resolved_path.is_relative_to(resolved_root):
+        raise ValueError("Benchmark supporting table references must stay under the benchmark root")
+    stat = resolved_path.stat()
+    content_hash = hashlib.sha256(
+        dumps_json(
+            {
+                "benchmark_id": benchmark["id"],
+                "relative_path": relative,
+                "size_bytes": size_bytes,
+                "mtime_ns": stat.st_mtime_ns,
+                "storage_mode": "local_benchmark_reference",
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+    artifact = register_artifact(
+        db,
+        project_id=project_id,
+        asset_type="benchmark_supporting_table",
+        name=f"{benchmark['id']}_{table_name}",
+        uri=str(resolved_path.parent),
+        content_hash=content_hash,
+        size_bytes=size_bytes,
+        metadata={
+            "primary_path": str(resolved_path),
+            "project_id": project_id,
+            "benchmark_id": benchmark["id"],
+            "benchmark_name": benchmark.get("name"),
+            "source_url": benchmark.get("source_url"),
+            "relative_path": relative,
+            "table_name": table_name,
+            "role": role,
+            "relational_catalog_artifact_id": relational_catalog_artifact.id,
+            "storage_mode": "local_benchmark_reference",
+            "copied_to_artifact_store": False,
+            "max_copy_bytes": max_copy_bytes,
+            "integrity_scope": "path_size_mtime_reference",
+            "secret_or_credential_materialized": False,
+            "agent_runner_credential_access": False,
+        },
+        version=version,
+    )
+    create_lineage_edge(
+        db,
+        project_id=project_id,
+        from_asset_type="artifact",
+        from_asset_id=artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=relational_catalog_artifact.id,
+        relation_type="cataloged_by",
+        metadata={"storage_mode": "local_benchmark_reference", "copied_to_artifact_store": False},
+    )
+    return artifact
 
 
 def create_benchmark_scenario_pack(
