@@ -172,9 +172,11 @@ def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path
     assert chat["action_summary"]["outcome"] == "applied"
     assert "ROC-AUC" in chat["action_summary"]["headline"]
     assert chat["action_summary"]["next_step"]["target_tab"] == "Evaluation"
+    assert chat["action_summary"]["next_step"]["target_anchor"] == "evaluation-design"
     assert any("EvaluationSpecs" in item for item in chat["action_summary"]["boundaries"])
     assert any(action["type"] == "update_evaluation_candidates" for action in chat["actions"])
     assert any(action["target_tab"] == "Evaluation" for action in chat["actions"])
+    assert any(action["target_anchor"] == "evaluation-design" for action in chat["actions"])
     assert chat["worker_events"]
     assert chat["token_usage"]["is_estimate"] is True
     assert chat["job"]["status"] == "succeeded"
@@ -257,6 +259,7 @@ def test_relational_schema_hint_upload_preview_and_agent_route(tmp_path: Path) -
     chat = chat_response.json()
     assert chat["intent"]["type"] == "show_relational_map"
     assert chat["action_summary"]["next_step"]["target_tab"] == "Data"
+    assert chat["action_summary"]["next_step"]["target_anchor"] == "relational-map"
     assert "Relational" in chat["action_summary"]["headline"]
     assert any("join contracts" in item for item in chat["action_summary"]["boundaries"])
 
@@ -290,12 +293,14 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     chat = chat_response.json()
     assert chat["intent"]["type"] == "generate_data_understanding_notebook"
     assert any(action["type"] == "generate_data_understanding_notebook" for action in chat["actions"])
+    assert any(action["target_anchor"] == "analysis-story" for action in chat["actions"])
 
     eda_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "EDAレビューを作って可視化して"})
     assert eda_chat_response.status_code == 200, eda_chat_response.text
     eda_chat = eda_chat_response.json()
     assert eda_chat["intent"]["type"] == "run_eda_review"
     assert any(action["type"] == "run_eda_review" and action["status"] == "applied" for action in eda_chat["actions"])
+    assert any(action["target_anchor"] == "analysis-story" for action in eda_chat["actions"])
     assert "controlled Data Review" in eda_chat["assistant_message"]
 
     author_chat_response = client.post(
@@ -338,9 +343,11 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     assert "Artifact:" not in generic_chat["assistant_message"]
     assert generic_chat["action_summary"]["headline"] == "Controlled runner task prepared"
     assert generic_chat["action_summary"]["next_step"]["target_tab"] == "Approach"
+    assert generic_chat["action_summary"]["next_step"]["target_anchor"] == "approach-handoff"
     assert any("AgentTaskContract" in item for item in generic_chat["action_summary"]["boundaries"])
     assert any(action["type"] == "create_agent_task_contract" for action in generic_chat["actions"])
     assert any(action["target_tab"] == "Approach" for action in generic_chat["actions"])
+    assert any(action["target_anchor"] == "approach-handoff" for action in generic_chat["actions"])
 
     activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
     assert activity_response.status_code == 200

@@ -532,6 +532,7 @@ textarea {
 }
 
 .panel {
+  scroll-margin-top: 18px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
@@ -564,6 +565,7 @@ textarea {
 
 .data-focus-panel {
   order: -59;
+  scroll-margin-top: 18px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
   gap: 18px;
@@ -1656,6 +1658,7 @@ td {
 }
 
 .notebook-focus-panel {
+  scroll-margin-top: 18px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
   gap: 18px;
@@ -2859,6 +2862,7 @@ td {
 }
 
 .strategy-brief-panel {
+  scroll-margin-top: 18px;
   display: grid;
   gap: 16px;
   border: 1px solid var(--border-strong);
@@ -2868,6 +2872,22 @@ td {
     var(--surface);
   box-shadow: 0 18px 50px var(--shadow);
   padding: 18px;
+}
+
+.navigation-highlight {
+  animation: navigation-pulse 1.4s ease-out;
+}
+
+@keyframes navigation-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-2) 44%, transparent);
+  }
+  38% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent-2) 26%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-2) 0%, transparent);
+  }
 }
 
 .strategy-brief-panel h2 {

@@ -390,6 +390,7 @@ def generate_data_understanding_notebook_action(
         "status": "applied",
         "label": "Generated a Data Understanding notebook",
         "target_tab": "Notebooks",
+        "target_anchor": "analysis-story",
         "detail": "Created notebook source, HTML preview, report, manifest, and lineage inside Tablex.",
         "artifact_id": result.notebook_artifact.id,
         "artifact_ids": result.artifact_ids,
@@ -410,6 +411,7 @@ def run_eda_review_action(
             "status": "needs_review",
             "label": "Upload a dataset before running Data Review",
             "target_tab": "Data",
+            "target_anchor": "dataset-upload",
             "detail": "Tablex needs a DatasetSnapshot before it can compute EDA figures, findings, and target relationships.",
         }
     result = create_dataset_eda_review(db, store=store, dataset=dataset)
@@ -418,6 +420,7 @@ def run_eda_review_action(
         "status": "applied",
         "label": "Ran a controlled Data Review",
         "target_tab": "Notebooks",
+        "target_anchor": "analysis-story",
         "detail": (
             "Created a Data Review with DuckDB-derived distributions, target relationships, findings, "
             "SVG figures, an HTML narrative, report, evidence, insight, lineage, and Codex next prompts."
@@ -438,6 +441,7 @@ def show_relational_map_action(db: Session, *, project: Project) -> dict[str, An
             "status": "explained",
             "label": "Open the relational map",
             "target_tab": "Data",
+            "target_anchor": "relational-map",
             "detail": (
                 "A RelationalCatalog is available. The Data tab shows the ER-style map first, with raw catalog JSON "
                 "folded as supporting detail."
@@ -451,6 +455,7 @@ def show_relational_map_action(db: Session, *, project: Project) -> dict[str, An
             "status": "explained",
             "label": "Review the uploaded ER evidence",
             "target_tab": "Data",
+            "target_anchor": "relational-map",
             "detail": (
                 "An uploaded ER/schema hint is available. The Data tab shows the diagram or structured JSON evidence, "
                 "then keeps validation guardrails visible."
@@ -463,6 +468,7 @@ def show_relational_map_action(db: Session, *, project: Project) -> dict[str, An
         "status": "needs_review",
         "label": "Upload an ER diagram or import a multi-table benchmark",
         "target_tab": "Data",
+        "target_anchor": "relational-map",
         "detail": (
             "No relational catalog or ER diagram evidence exists yet. Upload a PNG/JPEG/SVG/PDF/JSON ER hint, "
             "or import a benchmark with supporting tables."
@@ -491,6 +497,7 @@ def create_notebook_authoring_action(
         "status": "applied",
         "label": "Prepared a GM-style notebook authoring brief",
         "target_tab": "Notebooks",
+        "target_anchor": "notebook-focus",
         "detail": (
             "Created a source-backed brief with Kaggle Grandmaster-inspired craft principles, sample moves, "
             "context artifacts, and a Codex contract for on-the-fly notebook writing."
@@ -510,6 +517,7 @@ def explain_next_step_action(db: Session, *, project: Project) -> dict[str, Any]
         "status": "explained",
         "label": str(focus["title"]),
         "target_tab": focus["target_tab"],
+        "target_anchor": target_anchor_for_tab(str(focus["target_tab"])),
         "detail": str(focus["reason"]),
         "guidance": {
             "focus_key": focus["focus_key"],
@@ -520,6 +528,19 @@ def explain_next_step_action(db: Session, *, project: Project) -> dict[str, Any]
             "decision_brief": decision_brief,
         },
     }
+
+
+def target_anchor_for_tab(tab: str) -> str:
+    anchors = {
+        "Data": "data-focus",
+        "Understanding": "understanding-report",
+        "Assumptions": "assumption-review",
+        "Evaluation": "evaluation-design",
+        "Approach": "approach-handoff",
+        "Notebooks": "notebook-focus",
+        "Reports": "decision-report",
+    }
+    return anchors.get(tab, "approach-handoff")
 
 
 def latest_dataset(db: Session, project_id: str) -> DatasetSnapshot | None:
@@ -557,6 +578,7 @@ def guide_notebook_review_action(
             "status": "needs_review",
             "label": "Create a notebook review first",
             "target_tab": "Notebooks",
+            "target_anchor": "notebook-focus",
             "detail": "No generated notebook exists yet. Generate a Data Understanding notebook, then ask me what to inspect.",
         }
     artifact_ids = dict_value(item.get("artifact_ids"))
@@ -589,6 +611,7 @@ def guide_notebook_review_action(
         "status": "explained",
         "label": label,
         "target_tab": "Notebooks",
+        "target_anchor": "analysis-story",
         "detail": detail,
         "artifact_id": artifact_id,
         "artifact_ids": [
@@ -678,6 +701,7 @@ def apply_metric_preference(
                 "status": "applied",
                 "label": f"Set {len(changed_candidates)} evaluation candidate(s) to {SUPPORTED_METRICS[metric]['label']}",
                 "target_tab": "Evaluation",
+                "target_anchor": "evaluation-design",
                 "detail": "Updated mutable EvaluationCandidates only. Approved EvaluationSpecs are not destructively changed.",
                 "entity_ids": [candidate.id for candidate in changed_candidates],
             }
@@ -713,6 +737,7 @@ def apply_metric_preference(
                 "status": "applied",
                 "label": f"Set {len(changed_specs)} draft EvaluationSpec(s) to {SUPPORTED_METRICS[metric]['label']}",
                 "target_tab": "Evaluation",
+                "target_anchor": "evaluation-design",
                 "detail": "Draft specs were updated and new spec artifacts were written.",
                 "entity_ids": [spec.id for spec, _artifact in changed_specs],
                 "artifact_ids": [artifact.id for _spec, artifact in changed_specs],
@@ -781,6 +806,7 @@ def apply_metric_preference(
                 "status": "needs_review",
                 "label": f"Recorded requested metric change to {SUPPORTED_METRICS[metric]['label']}",
                 "target_tab": "Evaluation",
+                "target_anchor": "evaluation-design",
                 "detail": "Approved EvaluationSpecs were left unchanged; a review artifact was created instead.",
                 "artifact_id": artifact.id,
                 "entity_ids": [spec.id for spec in conflicting_approved],
@@ -794,6 +820,7 @@ def apply_metric_preference(
                 "status": "recorded",
                 "label": f"Recorded preference for {SUPPORTED_METRICS[metric]['label']}",
                 "target_tab": "Evaluation",
+                "target_anchor": "evaluation-design",
                 "detail": "No evaluation candidates or draft specs exist yet. The metric preference is ready for the next evaluation design step.",
             }
         )
@@ -830,6 +857,7 @@ def agent_task_action(result: AgentTaskPlanResult) -> dict[str, Any]:
         "status": "created",
         "label": "Prepared a controlled AgentTaskContract",
         "target_tab": "Approach",
+        "target_anchor": "approach-handoff",
         "detail": "The contract carries current context, safety rules, artifact expectations, and open-ended runner autonomy.",
         "artifact_id": result.artifact.id,
         "entity_ids": [str(result.contract["task_id"])],
@@ -955,6 +983,7 @@ def build_action_summary(intent: dict[str, Any], actions: list[dict[str, Any]]) 
         "next_step": {
             "label": focus.get("label"),
             "target_tab": focus.get("target_tab"),
+            "target_anchor": focus.get("target_anchor"),
             "status": focus.get("status"),
         },
         "boundaries": boundaries,
@@ -964,6 +993,7 @@ def build_action_summary(intent: dict[str, Any], actions: list[dict[str, Any]]) 
                 "status": action.get("status"),
                 "label": action.get("label"),
                 "target_tab": action.get("target_tab"),
+                "target_anchor": action.get("target_anchor"),
                 "detail": action.get("detail"),
             }
             for action in actions[:5]
@@ -1040,6 +1070,7 @@ def build_worker_events(
             "detail": "; ".join(str(action["label"]) for action in actions[:3]),
             "job_id": job.id,
             "target_tab": next_focus_from_actions(actions).get("target_tab"),
+            "target_anchor": next_focus_from_actions(actions).get("target_anchor"),
             "created_at": job.created_at.isoformat(),
             "updated_at": job.updated_at.isoformat(),
             "active": False,
@@ -1057,6 +1088,7 @@ def next_focus_from_actions(actions: list[dict[str, Any]]) -> dict[str, Any]:
         if action.get("target_tab"):
             return {
                 "target_tab": action["target_tab"],
+                "target_anchor": action.get("target_anchor"),
                 "label": action["label"],
                 "status": action["status"],
             }

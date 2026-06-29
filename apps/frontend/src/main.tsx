@@ -921,6 +921,7 @@ type AgentChatAction = {
   status: string;
   label: string;
   target_tab: string | null;
+  target_anchor?: string | null;
   detail: string;
   artifact_id?: string;
   artifact_ids?: string[];
@@ -933,7 +934,7 @@ type AgentActionSummary = {
   headline: string;
   what_changed: string[];
   what_needs_review: string[];
-  next_step: { label?: string | null; target_tab?: string | null; status?: string | null };
+  next_step: { label?: string | null; target_tab?: string | null; target_anchor?: string | null; status?: string | null };
   boundaries: string[];
   actions: Array<Record<string, unknown>>;
 };
@@ -1301,9 +1302,9 @@ function tabFromString(value: string | null | undefined, fallback: Tab): Tab {
   return match ? match.id : fallback;
 }
 
-function firstAgentChatTargetTab(actions: AgentChatAction[]): Tab | null {
+function firstAgentChatTarget(actions: AgentChatAction[]): { tab: Tab; anchor: string | null } | null {
   const action = actions.find((candidate) => candidate.target_tab && tabItems.some((item) => item.id === candidate.target_tab));
-  return action ? tabFromString(action.target_tab, "Approach") : null;
+  return action ? { tab: tabFromString(action.target_tab, "Approach"), anchor: action.target_anchor ?? null } : null;
 }
 
 type FocusRecommendation = {
@@ -2234,6 +2235,7 @@ function ProjectDetail({
   const [agentWorkerEvents, setAgentWorkerEvents] = React.useState<AgentWorkerEvent[]>([]);
   const [agentActivity, setAgentActivity] = React.useState<AgentActivityResponse | null>(null);
   const [activityTick, setActivityTick] = React.useState(0);
+  const [pendingAnchor, setPendingAnchor] = React.useState<string | null>(null);
   const focusRecommendation = React.useMemo(
     () => {
       if (guidance) return focusFromGuidance(guidance, text);
@@ -2373,6 +2375,20 @@ function ProjectDetail({
   }, [refresh]);
 
   React.useEffect(() => {
+    if (!pendingAnchor) return;
+    const handle = window.setTimeout(() => {
+      const element = document.getElementById(pendingAnchor);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "start" });
+        element.classList.add("navigation-highlight");
+        window.setTimeout(() => element.classList.remove("navigation-highlight"), 1400);
+      }
+      setPendingAnchor(null);
+    }, 80);
+    return () => window.clearTimeout(handle);
+  }, [pendingAnchor, tab]);
+
+  React.useEffect(() => {
     const interval = window.setInterval(
       () => {
         setActivityTick((current) => current + 1);
@@ -2382,6 +2398,11 @@ function ProjectDetail({
     );
     return () => window.clearInterval(interval);
   }, [busy, refreshAgentActivity]);
+
+  function navigateToTarget(targetTab: Tab, targetAnchor?: string | null) {
+    if (targetAnchor) setPendingAnchor(targetAnchor);
+    onTabChange(targetTab);
+  }
 
   async function runAction(action: () => Promise<unknown>) {
     setBusy(true);
@@ -2423,11 +2444,11 @@ function ProjectDetail({
       setAgentWorkerEvents((current) =>
         [...result.worker_events, ...current.filter((event) => event.job_id !== pendingWorker.job_id)].slice(0, 8)
       );
-      const targetTab = firstAgentChatTargetTab(result.actions);
-      if (targetTab) onTabChange(targetTab);
+      const target = firstAgentChatTarget(result.actions);
       await refreshAgentActivity();
       await refresh();
       await onProjectChanged();
+      if (target) navigateToTarget(target.tab, target.anchor);
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2446,7 +2467,7 @@ function ProjectDetail({
 
   function openAgentChatAction(action: AgentChatAction) {
     const targetTab = tabFromString(action.target_tab, "Approach");
-    onTabChange(targetTab);
+    navigateToTarget(targetTab, action.target_anchor ?? null);
   }
 
   async function runFocusAction(action: FocusAction | null) {
@@ -2820,7 +2841,21 @@ function agentChatActionLabel(action: AgentChatAction, text: LocaleMessages) {
   const verb = ["needs_review", "created", "recorded", "explained"].includes(action.status)
     ? text.chatActionReview
     : text.chatActionOpen;
-  return `${verb} ${tabLabel(targetTab, text)}`;
+  const anchorLabel = action.target_anchor ? ` · ${surfaceLabel(action.target_anchor)}` : "";
+  return `${verb} ${tabLabel(targetTab, text)}${anchorLabel}`;
+}
+
+function surfaceLabel(anchor: string) {
+  const labels: Record<string, string> = {
+    "dataset-upload": "Dataset Upload",
+    "data-focus": "Data Evidence",
+    "relational-map": "Relational Map",
+    "notebook-focus": "Notebook Focus",
+    "analysis-story": "Analysis Story",
+    "evaluation-design": "Evaluation Design",
+    "approach-handoff": "Runner Handoff"
+  };
+  return labels[anchor] ?? anchor.replace(/-/g, " ");
 }
 
 function agentChatOutcomeClass(outcome: string) {
@@ -3846,7 +3881,7 @@ function DataTab({
 
   return (
     <div className="stack">
-      <Panel title="Dataset Upload" icon={<Upload size={18} />} className="data-primary-panel">
+      <Panel id="dataset-upload" title="Dataset Upload" icon={<Upload size={18} />} className="data-primary-panel">
         <div className="upload-row">
           <input type="file" accept=".csv,.parquet" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
           <input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Target column" />
@@ -3868,7 +3903,7 @@ function DataTab({
           </button>
         </div>
       </Panel>
-      <section className="data-focus-panel" aria-label="Data evidence focus">
+      <section id="data-focus" className="data-focus-panel" aria-label="Data evidence focus">
         <div className="data-focus-copy">
           <div className="eyebrow">Data evidence now</div>
           <h2>{dataFocusHeadline}</h2>
@@ -4374,7 +4409,7 @@ function DataTab({
       </Panel>
         </div>
       </details>
-      <Panel title="Relational Map" icon={<GitBranch size={18} />} className="data-relational-map-panel">
+      <Panel id="relational-map" title="Relational Map" icon={<GitBranch size={18} />} className="data-relational-map-panel">
         <div className="relational-map-hero">
           <div>
             <div className="eyebrow">Relationship evidence</div>
@@ -4730,7 +4765,7 @@ function UnderstandingTab({
           Run Understanding
         </button>
       </div>
-      <Panel title="Data Understanding Report" icon={<FileText size={18} />}>
+      <Panel id="understanding-report" title="Data Understanding Report" icon={<FileText size={18} />}>
         {understanding ? (
           <pre className="markdown-preview">{understanding}</pre>
         ) : (
@@ -4938,7 +4973,7 @@ function AssumptionReviewQueuePanel({
   }
 
   return (
-    <Panel title="Review Queue" icon={<ListChecks size={18} />}>
+    <Panel id="assumption-review" title="Review Queue" icon={<ListChecks size={18} />}>
       {item ? (
         <div className="review-card">
           <div className="review-card-main">
@@ -5101,7 +5136,7 @@ function EvaluationTab({
           Compare Scenarios
         </button>
       </div>
-      <Panel title="Evaluation Candidates" icon={<BarChart3 size={18} />}>
+      <Panel id="evaluation-design" title="Evaluation Candidates" icon={<BarChart3 size={18} />}>
         {candidates.length ? (
           <div className="card-grid">
             {candidates.map((candidate) => (
@@ -5314,7 +5349,7 @@ function StrategyBriefPanel({
 }) {
   if (!brief) {
     return (
-      <section className="strategy-brief-panel">
+      <section id="approach-handoff" className="strategy-brief-panel">
         <div>
           <div className="eyebrow">{text.strategyBriefTitle}</div>
           <h2>{project.name}</h2>
@@ -5340,7 +5375,7 @@ function StrategyBriefPanel({
   ];
 
   return (
-    <section className="strategy-brief-panel">
+    <section id="approach-handoff" className="strategy-brief-panel">
       <div className="strategy-hero">
         <div className="strategy-hero-copy">
           <img src="/mascot/tablee-hero.png" alt="" aria-hidden="true" className="strategy-hero-mascot" />
@@ -6771,7 +6806,7 @@ function NotebooksTab({
 
   return (
     <div className="stack notebook-workbench">
-      <section className="notebook-focus-panel" aria-label="Notebook reading focus">
+      <section id="notebook-focus" className="notebook-focus-panel" aria-label="Notebook reading focus">
         <div className="notebook-focus-copy">
           <div className="eyebrow">Notebook focus</div>
           <h2>{notebookFocusHeadline}</h2>
@@ -6818,7 +6853,7 @@ function NotebooksTab({
           </div>
         </div>
       </section>
-      <Panel title="Analysis Story" icon={<BarChart3 size={18} />}>
+      <Panel id="analysis-story" title="Analysis Story" icon={<BarChart3 size={18} />}>
         {story ? (
           <div className="analysis-story-surface">
             <section className="analysis-story-hero">
@@ -7355,7 +7390,7 @@ function ReportsTab({
 
   return (
     <div className="stack">
-      <section className="decision-report-hero">
+      <section id="decision-report" className="decision-report-hero">
         <div className="decision-report-copy">
           <div className="eyebrow">Current decision report</div>
           <h3>{readinessHeadline}</h3>
@@ -8962,18 +8997,20 @@ function LineageTab({ lineage }: { lineage: LineageEdge[] }) {
 }
 
 function Panel({
+  id,
   title,
   icon,
   children,
   className
 }: {
+  id?: string;
   title: string;
   icon: React.ReactNode;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
-    <section className={`panel ${className ?? ""}`}>
+    <section id={id} className={`panel ${className ?? ""}`}>
       <div className="panel-header">
         <div className="panel-title">
           {icon}
