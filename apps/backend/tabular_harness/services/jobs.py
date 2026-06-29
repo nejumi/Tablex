@@ -61,6 +61,7 @@ JOB_TYPES = {
     "create_experiment_plan",
     "compare_experiments",
     "draft_run_report",
+    "post_run_reading_workflow",
     "analyze_data_quality",
     "probe_kaggle_benchmark_access",
     "fetch_kaggle_competition_inventory",

@@ -238,6 +238,16 @@ def test_agent_chat_runs_core_harness_actions(tmp_path: Path) -> None:
     assert empty_leaderboard["action_summary"]["headline"] == "Leaderboard needs run evidence"
     assert empty_leaderboard["action_summary"]["next_step"]["target_tab"] == "Experiments"
 
+    empty_post_run_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "結果をdiagnostics付きでdecision reportにまとめて"},
+    )
+    assert empty_post_run_response.status_code == 200, empty_post_run_response.text
+    empty_post_run = empty_post_run_response.json()
+    assert empty_post_run["intent"]["type"] == "post_run_reading_workflow"
+    assert empty_post_run["action_summary"]["headline"] == "Post-run reading needs successful runs"
+    assert empty_post_run["action_summary"]["next_step"]["target_tab"] == "Experiments"
+
 
 def test_relational_schema_hint_upload_preview_and_agent_route(tmp_path: Path) -> None:
     client = make_client(tmp_path)
@@ -1587,6 +1597,24 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     current_decision_report_empty_response = client.get(f"/api/projects/{project_id}/decision-report/current")
     assert current_decision_report_empty_response.status_code == 200
     assert current_decision_report_empty_response.json()["available"] is False
+
+    post_run_chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "上位runをdiagnostics付きでdecision reportにまとめて"},
+    )
+    assert post_run_chat_response.status_code == 200, post_run_chat_response.text
+    post_run_chat = post_run_chat_response.json()
+    assert post_run_chat["intent"]["type"] == "post_run_reading_workflow"
+    assert post_run_chat["action_summary"]["headline"] == "Post-run reading pack is ready"
+    assert post_run_chat["action_summary"]["next_step"]["target_tab"] == "Reports"
+    post_run_action = next(action for action in post_run_chat["actions"] if action["type"] == "post_run_reading_workflow")
+    assert post_run_action["status"] == "applied"
+    assert post_run_action["artifact_id"]
+    assert any("missing diagnostics" in item for item in post_run_chat["action_summary"]["boundaries"])
+
+    current_post_run_report_response = client.get(f"/api/projects/{project_id}/decision-report/current")
+    assert current_post_run_report_response.status_code == 200
+    assert current_post_run_report_response.json()["available"] is True
 
     decision_report_v1_response = client.post(f"/api/projects/{project_id}/decision-report/generate")
     assert decision_report_v1_response.status_code == 200, decision_report_v1_response.text

@@ -28,6 +28,7 @@ from tabular_harness.services.artifacts import LocalArtifactStore, create_lineag
 from tabular_harness.services.baseline import create_baseline_strategy_plan
 from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.decision_reporting import create_decision_report_v1
+from tabular_harness.services.diagnostics import analyze_run_diagnostics
 from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
     create_default_evaluation_candidates,
@@ -36,7 +37,10 @@ from tabular_harness.services.evaluation import (
     write_candidates_artifact,
     write_spec_artifact,
 )
-from tabular_harness.services.experiment_lifecycle import compare_project_experiments
+from tabular_harness.services.experiment_lifecycle import (
+    compare_project_experiments,
+    draft_run_report,
+)
 from tabular_harness.services.jobs import (
     create_job,
     mark_job_failed,
@@ -112,6 +116,8 @@ def handle_agent_chat_turn(
         actions.append(show_leaderboard_action(db, project=project))
     elif intent["type"] == "compare_top_runs":
         actions.append(compare_top_runs_action(db, store=store, project=project))
+    elif intent["type"] == "post_run_reading_workflow":
+        actions.append(post_run_reading_workflow_action(db, store=store, project=project))
     elif intent["type"] == "author_analysis_notebook":
         authoring_action = create_notebook_authoring_action(db, store=store, project=project, message=message)
         actions.append(authoring_action)
@@ -304,6 +310,13 @@ def infer_chat_intent(message: str) -> dict[str, Any]:
             "metric": None,
             "confidence": 0.8,
             "summary": "User wants a flexible baseline strategy plan, not a fixed AutoML recipe.",
+        }
+    if is_post_run_workflow_request(normalized):
+        return {
+            "type": "post_run_reading_workflow",
+            "metric": None,
+            "confidence": 0.84,
+            "summary": "User wants Tablex to turn top-run evidence into diagnostics, reports, and a decision-readable post-run summary.",
         }
     if is_decision_report_request(normalized):
         return {
@@ -512,6 +525,36 @@ def is_compare_top_runs_request(normalized: str) -> bool:
         word in normalized for word in ["compare", "comparison", "best", "top", "rank", "比較", "比べ", "上位", "トップ"]
     )
     return has_run_word and has_compare_word
+
+
+def is_post_run_workflow_request(normalized: str) -> bool:
+    has_run_or_result_word = any(
+        word in normalized
+        for word in [
+            "post-run",
+            "post run",
+            "top run",
+            "leaderboard",
+            "diagnostics",
+            "diagnostic",
+            "result",
+            "results",
+            "run",
+            "上位run",
+            "結果",
+            "診断",
+            "リーダーボード",
+        ]
+    )
+    has_report_or_decision_word = any(
+        word in normalized
+        for word in ["decision report", "report", "summary", "まとめ", "レポート", "判断", "意思決定"]
+    )
+    has_action_word = any(
+        word in normalized
+        for word in ["generate", "create", "make", "summarize", "作", "生成", "まとめ", "して", "見せ"]
+    )
+    return has_run_or_result_word and has_report_or_decision_word and has_action_word
 
 
 def is_notebook_authoring_request(normalized: str) -> bool:
@@ -1103,6 +1146,95 @@ def compare_top_runs_action(db: Session, *, store: LocalArtifactStore, project: 
         "artifact_id": result.artifact_ids[0] if result.artifact_ids else None,
         "artifact_ids": result.artifact_ids,
         "entity_ids": [run.id for run in runs[:5]],
+        "job_id": action_job.id,
+    }
+
+
+def post_run_reading_workflow_action(db: Session, *, store: LocalArtifactStore, project: Project) -> dict[str, Any]:
+    runs = leaderboard_runs(db, project.id)
+    if not runs:
+        return needs_review_action(
+            action_type="post_run_reading_workflow",
+            label="Successful runs are needed before post-run reporting",
+            target_tab="Experiments",
+            target_anchor=None,
+            detail=(
+                "No successful ExperimentRun exists yet. Create a run under an approved EvaluationSpec and "
+                "SplitManifest before asking Tablex to diagnose and summarize results."
+            ),
+        )
+    top_run = runs[0]
+    action_job = create_job(
+        db,
+        job_type="post_run_reading_workflow",
+        project_id=project.id,
+        input_payload={"triggered_by": "agent_chat", "top_run_id": top_run.id, "run_ids": [run.id for run in runs[:5]]},
+    )
+    diagnostics_ids: list[str] = []
+    diagnostics_error: str | None = None
+    run_report_artifact_id: str | None = None
+    comparison_artifact_ids: list[str] = []
+    decision_report_id: str | None = None
+    decision_report_artifact_id: str | None = None
+    try:
+        mark_job_running(action_job)
+        try:
+            diagnostics_result = analyze_run_diagnostics(db, store=store, run=top_run)
+            diagnostics_ids = diagnostics_result.artifact_ids
+        except ValueError as exc:
+            diagnostics_error = str(exc)
+        run_report_result = draft_run_report(db, store=store, run=top_run)
+        run_report_artifact_id = run_report_result.artifact.id
+        comparison_result = compare_project_experiments(db, store=store, project=project)
+        comparison_artifact_ids = comparison_result.artifact_ids
+        decision_result = create_decision_report_v1(db, store=store, project=project)
+        decision_report_id = decision_result.report.id
+        decision_report_artifact_id = decision_result.report_artifact.id
+        mark_job_succeeded(
+            action_job,
+            {
+                "top_run_id": top_run.id,
+                "diagnostics_artifact_ids": diagnostics_ids,
+                "diagnostics_error": diagnostics_error,
+                "run_report_artifact_id": run_report_artifact_id,
+                "comparison_artifact_ids": comparison_artifact_ids,
+                "decision_report_id": decision_report_id,
+                "decision_report_artifact_id": decision_report_artifact_id,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(action_job, str(exc))
+        return needs_review_action(
+            action_type="post_run_reading_workflow",
+            label="Post-run reading workflow needs attention",
+            target_tab="Leaderboard",
+            target_anchor="leaderboard-focus",
+            detail=str(exc),
+            job_id=action_job.id,
+        )
+    artifact_ids = [*diagnostics_ids, *comparison_artifact_ids]
+    if run_report_artifact_id:
+        artifact_ids.append(run_report_artifact_id)
+    if decision_report_artifact_id:
+        artifact_ids.append(decision_report_artifact_id)
+    diagnostics_note = (
+        " Diagnostics were generated."
+        if diagnostics_ids
+        else f" Diagnostics could not be generated yet: {diagnostics_error}." if diagnostics_error else ""
+    )
+    return {
+        "type": "post_run_reading_workflow",
+        "status": "applied",
+        "label": "Prepared post-run evidence for reading",
+        "target_tab": "Reports",
+        "target_anchor": "decision-report",
+        "detail": (
+            f"Top run {top_run.id} was converted into run report, experiment comparison, and decision report evidence."
+            f"{diagnostics_note} Start with Reports, then return to Leaderboard if the rank needs diagnostics detail."
+        ),
+        "artifact_id": decision_report_artifact_id or run_report_artifact_id or (artifact_ids[0] if artifact_ids else None),
+        "artifact_ids": artifact_ids,
+        "entity_ids": [top_run.id],
         "job_id": action_job.id,
     }
 
@@ -1718,6 +1850,14 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
                 "Next: open Leaderboard, then inspect diagnostics/report evidence for the leading run."
             )
         return f"I cannot compare runs yet: {action['detail']} Open {action['target_tab']} and resolve that first."
+    if intent["type"] == "post_run_reading_workflow":
+        action = actions[0]
+        if action["status"] == "applied":
+            return (
+                f"I prepared the post-run reading workflow. {action['detail']} "
+                "Next: open Reports and read the decision report first; use Leaderboard only when you need rank-level detail."
+            )
+        return f"I cannot prepare post-run reading yet: {action['detail']} Open {action['target_tab']} and resolve that first."
     if intent["type"] == "author_analysis_notebook":
         brief_action = next((action for action in actions if action["type"] == "create_notebook_authoring_brief"), None)
         task_action = next((action for action in actions if action["type"] == "create_agent_task_contract"), None)
@@ -1834,6 +1974,8 @@ def action_summary_headline(intent: dict[str, Any], outcome: str) -> str:
         return "Leaderboard reader is ready" if outcome != "needs_review" else "Leaderboard needs run evidence"
     if intent_type == "compare_top_runs":
         return "Run evidence compared" if outcome == "applied" else "Run comparison needs successful runs"
+    if intent_type == "post_run_reading_workflow":
+        return "Post-run reading pack is ready" if outcome == "applied" else "Post-run reading needs successful runs"
     if intent_type == "generate_data_understanding_notebook":
         return "Notebook evidence generated"
     if intent_type == "author_analysis_notebook":
@@ -1864,8 +2006,10 @@ def action_summary_boundaries(intent: dict[str, Any], actions: list[dict[str, An
         boundaries.append("Baseline strategy is an evidence-backed plan, not a fixed AutoML recipe or deployment approval.")
     if intent_type == "generate_decision_report":
         boundaries.append("Decision reports summarize current evidence; missing evidence remains visible instead of being invented.")
-    if intent_type in {"show_leaderboard", "compare_top_runs"}:
+    if intent_type in {"show_leaderboard", "compare_top_runs", "post_run_reading_workflow"}:
         boundaries.append("Leaderboard ranks are decision evidence only under the same EvaluationSpec and SplitManifest context.")
+    if intent_type == "post_run_reading_workflow":
+        boundaries.append("Post-run reports expose missing diagnostics instead of inventing model evidence.")
     if intent_type == "plan_notebook_followup_task":
         boundaries.append("Notebook follow-up diagnostics must be artifact-backed and must not fake unavailable model evidence.")
         boundaries.append("EvaluationSpec and SplitManifest remain read-only constraints for the runner.")

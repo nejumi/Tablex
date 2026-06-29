@@ -2672,11 +2672,13 @@ function ProjectDetail({
       )}
       {tab === "Leaderboard" && (
         <LeaderboardTab
+          project={project}
           specs={specs}
           artifacts={artifacts}
           leaderboard={leaderboard}
           busy={busy}
           runAction={runAction}
+          onAskAgent={submitAgentChat}
         />
       )}
       {tab === "Reports" && (
@@ -8916,25 +8918,31 @@ function BarVisualization({
 }
 
 function LeaderboardTab({
+  project,
   specs,
   artifacts,
   leaderboard,
   busy,
-  runAction
+  runAction,
+  onAskAgent
 }: {
+  project: Project;
   specs: EvaluationSpec[];
   artifacts: Artifact[];
   leaderboard: LeaderboardEntry[];
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
+  onAskAgent: (objective: string) => Promise<AgentChatResponse | void>;
 }) {
   const splitManifests = artifacts.filter((artifact) => artifact.asset_type === "split_manifest");
   const diagnosticArtifacts = artifacts.filter((artifact) =>
     ["evaluation_diagnostics", "evaluation_diagnostics_report"].includes(artifact.asset_type)
   );
+  const comparisonReportArtifacts = artifacts.filter((artifact) => artifact.asset_type === "experiment_comparison_report");
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
+  const autoPreviewedComparisonRef = React.useRef<string | null>(null);
 
   async function loadPreview(artifactId: string) {
     setPreviewLoadingId(artifactId);
@@ -8988,6 +8996,15 @@ function LeaderboardTab({
     return job;
   }
 
+  const latestComparisonReport = comparisonReportArtifacts[0] ?? null;
+  React.useEffect(() => {
+    if (!latestComparisonReport) return;
+    if (preview?.id === latestComparisonReport.id) return;
+    if (autoPreviewedComparisonRef.current === latestComparisonReport.id) return;
+    autoPreviewedComparisonRef.current = latestComparisonReport.id;
+    void loadPreview(latestComparisonReport.id);
+  }, [latestComparisonReport, preview?.id]);
+
   return (
     <div className="stack">
       <FocusedEvidenceReader
@@ -9001,7 +9018,11 @@ function LeaderboardTab({
           { label: "Runs", value: leaderboard.length, tone: leaderboard.length ? "ready" : "muted" },
           { label: "Approved specs", value: approvedSpecCount, tone: approvedSpecCount ? "ready" : "warning" },
           { label: "Split manifests", value: splitManifests.length, tone: splitManifests.length ? "ready" : "warning" },
-          { label: "Diagnostics", value: diagnosticArtifacts.length, tone: diagnosticArtifacts.length ? "ready" : "muted" }
+          {
+            label: latestComparisonReport ? "Comparison" : "Diagnostics",
+            value: latestComparisonReport ? "ready" : diagnosticArtifacts.length,
+            tone: latestComparisonReport || diagnosticArtifacts.length ? "ready" : "muted"
+          }
         ]}
         nextLabel={topEntry ? "Review diagnostics for the leading run" : "Create run evidence from Experiments"}
         nextDetail={
@@ -9014,7 +9035,7 @@ function LeaderboardTab({
         onNext={() => {
           if (topEntry) void runAction(() => analyzeTopRun(topEntry));
         }}
-        previewTitle="Diagnostics preview"
+        previewTitle={latestComparisonReport ? "Latest comparison report" : "Diagnostics preview"}
         preview={preview}
         previewError={previewError}
         previewLoading={Boolean(previewLoadingId)}
@@ -9034,6 +9055,14 @@ function LeaderboardTab({
           <button className="secondary-button" disabled={busy} onClick={() => void runAction(() => generateTopRunNotebook(topEntry))}>
             {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
             Diagnostics Notebook
+          </button>
+          <button
+            className="secondary-button"
+            disabled={busy}
+            onClick={() => void onAskAgent(`Prepare a post-run decision report for ${project.name}: diagnose the top run, compare current runs, and generate the decision report.`)}
+          >
+            {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+            Post-run Report
           </button>
         </div>
       ) : null}
