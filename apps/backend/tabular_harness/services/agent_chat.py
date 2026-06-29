@@ -24,11 +24,22 @@ from tabular_harness.services.analysis_notebooks import (
 )
 from tabular_harness.services.approach import latest_project_artifact, store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
+from tabular_harness.services.baseline import create_baseline_strategy_plan
+from tabular_harness.services.data_quality import analyze_dataset_quality
+from tabular_harness.services.decision_reporting import create_decision_report_v1
 from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
+    create_default_evaluation_candidates,
+    create_evaluation_scenario_comparison,
     spec_to_dict,
     write_candidates_artifact,
     write_spec_artifact,
+)
+from tabular_harness.services.jobs import (
+    create_job,
+    mark_job_failed,
+    mark_job_running,
+    mark_job_succeeded,
 )
 from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.project_guidance import build_project_guidance
@@ -84,6 +95,16 @@ def handle_agent_chat_turn(
         actions.append(run_eda_review_action(db, store=store, project=project))
     elif intent["type"] == "show_relational_map":
         actions.append(show_relational_map_action(db, project=project))
+    elif intent["type"] == "run_data_quality":
+        actions.append(run_data_quality_action(db, store=store, project=project))
+    elif intent["type"] == "compare_evaluation_scenarios":
+        actions.append(compare_evaluation_scenarios_action(db, store=store, project=project))
+    elif intent["type"] == "design_evaluation":
+        actions.append(design_evaluation_action(db, store=store, project=project))
+    elif intent["type"] == "plan_baseline_strategy":
+        actions.append(plan_baseline_strategy_action(db, store=store, project=project))
+    elif intent["type"] == "generate_decision_report":
+        actions.append(generate_decision_report_action(db, store=store, project=project))
     elif intent["type"] == "author_analysis_notebook":
         authoring_action = create_notebook_authoring_action(db, store=store, project=project, message=message)
         actions.append(authoring_action)
@@ -249,6 +270,41 @@ def infer_chat_intent(message: str) -> dict[str, Any]:
             "confidence": 0.82,
             "summary": "User wants Tablex to show or collect relational/ER diagram evidence inside the workbench.",
         }
+    if is_data_quality_request(normalized):
+        return {
+            "type": "run_data_quality",
+            "metric": None,
+            "confidence": 0.82,
+            "summary": "User wants Tablex to review data quality and risk inside the harness.",
+        }
+    if is_evaluation_compare_request(normalized):
+        return {
+            "type": "compare_evaluation_scenarios",
+            "metric": None,
+            "confidence": 0.82,
+            "summary": "User wants Tablex to compare evaluation scenarios before locking a split.",
+        }
+    if is_evaluation_design_request(normalized):
+        return {
+            "type": "design_evaluation",
+            "metric": None,
+            "confidence": 0.8,
+            "summary": "User wants Tablex to draft evaluation candidates.",
+        }
+    if is_baseline_strategy_request(normalized):
+        return {
+            "type": "plan_baseline_strategy",
+            "metric": None,
+            "confidence": 0.8,
+            "summary": "User wants a flexible baseline strategy plan, not a fixed AutoML recipe.",
+        }
+    if is_decision_report_request(normalized):
+        return {
+            "type": "generate_decision_report",
+            "metric": None,
+            "confidence": 0.78,
+            "summary": "User wants Tablex to synthesize the current project evidence into a decision report.",
+        }
     if is_next_step_request(normalized):
         return {
             "type": "explain_next_step",
@@ -335,6 +391,84 @@ def is_relational_map_request(normalized: str) -> bool:
         for word in ["show", "view", "visualize", "preview", "upload", "import", "見せ", "表示", "可視化", "アップロード", "取り込"]
     )
     return has_relational_word and has_action_word
+
+
+def is_data_quality_request(normalized: str) -> bool:
+    has_quality_word = any(
+        word in normalized
+        for word in [
+            "data quality",
+            "quality gate",
+            "quality check",
+            "check quality",
+            "missingness",
+            "leakage risk",
+            "品質",
+            "データ品質",
+            "欠損",
+            "リーク",
+        ]
+    )
+    has_action_word = any(
+        word in normalized
+        for word in ["run", "check", "review", "analyze", "analyse", "検査", "確認", "見て", "レビュー", "して"]
+    )
+    return has_quality_word and has_action_word
+
+
+def is_evaluation_compare_request(normalized: str) -> bool:
+    has_evaluation_word = any(word in normalized for word in ["evaluation", "split", "validation", "評価", "分割"])
+    has_compare_word = any(
+        word in normalized
+        for word in ["compare", "scenario", "random", "stratified", "time split", "group split", "比較", "シナリオ"]
+    )
+    has_action_word = any(word in normalized for word in ["compare", "design", "review", "作", "生成", "比較", "見て", "して"])
+    return has_evaluation_word and has_compare_word and has_action_word
+
+
+def is_evaluation_design_request(normalized: str) -> bool:
+    has_evaluation_word = any(
+        word in normalized
+        for word in ["evaluation design", "evaluation", "validation design", "split design", "評価設計", "評価", "分割設計"]
+    )
+    has_action_word = any(
+        word in normalized
+        for word in ["design", "create", "generate", "draft", "plan", "作", "生成", "設計", "考えて", "して"]
+    )
+    return has_evaluation_word and has_action_word
+
+
+def is_baseline_strategy_request(normalized: str) -> bool:
+    has_baseline_word = any(
+        word in normalized
+        for word in [
+            "baseline",
+            "xgboost",
+            "modeling strategy",
+            "model strategy",
+            "strong baseline",
+            "ベースライン",
+            "モデル戦略",
+            "モデリング",
+        ]
+    )
+    has_action_word = any(
+        word in normalized
+        for word in ["plan", "design", "create", "generate", "run", "作", "生成", "設計", "考えて", "して"]
+    )
+    return has_baseline_word and has_action_word
+
+
+def is_decision_report_request(normalized: str) -> bool:
+    has_report_word = any(
+        word in normalized
+        for word in ["decision report", "project report", "report", "summary", "synthesize", "レポート", "サマリ", "まとめ"]
+    )
+    has_action_word = any(
+        word in normalized
+        for word in ["generate", "create", "draft", "write", "make", "show", "作", "生成", "書", "まとめ", "見せ", "して"]
+    )
+    return has_report_word and has_action_word
 
 
 def is_notebook_authoring_request(normalized: str) -> bool:
@@ -560,6 +694,313 @@ def show_relational_map_action(db: Session, *, project: Project) -> dict[str, An
     }
 
 
+def run_data_quality_action(db: Session, *, store: LocalArtifactStore, project: Project) -> dict[str, Any]:
+    dataset = latest_dataset(db, project.id)
+    if dataset is None:
+        return needs_dataset_action(
+            action_type="run_data_quality",
+            label="Upload a dataset before checking quality",
+            detail="Data quality review needs a DatasetSnapshot so Tablex can inspect missingness, leakage risk, duplicates, target status, and availability assumptions.",
+        )
+    action_job = create_job(
+        db,
+        job_type="analyze_data_quality",
+        project_id=project.id,
+        input_payload={"dataset_snapshot_id": dataset.id, "triggered_by": "agent_chat"},
+    )
+    try:
+        mark_job_running(action_job)
+        result = analyze_dataset_quality(db, store=store, project=project, dataset=dataset)
+        mark_job_succeeded(
+            action_job,
+            {
+                "dataset_snapshot_id": dataset.id,
+                "artifact_ids": result.artifact_ids,
+                "gate": result.gate,
+                "evidence_ids": result.evidence_ids,
+                "assumption_ids": result.assumption_ids,
+                "question_ids": result.question_ids,
+                "insight_id": result.insight_id,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(action_job, str(exc))
+        return needs_review_action(
+            action_type="run_data_quality",
+            label="Data quality review needs attention",
+            target_tab="Data",
+            target_anchor="data-focus",
+            detail=str(exc),
+            job_id=action_job.id,
+        )
+    severity = str(result.gate.get("summary", {}).get("severity") or "recorded")
+    return {
+        "type": "run_data_quality",
+        "status": "applied",
+        "label": f"Ran Data Quality Gate ({severity})",
+        "target_tab": "Data",
+        "target_anchor": "data-focus",
+        "detail": "Created data_quality_gate, data_quality_report, visualization, Evidence, Assumptions/Questions when needed, Insight, and lineage.",
+        "artifact_id": result.artifact_ids[0] if result.artifact_ids else None,
+        "artifact_ids": result.artifact_ids,
+        "entity_ids": [result.insight_id, *result.evidence_ids],
+        "job_id": action_job.id,
+    }
+
+
+def design_evaluation_action(db: Session, *, store: LocalArtifactStore, project: Project) -> dict[str, Any]:
+    dataset = latest_dataset(db, project.id)
+    if dataset is None:
+        return needs_dataset_action(
+            action_type="design_evaluation",
+            label="Upload a dataset before drafting evaluation",
+            detail="Evaluation design needs row count, target status, schema, and profile context from a DatasetSnapshot.",
+        )
+    action_job = create_job(
+        db,
+        job_type="design_evaluation_candidates",
+        project_id=project.id,
+        input_payload={"dataset_snapshot_id": dataset.id, "triggered_by": "agent_chat"},
+    )
+    try:
+        mark_job_running(action_job)
+        candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
+        mark_job_succeeded(action_job, {"evaluation_candidate_ids": [candidate.id for candidate in candidates]})
+    except ValueError as exc:
+        mark_job_failed(action_job, str(exc))
+        return needs_review_action(
+            action_type="design_evaluation",
+            label="Evaluation design needs attention",
+            target_tab="Evaluation",
+            target_anchor="evaluation-design",
+            detail=str(exc),
+            job_id=action_job.id,
+        )
+    return {
+        "type": "design_evaluation",
+        "status": "applied",
+        "label": f"Drafted {len(candidates)} evaluation candidate(s)",
+        "target_tab": "Evaluation",
+        "target_anchor": "evaluation-design",
+        "detail": "Created or refreshed EvaluationCandidates. No EvaluationSpec was approved or destructively changed by chat.",
+        "entity_ids": [candidate.id for candidate in candidates],
+        "job_id": action_job.id,
+    }
+
+
+def compare_evaluation_scenarios_action(db: Session, *, store: LocalArtifactStore, project: Project) -> dict[str, Any]:
+    dataset = latest_dataset(db, project.id)
+    if dataset is None:
+        return needs_dataset_action(
+            action_type="compare_evaluation_scenarios",
+            label="Upload a dataset before comparing evaluation scenarios",
+            detail="Scenario comparison needs a DatasetSnapshot so Tablex can compare random, stratified, time, and group-aware options against actual data evidence.",
+        )
+    action_job = create_job(
+        db,
+        job_type="compare_evaluation_scenarios",
+        project_id=project.id,
+        input_payload={"dataset_snapshot_id": dataset.id, "triggered_by": "agent_chat"},
+    )
+    try:
+        mark_job_running(action_job)
+        candidates = list(create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset))
+        artifact = create_evaluation_scenario_comparison(
+            db,
+            store=store,
+            project=project,
+            dataset=dataset,
+            candidates=candidates,
+        )
+        metadata = loads_json(artifact.metadata_json, {})
+        mark_job_succeeded(
+            action_job,
+            {
+                "dataset_snapshot_id": dataset.id,
+                "artifact_id": artifact.id,
+                "candidate_count": len(candidates),
+                "recommended_candidate_id": metadata.get("recommended_candidate_id"),
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(action_job, str(exc))
+        return needs_review_action(
+            action_type="compare_evaluation_scenarios",
+            label="Evaluation scenario comparison needs attention",
+            target_tab="Evaluation",
+            target_anchor="evaluation-design",
+            detail=str(exc),
+            job_id=action_job.id,
+        )
+    return {
+        "type": "compare_evaluation_scenarios",
+        "status": "applied",
+        "label": "Compared evaluation scenarios",
+        "target_tab": "Evaluation",
+        "target_anchor": "evaluation-design",
+        "detail": "Created an evaluation_scenario_comparison artifact from current candidates, assumptions, quality risk, and dataset evidence.",
+        "artifact_id": artifact.id,
+        "artifact_ids": [artifact.id],
+        "entity_ids": [candidate.id for candidate in candidates],
+        "job_id": action_job.id,
+    }
+
+
+def plan_baseline_strategy_action(db: Session, *, store: LocalArtifactStore, project: Project) -> dict[str, Any]:
+    spec = latest_approved_spec_for_project(db, project.id)
+    if spec is None:
+        return needs_review_action(
+            action_type="plan_baseline_strategy",
+            label="Approve an EvaluationSpec before baseline strategy planning",
+            target_tab="Evaluation",
+            target_anchor="evaluation-design",
+            detail="Tablex can propose baseline strategy only after the primary evaluation design is approved. Ask for evaluation design or scenario comparison first.",
+        )
+    split = latest_split_for_spec_id(db, spec.id)
+    if split is None:
+        return needs_review_action(
+            action_type="plan_baseline_strategy",
+            label="Generate a SplitManifest before baseline strategy planning",
+            target_tab="Evaluation",
+            target_anchor="evaluation-design",
+            detail="Baseline strategy planning must respect the approved EvaluationSpec and SplitManifest before discussing model tactics.",
+        )
+    action_job = create_job(
+        db,
+        job_type="plan_baseline_strategy",
+        project_id=project.id,
+        input_payload={
+            "evaluation_spec_id": spec.id,
+            "split_manifest_id": split.id,
+            "triggered_by": "agent_chat",
+        },
+    )
+    try:
+        mark_job_running(action_job)
+        result = create_baseline_strategy_plan(
+            db,
+            store=store,
+            project=project,
+            evaluation_spec=spec,
+            split_manifest=split,
+        )
+        mark_job_succeeded(
+            action_job,
+            {
+                "baseline_strategy_plan_artifact_id": result.artifact.id,
+                "strategy_count": len(result.plan.get("candidate_strategies", [])),
+                "next_agent_task_count": len(result.plan.get("next_agent_tasks", [])),
+                "selected_baseline_type": result.plan["selected_execution"].get("baseline_type"),
+                "strategy_mode": result.plan.get("context", {}).get("strategy_mode"),
+                "planning_source": result.plan.get("context", {}).get("current_baseline_plan", {}).get("planning_source"),
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(action_job, str(exc))
+        return needs_review_action(
+            action_type="plan_baseline_strategy",
+            label="Baseline strategy planning needs attention",
+            target_tab="Experiments",
+            target_anchor=None,
+            detail=str(exc),
+            job_id=action_job.id,
+        )
+    selected = str(result.plan.get("selected_execution", {}).get("baseline_type") or "adaptive baseline")
+    return {
+        "type": "plan_baseline_strategy",
+        "status": "applied",
+        "label": "Planned a flexible baseline strategy",
+        "target_tab": "Experiments",
+        "target_anchor": None,
+        "detail": (
+            f"Created a baseline_strategy_plan artifact. Selected execution starts with {selected}, but the plan remains "
+            "evidence-backed and open to Codex/Skill runner alternatives."
+        ),
+        "artifact_id": result.artifact.id,
+        "artifact_ids": [result.artifact.id],
+        "job_id": action_job.id,
+    }
+
+
+def generate_decision_report_action(db: Session, *, store: LocalArtifactStore, project: Project) -> dict[str, Any]:
+    action_job = create_job(
+        db,
+        job_type="generate_decision_report",
+        project_id=project.id,
+        input_payload={"triggered_by": "agent_chat"},
+    )
+    try:
+        mark_job_running(action_job)
+        result = create_decision_report_v1(db, store=store, project=project)
+        mark_job_succeeded(
+            action_job,
+            {
+                "schema_version": result.bundle["schema_version"],
+                "readiness_status": result.bundle["readiness"]["status"],
+                "report_id": result.report.id,
+                "decision_report_artifact_id": result.report_artifact.id,
+                "decision_report_bundle_artifact_id": result.bundle_artifact.id,
+                "decision_report_evidence_id": result.evidence.id,
+                "next_action_count": len(result.bundle["next_actions"]),
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(action_job, str(exc))
+        return needs_review_action(
+            action_type="generate_decision_report",
+            label="Decision report needs attention",
+            target_tab="Reports",
+            target_anchor="decision-report",
+            detail=str(exc),
+            job_id=action_job.id,
+        )
+    readiness = str(result.bundle.get("readiness", {}).get("status") or "recorded")
+    return {
+        "type": "generate_decision_report",
+        "status": "applied",
+        "label": "Generated a decision report",
+        "target_tab": "Reports",
+        "target_anchor": "decision-report",
+        "detail": f"Created decision_report, decision_report_bundle, Evidence, Report, and lineage. Readiness status is {readiness}.",
+        "artifact_id": result.report_artifact.id,
+        "artifact_ids": [result.report_artifact.id, result.bundle_artifact.id],
+        "entity_ids": [result.report.id, result.evidence.id],
+        "job_id": action_job.id,
+    }
+
+
+def needs_dataset_action(*, action_type: str, label: str, detail: str) -> dict[str, Any]:
+    return needs_review_action(
+        action_type=action_type,
+        label=label,
+        target_tab="Data",
+        target_anchor="dataset-upload",
+        detail=detail,
+    )
+
+
+def needs_review_action(
+    *,
+    action_type: str,
+    label: str,
+    target_tab: str,
+    target_anchor: str | None,
+    detail: str,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    action: dict[str, Any] = {
+        "type": action_type,
+        "status": "needs_review",
+        "label": label,
+        "target_tab": target_tab,
+        "target_anchor": target_anchor,
+        "detail": detail,
+    }
+    if job_id:
+        action["job_id"] = job_id
+    return action
+
+
 def create_notebook_authoring_action(
     db: Session,
     *,
@@ -632,6 +1073,20 @@ def latest_dataset(db: Session, project_id: str) -> DatasetSnapshot | None:
         select(DatasetSnapshot)
         .where(DatasetSnapshot.project_id == project_id)
         .order_by(DatasetSnapshot.created_at.desc())
+    )
+
+
+def latest_approved_spec_for_project(db: Session, project_id: str) -> EvaluationSpec | None:
+    return db.scalar(
+        select(EvaluationSpec)
+        .where(EvaluationSpec.project_id == project_id, EvaluationSpec.status == "approved")
+        .order_by(EvaluationSpec.created_at.desc())
+    )
+
+
+def latest_split_for_spec_id(db: Session, spec_id: str) -> SplitManifest | None:
+    return db.scalar(
+        select(SplitManifest).where(SplitManifest.evaluation_spec_id == spec_id).order_by(SplitManifest.created_at.desc())
     )
 
 
@@ -1056,6 +1511,46 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
             f"I found relational evidence and routed you to Data. {action['detail']} "
             "Start with the ER-style map, then inspect only the guardrails and supporting JSON if something looks wrong."
         )
+    if intent["type"] == "run_data_quality":
+        action = actions[0]
+        if action["status"] == "applied":
+            return (
+                f"I ran the Data Quality Gate. {action['detail']} "
+                "Next: open Data, read the current data evidence and any quality warnings, then let the Navigator decide whether assumptions or evaluation need attention."
+            )
+        return f"I cannot run the Data Quality Gate yet: {action['detail']} Open Data and resolve that first."
+    if intent["type"] == "design_evaluation":
+        action = actions[0]
+        if action["status"] == "applied":
+            return (
+                "I drafted evaluation candidates inside Tablex. I did not approve an EvaluationSpec or change a SplitManifest. "
+                f"{action['detail']} Next: open Evaluation, review the primary and alternatives, then approve only when the design is defensible."
+            )
+        return f"I cannot draft evaluation yet: {action['detail']} Open {action['target_tab']} and resolve that first."
+    if intent["type"] == "compare_evaluation_scenarios":
+        action = actions[0]
+        if action["status"] == "applied":
+            return (
+                "I compared evaluation scenarios as decision support. "
+                f"{action['detail']} Next: open Evaluation and read the comparison before promoting a primary spec."
+            )
+        return f"I cannot compare evaluation scenarios yet: {action['detail']} Open {action['target_tab']} and resolve that first."
+    if intent["type"] == "plan_baseline_strategy":
+        action = actions[0]
+        if action["status"] == "applied":
+            return (
+                "I planned a flexible baseline strategy instead of forcing a fixed recipe. "
+                f"{action['detail']} Next: open Experiments, inspect the strategy plan, then run or hand off only after EvaluationSpec and SplitManifest remain clear."
+            )
+        return f"I cannot plan the baseline strategy yet: {action['detail']} Open {action['target_tab']} and resolve that first."
+    if intent["type"] == "generate_decision_report":
+        action = actions[0]
+        if action["status"] == "applied":
+            return (
+                "I generated a decision report inside Tablex. "
+                f"{action['detail']} Next: open Reports and read the recommendation, coverage gaps, and next action before scanning raw artifacts."
+            )
+        return f"I cannot generate the decision report yet: {action['detail']} Open {action['target_tab']} and resolve that first."
     if intent["type"] == "author_analysis_notebook":
         brief_action = next((action for action in actions if action["type"] == "create_notebook_authoring_brief"), None)
         task_action = next((action for action in actions if action["type"] == "create_agent_task_contract"), None)
@@ -1158,6 +1653,16 @@ def action_summary_headline(intent: dict[str, Any], outcome: str) -> str:
         return "Data Review is ready" if outcome == "applied" else "Data Review needs a dataset first"
     if intent_type == "show_relational_map":
         return "Relational map is ready" if outcome != "needs_review" else "Relational evidence is needed"
+    if intent_type == "run_data_quality":
+        return "Data quality gate is ready" if outcome == "applied" else "Data quality needs data first"
+    if intent_type == "design_evaluation":
+        return "Evaluation candidates are ready" if outcome == "applied" else "Evaluation design needs data first"
+    if intent_type == "compare_evaluation_scenarios":
+        return "Evaluation scenarios compared" if outcome == "applied" else "Evaluation comparison needs data first"
+    if intent_type == "plan_baseline_strategy":
+        return "Baseline strategy plan is ready" if outcome == "applied" else "Baseline strategy needs evaluation context"
+    if intent_type == "generate_decision_report":
+        return "Decision report is ready" if outcome == "applied" else "Decision report needs review"
     if intent_type == "generate_data_understanding_notebook":
         return "Notebook evidence generated"
     if intent_type == "author_analysis_notebook":
@@ -1180,6 +1685,14 @@ def action_summary_boundaries(intent: dict[str, Any], actions: list[dict[str, An
         boundaries.append("Approved EvaluationSpecs and SplitManifests are not destructively changed by chat.")
     if intent_type == "show_relational_map":
         boundaries.append("Uploaded or inferred ER edges are evidence, not confirmed join contracts.")
+    if intent_type == "run_data_quality":
+        boundaries.append("Quality gates create evidence and questions; they do not silently drop rows or features.")
+    if intent_type in {"design_evaluation", "compare_evaluation_scenarios"}:
+        boundaries.append("Evaluation Chat actions draft or compare designs; approval and SplitManifest generation remain explicit.")
+    if intent_type == "plan_baseline_strategy":
+        boundaries.append("Baseline strategy is an evidence-backed plan, not a fixed AutoML recipe or deployment approval.")
+    if intent_type == "generate_decision_report":
+        boundaries.append("Decision reports summarize current evidence; missing evidence remains visible instead of being invented.")
     if intent_type == "plan_notebook_followup_task":
         boundaries.append("Notebook follow-up diagnostics must be artifact-backed and must not fake unavailable model evidence.")
         boundaries.append("EvaluationSpec and SplitManifest remain read-only constraints for the runner.")

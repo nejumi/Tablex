@@ -188,6 +188,50 @@ def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path
     assert any(item["asset_type"] == "agent_chat_turn" for item in artifacts_response.json())
 
 
+def test_agent_chat_runs_core_harness_actions(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Chat action loop", "target_column": "target"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    rows = ["feature,segment,target"] + [f"{index},{'A' if index % 2 else 'B'},{index % 2}" for index in range(1, 14)]
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("chat_actions.csv", "\n".join(rows).encode("utf-8"), "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    quality_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "データ品質を確認して"})
+    assert quality_chat_response.status_code == 200, quality_chat_response.text
+    quality_chat = quality_chat_response.json()
+    assert quality_chat["intent"]["type"] == "run_data_quality"
+    assert quality_chat["action_summary"]["headline"] == "Data quality gate is ready"
+    assert quality_chat["action_summary"]["next_step"]["target_tab"] == "Data"
+    assert any(action["type"] == "run_data_quality" and action["status"] == "applied" for action in quality_chat["actions"])
+    assert any("do not silently drop" in item for item in quality_chat["action_summary"]["boundaries"])
+
+    evaluation_chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "randomとstratifiedの評価シナリオを比較して"},
+    )
+    assert evaluation_chat_response.status_code == 200, evaluation_chat_response.text
+    evaluation_chat = evaluation_chat_response.json()
+    assert evaluation_chat["intent"]["type"] == "compare_evaluation_scenarios"
+    assert evaluation_chat["action_summary"]["headline"] == "Evaluation scenarios compared"
+    assert evaluation_chat["action_summary"]["next_step"]["target_tab"] == "Evaluation"
+    scenario_action = next(action for action in evaluation_chat["actions"] if action["type"] == "compare_evaluation_scenarios")
+    assert scenario_action["artifact_id"]
+
+    report_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "decision reportを作って"})
+    assert report_chat_response.status_code == 200, report_chat_response.text
+    report_chat = report_chat_response.json()
+    assert report_chat["intent"]["type"] == "generate_decision_report"
+    assert report_chat["action_summary"]["headline"] == "Decision report is ready"
+    assert report_chat["action_summary"]["next_step"]["target_tab"] == "Reports"
+    assert any(action["type"] == "generate_decision_report" and action["artifact_id"] for action in report_chat["actions"])
+
+
 def test_relational_schema_hint_upload_preview_and_agent_route(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
@@ -721,6 +765,17 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "baseline_strategy_plan.v1" in strategy_preview
     assert "adaptive_baseline_planning" in strategy_preview
     assert "reporting_plan" in strategy_preview
+
+    baseline_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "ベースライン戦略を作って"})
+    assert baseline_chat_response.status_code == 200, baseline_chat_response.text
+    baseline_chat = baseline_chat_response.json()
+    assert baseline_chat["intent"]["type"] == "plan_baseline_strategy"
+    assert baseline_chat["action_summary"]["headline"] == "Baseline strategy plan is ready"
+    assert baseline_chat["action_summary"]["next_step"]["target_tab"] == "Experiments"
+    baseline_chat_action = next(action for action in baseline_chat["actions"] if action["type"] == "plan_baseline_strategy")
+    assert baseline_chat_action["status"] == "applied"
+    assert baseline_chat_action["artifact_id"]
+    assert any("not a fixed AutoML recipe" in item for item in baseline_chat["action_summary"]["boundaries"])
 
     strategy_brief_response = client.get(f"/api/projects/{project_id}/approach/strategy-brief")
     assert strategy_brief_response.status_code == 200, strategy_brief_response.text
