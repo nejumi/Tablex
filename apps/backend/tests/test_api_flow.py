@@ -291,6 +291,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert notebook_source_preview["content_type"] == "py"
     assert "import marimo as mo" in notebook_source_preview["preview"]
     assert "plotly.express" in notebook_source_preview["preview"]
+    assert "EDA quality rubric" in notebook_source_preview["preview"]
+    assert "Leakage and evaluation guardrails" in notebook_source_preview["preview"]
 
     notebook_html_preview_response = client.get(
         f"/api/artifacts/{notebook_job['output']['notebook_html_artifact_id']}/preview"
@@ -300,6 +302,9 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert notebook_html_preview["preview_available"] is True
     assert notebook_html_preview["content_type"] == "text/html"
     assert "Tablex Analysis Notebook" in notebook_html_preview["preview"]
+    assert "EDA quality rubric" in notebook_html_preview["preview"]
+    assert "Target readiness" in notebook_html_preview["preview"]
+    assert "Feature review queues" in notebook_html_preview["preview"]
     assert "partial dependence" in notebook_html_preview["preview"]
 
     notebook_manifest_response = client.get(
@@ -309,6 +314,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     notebook_manifest = notebook_manifest_response.json()
     assert notebook_manifest["status"] == "generated_not_executed"
     assert notebook_manifest["execution_policy"]["connector_credentials_embedded"] is False
+    assert notebook_manifest["analysis_quality"]["rubric_area_count"] >= 5
+    assert notebook_manifest["analysis_quality"]["guardrail_count"] >= 3
 
     questions_response = client.get(f"/api/projects/{project_id}/questions")
     assert questions_response.status_code == 200

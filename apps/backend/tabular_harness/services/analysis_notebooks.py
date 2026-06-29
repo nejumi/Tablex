@@ -209,6 +209,13 @@ def create_data_understanding_notebook(
             "notebook_report_id": report.id,
             "notebook_report_artifact_id": report_artifact.id,
         },
+        "analysis_quality": {
+            "eda_quality_score": summary["eda_quality_score"],
+            "rubric_area_count": len(summary["quality_rubric"]),
+            "guardrail_count": len(summary["evaluation_guardrails"]),
+            "storyboard_section_count": len(summary["analysis_storyboard"]),
+            "quality_bar": "human_readable_target_aware_scaffold",
+        },
         "next_execution_modes": [
             "local marimo edit/run from downloaded artifact",
             "future controlled marimo runner with artifact capture",
@@ -900,13 +907,72 @@ def _(context, mo):
 def _(context, pd):
     columns = pd.DataFrame(context["summary"]["columns"])
     findings = pd.DataFrame(context["summary"]["findings"])
+    guardrails = pd.DataFrame(context["summary"]["evaluation_guardrails"])
+    quality_rubric = pd.DataFrame(context["summary"]["quality_rubric"])
     runs = pd.DataFrame(context["summary"]["recent_runs"])
-    return columns, findings, runs
+    storyboard = pd.DataFrame(context["summary"]["analysis_storyboard"])
+    return columns, findings, guardrails, quality_rubric, runs, storyboard
 
 
 @app.cell
-def _(columns, mo):
+def _(context, mo, quality_rubric):
+    score = context["summary"]["eda_quality_score"]
+    mo.md(
+        f"""
+        ## EDA quality rubric
+
+        **Status:** {{score["status"]}}  
+        **Score:** {{score["score"]}}  
+        {{score["interpretation"]}}
+        """
+    )
+    mo.ui.table(quality_rubric) if not quality_rubric.empty else mo.md("No quality rubric available.")
+    return
+
+
+@app.cell
+def _(mo, storyboard):
+    mo.md("## Analysis storyboard")
+    mo.ui.table(storyboard) if not storyboard.empty else mo.md("No storyboard available.")
+    return
+
+
+@app.cell
+def _(context, mo):
+    target = context["summary"]["target_readiness"]
+    mo.md(
+        f"""
+        ## Target readiness
+
+        **Status:** {{target["status"]}}  
+        {{target["summary"]}}
+
+        **Metric note:** {{target["metric_note"]}}
+        """
+    )
+    return
+
+
+@app.cell
+def _(guardrails, mo):
+    mo.md("## Leakage and evaluation guardrails")
+    mo.ui.table(guardrails) if not guardrails.empty else mo.md("No guardrails generated yet.")
+    return
+
+
+@app.cell
+def _(columns, context, mo):
     mo.md("## Column Profile")
+    queues = context["summary"]["feature_review_sections"]
+    mo.md(
+        f"""
+        High-signal queues: {{len(queues["top_missing"])}} missingness, 
+        {{len(queues["high_cardinality"])}} high-cardinality, 
+        {{len(queues["datetime"])}} datetime, 
+        {{len(queues["text"])}} text, 
+        {{len(queues["leakage_suspects"])}} leakage-suspect columns.
+        """
+    )
     mo.ui.table(columns) if not columns.empty else mo.md("No profile columns are available yet.")
     return
 
@@ -963,9 +1029,13 @@ def _(context, mo):
 
 @app.cell
 def _(context, mo):
-    target = context["summary"]["target_profile"]
-    mo.md("## Target Profile")
-    mo.md(str(target)) if target else mo.md("No target has been selected. Keep target choice downstream of data understanding.")
+    target = context["summary"]["target_readiness"]
+    mo.md("## Target value details")
+    if target.get("top_values"):
+        rows = "\\n".join([f"- {{item.get('value')}}: {{item.get('count')}}" for item in target["top_values"]])
+        mo.md(rows)
+    else:
+        mo.md("No target value counts are available yet.")
     return
 
 
@@ -995,7 +1065,12 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
     type_rows = _count_rows(columns, "semantic_type")
     role_rows = _count_rows(columns, "role")
     missing_rows = sorted(columns, key=lambda item: _float_value(item.get("missing_rate")), reverse=True)[:8]
-    target = summary.get("target_profile")
+    quality_score = cast(dict[str, Any], summary.get("eda_quality_score") or {})
+    rubric = cast(list[dict[str, Any]], summary.get("quality_rubric") or [])
+    storyboard = cast(list[dict[str, Any]], summary.get("analysis_storyboard") or [])
+    target = cast(dict[str, Any], summary.get("target_readiness") or {})
+    guardrails = cast(list[dict[str, Any]], summary.get("evaluation_guardrails") or [])
+    feature_sections = cast(dict[str, list[dict[str, Any]]], summary.get("feature_review_sections") or {})
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1079,6 +1154,23 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
         <span class="badge">artifact-backed</span>
       </div>
     </section>
+    <section class="panel">
+      <h2>EDA quality rubric</h2>
+      <p><strong>{escape(str(quality_score.get("status", "unknown")))}</strong> · score {escape(str(quality_score.get("score", "-")))}. {escape(str(quality_score.get("interpretation", "")))}</p>
+      <div class="findings">{_rubric_rows(rubric)}</div>
+    </section>
+    <section class="panel">
+      <h2>Analysis storyboard</h2>
+      <div class="findings">{_storyboard_rows(storyboard)}</div>
+    </section>
+    <section class="panel">
+      <h2>Target readiness</h2>
+      {_target_readiness_html(target)}
+    </section>
+    <section class="panel">
+      <h2>Leakage and evaluation guardrails</h2>
+      <div class="findings">{_guardrail_rows(guardrails)}</div>
+    </section>
     <section class="grid">
       <div class="panel">
         <h2>Semantic mix</h2>
@@ -1094,6 +1186,10 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
       {_missing_rows(missing_rows)}
     </section>
     <section class="panel">
+      <h2>Feature review queues</h2>
+      {_feature_queue_rows(feature_sections)}
+    </section>
+    <section class="panel">
       <h2>Findings and investigation queue</h2>
       <div class="findings">{_finding_rows(findings)}</div>
     </section>
@@ -1106,8 +1202,8 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
       </div>
     </section>
     <section class="panel">
-      <h2>Target profile</h2>
-      <p>{escape(json.dumps(target, ensure_ascii=False, sort_keys=True) if target else "No target selected. Target can be chosen after data understanding, or generated by aggregation before evaluation design.")}</p>
+      <h2>Target value details</h2>
+      <p>{escape(_target_values_text(target))}</p>
     </section>
     <section class="panel">
       <h2>Modeling diagnostics cells</h2>
@@ -1124,14 +1220,38 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
 def render_notebook_report(notebook: dict[str, Any], notebook_artifact_id: str, html_artifact_id: str) -> str:
     summary = notebook["summary"]
     findings = cast(list[dict[str, Any]], summary["findings"])
+    rubric = cast(list[dict[str, Any]], summary.get("quality_rubric") or [])
+    guardrails = cast(list[dict[str, Any]], summary.get("evaluation_guardrails") or [])
+    target = cast(dict[str, Any], summary.get("target_readiness") or {})
+    score = cast(dict[str, Any], summary.get("eda_quality_score") or {})
     finding_lines = [
         f"- **{item['severity']}**: {item['message']} ({item['next_action']})" for item in findings[:8]
     ] or ["- No findings generated yet."]
+    rubric_lines = [
+        f"- **{item['area']}**: {item['status']} - {item['upgrade_path']}" for item in rubric
+    ] or ["- No EDA quality rubric generated yet."]
+    guardrail_lines = [
+        f"- **{item['guardrail']}** ({item['risk']}): {item['detail']}" for item in guardrails
+    ] or ["- No evaluation guardrails generated yet."]
     return "\n".join(
         [
             "# Data Understanding Analysis Notebook",
             "",
             str(summary["overview"]),
+            "",
+            "## EDA Quality",
+            "",
+            f"- Status: `{score.get('status', 'unknown')}`",
+            f"- Score: `{score.get('score', '-')}`",
+            f"- Interpretation: {score.get('interpretation', '')}",
+            "",
+            *rubric_lines,
+            "",
+            "## Target Readiness",
+            "",
+            f"- Status: `{target.get('status', 'unknown')}`",
+            f"- Summary: {target.get('summary', 'No target readiness summary available.')}",
+            f"- Metric note: {target.get('metric_note', '')}",
             "",
             "## Artifacts",
             "",
@@ -1143,8 +1263,13 @@ def render_notebook_report(notebook: dict[str, Any], notebook_artifact_id: str, 
             "- marimo notebook source with pandas, matplotlib, and Plotly cells.",
             "- Static in-product HTML preview for immediate inspection.",
             "- Reader brief and investigation queue for human-first review.",
+            "- EDA quality rubric, analysis storyboard, target readiness, feature queues, and evaluation guardrails.",
             "- Placeholder diagnostics section for feature importance, permutation importance, partial dependence, and prediction analysis.",
             "- Execution policy keeps credentials out of notebooks and runner context.",
+            "",
+            "## Evaluation Guardrails",
+            "",
+            *guardrail_lines,
             "",
             "## Findings",
             "",
@@ -2607,6 +2732,29 @@ def _profile_summary(
         f"Generated analysis notebook for {row_count:,} rows and {column_count:,} columns. "
         f"Profile mode is {profile_mode}; target is {target_column or 'not selected'}."
     )
+    quality_rubric = _eda_quality_rubric(
+        target_column=target_column,
+        target_profile=target_profile,
+        profile_mode=profile_mode,
+        quality=quality,
+        diagnostics=diagnostics,
+        runs=runs,
+    )
+    feature_sections = _feature_review_sections(compact_columns)
+    evaluation_guardrails = _evaluation_guardrails(
+        target_column=target_column,
+        profile=profile,
+        quality=quality,
+        diagnostics=diagnostics,
+    )
+    target_readiness = _target_readiness(target_column, target_profile, row_count)
+    analysis_questions = _analysis_questions(
+        target_column=target_column,
+        target_readiness=target_readiness,
+        feature_sections=feature_sections,
+        evaluation_guardrails=evaluation_guardrails,
+        runs=runs,
+    )
     return {
         "title": "Data Understanding Notebook",
         "overview": overview,
@@ -2623,8 +2771,284 @@ def _profile_summary(
         "group_candidates": profile.get("group_candidates") if isinstance(profile.get("group_candidates"), list) else [],
         "leakage_suspects": profile.get("leakage_suspects") if isinstance(profile.get("leakage_suspects"), list) else [],
         "findings": findings,
+        "quality_rubric": quality_rubric,
+        "eda_quality_score": _eda_quality_score(quality_rubric),
+        "analysis_storyboard": _analysis_storyboard(target_column, profile_mode, bool(runs)),
+        "target_readiness": target_readiness,
+        "feature_review_sections": feature_sections,
+        "evaluation_guardrails": evaluation_guardrails,
+        "analysis_questions": analysis_questions,
         "recent_runs": [_run_summary(run) for run in runs],
     }
+
+
+def _eda_quality_rubric(
+    *,
+    target_column: str | None,
+    target_profile: dict[str, Any] | None,
+    profile_mode: str,
+    quality: dict[str, Any],
+    diagnostics: dict[str, Any],
+    runs: list[ExperimentRun],
+) -> list[dict[str, str]]:
+    raw_quality_summary = quality.get("summary")
+    quality_summary: dict[str, Any] = raw_quality_summary if isinstance(raw_quality_summary, dict) else {}
+    return [
+        {
+            "area": "Data story",
+            "status": "started",
+            "evidence": f"Profile mode: {profile_mode}",
+            "upgrade_path": "Clarify row semantics, prediction-time decision, unit of analysis, and data collection process.",
+        },
+        {
+            "area": "Target-aware EDA",
+            "status": "started" if target_column and target_profile else "missing_target",
+            "evidence": target_column or "No target selected",
+            "upgrade_path": "Explain target construction, class balance or distribution shape, and metric suitability.",
+        },
+        {
+            "area": "Leakage and availability",
+            "status": "started" if quality_summary else "needs_quality_gate",
+            "evidence": str(quality_summary.get("severity") or "quality gate not available"),
+            "upgrade_path": "Inspect leakage suspects, post-outcome fields, duplicates, temporal leakage, and availability at prediction time.",
+        },
+        {
+            "area": "Evaluation guardrails",
+            "status": "started",
+            "evidence": "SplitManifest and EvaluationSpec remain harness-owned",
+            "upgrade_path": "Compare random, stratified, time, and group scenarios before treating model lift as trustworthy.",
+        },
+        {
+            "area": "Model diagnostics",
+            "status": "available" if runs or diagnostics else "deferred_until_runs",
+            "evidence": f"{len(runs)} recent run(s)" if runs else "No run diagnostics yet",
+            "upgrade_path": "Add feature importance, permutation importance, PDP, calibration, residuals/errors, and prediction examples.",
+        },
+    ]
+
+
+def _eda_quality_score(rubric: list[dict[str, str]]) -> dict[str, Any]:
+    weights = {
+        "available": 1.0,
+        "started": 0.55,
+        "needs_quality_gate": 0.35,
+        "deferred_until_runs": 0.25,
+        "missing_target": 0.2,
+    }
+    score = sum(weights.get(item["status"], 0.3) for item in rubric) / max(len(rubric), 1)
+    return {
+        "score": round(score, 3),
+        "status": "strong_start" if score >= 0.7 else "needs_analysis_depth",
+        "interpretation": (
+            "Notebook has enough evidence for a useful narrative start."
+            if score >= 0.7
+            else "Notebook is a scaffold plus initial findings; executed, target-aware analysis still needs depth."
+        ),
+    }
+
+
+def _analysis_storyboard(target_column: str | None, profile_mode: str, has_runs: bool) -> list[dict[str, str]]:
+    return [
+        {
+            "section": "Executive read",
+            "question": "What should a human inspect first?",
+            "artifact_expectation": "Short narrative, quality score, and top risks.",
+        },
+        {
+            "section": "Data shape and semantics",
+            "question": "What does one row mean, and which columns define time, entity, text, or outcome?",
+            "artifact_expectation": f"Profile mode and sample boundary are explicit: {profile_mode}.",
+        },
+        {
+            "section": "Target and metric readiness",
+            "question": "Is the target selected, interpretable, and compatible with the proposed metric?",
+            "artifact_expectation": f"Target is {target_column or 'not selected; continue without blocking'}",
+        },
+        {
+            "section": "Feature landscape",
+            "question": "Which numeric, categorical, text, datetime, group, sparse, or high-cardinality fields deserve attention?",
+            "artifact_expectation": "Ranked feature review queues instead of a raw column dump.",
+        },
+        {
+            "section": "Evaluation guardrails",
+            "question": "What split, leakage, group, and time constraints must Codex respect?",
+            "artifact_expectation": "Guardrails stay visible before model or feature recommendations.",
+        },
+        {
+            "section": "Diagnostics and next hypotheses",
+            "question": "What would change the decision if a baseline or agent run exists?",
+            "artifact_expectation": (
+                "Use run artifacts for importance/error analysis." if has_runs else "Defer model diagnostics until runs exist."
+            ),
+        },
+    ]
+
+
+def _target_readiness(
+    target_column: str | None,
+    target_profile: dict[str, Any] | None,
+    row_count: int,
+) -> dict[str, Any]:
+    if not target_column:
+        return {
+            "status": "not_selected",
+            "summary": "No target is selected yet; this is acceptable before data understanding is complete.",
+            "metric_note": "Do not lock metric or split until target construction and prediction timing are clear.",
+            "top_values": [],
+        }
+    if not target_profile:
+        return {
+            "status": "selected_without_profile",
+            "summary": f"Target `{target_column}` is selected but was not profiled in the latest artifact.",
+            "metric_note": "Regenerate profile or verify target exists before evaluation design.",
+            "top_values": [],
+        }
+    unique_count = int(target_profile.get("unique_count") or 0)
+    missing_count = int(target_profile.get("missing_count") or 0)
+    raw_top_values = target_profile.get("top_values")
+    top_values: list[Any] = raw_top_values if isinstance(raw_top_values, list) else []
+    largest_class = max((int(item.get("count") or 0) for item in top_values if isinstance(item, dict)), default=0)
+    imbalance = largest_class / row_count if row_count else 0.0
+    if unique_count <= 20:
+        metric_note = (
+            "Classification-like target. Inspect imbalance before preferring ROC-AUC, PR-AUC, F1, log loss, or accuracy."
+        )
+    else:
+        metric_note = "Regression-like target. Inspect distribution, outliers, and error cost before preferring RMSE, MAE, or R2."
+    return {
+        "status": "profiled",
+        "summary": (
+            f"Target `{target_column}` has {unique_count} unique value(s), {missing_count} missing value(s), "
+            f"and largest-class share about {imbalance:.1%}."
+        ),
+        "unique_count": unique_count,
+        "missing_count": missing_count,
+        "largest_class_share": round(imbalance, 4),
+        "metric_note": metric_note,
+        "top_values": top_values[:8],
+    }
+
+
+def _feature_review_sections(columns: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    feature_columns = [column for column in columns if column.get("role") != "target"]
+    return {
+        "top_missing": sorted(feature_columns, key=lambda item: _float_value(item.get("missing_rate")), reverse=True)[:12],
+        "high_cardinality": sorted(feature_columns, key=lambda item: int(item.get("unique_count") or 0), reverse=True)[:12],
+        "identifier_or_group": [
+            column for column in feature_columns if column.get("role") in {"identifier", "group"}
+        ][:12],
+        "datetime": [column for column in feature_columns if column.get("semantic_type") == "datetime"][:12],
+        "text": [column for column in feature_columns if column.get("semantic_type") == "text"][:12],
+        "leakage_suspects": [column for column in feature_columns if column.get("is_leakage_suspect")][:12],
+    }
+
+
+def _evaluation_guardrails(
+    *,
+    target_column: str | None,
+    profile: dict[str, Any],
+    quality: dict[str, Any],
+    diagnostics: dict[str, Any],
+) -> list[dict[str, str]]:
+    guardrails: list[dict[str, str]] = []
+    if not target_column:
+        guardrails.append(
+            {
+                "guardrail": "Target definition",
+                "risk": "blocking",
+                "status": "open",
+                "detail": "Target may be selected after data understanding or derived by aggregation.",
+            }
+        )
+    leakage = profile.get("leakage_suspects") if isinstance(profile.get("leakage_suspects"), list) else []
+    guardrails.append(
+        {
+            "guardrail": "Prediction-time availability",
+            "risk": "high" if leakage else "medium",
+            "status": "needs_review" if leakage else "watch",
+            "detail": (
+                f"Review leakage-suspect columns: {', '.join(str(item) for item in leakage[:8])}."
+                if leakage
+                else "No name-based leakage suspects, but availability still needs domain confirmation."
+            ),
+        }
+    )
+    time_candidates = profile.get("time_candidates") if isinstance(profile.get("time_candidates"), list) else []
+    guardrails.append(
+        {
+            "guardrail": "Time split readiness",
+            "risk": "medium" if time_candidates else "low",
+            "status": "scenario_compare" if time_candidates else "not_detected",
+            "detail": (
+                f"Candidate time columns: {', '.join(str(item) for item in time_candidates[:8])}."
+                if time_candidates
+                else "No time-like columns detected by profile heuristics."
+            ),
+        }
+    )
+    group_candidates = profile.get("group_candidates") if isinstance(profile.get("group_candidates"), list) else []
+    guardrails.append(
+        {
+            "guardrail": "Group leakage",
+            "risk": "medium" if group_candidates else "low",
+            "status": "scenario_compare" if group_candidates else "not_detected",
+            "detail": (
+                f"Candidate group columns: {', '.join(str(item) for item in group_candidates[:8])}."
+                if group_candidates
+                else "No repeated entity/group column detected by profile heuristics."
+            ),
+        }
+    )
+    quality_summary = quality.get("summary") if isinstance(quality.get("summary"), dict) else {}
+    if quality_summary:
+        guardrails.append(
+            {
+                "guardrail": "Data quality gate",
+                "risk": str(quality_summary.get("severity") or "medium"),
+                "status": "available",
+                "detail": f"Latest quality gate severity: {quality_summary.get('severity', 'unknown')}.",
+            }
+        )
+    if diagnostics:
+        guardrails.append(
+            {
+                "guardrail": "Prediction diagnostics",
+                "risk": "medium",
+                "status": "available",
+                "detail": "Diagnostics artifact can support slice/error analysis in a controlled notebook runner.",
+            }
+        )
+    return guardrails
+
+
+def _analysis_questions(
+    *,
+    target_column: str | None,
+    target_readiness: dict[str, Any],
+    feature_sections: dict[str, list[dict[str, Any]]],
+    evaluation_guardrails: list[dict[str, str]],
+    runs: list[ExperimentRun],
+) -> list[str]:
+    questions = [
+        "What does one row represent, and what decision happens at prediction time?",
+        str(target_readiness["metric_note"]),
+    ]
+    if not target_column:
+        questions.append("Should the target be selected from a column, or derived by aggregation after understanding the tables?")
+    if feature_sections["leakage_suspects"]:
+        questions.append("Which leakage-suspect columns must be excluded until prediction-time availability is confirmed?")
+    if feature_sections["high_cardinality"]:
+        questions.append("Which high-cardinality identifiers are entity/group keys versus useful categorical signals?")
+    if feature_sections["text"]:
+        questions.append("Which text columns deserve TF-IDF, embeddings, summarization, or exclusion because they are leakage-prone?")
+    if any(item["status"] == "scenario_compare" for item in evaluation_guardrails):
+        questions.append("Should evaluation compare random, stratified, time, and group scenarios before approving a primary spec?")
+    questions.append(
+        "After the first baseline, inspect feature importance, permutation importance, partial dependence, calibration, slice metrics, and concrete prediction errors."
+        if runs
+        else "After the first baseline, generate model diagnostics before reading leaderboard rank as a decision."
+    )
+    return questions
 
 
 def _compact_column(column: dict[str, Any]) -> dict[str, Any]:
@@ -3116,6 +3540,102 @@ def _finding_rows(findings: list[dict[str, Any]]) -> str:
             "</div>"
         )
     return "".join(output)
+
+
+def _rubric_rows(rubric: list[dict[str, Any]]) -> str:
+    if not rubric:
+        return "<p>No rubric available.</p>"
+    output = []
+    for item in rubric:
+        status = str(item.get("status") or "unknown")
+        output.append(
+            f'<div class="finding {escape(status)}">'
+            f"<strong>{escape(str(item.get('area') or 'Quality area'))}</strong>"
+            f"<p>{escape(str(item.get('evidence') or 'No evidence yet.'))}</p>"
+            f'<div class="tiny">{escape(status)} · {escape(str(item.get("upgrade_path") or ""))}</div>'
+            "</div>"
+        )
+    return "".join(output)
+
+
+def _storyboard_rows(storyboard: list[dict[str, Any]]) -> str:
+    if not storyboard:
+        return "<p>No storyboard available.</p>"
+    output = []
+    for item in storyboard:
+        output.append(
+            '<div class="finding">'
+            f"<strong>{escape(str(item.get('section') or 'Section'))}</strong>"
+            f"<p>{escape(str(item.get('question') or ''))}</p>"
+            f'<div class="tiny">{escape(str(item.get("artifact_expectation") or ""))}</div>'
+            "</div>"
+        )
+    return "".join(output)
+
+
+def _guardrail_rows(guardrails: list[dict[str, Any]]) -> str:
+    if not guardrails:
+        return "<p>No guardrails available.</p>"
+    output = []
+    for item in guardrails:
+        risk = str(item.get("risk") or "medium")
+        output.append(
+            f'<div class="finding {escape(risk)}">'
+            f"<strong>{escape(str(item.get('guardrail') or 'Guardrail'))}</strong>"
+            f"<p>{escape(str(item.get('detail') or ''))}</p>"
+            f'<div class="tiny">{escape(risk)} · {escape(str(item.get("status") or ""))}</div>'
+            "</div>"
+        )
+    return "".join(output)
+
+
+def _target_readiness_html(target: dict[str, Any]) -> str:
+    if not target:
+        return "<p>No target readiness summary available.</p>"
+    badges = [
+        f'<span class="badge">status: {escape(str(target.get("status") or "unknown"))}</span>',
+        f'<span class="badge">unique: {escape(str(target.get("unique_count", "-")))}</span>',
+        f'<span class="badge">missing: {escape(str(target.get("missing_count", "-")))}</span>',
+    ]
+    return (
+        f"<p>{escape(str(target.get('summary') or 'No target summary.'))}</p>"
+        f"<p><strong>Metric note:</strong> {escape(str(target.get('metric_note') or ''))}</p>"
+        f'<div class="badge-row">{"".join(badges)}</div>'
+    )
+
+
+def _feature_queue_rows(feature_sections: dict[str, list[dict[str, Any]]]) -> str:
+    if not feature_sections:
+        return "<p>No feature queues available.</p>"
+    labels = {
+        "top_missing": "Missingness",
+        "high_cardinality": "High cardinality",
+        "identifier_or_group": "Identifier/group",
+        "datetime": "Datetime",
+        "text": "Text",
+        "leakage_suspects": "Leakage suspects",
+    }
+    blocks = []
+    for key, label in labels.items():
+        rows = feature_sections.get(key) or []
+        names = ", ".join(str(row.get("name") or "") for row in rows[:6]) or "none"
+        blocks.append(
+            '<div class="finding">'
+            f"<strong>{escape(label)}</strong>"
+            f"<p>{escape(names)}</p>"
+            f'<div class="tiny">{len(rows)} queued column(s)</div>'
+            "</div>"
+        )
+    return f'<div class="findings">{"".join(blocks)}</div>'
+
+
+def _target_values_text(target: dict[str, Any]) -> str:
+    values = target.get("top_values") if isinstance(target.get("top_values"), list) else []
+    if not values:
+        return "No target value counts are available yet."
+    return "; ".join(
+        f"{item.get('value')}: {item.get('count')}" for item in values[:8] if isinstance(item, dict)
+    )
 
 
 def _count_rows(rows: list[dict[str, Any]], field: str) -> list[tuple[str, int]]:

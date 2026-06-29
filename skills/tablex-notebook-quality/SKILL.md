@@ -14,10 +14,23 @@ Write for a human analyst first, while preserving harness-owned evaluation bound
 - Start with a reader brief: what question the notebook answers and what the user should inspect first.
 - Tell a data story: row meaning, target meaning, leakage risk, time/group structure, missingness, and prediction-time availability.
 - Keep EvaluationSpec and SplitManifest visible before discussing model lift.
-- Use clear section flow: executive read, data shape, target/profile, findings, evaluation guardrails, model diagnostics, failure analysis, next actions.
+- Use clear section flow: executive read, EDA quality rubric, data shape, target/profile, feature landscape, evaluation guardrails, model diagnostics, failure analysis, next actions.
 - Prefer a few high-signal plots with interpretation over many disconnected charts.
 - Every important claim should be backed by an artifact, metric, table, plot, or explicit assumption.
 - Include a next-analysis queue for Codex or a human: feature importance, permutation importance, partial dependence, calibration, threshold analysis, slice metrics, residual/error review, and prediction examples when relevant.
+
+## Quality Rubric
+
+Make these areas explicit in generated notebooks and reports:
+
+- Data story: row semantics, decision timing, collection process, profile boundary.
+- Target-aware EDA: target construction, distribution, imbalance/outliers, missing target values, metric suitability.
+- Leakage and availability: post-outcome fields, duplicate rows/entities, prediction-time availability, temporal leakage.
+- Evaluation guardrails: random/stratified/time/group scenarios, SplitManifest constraints, unresolved assumptions.
+- Feature landscape: numeric, categorical, text, datetime, group/entity, sparse, high-cardinality, and leakage-suspect queues.
+- Model diagnostics: feature importance, permutation importance, PDP, calibration, threshold analysis, slice metrics, residual/error review, prediction examples.
+
+If evidence is missing, mark the area as missing/deferred and describe the next artifact or runner work needed. Do not pretend a static scaffold is an executed analysis.
 
 ## Avoid
 
