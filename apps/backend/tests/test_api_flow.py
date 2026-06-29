@@ -355,11 +355,12 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert data_evidence_html_response.status_code == 200
     data_evidence_html = data_evidence_html_response.json()
     assert data_evidence_html["content_type"] == "text/html"
-    assert "Notebook EDA Evidence" in data_evidence_html["preview"]
+    assert "Notebook Evidence Review" in data_evidence_html["preview"]
     assert "Read this first" in data_evidence_html["preview"]
     assert "Visual story cards" in data_evidence_html["preview"]
     assert "Ask Codex next" in data_evidence_html["preview"]
     assert "Feature review queues" in data_evidence_html["preview"]
+    assert "No read order generated yet" not in data_evidence_html["preview"]
 
     data_evidence_svg_response = client.get(
         f"/api/artifacts/{data_capture_job['output']['notebook_evidence_figure_artifact_ids'][0]}/preview"
@@ -1288,6 +1289,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert notebook_index["counts"]["by_kind"]["model_diagnostics"] >= 1
     assert notebook_index["recommended_notebook"]["notebook_kind"] == "model_diagnostics"
     assert notebook_index["recommended_notebook"]["artifact_ids"]["html_preview"]
+    assert notebook_index["recommended_notebook"]["content"]["readiness"] == "evidence_ready"
     assert any(group["notebook_kind"] == "model_diagnostics" for group in notebook_index["groups"])
 
     execution_plan_response = client.post(
@@ -1345,6 +1347,20 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert execution_capture_job["output"]["notebook_evidence_bundle_artifact_id"]
     assert execution_capture_job["output"]["notebook_evidence_html_artifact_id"]
     assert execution_capture_job["output"]["notebook_evidence_figure_artifact_ids"]
+
+    model_evidence_html_response = client.get(
+        f"/api/artifacts/{execution_capture_job['output']['notebook_evidence_html_artifact_id']}/preview"
+    )
+    assert model_evidence_html_response.status_code == 200
+    model_evidence_html = model_evidence_html_response.json()
+    assert "Notebook Evidence Review" in model_evidence_html["preview"]
+    assert "Readiness verdict" in model_evidence_html["preview"]
+    assert "Prediction coverage" in model_evidence_html["preview"]
+    assert "Diagnostics readiness" in model_evidence_html["preview"]
+    assert "Review playbook" in model_evidence_html["preview"]
+    assert "No read order generated yet" not in model_evidence_html["preview"]
+    assert "No visual story cards generated yet" not in model_evidence_html["preview"]
+    assert "No EDA playbook generated yet" not in model_evidence_html["preview"]
 
     execution_manifest_response = client.get(
         f"/api/artifacts/{execution_capture_job['output']['notebook_execution_manifest_artifact_id']}/download"

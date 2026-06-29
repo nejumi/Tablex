@@ -542,6 +542,16 @@ type NotebookIndexItem = {
   report_id: string | null;
   visualization_id: string | null;
   coverage: Record<string, unknown>;
+  content: {
+    readiness?: string;
+    quality_score?: number;
+    read_order_count?: number;
+    story_card_count?: number;
+    playbook_count?: number;
+    primary_metric_available?: boolean;
+    prediction_rows?: number;
+    has_predictions?: boolean;
+  };
   recommendation_score: number;
   recommendation_reason: string;
 };
@@ -6067,7 +6077,11 @@ function NotebooksTab({
   const [guideResponse, setGuideResponse] = React.useState<string | null>(null);
   const [guideBusy, setGuideBusy] = React.useState(false);
   const latestRun = runs[0] ?? null;
+  const notebookItems = notebookIndex?.items ?? [];
   const recommendedNotebook = notebookIndex?.recommended_notebook ?? null;
+  const fallbackDataNotebook = notebookItems.find((item) => item.notebook_kind === "data_understanding") ?? null;
+  const divertedFromEmptyDiagnostics = isEmptyDiagnosticsNotebook(recommendedNotebook) && fallbackDataNotebook !== null;
+  const reviewNotebook = divertedFromEmptyDiagnostics ? fallbackDataNotebook : recommendedNotebook;
   const executionArtifacts = artifacts.filter(
     (artifact) =>
       [
@@ -6166,16 +6180,15 @@ function NotebooksTab({
     return labels[assetType] ?? assetType.replace(/_/g, " ");
   }
 
-  const notebookItems = notebookIndex?.items ?? [];
-  const recommendedEvidenceHtml = recommendedNotebook
-    ? latestArtifactForNotebook(recommendedNotebook, ["notebook_evidence_html", "notebook_execution_html"])
+  const reviewEvidenceHtml = reviewNotebook
+    ? latestArtifactForNotebook(reviewNotebook, ["notebook_evidence_html", "notebook_execution_html"])
     : null;
-  const recommendedEvidenceBundle = recommendedNotebook
-    ? latestArtifactForNotebook(recommendedNotebook, ["notebook_evidence_bundle"])
+  const reviewEvidenceBundle = reviewNotebook
+    ? latestArtifactForNotebook(reviewNotebook, ["notebook_evidence_bundle"])
     : null;
-  const recommendedEvidenceFigures = recommendedNotebook ? artifactsForNotebook(recommendedNotebook, ["notebook_evidence_svg"]) : [];
-  const recommendedSafetyArtifact = recommendedNotebook
-    ? latestArtifactForNotebook(recommendedNotebook, [
+  const reviewEvidenceFigures = reviewNotebook ? artifactsForNotebook(reviewNotebook, ["notebook_evidence_svg"]) : [];
+  const reviewSafetyArtifact = reviewNotebook
+    ? latestArtifactForNotebook(reviewNotebook, [
         "notebook_execution_manifest",
         "notebook_execution_report",
         "notebook_figure_manifest",
@@ -6183,18 +6196,18 @@ function NotebooksTab({
         "agent_task_contract"
       ])
     : null;
-  const readablePreviewArtifactId = recommendedEvidenceHtml?.id ?? (recommendedNotebook ? notebookPreviewArtifactId(recommendedNotebook) : null);
-  const hasExecutionPlan = Boolean(recommendedNotebook?.coverage.has_execution_plan);
-  const hasEvidenceCapture = Boolean(recommendedNotebook?.coverage.has_execution_capture || recommendedEvidenceHtml);
-  const hasEvidenceFigures = recommendedEvidenceFigures.length > 0;
+  const readablePreviewArtifactId = reviewEvidenceHtml?.id ?? (reviewNotebook ? notebookPreviewArtifactId(reviewNotebook) : null);
+  const hasExecutionPlan = Boolean(reviewNotebook?.coverage.has_execution_plan);
+  const hasEvidenceCapture = Boolean(reviewNotebook?.coverage.has_execution_capture || reviewEvidenceHtml);
+  const hasEvidenceFigures = reviewEvidenceFigures.length > 0;
 
   async function askNotebookGuide(message: string) {
     const trimmed = message.trim();
-    if (!trimmed || !recommendedNotebook) return;
+    if (!trimmed || !reviewNotebook) return;
     setGuideBusy(true);
     try {
       const response = await onAskAgent(
-        `[notebook:${recommendedNotebook.notebook_artifact_id}] ${trimmed}. Reply as an interactive notebook guide: name the exact section, artifact, or figure I should inspect next, why it matters, and what action Tablex should take.`
+        `[notebook:${reviewNotebook.notebook_artifact_id}] ${trimmed}. Reply as an interactive notebook guide: name the exact section, artifact, or figure I should inspect next, why it matters, and what action Tablex should take.`
       );
       if (response && typeof response.assistant_message === "string") {
         setGuideResponse(response.assistant_message);
@@ -6207,16 +6220,22 @@ function NotebooksTab({
   return (
     <div className="stack notebook-workbench">
       <Panel title="Notebook Review" icon={<BarChart3 size={18} />}>
-        {recommendedNotebook ? (
+        {reviewNotebook ? (
           <div className="notebook-review-grid">
             <div className="notebook-start-card">
               <div className="notebook-start-copy">
                 <div className="eyebrow">Start here</div>
-                <h3>{recommendedNotebook.title}</h3>
-                <p>{recommendedNotebook.recommendation_reason}</p>
+                <h3>{reviewNotebook.title}</h3>
+                <p>{reviewNotebook.recommendation_reason}</p>
+                {divertedFromEmptyDiagnostics ? (
+                  <div className="banner warning compact">
+                    A model diagnostics notebook exists, but it has no useful metric or prediction evidence yet. Tablex is routing you back to Data Understanding first.
+                  </div>
+                ) : null}
                 <div className="badge-row">
-                  <span className="badge">{recommendedNotebook.notebook_kind.replace(/_/g, " ")}</span>
-                  <span className="badge muted">{notebookSourceLabel(recommendedNotebook)}</span>
+                  <span className="badge">{reviewNotebook.notebook_kind.replace(/_/g, " ")}</span>
+                  <span className="badge muted">{notebookSourceLabel(reviewNotebook)}</span>
+                  <span className={notebookReadinessClass(reviewNotebook)}>{notebookReadinessLabel(reviewNotebook)}</span>
                   <span className={hasEvidenceCapture ? "badge" : "badge risk"}>
                     {hasEvidenceCapture ? "evidence captured" : "needs evidence capture"}
                   </span>
@@ -6240,7 +6259,7 @@ function NotebooksTab({
                 <button
                   className="secondary-button"
                   disabled={busy}
-                  onClick={() => void runAction(() => captureNotebookExecution(recommendedNotebook))}
+                  onClick={() => void runAction(() => captureNotebookExecution(reviewNotebook))}
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
                   Capture Evidence
@@ -6297,7 +6316,7 @@ function NotebooksTab({
                   <Check size={14} />
                 </span>
                 <strong>Notebook draft</strong>
-                <small>{formatDate(recommendedNotebook.created_at)}</small>
+                <small>{formatDate(reviewNotebook.created_at)}</small>
               </div>
               <div className={`notebook-step ${hasExecutionPlan ? "done" : "pending"}`}>
                 <span>{hasExecutionPlan ? <Check size={14} /> : <ListChecks size={14} />}</span>
@@ -6307,13 +6326,13 @@ function NotebooksTab({
               <div className={`notebook-step ${hasEvidenceCapture ? "done" : "pending"}`}>
                 <span>{hasEvidenceCapture ? <Check size={14} /> : <Play size={14} />}</span>
                 <strong>Evidence capture</strong>
-                <small>{hasEvidenceFigures ? `${recommendedEvidenceFigures.length} figures rendered` : "Profile evidence not rendered yet"}</small>
+                <small>{hasEvidenceFigures ? `${reviewEvidenceFigures.length} figures rendered` : "Profile evidence not rendered yet"}</small>
               </div>
             </div>
             <div className="metric-grid compact">
               <Metric label="Notebooks" value={notebookIndex?.counts.total ?? 0} />
               <Metric label="Captured" value={notebookIndex?.counts.with_execution_capture ?? 0} />
-              <Metric label="Figures" value={recommendedEvidenceFigures.length} />
+              <Metric label="Figures" value={reviewEvidenceFigures.length} />
               <Metric label="Evidence files" value={executionArtifacts.length} />
             </div>
           </div>
@@ -6359,27 +6378,27 @@ function NotebooksTab({
       </Panel>
 
       <Panel title="Evidence Outputs" icon={<ListChecks size={18} />}>
-        {recommendedNotebook ? (
+        {reviewNotebook ? (
           <div className="stack">
             <div className="card-grid notebook-evidence-grid">
               <div className="mini-card notebook-evidence-card primary">
                 <div className="mini-card-title">Review narrative</div>
                 <p>Target readiness, findings, guardrails, and rendered profile evidence in one readable page.</p>
                 <div className="badge-row">
-                  <span className={recommendedEvidenceHtml ? "badge" : "badge risk"}>
-                    {recommendedEvidenceHtml ? "ready" : "not captured"}
+                  <span className={reviewEvidenceHtml ? "badge" : "badge risk"}>
+                    {reviewEvidenceHtml ? "ready" : "not captured"}
                   </span>
-                  {recommendedEvidenceBundle ? <span className="badge muted">bundle saved</span> : null}
+                  {reviewEvidenceBundle ? <span className="badge muted">bundle saved</span> : null}
                 </div>
                 <div className="row-actions">
                   <button
                     className="secondary-button"
-                    disabled={!recommendedEvidenceHtml || previewLoadingId === recommendedEvidenceHtml.id}
+                    disabled={!reviewEvidenceHtml || previewLoadingId === reviewEvidenceHtml.id}
                     onClick={() => {
-                      if (recommendedEvidenceHtml) void loadPreview(recommendedEvidenceHtml.id);
+                      if (reviewEvidenceHtml) void loadPreview(reviewEvidenceHtml.id);
                     }}
                   >
-                    {recommendedEvidenceHtml && previewLoadingId === recommendedEvidenceHtml.id ? (
+                    {reviewEvidenceHtml && previewLoadingId === reviewEvidenceHtml.id ? (
                       <Loader2 className="spin" size={16} />
                     ) : (
                       <FileText size={16} />
@@ -6392,17 +6411,17 @@ function NotebooksTab({
                 <div className="mini-card-title">Figures</div>
                 <p>Profile-backed SVG charts for missingness, semantic mix, target profile, and feature review queues.</p>
                 <div className="badge-row">
-                  <span className={hasEvidenceFigures ? "badge" : "badge muted"}>{recommendedEvidenceFigures.length} rendered</span>
+                  <span className={hasEvidenceFigures ? "badge" : "badge muted"}>{reviewEvidenceFigures.length} rendered</span>
                 </div>
                 <div className="row-actions">
                   <button
                     className="secondary-button"
-                    disabled={!recommendedEvidenceFigures[0] || previewLoadingId === recommendedEvidenceFigures[0]?.id}
+                    disabled={!reviewEvidenceFigures[0] || previewLoadingId === reviewEvidenceFigures[0]?.id}
                     onClick={() => {
-                      if (recommendedEvidenceFigures[0]) void loadPreview(recommendedEvidenceFigures[0].id);
+                      if (reviewEvidenceFigures[0]) void loadPreview(reviewEvidenceFigures[0].id);
                     }}
                   >
-                    {recommendedEvidenceFigures[0] && previewLoadingId === recommendedEvidenceFigures[0].id ? (
+                    {reviewEvidenceFigures[0] && previewLoadingId === reviewEvidenceFigures[0].id ? (
                       <Loader2 className="spin" size={16} />
                     ) : (
                       <BarChart3 size={16} />
@@ -6415,19 +6434,19 @@ function NotebooksTab({
                 <div className="mini-card-title">Runner record</div>
                 <p>Plan, manifest, source, and safety policy for controlled runner handoff.</p>
                 <div className="badge-row">
-                  <span className={recommendedSafetyArtifact ? "badge" : "badge muted"}>
-                    {recommendedSafetyArtifact ? notebookArtifactDisplayName(recommendedSafetyArtifact.asset_type) : "not planned"}
+                  <span className={reviewSafetyArtifact ? "badge" : "badge muted"}>
+                    {reviewSafetyArtifact ? notebookArtifactDisplayName(reviewSafetyArtifact.asset_type) : "not planned"}
                   </span>
                 </div>
                 <div className="row-actions">
                   <button
                     className="secondary-button"
-                    disabled={!recommendedSafetyArtifact || previewLoadingId === recommendedSafetyArtifact.id}
+                    disabled={!reviewSafetyArtifact || previewLoadingId === reviewSafetyArtifact.id}
                     onClick={() => {
-                      if (recommendedSafetyArtifact) void loadPreview(recommendedSafetyArtifact.id);
+                      if (reviewSafetyArtifact) void loadPreview(reviewSafetyArtifact.id);
                     }}
                   >
-                    {recommendedSafetyArtifact && previewLoadingId === recommendedSafetyArtifact.id ? (
+                    {reviewSafetyArtifact && previewLoadingId === reviewSafetyArtifact.id ? (
                       <Loader2 className="spin" size={16} />
                     ) : (
                       <ListChecks size={16} />
@@ -6437,7 +6456,7 @@ function NotebooksTab({
                   <button
                     className="secondary-button"
                     disabled={busy}
-                    onClick={() => void runAction(() => planNotebookExecution(recommendedNotebook))}
+                    onClick={() => void runAction(() => planNotebookExecution(reviewNotebook))}
                   >
                     {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
                     Plan
@@ -6493,7 +6512,8 @@ function NotebooksTab({
               </div>,
               <div className="badge-row" key={`${item.notebook_artifact_id}-state`}>
                 <span className="badge muted">{notebookCoverageLabel(item)}</span>
-                {item.notebook_artifact_id === recommendedNotebook?.notebook_artifact_id ? <span className="badge">recommended</span> : null}
+                <span className={notebookReadinessClass(item)}>{notebookReadinessLabel(item)}</span>
+                {item.notebook_artifact_id === reviewNotebook?.notebook_artifact_id ? <span className="badge">current</span> : null}
               </div>,
               <div className="row-actions" key={`${item.notebook_artifact_id}-actions`}>
                 <button
@@ -7035,6 +7055,31 @@ function notebookCoverageLabel(item: NotebookIndexItem) {
     item.coverage.has_execution_capture ? "capture" : null
   ].filter(Boolean);
   return flags.length ? flags.join(" / ") : "source only";
+}
+
+function isEmptyDiagnosticsNotebook(item: NotebookIndexItem | null) {
+  if (!item || item.notebook_kind !== "model_diagnostics") return false;
+  return String(item.content?.readiness ?? item.coverage.content_readiness ?? "") === "not_ready";
+}
+
+function notebookReadinessLabel(item: NotebookIndexItem) {
+  const readiness = String(item.content?.readiness ?? item.coverage.content_readiness ?? "unknown");
+  const labels: Record<string, string> = {
+    evidence_ready: "evidence ready",
+    narrative_ready: "narrative ready",
+    partial_review: "partial review",
+    not_ready: "not ready",
+    source_only: "source only",
+    unknown: "unknown"
+  };
+  return labels[readiness] ?? readiness.replace(/_/g, " ");
+}
+
+function notebookReadinessClass(item: NotebookIndexItem) {
+  const readiness = String(item.content?.readiness ?? item.coverage.content_readiness ?? "unknown");
+  if (readiness === "evidence_ready" || readiness === "narrative_ready") return "badge";
+  if (readiness === "not_ready") return "badge risk";
+  return "badge muted";
 }
 
 function notebookSourceLabel(item: NotebookIndexItem) {

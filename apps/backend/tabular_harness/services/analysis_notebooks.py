@@ -899,15 +899,92 @@ def build_notebook_evidence_figure_specs(
     summary: dict[str, Any],
     generated_at: str,
 ) -> list[dict[str, str]]:
+    if notebook_kind == "model_diagnostics":
+        prediction_summary = _dict_value(summary.get("prediction_summary"))
+        score_bins = [
+            cast(dict[str, Any], item)
+            for item in _list_value(prediction_summary.get("score_bins"))
+            if isinstance(item, dict)
+        ]
+        feature_rows = [
+            cast(dict[str, Any], item)
+            for item in _list_value(summary.get("feature_family_rows"))
+            if isinstance(item, dict)
+        ]
+        findings = [
+            cast(dict[str, Any], item)
+            for item in _list_value(summary.get("findings"))
+            if isinstance(item, dict)
+        ]
+        return [
+            {
+                "figure_id": "diagnostics_readiness",
+                "title": "Diagnostics Readiness",
+                "description": "Whether the model notebook has enough evidence for human review.",
+                "svg": svg_bar_chart(
+                    title="Diagnostics readiness",
+                    rows=[
+                        {"label": "metric available", "value": 1 if summary.get("primary_metric_value") is not None else 0},
+                        {"label": "prediction rows", "value": int(prediction_summary.get("row_count") or 0)},
+                        {"label": "feature families", "value": len(feature_rows)},
+                        {"label": "findings", "value": len(findings)},
+                    ],
+                    value_format="integer",
+                    empty_message="No model diagnostic evidence is available yet.",
+                ),
+            },
+            {
+                "figure_id": "feature_family_inventory",
+                "title": "Feature Family Inventory",
+                "description": "Feature families reported by the model run.",
+                "svg": svg_bar_chart(
+                    title="Feature family inventory",
+                    rows=[
+                        {"label": str(row.get("family") or "unknown"), "value": int(row.get("count") or 0)}
+                        for row in feature_rows
+                    ],
+                    value_format="integer",
+                    empty_message="Feature-family counts are not available for this run yet.",
+                ),
+            },
+            {
+                "figure_id": "prediction_score_bins",
+                "title": "Prediction Score Bins",
+                "description": "Prediction score distribution when prediction artifacts are available.",
+                "svg": svg_bar_chart(
+                    title="Prediction score bins",
+                    rows=[
+                        {"label": str(row.get("bin") or "bin"), "value": int(row.get("count") or 0)}
+                        for row in score_bins
+                    ],
+                    value_format="integer",
+                    empty_message="Prediction score bins are not available. Persist validation predictions before reading model behavior.",
+                ),
+            },
+            {
+                "figure_id": "diagnostics_attention_counts",
+                "title": "Diagnostics Attention Counts",
+                "description": "Finding severity counts for the next model-review action.",
+                "svg": svg_bar_chart(
+                    title="Diagnostics attention counts",
+                    rows=[
+                        {"label": severity, "value": count}
+                        for severity, count in _count_rows(findings, "severity")
+                    ],
+                    value_format="integer",
+                    empty_message="No findings are available yet.",
+                ),
+            },
+        ]
     if notebook_kind != "data_understanding":
         return [
             {
-                "figure_id": "diagnostics_evidence_summary",
-                "title": "Diagnostics Evidence Summary",
-                "description": "Model diagnostics evidence rendered from available run summary context.",
+                "figure_id": "notebook_evidence_summary",
+                "title": "Notebook Evidence Summary",
+                "description": "Evidence rendered from available notebook context.",
                 "svg": svg_message_chart(
-                    title="Diagnostics evidence",
-                    message="Run-level model diagnostics will be rendered after model artifacts expose detailed metrics.",
+                    title="Notebook evidence",
+                    message="No specialized evidence renderer exists for this notebook kind yet.",
                     subtitle=f"Project {project.name} | Notebook {notebook_artifact.id} | {generated_at}",
                 ),
             }
@@ -1106,6 +1183,9 @@ def format_svg_value(value: float, value_format: str) -> str:
 def render_notebook_evidence_html(bundle: dict[str, Any], figure_specs: list[dict[str, str]]) -> str:
     summary = cast(dict[str, Any], bundle["summary"])
     tables = cast(dict[str, Any], bundle["tables"])
+    notebook_kind = str(bundle.get("notebook_kind") or "analysis")
+    kind_label = notebook_kind.replace("_", " ").title()
+    playbook_title = "EDA playbook" if notebook_kind == "data_understanding" else "Review playbook"
     brief = _dict_value(tables.get("analysis_brief"))
     read_order = [
         cast(dict[str, Any], item) for item in _list_value(brief.get("read_this_first")) if isinstance(item, dict)
@@ -1128,7 +1208,7 @@ def render_notebook_evidence_html(bundle: dict[str, Any], figure_specs: list[dic
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tablex Notebook EDA Evidence</title>
+  <title>Tablex Notebook Evidence Review</title>
   <style>
     :root {{ color-scheme: light dark; --ink:#10183f; --muted:#53617d; --line:#dbe3f3; --panel:#fff; --wash:#f4f9fb; --teal:#18b8a6; }}
     body {{ margin:0; background:linear-gradient(180deg,#f8fbff 0%,#eef8f6 100%); color:var(--ink); font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }}
@@ -1158,7 +1238,7 @@ def render_notebook_evidence_html(bundle: dict[str, Any], figure_specs: list[dic
   <main>
     <header class="hero">
       <div>
-        <div class="eyebrow">Notebook EDA Evidence</div>
+        <div class="eyebrow">Notebook Evidence Review · {escape(kind_label)}</div>
         <h1>{escape(str(summary.get("title") or "EDA evidence bundle"))}</h1>
         <p>{escape(str(brief.get("headline") or summary.get("overview") or ""))}</p>
       </div>
@@ -1183,7 +1263,7 @@ def render_notebook_evidence_html(bundle: dict[str, Any], figure_specs: list[dic
       <div class="story-grid">{_story_card_rows(story_cards)}</div>
     </section>
     <section class="panel">
-      <h2>EDA playbook</h2>
+      <h2>{escape(playbook_title)}</h2>
       {_playbook_rows(playbook)}
     </section>
     {figures_html}
@@ -2438,6 +2518,8 @@ def _notebook_index_item(
     report = reports_by_artifact_id.get(report_artifact.id) if report_artifact else None
     visualization = visualizations_by_artifact_id.get(visualization_artifact.id) if visualization_artifact else None
     execution_metadata = loads_json(execution_manifest_artifact.metadata_json, {}) if execution_manifest_artifact else {}
+    context_summary = _notebook_artifact_context_summary(notebook_artifact)
+    content = _notebook_content_signal(notebook_kind, context_summary)
     coverage = {
         "has_html_preview": html_artifact is not None,
         "has_manifest": manifest_artifact is not None,
@@ -2450,8 +2532,10 @@ def _notebook_index_item(
         "has_figure_manifest": figure_manifest_artifact is not None,
         "execution_status": str(metadata.get("execution_status") or "unknown"),
         "execution_capture_status": str(execution_metadata.get("execution_status") or "not_captured"),
+        "content_readiness": content["readiness"],
+        "content_quality_score": content["quality_score"],
     }
-    recommendation_score = _notebook_recommendation_score(notebook_kind, coverage, metadata)
+    recommendation_score = _notebook_recommendation_score(notebook_kind, coverage, metadata, content)
     return {
         "notebook_artifact_id": notebook_artifact.id,
         "notebook_kind": notebook_kind,
@@ -2478,8 +2562,9 @@ def _notebook_index_item(
         "report_id": report.id if report else None,
         "visualization_id": visualization.id if visualization else None,
         "coverage": coverage,
+        "content": content,
         "recommendation_score": recommendation_score,
-        "recommendation_reason": _notebook_recommendation_reason(notebook_kind, coverage),
+        "recommendation_reason": _notebook_recommendation_reason(notebook_kind, coverage, content),
     }
 
 
@@ -2683,9 +2768,10 @@ def build_notebook_figure_manifest(
             "feature_review_queue_counts",
         ],
         "model_diagnostics": [
+            "diagnostics_readiness",
             "feature_family_inventory",
             "prediction_score_bins",
-            "diagnostics_coverage_summary",
+            "diagnostics_attention_counts",
         ],
     }.get(notebook_kind, ["notebook_generated_figures"])
     rendered = rendered_figures or []
@@ -2949,12 +3035,13 @@ def _notebook_recommendation_score(
     notebook_kind: str,
     coverage: dict[str, Any],
     metadata: dict[str, Any],
+    content: dict[str, Any],
 ) -> int:
     score = 20
     if notebook_kind == "model_diagnostics":
-        score += 30
+        score += 10
     if notebook_kind == "data_understanding":
-        score += 20
+        score += 35
     if coverage.get("has_html_preview"):
         score += 20
     if coverage.get("has_report"):
@@ -2969,6 +3056,19 @@ def _notebook_recommendation_score(
         score += 8
     if coverage.get("execution_status") == "generated_not_executed":
         score += 2
+    readiness = str(content.get("readiness") or "unknown")
+    quality_score = int(content.get("quality_score") or 0)
+    if notebook_kind == "model_diagnostics":
+        if readiness == "evidence_ready":
+            score += 90
+        elif readiness == "partial_review":
+            score += 14
+        elif readiness == "not_ready":
+            score -= 55
+    elif notebook_kind == "data_understanding":
+        score += min(50, quality_score)
+    else:
+        score += min(20, quality_score)
     return score
 
 
@@ -3048,16 +3148,79 @@ def _notebook_title(notebook_kind: str) -> str:
     return "Analysis Notebook"
 
 
-def _notebook_recommendation_reason(notebook_kind: str, coverage: dict[str, Any]) -> str:
+def _notebook_recommendation_reason(notebook_kind: str, coverage: dict[str, Any], content: dict[str, Any]) -> str:
+    readiness = str(content.get("readiness") or "unknown")
+    if notebook_kind == "model_diagnostics" and readiness == "not_ready":
+        return "Model diagnostics exists, but it is not useful yet because metric, prediction, or diagnostic evidence is missing."
+    if notebook_kind == "model_diagnostics" and readiness == "partial_review":
+        return "Use only as a diagnostics coverage check; fill missing prediction or diagnostic evidence before model claims."
+    if notebook_kind == "model_diagnostics" and readiness == "evidence_ready":
+        return "Evidence-rich model review: metrics, prediction coverage, and diagnostics are available enough for a first read."
+    if notebook_kind == "data_understanding" and readiness in {"evidence_ready", "narrative_ready"}:
+        return "Best starting point: Data Understanding has narrative, story cards, playbook, and evidence figures."
     if coverage.get("has_execution_capture"):
         return "Most complete notebook evidence: preview, report, execution plan, and safe static capture are available."
-    if notebook_kind == "model_diagnostics":
-        return "Most actionable after experiments because it ties metrics, predictions, validation, and diagnostics together."
     if notebook_kind == "data_understanding":
         return "Best starting point before target, evaluation, or feature decisions."
     if coverage.get("has_html_preview"):
         return "Preview is available inside the workbench."
     return "Notebook source exists, but preview/report coverage is incomplete."
+
+
+def _notebook_artifact_context_summary(notebook_artifact: Artifact) -> dict[str, Any]:
+    try:
+        source = artifact_primary_path(notebook_artifact).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    context = extract_notebook_context(source)
+    summary = context.get("summary") if isinstance(context.get("summary"), dict) else {}
+    return cast(dict[str, Any], summary)
+
+
+def _notebook_content_signal(notebook_kind: str, summary: dict[str, Any]) -> dict[str, Any]:
+    if notebook_kind == "data_understanding":
+        brief = _dict_value(summary.get("analysis_brief"))
+        read_count = len(_list_value(brief.get("read_this_first")))
+        story_count = len(_list_value(summary.get("visual_story_cards")))
+        playbook_count = len(_list_value(summary.get("eda_playbook")))
+        figure_queue_count = len(_list_value(summary.get("feature_family_summary")))
+        quality_score = min(100, read_count * 12 + story_count * 8 + playbook_count * 8 + figure_queue_count * 2)
+        readiness = "narrative_ready" if read_count and story_count and playbook_count else "source_only"
+        return {
+            "readiness": readiness,
+            "quality_score": quality_score,
+            "read_order_count": read_count,
+            "story_card_count": story_count,
+            "playbook_count": playbook_count,
+            "primary_metric_available": False,
+            "prediction_rows": 0,
+        }
+    if notebook_kind == "model_diagnostics":
+        prediction_summary = _dict_value(summary.get("prediction_summary"))
+        prediction_rows = int(prediction_summary.get("row_count") or 0)
+        has_metric = summary.get("primary_metric_value") is not None
+        has_predictions = prediction_rows > 0 and prediction_summary.get("status") == "available"
+        readiness = str(summary.get("evidence_readiness") or "not_ready")
+        quality_score = int(summary.get("evidence_quality_score") or 0)
+        return {
+            "readiness": readiness,
+            "quality_score": quality_score,
+            "read_order_count": len(_list_value(_dict_value(summary.get("analysis_brief")).get("read_this_first"))),
+            "story_card_count": len(_list_value(summary.get("visual_story_cards"))),
+            "playbook_count": len(_list_value(summary.get("eda_playbook"))),
+            "primary_metric_available": has_metric,
+            "prediction_rows": prediction_rows,
+            "has_predictions": has_predictions,
+        }
+    return {
+        "readiness": "unknown",
+        "quality_score": 0,
+        "read_order_count": 0,
+        "story_card_count": 0,
+        "playbook_count": 0,
+        "primary_metric_available": False,
+        "prediction_rows": 0,
+    }
 
 
 def _latest_artifact_for_metadata(
@@ -3145,7 +3308,11 @@ def _model_diagnostics_summary(
     prediction_summary: dict[str, Any],
     source_artifacts: dict[str, Artifact | None],
 ) -> dict[str, Any]:
-    primary_metric_name = str(metrics.get("primary_metric_name") or model_version.primary_metric_name if model_version else metrics.get("primary_metric_name") or "")
+    primary_metric_name = str(
+        metrics.get("primary_metric_name")
+        or (model_version.primary_metric_name if model_version else None)
+        or ""
+    )
     primary_metric_value = metrics.get("primary_metric_value")
     if primary_metric_value is None and model_version is not None:
         primary_metric_value = model_version.primary_metric_value
@@ -3161,6 +3328,20 @@ def _model_diagnostics_summary(
         validation=validation,
         prediction_summary=prediction_summary,
         model_version=model_version,
+    )
+    evidence_state = _model_diagnostics_evidence_state(
+        primary_metric_value=primary_metric_value,
+        prediction_summary=prediction_summary,
+        diagnostics=diagnostics,
+        feature_rows=feature_rows,
+        findings=findings,
+    )
+    brief = _model_diagnostics_analysis_brief(
+        run=run,
+        primary_metric_name=primary_metric_name,
+        primary_metric_value=primary_metric_value,
+        prediction_summary=prediction_summary,
+        evidence_state=evidence_state,
     )
     overview = (
         f"Generated model diagnostics notebook for run {run.id}. "
@@ -3194,7 +3375,274 @@ def _model_diagnostics_summary(
         "validation_status": validation_status,
         "artifact_coverage": artifact_coverage,
         "findings": findings,
+        "evidence_readiness": evidence_state["readiness"],
+        "evidence_quality_score": evidence_state["quality_score"],
+        "analysis_brief": brief,
+        "visual_story_cards": _model_diagnostics_story_cards(
+            primary_metric_name=primary_metric_name,
+            primary_metric_value=primary_metric_value,
+            prediction_summary=prediction_summary,
+            feature_rows=feature_rows,
+            diagnostics=diagnostics,
+            findings=findings,
+            evidence_state=evidence_state,
+        ),
+        "eda_playbook": _model_diagnostics_playbook(
+            primary_metric_name=primary_metric_name,
+            prediction_summary=prediction_summary,
+            diagnostics=diagnostics,
+            findings=findings,
+            evidence_state=evidence_state,
+        ),
+        "evaluation_guardrails": _model_diagnostics_guardrails(evidence_state),
+        "analysis_questions": _model_diagnostics_questions(evidence_state),
+        "codex_navigation_prompts": _model_diagnostics_prompts(evidence_state),
     }
+
+
+def _model_diagnostics_evidence_state(
+    *,
+    primary_metric_value: object,
+    prediction_summary: dict[str, Any],
+    diagnostics: dict[str, Any],
+    feature_rows: list[dict[str, Any]],
+    findings: list[dict[str, str]],
+) -> dict[str, Any]:
+    has_metric = primary_metric_value is not None
+    prediction_rows = int(prediction_summary.get("row_count") or 0)
+    has_predictions = prediction_summary.get("status") == "available" and prediction_rows > 0
+    has_diagnostics = bool(diagnostics)
+    used_feature_families = sum(1 for row in feature_rows if int(row.get("count") or 0) > 0)
+    high_findings = sum(1 for item in findings if str(item.get("severity") or "") == "high")
+    quality_score = 0
+    quality_score += 30 if has_metric else 0
+    quality_score += 30 if has_predictions else 0
+    quality_score += 20 if has_diagnostics else 0
+    quality_score += min(15, used_feature_families * 4)
+    quality_score += 5 if findings else 0
+    if quality_score >= 70:
+        readiness = "evidence_ready"
+    elif quality_score >= 35:
+        readiness = "partial_review"
+    else:
+        readiness = "not_ready"
+    return {
+        "readiness": readiness,
+        "quality_score": quality_score,
+        "has_metric": has_metric,
+        "has_predictions": has_predictions,
+        "has_diagnostics": has_diagnostics,
+        "prediction_rows": prediction_rows,
+        "used_feature_families": used_feature_families,
+        "high_finding_count": high_findings,
+    }
+
+
+def _model_diagnostics_analysis_brief(
+    *,
+    run: ExperimentRun,
+    primary_metric_name: str,
+    primary_metric_value: object,
+    prediction_summary: dict[str, Any],
+    evidence_state: dict[str, Any],
+) -> dict[str, Any]:
+    readiness = str(evidence_state["readiness"])
+    prediction_rows = int(evidence_state["prediction_rows"])
+    if readiness == "evidence_ready":
+        headline = "This model review has enough run evidence for a first human read."
+        decision_state = "review model behavior"
+        why = (
+            "Metric, prediction, and diagnostic artifacts are present enough to inspect model behavior, "
+            "not just leaderboard position."
+        )
+    elif readiness == "partial_review":
+        headline = "This model review is useful only as a coverage check, not as a model-quality claim."
+        decision_state = "fill diagnostic gaps"
+        why = "Some run evidence exists, but missing prediction or diagnostics coverage limits interpretation."
+    else:
+        headline = "Do not read this as a model diagnostic notebook yet."
+        decision_state = "not ready"
+        why = (
+            "The run does not expose enough metric, prediction, or diagnostics evidence. Return to Data Understanding "
+            "or rerun baseline diagnostics before spending attention here."
+        )
+    return {
+        "headline": headline,
+        "decision_state": decision_state,
+        "why_it_matters": why,
+        "profile_boundary": (
+            f"Run {run.id}; primary metric "
+            f"{primary_metric_name or 'unknown'}={_format_metric(primary_metric_value)}; "
+            f"prediction rows={prediction_rows}."
+        ),
+        "read_this_first": [
+            {
+                "title": "Readiness verdict",
+                "why": headline,
+                "artifact_hint": "Check evidence readiness and prediction coverage before reading charts.",
+            },
+            {
+                "title": "Metric and split context",
+                "why": "A single metric only matters if it matches the approved EvaluationSpec and split.",
+                "artifact_hint": f"Primary metric: {primary_metric_name or 'unknown'}={_format_metric(primary_metric_value)}.",
+            },
+            {
+                "title": "Prediction coverage",
+                "why": "Model behavior cannot be diagnosed without persisted validation predictions.",
+                "artifact_hint": f"Prediction rows summarized: {prediction_rows}.",
+            },
+            {
+                "title": "Next Codex task",
+                "why": "Use Codex to fill the most important missing evidence instead of hand-reading empty panels.",
+                "artifact_hint": "Ask for diagnostics, feature importance, permutation importance, calibration, or slice analysis.",
+            },
+        ],
+    }
+
+
+def _model_diagnostics_story_cards(
+    *,
+    primary_metric_name: str,
+    primary_metric_value: object,
+    prediction_summary: dict[str, Any],
+    feature_rows: list[dict[str, Any]],
+    diagnostics: dict[str, Any],
+    findings: list[dict[str, str]],
+    evidence_state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    prediction_rows = int(evidence_state["prediction_rows"])
+    metric_status = "ready" if evidence_state["has_metric"] else "missing"
+    prediction_status = "ready" if evidence_state["has_predictions"] else "missing"
+    diagnostics_status = "ready" if evidence_state["has_diagnostics"] else "missing"
+    feature_count = sum(int(row.get("count") or 0) for row in feature_rows)
+    return [
+        {
+            "title": "Metric credibility",
+            "status": metric_status,
+            "why_read": "Start by asking whether the primary metric is meaningful for the user's decision.",
+            "signal": f"{primary_metric_name or 'unknown'}={_format_metric(primary_metric_value)}",
+        },
+        {
+            "title": "Prediction coverage",
+            "status": prediction_status,
+            "why_read": "Prediction artifacts unlock score bins, threshold review, calibration, and error analysis.",
+            "signal": f"{prediction_rows} prediction rows summarized.",
+        },
+        {
+            "title": "Diagnostics depth",
+            "status": diagnostics_status,
+            "why_read": "Slice metrics, worst examples, and sanity checks are needed before trusting aggregate lift.",
+            "signal": _diagnostics_coverage(diagnostics, {}),
+        },
+        {
+            "title": "Feature evidence",
+            "status": "partial" if feature_count else "missing",
+            "why_read": "Feature-family usage tells Codex where to add importance, PDP, and error-slice analysis.",
+            "signal": f"{feature_count} features reported across families.",
+        },
+        {
+            "title": "Attention queue",
+            "status": "review",
+            "why_read": "Findings define the next useful analysis rather than leaving the user with raw artifacts.",
+            "signal": f"{len(findings)} finding(s), {evidence_state['high_finding_count']} high severity.",
+        },
+    ]
+
+
+def _model_diagnostics_playbook(
+    *,
+    primary_metric_name: str,
+    prediction_summary: dict[str, Any],
+    diagnostics: dict[str, Any],
+    findings: list[dict[str, str]],
+    evidence_state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "stage": "1. Decide whether the notebook is worth reading",
+            "reader_question": "Is this a real diagnostic review or only a placeholder generated before evidence exists?",
+            "current_evidence": f"readiness={evidence_state['readiness']}; quality_score={evidence_state['quality_score']}",
+            "codex_followup": "If not_ready, ask Codex to run or repair baseline diagnostics before reading further.",
+        },
+        {
+            "stage": "2. Interpret the primary metric",
+            "reader_question": "Does the metric match the problem type, class balance, and business decision?",
+            "current_evidence": primary_metric_name or "No primary metric recorded.",
+            "codex_followup": "Ask Codex to explain metric choice and compare alternatives only through EvaluationSpec.",
+        },
+        {
+            "stage": "3. Inspect prediction behavior",
+            "reader_question": "Where do scores concentrate, and are predictions available for threshold/calibration review?",
+            "current_evidence": f"{int(prediction_summary.get('row_count') or 0)} prediction rows.",
+            "codex_followup": "Ask Codex for score bins, calibration, threshold, and error-slice artifacts.",
+        },
+        {
+            "stage": "4. Diagnose failures before optimizing",
+            "reader_question": "Which slices, time periods, groups, or examples explain model weakness?",
+            "current_evidence": _diagnostics_coverage(diagnostics, {}),
+            "codex_followup": "Ask Codex to add slice metrics and worst-example review when diagnostics are missing.",
+        },
+        {
+            "stage": "5. Convert findings into the next experiment",
+            "reader_question": "Which single missing evidence item blocks the next credible modeling step?",
+            "current_evidence": f"{len(findings)} finding(s) queued.",
+            "codex_followup": "Create one targeted agent task, not a broad rerun.",
+        },
+    ]
+
+
+def _model_diagnostics_guardrails(evidence_state: dict[str, Any]) -> list[dict[str, str]]:
+    guardrails = [
+        {
+            "guardrail": "Do not trust empty diagnostics",
+            "detail": "A model notebook with no predictions or metrics is a readiness signal, not model evidence.",
+            "risk": "high" if evidence_state["readiness"] == "not_ready" else "medium",
+            "status": str(evidence_state["readiness"]),
+        },
+        {
+            "guardrail": "Respect EvaluationSpec and SplitManifest",
+            "detail": "Do not recompute metrics on ad hoc splits while creating model diagnostics.",
+            "risk": "high",
+            "status": "always_on",
+        },
+    ]
+    if not evidence_state["has_predictions"]:
+        guardrails.append(
+            {
+                "guardrail": "Persist predictions before explanation",
+                "detail": "Importance, PDP, calibration, threshold, and error review need prediction artifacts.",
+                "risk": "high",
+                "status": "blocked",
+            }
+        )
+    return guardrails
+
+
+def _model_diagnostics_questions(evidence_state: dict[str, Any]) -> list[str]:
+    questions = [
+        "Does the primary metric align with the approved evaluation design?",
+        "Which validation slices or examples explain the current score?",
+    ]
+    if not evidence_state["has_predictions"]:
+        questions.insert(0, "Why were validation predictions not persisted for this run?")
+    if not evidence_state["has_diagnostics"]:
+        questions.append("Which diagnostics should the runner materialize first: slices, calibration, or worst examples?")
+    return questions
+
+
+def _model_diagnostics_prompts(evidence_state: dict[str, Any]) -> list[str]:
+    if evidence_state["readiness"] == "not_ready":
+        return [
+            "This notebook is not ready. Generate or repair baseline diagnostics, then recreate the model diagnostics notebook.",
+            "Find why prediction rows are zero and persist validation predictions as artifacts.",
+            "Open Data Understanding evidence first; do not compare models from this placeholder.",
+        ]
+    return [
+        "Explain the primary metric in business terms and identify one failure-analysis artifact to generate next.",
+        "Add artifact-backed feature importance and permutation importance for this run.",
+        "Create calibration, threshold, and score-bin interpretation without changing EvaluationSpec.",
+        "Inspect worst examples and slice metrics before recommending a new modeling approach.",
+    ]
 
 
 def _feature_family_rows(metrics: dict[str, Any]) -> list[dict[str, Any]]:
