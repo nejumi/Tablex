@@ -222,10 +222,6 @@ textarea {
   padding: 22px 28px 36px;
 }
 
-.main.with-agent-rail {
-  padding-right: 356px;
-}
-
 .topbar {
   display: flex;
   align-items: flex-start;
@@ -1682,19 +1678,20 @@ td {
 
 .agent-activity-rail {
   position: fixed;
-  top: 18px;
+  top: 82px;
   right: 18px;
-  bottom: 18px;
   z-index: 18;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
-  width: 314px;
+  width: min(352px, calc(100vw - 28px));
+  max-height: calc(100vh - 104px);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface) 96%, transparent);
   box-shadow: 0 18px 54px var(--shadow);
   padding: 12px;
+  animation: activity-pop 180ms ease-out;
 }
 
 .agent-activity-header {
@@ -1734,6 +1731,15 @@ td {
   border-radius: 8px;
   background: var(--surface-muted);
   padding: 10px;
+  animation: worker-pop 180ms ease-out;
+}
+
+.agent-worker-card.active,
+.agent-worker-card.running,
+.agent-worker-card.queued,
+.agent-worker-card.approval_required {
+  border-left-color: var(--accent-2);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--accent-2) 16%, transparent);
 }
 
 .agent-worker-card.needs_review {
@@ -1789,6 +1795,43 @@ td {
   min-width: 8px;
   border-radius: 5px 5px 2px 2px;
   background: linear-gradient(180deg, var(--accent), var(--accent-2));
+}
+
+.token-sparkline.live span {
+  animation: token-pulse 880ms ease-in-out infinite alternate;
+}
+
+@keyframes activity-pop {
+  from {
+    opacity: 0;
+    transform: translate3d(10px, -6px, 0) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes worker-pop {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes token-pulse {
+  from {
+    filter: saturate(0.9);
+    transform: scaleY(0.88);
+  }
+  to {
+    filter: saturate(1.2);
+    transform: scaleY(1);
+  }
 }
 
 .agent-worker-meta {
@@ -2035,10 +2078,6 @@ td {
     padding: 18px;
   }
 
-  .main.with-agent-rail {
-    padding: 18px;
-  }
-
   .two-column,
   .focus-guide,
   .supporting-details-body,
@@ -2080,10 +2119,12 @@ td {
   }
 
   .agent-activity-rail {
-    position: static;
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
     width: auto;
-    max-height: none;
-    order: 3;
+    max-height: 72vh;
   }
 
   .settings-panel {

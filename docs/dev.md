@@ -293,9 +293,25 @@ The Reports tab renders `visualization_spec.v1` records with typed UI previews f
 
 Approach Ideas are not fixed recipes. They are evidence-backed proposals with `AgentTaskContract` payloads for future Codex, Skill-library, and controlled web or literature research runners. The harness still owns EvaluationSpec, SplitManifest, artifacts, lineage, safety controls, and report outputs.
 
-The project UI includes a persistent Agent Chat dock across project tabs. Submitting text posts to `/api/projects/{project_id}/agent-chat`, which returns a human-facing assistant message, interpreted intent, actions taken, worker events, estimated token telemetry, and an `agent_chat_turn` artifact. Safe harness-owned intents can act immediately; for example, "metricはROC-AUCにして" updates mutable EvaluationCandidates or draft EvaluationSpecs, but records a review artifact instead of destructively changing approved EvaluationSpecs/SplitManifests. Requests that need runner work still create a harness-owned `AgentTaskContract` using the current project context, so later Codex/LocalStub runners operate through Tablex approvals, artifacts, lineage, safety policy, and reporting requirements. The project UI also includes a right-edge Agent Activity rail that shows recent agent/notebook/research workers, status, action summaries, estimated token time series, and a small worker-specific chat input. Token counts are marked as estimates until real Codex runner telemetry is available.
+The project UI includes a persistent Agent Chat dock across project tabs. Submitting text posts to `/api/projects/{project_id}/agent-chat`, which returns a human-facing assistant message, interpreted intent, actions taken, worker events, estimated token telemetry, and an `agent_chat_turn` artifact. Safe harness-owned intents can act immediately; for example, "metricはROC-AUCにして" updates mutable EvaluationCandidates or draft EvaluationSpecs, but records a review artifact instead of destructively changing approved EvaluationSpecs/SplitManifests. Requests that need runner work still create a harness-owned `AgentTaskContract` using the current project context, so later Codex/LocalStub runners operate through Tablex approvals, artifacts, lineage, safety policy, and reporting requirements. The project UI also includes a right-edge Agent Activity overlay that appears only while agent/notebook/research work is active or has just completed. It shows worker cards, status, action summaries, animated estimated token time series, and a small worker-specific chat input. Token counts are marked as estimates until real Codex runner telemetry is available.
 
-The app has a top-level Portal above individual project workspaces. It shows cross-project portfolio status from the project list, recent project updates, and a local idea inbox for product, UX, data, modeling, or reporting follow-up. Project detail pages include a "Back to Portal" affordance so users are not trapped inside one project workspace.
+Project-scoped agent activity can be inspected with:
+
+```bash
+curl http://localhost:8000/api/projects/{project_id}/agent-activity
+```
+
+The app has a top-level Portal above individual project workspaces. It shows cross-project portfolio status, backend-backed recent updates, and an idea inbox for product, UX, data, modeling, or reporting follow-up. Portal ideas are saved as cross-project `portal_idea` artifacts, not browser-only state:
+
+```bash
+curl http://localhost:8000/api/portal/overview
+curl http://localhost:8000/api/portal/ideas
+curl -X POST http://localhost:8000/api/portal/ideas \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Improve transient worker activity boxes."}'
+```
+
+Project detail pages include a "Back to Portal" affordance so users are not trapped inside one project workspace.
 
 The top-right User Settings icon stores local workbench preferences in browser `localStorage`. Display theme supports Light and Dark through `document.documentElement.dataset.theme`. Language settings are LocalePack-based rather than a fixed language enum: built-in packs are `en-US` and `ja-JP`, and any missing locale can be added as a local dynamic pack that falls back to English for untranslated keys. App shell, tabs, common actions, create-project controls, settings, and persistent Agent Chat copy are LocalePack-driven. Creating a localization task from settings posts `task_type=generate_locale_pack` to `/api/projects/{project_id}/approach/agent-task-plan`; it produces a harness-owned AgentTaskContract and must not include secrets or connector credentials.
 

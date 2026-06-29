@@ -44,7 +44,6 @@ type UserSettings = {
 
 const userSettingsStorageKey = "tablex.userSettings.v1";
 const dynamicLocaleStorageKey = "tablex.dynamicLocalePacks.v1";
-const portalIdeasStorageKey = "tablex.portalIdeas.v1";
 
 const defaultUserSettings: UserSettings = {
   locale: "en-US",
@@ -394,26 +393,6 @@ function loadUserSettings(): UserSettings {
     };
   } catch {
     return defaultUserSettings;
-  }
-}
-
-function loadPortalIdeas(): PortalIdea[] {
-  try {
-    const raw = window.localStorage.getItem(portalIdeasStorageKey);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is PortalIdea => {
-      return (
-        item &&
-        typeof item === "object" &&
-        typeof item.id === "string" &&
-        typeof item.text === "string" &&
-        typeof item.created_at === "string"
-      );
-    });
-  } catch {
-    return [];
   }
 }
 
@@ -799,6 +778,7 @@ type EvaluationSpec = {
 
 type Job = {
   id: string;
+  project_id: string | null;
   job_type: string;
   status: string;
   priority: number;
@@ -817,6 +797,7 @@ type Job = {
   locked_by: string | null;
   locked_at: string | null;
   created_at: string;
+  updated_at: string;
   started_at: string | null;
   ended_at: string | null;
   output: Record<string, unknown>;
@@ -842,7 +823,11 @@ type AgentWorkerEvent = {
   headline: string;
   detail: string;
   job_id: string;
+  project_id?: string | null;
   target_tab: string | null;
+  created_at?: string;
+  updated_at?: string;
+  active?: boolean;
   token_usage: {
     source: string;
     is_estimate: boolean;
@@ -883,8 +868,45 @@ type AgentChatMessage = {
 
 type PortalIdea = {
   id: string;
+  artifact_id?: string;
   text: string;
+  status?: string;
+  source?: string;
   created_at: string;
+};
+
+type PortalUpdate = {
+  type: string;
+  project_id: string | null;
+  title: string;
+  summary: string;
+  created_at: string;
+  target_tab: string | null;
+};
+
+type PortalOverview = {
+  schema_version: "portal_overview.v1";
+  generated_at: string;
+  summary: Record<string, unknown>;
+  projects: Array<{
+    id: string;
+    name: string;
+    description: string | null;
+    status: string;
+    current_phase: string;
+    updated_at: string;
+  }>;
+  recent_updates: PortalUpdate[];
+  agent_activity: AgentWorkerEvent[];
+  ideas: PortalIdea[];
+};
+
+type AgentActivityResponse = {
+  schema_version: "agent_activity.v1";
+  project_id: string;
+  generated_at: string;
+  active_count: number;
+  workers: AgentWorkerEvent[];
 };
 
 type Run = {
@@ -1467,7 +1489,8 @@ function App() {
   const [tab, setTab] = React.useState<Tab>("Overview");
   const [userSettings, setUserSettings] = React.useState<UserSettings>(() => loadUserSettings());
   const [dynamicLocalePacks, setDynamicLocalePacks] = React.useState<LocalePack[]>(() => loadDynamicLocalePacks());
-  const [portalIdeas, setPortalIdeas] = React.useState<PortalIdea[]>(() => loadPortalIdeas());
+  const [portalOverview, setPortalOverview] = React.useState<PortalOverview | null>(null);
+  const [portalIdeas, setPortalIdeas] = React.useState<PortalIdea[]>([]);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -1478,18 +1501,22 @@ function App() {
   React.useEffect(() => {
     window.localStorage.setItem(userSettingsStorageKey, JSON.stringify(userSettings));
     window.localStorage.setItem(dynamicLocaleStorageKey, JSON.stringify(dynamicLocalePacks));
-    window.localStorage.setItem(portalIdeasStorageKey, JSON.stringify(portalIdeas));
     document.documentElement.lang = activeLocale.locale;
     document.documentElement.dir = activeLocale.direction;
     document.documentElement.dataset.theme = userSettings.displayTheme;
-  }, [activeLocale.direction, activeLocale.locale, dynamicLocalePacks, portalIdeas, userSettings]);
+  }, [activeLocale.direction, activeLocale.locale, dynamicLocalePacks, userSettings]);
 
   const refreshProjects = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await api<Project[]>("/api/projects");
+      const [data, portalData] = await Promise.all([
+        api<Project[]>("/api/projects"),
+        api<PortalOverview>("/api/portal/overview").catch(() => null)
+      ]);
       setProjects(data);
+      setPortalOverview(portalData);
+      setPortalIdeas(portalData?.ideas ?? []);
       if (!selectedProjectId && data[0]) {
         setSelectedProjectId(data[0].id);
       }
@@ -1546,6 +1573,24 @@ function App() {
     }));
   }
 
+  async function addPortalIdea(textValue: string) {
+    const idea = await api<PortalIdea>("/api/portal/ideas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: textValue })
+    });
+    setPortalIdeas((current) => [idea, ...current].slice(0, 40));
+    setPortalOverview((current) => {
+      if (!current) return current;
+      const previousCount = typeof current.summary.idea_count === "number" ? current.summary.idea_count : current.ideas.length;
+      return {
+        ...current,
+        summary: { ...current.summary, idea_count: previousCount + 1 },
+        ideas: [idea, ...current.ideas].slice(0, 40)
+      };
+    });
+  }
+
   return (
     <LocaleContext.Provider value={{ text, locale: activeLocale.locale }}>
       <div className="app-shell">
@@ -1578,7 +1623,7 @@ function App() {
         </div>
         <CreateProjectForm text={text} onCreated={refreshProjects} />
       </aside>
-      <main className={activeProject ? "main with-agent-rail" : "main"}>
+      <main className="main">
         <header className="topbar">
           <div>
             <div className="topbar-kicker">
@@ -1627,6 +1672,7 @@ function App() {
         {!loading && !activeProject && projects.length > 0 ? (
           <PortalView
             projects={projects}
+            overview={portalOverview}
             ideas={portalIdeas}
             text={text}
             onOpenProject={(projectId) => {
@@ -1634,7 +1680,7 @@ function App() {
               setViewMode("project");
               setTab("Overview");
             }}
-            onAddIdea={(idea) => setPortalIdeas((current) => [idea, ...current].slice(0, 40))}
+            onAddIdea={addPortalIdea}
           />
         ) : null}
         {activeProject ? (
@@ -1665,35 +1711,62 @@ function App() {
   );
 }
 
+function numberFromSummary(value: unknown, fallback: number | string): number | string {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
 function PortalView({
   projects,
+  overview,
   ideas,
   text,
   onOpenProject,
   onAddIdea
 }: {
   projects: Project[];
+  overview: PortalOverview | null;
   ideas: PortalIdea[];
   text: LocaleMessages;
   onOpenProject: (projectId: string) => void;
-  onAddIdea: (idea: PortalIdea) => void;
+  onAddIdea: (text: string) => Promise<void>;
 }) {
   const [draft, setDraft] = React.useState("");
-  const activeCount = projects.filter((project) => project.status !== "archived").length;
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const summary = overview?.summary ?? {};
+  const activeCount = numberFromSummary(summary.active_project_count, projects.filter((project) => project.status !== "archived").length);
+  const projectCount = numberFromSummary(summary.project_count, projects.length);
+  const jobCount = numberFromSummary(summary.job_count, "Project tabs");
+  const artifactCount = numberFromSummary(summary.artifact_count, "Workbench");
   const recentProjects = [...projects]
     .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))
     .slice(0, 6);
+  const recentUpdates =
+    overview?.recent_updates?.length
+      ? overview.recent_updates
+      : recentProjects.map((project) => ({
+          type: "project",
+          project_id: project.id,
+          title: project.name,
+          summary: formatWorkflowState(project.current_phase),
+          created_at: project.updated_at,
+          target_tab: "Overview"
+        }));
 
-  function addIdea(event: React.FormEvent) {
+  async function addIdea(event: React.FormEvent) {
     event.preventDefault();
     const value = draft.trim();
     if (!value) return;
-    onAddIdea({
-      id: `idea_${Date.now()}`,
-      text: value,
-      created_at: new Date().toISOString()
-    });
-    setDraft("");
+    setBusy(true);
+    setError(null);
+    try {
+      await onAddIdea(value);
+      setDraft("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -1708,10 +1781,10 @@ function PortalView({
       </div>
 
       <section className="metric-grid compact" aria-label={text.atAGlance}>
-        <Metric label={text.totalProjects} value={projects.length} />
+        <Metric label={text.totalProjects} value={projectCount} />
         <Metric label={text.activeProjects} value={activeCount} />
-        <Metric label={text.totalJobs} value="Project tabs" />
-        <Metric label={text.totalArtifacts} value="Workbench" />
+        <Metric label={text.totalJobs} value={jobCount} />
+        <Metric label={text.totalArtifacts} value={artifactCount} />
       </section>
 
       <section className="two-column">
@@ -1723,13 +1796,21 @@ function PortalView({
             </div>
           </div>
           <div className="portal-project-list">
-            {recentProjects.map((project) => (
-              <button key={project.id} className="portal-project-card" onClick={() => onOpenProject(project.id)} type="button">
+            {recentUpdates.slice(0, 8).map((update, index) => (
+              <button
+                key={`${update.type}-${update.project_id ?? "cross"}-${index}-${update.created_at}`}
+                className="portal-project-card"
+                onClick={() => {
+                  if (update.project_id) onOpenProject(update.project_id);
+                }}
+                type="button"
+                disabled={!update.project_id}
+              >
                 <span>
-                  <strong>{project.name}</strong>
-                  <small>{formatWorkflowState(project.current_phase)} · {new Date(project.updated_at).toLocaleString()}</small>
+                  <strong>{update.title}</strong>
+                  <small>{update.summary} · {new Date(update.created_at).toLocaleString()}</small>
                 </span>
-                <span className="secondary-button">{text.openProject}</span>
+                {update.project_id ? <span className="secondary-button">{text.openProject}</span> : null}
               </button>
             ))}
           </div>
@@ -1743,6 +1824,7 @@ function PortalView({
             </div>
           </div>
           <p className="muted-copy">{text.ideaInboxHint}</p>
+          {error ? <div className="banner danger">{error}</div> : null}
           <form className="portal-idea-form" onSubmit={addIdea}>
             <textarea
               value={draft}
@@ -1750,8 +1832,8 @@ function PortalView({
               placeholder={text.ideaInboxPlaceholder}
               rows={4}
             />
-            <button className="primary-button" disabled={!draft.trim()}>
-              <Plus size={16} />
+            <button className="primary-button" disabled={busy || !draft.trim()}>
+              {busy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
               {text.addIdea}
             </button>
           </form>
@@ -1980,6 +2062,8 @@ function ProjectDetail({
   const [error, setError] = React.useState<string | null>(null);
   const [agentChatMessages, setAgentChatMessages] = React.useState<AgentChatMessage[]>([]);
   const [agentWorkerEvents, setAgentWorkerEvents] = React.useState<AgentWorkerEvent[]>([]);
+  const [agentActivity, setAgentActivity] = React.useState<AgentActivityResponse | null>(null);
+  const [activityTick, setActivityTick] = React.useState(0);
   const focusRecommendation = React.useMemo(
     () => {
       if (guidance) return focusFromGuidance(guidance, text);
@@ -2029,6 +2113,7 @@ function ProjectDetail({
         libraryAssetsData,
         projectAssetReferencesData,
         lineageData,
+        agentActivityData,
         understandingData
       ] = await Promise.all([
         api<Overview>(`/api/projects/${project.id}/overview`),
@@ -2056,6 +2141,7 @@ function ProjectDetail({
         api<LibraryAsset[]>(`/api/assets`),
         api<AssetReference[]>(`/api/projects/${project.id}/asset-references`),
         api<LineageEdge[]>(`/api/projects/${project.id}/lineage`),
+        api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`).catch(() => null),
         api<{ markdown: string | null }>(`/api/projects/${project.id}/understanding/latest`)
       ]);
       setOverview(overviewData);
@@ -2082,6 +2168,7 @@ function ProjectDetail({
       setInsights(insightsData);
       setLibraryAssets(libraryAssetsData);
       setProjectAssetReferences(projectAssetReferencesData);
+      setAgentActivity(agentActivityData);
       const validationEntries = await Promise.all(
         modelVersionsData.map(async (modelVersion) => {
           const validations = await api<ModelValidation[]>(`/api/model-versions/${modelVersion.id}/validations`);
@@ -2096,9 +2183,29 @@ function ProjectDetail({
     }
   }, [project.id]);
 
+  const refreshAgentActivity = React.useCallback(async () => {
+    try {
+      const data = await api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`);
+      setAgentActivity(data);
+    } catch {
+      // The activity overlay is opportunistic; project refresh still surfaces hard errors.
+    }
+  }, [project.id]);
+
   React.useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  React.useEffect(() => {
+    const interval = window.setInterval(
+      () => {
+        setActivityTick((current) => current + 1);
+        void refreshAgentActivity();
+      },
+      busy ? 900 : 2400
+    );
+    return () => window.clearInterval(interval);
+  }, [busy, refreshAgentActivity]);
 
   async function runAction(action: () => Promise<unknown>) {
     setBusy(true);
@@ -2119,7 +2226,9 @@ function ProjectDetail({
     if (!trimmed) return;
     setBusy(true);
     setError(null);
+    const pendingWorker = optimisticWorkerEvent(project.id, trimmed);
     setAgentChatMessages((current) => [...current.slice(-3), { role: "user", text: trimmed }]);
+    setAgentWorkerEvents((current) => [pendingWorker, ...current].slice(0, 8));
     try {
       const result = await api<AgentChatResponse>(`/api/projects/${project.id}/agent-chat`, {
         method: "POST",
@@ -2134,13 +2243,17 @@ function ProjectDetail({
           actions: result.actions
         }
       ]);
-      setAgentWorkerEvents((current) => [...result.worker_events, ...current].slice(0, 8));
+      setAgentWorkerEvents((current) =>
+        [...result.worker_events, ...current.filter((event) => event.job_id !== pendingWorker.job_id)].slice(0, 8)
+      );
+      await refreshAgentActivity();
       await refresh();
       await onProjectChanged();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
       setAgentChatMessages((current) => [...current.slice(-4), { role: "system", text: message }]);
+      setAgentWorkerEvents((current) => current.filter((event) => event.job_id !== pendingWorker.job_id));
     } finally {
       setBusy(false);
     }
@@ -2226,7 +2339,8 @@ function ProjectDetail({
         text={text}
         jobs={jobs}
         events={agentWorkerEvents}
-        messages={agentChatMessages}
+        activity={agentActivity}
+        tick={activityTick}
         onWorkerMessage={submitAgentChat}
       />
       {tab === "Overview" && (
@@ -2635,24 +2749,32 @@ function AgentActivityRail({
   text,
   jobs,
   events,
-  messages,
+  activity,
+  tick,
   onWorkerMessage
 }: {
   text: LocaleMessages;
   jobs: Job[];
   events: AgentWorkerEvent[];
-  messages: AgentChatMessage[];
+  activity: AgentActivityResponse | null;
+  tick: number;
   onWorkerMessage: (message: string) => Promise<void>;
 }) {
   const workerEvents = React.useMemo(() => {
+    const now = Date.now() + tick;
+    const fromActivity = activity?.workers ?? [];
     const fromJobs = jobs.flatMap((job) => workerEventsFromJob(job));
-    const merged = [...events, ...fromJobs];
+    const merged = [...events, ...fromActivity, ...fromJobs];
     const byKey = new Map<string, AgentWorkerEvent>();
     merged.forEach((event) => {
       byKey.set(`${event.worker_id}-${event.job_id}`, event);
     });
-    return [...byKey.values()].slice(0, 5);
-  }, [events, jobs]);
+    return [...byKey.values()].filter((event) => isVisibleWorkerEvent(event, now)).slice(0, 8);
+  }, [activity, events, jobs, tick]);
+
+  if (!workerEvents.length) {
+    return null;
+  }
 
   return (
     <aside className="agent-activity-rail" aria-label={text.agentActivityTitle}>
@@ -2668,12 +2790,16 @@ function AgentActivityRail({
       {workerEvents.length ? (
         <div className="agent-worker-list">
           {workerEvents.map((event) => (
-            <AgentWorkerCard key={`${event.worker_id}-${event.job_id}`} event={event} text={text} onWorkerMessage={onWorkerMessage} />
+            <AgentWorkerCard
+              key={`${event.worker_id}-${event.job_id}`}
+              event={event}
+              text={text}
+              tick={tick}
+              onWorkerMessage={onWorkerMessage}
+            />
           ))}
         </div>
-      ) : (
-        <EmptyInline text={messages.length ? text.noAgentActivity : text.noAgentActivity} />
-      )}
+      ) : null}
     </aside>
   );
 }
@@ -2681,14 +2807,17 @@ function AgentActivityRail({
 function AgentWorkerCard({
   event,
   text,
+  tick,
   onWorkerMessage
 }: {
   event: AgentWorkerEvent;
   text: LocaleMessages;
+  tick: number;
   onWorkerMessage: (message: string) => Promise<void>;
 }) {
   const [draft, setDraft] = React.useState("");
-  const maxTokens = Math.max(...event.token_usage.series.map((point) => point.tokens), 1);
+  const displaySeries = animatedTokenSeries(event, tick);
+  const maxTokens = Math.max(...displaySeries.map((point) => point.tokens), 1);
 
   async function submit(eventSubmit: React.FormEvent) {
     eventSubmit.preventDefault();
@@ -2699,25 +2828,28 @@ function AgentWorkerCard({
   }
 
   return (
-    <section className={`agent-worker-card ${event.status}`}>
+    <section className={`agent-worker-card ${event.status} ${event.active ? "active" : ""}`}>
       <div className="agent-worker-topline">
         <strong>{event.display_name}</strong>
         <span>{event.status}</span>
       </div>
       <p>{event.headline}</p>
       <small>{event.detail}</small>
-      <div className="token-sparkline" aria-label={text.estimatedTokens}>
-        {event.token_usage.series.map((point) => (
+      <div className={`token-sparkline ${event.active || isRunningWorkerStatus(event.status) ? "live" : ""}`} aria-label={text.estimatedTokens}>
+        {displaySeries.map((point, index) => (
           <span
-            key={point.step}
+            key={`${point.step}-${index}`}
             title={`${point.step}: ${point.tokens}`}
-            style={{ height: `${Math.max(12, (point.tokens / maxTokens) * 54)}px` }}
+            style={{
+              height: `${Math.max(12, (point.tokens / maxTokens) * 54)}px`,
+              animationDelay: `${index * 120}ms`
+            }}
           />
         ))}
       </div>
       <div className="agent-worker-meta">
         <span>{text.estimatedTokens}</span>
-        <strong>{event.token_usage.series[event.token_usage.series.length - 1]?.tokens ?? 0}</strong>
+        <strong>{displaySeries[displaySeries.length - 1]?.tokens ?? 0}</strong>
       </div>
       <small className="agent-worker-estimate">{text.telemetryEstimate}</small>
       <form className="agent-worker-chat" onSubmit={(submitEvent) => void submit(submitEvent)}>
@@ -2732,6 +2864,52 @@ function AgentWorkerCard({
       </form>
     </section>
   );
+}
+
+function optimisticWorkerEvent(projectId: string, message: string): AgentWorkerEvent {
+  const now = new Date().toISOString();
+  const base = Math.max(32, Math.min(160, message.length));
+  return {
+    worker_id: "agent-chat-orchestrator",
+    display_name: "Tablee Orchestrator",
+    status: "running",
+    headline: "Reading your request and checking project context.",
+    detail: message,
+    job_id: `local-${Date.now()}`,
+    project_id: projectId,
+    target_tab: "Approach",
+    created_at: now,
+    updated_at: now,
+    active: true,
+    token_usage: {
+      source: "estimated_until_runner_telemetry",
+      is_estimate: true,
+      series: [
+        { step: "request", tokens: base },
+        { step: "context", tokens: base * 3 },
+        { step: "action", tokens: base * 5 }
+      ]
+    }
+  };
+}
+
+function isRunningWorkerStatus(status: string) {
+  return ["queued", "running", "approval_required", "needs_review"].includes(status);
+}
+
+function isVisibleWorkerEvent(event: AgentWorkerEvent, now: number) {
+  const timestamp = Date.parse(event.updated_at ?? event.created_at ?? "");
+  if (event.job_id.startsWith("local-") && Number.isFinite(timestamp) && now - timestamp > 15000) return false;
+  if (event.active || isRunningWorkerStatus(event.status)) return true;
+  return Number.isFinite(timestamp) && now - timestamp < 9000;
+}
+
+function animatedTokenSeries(event: AgentWorkerEvent, tick: number): TokenSeriesPoint[] {
+  if (!event.active && !isRunningWorkerStatus(event.status)) return event.token_usage.series;
+  return event.token_usage.series.map((point, index) => ({
+    ...point,
+    tokens: Math.max(1, Math.round(point.tokens + ((tick + index) % 3) * Math.max(4, Math.round(point.tokens * 0.035))))
+  }));
 }
 
 function workerEventsFromJob(job: Job): AgentWorkerEvent[] {
@@ -2752,7 +2930,11 @@ function workerEventsFromJob(job: Job): AgentWorkerEvent[] {
       headline: jobHeadline(job),
       detail: job.error_message ?? `Job ${job.id}`,
       job_id: job.id,
+      project_id: job.project_id,
       target_tab: targetTabForJob(job.job_type),
+      created_at: job.created_at,
+      updated_at: job.updated_at,
+      active: isRunningWorkerStatus(job.status),
       token_usage: {
         source: "estimated_until_runner_telemetry",
         is_estimate: true,
@@ -2779,7 +2961,11 @@ function coerceWorkerEvent(raw: unknown, job: Job, index: number): AgentWorkerEv
     headline: typeof record.headline === "string" ? record.headline : jobHeadline(job),
     detail: typeof record.detail === "string" ? record.detail : `Job ${job.id}`,
     job_id: typeof record.job_id === "string" ? record.job_id : job.id,
+    project_id: typeof record.project_id === "string" ? record.project_id : job.project_id,
     target_tab: typeof record.target_tab === "string" ? record.target_tab : targetTabForJob(job.job_type),
+    created_at: typeof record.created_at === "string" ? record.created_at : job.created_at,
+    updated_at: typeof record.updated_at === "string" ? record.updated_at : job.updated_at,
+    active: typeof record.active === "boolean" ? record.active : isRunningWorkerStatus(job.status),
     token_usage: {
       source:
         usage && typeof usage === "object" && typeof (usage as Record<string, unknown>).source === "string"

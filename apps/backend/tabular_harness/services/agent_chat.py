@@ -17,6 +17,7 @@ from tabular_harness.models.entities import (
     SplitManifest,
 )
 from tabular_harness.services.agent_task_planner import AgentTaskPlanResult, plan_project_agent_task
+from tabular_harness.services.analysis_notebooks import create_data_understanding_notebook
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
 from tabular_harness.services.evaluation import (
@@ -24,6 +25,7 @@ from tabular_harness.services.evaluation import (
     write_candidates_artifact,
     write_spec_artifact,
 )
+from tabular_harness.services.project_guidance import build_project_guidance
 
 SUPPORTED_METRICS = {
     "roc_auc": {"aliases": ["roc auc", "roc-auc", "roc_auc", "auc"], "label": "ROC-AUC"},
@@ -70,6 +72,10 @@ def handle_agent_chat_turn(
                 metric=str(intent["metric"]),
             )
             actions.append(agent_task_action(planned_agent_task))
+    elif intent["type"] == "generate_data_understanding_notebook":
+        actions.append(generate_data_understanding_notebook_action(db, store=store, project=project))
+    elif intent["type"] == "explain_next_step":
+        actions.append(explain_next_step_action(db, project=project))
     else:
         planned_agent_task = plan_project_agent_task(
             db,
@@ -147,6 +153,20 @@ def infer_chat_intent(message: str) -> dict[str, Any]:
             "confidence": 0.9,
             "summary": f"User wants the evaluation metric to be {SUPPORTED_METRICS[metric]['label']}.",
         }
+    if is_notebook_request(normalized):
+        return {
+            "type": "generate_data_understanding_notebook",
+            "metric": None,
+            "confidence": 0.78,
+            "summary": "User wants Tablex to generate notebook evidence inside the workbench.",
+        }
+    if is_next_step_request(normalized):
+        return {
+            "type": "explain_next_step",
+            "metric": None,
+            "confidence": 0.76,
+            "summary": "User wants guidance on what to inspect or do next.",
+        }
     return {
         "type": "plan_agent_task",
         "metric": None,
@@ -167,6 +187,56 @@ def extract_metric(normalized: str) -> str | None:
             if comparable_alias in comparable:
                 return metric
     return None
+
+
+def is_notebook_request(normalized: str) -> bool:
+    return ("notebook" in normalized or "ノートブック" in normalized) and any(
+        word in normalized for word in ["generate", "create", "make", "作", "生成", "出し", "作って"]
+    )
+
+
+def is_next_step_request(normalized: str) -> bool:
+    return any(phrase in normalized for phrase in ["next", "次", "見るべき", "何を見", "what should"]) and any(
+        word in normalized for word in ["step", "見る", "do", "すべき", "focus", "フォーカス"]
+    )
+
+
+def generate_data_understanding_notebook_action(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+) -> dict[str, Any]:
+    result = create_data_understanding_notebook(db, store=store, project=project)
+    return {
+        "type": "generate_data_understanding_notebook",
+        "status": "applied",
+        "label": "Generated a Data Understanding notebook",
+        "target_tab": "Notebooks",
+        "detail": "Created notebook source, HTML preview, report, manifest, and lineage inside Tablex.",
+        "artifact_id": result.notebook_artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "entity_ids": [result.report.id],
+    }
+
+
+def explain_next_step_action(db: Session, *, project: Project) -> dict[str, Any]:
+    guidance = build_project_guidance(db, project)
+    focus = guidance["recommended_focus"]
+    return {
+        "type": "explain_next_step",
+        "status": "explained",
+        "label": str(focus["title"]),
+        "target_tab": focus["target_tab"],
+        "detail": str(focus["reason"]),
+        "guidance": {
+            "focus_key": focus["focus_key"],
+            "risk_level": focus["risk_level"],
+            "confidence": focus["confidence"],
+            "evidence": focus["evidence"],
+            "current_stage_id": guidance["current_stage_id"],
+        },
+    }
 
 
 def apply_metric_preference(
@@ -395,6 +465,20 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
             parts.append("I also prepared a controlled AgentTaskContract for a runner to revise the design safely.")
         parts.append("Next: open Evaluation and review the metric state before running experiments.")
         return " ".join(parts)
+    if intent["type"] == "generate_data_understanding_notebook":
+        action = actions[0]
+        if action["status"] == "applied":
+            return (
+                "I generated a Data Understanding notebook inside Tablex, including source, HTML preview, "
+                "report, manifest, and lineage. Next: open Notebooks and review the reader brief, findings, "
+                "and investigation queue."
+            )
+    if intent["type"] == "explain_next_step":
+        action = actions[0]
+        return (
+            f"Next focus: {action['label']}. {action['detail']} "
+            f"Open {action['target_tab']} and use the Focus Guide evidence before asking a runner to continue."
+        )
     artifact = next((action.get("artifact_id") for action in actions if action.get("artifact_id")), None)
     return (
         "I prepared a controlled AgentTaskContract for this request, including current project context, "
@@ -432,6 +516,9 @@ def build_worker_events(
             "detail": "; ".join(str(action["label"]) for action in actions[:3]),
             "job_id": job.id,
             "target_tab": next_focus_from_actions(actions).get("target_tab"),
+            "created_at": job.created_at.isoformat(),
+            "updated_at": job.updated_at.isoformat(),
+            "active": status == "needs_review",
             "token_usage": {
                 "source": "estimated_until_runner_telemetry",
                 "is_estimate": True,

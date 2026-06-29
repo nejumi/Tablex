@@ -41,6 +41,7 @@ from tabular_harness.models.entities import (
 )
 from tabular_harness.schemas import (
     AdaptiveStrategyBriefRead,
+    AgentActivityRead,
     AgentChatCreate,
     AgentChatRead,
     AgentTaskPlanCreate,
@@ -75,6 +76,9 @@ from tabular_harness.schemas import (
     KaggleSelectiveDownloadRequest,
     ModelValidationRead,
     ModelVersionRead,
+    PortalIdeaCreate,
+    PortalIdeaRead,
+    PortalOverviewRead,
     ProjectCreate,
     ProjectGuidanceRead,
     ProjectOverview,
@@ -198,6 +202,12 @@ from tabular_harness.services.model_versions import validate_model_version_packa
 from tabular_harness.services.planned_agent_execution import run_planned_agent_task_local_stub
 from tabular_harness.services.planned_agent_workspace import (
     prepare_workspace_from_contract_artifact,
+)
+from tabular_harness.services.portal import (
+    build_portal_overview,
+    create_portal_idea,
+    list_portal_ideas,
+    worker_events_from_job,
 )
 from tabular_harness.services.profiler import profile_tabular_file
 from tabular_harness.services.project_guidance import (
@@ -654,6 +664,25 @@ def download_kaggle_selected_files_endpoint(
         mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
+
+
+@router.get("/api/portal/overview", response_model=PortalOverviewRead)
+def portal_overview(db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    return build_portal_overview(db)
+
+
+@router.get("/api/portal/ideas", response_model=list[PortalIdeaRead])
+def portal_ideas(db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    return list_portal_ideas(db)
+
+
+@router.post("/api/portal/ideas", response_model=PortalIdeaRead)
+def create_portal_idea_endpoint(
+    payload: PortalIdeaCreate,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    return create_portal_idea(db, store=store, text=payload.text)
 
 
 @router.get("/api/projects", response_model=list[ProjectRead])
@@ -3901,6 +3930,25 @@ def list_project_jobs(project_id: str, db: Annotated[Session, Depends(get_sessio
     require_project(db, project_id)
     jobs = db.scalars(select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc())).all()
     return [job_to_dict(item) for item in jobs]
+
+
+@router.get("/api/projects/{project_id}/agent-activity", response_model=AgentActivityRead)
+def get_project_agent_activity(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    require_project(db, project_id)
+    jobs = list(
+        db.scalars(
+            select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc()).limit(30)
+        ).all()
+    )
+    workers = [event for job in jobs for event in worker_events_from_job(job)]
+    active_workers = [worker for worker in workers if worker.get("active")]
+    return {
+        "schema_version": "agent_activity.v1",
+        "project_id": project_id,
+        "generated_at": utc_now().isoformat(),
+        "active_count": len(active_workers),
+        "workers": workers[:20],
+    }
 
 
 @router.post("/api/jobs", response_model=JobRead)

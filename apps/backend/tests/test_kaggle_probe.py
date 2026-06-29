@@ -4,6 +4,7 @@ import json
 import urllib.error
 import urllib.request
 import zipfile
+from email.message import Message
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -129,7 +130,7 @@ def test_kaggle_probe_tries_next_candidate_after_unauthorized() -> None:
                 url=request.full_url,
                 code=401,
                 msg="Unauthorized",
-                hdrs=None,
+                hdrs=Message(),
                 fp=None,
             )
         return FakeResponse(b"[]")

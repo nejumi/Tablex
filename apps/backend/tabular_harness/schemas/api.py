@@ -589,6 +589,37 @@ class AgentChatCreate(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
 
 
+class PortalIdeaCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class PortalIdeaRead(BaseModel):
+    id: str
+    artifact_id: str
+    text: str
+    status: str
+    source: str
+    created_at: str
+
+
+class PortalOverviewRead(BaseModel):
+    schema_version: str
+    generated_at: str
+    summary: dict[str, Any]
+    projects: list[dict[str, Any]]
+    recent_updates: list[dict[str, Any]]
+    agent_activity: list[dict[str, Any]]
+    ideas: list[PortalIdeaRead]
+
+
+class AgentActivityRead(BaseModel):
+    schema_version: str
+    project_id: str
+    generated_at: str
+    active_count: int
+    workers: list[dict[str, Any]]
+
+
 class JobRead(BaseModel):
     id: str
     project_id: str | None

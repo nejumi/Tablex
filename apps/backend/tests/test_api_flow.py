@@ -150,6 +150,58 @@ def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path
     assert any(item["asset_type"] == "agent_chat_turn" for item in artifacts_response.json())
 
 
+def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Portal Ops", "target_column": "target"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    idea_response = client.post("/api/portal/ideas", json={"text": "Make worker boxes transient and lively."})
+    assert idea_response.status_code == 200, idea_response.text
+    idea = idea_response.json()
+    assert idea["artifact_id"]
+    assert idea["text"].startswith("Make worker")
+
+    ideas_response = client.get("/api/portal/ideas")
+    assert ideas_response.status_code == 200
+    assert any(item["id"] == idea["id"] for item in ideas_response.json())
+
+    csv_bytes = b"feature,target\n1,0\n2,1\n3,0\n4,1\n"
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("portal.csv", csv_bytes, "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "notebookを生成して"})
+    assert chat_response.status_code == 200, chat_response.text
+    chat = chat_response.json()
+    assert chat["intent"]["type"] == "generate_data_understanding_notebook"
+    assert any(action["type"] == "generate_data_understanding_notebook" for action in chat["actions"])
+
+    next_step_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "次に何を見るべき？"})
+    assert next_step_response.status_code == 200, next_step_response.text
+    next_step = next_step_response.json()
+    assert next_step["intent"]["type"] == "explain_next_step"
+    assert any(action["type"] == "explain_next_step" for action in next_step["actions"])
+    assert "Next focus" in next_step["assistant_message"]
+
+    activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
+    assert activity_response.status_code == 200
+    activity = activity_response.json()
+    assert activity["schema_version"] == "agent_activity.v1"
+    assert any(worker["worker_id"] == "agent-chat-orchestrator" for worker in activity["workers"])
+
+    overview_response = client.get("/api/portal/overview")
+    assert overview_response.status_code == 200
+    overview = overview_response.json()
+    assert overview["schema_version"] == "portal_overview.v1"
+    assert overview["summary"]["project_count"] >= 1
+    assert overview["summary"]["idea_count"] >= 1
+    assert overview["agent_activity"]
+
+
 def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
