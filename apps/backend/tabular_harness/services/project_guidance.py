@@ -88,6 +88,14 @@ def build_project_guidance(db: Session, project: Project) -> dict[str, Any]:
     focus = _recommended_focus(project, counts, state)
     journey_stages = _journey_stages(project, counts, state, focus)
     current_stage = _current_journey_stage(journey_stages)
+    autonomous_navigation = _autonomous_navigation(
+        project=project,
+        counts=counts,
+        state=state,
+        focus=focus,
+        journey_stages=journey_stages,
+        current_stage=current_stage,
+    )
     hidden_detail_groups = [
         {
             "id": "risk_and_questions",
@@ -118,6 +126,7 @@ def build_project_guidance(db: Session, project: Project) -> dict[str, Any]:
         "supporting_counts": counts,
         "hidden_detail_groups": hidden_detail_groups,
         "agent_guidance": _agent_guidance(state),
+        "autonomous_navigation": autonomous_navigation,
     }
 
 
@@ -746,6 +755,90 @@ def _state_summary(db: Session, project: Project, counts: dict[str, int]) -> dic
     }
 
 
+def _autonomous_navigation(
+    *,
+    project: Project,
+    counts: dict[str, int],
+    state: dict[str, Any],
+    focus: dict[str, Any],
+    journey_stages: list[dict[str, Any]],
+    current_stage: dict[str, Any] | None,
+) -> dict[str, Any]:
+    attention_state = _navigation_attention_state(focus, state)
+    primary_action = focus["primary_action"]
+    current_stage_label = current_stage["label"] if current_stage else str(focus["target_tab"])
+    visible_context = [
+        {"label": "Now", "value": focus["title"]},
+        {"label": "Why", "value": focus["reason"]},
+        {"label": "Decision stage", "value": current_stage_label},
+    ]
+    hidden_complexity = [
+        "raw artifact inventory",
+        "full job history",
+        "secondary tabs",
+        "debug lineage details",
+    ]
+    if int(state["unresolved_high_risk_assumption_count"]) > 0:
+        hidden_complexity.append("non-critical assumptions")
+    if counts["reports"] > 0:
+        hidden_complexity.append("older report shelves")
+    runner_prompt = focus.get("suggested_agent_prompt") or _navigation_runner_prompt(project, focus, state)
+    return {
+        "schema_version": "autonomous_navigation.v1",
+        "mode": "one_decision_at_a_time",
+        "aesthetic_principle": "show_the_next_decision_not_the_system_topology",
+        "attention_budget": 1,
+        "status": attention_state,
+        "headline": focus["title"],
+        "why": focus["reason"],
+        "target_tab": focus["target_tab"],
+        "primary_action": primary_action,
+        "secondary_action_count": len(focus.get("secondary_actions", [])),
+        "confidence": focus["confidence"],
+        "risk_level": focus["risk_level"],
+        "evidence": focus["evidence"][:3],
+        "visible_context": visible_context,
+        "hidden_complexity": hidden_complexity,
+        "journey_progress": {
+            "current_stage_id": current_stage["id"] if current_stage else None,
+            "current_stage_label": current_stage_label,
+            "done_count": sum(1 for stage in journey_stages if stage["status"] == "done"),
+            "total_count": len(journey_stages),
+        },
+        "codex_navigation": {
+            "role": "interactive_guide_and_runner_not_product_owner",
+            "prompt": runner_prompt,
+            "runner_may_choose_approach": True,
+            "must_respect_harness_boundaries": [
+                "EvaluationSpec",
+                "SplitManifest",
+                "artifact lineage",
+                "secret and connector credential boundaries",
+            ],
+        },
+    }
+
+
+def _navigation_attention_state(focus: dict[str, Any], state: dict[str, Any]) -> str:
+    if focus["risk_level"] == "blocking" or int(state["blocking_question_count"]) > 0:
+        return "blocked"
+    if focus["risk_level"] == "high":
+        return "needs_attention"
+    if int(state["failed_recent_job_count"]) > 0:
+        return "recover"
+    return "ready_to_act"
+
+
+def _navigation_runner_prompt(project: Project, focus: dict[str, Any], state: dict[str, Any]) -> str:
+    target = state.get("target_column") or "the target after data understanding"
+    return (
+        f"Guide the user through the next Tablex decision for project '{project.name}'. "
+        f"The current focus is '{focus['title']}' for target {target}. Explain the smallest useful next action, "
+        "what evidence justifies it, what uncertainty remains, and what Codex should do only after harness-owned "
+        "EvaluationSpec, SplitManifest, artifacts, and safety boundaries are respected."
+    )
+
+
 def _recommended_focus(project: Project, counts: dict[str, int], state: dict[str, Any]) -> dict[str, Any]:
     if not state["has_dataset"]:
         return _focus(
@@ -944,10 +1037,10 @@ def _recommended_focus(project: Project, counts: dict[str, int], state: dict[str
             confidence=0.82,
             evidence=[f"{state['successful_run_count']} successful runs", "0 reports"],
             primary_action=_endpoint_action(
-                "generate_decision_dashboard",
-                "Generate decision dashboard",
+                "generate_decision_report",
+                "Generate decision report",
                 "Reports",
-                f"/api/projects/{project.id}/decision-dashboard/generate",
+                f"/api/projects/{project.id}/decision-report/generate",
             ),
             secondary_actions=[
                 _navigate_action("inspect_leaderboard", "Inspect Leaderboard", "Leaderboard"),

@@ -825,10 +825,12 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
             "I will keep notebook source, evidence, figures, and runner records separate so Preview is not confused with executed marimo output."
         )
     artifact = next((action.get("artifact_id") for action in actions if action.get("artifact_id")), None)
+    artifact_note = f" It is registered as artifact `{artifact}` for lineage and review." if artifact else ""
     return (
-        "I prepared a controlled AgentTaskContract for this request, including current project context, "
-        "safety boundaries, artifact expectations, and reporting requirements. "
-        f"Artifact: `{artifact}`. Next: review it in Approach or run a controlled runner when ready."
+        "I prepared a controlled runner task and put it in Approach. It carries the current data context, "
+        "evaluation locks, safety boundaries, expected artifacts, and reporting requirements, while leaving the "
+        "actual modeling approach open for Codex to choose from evidence and Skills."
+        f"{artifact_note} Next: review the runner task in Approach, then run a controlled runner when you want it to act."
     )
 
 

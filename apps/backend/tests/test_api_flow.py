@@ -41,6 +41,13 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     assert empty_guidance["recommended_focus"]["target_tab"] == "Data"
     assert empty_guidance["recommended_focus"]["primary_action"]["action_type"] == "navigate"
     assert empty_guidance["supporting_counts"]["datasets"] == 0
+    empty_navigation = empty_guidance["autonomous_navigation"]
+    assert empty_navigation["schema_version"] == "autonomous_navigation.v1"
+    assert empty_navigation["mode"] == "one_decision_at_a_time"
+    assert empty_navigation["attention_budget"] == 1
+    assert empty_navigation["headline"] == empty_guidance["recommended_focus"]["title"]
+    assert empty_navigation["primary_action"]["id"] == empty_guidance["recommended_focus"]["primary_action"]["id"]
+    assert empty_navigation["codex_navigation"]["runner_may_choose_approach"] is True
     empty_journey = {stage["id"]: stage for stage in empty_guidance["journey_stages"]}
     assert empty_guidance["current_stage_id"] == "data_intake"
     assert empty_journey["data_intake"]["status"] == "current"
@@ -76,6 +83,10 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     }
     assert next_guidance["recommended_focus"]["primary_action"]["target_tab"]
     assert next_guidance["agent_guidance"]
+    next_navigation = next_guidance["autonomous_navigation"]
+    assert next_navigation["attention_budget"] == 1
+    assert next_navigation["journey_progress"]["total_count"] == len(next_guidance["journey_stages"])
+    assert "show_the_next_decision" in next_navigation["aesthetic_principle"]
 
     snapshot_response = client.post(f"/api/projects/{project_id}/guidance/snapshot")
     assert snapshot_response.status_code == 200, snapshot_response.text
@@ -212,6 +223,17 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     assert next_step["intent"]["type"] == "explain_next_step"
     assert any(action["type"] == "explain_next_step" for action in next_step["actions"])
     assert "Next focus" in next_step["assistant_message"]
+
+    generic_chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "新しい特徴量戦略を考えて"},
+    )
+    assert generic_chat_response.status_code == 200, generic_chat_response.text
+    generic_chat = generic_chat_response.json()
+    assert generic_chat["intent"]["type"] == "plan_agent_task"
+    assert "controlled runner task" in generic_chat["assistant_message"]
+    assert "Artifact:" not in generic_chat["assistant_message"]
+    assert any(action["type"] == "create_agent_task_contract" for action in generic_chat["actions"])
 
     activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
     assert activity_response.status_code == 200

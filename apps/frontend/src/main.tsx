@@ -142,6 +142,9 @@ const englishMessages = {
   journeyExperiments: "Experiments",
   journeyNotebooks: "Notebooks",
   journeyReports: "Reports",
+  autonomousNavigator: "Autonomous Navigator",
+  oneDecisionAtATime: "one decision at a time",
+  showMapOnlyIfNeeded: "Show the map only if needed",
   settings: "User Settings",
   settingsHint: "Language, locale packs, and display preferences are stored locally for this workbench.",
   language: "Language",
@@ -289,6 +292,9 @@ const japaneseMessages: LocaleMessages = {
   journeyExperiments: "実験",
   journeyNotebooks: "ノートブック",
   journeyReports: "レポート",
+  autonomousNavigator: "Autonomous Navigator",
+  oneDecisionAtATime: "次の一手だけ",
+  showMapOnlyIfNeeded: "必要な時だけ全体地図を開く",
   settings: "ユーザー設定",
   settingsHint: "言語、locale pack、表示設定をこのworkbenchのlocal設定として保存します。",
   language: "言語",
@@ -1303,6 +1309,7 @@ type ProjectGuidance = {
   supporting_counts: Record<string, number>;
   hidden_detail_groups: Array<Record<string, unknown>>;
   agent_guidance: string[];
+  autonomous_navigation: Record<string, unknown>;
 };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -1380,14 +1387,6 @@ function journeyStageLabel(stage: ProjectGuidanceJourneyStage, text: LocaleMessa
   if (stage.id === "notebooks") return text.journeyNotebooks;
   if (stage.id === "reports") return text.journeyReports;
   return stage.label;
-}
-
-function journeyStatusLabel(status: ProjectGuidanceJourneyStage["status"], text: LocaleMessages) {
-  if (status === "done") return text.journeyStatusDone;
-  if (status === "current") return text.journeyStatusCurrent;
-  if (status === "next") return text.journeyStatusNext;
-  if (status === "blocked") return text.journeyStatusBlocked;
-  return text.journeyStatusWaiting;
 }
 
 function isHighRiskAssumption(assumption: Assumption) {
@@ -2421,15 +2420,10 @@ function ProjectDetail({
   return (
     <section className="detail">
       {error ? <div className="banner danger">{error}</div> : null}
-      <FocusGuide
+      <AutonomousNavigator
+        guidance={guidance}
         recommendation={focusRecommendation}
         currentTab={tab}
-        text={text}
-        onTabChange={onTabChange}
-        onAction={(action) => void runFocusAction(action)}
-      />
-      <GuidedJourneyRail
-        guidance={guidance}
         busy={busy}
         text={text}
         onTabChange={onTabChange}
@@ -2458,8 +2452,6 @@ function ProjectDetail({
           jobs={jobs}
           artifacts={artifacts}
           text={text}
-          focusRecommendation={focusRecommendation}
-          onTabChange={onTabChange}
         />
       )}
       {tab === "Data" && (
@@ -2592,21 +2584,46 @@ function ProjectDetail({
   );
 }
 
-function FocusGuide({
+function AutonomousNavigator({
+  guidance,
   recommendation,
   currentTab,
+  busy,
   text,
   onTabChange,
-  onAction
+  onAction,
+  onSaveSnapshot
 }: {
+  guidance: ProjectGuidance | null;
   recommendation: FocusRecommendation;
   currentTab: Tab;
+  busy: boolean;
   text: LocaleMessages;
   onTabChange: (tab: Tab) => void;
   onAction: (action: FocusAction | null) => void;
+  onSaveSnapshot: () => void;
 }) {
+  const navigation = guidance?.autonomous_navigation ?? {};
+  const headline = textField(navigation.headline) ?? recommendation.title;
+  const why = textField(navigation.why) ?? recommendation.reason;
+  const status = textField(navigation.status) ?? recommendation.riskLevel ?? "ready_to_act";
+  const evidence = Array.isArray(navigation.evidence)
+    ? navigation.evidence.map((item) => String(item)).slice(0, 3)
+    : recommendation.evidence.slice(0, 3);
+  const journeyProgress =
+    navigation.journey_progress && typeof navigation.journey_progress === "object"
+      ? (navigation.journey_progress as Record<string, unknown>)
+      : {};
+  const doneCount = Number(journeyProgress.done_count ?? 0);
+  const totalCount = Number(journeyProgress.total_count ?? guidance?.journey_stages.length ?? 0);
+  const stages = guidance?.journey_stages ?? [];
   const isCurrent = currentTab === recommendation.tab;
+  const navigationPrimaryAction =
+    guidance?.recommended_focus.primary_action && navigation.primary_action && typeof navigation.primary_action === "object"
+      ? guidanceActionToFocusAction(guidance.recommended_focus.primary_action)
+      : null;
   const primaryAction =
+    navigationPrimaryAction ??
     recommendation.primaryAction ??
     ({
       id: "navigate_recommended_focus",
@@ -2620,46 +2637,23 @@ function FocusGuide({
       disabled: isCurrent,
       disabledReason: null
     } satisfies FocusAction);
-  const secondaryActions = recommendation.secondaryActions.length
-    ? recommendation.secondaryActions
-    : recommendation.secondaryTabs.map(
-        (tab) =>
-          ({
-            id: `navigate_${tab}`,
-            label: tabLabel(tab, text),
-            targetTab: tab,
-            actionType: "navigate",
-            method: null,
-            endpoint: null,
-            requestBody: null,
-            prompt: null,
-            disabled: false,
-            disabledReason: null
-          }) satisfies FocusAction
-      );
   const primaryDisabled = primaryAction.disabled || (primaryAction.actionType === "navigate" && isCurrent);
 
   return (
-    <section className="focus-guide streamlined" aria-label={text.focusGuideTitle}>
-      <div className="focus-command">
-        <div className="focus-guide-copy">
-          <div className="focus-guide-eyebrow">
-            <Lightbulb size={16} />
-            {text.focusGuideTitle}
-          </div>
-          <div className="focus-brief">
-            <div>
-              <span>{text.focusNow}</span>
-              <h2>{recommendation.title}</h2>
-            </div>
-            <div>
-              <span>{text.focusWhy}</span>
-              <p>{recommendation.reason}</p>
-            </div>
+    <section className="autonomous-navigator" aria-label={text.autonomousNavigator}>
+      <div className="autonomous-main">
+        <div className="autonomous-copy">
+          <div className="eyebrow">{text.autonomousNavigator}</div>
+          <h2>{headline}</h2>
+          <p>{why}</p>
+          <div className="badge-row">
+            <span className={navigatorStatusClass(status)}>{status.replace(/_/g, " ")}</span>
+            {totalCount ? <span className="badge muted">{doneCount}/{totalCount} journey</span> : null}
+            <span className="badge muted">{text.oneDecisionAtATime}</span>
           </div>
         </div>
         <button
-          className="primary-button focus-primary-action"
+          className="primary-button autonomous-action"
           disabled={primaryDisabled}
           onClick={() => onAction(primaryAction)}
           type="button"
@@ -2671,146 +2665,46 @@ function FocusGuide({
           </span>
         </button>
       </div>
-      <details className="focus-supporting">
+      {evidence.length ? (
+        <div className="autonomous-evidence">
+          {evidence.map((item) => (
+            <span key={item}>{item}</span>
+          ))}
+        </div>
+      ) : null}
+      <details className="autonomous-details">
         <summary>
-          <span>{text.viewDetails}</span>
-          <small>{recommendation.evidence.slice(0, 2).join(" / ")}</small>
+          <span>{text.showMapOnlyIfNeeded}</span>
+          <small>{text.journeyMap}</small>
         </summary>
-        <div className="focus-supporting-body">
-          <div className="focus-evidence" aria-label={text.focusEvidence}>
-            <span>{text.focusEvidence}</span>
-            {recommendation.evidence.slice(0, 3).map((item) => (
-              <strong key={item}>{item}</strong>
-            ))}
-          </div>
-          <div className="focus-secondary">
-            <span>{text.otherUsefulViews}</span>
-            <div>
-              {secondaryActions.map((action) => (
-                <button
-                  className="secondary-button"
-                  disabled={action.disabled}
-                  key={action.id}
-                  onClick={() => (action.actionType === "navigate" ? onTabChange(action.targetTab) : onAction(action))}
-                  type="button"
-                >
-                  {action.label}
-                </button>
-              ))}
-            </div>
-          </div>
+        <div className="autonomous-map">
+          {stages.map((stage, index) => (
+            <button
+              className={`autonomous-stage ${stage.status}`}
+              key={stage.id}
+              onClick={() => (stage.action ? onAction(guidanceActionToFocusAction(stage.action)) : onTabChange(normalizeTab(stage.target_tab)))}
+              title={stage.summary}
+              type="button"
+            >
+              <span>{stage.status === "done" ? <Check size={13} /> : index + 1}</span>
+              <strong>{journeyStageLabel(stage, text)}</strong>
+            </button>
+          ))}
+          <button className="secondary-button" disabled={busy} type="button" onClick={onSaveSnapshot}>
+            {busy ? <Loader2 className="spin" size={16} /> : <Download size={16} />}
+            {text.journeySaveSnapshot}
+          </button>
         </div>
       </details>
     </section>
   );
 }
 
-function GuidedJourneyRail({
-  guidance,
-  busy,
-  text,
-  onTabChange,
-  onAction,
-  onSaveSnapshot
-}: {
-  guidance: ProjectGuidance | null;
-  busy: boolean;
-  text: LocaleMessages;
-  onTabChange: (tab: Tab) => void;
-  onAction: (action: FocusAction | null) => void;
-  onSaveSnapshot: () => void;
-}) {
-  const stages = guidance?.journey_stages ?? [];
-  if (!stages.length) return null;
-  const currentStage =
-    stages.find((stage) => stage.id === guidance?.current_stage_id) ??
-    stages.find((stage) => stage.status === "blocked" || stage.status === "current" || stage.status === "next") ??
-    stages[0];
-  const currentStageIndex = currentStage ? stages.findIndex((stage) => stage.id === currentStage.id) : -1;
-
-  function openStage(stage: ProjectGuidanceJourneyStage) {
-    if (stage.action) {
-      onAction(guidanceActionToFocusAction(stage.action));
-      return;
-    }
-    onTabChange(normalizeTab(stage.target_tab));
-  }
-
-  return (
-    <section className="journey-rail" aria-label={text.guidedJourneyTitle}>
-      <div className="journey-header">
-        <div className="journey-title-row">
-          <span className={`journey-current-dot ${currentStage?.status ?? "waiting"}`} aria-hidden="true">
-            {currentStage?.status === "done" ? (
-              <Check size={14} />
-            ) : currentStage?.status === "blocked" ? (
-              <AlertTriangle size={14} />
-            ) : currentStageIndex >= 0 ? (
-              currentStageIndex + 1
-            ) : null}
-          </span>
-          <div>
-            <div className="eyebrow">{text.guidedJourneyTitle}</div>
-            <p>
-              <strong>{currentStage ? journeyStageLabel(currentStage, text) : text.journeyStatusWaiting}</strong>
-              {currentStage ? `: ${currentStage.summary}` : `: ${text.guidedJourneySubtitle}`}
-            </p>
-          </div>
-        </div>
-        <div className="journey-actions">
-          {currentStage ? (
-            <button className="secondary-button" type="button" onClick={() => openStage(currentStage)}>
-              <Search size={16} />
-              {text.journeyOpenStage}
-            </button>
-          ) : null}
-          <button className="secondary-button" disabled={busy} type="button" onClick={onSaveSnapshot}>
-            {busy ? <Loader2 className="spin" size={16} /> : <Download size={16} />}
-            {text.journeySaveSnapshot}
-          </button>
-        </div>
-      </div>
-      <details className="journey-map">
-        <summary>
-          <span>{text.journeyMap}</span>
-          <small>
-            {stages.filter((stage) => stage.status === "done").length}/{stages.length} {text.journeyStatusDone}
-          </small>
-        </summary>
-        <div className="journey-stages">
-          {stages.map((stage, index) => (
-            <button
-              className={`journey-stage ${stage.status}`}
-              key={stage.id}
-              onClick={() => openStage(stage)}
-              title={stage.summary}
-              type="button"
-            >
-              <span className="journey-dot" aria-hidden="true">
-                {stage.status === "done" ? <Check size={14} /> : stage.status === "blocked" ? <AlertTriangle size={14} /> : index + 1}
-              </span>
-              <span className="journey-stage-copy">
-                <strong>{journeyStageLabel(stage, text)}</strong>
-                <small>{journeyStatusLabel(stage.status, text)}</small>
-              </span>
-            </button>
-          ))}
-        </div>
-        {currentStage ? (
-          <div className="journey-current">
-            <span>{journeyStageLabel(currentStage, text)}</span>
-            <p>{currentStage.summary}</p>
-            <div className="focus-evidence" aria-label={text.journeyEvidence}>
-              <span>{text.journeyEvidence}</span>
-              {currentStage.evidence.slice(0, 3).map((item) => (
-                <strong key={item}>{item}</strong>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </details>
-    </section>
-  );
+function navigatorStatusClass(status: string) {
+  if (["ready_to_act", "ready", "low"].includes(status)) return "badge success";
+  if (["blocked", "high", "needs_attention"].includes(status)) return "badge risk";
+  if (["recover", "medium"].includes(status)) return "badge warning";
+  return "badge muted";
 }
 
 function AgentChatDock({
@@ -3268,17 +3162,13 @@ function OverviewTab({
   assumptions,
   jobs,
   artifacts,
-  text,
-  focusRecommendation,
-  onTabChange
+  text
 }: {
   overview: Overview | null;
   assumptions: Assumption[];
   jobs: Job[];
   artifacts: Artifact[];
   text: LocaleMessages;
-  focusRecommendation: FocusRecommendation;
-  onTabChange: (tab: Tab) => void;
 }) {
   if (!overview) return <LoadingBlock label="Loading overview" />;
   const highRiskAssumptions = assumptions.filter(isHighRiskAssumption);
@@ -3294,18 +3184,6 @@ function OverviewTab({
           <Metric label="Assumptions" value={overview.counts.assumptions ?? 0} />
           <Metric label="Runs" value={overview.counts.experiment_runs ?? 0} />
         </div>
-      </Panel>
-      <Panel title="Next Actions" icon={<ListChecks size={18} />}>
-        <ul className="clean-list">
-          <li>
-            <button className="inline-action" onClick={() => onTabChange(focusRecommendation.tab)} type="button">
-              {text.recommendedFocus}: {focusRecommendation.title}
-            </button>
-          </li>
-          {overview.next_actions.slice(0, 3).map((action) => (
-            <li key={action}>{action}</li>
-          ))}
-        </ul>
       </Panel>
       <details className="supporting-details">
         <summary>

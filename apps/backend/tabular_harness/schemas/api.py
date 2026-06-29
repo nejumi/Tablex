@@ -93,6 +93,7 @@ class ProjectGuidanceRead(BaseModel):
     supporting_counts: dict[str, int]
     hidden_detail_groups: list[dict[str, Any]]
     agent_guidance: list[str]
+    autonomous_navigation: dict[str, Any]
 
 
 class ArtifactRead(BaseModel):
