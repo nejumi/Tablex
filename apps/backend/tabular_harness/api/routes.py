@@ -200,6 +200,7 @@ from tabular_harness.services.kaggle_probe import (
     probe_kaggle_benchmark_access,
 )
 from tabular_harness.services.model_versions import validate_model_version_package
+from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.planned_agent_execution import run_planned_agent_task_local_stub
 from tabular_harness.services.planned_agent_workspace import (
     prepare_workspace_from_contract_artifact,
@@ -980,6 +981,48 @@ def run_dataset_eda_review(
                 "artifact_ids": result.artifact_ids,
                 "quality_score": result.review["summary"]["quality_score"],
                 "target_column": result.review["summary"].get("target_column"),
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/notebook-authoring/brief", response_model=JobRead)
+def create_notebook_authoring_brief_endpoint(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="create_notebook_authoring_brief",
+        project_id=project_id,
+        input_payload={"objective": "Prepare source-backed guidance for on-the-fly Codex notebook authoring."},
+        policy={
+            "external_network_access": "not_executed_by_endpoint",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+            "execution_mode": "authoring_brief_only",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_notebook_authoring_brief(db, store=store, project=project)
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.brief["schema_version"],
+                "notebook_authoring_brief_artifact_id": result.brief_artifact.id,
+                "notebook_authoring_report_id": result.report.id,
+                "notebook_authoring_report_artifact_id": result.report_artifact.id,
+                "source_card_count": len(result.brief["source_inspirations"]),
+                "principle_count": len(result.brief["authoring_principles"]),
+                "context_artifact_count": len(result.brief["context_artifacts"]),
+                "artifact_id": result.brief_artifact.id,
+                "artifact_ids": result.artifact_ids,
             },
         )
     except ValueError as exc:

@@ -187,6 +187,25 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     assert any(action["type"] == "run_eda_review" and action["status"] == "applied" for action in eda_chat["actions"])
     assert "controlled Data Review" in eda_chat["assistant_message"]
 
+    author_chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "Kaggle Grandmaster級の良いノートブックに改善して"},
+    )
+    assert author_chat_response.status_code == 200, author_chat_response.text
+    author_chat = author_chat_response.json()
+    assert author_chat["intent"]["type"] == "author_analysis_notebook"
+    assert any(action["type"] == "create_notebook_authoring_brief" for action in author_chat["actions"])
+    contract_action = next(action for action in author_chat["actions"] if action["type"] == "create_agent_task_contract")
+    contract_response = client.get(f"/api/artifacts/{contract_action['artifact_id']}/download")
+    assert contract_response.status_code == 200
+    contract = contract_response.json()
+    assert contract["task_type"] == "author_analysis_notebook"
+    assert any(output["path"] == "notebooks/tablex_analysis_notebook.py" for output in contract["required_outputs"])
+    assert any("notebook_authoring_brief" in check for check in contract["quality_checks"])
+    assert contract["inputs"]["notebook_authoring"]["artifact_id"]
+    assert contract["inputs"]["notebook_authoring"]["source_inspirations"]
+    assert contract["inputs"]["notebook_authoring"]["authoring_principles"]
+
     next_step_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "次に何を見るべき？"})
     assert next_step_response.status_code == 200, next_step_response.text
     next_step = next_step_response.json()

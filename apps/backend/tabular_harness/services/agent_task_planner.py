@@ -175,6 +175,9 @@ def build_agent_task_contract_payload(
     relational_diagnostics_inputs = relational_feature_scenario_diagnostics_contract_inputs(
         context_artifacts.get("relational_feature_scenario_diagnostics")
     )
+    notebook_authoring_inputs = notebook_authoring_brief_contract_inputs(
+        context_artifacts.get("notebook_authoring_brief")
+    )
     source_policy = source_pack_inputs.get("source_policy") or research_inputs.get(
         "research_source_policy",
         {"network_default": "disabled_until_runner_policy_allows"},
@@ -222,50 +225,10 @@ def build_agent_task_contract_payload(
             "relational_feature_plan": relational_plan_inputs,
             "relational_feature_recipe": relational_recipe_inputs,
             "relational_feature_scenario_diagnostics": relational_diagnostics_inputs,
+            "notebook_authoring": notebook_authoring_inputs,
         },
-        "required_outputs": [
-            {
-                "path": "reports/approach_report.md",
-                "schema": "markdown_report.v1",
-                "description": "Self-contained report with approach choice, implementation notes, metrics, risks, citations, and next actions.",
-            },
-            {
-                "path": "artifacts/feature_recipe.json",
-                "schema": "feature_recipe.v1",
-                "description": "Train-fold-safe feature generation recipe, including rejected or deferred feature families.",
-            },
-            {
-                "path": "artifacts/experiment_metrics.json",
-                "schema": "experiment_metrics.v1",
-                "description": "Metrics computed only with the harness EvaluationSpec and SplitManifest.",
-            },
-            {
-                "path": "artifacts/visualization_spec.json",
-                "schema": "visualization_spec.v1",
-                "description": "Portable visualization spec for leaderboard, diagnostics, and report panels.",
-            },
-            {
-                "path": "artifacts/evidence.json",
-                "schema": "evidence_set.v1",
-                "description": "Artifact-backed evidence, including source summaries for any external claims.",
-            },
-            {
-                "path": "artifacts/approach_decision_trace.json",
-                "schema": "approach_decision_trace.v1",
-                "description": (
-                    "Runner-authored trace of considered, rejected, revised, or newly proposed approaches. "
-                    "This is open-ended and should not be limited to predefined recipes."
-                ),
-            },
-        ],
-        "quality_checks": [
-            "Use the approved EvaluationSpec and SplitManifest when they exist.",
-            "Fit preprocessing and feature extraction on the training split only.",
-            "Compare against a sanity floor and explain failures or non-improvements.",
-            "Register important outputs as artifacts with lineage-ready metadata.",
-            "Return report and visualization outputs that are understandable inside Tablex UI.",
-            "Use recommended approaches as evidence, not as mandatory recipes; explain any replacement approach.",
-        ],
+        "required_outputs": required_outputs_for_task(task_type),
+        "quality_checks": quality_checks_for_task(task_type),
         "forbidden_actions": [
             "Do not read secrets or connector credentials.",
             "Do not pass connector credentials to any agent, script, prompt, or workspace file.",
@@ -289,6 +252,101 @@ def build_agent_task_contract_payload(
         },
         "autonomy_level": 3,
     }
+
+
+def required_outputs_for_task(task_type: str) -> list[dict[str, str]]:
+    if task_type == "author_analysis_notebook":
+        return [
+            {
+                "path": "notebooks/tablex_analysis_notebook.py",
+                "schema": "marimo_notebook.v1",
+                "description": (
+                    "Human-facing marimo analysis notebook authored from current Tablex evidence and "
+                    "the notebook_authoring_brief, not a fixed template."
+                ),
+            },
+            {
+                "path": "reports/notebook_authoring_report.md",
+                "schema": "markdown_report.v1",
+                "description": "Short reader guide summarizing the notebook story, findings, caveats, and next actions.",
+            },
+            {
+                "path": "artifacts/notebook_figure_manifest.json",
+                "schema": "notebook_figure_manifest.v1",
+                "description": "Manifest of generated figures/tables with captions and source artifacts.",
+            },
+            {
+                "path": "artifacts/notebook_evidence_bundle.json",
+                "schema": "notebook_evidence_bundle.v1",
+                "description": "Artifact-backed evidence bundle for the notebook claims.",
+            },
+            {
+                "path": "artifacts/notebook_quality_review.json",
+                "schema": "notebook_quality_review.v1",
+                "description": "Self-review against the Tablex notebook quality Skill and source-backed authoring brief.",
+            },
+            {
+                "path": "artifacts/source_citation_manifest.json",
+                "schema": "source_citation_manifest.v1",
+                "description": "Citation/source audit for notebook craft references and any external claims.",
+            },
+        ]
+    return [
+        {
+            "path": "reports/approach_report.md",
+            "schema": "markdown_report.v1",
+            "description": "Self-contained report with approach choice, implementation notes, metrics, risks, citations, and next actions.",
+        },
+        {
+            "path": "artifacts/feature_recipe.json",
+            "schema": "feature_recipe.v1",
+            "description": "Train-fold-safe feature generation recipe, including rejected or deferred feature families.",
+        },
+        {
+            "path": "artifacts/experiment_metrics.json",
+            "schema": "experiment_metrics.v1",
+            "description": "Metrics computed only with the harness EvaluationSpec and SplitManifest.",
+        },
+        {
+            "path": "artifacts/visualization_spec.json",
+            "schema": "visualization_spec.v1",
+            "description": "Portable visualization spec for leaderboard, diagnostics, and report panels.",
+        },
+        {
+            "path": "artifacts/evidence.json",
+            "schema": "evidence_set.v1",
+            "description": "Artifact-backed evidence, including source summaries for any external claims.",
+        },
+        {
+            "path": "artifacts/approach_decision_trace.json",
+            "schema": "approach_decision_trace.v1",
+            "description": (
+                "Runner-authored trace of considered, rejected, revised, or newly proposed approaches. "
+                "This is open-ended and should not be limited to predefined recipes."
+            ),
+        },
+    ]
+
+
+def quality_checks_for_task(task_type: str) -> list[str]:
+    if task_type == "author_analysis_notebook":
+        return [
+            "Read notebook_authoring_brief first when present.",
+            "Use public Kaggle Grandmaster-style source cards as craft inspiration only; do not copy text, code, or section order.",
+            "Inspect current Tablex artifacts before deciding the notebook structure.",
+            "Every chart or table must answer a question and include an interpretation or next action.",
+            "Separate observed evidence, assumptions, missing evidence, and deferred checks.",
+            "Keep EvaluationSpec and SplitManifest visible before model or metric claims.",
+            "Register notebook source, report, figure manifest, evidence bundle, quality review, and citation audit as artifacts.",
+        ]
+    return [
+        "Use the approved EvaluationSpec and SplitManifest when they exist.",
+        "Fit preprocessing and feature extraction on the training split only.",
+        "Compare against a sanity floor and explain failures or non-improvements.",
+        "Register important outputs as artifacts with lineage-ready metadata.",
+        "Return report and visualization outputs that are understandable inside Tablex UI.",
+        "Use recommended approaches as evidence, not as mandatory recipes; explain any replacement approach.",
+    ]
 
 
 def build_planner_approach_candidates(
@@ -618,6 +676,9 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "eda_profile": latest_project_artifact(db, project_id, "eda_profile"),
         "understanding_report": latest_project_artifact(db, project_id, "understanding_report"),
         "data_quality_gate": latest_project_artifact(db, project_id, "data_quality_gate"),
+        "notebook_authoring_brief": latest_project_artifact(db, project_id, "notebook_authoring_brief"),
+        "eda_review_bundle": latest_project_artifact(db, project_id, "eda_review_bundle"),
+        "eda_review_html": latest_project_artifact(db, project_id, "eda_review_html"),
         "relational_catalog": latest_project_artifact(db, project_id, "relational_catalog"),
         "relational_feature_plan": latest_project_artifact(db, project_id, "relational_feature_plan"),
         "relational_feature_recipe": latest_project_artifact(db, project_id, "relational_feature_recipe"),
@@ -766,6 +827,34 @@ def adaptive_strategy_brief_contract_inputs(strategy_artifact: Artifact | None) 
         },
         "reporting_plan": reporting_plan,
         "policy": "product_guidance_for_open_ended_runner_handoff_not_a_fixed_recipe",
+    }
+
+
+def notebook_authoring_brief_contract_inputs(brief_artifact: Artifact | None) -> dict[str, Any]:
+    if brief_artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(brief_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "artifact_id": brief_artifact.id,
+        "schema_version": payload.get("schema_version", "notebook_authoring_brief.v1"),
+        "objective": payload.get("objective"),
+        "source_inspirations": payload.get("source_inspirations")
+        if isinstance(payload.get("source_inspirations"), list)
+        else [],
+        "authoring_principles": payload.get("authoring_principles")
+        if isinstance(payload.get("authoring_principles"), list)
+        else [],
+        "sample_moves": payload.get("sample_moves") if isinstance(payload.get("sample_moves"), list) else [],
+        "context_artifacts": payload.get("context_artifacts")
+        if isinstance(payload.get("context_artifacts"), list)
+        else [],
+        "codex_contract": payload.get("codex_contract") if isinstance(payload.get("codex_contract"), dict) else {},
+        "policy": "source_backed_notebook_craft_guidance_for_on_the_fly_codex_authoring",
     }
 
 

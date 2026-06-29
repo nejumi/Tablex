@@ -81,6 +81,11 @@ class LocalStubAgentRunner(NoopAgentRunner):
         source_citation_manifest = render_stub_source_citation_manifest(task_contract, execution_policy)
         citation_audit_report = render_stub_citation_audit_report(source_citation_manifest)
         citation_visualization_spec = render_stub_citation_visualization(source_citation_manifest)
+        notebook_authoring_plan = (
+            render_stub_notebook_authoring_plan(task_contract)
+            if task_contract.task_type == "author_analysis_notebook"
+            else None
+        )
         visualization_spec = {
             "schema_version": "visualization_spec.v1",
             "title": "Agent Task Output Checklist",
@@ -186,6 +191,21 @@ class LocalStubAgentRunner(NoopAgentRunner):
                     },
                 ]
             )
+        if notebook_authoring_plan is not None:
+            output_artifacts.append(
+                {
+                    "path": "reports/notebook_authoring_plan.md",
+                    "asset_type": "notebook_authoring_plan",
+                    "name": f"notebook_authoring_plan_{task_contract.task_id}",
+                    "metadata": {
+                        "task_id": task_contract.task_id,
+                        "task_type": task_contract.task_type,
+                        "notebook_authoring_brief_artifact_id": dict_value(
+                            task_contract.inputs.get("notebook_authoring")
+                        ).get("artifact_id"),
+                    },
+                }
+            )
         result = AgentResult(
             task_id=task_contract.task_id,
             status="succeeded",
@@ -199,6 +219,7 @@ class LocalStubAgentRunner(NoopAgentRunner):
                 "visualization_spec": visualization_spec,
                 "source_citation_manifest": source_citation_manifest,
                 "citation_audit_report": citation_audit_report,
+                "notebook_authoring_plan": notebook_authoring_plan,
                 "relational_context_summary": relational_context if has_relational_context else None,
                 "approach_decision_trace": approach_decision_trace,
             },
@@ -219,6 +240,7 @@ class LocalStubAgentRunner(NoopAgentRunner):
             approach_decision_trace=approach_decision_trace,
             citation_audit_report=citation_audit_report,
             citation_visualization_spec=citation_visualization_spec,
+            notebook_authoring_plan=notebook_authoring_plan,
             relational_context_summary=relational_context if has_relational_context else None,
             relational_visualization_spec=relational_visualization_spec,
             result=result,
@@ -311,6 +333,7 @@ def write_stub_workspace_outputs(
     approach_decision_trace: dict[str, Any],
     citation_audit_report: str,
     citation_visualization_spec: dict[str, Any],
+    notebook_authoring_plan: str | None,
     relational_context_summary: dict[str, Any] | None,
     relational_visualization_spec: dict[str, Any] | None,
     result: AgentResult,
@@ -341,6 +364,8 @@ def write_stub_workspace_outputs(
         encoding="utf-8",
     )
     (reports_dir / "citation_audit_report.md").write_text(citation_audit_report, encoding="utf-8")
+    if notebook_authoring_plan is not None:
+        (reports_dir / "notebook_authoring_plan.md").write_text(notebook_authoring_plan, encoding="utf-8")
     (artifacts_dir / "citation_visualization_spec.json").write_text(
         json.dumps(citation_visualization_spec, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -515,6 +540,80 @@ def render_stub_approach_decision_trace(
             "Record why any harness suggestion was accepted, modified, rejected, or deferred.",
         ],
     }
+
+
+def render_stub_notebook_authoring_plan(contract: AgentTaskContract) -> str:
+    notebook_context = dict_value(contract.inputs.get("notebook_authoring"))
+    dataset_context = dict_value(contract.inputs.get("dataset_context"))
+    evaluation_contract = dict_value(contract.inputs.get("evaluation_contract"))
+    sources = [item for item in list_value(notebook_context.get("source_inspirations")) if isinstance(item, dict)]
+    principles = [item for item in list_value(notebook_context.get("authoring_principles")) if isinstance(item, dict)]
+    context_artifacts = [
+        item for item in list_value(notebook_context.get("context_artifacts")) if isinstance(item, dict)
+    ]
+    lines = [
+        "# Notebook Authoring Plan",
+        "",
+        "LocalStub did not write the final notebook. This artifact defines the handoff a real Codex runner must use.",
+        "",
+        "## Reader Objective",
+        "",
+        str(notebook_context.get("objective") or contract.objective),
+        "",
+        "## Current Evidence",
+        "",
+        f"- Notebook authoring brief: `{notebook_context.get('artifact_id') or 'missing'}`",
+        f"- DatasetSnapshot: `{dataset_context.get('dataset_snapshot_id') or 'missing'}`",
+        f"- Rows: `{dataset_context.get('row_count')}`",
+        f"- Columns: `{dataset_context.get('column_count')}`",
+        f"- Target: `{dataset_context.get('target_column') or 'not selected'}`",
+        f"- EvaluationSpec: `{evaluation_contract.get('evaluation_spec_id') or 'missing'}`",
+        f"- Primary metric: `{evaluation_contract.get('primary_metric') or 'not selected'}`",
+        "",
+        "## Source Inspirations",
+    ]
+    if sources:
+        for source in sources:
+            lines.append(f"- {source.get('title')}: {source.get('runner_use')}")
+    else:
+        lines.append("- No public craft source cards were attached; runner should ask for or create them before external claims.")
+    lines.extend(["", "## Authoring Principles"])
+    if principles:
+        for principle in principles:
+            lines.append(f"- **{principle.get('principle')}**: {principle.get('implementation')}")
+    else:
+        lines.append("- Use the Tablex notebook quality Skill as the fallback quality bar.")
+    lines.extend(
+        [
+            "",
+            "## Context Artifacts To Open First",
+        ]
+    )
+    if context_artifacts:
+        for artifact in context_artifacts:
+            lines.append(f"- `{artifact.get('role')}`: `{artifact.get('artifact_id')}` ({artifact.get('asset_type')})")
+    else:
+        lines.append("- No EDA/Data Review artifacts were attached; generate Data Review before final notebook authoring.")
+    lines.extend(
+        [
+            "",
+            "## Codex Execution Instructions",
+            "",
+            "- Decide the notebook flow from evidence, not from a fixed Tablex template.",
+            "- Start with a concise reader brief, then a question ladder: question, evidence, interpretation, next action.",
+            "- Prefer a small number of purposeful figures over a chart gallery.",
+            "- Label missing evidence, unresolved assumptions, profile boundaries, and deferred checks.",
+            "- Return the marimo source, rendered report, figure manifest, evidence bundle, quality review, and citation audit.",
+            "",
+            "## Non-Negotiable Boundaries",
+            "",
+            "- Do not read secrets or connector credentials.",
+            "- Do not copy public notebook prose, code, or section order.",
+            "- Do not change EvaluationSpec or SplitManifest.",
+            "- Do not make model or metric claims unless supported by Tablex artifacts.",
+        ]
+    )
+    return "\n".join(lines).strip() + "\n"
 
 
 def summarize_approach_candidates(candidates: list[Any]) -> list[dict[str, Any]]:

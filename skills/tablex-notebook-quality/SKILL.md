@@ -11,6 +11,8 @@ Use this skill when a Tablex task asks for a notebook, data understanding report
 
 Write for a human analyst first, while preserving harness-owned evaluation boundaries.
 
+- Do not treat Tablex notebook generation as a fixed template. Use the current `notebook_authoring_brief`, Data Review evidence, project artifacts, and cited public notebook-craft inspirations to decide the narrative on the fly.
+- Use public Kaggle Grandmaster-style work as craft inspiration: detailed EDA before modeling, question-driven flow, high-signal visuals, clear storytelling, strong structure, original insight, and transparent next actions. Do not copy public notebook text, code, or section order verbatim.
 - Start with a reader brief: what question the notebook answers and what the user should inspect first.
 - Tell a data story: row meaning, target meaning, leakage risk, time/group structure, missingness, and prediction-time availability.
 - Keep EvaluationSpec and SplitManifest visible before discussing model lift.
@@ -23,6 +25,12 @@ Write for a human analyst first, while preserving harness-owned evaluation bound
 
 Make these areas explicit in generated notebooks and reports:
 
+- Reader journey: hook, question ladder, evidence, interpretation, caveat, next action.
+- Visual quality: a small number of purposeful figures with captions, not a dashboard dump.
+- Storytelling: each section should change what the analyst believes or knows.
+- Structure: progressive disclosure from verdict to evidence to appendix.
+- Insight quality: prioritize findings that alter evaluation, feature strategy, or runner work.
+- Originality: adapt to the dataset's actual semantics instead of reusing generic Titanic/Home Credit sections.
 - Data story: row semantics, decision timing, collection process, profile boundary.
 - Target-aware EDA: target construction, distribution, imbalance/outliers, missing target values, metric suitability.
 - Leakage and availability: post-outcome fields, duplicate rows/entities, prediction-time availability, temporal leakage.
@@ -39,6 +47,7 @@ If evidence is missing, mark the area as missing/deferred and describe the next 
 - Do not hide uncertainty. Label assumptions, sample boundaries, missing execution, and deferred checks.
 - Do not copy external notebook structures blindly. Use public notebook craft as inspiration for narrative, not as fixed recipes.
 - Do not require W&B, MLflow, Kaggle, or external dashboards to understand the result.
+- Do not write a notebook that merely restyles existing Tablex HTML. The runner should add analysis, interpretation, and artifact-backed figures/tables.
 
 ## Tablex-Specific Requirements
 
@@ -47,3 +56,4 @@ If evidence is missing, mark the area as missing/deferred and describe the next 
 - Do not destructively modify EvaluationSpec or SplitManifest from notebook code.
 - Register generated source, HTML preview, report, figure manifest, and execution/capture evidence as artifacts.
 - Make notebook outputs useful inside the Tablex UI: concise headings, metric cards, readable tables, charts with captions, and clear next actions.
+- If `notebook_authoring_brief` is present, read it first. Treat its source cards and sample moves as craft context for Codex, not as deterministic harness sections.

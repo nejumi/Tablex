@@ -30,6 +30,7 @@ from tabular_harness.services.evaluation import (
     write_candidates_artifact,
     write_spec_artifact,
 )
+from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.project_guidance import build_project_guidance
 
 SUPPORTED_METRICS = {
@@ -81,6 +82,23 @@ def handle_agent_chat_turn(
         actions.append(generate_data_understanding_notebook_action(db, store=store, project=project))
     elif intent["type"] == "run_eda_review":
         actions.append(run_eda_review_action(db, store=store, project=project))
+    elif intent["type"] == "author_analysis_notebook":
+        authoring_action = create_notebook_authoring_action(db, store=store, project=project, message=message)
+        actions.append(authoring_action)
+        planned_agent_task = plan_project_agent_task(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            objective=(
+                f"The user asked: {message}. Write or revise a high-quality, human-facing Tablex analysis notebook "
+                "on the fly. Use the latest notebook_authoring_brief, Data Review evidence, project artifacts, "
+                "and the tablex-notebook-quality Skill. Do not use a fixed template; choose the narrative and "
+                "sections from the evidence."
+            ),
+            task_type="author_analysis_notebook",
+        )
+        actions.append(agent_task_action(planned_agent_task))
     elif intent["type"] == "guide_notebook_review":
         actions.append(
             guide_notebook_review_action(
@@ -169,6 +187,13 @@ def infer_chat_intent(message: str) -> dict[str, Any]:
             "summary": f"User wants the evaluation metric to be {SUPPORTED_METRICS[metric]['label']}.",
         }
     notebook_id = extract_notebook_artifact_id(message)
+    if is_notebook_authoring_request(normalized):
+        return {
+            "type": "author_analysis_notebook",
+            "metric": None,
+            "confidence": 0.88,
+            "summary": "User wants Codex to write or revise a high-quality analysis notebook from current evidence.",
+        }
     if notebook_id or is_notebook_guide_request(normalized):
         return {
             "type": "guide_notebook_review",
@@ -249,6 +274,31 @@ def is_eda_review_request(normalized: str) -> bool:
         for word in ["run", "generate", "create", "make", "show", "作", "生成", "出し", "やって", "して", "見せ"]
     )
     return has_eda_word and has_action_word
+
+
+def is_notebook_authoring_request(normalized: str) -> bool:
+    has_notebook = any(word in normalized for word in ["notebook", "ノートブック", "分析", "eda"])
+    has_authoring = any(
+        word in normalized
+        for word in [
+            "write",
+            "revise",
+            "improve",
+            "author",
+            "draft",
+            "quality",
+            "heads or tails",
+            "grandmaster",
+            "書",
+            "改稿",
+            "改善",
+            "本気",
+            "良い",
+            "高品質",
+            "kaggle",
+        ]
+    )
+    return has_notebook and has_authoring
 
 
 def is_next_step_request(normalized: str) -> bool:
@@ -337,6 +387,37 @@ def run_eda_review_action(
         "artifact_id": result.html_artifact.id,
         "artifact_ids": result.artifact_ids,
         "entity_ids": [result.report.id, result.evidence.id, result.insight.id],
+    }
+
+
+def create_notebook_authoring_action(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    message: str,
+) -> dict[str, Any]:
+    result = create_notebook_authoring_brief(
+        db,
+        store=store,
+        project=project,
+        objective=(
+            f"Prepare Codex to write a high-quality Tablex analysis notebook for this request: {message}. "
+            "Use source-backed notebook craft principles, current Data Review evidence, and project artifacts."
+        ),
+    )
+    return {
+        "type": "create_notebook_authoring_brief",
+        "status": "applied",
+        "label": "Prepared a GM-style notebook authoring brief",
+        "target_tab": "Notebooks",
+        "detail": (
+            "Created a source-backed brief with Kaggle Grandmaster-inspired craft principles, sample moves, "
+            "context artifacts, and a Codex contract for on-the-fly notebook writing."
+        ),
+        "artifact_id": result.brief_artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "entity_ids": [result.report.id],
     }
 
 
@@ -716,6 +797,16 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
         return (
             f"I cannot run Data Review yet: {action['detail']} "
             f"Open {action['target_tab']} and upload or select a dataset first."
+        )
+    if intent["type"] == "author_analysis_notebook":
+        brief_action = next((action for action in actions if action["type"] == "create_notebook_authoring_brief"), None)
+        task_action = next((action for action in actions if action["type"] == "create_agent_task_contract"), None)
+        return (
+            "I prepared the notebook authoring handoff instead of hardcoding another template. "
+            f"{brief_action['detail'] if brief_action else ''} "
+            f"{task_action['detail'] if task_action else ''} "
+            "Next: run the controlled Codex notebook authoring task so it reads the brief, Data Review evidence, "
+            "and project artifacts, then writes the notebook on the fly with source-backed narrative quality."
         )
     if intent["type"] == "explain_next_step":
         action = actions[0]
