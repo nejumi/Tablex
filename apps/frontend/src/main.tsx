@@ -3790,8 +3790,39 @@ function DataTab({
   );
   const publicWorkflowJobs = jobs.filter((job) => job.job_type === "run_public_benchmark_workflow");
   const latestDataset = datasets[0] ?? null;
+  const latestProfileArtifact = profileArtifacts[0] ?? null;
+  const latestQualityArtifact = qualityArtifacts[0] ?? null;
   const latestRelationalCatalog = relationalArtifacts[0] ?? null;
   const latestRelationalHint = relationalHintArtifacts.find((artifact) => artifact.asset_type === "relational_schema_hint") ?? null;
+  const relationalEvidenceLabel = latestRelationalCatalog
+    ? "relational catalog ready"
+    : latestRelationalHint
+      ? "uploaded ER evidence"
+      : "not mapped yet";
+  const dataFocusHeadline = latestDataset
+    ? "Read the data evidence before deciding the next modeling move"
+    : "Start by uploading or importing a dataset";
+  const dataFocusReason = latestDataset
+    ? "Tablex should first establish row meaning, target availability, relational structure, quality risk, and evaluation constraints. Detailed catalogs stay available below, but the first decision is whether the data evidence is trustworthy enough for runner work."
+    : "A project can exist before target selection. Upload CSV/Parquet or import a benchmark first, then let Data Understanding propose target candidates, assumptions, and evaluation choices.";
+  const dataFocusNextAction = !latestDataset
+    ? "Upload or import data"
+    : !latestProfileArtifact
+      ? "Run profiling from upload/import"
+      : !latestQualityArtifact
+        ? "Analyze quality"
+        : !latestRelationalCatalog && benchmarks.some((benchmark) => benchmark.source_card?.table_bundle)
+          ? "Import relational benchmark"
+          : "Review ER evidence";
+  const dataFocusRelationalArtifactId = latestRelationalCatalog?.id ?? latestRelationalHint?.id ?? null;
+  const dataFocusButtonLabel = !latestDataset
+    ? "Upload Data"
+    : !latestQualityArtifact
+      ? "Check Quality"
+      : dataFocusRelationalArtifactId
+        ? "Open ER Map"
+        : "Review Details";
+  const dataFocusButtonDisabled = !latestDataset || busy || Boolean(latestQualityArtifact && !dataFocusRelationalArtifactId);
 
   React.useEffect(() => {
     const preferredArtifact = latestRelationalCatalog ?? latestRelationalHint;
@@ -3837,6 +3868,66 @@ function DataTab({
           </button>
         </div>
       </Panel>
+      <section className="data-focus-panel" aria-label="Data evidence focus">
+        <div className="data-focus-copy">
+          <div className="eyebrow">Data evidence now</div>
+          <h2>{dataFocusHeadline}</h2>
+          <p>{dataFocusReason}</p>
+          <div className="badge-row">
+            <span className={latestDataset ? "badge" : "badge risk"}>{latestDataset ? "dataset ready" : "needs data"}</span>
+            <span className={latestProfileArtifact ? "badge" : "badge muted"}>
+              {latestProfileArtifact ? String(latestProfileArtifact.metadata.profile_mode ?? "profiled").replace(/_/g, " ") : "profile pending"}
+            </span>
+            <span className={latestQualityArtifact ? "badge" : "badge warning"}>
+              {latestQualityArtifact ? String(latestQualityArtifact.metadata.severity ?? "quality recorded") : "quality not checked"}
+            </span>
+            <span className={latestRelationalCatalog || latestRelationalHint ? "badge" : "badge muted"}>
+              {relationalEvidenceLabel}
+            </span>
+          </div>
+        </div>
+        <div className="data-focus-aside">
+          <Metric label="Rows" value={latestDataset?.row_count ?? "-"} />
+          <Metric label="Columns" value={latestDataset?.column_count ?? "-"} />
+          <Metric label="Profiles" value={profileArtifacts.length} />
+          <Metric label="Quality" value={qualityArtifacts.length ? qualityArtifacts.length : "none"} />
+          <div className="data-focus-action">
+            <span>Next</span>
+            <strong>{dataFocusNextAction}</strong>
+            <button
+              className="secondary-button"
+              disabled={dataFocusButtonDisabled}
+              onClick={() => {
+                if (!latestDataset) return;
+                if (!latestQualityArtifact) {
+                  void runAction(() => api(`/api/datasets/${latestDataset.id}/quality/run`, { method: "POST" }));
+                  return;
+                }
+                if (dataFocusRelationalArtifactId) {
+                  void loadRelationalPreview(dataFocusRelationalArtifactId);
+                }
+              }}
+            >
+              {busy ? (
+                <Loader2 className="spin" size={16} />
+              ) : latestQualityArtifact && dataFocusRelationalArtifactId ? (
+                <Eye size={16} />
+              ) : (
+                <ListChecks size={16} />
+              )}
+              {dataFocusButtonLabel}
+            </button>
+          </div>
+        </div>
+      </section>
+      <details className="data-supporting-shelves data-supporting-shelves-primary">
+        <summary>
+          <span>Supporting data shelves</span>
+          <small>
+            benchmark plans, imports, snapshots, profiles, and source artifacts
+          </small>
+        </summary>
+        <div className="data-supporting-shelves-body">
       <Panel title="Benchmark Collection Plan" icon={<Database size={18} />}>
         <div className="toolbar">
           <button className="secondary-button" disabled={busy} onClick={() => void createBenchmarkCollectionPlan()}>
@@ -4281,6 +4372,8 @@ function DataTab({
           <EmptyInline text="Raw uploaded files are stored in the local artifact store with content hashes." />
         )}
       </Panel>
+        </div>
+      </details>
       <Panel title="Relational Map" icon={<GitBranch size={18} />} className="data-relational-map-panel">
         <div className="relational-map-hero">
           <div>
@@ -4510,6 +4603,14 @@ function DataTab({
           </div>
         </details>
       </Panel>
+      <details className="data-supporting-shelves data-supporting-shelves-secondary">
+        <summary>
+          <span>Scenarios, workflow results, and quality details</span>
+          <small>
+            {scenarioArtifacts.length} scenarios / {publicWorkflowJobs.length} workflows / {qualityArtifacts.length} quality artifacts
+          </small>
+        </summary>
+        <div className="data-supporting-shelves-body">
       <Panel title="Benchmark Scenario Packs" icon={<Layers size={18} />}>
         {scenarioArtifacts.length ? (
           <Table
@@ -4581,6 +4682,8 @@ function DataTab({
           <EmptyInline text={qualityPreview?.reason ?? "Analyze quality or select a quality artifact to inspect gates, guidance, and agent-context notes."} />
         )}
       </Panel>
+        </div>
+      </details>
     </div>
   );
 }
@@ -6619,6 +6722,21 @@ function NotebooksTab({
   const hasEvidenceCapture = Boolean(reviewNotebook?.coverage.has_execution_capture || reviewEvidenceHtml);
   const story = analysisStory?.story ?? null;
   const storyPreviewArtifactId = textField(story?.selected_source?.preview_artifact_id) ?? readablePreviewArtifactId;
+  const notebookFocusHeadline =
+    textField(story?.headline) ??
+    (reviewNotebook ? reviewNotebook.title : "Create the first readable analysis story");
+  const notebookFocusReason =
+    textField(story?.why_this_story) ??
+    (divertedFromEmptyDiagnostics
+      ? "The latest diagnostics notebook has no useful model evidence, so Tablex is routing attention back to Data Understanding."
+      : reviewNotebook
+        ? reviewNotebook.recommendation_reason
+        : "Run EDA Review first, then let Codex extend analysis only when the next human question is clear.");
+  const notebookFocusNext = storyPreviewArtifactId
+    ? "Open the current story"
+    : latestDataset
+      ? "Run EDA Review"
+      : "Upload data first";
   const storyPrimaryActionType = textField(story?.primary_action?.action_type);
   const storyPrimaryEndpoint = textField(story?.primary_action?.endpoint);
   const autoPreviewedArtifactRef = React.useRef<string | null>(null);
@@ -6653,6 +6771,53 @@ function NotebooksTab({
 
   return (
     <div className="stack notebook-workbench">
+      <section className="notebook-focus-panel" aria-label="Notebook reading focus">
+        <div className="notebook-focus-copy">
+          <div className="eyebrow">Notebook focus</div>
+          <h2>{notebookFocusHeadline}</h2>
+          <p>{notebookFocusReason}</p>
+          <div className="badge-row">
+            <span className={story ? "badge" : "badge muted"}>{story ? "story ready" : "story pending"}</span>
+            <span className={hasEvidenceCapture ? "badge" : "badge risk"}>
+              {hasEvidenceCapture ? "evidence captured" : "capture needed"}
+            </span>
+            <span className={latestEdaReviewHtml ? "badge" : "badge warning"}>
+              {latestEdaReviewHtml ? "EDA review ready" : "EDA review not run"}
+            </span>
+            {divertedFromEmptyDiagnostics ? <span className="badge warning">empty diagnostics skipped</span> : null}
+          </div>
+        </div>
+        <div className="notebook-focus-aside">
+          <Metric label="Notebooks" value={notebookIndex?.counts.total ?? 0} />
+          <Metric label="Captured" value={notebookIndex?.counts.with_execution_capture ?? 0} />
+          <Metric label="Figures" value={String(story?.figure_refs.length ?? latestEdaReviewFigures.length)} />
+          <Metric label="Runs" value={runs.length} />
+          <div className="notebook-focus-action">
+            <span>Next</span>
+            <strong>{notebookFocusNext}</strong>
+            <button
+              className="secondary-button"
+              disabled={busy || (!storyPreviewArtifactId && latestDataset === null)}
+              onClick={() => {
+                if (storyPreviewArtifactId) {
+                  void loadPreview(storyPreviewArtifactId);
+                } else if (latestDataset) {
+                  void runAction(() => runEdaReview(latestDataset));
+                }
+              }}
+            >
+              {previewLoadingId === storyPreviewArtifactId || busy ? (
+                <Loader2 className="spin" size={16} />
+              ) : storyPreviewArtifactId ? (
+                <Eye size={16} />
+              ) : (
+                <BarChart3 size={16} />
+              )}
+              {storyPreviewArtifactId ? "Open Story" : "Run EDA Review"}
+            </button>
+          </div>
+        </div>
+      </section>
       <Panel title="Analysis Story" icon={<BarChart3 size={18} />}>
         {story ? (
           <div className="analysis-story-surface">
