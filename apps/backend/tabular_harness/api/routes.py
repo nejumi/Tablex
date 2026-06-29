@@ -206,6 +206,9 @@ from tabular_harness.services.kaggle_probe import (
     fetch_kaggle_competition_inventory,
     probe_kaggle_benchmark_access,
 )
+from tabular_harness.services.model_diagnostics_artifacts import (
+    materialize_model_diagnostics_artifacts,
+)
 from tabular_harness.services.model_versions import validate_model_version_package
 from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.planned_agent_execution import (
@@ -4027,6 +4030,53 @@ def analyze_run_diagnostics_endpoint(
                 "run_id": run.id,
                 "artifact_ids": result.artifact_ids,
                 "diagnostics": result.diagnostics,
+                "insight_id": result.insight_id,
+                "evidence_id": result.evidence_id,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/runs/{run_id}/model-diagnostics-artifacts", response_model=JobRead)
+def materialize_model_diagnostics_artifacts_endpoint(
+    run_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    run = db.get(ExperimentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="ExperimentRun not found")
+    job = create_job(
+        db,
+        job_type="materialize_model_diagnostics_artifacts",
+        project_id=run.project_id,
+        input_payload={"run_id": run.id},
+        policy={
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+            "evaluation_spec_modified": False,
+            "split_manifest_required": True,
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = materialize_model_diagnostics_artifacts(db, store=store, run=run)
+        mark_job_succeeded(
+            job,
+            {
+                "run_id": run.id,
+                "model_version_id": run.model_version_id,
+                "artifact_ids": result.artifact_ids,
+                "model_diagnostics_artifact_pack_id": result.artifact_ids[2],
+                "model_diagnostics_report_artifact_id": result.artifact_ids[3],
+                "feature_importance_artifact_id": result.artifact_ids[0],
+                "permutation_importance_artifact_id": result.artifact_ids[1],
+                "visualization_artifact_id": result.artifact_ids[4],
+                "availability": result.diagnostics.get("availability", {}),
                 "insight_id": result.insight_id,
                 "evidence_id": result.evidence_id,
             },

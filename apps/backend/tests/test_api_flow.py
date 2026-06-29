@@ -1753,6 +1753,25 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert diagnostics_job["output"]["insight_id"]
     assert diagnostics_job["output"]["evidence_id"]
 
+    model_evidence_response = client.post(f"/api/runs/{baseline_run['id']}/model-diagnostics-artifacts")
+    assert model_evidence_response.status_code == 200, model_evidence_response.text
+    model_evidence_job = model_evidence_response.json()
+    assert model_evidence_job["status"] == "succeeded"
+    assert model_evidence_job["job_type"] == "materialize_model_diagnostics_artifacts"
+    assert model_evidence_job["output"]["feature_importance_artifact_id"]
+    assert model_evidence_job["output"]["permutation_importance_artifact_id"]
+    assert model_evidence_job["output"]["model_diagnostics_artifact_pack_id"]
+    assert model_evidence_job["output"]["model_diagnostics_report_artifact_id"]
+    assert model_evidence_job["output"]["availability"]["native_feature_importance"] == "ready"
+    assert model_evidence_job["output"]["availability"]["prediction_review"] == "ready"
+    model_evidence_report_response = client.get(
+        f"/api/artifacts/{model_evidence_job['output']['model_diagnostics_report_artifact_id']}/preview"
+    )
+    assert model_evidence_report_response.status_code == 200
+    model_evidence_report = model_evidence_report_response.json()["preview"]
+    assert "Model Diagnostics Artifact Pack" in model_evidence_report
+    assert "Top Native Features" in model_evidence_report
+
     model_notebook_response = client.post(f"/api/runs/{baseline_run['id']}/analysis-notebook")
     assert model_notebook_response.status_code == 200, model_notebook_response.text
     model_notebook_job = model_notebook_response.json()
@@ -1782,6 +1801,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert model_notebook_html["content_type"] == "text/html"
     assert "Tablex Model Diagnostics Notebook" in model_notebook_html["preview"]
     assert "Feature importance" in model_notebook_html["preview"]
+    assert "Model evidence" in model_notebook_html["preview"]
 
     model_notebook_manifest_response = client.get(
         f"/api/artifacts/{model_notebook_job['output']['notebook_run_manifest_artifact_id']}/download"
@@ -1869,6 +1889,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "Result interpretation" in model_evidence_html["preview"]
     assert "Sanity floor" in model_evidence_html["preview"]
     assert "Primary metric" in model_evidence_html["preview"]
+    assert "Native Feature Importance" in model_evidence_html["preview"]
+    assert "Permutation Importance" in model_evidence_html["preview"]
     assert "Readiness verdict" in model_evidence_html["preview"]
     assert "Prediction coverage" in model_evidence_html["preview"]
     assert "Diagnostics readiness" in model_evidence_html["preview"]

@@ -47,6 +47,9 @@ from tabular_harness.services.jobs import (
     mark_job_running,
     mark_job_succeeded,
 )
+from tabular_harness.services.model_diagnostics_artifacts import (
+    materialize_model_diagnostics_artifacts,
+)
 from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.project_guidance import build_project_guidance
 from tabular_harness.services.reporting import leaderboard_sort_key
@@ -152,6 +155,11 @@ def handle_agent_chat_turn(
             source_ref=dict_value(intent.get("source_ref")),
         )
         actions.append(notebook_followup_task_action(planned_agent_task, intent))
+        if any(
+            focus in {"feature_importance", "permutation_importance", "calibration", "threshold", "score_bins", "slice_metrics", "worst_examples"}
+            for focus in list_value(intent.get("focus_areas"))
+        ):
+            actions.append(materialize_top_model_evidence_action(db, store=store, project=project))
     elif intent["type"] == "guide_notebook_review":
         actions.append(
             guide_notebook_review_action(
@@ -688,7 +696,28 @@ def notebook_followup_focus_areas(normalized: str) -> list[str]:
 
 
 def is_notebook_followup_task_request(normalized: str, *, has_scoped_source: bool) -> bool:
-    if not has_scoped_source and not any(word in normalized for word in ["notebook", "ノートブック", "analysis story"]):
+    has_model_evidence_context = bool(notebook_followup_focus_areas(normalized)) and any(
+        word in normalized
+        for word in [
+            "model",
+            "run",
+            "top run",
+            "result",
+            "evidence",
+            "diagnostic",
+            "diagnostics",
+            "モデル",
+            "run",
+            "結果",
+            "根拠",
+            "診断",
+        ]
+    )
+    if (
+        not has_scoped_source
+        and not has_model_evidence_context
+        and not any(word in normalized for word in ["notebook", "ノートブック", "analysis story"])
+    ):
         return False
     has_followup_focus = bool(notebook_followup_focus_areas(normalized))
     asks_for_materialization = any(
@@ -1841,6 +1870,81 @@ def notebook_followup_task_action(result: AgentTaskPlanResult, intent: dict[str,
     }
 
 
+def materialize_top_model_evidence_action(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+) -> dict[str, Any]:
+    runs = leaderboard_runs(db, project.id)
+    if not runs:
+        return needs_review_action(
+            action_type="materialize_model_diagnostics_artifacts",
+            label="Model evidence needs a successful run",
+            target_tab="Experiments",
+            target_anchor=None,
+            detail="No successful ExperimentRun exists yet, so Tablex cannot materialize model evidence artifacts.",
+        )
+    top_run = runs[0]
+    action_job = create_job(
+        db,
+        job_type="materialize_model_diagnostics_artifacts",
+        project_id=project.id,
+        input_payload={"run_id": top_run.id, "triggered_by": "agent_chat"},
+        policy={
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+            "evaluation_spec_modified": False,
+            "split_manifest_required": True,
+        },
+    )
+    try:
+        mark_job_running(action_job)
+        result = materialize_model_diagnostics_artifacts(db, store=store, run=top_run)
+        mark_job_succeeded(
+            action_job,
+            {
+                "run_id": top_run.id,
+                "model_version_id": top_run.model_version_id,
+                "artifact_ids": result.artifact_ids,
+                "feature_importance_artifact_id": result.artifact_ids[0],
+                "permutation_importance_artifact_id": result.artifact_ids[1],
+                "model_diagnostics_artifact_pack_id": result.artifact_ids[2],
+                "model_diagnostics_report_artifact_id": result.artifact_ids[3],
+                "visualization_artifact_id": result.artifact_ids[4],
+                "availability": result.diagnostics.get("availability", {}),
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(action_job, str(exc))
+        return needs_review_action(
+            action_type="materialize_model_diagnostics_artifacts",
+            label="Model evidence needs source artifacts",
+            target_tab="Experiments",
+            target_anchor=None,
+            detail=str(exc),
+            job_id=action_job.id,
+        )
+    availability = result.diagnostics.get("availability", {})
+    return {
+        "type": "materialize_model_diagnostics_artifacts",
+        "status": "applied",
+        "label": "Materialized model evidence artifacts",
+        "target_tab": "Leaderboard",
+        "target_anchor": "result-readout",
+        "detail": (
+            f"Created feature importance, permutation importance, model diagnostics pack, report, and visualization "
+            f"for top run {top_run.id}. Availability: native={availability.get('native_feature_importance')}, "
+            f"permutation={availability.get('permutation_importance')}, prediction_review={availability.get('prediction_review')}."
+        ),
+        "artifact_id": result.artifact_ids[3],
+        "artifact_ids": result.artifact_ids,
+        "entity_ids": [top_run.id, result.insight_id, result.evidence_id],
+        "job_id": action_job.id,
+    }
+
+
 def append_decision_note(existing: str, note: str) -> str:
     if note in existing:
         return existing
@@ -1984,11 +2088,23 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
         )
     if intent["type"] == "plan_notebook_followup_task":
         action = actions[0]
+        model_evidence_action = next(
+            (item for item in actions if item.get("type") == "materialize_model_diagnostics_artifacts"),
+            None,
+        )
+        model_evidence_sentence = (
+            f" I also materialized in-harness model evidence now: {model_evidence_action['detail']} "
+            "Read Leaderboard > Result Readout first, then open Notebook Evidence for the visual story. "
+            "Use the Approach handoff only if you want Codex to extend this into a broader notebook or report update."
+            if model_evidence_action and model_evidence_action.get("status") == "applied"
+            else ""
+        )
         return (
             "I turned that notebook follow-up into a controlled diagnostics task, not just a note. "
             f"{action['detail']} Open Approach to review the runner handoff. When executed, Codex should produce "
             "a concise report, figures or visualization specs, evidence bundle, and notebook update only from "
             "available artifacts; if prediction or model evidence is missing, it must say exactly what is missing."
+            f"{model_evidence_sentence}"
         )
     if intent["type"] == "explain_next_step":
         action = actions[0]
@@ -2181,6 +2297,23 @@ def build_worker_events(
 
 
 def next_focus_from_actions(actions: list[dict[str, Any]]) -> dict[str, Any]:
+    materialized_model_evidence = next(
+        (
+            action
+            for action in actions
+            if action.get("type") == "materialize_model_diagnostics_artifacts"
+            and action.get("status") == "applied"
+            and action.get("target_tab")
+        ),
+        None,
+    )
+    if materialized_model_evidence:
+        return {
+            "target_tab": materialized_model_evidence["target_tab"],
+            "target_anchor": materialized_model_evidence.get("target_anchor"),
+            "label": materialized_model_evidence["label"],
+            "status": materialized_model_evidence["status"],
+        }
     for action in actions:
         if action.get("target_tab"):
             return {

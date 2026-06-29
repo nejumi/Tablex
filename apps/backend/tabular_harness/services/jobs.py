@@ -52,6 +52,7 @@ JOB_TYPES = {
     "create_notebook_authoring_brief",
     "generate_data_understanding_notebook",
     "generate_model_diagnostics_notebook",
+    "materialize_model_diagnostics_artifacts",
     "plan_notebook_execution",
     "capture_notebook_execution",
     "prepare_result_notebook_evidence",

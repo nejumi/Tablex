@@ -1086,6 +1086,7 @@ def build_notebook_evidence_bundle(
             "result_interpretation": summary.get("result_interpretation", {}),
             "metric_comparison": summary.get("metric_comparison", {}),
             "sanity_floor": summary.get("sanity_floor", {}),
+            "model_diagnostics_artifacts": summary.get("model_diagnostics_artifacts", {}),
             "figure_count": len(figures),
             "guardrail_count": len(summary.get("evaluation_guardrails", []))
             if isinstance(summary.get("evaluation_guardrails"), list)
@@ -1100,6 +1101,7 @@ def build_notebook_evidence_bundle(
             "result_interpretation": summary.get("result_interpretation", {}),
             "metric_comparison": summary.get("metric_comparison", {}),
             "sanity_floor": summary.get("sanity_floor", {}),
+            "model_diagnostics_artifacts": summary.get("model_diagnostics_artifacts", {}),
             "quality_rubric": summary.get("quality_rubric", []),
             "analysis_storyboard": summary.get("analysis_storyboard", []),
             "eda_playbook": summary.get("eda_playbook", []),
@@ -1170,6 +1172,17 @@ def build_notebook_evidence_figure_specs(
             for item in _list_value(summary.get("findings"))
             if isinstance(item, dict)
         ]
+        model_artifacts = _dict_value(summary.get("model_diagnostics_artifacts"))
+        native_top_features = [
+            cast(dict[str, Any], item)
+            for item in _list_value(_dict_value(model_artifacts.get("native_feature_importance")).get("top_features"))
+            if isinstance(item, dict)
+        ]
+        permutation_top_features = [
+            cast(dict[str, Any], item)
+            for item in _list_value(_dict_value(model_artifacts.get("permutation_importance")).get("top_features"))
+            if isinstance(item, dict)
+        ]
         return [
             {
                 "figure_id": "diagnostics_readiness",
@@ -1213,6 +1226,40 @@ def build_notebook_evidence_figure_specs(
                     ],
                     value_format="integer",
                     empty_message="Feature-family counts are not available for this run yet.",
+                ),
+            },
+            {
+                "figure_id": "native_feature_importance",
+                "title": "Native Feature Importance",
+                "description": "Top stored-model feature importances when the model package exposes them.",
+                "svg": svg_bar_chart(
+                    title="Native feature importance",
+                    rows=[
+                        {
+                            "label": str(row.get("feature_name") or "feature")[:80],
+                            "value": _float_value(row.get("importance")),
+                        }
+                        for row in native_top_features[:12]
+                    ],
+                    value_format="float",
+                    empty_message="Native feature importance is not available yet. Materialize model diagnostics artifacts first.",
+                ),
+            },
+            {
+                "figure_id": "permutation_importance",
+                "title": "Permutation Importance",
+                "description": "Bounded validation-split permutation deltas for the stored model package.",
+                "svg": svg_bar_chart(
+                    title="Permutation importance",
+                    rows=[
+                        {
+                            "label": str(row.get("feature_name") or "feature")[:80],
+                            "value": _float_value(row.get("importance_delta")),
+                        }
+                        for row in permutation_top_features[:12]
+                    ],
+                    value_format="float",
+                    empty_message="Permutation importance is not available yet. Materialize model diagnostics artifacts first.",
                 ),
             },
             {
@@ -1626,6 +1673,7 @@ def create_model_diagnostics_notebook(
     source_artifacts = _model_diagnostics_source_artifacts(db, run, model_version)
     metrics_payload = _read_json_artifact(source_artifacts.get("baseline_metrics"))
     diagnostics_payload = _read_json_artifact(source_artifacts.get("evaluation_diagnostics"))
+    model_diagnostics_artifacts_payload = _read_json_artifact(source_artifacts.get("model_diagnostics_artifact_pack"))
     validation_payload = _read_json_artifact(source_artifacts.get("model_validation_metrics"))
     prediction_summary = _read_prediction_summary(source_artifacts.get("prediction_output"))
     summary = _model_diagnostics_summary(
@@ -1635,6 +1683,7 @@ def create_model_diagnostics_notebook(
         dataset=dataset,
         metrics=metrics_payload or loads_json(run.metrics_json, {}),
         diagnostics=diagnostics_payload,
+        model_diagnostics_artifacts=model_diagnostics_artifacts_payload,
         validation=validation_payload,
         prediction_summary=prediction_summary,
         source_artifacts=source_artifacts,
@@ -2294,6 +2343,7 @@ def render_notebook_report(notebook: dict[str, Any], notebook_artifact_id: str, 
 def render_model_diagnostics_marimo_notebook(notebook: dict[str, Any]) -> str:
     context_json = json.dumps(notebook, ensure_ascii=False, indent=2, sort_keys=True)
     return f'''# Generated by Tablex. Product name is working-name only.
+# Model Diagnostics Notebook
 # Run with: marimo edit model_diagnostics_notebook.py
 import marimo
 
@@ -2453,6 +2503,12 @@ def render_model_diagnostics_html_preview(notebook: dict[str, Any], notebook_art
     findings = cast(list[dict[str, Any]], summary.get("findings", []))
     prediction_summary = cast(dict[str, Any], summary.get("prediction_summary", {}))
     score_bins = cast(list[dict[str, Any]], prediction_summary.get("score_bins", []))
+    model_artifacts = cast(dict[str, Any], summary.get("model_diagnostics_artifacts", {}))
+    model_availability = cast(dict[str, Any], model_artifacts.get("availability", {}))
+    native_importance = cast(dict[str, Any], model_artifacts.get("native_feature_importance", {}))
+    permutation_importance = cast(dict[str, Any], model_artifacts.get("permutation_importance", {}))
+    native_top_features = cast(list[dict[str, Any]], native_importance.get("top_features", []))
+    permutation_top_features = cast(list[dict[str, Any]], permutation_importance.get("top_features", []))
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -2545,6 +2601,17 @@ def render_model_diagnostics_html_preview(notebook: dict[str, Any], notebook_art
       <div class="panel">
         <h2>Feature families</h2>
         {_bar_rows(feature_rows, "family", "count")}
+      </div>
+    </section>
+    <section class="grid">
+      <div class="panel">
+        <h2>Model evidence</h2>
+        <p>native={escape(str(model_availability.get("native_feature_importance") or "missing"))}; permutation={escape(str(model_availability.get("permutation_importance") or "missing"))}; prediction_review={escape(str(model_availability.get("prediction_review") or "missing"))}</p>
+        {_html_table(native_top_features[:8], ["rank", "feature_name", "importance", "family"])}
+      </div>
+      <div class="panel">
+        <h2>Permutation importance</h2>
+        {_html_table(permutation_top_features[:8], ["rank", "feature_name", "importance_delta", "family"])}
       </div>
     </section>
     <section class="panel">
@@ -2781,6 +2848,15 @@ def _model_diagnostics_source_artifacts(
         ),
         "evaluation_diagnostics_report": _latest_artifact_for_metadata(
             db, run.project_id, "evaluation_diagnostics_report", "run_id", run.id
+        ),
+        "model_diagnostics_artifact_pack": _latest_artifact_for_metadata(
+            db, run.project_id, "model_diagnostics_artifact_pack", "run_id", run.id
+        ),
+        "feature_importance": _latest_artifact_for_metadata(
+            db, run.project_id, "feature_importance", "run_id", run.id
+        ),
+        "permutation_importance": _latest_artifact_for_metadata(
+            db, run.project_id, "permutation_importance", "run_id", run.id
         ),
         "run_report": _latest_artifact_for_metadata(db, run.project_id, "run_report", "run_id", run.id),
         "model_package": model_package_artifact,
@@ -3918,6 +3994,7 @@ def _model_diagnostics_summary(
     dataset: DatasetSnapshot | None,
     metrics: dict[str, Any],
     diagnostics: dict[str, Any],
+    model_diagnostics_artifacts: dict[str, Any],
     validation: dict[str, Any],
     prediction_summary: dict[str, Any],
     source_artifacts: dict[str, Artifact | None],
@@ -3931,6 +4008,7 @@ def _model_diagnostics_summary(
     if primary_metric_value is None and model_version is not None:
         primary_metric_value = model_version.primary_metric_value
     feature_rows = _feature_family_rows(metrics)
+    model_artifacts = _dict_value(model_diagnostics_artifacts)
     diagnostics_summary = diagnostics.get("summary") if isinstance(diagnostics.get("summary"), dict) else {}
     validation_status = validation.get("validation_status") if validation else None
     artifact_coverage = {
@@ -3997,6 +4075,14 @@ def _model_diagnostics_summary(
             findings=findings,
         ),
         "feature_family_rows": feature_rows,
+        "model_diagnostics_artifacts": {
+            "availability": _dict_value(model_artifacts.get("availability")),
+            "native_feature_importance": _dict_value(model_artifacts.get("native_feature_importance")),
+            "permutation_importance": _dict_value(model_artifacts.get("permutation_importance")),
+            "prediction_review": _dict_value(model_artifacts.get("prediction_review")),
+            "interpretation": _list_value(model_artifacts.get("interpretation")),
+            "limitations": _list_value(model_artifacts.get("limitations")),
+        },
         "prediction_summary": prediction_summary,
         "diagnostics_summary": diagnostics_summary,
         "diagnostics_coverage": _diagnostics_coverage(diagnostics, source_artifacts),
@@ -4012,6 +4098,7 @@ def _model_diagnostics_summary(
             prediction_summary=prediction_summary,
             feature_rows=feature_rows,
             diagnostics=diagnostics,
+            model_diagnostics_artifacts=model_artifacts,
             findings=findings,
             evidence_state=evidence_state,
         ),
@@ -4019,6 +4106,7 @@ def _model_diagnostics_summary(
             primary_metric_name=primary_metric_name,
             prediction_summary=prediction_summary,
             diagnostics=diagnostics,
+            model_diagnostics_artifacts=model_artifacts,
             findings=findings,
             evidence_state=evidence_state,
         ),
@@ -4236,6 +4324,7 @@ def _model_diagnostics_story_cards(
     prediction_summary: dict[str, Any],
     feature_rows: list[dict[str, Any]],
     diagnostics: dict[str, Any],
+    model_diagnostics_artifacts: dict[str, Any],
     findings: list[dict[str, str]],
     evidence_state: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -4244,7 +4333,10 @@ def _model_diagnostics_story_cards(
     prediction_status = "ready" if evidence_state["has_predictions"] else "missing"
     diagnostics_status = "ready" if evidence_state["has_diagnostics"] else "missing"
     feature_count = sum(int(row.get("count") or 0) for row in feature_rows)
-    return [
+    model_availability = _dict_value(model_diagnostics_artifacts.get("availability"))
+    native_status = str(model_availability.get("native_feature_importance") or "missing")
+    permutation_status = str(model_availability.get("permutation_importance") or "missing")
+    cards = [
         {
             "title": "Metric credibility",
             "status": metric_status,
@@ -4269,13 +4361,25 @@ def _model_diagnostics_story_cards(
             "why_read": "Feature-family usage tells Codex where to add importance, PDP, and error-slice analysis.",
             "signal": f"{feature_count} features reported across families.",
         },
+    ]
+    if native_status == "ready" or permutation_status == "ready":
+        cards.append(
+            {
+                "title": "Model evidence",
+                "status": "ready" if permutation_status == "ready" else "partial",
+                "why_read": "Feature and permutation evidence explain model behavior without treating leaderboard rank as the story.",
+                "signal": f"native={native_status}; permutation={permutation_status}.",
+            }
+        )
+    cards.append(
         {
             "title": "Attention queue",
             "status": "review",
             "why_read": "Findings define the next useful analysis rather than leaving the user with raw artifacts.",
             "signal": f"{len(findings)} finding(s), {evidence_state['high_finding_count']} high severity.",
-        },
-    ]
+        }
+    )
+    return cards
 
 
 def _model_diagnostics_playbook(
@@ -4283,10 +4387,12 @@ def _model_diagnostics_playbook(
     primary_metric_name: str,
     prediction_summary: dict[str, Any],
     diagnostics: dict[str, Any],
+    model_diagnostics_artifacts: dict[str, Any],
     findings: list[dict[str, str]],
     evidence_state: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    return [
+    availability = _dict_value(model_diagnostics_artifacts.get("availability"))
+    rows = [
         {
             "stage": "1. Decide whether the notebook is worth reading",
             "reader_question": "Is this a real diagnostic review or only a placeholder generated before evidence exists?",
@@ -4311,13 +4417,29 @@ def _model_diagnostics_playbook(
             "current_evidence": _diagnostics_coverage(diagnostics, {}),
             "codex_followup": "Ask Codex to add slice metrics and worst-example review when diagnostics are missing.",
         },
+    ]
+    if availability:
+        rows.append(
+            {
+                "stage": "5. Read model behavior evidence",
+                "reader_question": "Which features actually move the stored model, and do native and permutation signals agree?",
+                "current_evidence": (
+                    f"native={availability.get('native_feature_importance', 'missing')}; "
+                    f"permutation={availability.get('permutation_importance', 'missing')}; "
+                    f"prediction_review={availability.get('prediction_review', 'missing')}"
+                ),
+                "codex_followup": "Use this artifact pack for feature, permutation, calibration, threshold, and slice interpretation.",
+            }
+        )
+    rows.append(
         {
-            "stage": "5. Convert findings into the next experiment",
+            "stage": f"{len(rows) + 1}. Convert findings into the next experiment",
             "reader_question": "Which single missing evidence item blocks the next credible modeling step?",
             "current_evidence": f"{len(findings)} finding(s) queued.",
             "codex_followup": "Create one targeted agent task, not a broad rerun.",
         },
-    ]
+    )
+    return rows
 
 
 def _model_diagnostics_guardrails(evidence_state: dict[str, Any]) -> list[dict[str, str]]:

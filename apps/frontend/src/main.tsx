@@ -6781,7 +6781,8 @@ function ExperimentsTab({
       "compare_experiments",
       "draft_run_report",
       "analyze_evaluation_diagnostics",
-      "generate_model_diagnostics_notebook"
+      "generate_model_diagnostics_notebook",
+      "materialize_model_diagnostics_artifacts"
     ].includes(job.job_type)
   );
   const experimentArtifacts = artifacts.filter((artifact) =>
@@ -6803,7 +6804,11 @@ function ExperimentsTab({
       "analysis_notebook",
       "notebook_html",
       "notebook_run_manifest",
-      "notebook_report"
+      "notebook_report",
+      "feature_importance",
+      "permutation_importance",
+      "model_diagnostics_artifact_pack",
+      "model_diagnostics_artifact_report"
     ].includes(artifact.asset_type)
   );
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
@@ -6910,6 +6915,23 @@ function ExperimentsTab({
                   title="Run evaluation diagnostics"
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+                </button>
+                <button
+                  className="icon-button"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction(async () => {
+                      const job = await api<Job>(`/api/runs/${run.id}/model-diagnostics-artifacts`, { method: "POST" });
+                      const artifactId = textField(job.output.model_diagnostics_report_artifact_id) ?? textField(job.output.model_diagnostics_artifact_pack_id);
+                      if (artifactId) {
+                        await loadPreview(artifactId);
+                      }
+                      return job;
+                    })
+                  }
+                  title="Materialize model evidence artifacts"
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
                 </button>
                 <button
                   className="icon-button"
@@ -9083,6 +9105,9 @@ function LeaderboardTab({
   const diagnosticArtifacts = artifacts.filter((artifact) =>
     ["evaluation_diagnostics", "evaluation_diagnostics_report"].includes(artifact.asset_type)
   );
+  const modelDiagnosticArtifacts = artifacts.filter((artifact) =>
+    ["feature_importance", "permutation_importance", "model_diagnostics_artifact_pack", "model_diagnostics_artifact_report"].includes(artifact.asset_type)
+  );
   const comparisonReportArtifacts = artifacts.filter((artifact) => artifact.asset_type === "experiment_comparison_report");
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
@@ -9137,6 +9162,18 @@ function LeaderboardTab({
     const htmlArtifactId = textField(job.output.notebook_html_artifact_id);
     if (htmlArtifactId) {
       await loadPreview(htmlArtifactId);
+    }
+    return job;
+  }
+
+  async function materializeTopRunModelEvidence(entry: LeaderboardEntry) {
+    const job = await api<Job>(`/api/runs/${entry.run_id}/model-diagnostics-artifacts`, { method: "POST" });
+    const artifactId =
+      textField(job.output.model_diagnostics_report_artifact_id) ??
+      textField(job.output.model_diagnostics_artifact_pack_id) ??
+      textField(job.output.feature_importance_artifact_id);
+    if (artifactId) {
+      await loadPreview(artifactId);
     }
     return job;
   }
@@ -9243,6 +9280,10 @@ function LeaderboardTab({
             {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
             Top Run Diagnostics
           </button>
+          <button className="secondary-button" disabled={busy} onClick={() => void runAction(() => materializeTopRunModelEvidence(topEntry))}>
+            {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
+            Model Evidence
+          </button>
           <button className="secondary-button" disabled={busy} onClick={() => void runAction(() => draftTopRunReport(topEntry))}>
             {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
             Top Run Report
@@ -9335,6 +9376,38 @@ function LeaderboardTab({
             />
           ) : (
             <EmptyInline text="Evaluation diagnostics, slice metrics, error bins, worst examples, and split sanity checks will appear here after analyzing a run." />
+          )}
+        </Panel>
+        <Panel title="Model Evidence Artifacts" icon={<PieChart size={18} />}>
+          {modelDiagnosticArtifacts.length ? (
+            <Table
+              headers={["Type", "Name", "Version", "Run", "Actions"]}
+              rows={modelDiagnosticArtifacts.map((artifact) => [
+                artifact.asset_type,
+                artifact.name,
+                `v${artifact.version}`,
+                String(artifact.metadata.run_id ?? "-"),
+                <div className="row-actions" key={artifact.id}>
+                  <button
+                    className="icon-button"
+                    disabled={previewLoadingId === artifact.id}
+                    onClick={() => void loadPreview(artifact.id)}
+                    title="Preview model evidence"
+                  >
+                    {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                  </button>
+                  <a
+                    className="icon-link"
+                    href={`${apiBase}/api/artifacts/${artifact.id}/download`}
+                    title="Download model evidence"
+                  >
+                    <Download size={16} />
+                  </a>
+                </div>
+              ])}
+            />
+          ) : (
+            <EmptyInline text="Feature importance, permutation importance, calibration, threshold, and model behavior artifacts will appear here after materializing model evidence." />
           )}
         </Panel>
         <Panel title="Diagnostics Preview" icon={<FileText size={18} />}>
