@@ -481,6 +481,15 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert agent_task_contract["inputs"]["research_source_policy"]["network_default"] == (
         "disabled_until_runner_policy_allows"
     )
+    assert agent_task_contract["inputs"]["adaptive_strategy_brief"]["artifact_id"] == strategy_brief_job["output"][
+        "adaptive_strategy_brief_artifact_id"
+    ]
+    assert agent_task_contract["inputs"]["open_ended_approach_space"]["strategy_brief_available"] is True
+    assert any(
+        item["role"] == "adaptive_strategy_brief"
+        and item["artifact_id"] == strategy_brief_job["output"]["adaptive_strategy_brief_artifact_id"]
+        for item in agent_task_contract["inputs"]["available_context_artifacts"]
+    )
     assert any(
         item["name"] == "xgboost_mixed_type_baseline"
         for item in agent_task_contract["inputs"]["library_recommendations"]
@@ -524,6 +533,11 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         item["context_path"].startswith(".harness/context/library_assets/")
         for item in planned_workspace_manifest["materialized_sources"]
     )
+    assert any(
+        item["artifact_id"] == strategy_brief_job["output"]["adaptive_strategy_brief_artifact_id"]
+        and item["source_kind"] == "context_artifact"
+        for item in planned_workspace_manifest["materialized_sources"]
+    )
 
     planned_workspace_job_artifacts_response = client.get(f"/api/jobs/{planned_workspace_job['id']}/artifacts")
     assert planned_workspace_job_artifacts_response.status_code == 200
@@ -558,6 +572,10 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "agent_workspace_manifest_artifact_id"
     ]
     assert any(item["check_id"] == "workspace_manifest" for item in readiness_payload["checks"])
+    strategy_readiness_check = next(
+        item for item in readiness_payload["checks"] if item["check_id"] == "adaptive_strategy_context"
+    )
+    assert strategy_readiness_check["status"] == "pass"
 
     readiness_report_preview_response = client.get(
         f"/api/artifacts/{readiness_job['output']['agent_task_readiness_report_artifact_id']}/preview"
@@ -589,6 +607,17 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert planned_stub_job["output"]["citation_visualization_artifact_id"]
     assert len(planned_stub_job["output"]["visualization_ids"]) == 1
     assert planned_stub_job["output"]["requires_human_review"] is True
+
+    planned_trace_download_response = client.get(
+        f"/api/artifacts/{planned_stub_job['output']['approach_decision_trace_artifact_id']}/download"
+    )
+    assert planned_trace_download_response.status_code == 200
+    planned_trace = planned_trace_download_response.json()
+    assert planned_trace["context_used"]["adaptive_strategy_brief_artifact_id"] == strategy_brief_job["output"][
+        "adaptive_strategy_brief_artifact_id"
+    ]
+    assert planned_trace["adaptive_strategy_guidance"]["fixed_recipe_policy"] == "advisory_candidates_only"
+    assert planned_trace["adaptive_strategy_guidance"]["must_emit_approach_decision_trace"] is True
 
     planned_citation_preview_response = client.get(
         f"/api/artifacts/{planned_stub_job['output']['citation_audit_report_artifact_id']}/preview"

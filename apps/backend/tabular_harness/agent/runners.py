@@ -445,6 +445,7 @@ def render_stub_approach_decision_trace(
 ) -> dict[str, Any]:
     autonomy_policy = dict_value(contract.inputs.get("runner_autonomy_policy"))
     approach_space = dict_value(contract.inputs.get("open_ended_approach_space"))
+    strategy_context = dict_value(contract.inputs.get("adaptive_strategy_brief"))
     candidates = list_value(contract.inputs.get("recommended_approach_candidates"))
     recommendations = list_value(contract.inputs.get("library_recommendations"))
     research_queries = list_value(contract.inputs.get("research_queries"))
@@ -463,7 +464,9 @@ def render_stub_approach_decision_trace(
             "research_query_count": len(research_queries),
             "relational_context_available": relational_available,
             "relational_context_source_count": relational_context.get("source_count") or 0,
+            "adaptive_strategy_brief_artifact_id": strategy_context.get("artifact_id"),
         },
+        "adaptive_strategy_guidance": summarize_strategy_context(strategy_context),
         "approaches_considered": summarize_approach_candidates(candidates),
         "chosen_or_placeholder_approach": {
             "status": "not_chosen_by_local_stub",
@@ -529,6 +532,28 @@ def summarize_approach_candidates(candidates: list[Any]) -> list[dict[str, Any]]
             }
         )
     return summarized
+
+
+def summarize_strategy_context(strategy_context: dict[str, Any]) -> dict[str, Any]:
+    if not strategy_context:
+        return {"status": "missing"}
+    recommended_action = dict_value(strategy_context.get("recommended_next_action"))
+    codex_handoff = dict_value(strategy_context.get("codex_handoff"))
+    autonomy_policy = dict_value(codex_handoff.get("autonomy_policy"))
+    return {
+        "status": "available",
+        "artifact_id": strategy_context.get("artifact_id"),
+        "strategy_mode": strategy_context.get("strategy_mode"),
+        "fixed_recipe_policy": strategy_context.get("fixed_recipe_policy"),
+        "recommended_action": {
+            "action_type": recommended_action.get("action_type"),
+            "label": recommended_action.get("label"),
+            "reason": recommended_action.get("reason"),
+        },
+        "runner_can_propose_new_approach_classes": autonomy_policy.get("can_propose_new_approach_classes"),
+        "must_emit_approach_decision_trace": autonomy_policy.get("must_emit_approach_decision_trace"),
+        "policy": strategy_context.get("policy"),
+    }
 
 
 def relational_deferred_trace_items(relational_context: dict[str, Any]) -> list[dict[str, Any]]:

@@ -65,6 +65,16 @@ def test_planner_contract_carries_flexible_approach_context() -> None:
         content_hash="hash",
         metadata_json=dumps_json({"benchmark_id": "home_credit", "table_count": 4, "relationship_count": 3}),
     )
+    strategy_brief = Artifact(
+        id="art_strategy",
+        project_id=project.id,
+        asset_type="adaptive_strategy_brief",
+        name="adaptive_strategy_brief_fixture",
+        version=1,
+        uri="/tmp/strategy",
+        content_hash="strategy_hash",
+        metadata_json=dumps_json({"recommended_action_type": "agent_task", "lane_count": 7}),
+    )
     profile = {
         "column_count": 5,
         "semantic_counts": {"text": 1, "datetime": 1, "numeric": 2},
@@ -81,6 +91,7 @@ def test_planner_contract_carries_flexible_approach_context() -> None:
     ]
     context_artifacts = {
         "relational_catalog": relational_catalog,
+        "adaptive_strategy_brief": strategy_brief,
         "research_plan": None,
         "benchmark_scenario_pack": None,
     }
@@ -136,5 +147,14 @@ def test_planner_contract_carries_flexible_approach_context() -> None:
     assert inputs["evaluation_contract"]["split_manifest"]["split_manifest_id"] == split.id
     assert inputs["constraints"]["connector_credentials"] == "never_materialized"
     assert inputs["benchmark_context"]["benchmark_id"] == "home_credit"
+    assert inputs["adaptive_strategy_brief"]["artifact_id"] == strategy_brief.id
+    assert inputs["adaptive_strategy_brief"]["policy"] == (
+        "product_guidance_for_open_ended_runner_handoff_not_a_fixed_recipe"
+    )
+    assert inputs["open_ended_approach_space"]["strategy_brief_available"] is True
+    assert any(
+        item["role"] == "adaptive_strategy_brief" and item["artifact_id"] == strategy_brief.id
+        for item in inputs["available_context_artifacts"]
+    )
     assert len(inputs["artifact_expectations"]) >= 5
     assert any("validation/test targets" in item for item in contract["forbidden_actions"])

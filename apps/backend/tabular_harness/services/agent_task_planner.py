@@ -165,6 +165,9 @@ def build_agent_task_contract_payload(
     research_inputs = research_plan_contract_inputs(research_plan_artifact)
     source_pack_inputs = research_source_pack_contract_inputs(context_artifacts.get("research_source_pack"))
     synthesis_inputs = research_synthesis_contract_inputs(context_artifacts.get("research_finding_synthesis"))
+    strategy_brief_inputs = adaptive_strategy_brief_contract_inputs(
+        context_artifacts.get("adaptive_strategy_brief")
+    )
     relational_plan_inputs = relational_feature_plan_contract_inputs(context_artifacts.get("relational_feature_plan"))
     relational_recipe_inputs = relational_feature_recipe_contract_inputs(
         context_artifacts.get("relational_feature_recipe")
@@ -206,6 +209,7 @@ def build_agent_task_contract_payload(
                 relational_context_available=bool(
                     relational_plan_inputs or relational_recipe_inputs or relational_diagnostics_inputs
                 ),
+                strategy_brief_available=bool(strategy_brief_inputs),
             ),
             "allowed_research_modes": ["project_artifacts", "skill_library", "controlled_web_search"],
             "must_respect_split_manifest": True,
@@ -214,6 +218,7 @@ def build_agent_task_contract_payload(
             "research_source_policy": source_policy,
             "research_source_pack": source_pack_inputs,
             "research_finding_synthesis": synthesis_inputs,
+            "adaptive_strategy_brief": strategy_brief_inputs,
             "relational_feature_plan": relational_plan_inputs,
             "relational_feature_recipe": relational_recipe_inputs,
             "relational_feature_scenario_diagnostics": relational_diagnostics_inputs,
@@ -579,6 +584,7 @@ def open_ended_approach_space(
     asset_recommendations: list[dict[str, Any]],
     research_queries: list[dict[str, Any]],
     relational_context_available: bool,
+    strategy_brief_available: bool,
 ) -> dict[str, Any]:
     return {
         "schema_version": "open_ended_approach_space.v1",
@@ -587,9 +593,11 @@ def open_ended_approach_space(
         "recommended_asset_count": len(asset_recommendations),
         "research_query_count": len(research_queries),
         "relational_context_available": relational_context_available,
+        "strategy_brief_available": strategy_brief_available,
         "guidance": [
             "Start from current evidence and reusable Skills, but do not assume the best approach is already enumerated.",
             "Use current project artifacts, Skill/library context, and controlled research plans to justify approach choices.",
+            "Use the Adaptive Strategy Brief as product guidance, not as a mandatory recipe.",
             "Record why a suggested baseline, relational recipe, or Skill was used, modified, rejected, or deferred.",
         ],
         "expected_trace_sections": [
@@ -632,6 +640,15 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "baseline_plan": latest_project_artifact(db, project_id, "baseline_plan"),
         "baseline_metrics": latest_project_artifact(db, project_id, "baseline_metrics"),
         "baseline_report": latest_project_artifact(db, project_id, "baseline_report"),
+        "adaptive_strategy_brief": latest_project_artifact(db, project_id, "adaptive_strategy_brief"),
+        "adaptive_strategy_report": latest_project_artifact(db, project_id, "adaptive_strategy_report"),
+        "adaptive_strategy_visualization": latest_project_artifact_with_metadata(
+            db,
+            project_id,
+            "visualization_spec",
+            metadata_key="visualization_scope",
+            metadata_value="adaptive_strategy",
+        ),
         "research_plan": latest_project_artifact(db, project_id, "research_plan"),
         "research_source_pack": latest_project_artifact(db, project_id, "research_source_pack"),
         "research_finding_synthesis": latest_project_artifact(db, project_id, "research_finding_synthesis"),
@@ -640,6 +657,27 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "run_report": latest_project_artifact(db, project_id, "run_report"),
         "decision_dashboard": latest_project_artifact(db, project_id, "decision_dashboard"),
     }
+
+
+def latest_project_artifact_with_metadata(
+    db: Session,
+    project_id: str,
+    asset_type: str,
+    *,
+    metadata_key: str,
+    metadata_value: str,
+) -> Artifact | None:
+    artifacts = db.scalars(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.asset_type == asset_type)
+        .order_by(Artifact.created_at.desc())
+        .limit(40)
+    ).all()
+    for artifact in artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get(metadata_key) == metadata_value:
+            return artifact
+    return None
 
 
 def research_source_pack_contract_inputs(source_pack_artifact: Artifact | None) -> dict[str, Any]:
@@ -687,6 +725,46 @@ def research_synthesis_contract_inputs(synthesis_artifact: Artifact | None) -> d
         "agent_task_handoff": payload.get("agent_task_handoff")
         if isinstance(payload.get("agent_task_handoff"), dict)
         else {},
+    }
+
+
+def adaptive_strategy_brief_contract_inputs(strategy_artifact: Artifact | None) -> dict[str, Any]:
+    if strategy_artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(strategy_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        payload = {}
+    payload_dict: dict[str, Any] = cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+    raw_summary = payload_dict.get("summary")
+    raw_recommended_action = payload_dict.get("recommended_next_action")
+    raw_codex_handoff = payload_dict.get("codex_handoff")
+    raw_reporting_plan = payload_dict.get("reporting_plan")
+    raw_lanes = payload_dict.get("candidate_lanes")
+    summary: dict[str, Any] = raw_summary if isinstance(raw_summary, dict) else {}
+    recommended_action: dict[str, Any] = raw_recommended_action if isinstance(raw_recommended_action, dict) else {}
+    codex_handoff: dict[str, Any] = raw_codex_handoff if isinstance(raw_codex_handoff, dict) else {}
+    reporting_plan: dict[str, Any] = raw_reporting_plan if isinstance(raw_reporting_plan, dict) else {}
+    lanes: list[Any] = raw_lanes if isinstance(raw_lanes, list) else []
+    return {
+        "artifact_id": strategy_artifact.id,
+        "schema_version": payload_dict.get("schema_version", "adaptive_strategy_brief.v1"),
+        "strategy_mode": summary.get("strategy_mode"),
+        "fixed_recipe_policy": summary.get("fixed_recipe_policy"),
+        "recommended_next_action": recommended_action,
+        "candidate_lanes": lanes[:8],
+        "codex_handoff": {
+            "runner_role": codex_handoff.get("runner_role"),
+            "suggested_objective": codex_handoff.get("suggested_objective"),
+            "autonomy_policy": codex_handoff.get("autonomy_policy")
+            if isinstance(codex_handoff.get("autonomy_policy"), dict)
+            else {},
+            "contract_readiness": codex_handoff.get("contract_readiness")
+            if isinstance(codex_handoff.get("contract_readiness"), dict)
+            else {},
+        },
+        "reporting_plan": reporting_plan,
+        "policy": "product_guidance_for_open_ended_runner_handoff_not_a_fixed_recipe",
     }
 
 

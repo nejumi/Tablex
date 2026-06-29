@@ -170,6 +170,7 @@ def build_readiness_review(
         safety_check(contract, constraints),
         assumptions_check(assumption_context),
         context_artifacts_check(inputs),
+        strategy_context_check(inputs, workspace_manifest),
         relational_context_check(inputs, workspace_manifest),
         library_assets_check(inputs, workspace_manifest),
         workspace_check(workspace_artifact, workspace_manifest),
@@ -340,6 +341,36 @@ def context_artifacts_check(inputs: dict[str, Any]) -> dict[str, Any]:
         "pass",
         "info",
         f"{len(context_artifacts)} context artifact reference(s) are available.",
+    )
+
+
+def strategy_context_check(inputs: dict[str, Any], workspace_manifest: dict[str, Any] | None) -> dict[str, Any]:
+    strategy_context = dict_value(inputs.get("adaptive_strategy_brief"))
+    artifact_id = strategy_context.get("artifact_id")
+    if not artifact_id:
+        return check(
+            "adaptive_strategy_context",
+            "Adaptive Strategy Brief",
+            "warning",
+            "low",
+            "No Adaptive Strategy Brief is attached to the AgentTaskContract.",
+            "Create an Adaptive Strategy Brief before planning the next AgentTask when strategy guidance exists.",
+        )
+    if workspace_manifest is not None and not materialized_artifact_id(workspace_manifest, str(artifact_id)):
+        return check(
+            "adaptive_strategy_context",
+            "Adaptive Strategy Brief",
+            "warning",
+            "medium",
+            "Adaptive Strategy Brief is attached to the contract but was not materialized in the workspace.",
+            "Run Prepare Workspace again so Codex receives the same strategy guidance shown in the UI.",
+        )
+    return check(
+        "adaptive_strategy_context",
+        "Adaptive Strategy Brief",
+        "pass",
+        "info",
+        "Adaptive Strategy Brief is attached for open-ended Codex handoff.",
     )
 
 
@@ -666,6 +697,15 @@ def materialized_source_count(workspace_manifest: dict[str, Any] | None, source_
         1
         for item in list_value(workspace_manifest.get("materialized_sources"))
         if isinstance(item, dict) and item.get("source_kind") == source_kind
+    )
+
+
+def materialized_artifact_id(workspace_manifest: dict[str, Any] | None, artifact_id: str) -> bool:
+    if workspace_manifest is None:
+        return False
+    return any(
+        isinstance(item, dict) and item.get("artifact_id") == artifact_id
+        for item in list_value(workspace_manifest.get("materialized_sources"))
     )
 
 

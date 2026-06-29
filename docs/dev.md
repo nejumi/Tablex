@@ -460,3 +460,5 @@ curl -s -X POST http://localhost:8000/api/projects/{project_id}/approach/strateg
 ```
 
 This creates an `adaptive_strategy_brief` JSON artifact, an `adaptive_strategy_report` Markdown artifact and Report row, and a `visualization_spec` artifact. The brief treats baseline plans as advisory evidence and keeps Codex handoff open-ended while preserving EvaluationSpec, SplitManifest, artifact registration, reporting, and credential boundaries.
+
+When an AgentTaskContract is planned after an Adaptive Strategy Brief exists, the planner includes a compact `adaptive_strategy_brief` summary in the contract and copies the full Strategy Brief artifacts through `available_context_artifacts` during planned workspace preparation. AgentTask readiness includes an `adaptive_strategy_context` check.
