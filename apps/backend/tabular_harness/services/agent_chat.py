@@ -129,6 +129,7 @@ def handle_agent_chat_turn(
         "assistant_message": assistant_message,
         "intent": intent,
         "actions": actions,
+        "action_summary": build_action_summary(intent, actions),
         "worker_events": build_worker_events(job, intent, actions, token_series),
         "token_usage": {
             "source": "estimated_until_runner_telemetry",
@@ -838,6 +839,81 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
         "actual modeling approach open for Codex to choose from evidence and Skills."
         f"{artifact_note} Next: review the runner task in Approach, then run a controlled runner when you want it to act."
     )
+
+
+def build_action_summary(intent: dict[str, Any], actions: list[dict[str, Any]]) -> dict[str, Any]:
+    applied = [action for action in actions if action.get("status") == "applied"]
+    review = [action for action in actions if action.get("status") == "needs_review"]
+    planned = [action for action in actions if action.get("status") in {"created", "recorded", "explained"}]
+    focus = next_focus_from_actions(actions)
+    outcome = "needs_review" if review else "applied" if applied else "planned" if planned else "noted"
+    headline = action_summary_headline(intent, outcome)
+    what_changed = [
+        str(action["label"])
+        for action in actions
+        if action.get("status") in {"applied", "recorded", "created", "explained"} and action.get("label")
+    ]
+    what_needs_review = [str(action["label"]) for action in review if action.get("label")]
+    boundaries = action_summary_boundaries(intent, actions)
+    return {
+        "schema_version": "agent_action_summary.v1",
+        "outcome": outcome,
+        "headline": headline,
+        "what_changed": what_changed[:4],
+        "what_needs_review": what_needs_review[:4],
+        "next_step": {
+            "label": focus.get("label"),
+            "target_tab": focus.get("target_tab"),
+            "status": focus.get("status"),
+        },
+        "boundaries": boundaries,
+        "actions": [
+            {
+                "type": action.get("type"),
+                "status": action.get("status"),
+                "label": action.get("label"),
+                "target_tab": action.get("target_tab"),
+                "detail": action.get("detail"),
+            }
+            for action in actions[:5]
+        ],
+    }
+
+
+def action_summary_headline(intent: dict[str, Any], outcome: str) -> str:
+    intent_type = str(intent.get("type") or "")
+    if intent_type == "set_evaluation_metric":
+        metric = SUPPORTED_METRICS[str(intent["metric"])]["label"]
+        if outcome == "needs_review":
+            return f"{metric} request recorded for review"
+        if outcome == "applied":
+            return f"{metric} applied where it is safe"
+        return f"{metric} preference recorded"
+    if intent_type == "run_eda_review":
+        return "Data Review is ready" if outcome == "applied" else "Data Review needs a dataset first"
+    if intent_type == "generate_data_understanding_notebook":
+        return "Notebook evidence generated"
+    if intent_type == "author_analysis_notebook":
+        return "Notebook authoring handoff prepared"
+    if intent_type == "explain_next_step":
+        return "Next decision selected"
+    if intent_type == "guide_notebook_review":
+        return "Analysis reading path selected"
+    return "Controlled runner task prepared"
+
+
+def action_summary_boundaries(intent: dict[str, Any], actions: list[dict[str, Any]]) -> list[str]:
+    boundaries = [
+        "Tablex keeps artifacts, lineage, safety policy, and approvals in the harness.",
+    ]
+    intent_type = str(intent.get("type") or "")
+    if intent_type == "set_evaluation_metric":
+        boundaries.append("Approved EvaluationSpecs and SplitManifests are not destructively changed by chat.")
+    if any(action.get("type") == "create_agent_task_contract" for action in actions):
+        boundaries.append("Codex runner autonomy starts inside the generated AgentTaskContract, not outside the workbench.")
+    if any(action.get("target_tab") == "Notebooks" for action in actions):
+        boundaries.append("Notebook previews are in-product artifacts; executed notebook claims still need captured evidence.")
+    return boundaries[:4]
 
 
 def estimate_token_series(message: str, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:

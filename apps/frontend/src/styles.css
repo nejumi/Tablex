@@ -2210,7 +2210,7 @@ td {
 .agent-chat-log {
   display: grid;
   gap: 6px;
-  max-height: 132px;
+  max-height: 190px;
   overflow: auto;
 }
 
@@ -2225,6 +2225,40 @@ td {
 
 .agent-chat-message p {
   margin: 0;
+}
+
+.agent-chat-summary {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 8px;
+}
+
+.agent-chat-summary-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.agent-chat-summary-head strong {
+  color: var(--text-strong);
+}
+
+.agent-chat-summary small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.agent-chat-boundaries {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .agent-chat-actions {
@@ -2261,6 +2295,18 @@ td {
 .agent-chat-action-button strong {
   color: var(--text-strong);
   font-size: 12px;
+}
+
+.agent-chat-action-button small,
+.agent-chat-action-button em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.agent-chat-action-button em {
+  max-width: 360px;
 }
 
 .agent-chat-message.user {

@@ -658,6 +658,7 @@ class AgentChatRead(BaseModel):
     assistant_message: str
     intent: dict[str, Any]
     actions: list[dict[str, Any]]
+    action_summary: dict[str, Any]
     worker_events: list[dict[str, Any]]
     token_usage: dict[str, Any]
     next_focus: dict[str, Any]

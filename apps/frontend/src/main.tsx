@@ -927,6 +927,17 @@ type AgentChatAction = {
   entity_ids?: string[];
 };
 
+type AgentActionSummary = {
+  schema_version: string;
+  outcome: string;
+  headline: string;
+  what_changed: string[];
+  what_needs_review: string[];
+  next_step: { label?: string | null; target_tab?: string | null; status?: string | null };
+  boundaries: string[];
+  actions: Array<Record<string, unknown>>;
+};
+
 type AgentChatResponse = {
   schema_version: "agent_chat_turn.v1";
   project_id: string;
@@ -934,6 +945,7 @@ type AgentChatResponse = {
   assistant_message: string;
   intent: Record<string, unknown>;
   actions: AgentChatAction[];
+  action_summary?: AgentActionSummary;
   worker_events: AgentWorkerEvent[];
   token_usage: { source: string; is_estimate: boolean; series: TokenSeriesPoint[] };
   next_focus: Record<string, unknown>;
@@ -945,6 +957,7 @@ type AgentChatMessage = {
   role: "user" | "system";
   text: string;
   actions?: AgentChatAction[];
+  actionSummary?: AgentActionSummary;
 };
 
 type PortalIdea = {
@@ -2403,7 +2416,8 @@ function ProjectDetail({
         {
           role: "system",
           text: result.assistant_message,
-          actions: result.actions
+          actions: result.actions,
+          actionSummary: result.action_summary
         }
       ]);
       setAgentWorkerEvents((current) =>
@@ -2809,6 +2823,13 @@ function agentChatActionLabel(action: AgentChatAction, text: LocaleMessages) {
   return `${verb} ${tabLabel(targetTab, text)}`;
 }
 
+function agentChatOutcomeClass(outcome: string) {
+  if (outcome === "applied") return "badge success";
+  if (outcome === "needs_review") return "badge warning";
+  if (outcome === "planned") return "badge muted";
+  return "badge";
+}
+
 function AgentChatDock({
   busy,
   text,
@@ -2862,6 +2883,29 @@ function AgentChatDock({
           {messages.slice(-4).map((message, index) => (
             <div className={`agent-chat-message ${message.role}`} key={`${message.role}-${index}-${message.text}`}>
               <p>{message.text}</p>
+              {message.actionSummary ? (
+                <div className="agent-chat-summary">
+                  <div className="agent-chat-summary-head">
+                    <span className={agentChatOutcomeClass(message.actionSummary.outcome)}>
+                      {message.actionSummary.outcome.replace(/_/g, " ")}
+                    </span>
+                    <strong>{message.actionSummary.headline}</strong>
+                  </div>
+                  {message.actionSummary.next_step?.target_tab ? (
+                    <small>
+                      Next: {message.actionSummary.next_step.label ?? "Review"} in{" "}
+                      {tabLabel(tabFromString(message.actionSummary.next_step.target_tab, "Approach"), text)}
+                    </small>
+                  ) : null}
+                  {message.actionSummary.boundaries.length ? (
+                    <div className="agent-chat-boundaries">
+                      {message.actionSummary.boundaries.slice(0, 2).map((item) => (
+                        <span key={item}>{item}</span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {message.actions?.length ? (
                 <div className="agent-chat-actions">
                   {message.actions.slice(0, 3).map((action) => (
@@ -2872,7 +2916,9 @@ function AgentChatDock({
                       type="button"
                     >
                       <span>{action.status.replace(/_/g, " ")}</span>
-                      <strong>{agentChatActionLabel(action, text)}</strong>
+                      <strong>{action.label}</strong>
+                      <small>{agentChatActionLabel(action, text)}</small>
+                      {action.detail ? <em>{action.detail}</em> : null}
                     </button>
                   ))}
                 </div>

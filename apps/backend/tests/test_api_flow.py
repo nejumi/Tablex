@@ -168,6 +168,11 @@ def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path
     assert chat["schema_version"] == "agent_chat_turn.v1"
     assert chat["intent"]["type"] == "set_evaluation_metric"
     assert "ROC-AUC" in chat["assistant_message"]
+    assert chat["action_summary"]["schema_version"] == "agent_action_summary.v1"
+    assert chat["action_summary"]["outcome"] == "applied"
+    assert "ROC-AUC" in chat["action_summary"]["headline"]
+    assert chat["action_summary"]["next_step"]["target_tab"] == "Evaluation"
+    assert any("EvaluationSpecs" in item for item in chat["action_summary"]["boundaries"])
     assert any(action["type"] == "update_evaluation_candidates" for action in chat["actions"])
     assert any(action["target_tab"] == "Evaluation" for action in chat["actions"])
     assert chat["worker_events"]
@@ -256,6 +261,9 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     assert generic_chat["intent"]["type"] == "plan_agent_task"
     assert "controlled runner task" in generic_chat["assistant_message"]
     assert "Artifact:" not in generic_chat["assistant_message"]
+    assert generic_chat["action_summary"]["headline"] == "Controlled runner task prepared"
+    assert generic_chat["action_summary"]["next_step"]["target_tab"] == "Approach"
+    assert any("AgentTaskContract" in item for item in generic_chat["action_summary"]["boundaries"])
     assert any(action["type"] == "create_agent_task_contract" for action in generic_chat["actions"])
     assert any(action["target_tab"] == "Approach" for action in generic_chat["actions"])
 
