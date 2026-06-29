@@ -343,6 +343,252 @@ def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any
     }
 
 
+def build_project_analysis_story(db: Session, project: Project) -> dict[str, Any]:
+    notebook_index = build_project_notebook_index(db, project)
+    candidates = [
+        candidate
+        for candidate in [
+            _analysis_story_from_notebook(db, project, notebook_index),
+            _analysis_story_from_eda_review(db, project),
+        ]
+        if candidate is not None
+    ]
+    selected = max(candidates, key=lambda candidate: int(candidate["selection_score"])) if candidates else None
+    if selected is None:
+        return {
+            "schema_version": "analysis_story_surface.v1",
+            "project_id": project.id,
+            "generated_at": utc_now().isoformat(),
+            "available": False,
+            "story": None,
+            "empty_state": {
+                "headline": "Create the first readable analysis story.",
+                "reason": (
+                    "No Data Review or analysis notebook evidence is available yet. Start with harness-owned EDA, "
+                    "then let Codex extend the notebook when the next question is clear."
+                ),
+                "primary_action": {
+                    "label": "Run EDA Review",
+                    "action_type": "api",
+                    "endpoint": "/api/datasets/{dataset_snapshot_id}/eda-review",
+                    "target_tab": "Notebooks",
+                },
+            },
+            "notebook_index": notebook_index,
+        }
+    source_candidates = [
+        _analysis_story_source_summary(candidate)
+        for candidate in sorted(candidates, key=lambda candidate: int(candidate["selection_score"]), reverse=True)
+    ]
+    selected["supporting_sources"] = source_candidates[1:4]
+    selected.pop("selection_score", None)
+    return {
+        "schema_version": "analysis_story_surface.v1",
+        "project_id": project.id,
+        "generated_at": utc_now().isoformat(),
+        "available": True,
+        "story": selected,
+        "empty_state": None,
+        "notebook_index": notebook_index,
+    }
+
+
+def _analysis_story_from_notebook(
+    db: Session,
+    project: Project,
+    notebook_index: dict[str, Any],
+) -> dict[str, Any] | None:
+    items = [cast(dict[str, Any], item) for item in _list_value(notebook_index.get("items"))]
+    recommended = _dict_value(notebook_index.get("recommended_notebook")) or None
+    fallback_data = next((item for item in items if str(item.get("notebook_kind")) == "data_understanding"), None)
+    diverted = bool(recommended and _story_item_is_empty_diagnostics(recommended) and fallback_data is not None)
+    selected_item = fallback_data if diverted else recommended
+    if selected_item is None:
+        return None
+    notebook_artifact = db.get(Artifact, str(selected_item["notebook_artifact_id"]))
+    if notebook_artifact is None:
+        return None
+    summary = _notebook_artifact_context_summary(notebook_artifact)
+    brief = _dict_value(summary.get("analysis_brief"))
+    linked_artifact_ids = _dict_value(selected_item.get("artifact_ids"))
+    evidence_html = _latest_artifact_for_metadata(
+        db,
+        project.id,
+        "notebook_evidence_html",
+        "notebook_artifact_id",
+        notebook_artifact.id,
+    )
+    evidence_figures = _artifacts_for_metadata(
+        db,
+        project.id,
+        "notebook_evidence_svg",
+        "notebook_artifact_id",
+        notebook_artifact.id,
+    )
+    preview_artifact_id = (
+        evidence_html.id
+        if evidence_html is not None
+        else _first_text_value(
+            linked_artifact_ids.get("execution_html"),
+            linked_artifact_ids.get("html_preview"),
+            linked_artifact_ids.get("report_artifact"),
+            linked_artifact_ids.get("notebook"),
+        )
+    )
+    read_order = _analysis_story_read_order(brief.get("read_this_first"))
+    story_cards = _analysis_story_cards(summary.get("visual_story_cards"))
+    playbook = _analysis_story_playbook(summary.get("eda_playbook") or summary.get("review_playbook"))
+    codex_prompts = _string_list(summary.get("codex_navigation_prompts"))
+    if not codex_prompts:
+        codex_prompts = _string_list(summary.get("analysis_questions"))
+    caveats = _notebook_story_caveats(
+        brief=brief,
+        selected_item=selected_item,
+        diverted_from_empty_diagnostics=diverted,
+    )
+    selection_score = int(selected_item.get("recommendation_score") or 0)
+    if evidence_html is not None:
+        selection_score += 35
+    if diverted:
+        selection_score += 20
+    return {
+        "source_type": "analysis_notebook",
+        "headline": _story_headline(
+            brief.get("headline"),
+            selected_item.get("title"),
+            fallback="Read the recommended analysis notebook.",
+        ),
+        "deck": str(summary.get("overview") or selected_item.get("recommendation_reason") or ""),
+        "why_this_story": (
+            "Tablex is routing around an empty diagnostics notebook and returning to Data Understanding first."
+            if diverted
+            else str(selected_item.get("recommendation_reason") or "This notebook has the strongest current analysis evidence.")
+        ),
+        "selected_source": {
+            "source_type": "analysis_notebook",
+            "title": str(selected_item.get("title") or "Analysis Notebook"),
+            "artifact_id": notebook_artifact.id,
+            "preview_artifact_id": preview_artifact_id,
+            "report_id": selected_item.get("report_id"),
+            "notebook_kind": selected_item.get("notebook_kind"),
+            "status": selected_item.get("content", {}).get("readiness")
+            if isinstance(selected_item.get("content"), dict)
+            else selected_item.get("status"),
+            "created_at": selected_item.get("created_at"),
+            "reason": selected_item.get("recommendation_reason"),
+        },
+        "read_order": read_order,
+        "visual_story_cards": story_cards,
+        "evidence_cards": _notebook_evidence_cards(selected_item, evidence_figures),
+        "playbook": playbook,
+        "caveats": caveats,
+        "codex_prompts": codex_prompts[:4],
+        "primary_action": _notebook_story_primary_action(
+            selected_item=selected_item,
+            preview_artifact_id=preview_artifact_id,
+            evidence_html=evidence_html,
+        ),
+        "figure_refs": _artifact_refs(evidence_figures[:6]),
+        "raw_artifacts": _story_raw_artifact_refs(db, project.id, notebook_artifact, linked_artifact_ids, evidence_html, evidence_figures),
+        "metrics": {
+            "quality_score": selected_item.get("content", {}).get("quality_score")
+            if isinstance(selected_item.get("content"), dict)
+            else None,
+            "read_order_count": len(read_order),
+            "story_card_count": len(story_cards),
+            "figure_count": len(evidence_figures),
+        },
+        "selection_score": selection_score,
+    }
+
+
+def _analysis_story_from_eda_review(db: Session, project: Project) -> dict[str, Any] | None:
+    bundle_artifact = latest_project_artifact(db, project.id, "eda_review_bundle")
+    review = _read_json_artifact(bundle_artifact)
+    if bundle_artifact is None or not review:
+        return None
+    summary = _dict_value(review.get("summary"))
+    html_artifact = _latest_artifact_for_metadata(
+        db,
+        project.id,
+        "eda_review_html",
+        "eda_review_bundle_artifact_id",
+        bundle_artifact.id,
+    )
+    report_artifact = _latest_artifact_for_metadata(
+        db,
+        project.id,
+        "eda_review_report",
+        "eda_review_bundle_artifact_id",
+        bundle_artifact.id,
+    )
+    figure_artifacts = _artifacts_for_metadata(
+        db,
+        project.id,
+        "eda_review_svg",
+        "eda_review_bundle_artifact_id",
+        bundle_artifact.id,
+    )
+    quality_score = int(summary.get("quality_score") or 0)
+    preview_artifact_id = html_artifact.id if html_artifact is not None else report_artifact.id if report_artifact else bundle_artifact.id
+    return {
+        "source_type": "eda_review",
+        "headline": _story_headline(summary.get("headline"), None, fallback="Read the latest Data Review."),
+        "deck": (
+            f"{int(summary.get('row_count') or 0):,} rows, {int(summary.get('column_count') or 0):,} columns, "
+            f"target {summary.get('target_column') or 'not selected'}."
+        ),
+        "why_this_story": (
+            "The Data Review is harness-controlled DuckDB analysis with figures, findings, read order, and Codex prompts. "
+            "Use it as the first human-readable analysis surface before scanning raw artifacts."
+        ),
+        "selected_source": {
+            "source_type": "eda_review",
+            "title": "Data Review",
+            "artifact_id": bundle_artifact.id,
+            "preview_artifact_id": preview_artifact_id,
+            "report_id": _latest_report_id_for_artifact(db, report_artifact),
+            "notebook_kind": None,
+            "status": summary.get("severity") or "review",
+            "created_at": bundle_artifact.created_at.isoformat(),
+            "reason": "Latest harness-controlled EDA review.",
+        },
+        "read_order": _analysis_story_read_order(review.get("read_this_first")),
+        "visual_story_cards": _analysis_story_cards(review.get("story_cards")),
+        "evidence_cards": _eda_review_evidence_cards(review),
+        "playbook": _analysis_story_playbook(review.get("playbook")),
+        "caveats": _eda_review_caveats(review),
+        "codex_prompts": _string_list(review.get("codex_next_prompts"))[:4],
+        "primary_action": {
+            "label": "Open Data Review",
+            "action_type": "preview",
+            "artifact_id": preview_artifact_id,
+            "target_tab": "Notebooks",
+        },
+        "figure_refs": _artifact_refs(figure_artifacts[:6]),
+        "raw_artifacts": _artifact_refs([bundle_artifact, *[item for item in [html_artifact, report_artifact] if item is not None], *figure_artifacts[:6]]),
+        "metrics": {
+            "quality_score": quality_score,
+            "read_order_count": len(_list_value(review.get("read_this_first"))),
+            "story_card_count": len(_list_value(review.get("story_cards"))),
+            "figure_count": len(figure_artifacts),
+        },
+        "selection_score": 85 + min(35, quality_score // 2) + (20 if html_artifact is not None else 0),
+    }
+
+
+def _analysis_story_source_summary(story: dict[str, Any]) -> dict[str, Any]:
+    selected = _dict_value(story.get("selected_source"))
+    return {
+        "source_type": story.get("source_type"),
+        "title": selected.get("title"),
+        "artifact_id": selected.get("artifact_id"),
+        "preview_artifact_id": selected.get("preview_artifact_id"),
+        "status": selected.get("status"),
+        "reason": selected.get("reason"),
+    }
+
+
 def create_notebook_execution_plan(
     db: Session,
     *,
@@ -3138,6 +3384,275 @@ def _notebook_index_next_actions(project: Project, items: list[dict[str, Any]]) 
             }
         )
     return actions
+
+
+def _story_item_is_empty_diagnostics(item: dict[str, Any]) -> bool:
+    if str(item.get("notebook_kind") or "") != "model_diagnostics":
+        return False
+    content = _dict_value(item.get("content"))
+    coverage = _dict_value(item.get("coverage"))
+    return str(content.get("readiness") or coverage.get("content_readiness") or "") == "not_ready"
+
+
+def _story_headline(primary: object, secondary: object, *, fallback: str) -> str:
+    for value in (primary, secondary, fallback):
+        text = str(value or "").strip()
+        if text:
+            return text
+    return fallback
+
+
+def _analysis_story_read_order(value: object) -> list[dict[str, str]]:
+    rows = []
+    for item in _list_value(value)[:5]:
+        row = _dict_value(item)
+        title = str(row.get("title") or row.get("stage") or row.get("section") or "").strip()
+        why = str(row.get("why") or row.get("reader_question") or row.get("detail") or "").strip()
+        artifact_hint = str(row.get("artifact_hint") or row.get("current_evidence") or row.get("artifact_expectation") or "").strip()
+        if not title and not why:
+            continue
+        rows.append({"title": title or "Review item", "why": why, "artifact_hint": artifact_hint})
+    return rows
+
+
+def _analysis_story_cards(value: object) -> list[dict[str, str]]:
+    cards = []
+    for item in _list_value(value)[:6]:
+        row = _dict_value(item)
+        title = str(row.get("title") or row.get("area") or "").strip()
+        if not title:
+            continue
+        cards.append(
+            {
+                "title": title,
+                "signal": str(row.get("signal") or row.get("evidence") or "").strip(),
+                "why_read": str(row.get("why_read") or row.get("message") or row.get("detail") or "").strip(),
+                "status": str(row.get("status") or row.get("severity") or "review").strip(),
+            }
+        )
+    return cards
+
+
+def _analysis_story_playbook(value: object) -> list[dict[str, str]]:
+    rows = []
+    for item in _list_value(value)[:5]:
+        row = _dict_value(item)
+        stage = str(row.get("stage") or row.get("title") or "").strip()
+        question = str(row.get("reader_question") or row.get("question") or "").strip()
+        evidence = str(row.get("current_evidence") or row.get("evidence") or "").strip()
+        codex = str(row.get("codex_followup") or row.get("next_action") or "").strip()
+        if stage or question or evidence or codex:
+            rows.append({"stage": stage or "Review", "reader_question": question, "current_evidence": evidence, "codex_followup": codex})
+    return rows
+
+
+def _notebook_story_caveats(
+    *,
+    brief: dict[str, Any],
+    selected_item: dict[str, Any],
+    diverted_from_empty_diagnostics: bool,
+) -> list[str]:
+    caveats: list[str] = []
+    if diverted_from_empty_diagnostics:
+        caveats.append("A model diagnostics notebook exists, but metric or prediction evidence is missing, so it is not promoted.")
+    profile_boundary = str(brief.get("profile_boundary") or "").strip()
+    if profile_boundary:
+        caveats.append(profile_boundary)
+    caveats.extend(_string_list(brief.get("top_risks"))[:3])
+    coverage = _dict_value(selected_item.get("coverage"))
+    if coverage.get("has_execution_capture"):
+        caveats.append("Notebook cells were not executed; Tablex rendered harness-owned static evidence for safe in-product review.")
+    else:
+        caveats.append("Notebook cells were not executed; read this as harness-generated review context until captured evidence exists.")
+    if not coverage.get("has_html_preview"):
+        caveats.append("No in-product preview artifact is linked yet; use controlled generation or capture before treating it as a report.")
+    return _dedupe_strings(caveats)[:5]
+
+
+def _eda_review_caveats(review: dict[str, Any]) -> list[str]:
+    runner_notes = _dict_value(review.get("runner_notes"))
+    caveats = [
+        "EDA Review is harness-controlled DuckDB analysis, not arbitrary notebook execution.",
+        "Use figures to choose the next question; do not treat them as final causal explanations.",
+    ]
+    if runner_notes.get("external_network_accessed") is False:
+        caveats.append("No external network or connector credentials were used for this review.")
+    findings = [_dict_value(item) for item in _list_value(review.get("findings"))]
+    caveats.extend(str(item.get("message") or "") for item in findings if str(item.get("severity") or "") == "high")
+    return _dedupe_strings(caveats)[:5]
+
+
+def _notebook_evidence_cards(item: dict[str, Any], figure_artifacts: list[Artifact]) -> list[dict[str, str]]:
+    coverage = _dict_value(item.get("coverage"))
+    content = _dict_value(item.get("content"))
+    return [
+        {
+            "title": "Reader value",
+            "status": str(content.get("readiness") or coverage.get("content_readiness") or "unknown"),
+            "signal": f"quality {content.get('quality_score', 0)}",
+            "why_read": str(item.get("recommendation_reason") or ""),
+        },
+        {
+            "title": "Evidence capture",
+            "status": "ready" if coverage.get("has_execution_capture") else "missing",
+            "signal": f"{len(figure_artifacts)} figure(s)",
+            "why_read": "Captured figures and HTML keep the notebook readable inside Tablex.",
+        },
+        {
+            "title": "Runner boundary",
+            "status": "planned" if coverage.get("has_execution_plan") else "not_planned",
+            "signal": "controlled execution required",
+            "why_read": "Codex may extend the analysis, but the harness owns artifacts, lineage, safety, and evaluation boundaries.",
+        },
+    ]
+
+
+def _eda_review_evidence_cards(review: dict[str, Any]) -> list[dict[str, str]]:
+    summary = _dict_value(review.get("summary"))
+    findings = _list_value(review.get("findings"))
+    return [
+        {
+            "title": "Review quality",
+            "status": str(summary.get("severity") or "review"),
+            "signal": f"score {summary.get('quality_score', '-')}",
+            "why_read": "Quality reflects target status, figures, findings, and target relationships.",
+        },
+        {
+            "title": "Figures",
+            "status": "ready" if int(summary.get("figure_count") or 0) else "missing",
+            "signal": f"{summary.get('figure_count', 0)} rendered",
+            "why_read": "Figures are selected for analysis decisions, not decoration.",
+        },
+        {
+            "title": "Findings",
+            "status": "review" if findings else "missing",
+            "signal": f"{len(findings)} finding(s)",
+            "why_read": "Each finding should become one narrow Codex or harness action.",
+        },
+    ]
+
+
+def _notebook_story_primary_action(
+    *,
+    selected_item: dict[str, Any],
+    preview_artifact_id: str | None,
+    evidence_html: Artifact | None,
+) -> dict[str, Any]:
+    if preview_artifact_id and evidence_html is not None:
+        return {
+            "label": "Open evidence review",
+            "action_type": "preview",
+            "artifact_id": preview_artifact_id,
+            "target_tab": "Notebooks",
+        }
+    if selected_item.get("coverage", {}).get("has_execution_capture") and preview_artifact_id:
+        return {
+            "label": "Open current review",
+            "action_type": "preview",
+            "artifact_id": preview_artifact_id,
+            "target_tab": "Notebooks",
+        }
+    return {
+        "label": "Capture readable evidence",
+        "action_type": "api",
+        "endpoint": f"/api/analysis-notebooks/{selected_item['notebook_artifact_id']}/execution-capture",
+        "target_tab": "Notebooks",
+    }
+
+
+def _story_raw_artifact_refs(
+    db: Session,
+    project_id: str,
+    notebook_artifact: Artifact,
+    linked_artifact_ids: dict[str, Any],
+    evidence_html: Artifact | None,
+    evidence_figures: list[Artifact],
+) -> list[dict[str, Any]]:
+    artifacts: list[Artifact] = [notebook_artifact]
+    for artifact_id in linked_artifact_ids.values():
+        if not isinstance(artifact_id, str):
+            continue
+        artifact = db.get(Artifact, artifact_id)
+        if artifact is not None and artifact.project_id == project_id:
+            artifacts.append(artifact)
+    if evidence_html is not None:
+        artifacts.append(evidence_html)
+    artifacts.extend(evidence_figures[:6])
+    return _artifact_refs(_unique_artifacts(artifacts))
+
+
+def _artifact_refs(artifacts: list[Artifact]) -> list[dict[str, Any]]:
+    return [
+        {
+            "artifact_id": artifact.id,
+            "asset_type": artifact.asset_type,
+            "name": artifact.name,
+            "created_at": artifact.created_at.isoformat(),
+            "preview_url": f"/api/artifacts/{artifact.id}/preview",
+            "download_url": f"/api/artifacts/{artifact.id}/download",
+        }
+        for artifact in artifacts
+    ]
+
+
+def _unique_artifacts(artifacts: list[Artifact]) -> list[Artifact]:
+    seen: set[str] = set()
+    unique: list[Artifact] = []
+    for artifact in artifacts:
+        if artifact.id in seen:
+            continue
+        seen.add(artifact.id)
+        unique.append(artifact)
+    return unique
+
+
+def _artifacts_for_metadata(
+    db: Session,
+    project_id: str,
+    asset_type: str,
+    key: str,
+    value: object,
+) -> list[Artifact]:
+    if value is None:
+        return []
+    artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project_id, Artifact.asset_type == asset_type)
+            .order_by(Artifact.created_at.desc())
+        ).all()
+    )
+    return [artifact for artifact in artifacts if loads_json(artifact.metadata_json, {}).get(key) == value]
+
+
+def _latest_report_id_for_artifact(db: Session, artifact: Artifact | None) -> str | None:
+    if artifact is None:
+        return None
+    report = db.scalars(select(Report).where(Report.artifact_id == artifact.id).order_by(Report.created_at.desc())).first()
+    return report.id if report is not None else None
+
+
+def _string_list(value: object) -> list[str]:
+    return [str(item).strip() for item in _list_value(value) if str(item).strip()]
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    output: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        output.append(text)
+    return output
+
+
+def _first_text_value(*values: object) -> str | None:
+    for value in values:
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def _notebook_title(notebook_kind: str) -> str:

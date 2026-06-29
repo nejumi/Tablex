@@ -361,6 +361,17 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert eda_svg_response.status_code == 200
     assert eda_svg_response.json()["content_type"] == "image/svg+xml"
 
+    eda_story_response = client.get(f"/api/projects/{project_id}/analysis-story")
+    assert eda_story_response.status_code == 200, eda_story_response.text
+    eda_story = eda_story_response.json()
+    assert eda_story["schema_version"] == "analysis_story_surface.v1"
+    assert eda_story["available"] is True
+    assert eda_story["story"]["source_type"] == "eda_review"
+    assert eda_story["story"]["selected_source"]["preview_artifact_id"] == eda_review_job["output"]["eda_review_html_artifact_id"]
+    assert eda_story["story"]["read_order"]
+    assert eda_story["story"]["visual_story_cards"]
+    assert eda_story["story"]["codex_prompts"]
+
     assumptions_response = client.get(f"/api/projects/{project_id}/assumptions")
     assert assumptions_response.status_code == 200
     assumptions = assumptions_response.json()
@@ -483,6 +494,17 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     data_evidence_svg = data_evidence_svg_response.json()
     assert data_evidence_svg["content_type"] == "image/svg+xml"
     assert "<svg" in data_evidence_svg["preview"]
+
+    notebook_story_response = client.get(f"/api/projects/{project_id}/analysis-story")
+    assert notebook_story_response.status_code == 200, notebook_story_response.text
+    notebook_story = notebook_story_response.json()
+    assert notebook_story["available"] is True
+    assert notebook_story["story"]["source_type"] == "analysis_notebook"
+    assert notebook_story["story"]["selected_source"]["artifact_id"] == notebook_job["output"]["analysis_notebook_artifact_id"]
+    assert notebook_story["story"]["selected_source"]["preview_artifact_id"] == data_capture_job["output"]["notebook_evidence_html_artifact_id"]
+    assert notebook_story["story"]["evidence_cards"]
+    assert notebook_story["story"]["caveats"]
+    assert any("Notebook cells were not executed" in item for item in notebook_story["story"]["caveats"])
 
     questions_response = client.get(f"/api/projects/{project_id}/questions")
     assert questions_response.status_code == 200

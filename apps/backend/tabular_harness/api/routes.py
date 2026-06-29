@@ -108,6 +108,7 @@ from tabular_harness.services.agent_task_readiness import review_agent_task_read
 from tabular_harness.services.agent_task_results import list_agent_task_result_summaries
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
 from tabular_harness.services.analysis_notebooks import (
+    build_project_analysis_story,
     build_project_notebook_index,
     create_data_understanding_notebook,
     create_model_diagnostics_notebook,
@@ -3587,6 +3588,15 @@ def list_project_analysis_notebooks(
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
     return build_project_notebook_index(db, project)
+
+
+@router.get("/api/projects/{project_id}/analysis-story")
+def current_project_analysis_story(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    return build_project_analysis_story(db, project)
 
 
 @router.post("/api/analysis-notebooks/{artifact_id}/execution-plan", response_model=JobRead)

@@ -603,6 +603,49 @@ type NotebookIndex = {
   next_actions: Array<{ label: string; endpoint: string | null; reason: string }>;
 };
 
+type AnalysisStorySurface = {
+  schema_version: string;
+  project_id: string;
+  generated_at: string;
+  available: boolean;
+  story: AnalysisStory | null;
+  empty_state: {
+    headline?: string;
+    reason?: string;
+    primary_action?: Record<string, unknown>;
+  } | null;
+  notebook_index: NotebookIndex;
+};
+
+type AnalysisStory = {
+  source_type: string;
+  headline: string;
+  deck: string;
+  why_this_story: string;
+  selected_source: {
+    source_type: string;
+    title: string;
+    artifact_id: string;
+    preview_artifact_id: string | null;
+    report_id: string | null;
+    notebook_kind: string | null;
+    status: string | null;
+    created_at: string | null;
+    reason: string | null;
+  };
+  read_order: Array<Record<string, unknown>>;
+  visual_story_cards: Array<Record<string, unknown>>;
+  evidence_cards: Array<Record<string, unknown>>;
+  playbook: Array<Record<string, unknown>>;
+  caveats: string[];
+  codex_prompts: string[];
+  primary_action: Record<string, unknown>;
+  figure_refs: Array<Record<string, unknown>>;
+  raw_artifacts: Array<Record<string, unknown>>;
+  supporting_sources: Array<Record<string, unknown>>;
+  metrics: Record<string, unknown>;
+};
+
 type TranslationResult = {
   source_type: string;
   source_id: string;
@@ -2165,6 +2208,7 @@ function ProjectDetail({
   const [decisionReport, setDecisionReport] = React.useState<DecisionReportCurrent | null>(null);
   const [visualizations, setVisualizations] = React.useState<VisualizationSpec[]>([]);
   const [notebookIndex, setNotebookIndex] = React.useState<NotebookIndex | null>(null);
+  const [analysisStory, setAnalysisStory] = React.useState<AnalysisStorySurface | null>(null);
   const [agentTaskResults, setAgentTaskResults] = React.useState<AgentTaskResult[]>([]);
   const [insights, setInsights] = React.useState<Insight[]>([]);
   const [libraryAssets, setLibraryAssets] = React.useState<LibraryAsset[]>([]);
@@ -2222,6 +2266,7 @@ function ProjectDetail({
         decisionReportData,
         visualizationsData,
         notebookIndexData,
+        analysisStoryData,
         agentTaskResultsData,
         insightsData,
         libraryAssetsData,
@@ -2251,6 +2296,7 @@ function ProjectDetail({
         api<DecisionReportCurrent>(`/api/projects/${project.id}/decision-report/current`).catch(() => null),
         api<VisualizationSpec[]>(`/api/projects/${project.id}/visualizations`),
         api<NotebookIndex>(`/api/projects/${project.id}/analysis-notebooks`).catch(() => null),
+        api<AnalysisStorySurface>(`/api/projects/${project.id}/analysis-story`).catch(() => null),
         api<AgentTaskResult[]>(`/api/projects/${project.id}/agent-task-results`),
         api<Insight[]>(`/api/projects/${project.id}/insights`),
         api<LibraryAsset[]>(`/api/assets`),
@@ -2280,6 +2326,7 @@ function ProjectDetail({
       setDecisionReport(decisionReportData);
       setVisualizations(visualizationsData);
       setNotebookIndex(notebookIndexData);
+      setAnalysisStory(analysisStoryData);
       setAgentTaskResults(agentTaskResultsData);
       setInsights(insightsData);
       setLibraryAssets(libraryAssetsData);
@@ -2562,6 +2609,7 @@ function ProjectDetail({
           runs={runs}
           artifacts={artifacts}
           notebookIndex={notebookIndex}
+          analysisStory={analysisStory}
           busy={busy}
           runAction={runAction}
           onAskAgent={submitAgentChat}
@@ -6192,6 +6240,7 @@ function NotebooksTab({
   runs,
   artifacts,
   notebookIndex,
+  analysisStory,
   busy,
   runAction,
   onAskAgent
@@ -6201,6 +6250,7 @@ function NotebooksTab({
   runs: Run[];
   artifacts: Artifact[];
   notebookIndex: NotebookIndex | null;
+  analysisStory: AnalysisStorySurface | null;
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
   onAskAgent: (message: string) => Promise<AgentChatResponse | void>;
@@ -6361,17 +6411,32 @@ function NotebooksTab({
       ])
     : null;
   const readablePreviewArtifactId = reviewEvidenceHtml?.id ?? (reviewNotebook ? notebookPreviewArtifactId(reviewNotebook) : null);
-  const hasExecutionPlan = Boolean(reviewNotebook?.coverage.has_execution_plan);
   const hasEvidenceCapture = Boolean(reviewNotebook?.coverage.has_execution_capture || reviewEvidenceHtml);
-  const hasEvidenceFigures = reviewEvidenceFigures.length > 0;
+  const story = analysisStory?.story ?? null;
+  const storyPreviewArtifactId = textField(story?.selected_source?.preview_artifact_id) ?? readablePreviewArtifactId;
+  const storyPrimaryActionType = textField(story?.primary_action?.action_type);
+  const storyPrimaryEndpoint = textField(story?.primary_action?.endpoint);
+  const autoPreviewedArtifactRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (!storyPreviewArtifactId || autoPreviewedArtifactRef.current === storyPreviewArtifactId) return;
+    autoPreviewedArtifactRef.current = storyPreviewArtifactId;
+    void loadPreview(storyPreviewArtifactId);
+  }, [storyPreviewArtifactId]);
 
   async function askNotebookGuide(message: string) {
     const trimmed = message.trim();
-    if (!trimmed || !reviewNotebook) return;
+    if (!trimmed) return;
+    const storySource = story?.selected_source;
+    const scopedSource = storySource?.artifact_id
+      ? `[analysis-story:${storySource.source_type}:${storySource.artifact_id}]`
+      : reviewNotebook
+        ? `[notebook:${reviewNotebook.notebook_artifact_id}]`
+        : "[analysis-story]";
     setGuideBusy(true);
     try {
       const response = await onAskAgent(
-        `[notebook:${reviewNotebook.notebook_artifact_id}] ${trimmed}. Reply as an interactive notebook guide: name the exact section, artifact, or figure I should inspect next, why it matters, and what action Tablex should take.`
+        `${scopedSource} ${trimmed}. Reply as an interactive analysis guide: name the exact section, artifact, or figure I should inspect next, why it matters, and what action Tablex should take.`
       );
       if (response && typeof response.assistant_message === "string") {
         setGuideResponse(response.assistant_message);
@@ -6383,31 +6448,49 @@ function NotebooksTab({
 
   return (
     <div className="stack notebook-workbench">
-      <Panel title="Notebook Review" icon={<BarChart3 size={18} />}>
-        {reviewNotebook ? (
-          <div className="notebook-review-grid">
-            <div className="notebook-start-card">
-              <div className="notebook-start-copy">
-                <div className="eyebrow">Start here</div>
-                <h3>{reviewNotebook.title}</h3>
-                <p>{reviewNotebook.recommendation_reason}</p>
+      <Panel title="Analysis Story" icon={<BarChart3 size={18} />}>
+        {story ? (
+          <div className="analysis-story-surface">
+            <section className="analysis-story-hero">
+              <div className="analysis-story-copy">
+                <div className="eyebrow">Read this now</div>
+                <h3>{story.headline}</h3>
+                <p>{story.why_this_story || story.deck}</p>
                 {divertedFromEmptyDiagnostics ? (
                   <div className="banner warning compact">
                     A model diagnostics notebook exists, but it has no useful metric or prediction evidence yet. Tablex is routing you back to Data Understanding first.
                   </div>
                 ) : null}
                 <div className="badge-row">
-                  <span className="badge">{reviewNotebook.notebook_kind.replace(/_/g, " ")}</span>
-                  <span className="badge muted">{notebookSourceLabel(reviewNotebook)}</span>
-                  <span className={notebookReadinessClass(reviewNotebook)}>{notebookReadinessLabel(reviewNotebook)}</span>
-                  <span className={hasEvidenceCapture ? "badge" : "badge risk"}>
-                    {hasEvidenceCapture ? "evidence captured" : "needs evidence capture"}
+                  <span className="badge">{story.source_type.replace(/_/g, " ")}</span>
+                  <span className="badge muted">{story.selected_source.title}</span>
+                  {story.selected_source.status ? (
+                    <span className={decisionReportStatusClass(story.selected_source.status)}>
+                      {story.selected_source.status.replace(/_/g, " ")}
+                    </span>
+                  ) : null}
+                  <span className={hasEvidenceCapture || story.source_type === "eda_review" ? "badge" : "badge risk"}>
+                    {hasEvidenceCapture || story.source_type === "eda_review" ? "readable evidence" : "needs capture"}
                   </span>
                 </div>
               </div>
-              <div className="notebook-primary-actions">
+              <div className="analysis-story-actions">
                 <button
                   className="primary-button"
+                  disabled={!storyPreviewArtifactId || previewLoadingId === storyPreviewArtifactId}
+                  onClick={() => {
+                    if (storyPreviewArtifactId) void loadPreview(storyPreviewArtifactId);
+                  }}
+                >
+                  {storyPreviewArtifactId && previewLoadingId === storyPreviewArtifactId ? (
+                    <Loader2 className="spin" size={16} />
+                  ) : (
+                    <Eye size={16} />
+                  )}
+                  Open Story
+                </button>
+                <button
+                  className="secondary-button"
                   disabled={busy || latestDataset === null}
                   onClick={() => {
                     if (latestDataset) void runAction(() => runEdaReview(latestDataset));
@@ -6416,107 +6499,329 @@ function NotebooksTab({
                   {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
                   Run EDA Review
                 </button>
-                <button
-                  className="secondary-button"
-                  disabled={!readablePreviewArtifactId || previewLoadingId === readablePreviewArtifactId}
-                  onClick={() => {
-                    if (readablePreviewArtifactId) void loadPreview(readablePreviewArtifactId);
-                  }}
-                >
-                  {readablePreviewArtifactId && previewLoadingId === readablePreviewArtifactId ? (
-                    <Loader2 className="spin" size={16} />
-                  ) : (
-                    <Eye size={16} />
-                  )}
-                  Open Review
-                </button>
-                <button
-                  className="secondary-button"
-                  disabled={busy}
-                  onClick={() => void runAction(() => captureNotebookExecution(reviewNotebook))}
-                >
-                  {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                  Capture Evidence
-                </button>
-              </div>
-            </div>
-            <div className="notebook-guide-card">
-              <div>
-                <div className="eyebrow">Interactive guide</div>
-                <h3>Ask what to inspect next</h3>
-                <p>Use Codex as a reading guide for this notebook. The response appears here and is also recorded in Agent Chat.</p>
-              </div>
-              <div className="notebook-guide-prompts">
-                {[
-                  "What should I read first in this notebook?",
-                  "Which figure or evidence artifact matters most right now?",
-                  "What should Codex investigate next before modeling?"
-                ].map((prompt) => (
+                {reviewNotebook && storyPrimaryActionType === "api" && storyPrimaryEndpoint?.includes("execution-capture") ? (
                   <button
                     className="secondary-button"
-                    disabled={busy || guideBusy}
-                    key={prompt}
-                    onClick={() => void askNotebookGuide(prompt)}
+                    disabled={busy}
+                    onClick={() => void runAction(() => captureNotebookExecution(reviewNotebook))}
                   >
-                    {guideBusy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
-                    {prompt}
+                    {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                    Capture Evidence
                   </button>
-                ))}
+                ) : null}
               </div>
-              <form
-                className="notebook-guide-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const message = guideDraft.trim();
-                  if (!message) return;
-                  setGuideDraft("");
-                  void askNotebookGuide(message);
-                }}
-              >
-                <input
-                  value={guideDraft}
-                  onChange={(event) => setGuideDraft(event.target.value)}
-                  placeholder="Ask about this notebook review..."
-                />
-                <button className="icon-button" disabled={busy || guideBusy || !guideDraft.trim()} title="Ask notebook guide">
-                  {guideBusy ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
-                </button>
-              </form>
-              {guideResponse ? <div className="notebook-guide-response">{guideResponse}</div> : null}
+            </section>
+
+            <div className="analysis-story-grid">
+              <section className="analysis-story-section">
+                <div className="mini-card-title">Read order</div>
+                {story.read_order.length ? (
+                  <div className="analysis-read-list">
+                    {story.read_order.map((item, index) => (
+                      <div className="analysis-read-row" key={`${textField(item.title) ?? "read"}-${index}`}>
+                        <span>{index + 1}</span>
+                        <div>
+                          <strong>{textField(item.title) ?? "Review item"}</strong>
+                          <p>{textField(item.why) ?? ""}</p>
+                          {textField(item.artifact_hint) ? <small>{textField(item.artifact_hint)}</small> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyInline text="No read order is available yet. Ask Codex to create one from the current artifacts." />
+                )}
+              </section>
+
+              <section className="analysis-story-section">
+                <div className="mini-card-title">What matters</div>
+                {story.visual_story_cards.length ? (
+                  <div className="analysis-story-card-grid">
+                    {story.visual_story_cards.map((card, index) => (
+                      <div className="analysis-story-card" key={`${textField(card.title) ?? "card"}-${index}`}>
+                        <div className="badge-row">
+                          <span className={decisionReportStatusClass(textField(card.status) ?? "review")}>
+                            {(textField(card.status) ?? "review").replace(/_/g, " ")}
+                          </span>
+                        </div>
+                        <strong>{textField(card.title) ?? "Story card"}</strong>
+                        <p>{textField(card.why_read) ?? ""}</p>
+                        {textField(card.signal) ? <small>{textField(card.signal)}</small> : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyInline text="Story cards will appear after EDA Review or notebook generation." />
+                )}
+              </section>
             </div>
-            <div className="notebook-steps" aria-label="Notebook evidence state">
-              <div className="notebook-step done">
-                <span>
-                  <Check size={14} />
-                </span>
-                <strong>Notebook draft</strong>
-                <small>{formatDate(reviewNotebook.created_at)}</small>
-              </div>
-              <div className={`notebook-step ${hasExecutionPlan ? "done" : "pending"}`}>
-                <span>{hasExecutionPlan ? <Check size={14} /> : <ListChecks size={14} />}</span>
-                <strong>Runner plan</strong>
-                <small>{hasExecutionPlan ? "Contract ready" : "Optional before runner execution"}</small>
-              </div>
-              <div className={`notebook-step ${hasEvidenceCapture ? "done" : "pending"}`}>
-                <span>{hasEvidenceCapture ? <Check size={14} /> : <Play size={14} />}</span>
-                <strong>Evidence capture</strong>
-                <small>{hasEvidenceFigures ? `${reviewEvidenceFigures.length} figures rendered` : "Profile evidence not rendered yet"}</small>
-              </div>
+
+            <div className="analysis-story-grid compact">
+              <section className="analysis-story-section">
+                <div className="mini-card-title">Caveats</div>
+                {story.caveats.length ? (
+                  <ul className="analysis-plain-list">
+                    {story.caveats.slice(0, 5).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <EmptyInline text="No caveat has been raised for this story yet." />
+                )}
+              </section>
+              <section className="analysis-story-section">
+                <div className="mini-card-title">Ask Codex next</div>
+                <div className="analysis-prompt-list">
+                  {(story.codex_prompts.length
+                    ? story.codex_prompts
+                    : [
+                        "What should I read first and why?",
+                        "What is the next narrow analysis action?",
+                        "Which evidence is still too weak to trust?"
+                      ]
+                  ).slice(0, 4).map((prompt) => (
+                    <button
+                      className="secondary-button"
+                      disabled={busy || guideBusy}
+                      key={prompt}
+                      onClick={() => void askNotebookGuide(prompt)}
+                    >
+                      {guideBusy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+                <form
+                  className="notebook-guide-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const message = guideDraft.trim();
+                    if (!message) return;
+                    setGuideDraft("");
+                    void askNotebookGuide(message);
+                  }}
+                >
+                  <input
+                    value={guideDraft}
+                    onChange={(event) => setGuideDraft(event.target.value)}
+                    placeholder="Ask Tablee about this analysis story..."
+                  />
+                  <button className="icon-button" disabled={busy || guideBusy || !guideDraft.trim()} title="Ask analysis guide">
+                    {guideBusy ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
+                  </button>
+                </form>
+                {guideResponse ? <div className="notebook-guide-response">{guideResponse}</div> : null}
+              </section>
             </div>
-            <div className="metric-grid compact">
-              <Metric label="Notebooks" value={notebookIndex?.counts.total ?? 0} />
-              <Metric label="Captured" value={notebookIndex?.counts.with_execution_capture ?? 0} />
-              <Metric label="Figures" value={reviewEvidenceFigures.length} />
-              <Metric label="Data Review" value={latestEdaReviewHtml ? "ready" : "not run"} />
-            </div>
+
+            <section className="analysis-story-preview">
+              <div className="analysis-story-preview-head">
+                <div>
+                  <div className="eyebrow">Current story preview</div>
+                  <h3>{story.selected_source.title}</h3>
+                </div>
+                {storyPreviewArtifactId ? (
+                  <a className="icon-link" href={`${apiBase}/api/artifacts/${storyPreviewArtifactId}/download`} title="Download current story">
+                    <Download size={16} />
+                  </a>
+                ) : null}
+              </div>
+              {previewError ? <div className="banner danger">{previewError}</div> : null}
+              {preview?.preview_available ? (
+                isHtmlArtifactPreview(preview) ? (
+                  <HtmlArtifactPreview preview={preview} />
+                ) : (
+                  <TranslatablePreview preview={preview} />
+                )
+              ) : (
+                <EmptyInline text="The selected story will render here. If it is not available, run EDA Review or capture notebook evidence." />
+              )}
+            </section>
+
+            <details className="artifact-shelf analysis-supporting-shelf">
+              <summary>Supporting notebooks and artifacts</summary>
+              <div className="analysis-supporting-grid">
+                <div className="metric-grid compact">
+                  <Metric label="Notebooks" value={notebookIndex?.counts.total ?? 0} />
+                  <Metric label="Captured" value={notebookIndex?.counts.with_execution_capture ?? 0} />
+                  <Metric label="Figures" value={String(story.figure_refs.length || reviewEvidenceFigures.length)} />
+                  <Metric label="Data Review" value={latestEdaReviewHtml ? "ready" : "not run"} />
+                </div>
+
+                {reviewNotebook ? (
+                  <div className="card-grid notebook-evidence-grid">
+                    <div className="mini-card notebook-evidence-card primary">
+                      <div className="mini-card-title">Data Review</div>
+                      <p>Harness-controlled EDA with findings, figures, read order, and Codex prompts.</p>
+                      <div className="badge-row">
+                        <span className={latestEdaReviewHtml ? "badge" : "badge risk"}>
+                          {latestEdaReviewHtml ? "ready" : "not run"}
+                        </span>
+                        {latestEdaReviewFigures.length ? <span className="badge muted">{latestEdaReviewFigures.length} figures</span> : null}
+                      </div>
+                      <div className="row-actions">
+                        <button
+                          className="secondary-button"
+                          disabled={!latestEdaReviewHtml || previewLoadingId === latestEdaReviewHtml.id}
+                          onClick={() => {
+                            if (latestEdaReviewHtml) void loadPreview(latestEdaReviewHtml.id);
+                          }}
+                        >
+                          {latestEdaReviewHtml && previewLoadingId === latestEdaReviewHtml.id ? (
+                            <Loader2 className="spin" size={16} />
+                          ) : (
+                            <FileText size={16} />
+                          )}
+                          Open
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mini-card notebook-evidence-card primary">
+                      <div className="mini-card-title">Notebook evidence</div>
+                      <p>Static evidence capture keeps the notebook readable without leaving Tablex.</p>
+                      <div className="badge-row">
+                        <span className={reviewEvidenceHtml ? "badge" : "badge risk"}>
+                          {reviewEvidenceHtml ? "ready" : "not captured"}
+                        </span>
+                        {reviewEvidenceBundle ? <span className="badge muted">bundle saved</span> : null}
+                      </div>
+                      <div className="row-actions">
+                        <button
+                          className="secondary-button"
+                          disabled={!reviewEvidenceHtml || previewLoadingId === reviewEvidenceHtml.id}
+                          onClick={() => {
+                            if (reviewEvidenceHtml) void loadPreview(reviewEvidenceHtml.id);
+                          }}
+                        >
+                          {reviewEvidenceHtml && previewLoadingId === reviewEvidenceHtml.id ? (
+                            <Loader2 className="spin" size={16} />
+                          ) : (
+                            <FileText size={16} />
+                          )}
+                          Open
+                        </button>
+                        <button
+                          className="secondary-button"
+                          disabled={busy}
+                          onClick={() => void runAction(() => captureNotebookExecution(reviewNotebook))}
+                        >
+                          {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                          Capture
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mini-card notebook-evidence-card">
+                      <div className="mini-card-title">Runner record</div>
+                      <p>Plan, manifest, source, and safety policy for controlled Codex handoff.</p>
+                      <div className="row-actions">
+                        <button
+                          className="secondary-button"
+                          disabled={!reviewSafetyArtifact || previewLoadingId === reviewSafetyArtifact.id}
+                          onClick={() => {
+                            if (reviewSafetyArtifact) void loadPreview(reviewSafetyArtifact.id);
+                          }}
+                        >
+                          {reviewSafetyArtifact && previewLoadingId === reviewSafetyArtifact.id ? (
+                            <Loader2 className="spin" size={16} />
+                          ) : (
+                            <ListChecks size={16} />
+                          )}
+                          Inspect
+                        </button>
+                        <button
+                          className="secondary-button"
+                          disabled={busy}
+                          onClick={() => void runAction(() => planNotebookExecution(reviewNotebook))}
+                        >
+                          {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                          Plan
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                {notebookItems.length ? (
+                  <Table
+                    headers={["Notebook", "State", "Actions"]}
+                    rows={notebookItems.slice(0, 8).map((item) => [
+                      <div className="cell-stack" key={`${item.notebook_artifact_id}-title`}>
+                        <span>{item.title}</span>
+                        <small>
+                          {item.notebook_kind.replace(/_/g, " ")} | {notebookSourceLabel(item)}
+                        </small>
+                      </div>,
+                      <div className="badge-row" key={`${item.notebook_artifact_id}-state`}>
+                        <span className="badge muted">{notebookCoverageLabel(item)}</span>
+                        <span className={notebookReadinessClass(item)}>{notebookReadinessLabel(item)}</span>
+                        {item.notebook_artifact_id === reviewNotebook?.notebook_artifact_id ? <span className="badge">current</span> : null}
+                      </div>,
+                      <div className="row-actions" key={`${item.notebook_artifact_id}-actions`}>
+                        <button
+                          className="icon-button"
+                          disabled={previewLoadingId === notebookPreviewArtifactId(item)}
+                          onClick={() => void loadPreview(notebookPreviewArtifactId(item))}
+                          title="Preview notebook"
+                        >
+                          {previewLoadingId === notebookPreviewArtifactId(item) ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                        </button>
+                        <button
+                          className="icon-button"
+                          disabled={busy}
+                          onClick={() => void runAction(() => captureNotebookExecution(item))}
+                          title="Capture evidence"
+                        >
+                          {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                        </button>
+                        <a className="icon-link" href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`} title="Download marimo source">
+                          <Download size={16} />
+                        </a>
+                      </div>
+                    ])}
+                  />
+                ) : (
+                  <EmptyInline text="Notebook history will appear after Data Understanding or run-level diagnostics notebooks are generated." />
+                )}
+
+                {reviewArtifacts.length ? (
+                  <Table
+                    headers={["Artifact", "Status", "Created", "Actions"]}
+                    rows={reviewArtifacts.slice(0, 12).map((artifact) => [
+                      <div className="cell-stack" key={`${artifact.id}-label`}>
+                        <span>{notebookArtifactDisplayName(artifact.asset_type)}</span>
+                        <small>{String(artifact.metadata.figure_id ?? artifact.metadata.notebook_kind ?? artifact.id)}</small>
+                      </div>,
+                      String(artifact.metadata.execution_status ?? artifact.metadata.capture_mode ?? "ready"),
+                      formatDate(artifact.created_at),
+                      <div className="row-actions" key={artifact.id}>
+                        <button
+                          className="icon-button"
+                          disabled={previewLoadingId === artifact.id}
+                          onClick={() => void loadPreview(artifact.id)}
+                          title="Preview artifact"
+                        >
+                          {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                        </button>
+                        <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download artifact">
+                          <Download size={16} />
+                        </a>
+                      </div>
+                    ])}
+                  />
+                ) : null}
+              </div>
+            </details>
           </div>
         ) : (
           <div className="notebook-start-card">
             <img src="/mascot/tablee-avatar.svg" alt="" aria-hidden="true" className="notebook-start-mascot" />
             <div className="notebook-start-copy">
               <div className="eyebrow">Start here</div>
-              <h3>Create a Data Understanding notebook</h3>
-              <p>Use the current profile and assumptions to create the first narrative review. Model diagnostics become available after a run exists.</p>
+              <h3>{analysisStory?.empty_state?.headline ?? "Create the first readable analysis story"}</h3>
+              <p>
+                {analysisStory?.empty_state?.reason ??
+                  "Run EDA Review first. Then let Codex extend a marimo notebook only after the next human question is clear."}
+              </p>
               <div className="row-actions">
                 <button
                   className="primary-button"
@@ -6547,222 +6852,6 @@ function NotebooksTab({
           </div>
         )}
       </Panel>
-
-      <Panel title="Current Review" icon={<FileText size={18} />}>
-        {previewError ? <div className="banner danger">{previewError}</div> : null}
-        {preview?.preview_available ? (
-          isHtmlArtifactPreview(preview) ? (
-            <HtmlArtifactPreview preview={preview} />
-          ) : (
-            <TranslatablePreview preview={preview} />
-          )
-        ) : (
-          <EmptyInline text="Open Review to read the recommended notebook review here. Figures, evidence bundles, and runner records open in this same place so the result stays next to the action." />
-        )}
-      </Panel>
-
-      <Panel title="Evidence Outputs" icon={<ListChecks size={18} />}>
-        {reviewNotebook ? (
-          <div className="stack">
-            <div className="card-grid notebook-evidence-grid">
-              <div className="mini-card notebook-evidence-card primary">
-                <div className="mini-card-title">Data Review</div>
-                <p>Controlled DuckDB EDA over the uploaded dataset: distributions, target relationships, findings, figures, and Codex next prompts.</p>
-                <div className="badge-row">
-                  <span className={latestEdaReviewHtml ? "badge" : "badge risk"}>
-                    {latestEdaReviewHtml ? "ready" : "not run"}
-                  </span>
-                  {latestEdaReviewFigures.length ? <span className="badge muted">{latestEdaReviewFigures.length} figures</span> : null}
-                </div>
-                <div className="row-actions">
-                  <button
-                    className="secondary-button"
-                    disabled={!latestEdaReviewHtml || previewLoadingId === latestEdaReviewHtml.id}
-                    onClick={() => {
-                      if (latestEdaReviewHtml) void loadPreview(latestEdaReviewHtml.id);
-                    }}
-                  >
-                    {latestEdaReviewHtml && previewLoadingId === latestEdaReviewHtml.id ? (
-                      <Loader2 className="spin" size={16} />
-                    ) : (
-                      <FileText size={16} />
-                    )}
-                    Open
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={busy || latestDataset === null}
-                    onClick={() => {
-                      if (latestDataset) void runAction(() => runEdaReview(latestDataset));
-                    }}
-                  >
-                    {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                    Run
-                  </button>
-                </div>
-              </div>
-              <div className="mini-card notebook-evidence-card primary">
-                <div className="mini-card-title">Review narrative</div>
-                <p>Target readiness, findings, guardrails, and rendered profile evidence in one readable page.</p>
-                <div className="badge-row">
-                  <span className={reviewEvidenceHtml ? "badge" : "badge risk"}>
-                    {reviewEvidenceHtml ? "ready" : "not captured"}
-                  </span>
-                  {reviewEvidenceBundle ? <span className="badge muted">bundle saved</span> : null}
-                </div>
-                <div className="row-actions">
-                  <button
-                    className="secondary-button"
-                    disabled={!reviewEvidenceHtml || previewLoadingId === reviewEvidenceHtml.id}
-                    onClick={() => {
-                      if (reviewEvidenceHtml) void loadPreview(reviewEvidenceHtml.id);
-                    }}
-                  >
-                    {reviewEvidenceHtml && previewLoadingId === reviewEvidenceHtml.id ? (
-                      <Loader2 className="spin" size={16} />
-                    ) : (
-                      <FileText size={16} />
-                    )}
-                    Preview
-                  </button>
-                </div>
-              </div>
-              <div className="mini-card notebook-evidence-card">
-                <div className="mini-card-title">Figures</div>
-                <p>Profile-backed SVG charts for missingness, semantic mix, target profile, and feature review queues.</p>
-                <div className="badge-row">
-                  <span className={hasEvidenceFigures ? "badge" : "badge muted"}>{reviewEvidenceFigures.length} rendered</span>
-                </div>
-                <div className="row-actions">
-                  <button
-                    className="secondary-button"
-                    disabled={!reviewEvidenceFigures[0] || previewLoadingId === reviewEvidenceFigures[0]?.id}
-                    onClick={() => {
-                      if (reviewEvidenceFigures[0]) void loadPreview(reviewEvidenceFigures[0].id);
-                    }}
-                  >
-                    {reviewEvidenceFigures[0] && previewLoadingId === reviewEvidenceFigures[0].id ? (
-                      <Loader2 className="spin" size={16} />
-                    ) : (
-                      <BarChart3 size={16} />
-                    )}
-                    First Figure
-                  </button>
-                </div>
-              </div>
-              <div className="mini-card notebook-evidence-card">
-                <div className="mini-card-title">Runner record</div>
-                <p>Plan, manifest, source, and safety policy for controlled runner handoff.</p>
-                <div className="badge-row">
-                  <span className={reviewSafetyArtifact ? "badge" : "badge muted"}>
-                    {reviewSafetyArtifact ? notebookArtifactDisplayName(reviewSafetyArtifact.asset_type) : "not planned"}
-                  </span>
-                </div>
-                <div className="row-actions">
-                  <button
-                    className="secondary-button"
-                    disabled={!reviewSafetyArtifact || previewLoadingId === reviewSafetyArtifact.id}
-                    onClick={() => {
-                      if (reviewSafetyArtifact) void loadPreview(reviewSafetyArtifact.id);
-                    }}
-                  >
-                    {reviewSafetyArtifact && previewLoadingId === reviewSafetyArtifact.id ? (
-                      <Loader2 className="spin" size={16} />
-                    ) : (
-                      <ListChecks size={16} />
-                    )}
-                    Inspect
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={busy}
-                    onClick={() => void runAction(() => planNotebookExecution(reviewNotebook))}
-                  >
-                    {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                    Plan
-                  </button>
-                </div>
-              </div>
-            </div>
-            {reviewArtifacts.length ? (
-              <details className="artifact-shelf">
-                <summary>Artifact shelf ({reviewArtifacts.length})</summary>
-                <Table
-                  headers={["Artifact", "Status", "Created", "Actions"]}
-                  rows={reviewArtifacts.slice(0, 12).map((artifact) => [
-                    <div className="cell-stack" key={`${artifact.id}-label`}>
-                      <span>{notebookArtifactDisplayName(artifact.asset_type)}</span>
-                      <small>{String(artifact.metadata.figure_id ?? artifact.metadata.notebook_kind ?? artifact.id)}</small>
-                    </div>,
-                    String(artifact.metadata.execution_status ?? artifact.metadata.capture_mode ?? "ready"),
-                    formatDate(artifact.created_at),
-                    <div className="row-actions" key={artifact.id}>
-                      <button
-                        className="icon-button"
-                        disabled={previewLoadingId === artifact.id}
-                        onClick={() => void loadPreview(artifact.id)}
-                        title="Preview artifact"
-                      >
-                        {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-                      </button>
-                      <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download artifact">
-                        <Download size={16} />
-                      </a>
-                    </div>
-                  ])}
-                />
-              </details>
-            ) : null}
-          </div>
-        ) : (
-          <EmptyInline text="Notebook evidence will appear after a Data Understanding or Model Diagnostics notebook is generated." />
-        )}
-      </Panel>
-
-      <Panel title="Notebook Library" icon={<FileText size={18} />}>
-        {notebookItems.length ? (
-          <Table
-            headers={["Notebook", "State", "Actions"]}
-            rows={notebookItems.slice(0, 8).map((item) => [
-              <div className="cell-stack" key={`${item.notebook_artifact_id}-title`}>
-                <span>{item.title}</span>
-                <small>
-                  {item.notebook_kind.replace(/_/g, " ")} | {notebookSourceLabel(item)}
-                </small>
-              </div>,
-              <div className="badge-row" key={`${item.notebook_artifact_id}-state`}>
-                <span className="badge muted">{notebookCoverageLabel(item)}</span>
-                <span className={notebookReadinessClass(item)}>{notebookReadinessLabel(item)}</span>
-                {item.notebook_artifact_id === reviewNotebook?.notebook_artifact_id ? <span className="badge">current</span> : null}
-              </div>,
-              <div className="row-actions" key={`${item.notebook_artifact_id}-actions`}>
-                <button
-                  className="icon-button"
-                  disabled={previewLoadingId === notebookPreviewArtifactId(item)}
-                  onClick={() => void loadPreview(notebookPreviewArtifactId(item))}
-                  title="Preview notebook"
-                >
-                  {previewLoadingId === notebookPreviewArtifactId(item) ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-                </button>
-                <button
-                  className="icon-button"
-                  disabled={busy}
-                  onClick={() => void runAction(() => captureNotebookExecution(item))}
-                  title="Capture evidence"
-                >
-                  {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                </button>
-                <a className="icon-link" href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`} title="Download marimo source">
-                  <Download size={16} />
-                </a>
-              </div>
-            ])}
-          />
-        ) : (
-          <EmptyInline text="Notebook history will appear here after Data Understanding or run-level diagnostics notebooks are generated." />
-        )}
-      </Panel>
-
     </div>
   );
 }
