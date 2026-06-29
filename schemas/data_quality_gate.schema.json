@@ -8,6 +8,7 @@
     "project_id",
     "dataset_snapshot_id",
     "summary",
+    "profile_boundary",
     "checks",
     "quality_gates",
     "evaluation_guidance",
@@ -47,6 +48,20 @@
         ],
         "additionalProperties": true
       }
+    },
+    "profile_boundary": {
+      "type": "object",
+      "required": ["profile_mode", "profile_stat_scope", "quality_check_scope"],
+      "properties": {
+        "profile_mode": { "type": "string" },
+        "profile_stat_scope": { "type": "string" },
+        "quality_check_scope": { "type": "string", "enum": ["full", "sample"] },
+        "sample_row_count": { "type": ["integer", "null"], "minimum": 0 },
+        "sample_method": { "type": ["string", "null"] },
+        "deep_profile_recommended": { "type": "boolean" },
+        "deferred_column_count": { "type": ["integer", "null"], "minimum": 0 }
+      },
+      "additionalProperties": true
     },
     "quality_gates": {
       "type": "object",

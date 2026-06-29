@@ -665,6 +665,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert context_payload["safety_controls"]["connector_credentials"] == "never passed to the agent"
     assert context_payload["evaluation_context"]["split_manifest_id"]
     assert context_payload["quality_gate_context"]["status"] == "available"
+    assert context_payload["quality_gate_context"]["quality_check_scope"] in {"full", "sample"}
     assert context_payload["research_plan_context"]["artifact_id"] == research_plan_artifact_id
     assert (
         context_payload["research_synthesis_context"]["artifact_id"]
@@ -985,6 +986,51 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     schema_response = client.get(f"/api/datasets/{dataset_id}/schema")
     assert schema_response.status_code == 200
     assert len(schema_response.json()["columns"]) == 5
+
+
+def test_bounded_profile_quality_gate_uses_sample_scope(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Wide", "target_column": "target"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    header = ["row_id", "target", *[f"feature_{index}" for index in range(85)]]
+    rows = []
+    for row_index in range(120):
+        rows.append(
+            ",".join(
+                [
+                    f"id_{row_index}",
+                    str(row_index % 2),
+                    *[str((row_index + column_index) % 7) for column_index in range(85)],
+                ]
+            )
+        )
+    csv_bytes = (",".join(header) + "\n" + "\n".join(rows) + "\n").encode("utf-8")
+
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("wide.csv", csv_bytes, "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+    dataset_id = upload_response.json()["dataset_snapshot"]["id"]
+
+    artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
+    assert artifacts_response.status_code == 200
+    profile_artifact = next(item for item in artifacts_response.json() if item["asset_type"] == "eda_profile")
+    assert profile_artifact["metadata"]["profile_mode"] == "bounded_sample"
+
+    quality_response = client.post(f"/api/datasets/{dataset_id}/quality/run")
+    assert quality_response.status_code == 200, quality_response.text
+    gate = quality_response.json()["output"]["gate"]
+    assert gate["profile_boundary"]["quality_check_scope"] == "sample"
+    assert any(check["check_id"] == "profile_statistics_sampled" for check in gate["checks"])
+    duplicate_check = next(check for check in gate["checks"] if check["check_id"] == "duplicate_rows")
+    assert duplicate_check["status"] == "pass"
+    assert duplicate_check["evidence"]["duplicate_row_count"] == 0
+
+    latest_quality_response = client.get(f"/api/datasets/{dataset_id}/quality/latest")
+    assert latest_quality_response.status_code == 200
+    assert latest_quality_response.json()["metadata"]["quality_check_scope"] == "sample"
 
 
 def test_planned_agent_task_stub_rejects_blocked_readiness(tmp_path: Path) -> None:

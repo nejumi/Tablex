@@ -301,6 +301,9 @@ def quality_gate_context(artifact: Artifact | None) -> dict[str, Any]:
         "status": "available",
         "artifact_id": artifact.id,
         "severity": metadata.get("severity"),
+        "quality_check_scope": metadata.get("quality_check_scope"),
+        "profile_mode": metadata.get("profile_mode"),
+        "sample_row_count": metadata.get("sample_row_count"),
         "preview_url": f"/api/artifacts/{artifact.id}/preview",
         "download_url": f"/api/artifacts/{artifact.id}/download",
     }

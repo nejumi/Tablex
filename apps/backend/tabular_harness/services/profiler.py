@@ -316,7 +316,7 @@ def is_identifier_name(lower_name: str) -> bool:
         lower_name == "id"
         or lower_name.endswith("_id")
         or lower_name.endswith("id")
-        or "_id_" in lower_name
+        or lower_name.startswith("sk_id_")
         or lower_name.startswith("id_")
     )
 

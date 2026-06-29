@@ -32,6 +32,10 @@ from tabular_harness.services.artifacts import (
 from tabular_harness.services.profiler import quote_ident, read_sql
 from tabular_harness.services.reporting import persist_visualization_spec
 
+QUALITY_SAMPLE_ROWS = 50_000
+QUALITY_FULL_MAX_ROWS = 100_000
+QUALITY_FULL_MAX_COLUMNS = 80
+
 
 @dataclass(frozen=True)
 class DataQualityResult:
@@ -78,6 +82,9 @@ def analyze_dataset_quality(
             "evaluation_spec_id": evaluation_spec.id if evaluation_spec else None,
             "split_manifest_id": split_manifest.id if split_manifest else None,
             "severity": gate["summary"]["severity"],
+            "quality_check_scope": gate["profile_boundary"]["quality_check_scope"],
+            "profile_mode": gate["profile_boundary"]["profile_mode"],
+            "sample_row_count": gate["profile_boundary"]["sample_row_count"],
         },
     )
     report_md = render_data_quality_report(project=project, dataset=dataset, gate=gate)
@@ -208,6 +215,7 @@ def build_data_quality_gate(
             "status_counts": counts,
             "risk_score": quality_risk_score(checks),
         },
+        "profile_boundary": profile_boundary(profile),
         "checks": checks,
         "quality_gates": {
             "evaluation_ready": not blockers,
@@ -250,6 +258,32 @@ def basic_profile_checks(
         )
     ]
     column_names = {str(item.get("name")) for item in columns}
+    if is_bounded_profile(profile):
+        sample_raw = profile.get("profile_sample")
+        sample: dict[str, Any] = sample_raw if isinstance(sample_raw, dict) else {}
+        deep_raw = profile.get("deferred_deep_profile")
+        deep: dict[str, Any] = deep_raw if isinstance(deep_raw, dict) else {}
+        checks.append(
+            make_check(
+                "profile_statistics_sampled",
+                "profile",
+                "warning",
+                "medium",
+                "Column statistics are sample-backed",
+                (
+                    "The EDA profile used bounded_sample mode; missingness, uniqueness, duplicate, and target-proxy "
+                    f"quality checks are interpreted with a sample boundary of {sample.get('sample_row_count') or 'unknown'} rows."
+                ),
+                [],
+                "infer_and_continue",
+                ["missingness_policy", "duplicate_policy"],
+                evidence={
+                    "profile_mode": profile.get("profile_mode"),
+                    "sample_row_count": sample.get("sample_row_count"),
+                    "deferred_column_count": deep.get("deferred_column_count"),
+                },
+            )
+        )
     if project.target_column:
         checks.append(
             make_check(
@@ -350,10 +384,20 @@ def duckdb_dataset_checks(project: Project, dataset_artifact: Artifact, profile:
     path = artifact_primary_path(dataset_artifact)
     con = duckdb.connect(database=":memory:")
     dataset_sql = read_sql(path)
+    bounded = use_sample_quality_checks(profile)
+    row_scope = "sample" if bounded else "full"
+    checked_row_count = int(profile.get("row_count") or 0)
+    table_ref = dataset_sql
+    if bounded:
+        sample_limit = quality_sample_limit(profile)
+        table_ref = "quality_sample"
+        con.execute(f"CREATE TEMP TABLE {table_ref} AS SELECT * FROM {dataset_sql} LIMIT {sample_limit}")
+        sample_count = con.execute(f"SELECT COUNT(*) FROM {table_ref}").fetchone()
+        checked_row_count = int(sample_count[0]) if sample_count else 0
     checks = []
     duplicate_count = safe_int(
         con.execute(
-            f"SELECT COALESCE(SUM(cnt - 1), 0) FROM (SELECT COUNT(*) AS cnt FROM {dataset_sql} GROUP BY ALL HAVING COUNT(*) > 1)"
+            f"SELECT COALESCE(SUM(cnt - 1), 0) FROM (SELECT *, COUNT(*) AS cnt FROM {table_ref} GROUP BY ALL HAVING COUNT(*) > 1)"
         ).fetchone()
     )
     checks.append(
@@ -362,12 +406,17 @@ def duckdb_dataset_checks(project: Project, dataset_artifact: Artifact, profile:
             "duplicates",
             "warning" if duplicate_count > 0 else "pass",
             "medium" if duplicate_count > 0 else "low",
-            "Duplicate rows detected" if duplicate_count > 0 else "No duplicate full rows detected",
-            f"{duplicate_count} duplicate row copies were found by full-row comparison.",
+            "Duplicate rows detected" if duplicate_count > 0 else f"No duplicate rows detected in {row_scope} check",
+            (
+                f"{duplicate_count} duplicate row copies were found by {row_scope}-row comparison. "
+                "Full duplicate detection is deferred for this large dataset."
+                if bounded
+                else f"{duplicate_count} duplicate row copies were found by full-row comparison."
+            ),
             [],
             "scenario_compare" if duplicate_count > 0 else "infer_and_continue",
             ["duplicate_policy"] if duplicate_count > 0 else [],
-            evidence={"duplicate_row_count": duplicate_count},
+            evidence={"duplicate_row_count": duplicate_count, "row_scope": row_scope, "checked_row_count": checked_row_count},
         )
     )
     target = project.target_column
@@ -382,12 +431,11 @@ def duckdb_dataset_checks(project: Project, dataset_artifact: Artifact, profile:
                       CASE WHEN CAST({quote_ident(column)} AS VARCHAR) = CAST({quote_ident(target)} AS VARCHAR)
                       THEN 1 ELSE 0 END
                     )
-                    FROM {dataset_sql}
+                    FROM {table_ref}
                     """
                 ).fetchone()
             )
-            row_count = int(profile.get("row_count") or 0)
-            if row_count and matched / row_count >= 0.98:
+            if checked_row_count and matched / checked_row_count >= 0.98:
                 exact_match_columns.append(column)
     checks.append(
         make_check(
@@ -395,11 +443,15 @@ def duckdb_dataset_checks(project: Project, dataset_artifact: Artifact, profile:
             "leakage",
             "fail" if exact_match_columns else "pass",
             "blocking" if exact_match_columns else "low",
-            "Columns nearly duplicate the target" if exact_match_columns else "No exact target proxy columns detected",
-            "A feature that nearly equals the target is a strong leakage candidate.",
+            "Columns nearly duplicate the target" if exact_match_columns else f"No exact target proxy columns detected in {row_scope} check",
+            (
+                "A feature that nearly equals the target is a strong leakage candidate. "
+                f"This check used {row_scope} scope over {checked_row_count} rows."
+            ),
             exact_match_columns,
             "exclude_until_confirmed" if exact_match_columns else "infer_and_continue",
             ["prediction_time_availability"] if exact_match_columns else [],
+            evidence={"row_scope": row_scope, "checked_row_count": checked_row_count},
         )
     )
     return checks
@@ -580,6 +632,8 @@ def materialize_quality_findings(
 
 
 def render_data_quality_report(*, project: Project, dataset: DatasetSnapshot, gate: dict[str, Any]) -> str:
+    boundary_raw = gate.get("profile_boundary")
+    boundary: dict[str, Any] = boundary_raw if isinstance(boundary_raw, dict) else {}
     lines = [
         "# Data Quality Gate",
         "",
@@ -587,6 +641,9 @@ def render_data_quality_report(*, project: Project, dataset: DatasetSnapshot, ga
         f"- DatasetSnapshot: {dataset.id}",
         f"- Severity: {gate['summary']['severity']}",
         f"- Risk score: {gate['summary']['risk_score']}",
+        f"- Profile mode: {boundary.get('profile_mode', '-')}",
+        f"- Quality check scope: {boundary.get('quality_check_scope', '-')}",
+        f"- Sample rows: {boundary.get('sample_row_count', '-')}",
         "",
         "## Summary",
         "",
@@ -679,6 +736,45 @@ def profile_columns(profile: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(columns, list):
         return []
     return [cast(dict[str, Any], item) for item in columns if isinstance(item, dict)]
+
+
+def is_bounded_profile(profile: dict[str, Any]) -> bool:
+    return profile.get("profile_mode") == "bounded_sample" or profile.get("column_stat_scope") == "sample"
+
+
+def quality_sample_limit(profile: dict[str, Any]) -> int:
+    sample = profile.get("profile_sample")
+    if isinstance(sample, dict):
+        for key in ("sample_row_count", "sample_limit"):
+            value = sample.get(key)
+            if isinstance(value, int) and value > 0:
+                return min(value, QUALITY_SAMPLE_ROWS)
+    return QUALITY_SAMPLE_ROWS
+
+
+def use_sample_quality_checks(profile: dict[str, Any]) -> bool:
+    if is_bounded_profile(profile):
+        return True
+    row_count = int(profile.get("row_count") or 0)
+    column_count = int(profile.get("column_count") or 0)
+    return row_count > QUALITY_FULL_MAX_ROWS or column_count > QUALITY_FULL_MAX_COLUMNS
+
+
+def profile_boundary(profile: dict[str, Any]) -> dict[str, Any]:
+    sampled = use_sample_quality_checks(profile)
+    sample_raw = profile.get("profile_sample")
+    sample: dict[str, Any] = sample_raw if isinstance(sample_raw, dict) else {}
+    deep_raw = profile.get("deferred_deep_profile")
+    deep: dict[str, Any] = deep_raw if isinstance(deep_raw, dict) else {}
+    return {
+        "profile_mode": profile.get("profile_mode", "unknown"),
+        "profile_stat_scope": profile.get("column_stat_scope", "unknown"),
+        "quality_check_scope": "sample" if sampled else "full",
+        "sample_row_count": sample.get("sample_row_count") if sampled else None,
+        "sample_method": sample.get("sample_method") if sampled else None,
+        "deep_profile_recommended": bool(deep.get("recommended")) if deep else False,
+        "deferred_column_count": deep.get("deferred_column_count") if deep else 0,
+    }
 
 
 def split_recommendations(

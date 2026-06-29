@@ -1907,11 +1907,12 @@ function DataTab({
       <Panel title="Data Quality Gates" icon={<ListChecks size={18} />}>
         {qualityArtifacts.length ? (
           <Table
-            headers={["Type", "Name", "Severity", "Dataset", "Actions"]}
+            headers={["Type", "Name", "Severity", "Scope", "Dataset", "Actions"]}
             rows={qualityArtifacts.map((artifact) => [
               artifact.asset_type,
               artifact.name,
               String(artifact.metadata.severity ?? "-"),
+              String(artifact.metadata.quality_check_scope ?? "-"),
               String(artifact.metadata.dataset_snapshot_id ?? "-"),
               <div className="row-actions" key={artifact.id}>
                 <button

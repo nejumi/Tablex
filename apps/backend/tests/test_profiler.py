@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tabular_harness.services.profiler import profile_tabular_file
+from tabular_harness.services.profiler import infer_role, infer_semantic_type, profile_tabular_file
 
 
 def test_profile_tabular_file_generates_understanding_assets(tmp_path: Path) -> None:
@@ -63,3 +63,18 @@ def test_profile_tabular_file_uses_bounded_sample_for_large_inputs(tmp_path: Pat
     assert row_id_profile["role"] == "identifier"
     assert any(item["topic"] == "data_understanding" for item in result.assumptions)
     assert "bounded_sample" in result.understanding_md
+
+
+def test_home_credit_days_id_columns_are_not_identifier_groups() -> None:
+    assert infer_semantic_type("sk_id_curr", "BIGINT") == "identifier"
+    assert infer_semantic_type("days_id_publish", "BIGINT") == "numeric"
+    assert (
+        infer_role(
+            "days_id_publish",
+            unique_count=100,
+            row_count=1000,
+            stats_row_count=100,
+            unique_count_is_sampled=True,
+        )
+        == "feature"
+    )
