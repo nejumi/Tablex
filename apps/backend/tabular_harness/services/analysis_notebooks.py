@@ -81,6 +81,9 @@ class NotebookExecutionCaptureResult:
     html_artifact: Artifact
     figure_manifest_artifact: Artifact
     source_artifact: Artifact
+    evidence_bundle_artifact: Artifact | None
+    evidence_html_artifact: Artifact | None
+    figure_artifacts: list[Artifact]
     plan_artifact: Artifact
     contract_artifact: Artifact
     artifact_ids: list[str]
@@ -467,12 +470,25 @@ def create_notebook_execution_capture(
     execution_status = "static_capture_succeeded" if compile_result["status"] == "succeeded" else "static_capture_failed"
     generated_at = utc_now().isoformat()
     suffix = new_id("nbcap")
+    evidence_capture = create_notebook_evidence_artifacts(
+        db,
+        store,
+        project=project,
+        notebook_artifact=notebook_artifact,
+        notebook_kind=notebook_kind,
+        notebook_source=notebook_source,
+        linked_artifacts=linked_artifacts,
+        suffix=suffix,
+        generated_at=generated_at,
+        execution_status=execution_status,
+    )
     figure_manifest = build_notebook_figure_manifest(
         project=project,
         notebook_artifact=notebook_artifact,
         notebook_kind=notebook_kind,
         compile_result=compile_result,
         generated_at=generated_at,
+        rendered_figures=evidence_capture["figures"],
     )
     figure_manifest_artifact = store_json_artifact(
         db,
@@ -519,6 +535,15 @@ def create_notebook_execution_capture(
         output_artifacts={
             "notebook_figure_manifest_artifact_id": figure_manifest_artifact.id,
             "notebook_execution_source_artifact_id": source_artifact.id,
+            "notebook_evidence_bundle_artifact_id": evidence_capture["bundle_artifact"].id
+            if evidence_capture["bundle_artifact"]
+            else None,
+            "notebook_evidence_html_artifact_id": evidence_capture["html_artifact"].id
+            if evidence_capture["html_artifact"]
+            else None,
+            "notebook_evidence_figure_artifact_ids": [
+                artifact.id for artifact in evidence_capture["figure_artifacts"]
+            ],
         },
     )
     html = render_notebook_execution_html_preview(manifest)
@@ -613,6 +638,15 @@ def create_notebook_execution_capture(
         html_artifact=html_artifact,
         figure_manifest_artifact=figure_manifest_artifact,
         source_artifact=source_artifact,
+        evidence_artifacts=[
+            artifact
+            for artifact in [
+                evidence_capture["bundle_artifact"],
+                evidence_capture["html_artifact"],
+                *evidence_capture["figure_artifacts"],
+            ]
+            if artifact is not None
+        ],
     )
     artifact_ids = [
         manifest_artifact.id,
@@ -620,7 +654,12 @@ def create_notebook_execution_capture(
         html_artifact.id,
         figure_manifest_artifact.id,
         source_artifact.id,
+        *[artifact.id for artifact in evidence_capture["figure_artifacts"]],
     ]
+    if evidence_capture["bundle_artifact"]:
+        artifact_ids.append(evidence_capture["bundle_artifact"].id)
+    if evidence_capture["html_artifact"]:
+        artifact_ids.append(evidence_capture["html_artifact"].id)
     return NotebookExecutionCaptureResult(
         manifest=manifest,
         report=report,
@@ -629,10 +668,540 @@ def create_notebook_execution_capture(
         html_artifact=html_artifact,
         figure_manifest_artifact=figure_manifest_artifact,
         source_artifact=source_artifact,
+        evidence_bundle_artifact=evidence_capture["bundle_artifact"],
+        evidence_html_artifact=evidence_capture["html_artifact"],
+        figure_artifacts=evidence_capture["figure_artifacts"],
         plan_artifact=plan_artifact,
         contract_artifact=contract_artifact,
         artifact_ids=artifact_ids,
     )
+
+
+def create_notebook_evidence_artifacts(
+    db: Session,
+    store: LocalArtifactStore,
+    *,
+    project: Project,
+    notebook_artifact: Artifact,
+    notebook_kind: str,
+    notebook_source: str,
+    linked_artifacts: dict[str, Artifact | None],
+    suffix: str,
+    generated_at: str,
+    execution_status: str,
+) -> dict[str, Any]:
+    context = extract_notebook_context(notebook_source)
+    summary = context.get("summary") if isinstance(context.get("summary"), dict) else {}
+    if not summary:
+        return {
+            "bundle_artifact": None,
+            "html_artifact": None,
+            "figure_artifacts": [],
+            "figures": [],
+        }
+
+    figure_specs = build_notebook_evidence_figure_specs(
+        project=project,
+        notebook_artifact=notebook_artifact,
+        notebook_kind=notebook_kind,
+        summary=cast(dict[str, Any], summary),
+        generated_at=generated_at,
+    )
+    figure_artifacts: list[Artifact] = []
+    figure_refs: list[dict[str, Any]] = []
+    for spec in figure_specs:
+        artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="notebook_evidence_svg",
+            name=f"{spec['figure_id']}_{suffix}",
+            filename=f"{spec['figure_id']}.svg",
+            text=str(spec["svg"]),
+            metadata={
+                "project_id": project.id,
+                "notebook_artifact_id": notebook_artifact.id,
+                "notebook_kind": notebook_kind,
+                "execution_status": execution_status,
+                "capture_mode": "safe_profile_evidence_render",
+                "figure_id": spec["figure_id"],
+                "content_type": "image/svg+xml",
+            },
+        )
+        figure_artifacts.append(artifact)
+        figure_refs.append(
+            {
+                "slot": spec["figure_id"],
+                "figure_id": spec["figure_id"],
+                "title": spec["title"],
+                "description": spec["description"],
+                "artifact_id": artifact.id,
+                "asset_type": artifact.asset_type,
+                "content_type": "image/svg+xml",
+                "render_status": "rendered_from_profile_artifacts",
+                "runtime_execution_status": "notebook_cells_not_executed",
+            }
+        )
+
+    bundle = build_notebook_evidence_bundle(
+        project=project,
+        notebook_artifact=notebook_artifact,
+        notebook_kind=notebook_kind,
+        summary=cast(dict[str, Any], summary),
+        linked_artifacts=linked_artifacts,
+        figures=figure_refs,
+        generated_at=generated_at,
+        execution_status=execution_status,
+    )
+    bundle_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="notebook_evidence_bundle",
+        name=f"notebook_evidence_bundle_{suffix}",
+        filename="notebook_evidence_bundle.json",
+        payload=bundle,
+        metadata={
+            "project_id": project.id,
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_kind": notebook_kind,
+            "execution_status": execution_status,
+            "capture_mode": "safe_profile_evidence_render",
+            "figure_count": len(figure_refs),
+        },
+    )
+    html = render_notebook_evidence_html(bundle, figure_specs)
+    html_artifact = store_text_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="notebook_evidence_html",
+        name=f"notebook_evidence_preview_{suffix}",
+        filename="notebook_evidence_preview.html",
+        text=html,
+        metadata={
+            "project_id": project.id,
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_kind": notebook_kind,
+            "execution_status": execution_status,
+            "capture_mode": "safe_profile_evidence_render",
+            "notebook_evidence_bundle_artifact_id": bundle_artifact.id,
+            "content_type": "text/html",
+        },
+    )
+    return {
+        "bundle_artifact": bundle_artifact,
+        "html_artifact": html_artifact,
+        "figure_artifacts": figure_artifacts,
+        "figures": figure_refs,
+    }
+
+
+def extract_notebook_context(source: str) -> dict[str, Any]:
+    marker = "context = "
+    start = source.find(marker)
+    if start < 0:
+        return {}
+    decoder = json.JSONDecoder()
+    try:
+        value, _ = decoder.raw_decode(source[start + len(marker) :].lstrip())
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def build_notebook_evidence_bundle(
+    *,
+    project: Project,
+    notebook_artifact: Artifact,
+    notebook_kind: str,
+    summary: dict[str, Any],
+    linked_artifacts: dict[str, Artifact | None],
+    figures: list[dict[str, Any]],
+    generated_at: str,
+    execution_status: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "notebook_evidence_bundle.v1",
+        "project_id": project.id,
+        "notebook_artifact_id": notebook_artifact.id,
+        "notebook_kind": notebook_kind,
+        "generated_at": generated_at,
+        "capture_mode": "safe_profile_evidence_render",
+        "execution_status": execution_status,
+        "runtime_execution_status": "notebook_cells_not_executed",
+        "summary": {
+            "title": summary.get("title"),
+            "overview": summary.get("overview"),
+            "eda_quality_score": summary.get("eda_quality_score"),
+            "target_readiness": summary.get("target_readiness"),
+            "figure_count": len(figures),
+            "guardrail_count": len(summary.get("evaluation_guardrails", []))
+            if isinstance(summary.get("evaluation_guardrails"), list)
+            else 0,
+            "analysis_question_count": len(summary.get("analysis_questions", []))
+            if isinstance(summary.get("analysis_questions"), list)
+            else 0,
+        },
+        "figures": figures,
+        "tables": {
+            "analysis_brief": summary.get("analysis_brief", {}),
+            "quality_rubric": summary.get("quality_rubric", []),
+            "analysis_storyboard": summary.get("analysis_storyboard", []),
+            "eda_playbook": summary.get("eda_playbook", []),
+            "visual_story_cards": summary.get("visual_story_cards", []),
+            "feature_family_summary": summary.get("feature_family_summary", []),
+            "evaluation_guardrails": summary.get("evaluation_guardrails", []),
+            "analysis_questions": summary.get("analysis_questions", []),
+            "codex_navigation_prompts": summary.get("codex_navigation_prompts", []),
+            "feature_review_sections": summarize_feature_review_sections(summary.get("feature_review_sections")),
+        },
+        "linked_artifacts": _linked_artifact_refs(linked_artifacts),
+        "safety_policy": {
+            "arbitrary_notebook_code_executed": False,
+            "marimo_cells_executed": False,
+            "external_network_accessed": False,
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+            "render_source": "embedded_notebook_context_and_profile_artifacts",
+        },
+    }
+
+
+def summarize_feature_review_sections(value: object) -> dict[str, Any]:
+    sections = value if isinstance(value, dict) else {}
+    output: dict[str, Any] = {}
+    for key, rows in sections.items():
+        if not isinstance(rows, list):
+            continue
+        output[str(key)] = {
+            "count": len(rows),
+            "columns": [
+                {
+                    "name": str(row.get("name") or ""),
+                    "semantic_type": str(row.get("semantic_type") or "unknown"),
+                    "role": str(row.get("role") or "feature"),
+                    "missing_rate": _float_value(row.get("missing_rate")),
+                    "unique_count": int(row.get("unique_count") or 0),
+                }
+                for row in rows[:12]
+                if isinstance(row, dict)
+            ],
+        }
+    return output
+
+
+def build_notebook_evidence_figure_specs(
+    *,
+    project: Project,
+    notebook_artifact: Artifact,
+    notebook_kind: str,
+    summary: dict[str, Any],
+    generated_at: str,
+) -> list[dict[str, str]]:
+    if notebook_kind != "data_understanding":
+        return [
+            {
+                "figure_id": "diagnostics_evidence_summary",
+                "title": "Diagnostics Evidence Summary",
+                "description": "Model diagnostics evidence rendered from available run summary context.",
+                "svg": svg_message_chart(
+                    title="Diagnostics evidence",
+                    message="Run-level model diagnostics will be rendered after model artifacts expose detailed metrics.",
+                    subtitle=f"Project {project.name} | Notebook {notebook_artifact.id} | {generated_at}",
+                ),
+            }
+        ]
+
+    columns = [cast(dict[str, Any], item) for item in _list_value(summary.get("columns")) if isinstance(item, dict)]
+    target = _dict_value(summary.get("target_readiness"))
+    feature_sections = _dict_value(summary.get("feature_review_sections"))
+    top_missing = [cast(dict[str, Any], item) for item in _list_value(feature_sections.get("top_missing")) if isinstance(item, dict)]
+    target_top_values = [cast(dict[str, Any], item) for item in _list_value(target.get("top_values")) if isinstance(item, dict)]
+    feature_family_summary = [
+        cast(dict[str, Any], item) for item in _list_value(summary.get("feature_family_summary")) if isinstance(item, dict)
+    ]
+    findings = [cast(dict[str, Any], item) for item in _list_value(summary.get("findings")) if isinstance(item, dict)]
+    guardrails = [
+        cast(dict[str, Any], item) for item in _list_value(summary.get("evaluation_guardrails")) if isinstance(item, dict)
+    ]
+    return [
+        {
+            "figure_id": "feature_family_counts",
+            "title": "Feature Family Counts",
+            "description": "Semantic feature-family counts for choosing analysis tactics.",
+            "svg": svg_bar_chart(
+                title="Feature family counts",
+                rows=[
+                    {"label": str(row.get("family") or "unknown"), "value": int(row.get("count") or 0)}
+                    for row in feature_family_summary
+                    if isinstance(row, dict)
+                ],
+                value_format="integer",
+            ),
+        },
+        {
+            "figure_id": "top_missing_columns_bar",
+            "title": "Top Missing Columns",
+            "description": "Highest missing-rate columns from the profiled dataset.",
+            "svg": svg_bar_chart(
+                title="Top missing columns",
+                rows=[
+                    {"label": str(row.get("name") or ""), "value": _float_value(row.get("missing_rate"))}
+                    for row in top_missing
+                ][:12],
+                value_format="percent",
+            ),
+        },
+        {
+            "figure_id": "semantic_type_role_mix",
+            "title": "Semantic Type Mix",
+            "description": "Column semantic-type counts inferred from names and physical types.",
+            "svg": svg_bar_chart(
+                title="Semantic type mix",
+                rows=[
+                    {"label": label, "value": count}
+                    for label, count in _count_rows([row for row in columns if isinstance(row, dict)], "semantic_type")
+                ],
+                value_format="integer",
+            ),
+        },
+        {
+            "figure_id": "target_profile_summary",
+            "title": "Target Profile Summary",
+            "description": "Top target values when a target is selected; otherwise a target-readiness reminder.",
+            "svg": svg_bar_chart(
+                title="Target value distribution",
+                rows=[
+                    {"label": str(row.get("value") or "null"), "value": int(row.get("count") or 0)}
+                    for row in target_top_values
+                ],
+                value_format="integer",
+                empty_message=str(target.get("summary") or "No target selected yet."),
+            ),
+        },
+        {
+            "figure_id": "risk_attention_counts",
+            "title": "Risk Attention Counts",
+            "description": "Counts of findings and guardrails that deserve human/Codex attention.",
+            "svg": svg_bar_chart(
+                title="Risk attention counts",
+                rows=[
+                    {
+                        "label": "high findings",
+                        "value": len(
+                            [
+                                item
+                                for item in findings
+                                if str(item.get("severity") or "") in {"high", "blocking"}
+                            ]
+                        ),
+                    },
+                    {"label": "all findings", "value": len(findings)},
+                    {
+                        "label": "high guardrails",
+                        "value": len(
+                            [
+                                item
+                                for item in guardrails
+                                if str(item.get("risk") or "") in {"high", "blocking"}
+                            ]
+                        ),
+                    },
+                    {"label": "all guardrails", "value": len(guardrails)},
+                ],
+                value_format="integer",
+            ),
+        },
+        {
+            "figure_id": "feature_review_queue_counts",
+            "title": "Feature Review Queue Counts",
+            "description": "Counts of columns queued for focused human/Codex review.",
+            "svg": svg_bar_chart(
+                title="Feature review queues",
+                rows=[
+                    {
+                        "label": label,
+                        "value": len(items) if isinstance(items, list) else 0,
+                    }
+                    for label, items in feature_sections.items()
+                ],
+                value_format="integer",
+            ),
+        },
+    ]
+
+
+def svg_bar_chart(
+    *,
+    title: str,
+    rows: list[dict[str, Any]],
+    value_format: str,
+    empty_message: str = "No data available yet.",
+) -> str:
+    width = 900
+    row_height = 34
+    top = 74
+    left = 230
+    right = 64
+    chart_width = width - left - right
+    normalized_rows: list[tuple[str, float]] = [
+        (str(row.get("label") or ""), max(0.0, _float_value(row.get("value"))))
+        for row in rows
+        if str(row.get("label") or "")
+    ][:14]
+    height = max(220, top + max(1, len(normalized_rows)) * row_height + 42)
+    max_value = max((value for _, value in normalized_rows), default=0.0)
+    body: list[str] = []
+    if not normalized_rows or max_value <= 0:
+        body.append(f'<text x="{left}" y="{top + 38}" fill="#52606f" font-size="18">{escape(empty_message)}</text>')
+    else:
+        for index, (label, value) in enumerate(normalized_rows):
+            y = top + index * row_height
+            bar_width = max(4.0, value / max_value * chart_width)
+            body.extend(
+                [
+                    f'<text x="24" y="{y + 21}" fill="#20304f" font-size="15">{escape(label[:34])}</text>',
+                    f'<rect x="{left}" y="{y}" width="{bar_width:.1f}" height="22" rx="6" fill="url(#bar)"/>',
+                    f'<text x="{left + bar_width + 8:.1f}" y="{y + 17}" fill="#52606f" font-size="13">{escape(format_svg_value(value, value_format))}</text>',
+                ]
+            )
+    return svg_chart_shell(title=title, width=width, height=height, body="\n".join(body))
+
+
+def svg_message_chart(*, title: str, message: str, subtitle: str) -> str:
+    body = (
+        f'<text x="42" y="108" fill="#20304f" font-size="22">{escape(message)}</text>'
+        f'<text x="42" y="146" fill="#52606f" font-size="14">{escape(subtitle)}</text>'
+    )
+    return svg_chart_shell(title=title, width=900, height=220, body=body)
+
+
+def svg_chart_shell(*, title: str, width: int, height: int, body: str) -> str:
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" aria-label="{escape(title)}">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop stop-color="#f8fbff"/>
+      <stop offset="1" stop-color="#eef8f6"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" x2="1">
+      <stop stop-color="#18b8a6"/>
+      <stop offset="1" stop-color="#3867f3"/>
+    </linearGradient>
+  </defs>
+  <rect width="{width}" height="{height}" rx="18" fill="url(#bg)"/>
+  <text x="24" y="42" fill="#10183f" font-size="24" font-weight="700">{escape(title)}</text>
+  {body}
+</svg>'''
+
+
+def format_svg_value(value: float, value_format: str) -> str:
+    if value_format == "percent":
+        return f"{value:.1%}"
+    if value_format == "integer":
+        return f"{int(round(value)):,}"
+    return f"{value:.4g}"
+
+
+def render_notebook_evidence_html(bundle: dict[str, Any], figure_specs: list[dict[str, str]]) -> str:
+    summary = cast(dict[str, Any], bundle["summary"])
+    tables = cast(dict[str, Any], bundle["tables"])
+    brief = _dict_value(tables.get("analysis_brief"))
+    read_order = [
+        cast(dict[str, Any], item) for item in _list_value(brief.get("read_this_first")) if isinstance(item, dict)
+    ]
+    playbook = [cast(dict[str, Any], item) for item in _list_value(tables.get("eda_playbook")) if isinstance(item, dict)]
+    story_cards = [
+        cast(dict[str, Any], item) for item in _list_value(tables.get("visual_story_cards")) if isinstance(item, dict)
+    ]
+    prompts = _list_value(tables.get("codex_navigation_prompts"))
+    questions = _list_value(tables.get("analysis_questions"))
+    guardrails = [
+        cast(dict[str, Any], item) for item in _list_value(tables.get("evaluation_guardrails")) if isinstance(item, dict)
+    ]
+    figures_html = "".join(
+        f'<section class="panel"><h2>{escape(spec["title"])}</h2><p>{escape(spec["description"])}</p>{spec["svg"]}</section>'
+        for spec in figure_specs
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tablex Notebook EDA Evidence</title>
+  <style>
+    :root {{ color-scheme: light dark; --ink:#10183f; --muted:#53617d; --line:#dbe3f3; --panel:#fff; --wash:#f4f9fb; --teal:#18b8a6; }}
+    body {{ margin:0; background:linear-gradient(180deg,#f8fbff 0%,#eef8f6 100%); color:var(--ink); font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }}
+    main {{ display:grid; gap:18px; padding:28px; }}
+    h1 {{ margin:0; font-size:30px; letter-spacing:0; }}
+    h2 {{ margin:0 0 10px; font-size:16px; }}
+    p {{ color:var(--muted); line-height:1.55; }}
+    svg {{ width:100%; height:auto; display:block; }}
+    .eyebrow {{ color:var(--teal); font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }}
+    .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }}
+    .panel {{ border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.88); padding:16px; box-shadow:0 16px 42px rgba(34,48,88,.08); overflow:hidden; }}
+    .hero {{ display:grid; grid-template-columns:minmax(0,1fr) 220px; gap:18px; align-items:start; }}
+    .brief {{ border-left:5px solid var(--teal); background:var(--wash); border-radius:10px; padding:14px; }}
+    .story-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }}
+    .story-card {{ border:1px solid var(--line); border-radius:10px; background:var(--wash); padding:12px; }}
+    .story-card strong,.playbook-row strong {{ display:block; margin-bottom:6px; }}
+    .playbook-row {{ border-left:4px solid var(--teal); margin:8px 0; padding:10px 12px; background:var(--wash); border-radius:8px; }}
+    .prompt {{ display:inline-block; margin:4px; border:1px solid var(--line); border-radius:999px; background:var(--wash); padding:7px 10px; color:var(--ink); font-size:12px; font-weight:700; }}
+    .metric strong {{ display:block; font-size:22px; overflow-wrap:anywhere; }}
+    .metric span,.tiny {{ color:var(--muted); font-size:12px; }}
+    .finding {{ border-left:4px solid var(--teal); padding:10px 12px; background:var(--wash); border-radius:8px; margin:8px 0; }}
+    @media (max-width: 720px) {{ .hero {{ grid-template-columns:1fr; }} }}
+    @media (prefers-color-scheme: dark) {{ :root {{ --ink:#eef4ff; --muted:#aab6d3; --line:#2e3a5b; --wash:#17213a; }} body {{ background:#0c1225; }} .panel {{ background:rgba(17,24,47,.9); box-shadow:none; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div>
+        <div class="eyebrow">Notebook EDA Evidence</div>
+        <h1>{escape(str(summary.get("title") or "EDA evidence bundle"))}</h1>
+        <p>{escape(str(brief.get("headline") or summary.get("overview") or ""))}</p>
+      </div>
+      <div class="brief">
+        <strong>{escape(str(brief.get("decision_state") or "review"))}</strong>
+        <p>{escape(str(brief.get("profile_boundary") or "Profile boundary is recorded in the source artifacts."))}</p>
+      </div>
+    </header>
+    <section class="grid">
+      {_metric_card("Figures", summary.get("figure_count", 0))}
+      {_metric_card("Guardrails", summary.get("guardrail_count", 0))}
+      {_metric_card("Questions", summary.get("analysis_question_count", 0))}
+      {_metric_card("Runtime", bundle["runtime_execution_status"])}
+    </section>
+    <section class="panel">
+      <h2>Read this first</h2>
+      <p>{escape(str(brief.get("why_it_matters") or ""))}</p>
+      {_read_order_rows(read_order)}
+    </section>
+    <section class="panel">
+      <h2>Visual story cards</h2>
+      <div class="story-grid">{_story_card_rows(story_cards)}</div>
+    </section>
+    <section class="panel">
+      <h2>EDA playbook</h2>
+      {_playbook_rows(playbook)}
+    </section>
+    {figures_html}
+    <section class="panel">
+      <h2>Evaluation guardrails</h2>
+      {_guardrail_rows(guardrails)}
+    </section>
+    <section class="panel">
+      <h2>Analysis questions</h2>
+      {"".join(f'<div class="finding">{escape(str(item))}</div>' for item in questions) or "<p>No questions generated.</p>"}
+    </section>
+    <section class="panel">
+      <h2>Ask Codex next</h2>
+      {"".join(f'<span class="prompt">{escape(str(item))}</span>' for item in prompts) or "<p>No prompts generated.</p>"}
+    </section>
+  </main>
+</body>
+</html>"""
 
 
 def create_model_diagnostics_notebook(
@@ -842,6 +1411,9 @@ def render_marimo_notebook(notebook: dict[str, Any]) -> str:
     context_json = json.dumps(notebook, ensure_ascii=False, indent=2, sort_keys=True)
     return f'''# Generated by Tablex. Product name is working-name only.
 # Run with: marimo edit data_understanding_notebook.py
+# Review map: Reader brief, Read this first, Visual story cards, EDA quality rubric,
+# EDA playbook, Target readiness, Feature family map, Leakage and evaluation guardrails,
+# Feature review queues, What to inspect next, Ask Codex next.
 import marimo
 
 __generated_with = "0.1.0"
@@ -1071,6 +1643,11 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
     target = cast(dict[str, Any], summary.get("target_readiness") or {})
     guardrails = cast(list[dict[str, Any]], summary.get("evaluation_guardrails") or [])
     feature_sections = cast(dict[str, list[dict[str, Any]]], summary.get("feature_review_sections") or {})
+    brief = cast(dict[str, Any], summary.get("analysis_brief") or {})
+    playbook = cast(list[dict[str, Any]], summary.get("eda_playbook") or [])
+    story_cards = cast(list[dict[str, Any]], summary.get("visual_story_cards") or [])
+    feature_family_summary = cast(list[dict[str, Any]], summary.get("feature_family_summary") or [])
+    prompts = cast(list[str], summary.get("codex_navigation_prompts") or [])
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1104,11 +1681,18 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
     .eyebrow {{ color: var(--teal); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }}
     .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }}
     .panel {{ border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.86); padding: 16px; box-shadow: 0 16px 42px rgba(34, 48, 88, .08); }}
+    .hero-note {{ max-width: 360px; border-left: 5px solid var(--teal); background: var(--wash); }}
     .metric strong {{ display: block; font-size: 24px; }}
     .metric span, .tiny {{ color: var(--muted); font-size: 12px; }}
     .badge-row {{ display: flex; flex-wrap: wrap; gap: 8px; }}
     .badge {{ border: 1px solid var(--line); border-radius: 999px; padding: 6px 9px; background: var(--wash); font-size: 12px; font-weight: 700; }}
+    .story-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }}
+    .story-card {{ border:1px solid var(--line); border-radius:10px; background:var(--wash); padding:12px; }}
+    .story-card strong,.playbook-row strong {{ display:block; margin-bottom:6px; }}
+    .playbook-row {{ border-left:4px solid var(--teal); margin:8px 0; padding:10px 12px; background:var(--wash); border-radius:8px; }}
+    .prompt {{ display:inline-block; margin:4px; border:1px solid var(--line); border-radius:999px; background:var(--wash); padding:7px 10px; color:var(--ink); font-size:12px; font-weight:700; }}
     .bar-row {{ display: grid; grid-template-columns: minmax(100px, 180px) 1fr 54px; gap: 10px; align-items: center; margin: 8px 0; }}
+    .bar-row .span-all {{ grid-column: 1 / -1; }}
     .bar-track {{ height: 9px; border-radius: 999px; background: #e5ecf8; overflow: hidden; }}
     .bar {{ height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--teal), var(--blue)); }}
     .findings {{ display: grid; gap: 10px; }}
@@ -1123,17 +1707,20 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
       .panel {{ background: rgba(17,24,47,.9); box-shadow: none; }}
       code {{ background: #1e2a48; }}
     }}
+    @media (max-width: 760px) {{ header {{ grid-template-columns: 1fr; }} .hero-note {{ max-width: none; }} }}
   </style>
 </head>
 <body>
   <main>
     <header>
       <div>
-        <div class="eyebrow">Tablex Analysis Notebook</div>
+        <div class="eyebrow">Tablex Notebook Review</div>
         <h1>{escape(str(summary["title"]))}</h1>
-        <p>{escape(str(summary["overview"]))}</p>
+        <p>{escape(str(brief.get("headline") or summary["overview"]))}</p>
       </div>
-      <div class="panel">
+      <div class="panel hero-note">
+        <strong>{escape(str(brief.get("decision_state") or "review"))}</strong>
+        <p>{escape(str(brief.get("profile_boundary") or "Profile boundary is tracked in artifacts."))}</p>
         <div class="tiny">Notebook artifact</div>
         <code>{escape(notebook_artifact_id)}</code>
       </div>
@@ -1146,13 +1733,25 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
     </section>
     <section class="panel">
       <h2>Reader brief</h2>
-      <p>Start with the data story before modeling. Inspect row semantics, target meaning, missingness, leakage suspects, prediction-time availability, and evaluation constraints. A strong notebook should tell the reader what matters next, not only display artifacts.</p>
+      <p>{escape(str(brief.get("why_it_matters") or "Start with the data story before modeling. Inspect row semantics, target meaning, missingness, leakage suspects, prediction-time availability, and evaluation constraints."))}</p>
       <div class="badge-row">
         <span class="badge">narrative EDA</span>
         <span class="badge">evaluation-first</span>
         <span class="badge">human-readable</span>
         <span class="badge">artifact-backed</span>
       </div>
+    </section>
+    <section class="panel">
+      <h2>Read this first</h2>
+      {_read_order_rows(cast(list[dict[str, Any]], brief.get("read_this_first") or []))}
+    </section>
+    <section class="panel">
+      <h2>Visual story cards</h2>
+      <div class="story-grid">{_story_card_rows(story_cards)}</div>
+    </section>
+    <section class="panel">
+      <h2>EDA playbook</h2>
+      {_playbook_rows(playbook)}
     </section>
     <section class="panel">
       <h2>EDA quality rubric</h2>
@@ -1182,6 +1781,10 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
       </div>
     </section>
     <section class="panel">
+      <h2>Feature family map</h2>
+      {_feature_family_html_rows(feature_family_summary)}
+    </section>
+    <section class="panel">
       <h2>Missingness scan</h2>
       {_missing_rows(missing_rows)}
     </section>
@@ -1195,11 +1798,7 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
     </section>
     <section class="panel">
       <h2>What to inspect next</h2>
-      <div class="findings">
-        <div class="finding"><strong>Row semantics</strong><br/>Confirm what one row represents and whether rows are independent.</div>
-        <div class="finding"><strong>Target readiness</strong><br/>Confirm whether the target is direct, delayed, derived by aggregation, or not selected yet.</div>
-        <div class="finding"><strong>Evaluation guardrails</strong><br/>Resolve leakage, time, group, and prediction-time availability questions before treating scores as evidence.</div>
-      </div>
+      <div class="findings">{"".join(f'<div class="finding">{escape(str(item))}</div>' for item in cast(list[str], summary.get("analysis_questions") or []))}</div>
     </section>
     <section class="panel">
       <h2>Target value details</h2>
@@ -1209,8 +1808,12 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
       <h2>Modeling diagnostics cells</h2>
       <p>The generated marimo source includes matplotlib and Plotly cells for profile visualization. It also reserves diagnostics space for feature importance, permutation importance, partial dependence, slice metrics, and prediction analysis once experiment artifacts exist.</p>
     </section>
+    <section class="panel">
+      <h2>Ask Codex next</h2>
+      {"".join(f'<span class="prompt">{escape(str(item))}</span>' for item in prompts) or "<p>No prompts generated.</p>"}
+    </section>
     <footer>
-      Static preview rendered inside the workbench. External dashboards are not required; secrets and connector credentials are not embedded.
+      Static review rendered inside the workbench. It is not a live marimo execution; captured evidence and future runner outputs are registered separately as artifacts.
     </footer>
   </main>
 </body>
@@ -2068,12 +2671,16 @@ def build_notebook_figure_manifest(
     notebook_kind: str,
     compile_result: dict[str, Any],
     generated_at: str,
+    rendered_figures: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     expected_figures = {
         "data_understanding": [
+            "feature_family_counts",
             "top_missing_columns_bar",
             "semantic_type_role_mix",
             "target_profile_summary",
+            "risk_attention_counts",
+            "feature_review_queue_counts",
         ],
         "model_diagnostics": [
             "feature_family_inventory",
@@ -2081,6 +2688,8 @@ def build_notebook_figure_manifest(
             "diagnostics_coverage_summary",
         ],
     }.get(notebook_kind, ["notebook_generated_figures"])
+    rendered = rendered_figures or []
+    rendered_slots = {str(item.get("slot") or item.get("figure_id") or "") for item in rendered}
     return {
         "schema_version": "notebook_figure_manifest.v1",
         "project_id": project.id,
@@ -2088,15 +2697,20 @@ def build_notebook_figure_manifest(
         "notebook_kind": notebook_kind,
         "generated_at": generated_at,
         "capture_mode": "safe_static_capture",
-        "status": "planned_figures_only",
+        "status": "profile_evidence_rendered" if rendered else "planned_figures_only",
         "runtime_execution_status": "deferred",
+        "profile_evidence_render_status": "rendered" if rendered else "not_rendered",
         "compile_status": compile_result["status"],
-        "figures": [],
+        "figures": rendered,
         "expected_figure_slots": [
             {
                 "slot": slot,
-                "status": "not_rendered",
-                "reason": "Static capture validates notebook source but does not execute marimo cells.",
+                "status": "rendered_from_profile_artifacts" if slot in rendered_slots else "not_rendered",
+                "reason": (
+                    "Rendered by the harness from notebook/profile artifacts without executing marimo cells."
+                    if slot in rendered_slots
+                    else "Static capture validates notebook source but does not execute marimo cells."
+                ),
             }
             for slot in expected_figures
         ],
@@ -2114,7 +2728,7 @@ def build_notebook_execution_manifest(
     execution_status: str,
     generated_at: str,
     plan_created: bool,
-    output_artifacts: dict[str, str],
+    output_artifacts: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "schema_version": "notebook_execution_manifest.v1",
@@ -2129,10 +2743,18 @@ def build_notebook_execution_manifest(
             "runtime_execution_status": "deferred",
             "python_compile_status": compile_result["status"],
             "plan_created_by_capture": plan_created,
+            "profile_evidence_render_status": "rendered"
+            if output_artifacts.get("notebook_evidence_bundle_artifact_id")
+            else "not_available",
+            "profile_evidence_figure_count": len(output_artifacts.get("notebook_evidence_figure_artifact_ids", []))
+            if isinstance(output_artifacts.get("notebook_evidence_figure_artifact_ids"), list)
+            else 0,
         },
         "safety_policy": {
             "arbitrary_notebook_code_executed": False,
             "python_compile_only": True,
+            "harness_profile_evidence_rendered": bool(output_artifacts.get("notebook_evidence_bundle_artifact_id")),
+            "marimo_cells_executed": False,
             "python_isolated_mode": True,
             "external_network_accessed": False,
             "connector_credentials_materialized": False,
@@ -2235,6 +2857,15 @@ def render_notebook_execution_html_preview(manifest: dict[str, Any]) -> str:
       {_metric_card("Notebook kind", manifest["notebook_kind"])}
       {_metric_card("Compile", compile_result["status"])}
       {_metric_card("Runtime", summary["runtime_execution_status"])}
+      {_metric_card("Evidence figures", summary.get("profile_evidence_figure_count", 0))}
+    </section>
+    <section class="panel">
+      <h2>Profile evidence capture</h2>
+      <p>Notebook cells were not executed. Tablex rendered profile-backed EDA figures and tables from controlled notebook context and linked artifacts when available.</p>
+      <div class="badge-row">
+        <span class="badge">{escape(str(summary.get("profile_evidence_render_status", "not_available")))}</span>
+        <span class="badge">marimo cells: not executed</span>
+      </div>
     </section>
     <section class="panel">
       <h2>Safety boundary</h2>
@@ -2293,11 +2924,19 @@ def render_notebook_execution_report(
             f"- Duration: `{compile_result['duration_ms']} ms`",
             f"- Stderr excerpt: `{compile_result.get('stderr_excerpt') or 'none'}`",
             "",
+            "## Profile Evidence Capture",
+            "",
+            f"- Render status: `{manifest['summary'].get('profile_evidence_render_status', 'not_available')}`",
+            f"- Figure count: `{manifest['summary'].get('profile_evidence_figure_count', 0)}`",
+            "- Notebook cells executed: `false`",
+            "",
             "## Captured Artifacts",
             "",
             f"- HTML preview: `{html_artifact_id}`",
             f"- Figure manifest: `{figure_manifest_artifact_id}`",
             f"- Notebook source copy: `{source_artifact_id}`",
+            f"- Evidence bundle: `{manifest['outputs'].get('notebook_evidence_bundle_artifact_id') or 'not available'}`",
+            f"- Evidence HTML: `{manifest['outputs'].get('notebook_evidence_html_artifact_id') or 'not available'}`",
             "",
             "## Next Runner Steps",
             "",
@@ -2755,9 +3394,35 @@ def _profile_summary(
         evaluation_guardrails=evaluation_guardrails,
         runs=runs,
     )
+    analysis_brief = _analysis_brief(
+        project=project,
+        row_count=row_count,
+        column_count=column_count,
+        target_column=target_column,
+        profile_mode=profile_mode,
+        target_readiness=target_readiness,
+        feature_sections=feature_sections,
+        evaluation_guardrails=evaluation_guardrails,
+        findings=findings,
+    )
+    eda_playbook = _eda_playbook(
+        target_column=target_column,
+        target_readiness=target_readiness,
+        feature_sections=feature_sections,
+        evaluation_guardrails=evaluation_guardrails,
+        runs=runs,
+    )
+    visual_story_cards = _visual_story_cards(
+        target_readiness=target_readiness,
+        feature_sections=feature_sections,
+        evaluation_guardrails=evaluation_guardrails,
+        runs=runs,
+    )
+    feature_family_summary = _feature_family_summary(compact_columns)
     return {
         "title": "Data Understanding Notebook",
         "overview": overview,
+        "analysis_brief": analysis_brief,
         "row_count": row_count,
         "column_count": column_count,
         "missing_cell_count": int(profile.get("missing_cell_count") or 0),
@@ -2774,10 +3439,20 @@ def _profile_summary(
         "quality_rubric": quality_rubric,
         "eda_quality_score": _eda_quality_score(quality_rubric),
         "analysis_storyboard": _analysis_storyboard(target_column, profile_mode, bool(runs)),
+        "eda_playbook": eda_playbook,
+        "visual_story_cards": visual_story_cards,
+        "feature_family_summary": feature_family_summary,
         "target_readiness": target_readiness,
         "feature_review_sections": feature_sections,
         "evaluation_guardrails": evaluation_guardrails,
         "analysis_questions": analysis_questions,
+        "codex_navigation_prompts": _codex_navigation_prompts(
+            target_column=target_column,
+            target_readiness=target_readiness,
+            feature_sections=feature_sections,
+            evaluation_guardrails=evaluation_guardrails,
+            runs=runs,
+        ),
         "recent_runs": [_run_summary(run) for run in runs],
     }
 
@@ -3051,6 +3726,228 @@ def _analysis_questions(
     return questions
 
 
+def _analysis_brief(
+    *,
+    project: Project,
+    row_count: int,
+    column_count: int,
+    target_column: str | None,
+    profile_mode: str,
+    target_readiness: dict[str, Any],
+    feature_sections: dict[str, list[dict[str, Any]]],
+    evaluation_guardrails: list[dict[str, str]],
+    findings: list[dict[str, str]],
+) -> dict[str, Any]:
+    high_findings = [item for item in findings if item.get("severity") in {"high", "blocking"}]
+    blocking_guardrails = [
+        item for item in evaluation_guardrails if item.get("risk") in {"blocking", "high"}
+    ]
+    text_count = len(feature_sections.get("text") or [])
+    time_count = len(feature_sections.get("datetime") or [])
+    leakage_count = len(feature_sections.get("leakage_suspects") or [])
+    missing_count = len([row for row in feature_sections.get("top_missing", []) if _float_value(row.get("missing_rate")) > 0])
+    if not target_column:
+        decision_state = "target_discovery"
+        headline = "Target is not locked yet; read the dataset like a product/event story before designing evaluation."
+    elif blocking_guardrails or leakage_count:
+        decision_state = "risk_review"
+        headline = "Target exists, but leakage and evaluation guardrails should be reviewed before model lift matters."
+    else:
+        decision_state = "baseline_ready_review"
+        headline = "Profile evidence is ready for a first baseline plan, while evaluation assumptions stay visible."
+    return {
+        "style_goal": "analysis_article_quality",
+        "headline": headline,
+        "decision_state": decision_state,
+        "why_it_matters": (
+            f"{project.name} currently has {row_count:,} profiled rows and {column_count:,} columns. "
+            f"The notebook should reduce cognitive load by telling the reader where evidence is strong, "
+            f"where assumptions are unresolved, and what Codex should investigate next."
+        ),
+        "profile_boundary": f"Profile mode: {profile_mode}. Treat sample-backed statistics as directional, not final.",
+        "read_this_first": [
+            {
+                "title": "Target and decision timing",
+                "why": str(target_readiness.get("summary") or "Target semantics are not resolved."),
+                "artifact_hint": "Target readiness, questions, and Evaluation guardrails",
+            },
+            {
+                "title": "Leakage and availability",
+                "why": (
+                    f"{leakage_count} leakage-suspect column(s) are queued."
+                    if leakage_count
+                    else "No name-based leakage suspect was detected, but prediction-time availability still needs domain review."
+                ),
+                "artifact_hint": "Guardrails and leakage-suspect feature queue",
+            },
+            {
+                "title": "Feature terrain",
+                "why": (
+                    f"{missing_count} missingness signal(s), {text_count} text field(s), and {time_count} datetime field(s) need triage."
+                ),
+                "artifact_hint": "Feature review queues and semantic mix",
+            },
+        ],
+        "top_risks": [
+            str(item.get("message") or item.get("detail") or "")
+            for item in [*high_findings, *blocking_guardrails][:4]
+            if str(item.get("message") or item.get("detail") or "")
+        ],
+        "reader_contract": [
+            "Separate observed evidence from assumptions.",
+            "Do not treat leaderboard movement as insight until EvaluationSpec and SplitManifest are respected.",
+            "Ask Codex for targeted follow-up when a section raises a question instead of scanning every artifact manually.",
+        ],
+    }
+
+
+def _eda_playbook(
+    *,
+    target_column: str | None,
+    target_readiness: dict[str, Any],
+    feature_sections: dict[str, list[dict[str, Any]]],
+    evaluation_guardrails: list[dict[str, str]],
+    runs: list[ExperimentRun],
+) -> list[dict[str, str]]:
+    has_time_or_group = any(item.get("status") == "scenario_compare" for item in evaluation_guardrails)
+    return [
+        {
+            "stage": "1. Data story",
+            "reader_question": "What does one row mean, and what event or decision produced it?",
+            "current_evidence": "Profile shape, sample rows, candidate ID/group/time columns.",
+            "codex_followup": "Infer row semantics from names/profile, list competing interpretations, and ask only high-value questions.",
+        },
+        {
+            "stage": "2. Target and metric",
+            "reader_question": "Is the target direct, delayed, aggregate-derived, or still undecided?",
+            "current_evidence": str(target_readiness.get("summary") or "No target summary."),
+            "codex_followup": (
+                "Compare metric choices and target construction risks."
+                if target_column
+                else "Propose target-selection scenarios after data understanding."
+            ),
+        },
+        {
+            "stage": "3. Missingness and sparsity",
+            "reader_question": "Is missingness signal, collection artifact, leakage, or unusable noise?",
+            "current_evidence": f"{len(feature_sections.get('top_missing') or [])} columns queued by missingness.",
+            "codex_followup": "Create missingness patterns, target-conditioned missingness, and imputation hypotheses.",
+        },
+        {
+            "stage": "4. Feature families",
+            "reader_question": "Which numeric, categorical, text, datetime, ID, and grouped fields need distinct treatment?",
+            "current_evidence": (
+                f"{len(feature_sections.get('text') or [])} text, "
+                f"{len(feature_sections.get('datetime') or [])} datetime, "
+                f"{len(feature_sections.get('high_cardinality') or [])} high-cardinality fields."
+            ),
+            "codex_followup": "Choose feature tactics from evidence, not a fixed recipe.",
+        },
+        {
+            "stage": "5. Evaluation guardrails",
+            "reader_question": "Would random, stratified, time, or group split tell a misleading story?",
+            "current_evidence": "Scenario comparison needed." if has_time_or_group else "No time/group signal detected by profile heuristics.",
+            "codex_followup": "Design scenario comparison and preserve approved EvaluationSpec/SplitManifest boundaries.",
+        },
+        {
+            "stage": "6. Model diagnostics",
+            "reader_question": "After a baseline, where does it fail and which explanations are evidence-backed?",
+            "current_evidence": f"{len(runs)} run(s) available." if runs else "No run diagnostics yet.",
+            "codex_followup": "Add importance, permutation importance, PDP, calibration, slice metrics, and concrete error examples.",
+        },
+    ]
+
+
+def _visual_story_cards(
+    *,
+    target_readiness: dict[str, Any],
+    feature_sections: dict[str, list[dict[str, Any]]],
+    evaluation_guardrails: list[dict[str, str]],
+    runs: list[ExperimentRun],
+) -> list[dict[str, str]]:
+    leakage_count = len(feature_sections.get("leakage_suspects") or [])
+    high_card_count = len(feature_sections.get("high_cardinality") or [])
+    text_count = len(feature_sections.get("text") or [])
+    datetime_count = len(feature_sections.get("datetime") or [])
+    return [
+        {
+            "title": "Target plot",
+            "signal": str(target_readiness.get("status") or "unknown"),
+            "why_read": str(target_readiness.get("metric_note") or "Metric readiness is unresolved."),
+            "status": "ready" if target_readiness.get("status") == "profiled" else "needs_target",
+        },
+        {
+            "title": "Missingness bar",
+            "signal": f"{len(feature_sections.get('top_missing') or [])} queued columns",
+            "why_read": "Missingness often reveals collection process, leakage, or segmentation.",
+            "status": "ready",
+        },
+        {
+            "title": "Feature family map",
+            "signal": f"{text_count} text / {datetime_count} datetime / {high_card_count} high-cardinality",
+            "why_read": "Different families need different modeling and validation assumptions.",
+            "status": "ready",
+        },
+        {
+            "title": "Leakage watchlist",
+            "signal": f"{leakage_count} suspect columns",
+            "why_read": "Exclude or scenario-test unavailable fields before trusting validation scores.",
+            "status": "risk" if leakage_count else "watch",
+        },
+        {
+            "title": "Split scenario map",
+            "signal": ", ".join(item.get("status", "") for item in evaluation_guardrails[:3]),
+            "why_read": "A strong model on the wrong split is not evidence.",
+            "status": "review",
+        },
+        {
+            "title": "Model review",
+            "signal": f"{len(runs)} run(s)",
+            "why_read": "Importance, PDP, calibration, and errors should be read after the first defensible run.",
+            "status": "ready" if runs else "deferred",
+        },
+    ]
+
+
+def _feature_family_summary(columns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    families: dict[str, dict[str, Any]] = {}
+    for column in columns:
+        family = str(column.get("semantic_type") or "unknown")
+        entry = families.setdefault(family, {"family": family, "count": 0, "examples": []})
+        entry["count"] = int(entry["count"]) + 1
+        if len(entry["examples"]) < 5:
+            entry["examples"].append(str(column.get("name") or ""))
+    return sorted(families.values(), key=lambda item: (-int(item["count"]), str(item["family"])))
+
+
+def _codex_navigation_prompts(
+    *,
+    target_column: str | None,
+    target_readiness: dict[str, Any],
+    feature_sections: dict[str, list[dict[str, Any]]],
+    evaluation_guardrails: list[dict[str, str]],
+    runs: list[ExperimentRun],
+) -> list[str]:
+    prompts = [
+        "Walk me through this notebook like a senior data scientist. What should I read first and why?",
+        "Summarize the biggest unresolved assumptions before any modeling work.",
+        "Which columns should Codex inspect for leakage or prediction-time availability?",
+    ]
+    if not target_column:
+        prompts.append("Given the profile, propose target definition scenarios without blocking the workflow.")
+    elif target_readiness.get("status") == "profiled":
+        prompts.append(f"Explain whether `{target_column}` looks classification-like or regression-like and what metric risks remain.")
+    if feature_sections.get("text"):
+        prompts.append("Design an evidence-backed text feature investigation; do not default blindly to TF-IDF.")
+    if any(item.get("status") == "scenario_compare" for item in evaluation_guardrails):
+        prompts.append("Compare random, stratified, time, and group split risks for this project.")
+    if runs:
+        prompts.append("Use the latest run artifacts to plan feature importance, permutation importance, PDP, calibration, and error analysis.")
+    else:
+        prompts.append("After the first baseline, what model diagnostics should Tablex generate before reporting results?")
+    return prompts
+
+
 def _compact_column(column: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": str(column.get("name") or column.get("column_name") or ""),
@@ -3063,6 +3960,14 @@ def _compact_column(column: dict[str, Any]) -> dict[str, Any]:
         "stats_scope": str(column.get("stats_scope") or "unknown"),
         "is_leakage_suspect": bool(column.get("is_leakage_suspect")),
     }
+
+
+def _list_value(value: object) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _dict_value(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _build_findings(
@@ -3352,8 +4257,16 @@ def _record_notebook_execution_capture_lineage(
     html_artifact: Artifact,
     figure_manifest_artifact: Artifact,
     source_artifact: Artifact,
+    evidence_artifacts: list[Artifact],
 ) -> None:
-    outputs = [manifest_artifact, report_artifact, html_artifact, figure_manifest_artifact, source_artifact]
+    outputs = [
+        manifest_artifact,
+        report_artifact,
+        html_artifact,
+        figure_manifest_artifact,
+        source_artifact,
+        *evidence_artifacts,
+    ]
     for artifact in linked_artifacts:
         create_lineage_edge(
             db,
@@ -3383,7 +4296,7 @@ def _record_notebook_execution_capture_lineage(
         to_asset_id=report_artifact.id,
         relation_type="materializes",
     )
-    for artifact in [report_artifact, html_artifact, figure_manifest_artifact, source_artifact]:
+    for artifact in [report_artifact, html_artifact, figure_manifest_artifact, source_artifact, *evidence_artifacts]:
         create_lineage_edge(
             db,
             project_id=project.id,
@@ -3584,6 +4497,73 @@ def _guardrail_rows(guardrails: list[dict[str, Any]]) -> str:
             f"<strong>{escape(str(item.get('guardrail') or 'Guardrail'))}</strong>"
             f"<p>{escape(str(item.get('detail') or ''))}</p>"
             f'<div class="tiny">{escape(risk)} · {escape(str(item.get("status") or ""))}</div>'
+            "</div>"
+        )
+    return "".join(output)
+
+
+def _read_order_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "<p>No read order generated yet.</p>"
+    output = []
+    for index, item in enumerate(rows[:6], start=1):
+        output.append(
+            '<div class="playbook-row">'
+            f"<strong>{index}. {escape(str(item.get('title') or 'Review item'))}</strong>"
+            f"<p>{escape(str(item.get('why') or ''))}</p>"
+            f'<div class="tiny">{escape(str(item.get("artifact_hint") or ""))}</div>'
+            "</div>"
+        )
+    return "".join(output)
+
+
+def _story_card_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "<p>No visual story cards generated yet.</p>"
+    output = []
+    for item in rows[:8]:
+        output.append(
+            '<div class="story-card">'
+            f"<strong>{escape(str(item.get('title') or 'Story card'))}</strong>"
+            f'<span class="badge">{escape(str(item.get("status") or "review"))}</span>'
+            f"<p>{escape(str(item.get('why_read') or ''))}</p>"
+            f'<div class="tiny">{escape(str(item.get("signal") or ""))}</div>'
+            "</div>"
+        )
+    return "".join(output)
+
+
+def _playbook_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "<p>No EDA playbook generated yet.</p>"
+    output = []
+    for item in rows:
+        output.append(
+            '<div class="playbook-row">'
+            f"<strong>{escape(str(item.get('stage') or 'EDA stage'))}</strong>"
+            f"<p>{escape(str(item.get('reader_question') or ''))}</p>"
+            f'<div class="tiny">Evidence: {escape(str(item.get("current_evidence") or ""))}</div>'
+            f'<div class="tiny">Codex: {escape(str(item.get("codex_followup") or ""))}</div>'
+            "</div>"
+        )
+    return "".join(output)
+
+
+def _feature_family_html_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "<p>No feature family summary available.</p>"
+    output = []
+    max_count = max((int(row.get("count") or 0) for row in rows if isinstance(row, dict)), default=0)
+    for row in rows[:12]:
+        count = int(row.get("count") or 0)
+        width = 0.0 if max_count <= 0 else max(4.0, count / max_count * 100)
+        examples = ", ".join(str(item) for item in row.get("examples", [])[:5]) if isinstance(row.get("examples"), list) else ""
+        output.append(
+            '<div class="bar-row">'
+            f'<code>{escape(str(row.get("family") or "unknown"))}</code>'
+            f'<div class="bar-track"><div class="bar" style="width:{width:.1f}%"></div></div>'
+            f"<span>{count}</span>"
+            f'<div class="tiny span-all">{escape(examples)}</div>'
             "</div>"
         )
     return "".join(output)

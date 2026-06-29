@@ -3452,6 +3452,13 @@ def capture_analysis_notebook_execution_endpoint(
                 "notebook_execution_html_artifact_id": result.html_artifact.id,
                 "notebook_figure_manifest_artifact_id": result.figure_manifest_artifact.id,
                 "notebook_execution_source_artifact_id": result.source_artifact.id,
+                "notebook_evidence_bundle_artifact_id": result.evidence_bundle_artifact.id
+                if result.evidence_bundle_artifact
+                else None,
+                "notebook_evidence_html_artifact_id": result.evidence_html_artifact.id
+                if result.evidence_html_artifact
+                else None,
+                "notebook_evidence_figure_artifact_ids": [artifact.id for artifact in result.figure_artifacts],
                 "notebook_execution_plan_artifact_id": result.plan_artifact.id,
                 "agent_task_contract_artifact_id": result.contract_artifact.id,
                 "artifact_ids": result.artifact_ids,
@@ -4820,6 +4827,7 @@ def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 
         ".json",
         ".md",
         ".py",
+        ".svg",
         ".txt",
         ".yaml",
         ".yml",
@@ -4863,7 +4871,13 @@ def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 
             preview = json.dumps(json.loads(preview), indent=2, ensure_ascii=False)
         except json.JSONDecodeError:
             pass
-    content_type = "text/html" if suffix in {".html", ".htm"} else suffix.removeprefix(".") or "text"
+    content_type = (
+        "text/html"
+        if suffix in {".html", ".htm"}
+        else "image/svg+xml"
+        if suffix == ".svg"
+        else suffix.removeprefix(".") or "text"
+    )
     return {
         **base,
         "content_type": content_type,

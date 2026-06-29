@@ -38,7 +38,7 @@ The product name may still change. Internal package names and database tables st
 - Agent Task Results Workbench v1 with project-scoped summaries of planned and Idea-backed AgentTask runs, experiment registration, reports, citation audits, evidence, and preview/download actions in the Experiments UI.
 - Benchmark Evidence Pack v1 with source cards, local status, scenario packs, workflow results, reports, visualizations, AgentTask handoff state, Evidence, and lineage summarized inside the workbench.
 - Report & Visualization Workbench v1 with generated Insights, report preview/download, and typed VisualizationSpec rendering for metric cards, bars, stages, leaderboards, diagnostics, and agent checklists.
-- Analysis Notebook v0 with marimo source artifacts, static in-product HTML preview, EDA quality rubric, analysis storyboard, target readiness, feature review queues, evaluation guardrails, run manifest, notebook report, run-level model diagnostics notebooks, summary VisualizationSpecs, Notebook Center index, controlled execution planning contracts, safe static execution capture artifacts, and lineage from Data Understanding and ExperimentRun context.
+- Analysis Notebook v0 with marimo source artifacts, in-product notebook reviews, read-this-first guidance, visual story cards, EDA playbooks, EDA quality rubric, target readiness, feature review queues, profile-backed evidence SVG/HTML/bundle artifacts, interactive Notebook guide, controlled execution planning contracts, safe static execution capture artifacts, and lineage from Data Understanding and ExperimentRun context.
 - Decision Dashboard & Report v1 with readiness stages, artifact completeness, risk register, next actions, benchmark fixture policy, and decision visualization specs.
 - Agent Context Pack v0 for preparing schema-validated, harness-owned execution context before Codex/Skill/web-research runner tasks.
 - Job Orchestration v0 with queued jobs, approval gates, dependencies, retry/cancel actions, and a local worker entrypoint.
@@ -68,7 +68,7 @@ The product name may still change. Internal package names and database tables st
 - Controlled Research Runner Stub v1 with Research Source Pack execution contracts, research run manifests, findings reports, source citation manifests, Evidence, VisualizationSpec, and lineage without external network access.
 - Research Findings Synthesis v1 with runner findings, citation audit, follow-up requirements, Evidence, Report, VisualizationSpec, Lineage, AgentTaskContract inputs, AgentContextPack context, and Approach UI preview/download.
 - Leaderboard backed by ExperimentRun metrics.
-- React UI with project list, dataset upload, benchmark access gates, assumptions, evaluation, approach, experiments, notebooks, leaderboard, reports, assets, jobs, and lineage tabs. UI surfaces should feel rich and inspectable rather than a plain experiment tracker.
+- React UI with project list, dataset upload, benchmark access gates, ER-style relational catalog previews, assumptions, evaluation, approach, experiments, notebooks, leaderboard, reports, assets, jobs, and lineage tabs. UI surfaces should feel rich and inspectable rather than a plain experiment tracker.
 - AgentRunner interface with Noop/LocalStub and Codex CLI skeleton.
 - Single Docker image.
 

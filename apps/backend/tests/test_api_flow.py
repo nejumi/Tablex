@@ -293,6 +293,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "plotly.express" in notebook_source_preview["preview"]
     assert "EDA quality rubric" in notebook_source_preview["preview"]
     assert "Leakage and evaluation guardrails" in notebook_source_preview["preview"]
+    assert "What to inspect next" in notebook_source_preview["preview"]
 
     notebook_html_preview_response = client.get(
         f"/api/artifacts/{notebook_job['output']['notebook_html_artifact_id']}/preview"
@@ -304,6 +305,10 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "Tablex Analysis Notebook" in notebook_html_preview["preview"]
     assert "EDA quality rubric" in notebook_html_preview["preview"]
     assert "Target readiness" in notebook_html_preview["preview"]
+    assert "Read this first" in notebook_html_preview["preview"]
+    assert "Visual story cards" in notebook_html_preview["preview"]
+    assert "EDA playbook" in notebook_html_preview["preview"]
+    assert "Ask Codex next" in notebook_html_preview["preview"]
     assert "Feature review queues" in notebook_html_preview["preview"]
     assert "partial dependence" in notebook_html_preview["preview"]
 
@@ -316,6 +321,53 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert notebook_manifest["execution_policy"]["connector_credentials_embedded"] is False
     assert notebook_manifest["analysis_quality"]["rubric_area_count"] >= 5
     assert notebook_manifest["analysis_quality"]["guardrail_count"] >= 3
+
+    data_capture_response = client.post(
+        f"/api/analysis-notebooks/{notebook_job['output']['analysis_notebook_artifact_id']}/execution-capture"
+    )
+    assert data_capture_response.status_code == 200, data_capture_response.text
+    data_capture_job = data_capture_response.json()
+    assert data_capture_job["status"] == "succeeded"
+    assert data_capture_job["output"]["notebook_kind"] == "data_understanding"
+    assert data_capture_job["output"]["notebook_evidence_bundle_artifact_id"]
+    assert data_capture_job["output"]["notebook_evidence_html_artifact_id"]
+    assert len(data_capture_job["output"]["notebook_evidence_figure_artifact_ids"]) >= 4
+
+    data_evidence_bundle_response = client.get(
+        f"/api/artifacts/{data_capture_job['output']['notebook_evidence_bundle_artifact_id']}/download"
+    )
+    assert data_evidence_bundle_response.status_code == 200
+    data_evidence_bundle = data_evidence_bundle_response.json()
+    assert data_evidence_bundle["schema_version"] == "notebook_evidence_bundle.v1"
+    assert data_evidence_bundle["notebook_kind"] == "data_understanding"
+    assert data_evidence_bundle["runtime_execution_status"] == "notebook_cells_not_executed"
+    assert data_evidence_bundle["safety_policy"]["marimo_cells_executed"] is False
+    assert {figure["slot"] for figure in data_evidence_bundle["figures"]} >= {
+        "top_missing_columns_bar",
+        "semantic_type_role_mix",
+        "target_profile_summary",
+        "feature_review_queue_counts",
+    }
+
+    data_evidence_html_response = client.get(
+        f"/api/artifacts/{data_capture_job['output']['notebook_evidence_html_artifact_id']}/preview"
+    )
+    assert data_evidence_html_response.status_code == 200
+    data_evidence_html = data_evidence_html_response.json()
+    assert data_evidence_html["content_type"] == "text/html"
+    assert "Notebook EDA Evidence" in data_evidence_html["preview"]
+    assert "Read this first" in data_evidence_html["preview"]
+    assert "Visual story cards" in data_evidence_html["preview"]
+    assert "Ask Codex next" in data_evidence_html["preview"]
+    assert "Feature review queues" in data_evidence_html["preview"]
+
+    data_evidence_svg_response = client.get(
+        f"/api/artifacts/{data_capture_job['output']['notebook_evidence_figure_artifact_ids'][0]}/preview"
+    )
+    assert data_evidence_svg_response.status_code == 200
+    data_evidence_svg = data_evidence_svg_response.json()
+    assert data_evidence_svg["content_type"] == "image/svg+xml"
+    assert "<svg" in data_evidence_svg["preview"]
 
     questions_response = client.get(f"/api/projects/{project_id}/questions")
     assert questions_response.status_code == 200
@@ -1290,6 +1342,9 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert execution_capture_job["output"]["notebook_execution_html_artifact_id"]
     assert execution_capture_job["output"]["notebook_figure_manifest_artifact_id"]
     assert execution_capture_job["output"]["notebook_execution_source_artifact_id"]
+    assert execution_capture_job["output"]["notebook_evidence_bundle_artifact_id"]
+    assert execution_capture_job["output"]["notebook_evidence_html_artifact_id"]
+    assert execution_capture_job["output"]["notebook_evidence_figure_artifact_ids"]
 
     execution_manifest_response = client.get(
         f"/api/artifacts/{execution_capture_job['output']['notebook_execution_manifest_artifact_id']}/download"
@@ -1300,11 +1355,19 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert execution_manifest["safety_policy"]["python_compile_only"] is True
     assert execution_manifest["safety_policy"]["arbitrary_notebook_code_executed"] is False
     assert execution_manifest["safety_policy"]["secrets_materialized"] is False
+    assert execution_manifest["safety_policy"]["harness_profile_evidence_rendered"] is True
+    assert execution_manifest["safety_policy"]["marimo_cells_executed"] is False
     assert execution_manifest["static_compile"]["status"] == "succeeded"
     assert execution_manifest["summary"]["runtime_execution_status"] == "deferred"
+    assert execution_manifest["summary"]["profile_evidence_render_status"] == "rendered"
+    assert execution_manifest["summary"]["profile_evidence_figure_count"] >= 1
     assert (
         execution_manifest["outputs"]["notebook_execution_html_artifact_id"]
         == execution_capture_job["output"]["notebook_execution_html_artifact_id"]
+    )
+    assert (
+        execution_manifest["outputs"]["notebook_evidence_bundle_artifact_id"]
+        == execution_capture_job["output"]["notebook_evidence_bundle_artifact_id"]
     )
 
     execution_html_preview_response = client.get(
@@ -1315,6 +1378,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert execution_html_preview["content_type"] == "text/html"
     assert "Notebook Execution Capture" in execution_html_preview["preview"]
     assert "runtime execution is deferred" in execution_html_preview["preview"]
+    assert "Profile evidence capture" in execution_html_preview["preview"]
 
     figure_manifest_response = client.get(
         f"/api/artifacts/{execution_capture_job['output']['notebook_figure_manifest_artifact_id']}/download"
@@ -1323,6 +1387,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     figure_manifest = figure_manifest_response.json()
     assert figure_manifest["schema_version"] == "notebook_figure_manifest.v1"
     assert figure_manifest["runtime_execution_status"] == "deferred"
+    assert figure_manifest["profile_evidence_render_status"] == "rendered"
+    assert figure_manifest["figures"]
     assert figure_manifest["expected_figure_slots"]
 
     notebook_index_after_capture_response = client.get(f"/api/projects/{project_id}/analysis-notebooks")
@@ -1339,7 +1405,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert captured_item["coverage"]["execution_capture_status"] == "static_capture_succeeded"
     assert captured_item["artifact_ids"]["execution_manifest"] == execution_capture_job["output"]["notebook_execution_manifest_artifact_id"]
     assert captured_item["artifact_ids"]["execution_html"] == execution_capture_job["output"]["notebook_execution_html_artifact_id"]
-    assert any(action["endpoint"] and "execution-capture" in action["endpoint"] for action in notebook_index_after_capture["next_actions"])
+    if any(not item["coverage"]["has_execution_capture"] for item in notebook_index_after_capture["items"]):
+        assert any(
+            action["endpoint"] and "execution-capture" in action["endpoint"]
+            for action in notebook_index_after_capture["next_actions"]
+        )
+    else:
+        assert any(action["label"] == "Open the recommended notebook evidence" for action in notebook_index_after_capture["next_actions"])
 
     guidance_after_capture_response = client.get(f"/api/projects/{project_id}/guidance")
     assert guidance_after_capture_response.status_code == 200
@@ -1412,6 +1484,9 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "notebook_execution_html",
         "notebook_figure_manifest",
         "notebook_execution_source",
+        "notebook_evidence_bundle",
+        "notebook_evidence_html",
+        "notebook_evidence_svg",
     }.issubset(asset_types)
     artifacts = artifacts_response.json()
     validation_report = next(item for item in artifacts if item["asset_type"] == "model_validation_report")

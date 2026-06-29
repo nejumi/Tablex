@@ -2221,7 +2221,7 @@ function ProjectDetail({
     }
   }
 
-  async function submitAgentChat(objective: string) {
+  async function submitAgentChat(objective: string): Promise<AgentChatResponse | void> {
     const trimmed = objective.trim();
     if (!trimmed) return;
     setBusy(true);
@@ -2249,14 +2249,20 @@ function ProjectDetail({
       await refreshAgentActivity();
       await refresh();
       await onProjectChanged();
+      return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
       setAgentChatMessages((current) => [...current.slice(-4), { role: "system", text: message }]);
       setAgentWorkerEvents((current) => current.filter((event) => event.job_id !== pendingWorker.job_id));
+      return undefined;
     } finally {
       setBusy(false);
     }
+  }
+
+  async function submitAgentChatWithoutResponse(objective: string): Promise<void> {
+    await submitAgentChat(objective);
   }
 
   async function runFocusAction(action: FocusAction | null) {
@@ -2333,7 +2339,7 @@ function ProjectDetail({
         text={text}
         messages={agentChatMessages}
         latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
-        onSubmit={submitAgentChat}
+        onSubmit={submitAgentChatWithoutResponse}
       />
       <AgentActivityRail
         text={text}
@@ -2341,7 +2347,7 @@ function ProjectDetail({
         events={agentWorkerEvents}
         activity={agentActivity}
         tick={activityTick}
-        onWorkerMessage={submitAgentChat}
+        onWorkerMessage={submitAgentChatWithoutResponse}
       />
       {tab === "Overview" && (
         <OverviewTab
@@ -2434,6 +2440,7 @@ function ProjectDetail({
           notebookIndex={notebookIndex}
           busy={busy}
           runAction={runAction}
+          onAskAgent={submitAgentChat}
         />
       )}
       {tab === "Leaderboard" && (
@@ -3081,15 +3088,22 @@ function TranslatablePreview({
 function isHtmlArtifactPreview(preview: ArtifactPreview | null): boolean {
   if (!preview?.preview_available) return false;
   const filename = preview.filename.toLowerCase();
-  return preview.content_type === "text/html" || filename.endsWith(".html") || filename.endsWith(".htm");
+  return (
+    preview.content_type === "text/html" ||
+    preview.content_type === "image/svg+xml" ||
+    filename.endsWith(".html") ||
+    filename.endsWith(".htm") ||
+    filename.endsWith(".svg")
+  );
 }
 
 function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
+  const previewType = preview.content_type === "image/svg+xml" || preview.filename.toLowerCase().endsWith(".svg") ? "SVG" : "HTML";
   return (
     <div className="preview-block">
       <div className="preview-toolbar">
         <div className="preview-meta">
-          <span className="badge">HTML preview</span>
+          <span className="badge">{previewType} preview</span>
           <span className="badge muted">{preview.filename}</span>
           {preview.truncated ? <span className="badge risk">truncated</span> : null}
         </div>
@@ -4124,9 +4138,15 @@ function DataTab({
       <Panel title="Relational Preview" icon={<FileText size={18} />}>
         {relationalPreviewError ? <div className="banner danger">{relationalPreviewError}</div> : null}
         {relationalPreview?.preview_available ? (
-          <TranslatablePreview preview={relationalPreview} />
+          isRelationalCatalogPreview(relationalPreview) ? (
+            <RelationalCatalogPreview preview={relationalPreview} />
+          ) : isHtmlArtifactPreview(relationalPreview) ? (
+            <HtmlArtifactPreview preview={relationalPreview} />
+          ) : (
+            <TranslatablePreview preview={relationalPreview} />
+          )
         ) : (
-          <EmptyInline text={relationalPreview?.reason ?? "Select a relational catalog, feature plan, recipe, or scenario diagnostics artifact to inspect table profiles, key candidates, generated preview features, scenario comparisons, and guardrails."} />
+          <EmptyInline text={relationalPreview?.reason ?? "Select a relational catalog to see an ER-style table graph. Feature plans, recipes, and scenario diagnostics open here as reports or advanced artifacts."} />
         )}
       </Panel>
       <Panel title="Benchmark Scenario Packs" icon={<Layers size={18} />}>
@@ -6029,7 +6049,8 @@ function NotebooksTab({
   artifacts,
   notebookIndex,
   busy,
-  runAction
+  runAction,
+  onAskAgent
 }: {
   project: Project;
   runs: Run[];
@@ -6037,10 +6058,14 @@ function NotebooksTab({
   notebookIndex: NotebookIndex | null;
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
+  onAskAgent: (message: string) => Promise<AgentChatResponse | void>;
 }) {
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
+  const [guideDraft, setGuideDraft] = React.useState("");
+  const [guideResponse, setGuideResponse] = React.useState<string | null>(null);
+  const [guideBusy, setGuideBusy] = React.useState(false);
   const latestRun = runs[0] ?? null;
   const recommendedNotebook = notebookIndex?.recommended_notebook ?? null;
   const executionArtifacts = artifacts.filter(
@@ -6051,7 +6076,10 @@ function NotebooksTab({
         "notebook_execution_report",
         "notebook_execution_html",
         "notebook_figure_manifest",
-        "notebook_execution_source"
+        "notebook_execution_source",
+        "notebook_evidence_bundle",
+        "notebook_evidence_html",
+        "notebook_evidence_svg"
       ].includes(artifact.asset_type) ||
       (artifact.asset_type === "agent_task_contract" && typeof artifact.metadata.notebook_artifact_id === "string")
   );
@@ -6103,198 +6131,221 @@ function NotebooksTab({
     const job = await api<Job>(`/api/analysis-notebooks/${item.artifact_ids.notebook}/execution-capture`, {
       method: "POST"
     });
-    const htmlArtifactId = job.output.notebook_execution_html_artifact_id;
+    const htmlArtifactId = job.output.notebook_evidence_html_artifact_id ?? job.output.notebook_execution_html_artifact_id;
     if (typeof htmlArtifactId === "string") {
       await loadPreview(htmlArtifactId);
     }
     return job;
   }
 
-  return (
-    <div className="stack">
-      <div className="toolbar">
-        <button className="secondary-button" disabled={busy} onClick={() => void runAction(generateDataNotebook)}>
-          {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-          Data Notebook
-        </button>
-        <button
-          className="secondary-button"
-          disabled={busy || latestRun === null}
-          onClick={() => {
-            if (latestRun) void runAction(() => generateModelNotebook(latestRun));
-          }}
-        >
-          {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
-          Model Notebook
-        </button>
-        <button
-          className="secondary-button"
-          disabled={busy || recommendedNotebook === null}
-          onClick={() => {
-            if (recommendedNotebook) void runAction(() => planNotebookExecution(recommendedNotebook));
-          }}
-        >
-          {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
-          Plan Execution
-        </button>
-        <button
-          className="secondary-button"
-          disabled={busy || recommendedNotebook === null}
-          onClick={() => {
-            if (recommendedNotebook) void runAction(() => captureNotebookExecution(recommendedNotebook));
-          }}
-        >
-          {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-          Capture
-        </button>
-      </div>
+  function artifactsForNotebook(item: NotebookIndexItem, assetTypes: string[]) {
+    return executionArtifacts.filter(
+      (artifact) => assetTypes.includes(artifact.asset_type) && artifact.metadata.notebook_artifact_id === item.notebook_artifact_id
+    );
+  }
 
-      <Panel title="Notebook Workspace" icon={<BarChart3 size={18} />}>
-        {notebookIndex && notebookIndex.counts.total > 0 ? (
-          <div className="stack">
-            {recommendedNotebook ? (
-              <div className="focus-card">
-                <div>
-                  <div className="eyebrow">Recommended notebook</div>
-                  <h3>{recommendedNotebook.title}</h3>
-                  <p>{recommendedNotebook.recommendation_reason}</p>
-                  <div className="badge-row">
-                    <span className="badge">{recommendedNotebook.notebook_kind.replace(/_/g, " ")}</span>
-                    <span className="badge muted">{notebookCoverageLabel(recommendedNotebook)}</span>
-                    {recommendedNotebook.run_id ? <span className="badge muted">run {recommendedNotebook.run_id}</span> : null}
-                  </div>
-                </div>
-                <div className="row-actions">
-                  <button
-                    className="secondary-button"
-                    disabled={previewLoadingId === notebookPreviewArtifactId(recommendedNotebook)}
-                    onClick={() => void loadPreview(notebookPreviewArtifactId(recommendedNotebook))}
-                  >
-                    {previewLoadingId === notebookPreviewArtifactId(recommendedNotebook) ? (
-                      <Loader2 className="spin" size={16} />
-                    ) : (
-                      <Eye size={16} />
-                    )}
-                    Preview
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={busy}
-                    onClick={() => void runAction(() => planNotebookExecution(recommendedNotebook))}
-                  >
-                    {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
-                    Plan Execution
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={busy}
-                    onClick={() => void runAction(() => captureNotebookExecution(recommendedNotebook))}
-                  >
-                    {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                    Capture
-                  </button>
-                  <a
-                    className="icon-link"
-                    href={`${apiBase}/api/artifacts/${recommendedNotebook.artifact_ids.notebook}/download`}
-                    title="Download marimo source"
-                  >
-                    <Download size={16} />
-                  </a>
+  function latestArtifactForNotebook(item: NotebookIndexItem, assetTypes: string[]) {
+    return assetTypes
+      .map((assetType) => artifactsForNotebook(item, [assetType])[0])
+      .find((artifact): artifact is Artifact => Boolean(artifact));
+  }
+
+  function notebookArtifactDisplayName(assetType: string) {
+    const labels: Record<string, string> = {
+      notebook_evidence_html: "Evidence narrative",
+      notebook_evidence_svg: "Evidence figure",
+      notebook_evidence_bundle: "Evidence bundle",
+      notebook_execution_manifest: "Capture manifest",
+      notebook_execution_report: "Capture report",
+      notebook_execution_html: "Capture preview",
+      notebook_figure_manifest: "Figure manifest",
+      notebook_execution_plan: "Runner plan",
+      notebook_execution_source: "Captured source",
+      agent_task_contract: "Agent contract"
+    };
+    return labels[assetType] ?? assetType.replace(/_/g, " ");
+  }
+
+  const notebookItems = notebookIndex?.items ?? [];
+  const recommendedEvidenceHtml = recommendedNotebook
+    ? latestArtifactForNotebook(recommendedNotebook, ["notebook_evidence_html", "notebook_execution_html"])
+    : null;
+  const recommendedEvidenceBundle = recommendedNotebook
+    ? latestArtifactForNotebook(recommendedNotebook, ["notebook_evidence_bundle"])
+    : null;
+  const recommendedEvidenceFigures = recommendedNotebook ? artifactsForNotebook(recommendedNotebook, ["notebook_evidence_svg"]) : [];
+  const recommendedSafetyArtifact = recommendedNotebook
+    ? latestArtifactForNotebook(recommendedNotebook, [
+        "notebook_execution_manifest",
+        "notebook_execution_report",
+        "notebook_figure_manifest",
+        "notebook_execution_plan",
+        "agent_task_contract"
+      ])
+    : null;
+  const readablePreviewArtifactId = recommendedEvidenceHtml?.id ?? (recommendedNotebook ? notebookPreviewArtifactId(recommendedNotebook) : null);
+  const hasExecutionPlan = Boolean(recommendedNotebook?.coverage.has_execution_plan);
+  const hasEvidenceCapture = Boolean(recommendedNotebook?.coverage.has_execution_capture || recommendedEvidenceHtml);
+  const hasEvidenceFigures = recommendedEvidenceFigures.length > 0;
+
+  async function askNotebookGuide(message: string) {
+    const trimmed = message.trim();
+    if (!trimmed || !recommendedNotebook) return;
+    setGuideBusy(true);
+    try {
+      const response = await onAskAgent(
+        `[notebook:${recommendedNotebook.notebook_artifact_id}] ${trimmed}. Reply as an interactive notebook guide: name the exact section, artifact, or figure I should inspect next, why it matters, and what action Tablex should take.`
+      );
+      if (response && typeof response.assistant_message === "string") {
+        setGuideResponse(response.assistant_message);
+      }
+    } finally {
+      setGuideBusy(false);
+    }
+  }
+
+  return (
+    <div className="stack notebook-workbench">
+      <Panel title="Notebook Review" icon={<BarChart3 size={18} />}>
+        {recommendedNotebook ? (
+          <div className="notebook-review-grid">
+            <div className="notebook-start-card">
+              <div className="notebook-start-copy">
+                <div className="eyebrow">Start here</div>
+                <h3>{recommendedNotebook.title}</h3>
+                <p>{recommendedNotebook.recommendation_reason}</p>
+                <div className="badge-row">
+                  <span className="badge">{recommendedNotebook.notebook_kind.replace(/_/g, " ")}</span>
+                  <span className="badge muted">{notebookSourceLabel(recommendedNotebook)}</span>
+                  <span className={hasEvidenceCapture ? "badge" : "badge risk"}>
+                    {hasEvidenceCapture ? "evidence captured" : "needs evidence capture"}
+                  </span>
                 </div>
               </div>
-            ) : null}
+              <div className="notebook-primary-actions">
+                <button
+                  className="primary-button"
+                  disabled={!readablePreviewArtifactId || previewLoadingId === readablePreviewArtifactId}
+                  onClick={() => {
+                    if (readablePreviewArtifactId) void loadPreview(readablePreviewArtifactId);
+                  }}
+                >
+                  {readablePreviewArtifactId && previewLoadingId === readablePreviewArtifactId ? (
+                    <Loader2 className="spin" size={16} />
+                  ) : (
+                    <Eye size={16} />
+                  )}
+                  Open Review
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => void runAction(() => captureNotebookExecution(recommendedNotebook))}
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                  Capture Evidence
+                </button>
+              </div>
+            </div>
+            <div className="notebook-guide-card">
+              <div>
+                <div className="eyebrow">Interactive guide</div>
+                <h3>Ask what to inspect next</h3>
+                <p>Use Codex as a reading guide for this notebook. The response appears here and is also recorded in Agent Chat.</p>
+              </div>
+              <div className="notebook-guide-prompts">
+                {[
+                  "What should I read first in this notebook?",
+                  "Which figure or evidence artifact matters most right now?",
+                  "What should Codex investigate next before modeling?"
+                ].map((prompt) => (
+                  <button
+                    className="secondary-button"
+                    disabled={busy || guideBusy}
+                    key={prompt}
+                    onClick={() => void askNotebookGuide(prompt)}
+                  >
+                    {guideBusy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+              <form
+                className="notebook-guide-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const message = guideDraft.trim();
+                  if (!message) return;
+                  setGuideDraft("");
+                  void askNotebookGuide(message);
+                }}
+              >
+                <input
+                  value={guideDraft}
+                  onChange={(event) => setGuideDraft(event.target.value)}
+                  placeholder="Ask about this notebook review..."
+                />
+                <button className="icon-button" disabled={busy || guideBusy || !guideDraft.trim()} title="Ask notebook guide">
+                  {guideBusy ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
+                </button>
+              </form>
+              {guideResponse ? <div className="notebook-guide-response">{guideResponse}</div> : null}
+            </div>
+            <div className="notebook-steps" aria-label="Notebook evidence state">
+              <div className="notebook-step done">
+                <span>
+                  <Check size={14} />
+                </span>
+                <strong>Notebook draft</strong>
+                <small>{formatDate(recommendedNotebook.created_at)}</small>
+              </div>
+              <div className={`notebook-step ${hasExecutionPlan ? "done" : "pending"}`}>
+                <span>{hasExecutionPlan ? <Check size={14} /> : <ListChecks size={14} />}</span>
+                <strong>Runner plan</strong>
+                <small>{hasExecutionPlan ? "Contract ready" : "Optional before runner execution"}</small>
+              </div>
+              <div className={`notebook-step ${hasEvidenceCapture ? "done" : "pending"}`}>
+                <span>{hasEvidenceCapture ? <Check size={14} /> : <Play size={14} />}</span>
+                <strong>Evidence capture</strong>
+                <small>{hasEvidenceFigures ? `${recommendedEvidenceFigures.length} figures rendered` : "Profile evidence not rendered yet"}</small>
+              </div>
+            </div>
             <div className="metric-grid compact">
-              <Metric label="Notebooks" value={notebookIndex.counts.total} />
-              <Metric label="Data notebooks" value={notebookIndex.counts.by_kind.data_understanding ?? 0} />
-              <Metric label="Model notebooks" value={notebookIndex.counts.by_kind.model_diagnostics ?? 0} />
-              <Metric label="Captured" value={notebookIndex.counts.with_execution_capture} />
+              <Metric label="Notebooks" value={notebookIndex?.counts.total ?? 0} />
+              <Metric label="Captured" value={notebookIndex?.counts.with_execution_capture ?? 0} />
+              <Metric label="Figures" value={recommendedEvidenceFigures.length} />
+              <Metric label="Evidence files" value={executionArtifacts.length} />
             </div>
           </div>
         ) : (
-          <EmptyInline text="Notebook history will appear here after Data Understanding or run-level diagnostics notebooks are generated." />
+          <div className="notebook-start-card">
+            <img src="/mascot/tablee-avatar.svg" alt="" aria-hidden="true" className="notebook-start-mascot" />
+            <div className="notebook-start-copy">
+              <div className="eyebrow">Start here</div>
+              <h3>Create a Data Understanding notebook</h3>
+              <p>Use the current profile and assumptions to create the first narrative review. Model diagnostics become available after a run exists.</p>
+              <div className="row-actions">
+                <button className="primary-button" disabled={busy} onClick={() => void runAction(generateDataNotebook)}>
+                  {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+                  Data Notebook
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={busy || latestRun === null}
+                  onClick={() => {
+                    if (latestRun) void runAction(() => generateModelNotebook(latestRun));
+                  }}
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
+                  Model Notebook
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </Panel>
 
-      <div className="stack">
-        <Panel title="Notebook History" icon={<FileText size={18} />}>
-          {notebookIndex && notebookIndex.items.length ? (
-            <Table
-              headers={["Notebook", "Source", "Coverage", "Created", "Actions"]}
-              rows={notebookIndex.items.map((item) => [
-                <div className="cell-stack" key={`${item.notebook_artifact_id}-title`}>
-                  <span>{item.title}</span>
-                  <small>{item.notebook_kind.replace(/_/g, " ")}</small>
-                </div>,
-                notebookSourceLabel(item),
-                notebookCoverageLabel(item),
-                formatDate(item.created_at),
-                <div className="row-actions" key={`${item.notebook_artifact_id}-actions`}>
-                  <button
-                    className="icon-button"
-                    disabled={previewLoadingId === notebookPreviewArtifactId(item)}
-                    onClick={() => void loadPreview(notebookPreviewArtifactId(item))}
-                    title="Preview notebook"
-                  >
-                    {previewLoadingId === notebookPreviewArtifactId(item) ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-                  </button>
-                  <button
-                    className="icon-button"
-                    disabled={busy}
-                    onClick={() => void runAction(() => planNotebookExecution(item))}
-                    title="Plan controlled notebook execution"
-                  >
-                    {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
-                  </button>
-                  <button
-                    className="icon-button"
-                    disabled={busy}
-                    onClick={() => void runAction(() => captureNotebookExecution(item))}
-                    title="Capture controlled notebook execution evidence"
-                  >
-                    {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                  </button>
-                  <a className="icon-link" href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`} title="Download marimo source">
-                    <Download size={16} />
-                  </a>
-                </div>
-              ])}
-            />
-          ) : (
-            <EmptyInline text="Generated marimo notebooks will be listed here with preview, planning, and source download actions." />
-          )}
-        </Panel>
-
-        <Panel title="Execution Evidence" icon={<ListChecks size={18} />}>
-          {executionArtifacts.length ? (
-            <Table
-              headers={["Type", "Status", "Notebook", "Created", "Actions"]}
-              rows={executionArtifacts.map((artifact) => [
-                artifact.asset_type,
-                String(artifact.metadata.execution_status ?? "ready"),
-                String(artifact.metadata.notebook_artifact_id ?? "-"),
-                formatDate(artifact.created_at),
-                <div className="row-actions" key={artifact.id}>
-                  <button
-                    className="icon-button"
-                    disabled={previewLoadingId === artifact.id}
-                    onClick={() => void loadPreview(artifact.id)}
-                    title="Preview execution artifact"
-                  >
-                    {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-                  </button>
-                  <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download execution artifact">
-                    <Download size={16} />
-                  </a>
-                </div>
-              ])}
-            />
-          ) : (
-            <EmptyInline text="Controlled execution plans, capture manifests, reports, HTML previews, and notebook AgentTaskContracts will appear here before any full notebook runner executes cells." />
-          )}
-        </Panel>
-      </div>
-
-      <Panel title="Notebook Preview" icon={<FileText size={18} />}>
+      <Panel title="Current Review" icon={<FileText size={18} />}>
         {previewError ? <div className="banner danger">{previewError}</div> : null}
         {preview?.preview_available ? (
           isHtmlArtifactPreview(preview) ? (
@@ -6303,9 +6354,175 @@ function NotebooksTab({
             <TranslatablePreview preview={preview} />
           )
         ) : (
-          <EmptyInline text={preview?.reason ?? "Select a notebook, execution plan, or contract preview to inspect it inside the workbench."} />
+          <EmptyInline text="Open Review to read the recommended notebook review here. Figures, evidence bundles, and runner records open in this same place so the result stays next to the action." />
         )}
       </Panel>
+
+      <Panel title="Evidence Outputs" icon={<ListChecks size={18} />}>
+        {recommendedNotebook ? (
+          <div className="stack">
+            <div className="card-grid notebook-evidence-grid">
+              <div className="mini-card notebook-evidence-card primary">
+                <div className="mini-card-title">Review narrative</div>
+                <p>Target readiness, findings, guardrails, and rendered profile evidence in one readable page.</p>
+                <div className="badge-row">
+                  <span className={recommendedEvidenceHtml ? "badge" : "badge risk"}>
+                    {recommendedEvidenceHtml ? "ready" : "not captured"}
+                  </span>
+                  {recommendedEvidenceBundle ? <span className="badge muted">bundle saved</span> : null}
+                </div>
+                <div className="row-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={!recommendedEvidenceHtml || previewLoadingId === recommendedEvidenceHtml.id}
+                    onClick={() => {
+                      if (recommendedEvidenceHtml) void loadPreview(recommendedEvidenceHtml.id);
+                    }}
+                  >
+                    {recommendedEvidenceHtml && previewLoadingId === recommendedEvidenceHtml.id ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <FileText size={16} />
+                    )}
+                    Preview
+                  </button>
+                </div>
+              </div>
+              <div className="mini-card notebook-evidence-card">
+                <div className="mini-card-title">Figures</div>
+                <p>Profile-backed SVG charts for missingness, semantic mix, target profile, and feature review queues.</p>
+                <div className="badge-row">
+                  <span className={hasEvidenceFigures ? "badge" : "badge muted"}>{recommendedEvidenceFigures.length} rendered</span>
+                </div>
+                <div className="row-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={!recommendedEvidenceFigures[0] || previewLoadingId === recommendedEvidenceFigures[0]?.id}
+                    onClick={() => {
+                      if (recommendedEvidenceFigures[0]) void loadPreview(recommendedEvidenceFigures[0].id);
+                    }}
+                  >
+                    {recommendedEvidenceFigures[0] && previewLoadingId === recommendedEvidenceFigures[0].id ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <BarChart3 size={16} />
+                    )}
+                    First Figure
+                  </button>
+                </div>
+              </div>
+              <div className="mini-card notebook-evidence-card">
+                <div className="mini-card-title">Runner record</div>
+                <p>Plan, manifest, source, and safety policy for controlled runner handoff.</p>
+                <div className="badge-row">
+                  <span className={recommendedSafetyArtifact ? "badge" : "badge muted"}>
+                    {recommendedSafetyArtifact ? notebookArtifactDisplayName(recommendedSafetyArtifact.asset_type) : "not planned"}
+                  </span>
+                </div>
+                <div className="row-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={!recommendedSafetyArtifact || previewLoadingId === recommendedSafetyArtifact.id}
+                    onClick={() => {
+                      if (recommendedSafetyArtifact) void loadPreview(recommendedSafetyArtifact.id);
+                    }}
+                  >
+                    {recommendedSafetyArtifact && previewLoadingId === recommendedSafetyArtifact.id ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <ListChecks size={16} />
+                    )}
+                    Inspect
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() => void runAction(() => planNotebookExecution(recommendedNotebook))}
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                    Plan
+                  </button>
+                </div>
+              </div>
+            </div>
+            {executionArtifacts.length ? (
+              <details className="artifact-shelf">
+                <summary>Artifact shelf ({executionArtifacts.length})</summary>
+                <Table
+                  headers={["Artifact", "Status", "Created", "Actions"]}
+                  rows={executionArtifacts.slice(0, 12).map((artifact) => [
+                    <div className="cell-stack" key={`${artifact.id}-label`}>
+                      <span>{notebookArtifactDisplayName(artifact.asset_type)}</span>
+                      <small>{String(artifact.metadata.figure_id ?? artifact.metadata.notebook_kind ?? artifact.id)}</small>
+                    </div>,
+                    String(artifact.metadata.execution_status ?? artifact.metadata.capture_mode ?? "ready"),
+                    formatDate(artifact.created_at),
+                    <div className="row-actions" key={artifact.id}>
+                      <button
+                        className="icon-button"
+                        disabled={previewLoadingId === artifact.id}
+                        onClick={() => void loadPreview(artifact.id)}
+                        title="Preview artifact"
+                      >
+                        {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                      </button>
+                      <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download artifact">
+                        <Download size={16} />
+                      </a>
+                    </div>
+                  ])}
+                />
+              </details>
+            ) : null}
+          </div>
+        ) : (
+          <EmptyInline text="Notebook evidence will appear after a Data Understanding or Model Diagnostics notebook is generated." />
+        )}
+      </Panel>
+
+      <Panel title="Notebook Library" icon={<FileText size={18} />}>
+        {notebookItems.length ? (
+          <Table
+            headers={["Notebook", "State", "Actions"]}
+            rows={notebookItems.slice(0, 8).map((item) => [
+              <div className="cell-stack" key={`${item.notebook_artifact_id}-title`}>
+                <span>{item.title}</span>
+                <small>
+                  {item.notebook_kind.replace(/_/g, " ")} | {notebookSourceLabel(item)}
+                </small>
+              </div>,
+              <div className="badge-row" key={`${item.notebook_artifact_id}-state`}>
+                <span className="badge muted">{notebookCoverageLabel(item)}</span>
+                {item.notebook_artifact_id === recommendedNotebook?.notebook_artifact_id ? <span className="badge">recommended</span> : null}
+              </div>,
+              <div className="row-actions" key={`${item.notebook_artifact_id}-actions`}>
+                <button
+                  className="icon-button"
+                  disabled={previewLoadingId === notebookPreviewArtifactId(item)}
+                  onClick={() => void loadPreview(notebookPreviewArtifactId(item))}
+                  title="Preview notebook"
+                >
+                  {previewLoadingId === notebookPreviewArtifactId(item) ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <button
+                  className="icon-button"
+                  disabled={busy}
+                  onClick={() => void runAction(() => captureNotebookExecution(item))}
+                  title="Capture evidence"
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`} title="Download marimo source">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Notebook history will appear here after Data Understanding or run-level diagnostics notebooks are generated." />
+        )}
+      </Panel>
+
     </div>
   );
 }
@@ -6347,7 +6564,10 @@ function ReportsTab({
       "notebook_execution_report",
       "notebook_execution_html",
       "notebook_figure_manifest",
-      "notebook_execution_source"
+      "notebook_execution_source",
+      "notebook_evidence_bundle",
+      "notebook_evidence_html",
+      "notebook_evidence_svg"
     ].includes(artifact.asset_type) ||
     (artifact.asset_type === "agent_task_contract" && typeof artifact.metadata.notebook_artifact_id === "string")
   );
@@ -6821,6 +7041,201 @@ function notebookSourceLabel(item: NotebookIndexItem) {
   if (item.run_id) return `run ${item.run_id}`;
   if (item.dataset_snapshot_id) return `dataset ${item.dataset_snapshot_id}`;
   return "project";
+}
+
+type RelationalCatalogTable = {
+  table_name?: string;
+  path?: string;
+  role?: string;
+  is_primary?: boolean;
+  row_count?: number;
+  column_count?: number;
+  status?: string;
+  target_column_present?: boolean;
+  key_candidates?: Array<{ column?: string; reason?: string; uniqueness_ratio?: number }>;
+};
+
+type RelationalCatalogRelationship = {
+  left_table?: string;
+  right_table?: string;
+  left_column?: string;
+  right_column?: string;
+  relation_type?: string;
+  confidence?: number;
+  evidence?: string;
+};
+
+type RelationalCatalogPayload = {
+  schema_version?: string;
+  benchmark_name?: string;
+  table_count?: number;
+  relationship_count?: number;
+  tables?: RelationalCatalogTable[];
+  relationships?: RelationalCatalogRelationship[];
+  risk_notes?: string[];
+};
+
+function isRelationalCatalogPreview(preview: ArtifactPreview | null): boolean {
+  return Boolean(
+    preview?.preview_available &&
+      preview.asset_type === "relational_catalog" &&
+      preview.preview &&
+      preview.preview.includes("relational_catalog.v1")
+  );
+}
+
+function parseRelationalCatalogPreview(preview: ArtifactPreview): RelationalCatalogPayload | null {
+  if (!preview.preview) return null;
+  try {
+    const parsed = JSON.parse(preview.preview) as RelationalCatalogPayload;
+    return parsed && parsed.schema_version === "relational_catalog.v1" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function RelationalCatalogPreview({ preview }: { preview: ArtifactPreview }) {
+  const catalog = React.useMemo(() => parseRelationalCatalogPreview(preview), [preview]);
+  if (!catalog) return <TranslatablePreview preview={preview} />;
+  const tables = Array.isArray(catalog.tables) ? catalog.tables.slice(0, 12) : [];
+  const relationships = Array.isArray(catalog.relationships) ? catalog.relationships.slice(0, 24) : [];
+  const tableNames = new Set(tables.map((table) => table.table_name).filter(Boolean));
+  const visibleRelationships = relationships.filter(
+    (relationship) => relationship.left_table && relationship.right_table && tableNames.has(relationship.left_table) && tableNames.has(relationship.right_table)
+  );
+  return (
+    <div className="relational-preview">
+      <div className="relational-preview-header">
+        <div>
+          <div className="eyebrow">ER-style preview</div>
+          <h3>{catalog.benchmark_name ?? preview.name}</h3>
+          <p>Tables and inferred relationship candidates from the RelationalCatalog. Treat edges as review prompts until join semantics are confirmed.</p>
+        </div>
+        <div className="badge-row">
+          <span className="badge">{catalog.table_count ?? tables.length} tables</span>
+          <span className="badge muted">{relationships.length} relationships</span>
+          <span className="badge risk">inferred</span>
+        </div>
+      </div>
+      <RelationalErSvg tables={tables} relationships={visibleRelationships} />
+      <div className="relational-summary-grid">
+        {tables.slice(0, 6).map((table) => (
+          <div className="relational-table-card" key={table.table_name ?? table.path}>
+            <div className="mini-card-title">{table.table_name ?? table.path ?? "table"}</div>
+            <div className="badge-row">
+              {table.is_primary ? <span className="badge">primary</span> : <span className="badge muted">{table.role ?? "support"}</span>}
+              {table.target_column_present ? <span className="badge risk">target present</span> : null}
+            </div>
+            <dl className="facts">
+              <div>
+                <dt>Rows</dt>
+                <dd>{table.row_count?.toLocaleString() ?? "-"}</dd>
+              </div>
+              <div>
+                <dt>Columns</dt>
+                <dd>{table.column_count ?? "-"}</dd>
+              </div>
+              <div>
+                <dt>Keys</dt>
+                <dd>{table.key_candidates?.slice(0, 3).map((key) => key.column).join(", ") || "-"}</dd>
+              </div>
+            </dl>
+          </div>
+        ))}
+      </div>
+      {catalog.risk_notes?.length ? (
+        <div className="relational-risk-strip">
+          {catalog.risk_notes.slice(0, 4).map((note) => (
+            <span key={note}>{note}</span>
+          ))}
+        </div>
+      ) : null}
+      <details className="artifact-shelf">
+        <summary>Advanced JSON catalog</summary>
+        <TranslatablePreview preview={preview} />
+      </details>
+    </div>
+  );
+}
+
+function RelationalErSvg({
+  tables,
+  relationships
+}: {
+  tables: RelationalCatalogTable[];
+  relationships: RelationalCatalogRelationship[];
+}) {
+  const visibleTables = tables.slice(0, 10);
+  if (!visibleTables.length) return <EmptyInline text="No tables are available in this relational catalog." />;
+  const columns = Math.min(3, Math.max(1, visibleTables.length));
+  const cardWidth = 220;
+  const cardHeight = 104;
+  const gapX = 62;
+  const gapY = 72;
+  const padding = 32;
+  const rows = Math.ceil(visibleTables.length / columns);
+  const width = padding * 2 + columns * cardWidth + (columns - 1) * gapX;
+  const height = padding * 2 + rows * cardHeight + (rows - 1) * gapY;
+  const positions = new Map<string, { x: number; y: number }>();
+  visibleTables.forEach((table, index) => {
+    const x = padding + (index % columns) * (cardWidth + gapX);
+    const y = padding + Math.floor(index / columns) * (cardHeight + gapY);
+    if (table.table_name) positions.set(table.table_name, { x, y });
+  });
+  return (
+    <div className="relational-svg-shell">
+      <svg className="relational-er-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Relational catalog ER diagram">
+        <defs>
+          <marker id="er-arrow" markerHeight="8" markerWidth="8" orient="auto" refX="7" refY="4">
+            <path d="M0,0 L8,4 L0,8 Z" />
+          </marker>
+        </defs>
+        {relationships.slice(0, 32).map((relationship, index) => {
+          const left = relationship.left_table ? positions.get(relationship.left_table) : undefined;
+          const right = relationship.right_table ? positions.get(relationship.right_table) : undefined;
+          if (!left || !right) return null;
+          const x1 = left.x + cardWidth / 2;
+          const y1 = left.y + cardHeight / 2;
+          const x2 = right.x + cardWidth / 2;
+          const y2 = right.y + cardHeight / 2;
+          return (
+            <g className="er-edge" key={`${relationship.left_table}-${relationship.right_table}-${index}`}>
+              <line x1={x1} y1={y1} x2={x2} y2={y2} markerEnd="url(#er-arrow)" />
+              <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 6}>
+                {relationship.left_column ?? relationship.right_column ?? "key"}
+              </text>
+            </g>
+          );
+        })}
+        {visibleTables.map((table, index) => {
+          const position = table.table_name ? positions.get(table.table_name) : undefined;
+          if (!position) return null;
+          const keyNames = table.key_candidates?.slice(0, 2).map((key) => key.column).filter(Boolean).join(", ") || "no key hint";
+          return (
+            <g className={`er-node ${table.is_primary ? "primary" : ""}`} key={`${table.table_name}-${index}`}>
+              <rect x={position.x} y={position.y} width={cardWidth} height={cardHeight} rx="8" />
+              <text className="er-node-title" x={position.x + 14} y={position.y + 28}>
+                {truncateLabel(table.table_name ?? table.path ?? "table", 24)}
+              </text>
+              <text x={position.x + 14} y={position.y + 52}>
+                {table.is_primary ? "primary table" : table.role ?? "supporting table"}
+              </text>
+              <text x={position.x + 14} y={position.y + 74}>
+                {`${table.row_count?.toLocaleString() ?? "-"} rows / ${table.column_count ?? "-"} cols`}
+              </text>
+              <text x={position.x + 14} y={position.y + 94}>
+                {truncateLabel(keyNames, 30)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function truncateLabel(value: string, length: number) {
+  return value.length > length ? `${value.slice(0, Math.max(0, length - 1))}...` : value;
 }
 
 function VisualizationPreview({ visualization }: { visualization: VisualizationSpec }) {

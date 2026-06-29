@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,7 +17,10 @@ from tabular_harness.models.entities import (
     SplitManifest,
 )
 from tabular_harness.services.agent_task_planner import AgentTaskPlanResult, plan_project_agent_task
-from tabular_harness.services.analysis_notebooks import create_data_understanding_notebook
+from tabular_harness.services.analysis_notebooks import (
+    build_project_notebook_index,
+    create_data_understanding_notebook,
+)
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
 from tabular_harness.services.evaluation import (
@@ -74,6 +77,14 @@ def handle_agent_chat_turn(
             actions.append(agent_task_action(planned_agent_task))
     elif intent["type"] == "generate_data_understanding_notebook":
         actions.append(generate_data_understanding_notebook_action(db, store=store, project=project))
+    elif intent["type"] == "guide_notebook_review":
+        actions.append(
+            guide_notebook_review_action(
+                db,
+                project=project,
+                notebook_artifact_id=str(intent["notebook_artifact_id"]) if intent.get("notebook_artifact_id") else None,
+            )
+        )
     elif intent["type"] == "explain_next_step":
         actions.append(explain_next_step_action(db, project=project))
     else:
@@ -153,6 +164,15 @@ def infer_chat_intent(message: str) -> dict[str, Any]:
             "confidence": 0.9,
             "summary": f"User wants the evaluation metric to be {SUPPORTED_METRICS[metric]['label']}.",
         }
+    notebook_id = extract_notebook_artifact_id(message)
+    if notebook_id or is_notebook_guide_request(normalized):
+        return {
+            "type": "guide_notebook_review",
+            "metric": None,
+            "notebook_artifact_id": notebook_id,
+            "confidence": 0.82,
+            "summary": "User wants interactive guidance for reading notebook evidence.",
+        }
     if is_notebook_request(normalized):
         return {
             "type": "generate_data_understanding_notebook",
@@ -201,6 +221,39 @@ def is_next_step_request(normalized: str) -> bool:
     )
 
 
+def list_value(value: object) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def dict_value(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def extract_notebook_artifact_id(message: str) -> str | None:
+    match = re.search(r"\[notebook:([^\]]+)\]", message)
+    return match.group(1).strip() if match else None
+
+
+def is_notebook_guide_request(normalized: str) -> bool:
+    if "notebook" not in normalized and "ノートブック" not in normalized:
+        return False
+    return any(
+        phrase in normalized
+        for phrase in [
+            "read first",
+            "inspect",
+            "guide",
+            "review",
+            "figure",
+            "evidence",
+            "見る",
+            "どこ",
+            "何を見",
+            "ガイド",
+        ]
+    )
+
+
 def generate_data_understanding_notebook_action(
     db: Session,
     *,
@@ -237,6 +290,110 @@ def explain_next_step_action(db: Session, *, project: Project) -> dict[str, Any]
             "current_stage_id": guidance["current_stage_id"],
         },
     }
+
+
+def guide_notebook_review_action(
+    db: Session,
+    *,
+    project: Project,
+    notebook_artifact_id: str | None,
+) -> dict[str, Any]:
+    index = build_project_notebook_index(db, project)
+    items = [cast(dict[str, Any], item) for item in list_value(index.get("items")) if isinstance(item, dict)]
+    item = next(
+        (
+            candidate
+            for candidate in items
+            if isinstance(candidate, dict)
+            and notebook_artifact_id
+            and candidate.get("notebook_artifact_id") == notebook_artifact_id
+        ),
+        None,
+    )
+    if item is None:
+        recommended = index.get("recommended_notebook")
+        item = recommended if isinstance(recommended, dict) else None
+    if item is None:
+        return {
+            "type": "guide_notebook_review",
+            "status": "needs_review",
+            "label": "Create a notebook review first",
+            "target_tab": "Notebooks",
+            "detail": "No generated notebook exists yet. Generate a Data Understanding notebook, then ask me what to inspect.",
+        }
+    artifact_ids = dict_value(item.get("artifact_ids"))
+    notebook_id = str(item.get("notebook_artifact_id") or "")
+    evidence_html = latest_notebook_artifact(db, project.id, notebook_id, "notebook_evidence_html")
+    evidence_bundle = latest_notebook_artifact(db, project.id, notebook_id, "notebook_evidence_bundle")
+    evidence_figures = notebook_artifacts(db, project.id, notebook_id, "notebook_evidence_svg")
+    coverage = dict_value(item.get("coverage"))
+    if evidence_html is not None:
+        label = "Open the Evidence narrative first"
+        detail = (
+            f"Read `{evidence_html.name}` before source or manifests. It combines the notebook review, "
+            f"profile-backed figures, guardrails, and Codex follow-up prompts. Then inspect the first SVG figure "
+            f"if a visual claim needs detail."
+        )
+        artifact_id = evidence_html.id
+    elif coverage.get("has_execution_capture"):
+        label = "Open the capture preview first"
+        detail = "Evidence capture exists but the narrative evidence artifact is missing. Inspect the capture preview and figure manifest."
+        artifact_id = str(artifact_ids.get("execution_html") or artifact_ids.get("figure_manifest") or item.get("notebook_artifact_id"))
+    else:
+        label = "Capture evidence before reading deeply"
+        detail = (
+            "The notebook draft exists, but profile-backed evidence has not been captured. Click Capture Evidence, "
+            "then open the Evidence narrative so the result appears next to the action."
+        )
+        artifact_id = str(artifact_ids.get("html_preview") or item.get("notebook_artifact_id"))
+    return {
+        "type": "guide_notebook_review",
+        "status": "explained",
+        "label": label,
+        "target_tab": "Notebooks",
+        "detail": detail,
+        "artifact_id": artifact_id,
+        "artifact_ids": [
+            artifact.id
+            for artifact in [
+                evidence_html,
+                evidence_bundle,
+                *evidence_figures[:4],
+            ]
+            if artifact is not None
+        ],
+        "guidance": {
+            "notebook_artifact_id": notebook_id,
+            "notebook_kind": item.get("notebook_kind"),
+            "coverage": coverage,
+            "evidence_figure_count": len(evidence_figures),
+            "next_micro_steps": [
+                "Open Review in the Notebook tab.",
+                "Read the Read this first and Visual story cards sections.",
+                "Inspect the most relevant SVG figure if a claim needs detail.",
+                "Ask Codex for a targeted follow-up instead of scanning every artifact.",
+            ],
+        },
+    }
+
+
+def latest_notebook_artifact(db: Session, project_id: str, notebook_artifact_id: str, asset_type: str) -> Artifact | None:
+    return next(iter(notebook_artifacts(db, project_id, notebook_artifact_id, asset_type)), None)
+
+
+def notebook_artifacts(db: Session, project_id: str, notebook_artifact_id: str, asset_type: str) -> list[Artifact]:
+    artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project_id, Artifact.asset_type == asset_type)
+            .order_by(Artifact.created_at.desc())
+        ).all()
+    )
+    return [
+        artifact
+        for artifact in artifacts
+        if loads_json(artifact.metadata_json, {}).get("notebook_artifact_id") == notebook_artifact_id
+    ]
 
 
 def apply_metric_preference(
@@ -478,6 +635,16 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
         return (
             f"Next focus: {action['label']}. {action['detail']} "
             f"Open {action['target_tab']} and use the Focus Guide evidence before asking a runner to continue."
+        )
+    if intent["type"] == "guide_notebook_review":
+        action = actions[0]
+        guidance = dict_value(action.get("guidance"))
+        micro_steps = list_value(guidance.get("next_micro_steps"))
+        steps_text = " ".join(f"{index + 1}. {step}" for index, step in enumerate(micro_steps[:4]))
+        return (
+            f"Notebook guide: {action['label']}. {action['detail']} "
+            f"{steps_text} "
+            "I will keep notebook source, evidence, figures, and runner records separate so Preview is not confused with executed marimo output."
         )
     artifact = next((action.get("artifact_id") for action in actions if action.get("artifact_id")), None)
     return (
