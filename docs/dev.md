@@ -179,6 +179,8 @@ Place extracted benchmark files under `data/benchmarks/{benchmark_id}` or anothe
 
 `/api/projects/{project_id}/features/relational-scenarios/diagnose` requires the latest relational recipe preview artifacts. It creates `relational_feature_scenario_diagnostics`, `relational_feature_scenario_report`, and `visualization_spec` artifacts plus Report, Evidence, and Lineage. The endpoint does not train a model; it compares primary-table-only, safe relational preview, deferred relational feature, and evaluation-readiness scenarios through feature coverage, missingness, constant/high-cardinality flags, split compatibility, deferred reasons, and AgentTask scenario recommendations. AgentTaskContracts, ResearchBriefs, Ideas, and AgentContextPacks include the latest diagnostics summary when available.
 
+Benchmark Evidence Packs, Decision Dashboards/Reports, and drafted Project Reports include the latest relational plan, recipe, and scenario diagnostics when available. This keeps relational feature readiness, deferred reasons, and recommended AgentTask scenarios visible in normal in-product reports without requiring users to manually inspect raw artifacts.
+
 Artifact preview and download are available from:
 
 ```bash

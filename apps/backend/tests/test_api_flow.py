@@ -1801,6 +1801,52 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert relational_diagnostics_report_response.status_code == 200
     assert "Relational Feature Scenario Diagnostics" in relational_diagnostics_report_response.json()["preview"]
 
+    evidence_pack_response = client.post(f"/api/projects/{project_id}/benchmarks/evidence-pack")
+    assert evidence_pack_response.status_code == 200, evidence_pack_response.text
+    evidence_pack_job = evidence_pack_response.json()
+    assert evidence_pack_job["status"] == "succeeded"
+    evidence_pack_download_response = client.get(
+        f"/api/artifacts/{evidence_pack_job['output']['benchmark_evidence_pack_artifact_id']}/download"
+    )
+    assert evidence_pack_download_response.status_code == 200
+    evidence_pack = evidence_pack_download_response.json()
+    assert evidence_pack["summary"]["relational_recipe_count"] >= 1
+    assert evidence_pack["summary"]["relational_diagnostics_count"] >= 1
+    evidence_entry = evidence_pack["benchmarks"][0]
+    assert evidence_entry["relational_features"]["diagnostics_artifact_id"] == relational_diagnostics_job[
+        "output"
+    ]["relational_feature_scenario_diagnostics_artifact_id"]
+    assert any(stage["stage"] == "Relational diagnostics" for stage in evidence_entry["stages"])
+    evidence_report_response = client.get(
+        f"/api/artifacts/{evidence_pack_job['output']['benchmark_evidence_report_artifact_id']}/preview"
+    )
+    assert evidence_report_response.status_code == 200
+    assert "Relational scenarios" in evidence_report_response.json()["preview"]
+
+    decision_response = client.post(f"/api/projects/{project_id}/decision-dashboard/generate")
+    assert decision_response.status_code == 200, decision_response.text
+    decision_job = decision_response.json()
+    assert decision_job["status"] == "succeeded"
+    decision_download_response = client.get(
+        f"/api/artifacts/{decision_job['output']['decision_dashboard_artifact_id']}/download"
+    )
+    assert decision_download_response.status_code == 200
+    decision_dashboard = decision_download_response.json()
+    assert decision_dashboard["relational_context"]["diagnostics_artifact_id"] == relational_diagnostics_job[
+        "output"
+    ]["relational_feature_scenario_diagnostics_artifact_id"]
+    assert any(stage["stage"] == "Relational" for stage in decision_dashboard["readiness_stages"])
+    decision_report_response = client.get(f"/api/reports/{decision_job['output']['report_id']}/preview")
+    assert decision_report_response.status_code == 200
+    assert "Relational Feature Context" in decision_report_response.json()["preview"]
+
+    project_report_response = client.post(f"/api/projects/{project_id}/reports/draft", json={})
+    assert project_report_response.status_code == 200, project_report_response.text
+    project_report_job = project_report_response.json()
+    project_report_preview_response = client.get(f"/api/reports/{project_report_job['output']['report_id']}/preview")
+    assert project_report_preview_response.status_code == 200
+    assert "Relational Feature Context" in project_report_preview_response.json()["preview"]
+
     agent_task_plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
     assert agent_task_plan_response.status_code == 200, agent_task_plan_response.text
     agent_contract_response = client.get(

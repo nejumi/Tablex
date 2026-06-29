@@ -158,6 +158,8 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/features/relational
 
 The diagnostics endpoint creates `relational_feature_scenario_diagnostics`, `relational_feature_scenario_report`, and `visualization_spec` artifacts plus Evidence and Lineage. It does not train XGBoost or any other fixed model. Instead it measures generated feature usability, missingness, constant/high-cardinality flags, split compatibility, deferred reasons, and recommended AgentTask scenarios so the runner can later choose an approach from evidence, Skills, and evaluation constraints.
 
+Benchmark Evidence Packs and Decision Reports now surface the latest relational plan, recipe, and scenario diagnostics. Use them as the high-level report view when comparing Home Credit-style multi-table readiness, deferred safety checks, and runner handoff scenarios.
+
 Run the fixture smoke harness for a project:
 
 ```bash

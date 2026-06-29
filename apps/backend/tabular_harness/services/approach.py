@@ -490,6 +490,11 @@ def draft_project_report(
     visualizations = db.scalars(
         select(VisualizationSpec).where(VisualizationSpec.project_id == project.id).order_by(VisualizationSpec.created_at.desc())
     ).all()
+    artifacts = list(
+        db.scalars(select(Artifact).where(Artifact.project_id == project.id).order_by(Artifact.created_at.desc())).all()
+    )
+    artifact_by_type = latest_artifacts_by_type(artifacts)
+    relational_context = decision_relational_context(artifact_by_type)
     reports_title = title or f"{project.name} Project Report"
     markdown = render_project_report(
         project=project,
@@ -500,6 +505,7 @@ def draft_project_report(
         model_versions=list(model_versions),
         insights=list(insights),
         visualizations=list(visualizations),
+        relational_context=relational_context,
     )
     artifact = store_text_artifact(
         db,
@@ -511,7 +517,21 @@ def draft_project_report(
         text=markdown,
         metadata={"project_id": project.id, "report_type": report_type},
     )
-    source_asset_ids = build_report_source_assets(datasets=list(datasets), ideas=list(ideas), runs=list(runs))
+    source_asset_ids = build_report_source_assets(
+        datasets=list(datasets),
+        ideas=list(ideas),
+        runs=list(runs),
+        artifacts=[
+            artifact
+            for artifact in artifact_by_type.values()
+            if artifact.asset_type
+            in {
+                "relational_feature_plan",
+                "relational_feature_recipe",
+                "relational_feature_scenario_diagnostics",
+            }
+        ],
+    )
     report = Report(
         id=new_id("rpt"),
         project_id=project.id,
@@ -655,6 +675,7 @@ def create_decision_dashboard(
         db.scalars(select(Artifact).where(Artifact.project_id == project.id).order_by(Artifact.created_at.desc())).all()
     )
     artifact_by_type = latest_artifacts_by_type(artifacts)
+    relational_context = decision_relational_context(artifact_by_type)
     approved_spec = next((spec for spec in evaluation_specs if spec.status == "approved"), None)
     high_risk_assumptions = [
         assumption
@@ -671,12 +692,14 @@ def create_decision_dashboard(
         high_risk_assumptions=high_risk_assumptions,
         open_questions=open_questions,
         artifacts_by_type=artifact_by_type,
+        relational_context=relational_context,
     )
     artifact_completeness = decision_artifact_completeness(artifact_by_type)
     risk_register = decision_risk_register(
         assumptions=high_risk_assumptions,
         open_questions=open_questions,
         artifacts_by_type=artifact_by_type,
+        relational_context=relational_context,
     )
     next_actions = decision_next_actions(readiness_stages, artifact_completeness, risk_register)
     visualization_specs = decision_visualization_specs(
@@ -729,6 +752,7 @@ def create_decision_dashboard(
             for question in open_questions[:12]
         ],
         "benchmark_context": decision_benchmark_context(artifact_by_type),
+        "relational_context": relational_context,
         "visualization_specs": visualization_specs,
         "artifact_refs": {
             asset_type: decision_artifact_ref(artifact) for asset_type, artifact in artifact_by_type.items()
@@ -850,6 +874,7 @@ def decision_readiness_stages(
     high_risk_assumptions: list[Assumption],
     open_questions: list[Question],
     artifacts_by_type: dict[str, Artifact],
+    relational_context: dict[str, Any],
 ) -> list[dict[str, Any]]:
     return [
         stage("Data", bool(datasets), len(datasets), "Latest DatasetSnapshot is available." if datasets else "Upload or import data."),
@@ -876,6 +901,12 @@ def decision_readiness_stages(
             "research_plan" in artifacts_by_type,
             1 if "research_plan" in artifacts_by_type else 0,
             "ResearchPlan exists." if "research_plan" in artifacts_by_type else "Generate controlled ResearchPlan.",
+        ),
+        stage(
+            "Relational",
+            relational_context["status"] in {"ready_for_agent_review", "ready_with_deferred_risks"},
+            int(relational_context.get("usable_feature_count") or 0),
+            relational_context["detail"],
         ),
         stage(
             "Strategy",
@@ -918,6 +949,9 @@ def decision_artifact_completeness(artifacts_by_type: dict[str, Artifact]) -> li
         ("split_manifest", "Split manifest"),
         ("research_plan", "Controlled research plan"),
         ("baseline_strategy_plan", "Baseline strategy plan"),
+        ("relational_feature_plan", "Relational feature plan"),
+        ("relational_feature_recipe", "Relational feature recipe preview"),
+        ("relational_feature_scenario_diagnostics", "Relational feature scenario diagnostics"),
         ("benchmark_scenario_pack", "Benchmark scenario pack when benchmark data is used"),
         ("experiment_run", "Experiment run record artifact when available"),
         ("evaluation_diagnostics", "Evaluation diagnostics after a run"),
@@ -941,6 +975,7 @@ def decision_risk_register(
     assumptions: list[Assumption],
     open_questions: list[Question],
     artifacts_by_type: dict[str, Artifact],
+    relational_context: dict[str, Any],
 ) -> list[dict[str, Any]]:
     risks: list[dict[str, Any]] = []
     for assumption in assumptions[:10]:
@@ -988,6 +1023,28 @@ def decision_risk_register(
                 "summary": "Fixture results validate workflow only and must not be reported as benchmark performance.",
                 "status": "active",
                 "fallback_policy": "require_before_deployment",
+            }
+        )
+    if relational_context["status"] == "ready_with_deferred_risks":
+        risks.append(
+            {
+                "risk_type": "relational_features",
+                "id": relational_context.get("diagnostics_artifact_id"),
+                "severity": "medium",
+                "summary": "Relational diagnostics found usable preview features but also deferred safety checks.",
+                "status": "needs_review",
+                "fallback_policy": "scenario_compare",
+            }
+        )
+    elif relational_context["status"] == "needs_feature_review":
+        risks.append(
+            {
+                "risk_type": "relational_features",
+                "id": relational_context.get("diagnostics_artifact_id"),
+                "severity": "medium",
+                "summary": "Relational recipe diagnostics did not identify usable preview features under current heuristics.",
+                "status": "needs_review",
+                "fallback_policy": "exclude_until_confirmed",
             }
         )
     return risks
@@ -1047,6 +1104,65 @@ def decision_benchmark_context(artifacts_by_type: dict[str, Artifact]) -> dict[s
         "fixture_policy": "Fixture results are product smoke checks, not benchmark performance claims.",
         "preview_url": f"/api/artifacts/{pack_artifact.id}/preview",
     }
+
+
+def decision_relational_context(artifacts_by_type: dict[str, Artifact]) -> dict[str, Any]:
+    plan = artifacts_by_type.get("relational_feature_plan")
+    recipe = artifacts_by_type.get("relational_feature_recipe")
+    diagnostics = artifacts_by_type.get("relational_feature_scenario_diagnostics")
+    if plan is None:
+        return {
+            "status": "needs_plan",
+            "detail": "Create a relational feature plan when multi-table context exists.",
+        }
+    plan_metadata = artifact_metadata(plan)
+    recipe_metadata = artifact_metadata(recipe)
+    diagnostics_metadata = artifact_metadata(diagnostics)
+    diagnostics_payload = artifact_json_payload(diagnostics)
+    usable_count = int(diagnostics_metadata.get("usable_feature_count") or 0)
+    deferred_count = int(diagnostics_metadata.get("deferred_step_count") or 0)
+    if diagnostics is None:
+        status = "needs_diagnostics" if recipe else "needs_recipe"
+    elif usable_count > 0 and deferred_count == 0:
+        status = "ready_for_agent_review"
+    elif usable_count > 0:
+        status = "ready_with_deferred_risks"
+    else:
+        status = "needs_feature_review"
+    details = {
+        "needs_recipe": "Build a preview-only relational feature recipe.",
+        "needs_diagnostics": "Diagnose relational feature scenarios before runner implementation.",
+        "ready_for_agent_review": "Relational preview features are ready for controlled AgentTask review.",
+        "ready_with_deferred_risks": "Relational preview features exist, but deferred safety checks need review.",
+        "needs_feature_review": "Relational diagnostics did not identify usable preview features under current heuristics.",
+    }
+    return {
+        "status": status,
+        "detail": details.get(status, "Review relational feature state."),
+        "plan_artifact_id": plan.id,
+        "recipe_artifact_id": recipe.id if recipe else None,
+        "diagnostics_artifact_id": diagnostics.id if diagnostics else None,
+        "aggregation_candidate_count": plan_metadata.get("aggregation_candidate_count"),
+        "generated_feature_count": recipe_metadata.get("generated_feature_count"),
+        "usable_feature_count": diagnostics_metadata.get("usable_feature_count"),
+        "constant_feature_count": diagnostics_metadata.get("constant_feature_count"),
+        "high_missing_feature_count": diagnostics_metadata.get("high_missing_feature_count"),
+        "deferred_step_count": diagnostics_metadata.get("deferred_step_count"),
+        "scenario_count": diagnostics_metadata.get("scenario_count"),
+        "scenario_comparison": diagnostics_payload.get("scenario_comparison")
+        if isinstance(diagnostics_payload.get("scenario_comparison"), list)
+        else [],
+    }
+
+
+def artifact_json_payload(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def decision_visualization_specs(
@@ -1208,6 +1324,26 @@ def render_decision_report(dashboard: dict[str, Any]) -> str:
             f"- Fixture policy: {benchmark.get('fixture_policy')}",
         ]
     )
+    relational = dashboard["relational_context"]
+    lines.extend(
+        [
+            "",
+            "## Relational Feature Context",
+            "",
+            f"- Status: {relational.get('status')}",
+            f"- Detail: {relational.get('detail')}",
+            f"- Aggregation candidates: {relational.get('aggregation_candidate_count') or '-'}",
+            f"- Generated preview features: {relational.get('generated_feature_count') or '-'}",
+            f"- Usable preview features: {relational.get('usable_feature_count') or '-'}",
+            f"- Deferred steps: {relational.get('deferred_step_count') or '-'}",
+        ]
+    )
+    scenarios = relational.get("scenario_comparison")
+    if isinstance(scenarios, list) and scenarios:
+        lines.extend(["", "Relational scenarios:"])
+        for scenario in scenarios[:4]:
+            if isinstance(scenario, dict):
+                lines.append(f"- {scenario.get('scenario')}: {scenario.get('status')} ({scenario.get('risk_level')})")
     return "\n".join(lines).strip() + "\n"
 
 
@@ -2037,6 +2173,7 @@ def render_project_report(
     model_versions: list[ModelVersion],
     insights: list[Insight],
     visualizations: list[VisualizationSpec],
+    relational_context: dict[str, Any],
 ) -> str:
     lines = [
         f"# {project.name} Project Report",
@@ -2082,6 +2219,12 @@ def render_project_report(
             lines.append(f"- {visualization.title}: {visualization.chart_type} ({visualization.status})")
     else:
         lines.append("No visualization specs have been generated yet.")
+    lines.extend(["", "## Relational Feature Context"])
+    lines.append(f"- Status: {relational_context.get('status')}")
+    lines.append(f"- Detail: {relational_context.get('detail')}")
+    lines.append(f"- Generated preview features: {relational_context.get('generated_feature_count') or '-'}")
+    lines.append(f"- Usable preview features: {relational_context.get('usable_feature_count') or '-'}")
+    lines.append(f"- Deferred steps: {relational_context.get('deferred_step_count') or '-'}")
     lines.extend(
         [
         "",
@@ -2128,11 +2271,13 @@ def build_report_source_assets(
     datasets: list[DatasetSnapshot],
     ideas: list[Idea],
     runs: list[ExperimentRun],
+    artifacts: list[Artifact] | None = None,
 ) -> list[dict[str, str]]:
     source_assets: list[dict[str, str]] = []
     source_assets.extend({"asset_type": "dataset_snapshot", "asset_id": dataset.id} for dataset in datasets[:5])
     source_assets.extend({"asset_type": "idea", "asset_id": idea.id} for idea in ideas[:10])
     source_assets.extend({"asset_type": "experiment_run", "asset_id": run.id} for run in runs[:10])
+    source_assets.extend({"asset_type": "artifact", "asset_id": artifact.id} for artifact in (artifacts or [])[:10])
     return source_assets
 
 

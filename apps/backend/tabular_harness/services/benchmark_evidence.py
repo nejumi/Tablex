@@ -21,11 +21,16 @@ from tabular_harness.models.entities import (
     utc_now,
 )
 from tabular_harness.services.approach import (
+    artifact_metadata,
     first_sentence,
     store_json_artifact,
     store_text_artifact,
 )
-from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
+from tabular_harness.services.artifacts import (
+    LocalArtifactStore,
+    artifact_primary_path,
+    create_lineage_edge,
+)
 from tabular_harness.services.benchmarks import (
     benchmark_access,
     benchmark_source_card,
@@ -45,6 +50,14 @@ BENCHMARK_ARTIFACT_TYPES = {
     "data_quality_gate",
     "data_quality_report",
     "relational_catalog",
+    "relational_feature_plan",
+    "relational_feature_report",
+    "relational_feature_recipe",
+    "relational_feature_preview",
+    "relational_feature_preview_profile",
+    "relational_feature_recipe_report",
+    "relational_feature_scenario_diagnostics",
+    "relational_feature_scenario_report",
     "baseline_strategy_plan",
     "baseline_report",
     "baseline_metrics",
@@ -66,6 +79,9 @@ BENCHMARK_JOB_TYPES = {
     "create_benchmark_scenario_pack",
     "run_benchmark_fixture_smoke",
     "run_public_benchmark_workflow",
+    "create_relational_feature_plan",
+    "build_relational_feature_recipe",
+    "diagnose_relational_feature_scenarios",
     "plan_baseline_strategy",
     "run_baseline",
     "analyze_evaluation_diagnostics",
@@ -338,6 +354,7 @@ def build_benchmark_entry(
     benchmark_reports = relevant_reports(reports, benchmark_artifacts, benchmark_runs)
     benchmark_visualizations = relevant_visualizations(visualizations, benchmark_artifacts)
     benchmark_agent_tasks = build_agent_task_summary(db, benchmark_id, benchmark_artifacts)
+    relational_features = build_relational_feature_summary(benchmark_artifacts)
     stages = benchmark_stages(
         source_card=source_card,
         local_status=local_status,
@@ -346,6 +363,7 @@ def build_benchmark_entry(
         jobs=benchmark_jobs,
         runs=benchmark_runs,
         agent_tasks=benchmark_agent_tasks,
+        relational_features=relational_features,
     )
     return {
         "benchmark_id": benchmark_id,
@@ -366,6 +384,7 @@ def build_benchmark_entry(
         "reports": [report_ref(report) for report in benchmark_reports[:10]],
         "visualizations": [visualization_ref(visualization) for visualization in benchmark_visualizations[:10]],
         "agent_tasks": benchmark_agent_tasks,
+        "relational_features": relational_features,
         "stages": stages,
         "overall_status": "ready" if all(stage["status"] == "ready" for stage in stages[:6]) else "needs_attention",
         "next_actions": entry_next_actions(stages, benchmark, source_card),
@@ -508,6 +527,7 @@ def benchmark_stages(
     jobs: list[Job],
     runs: list[ExperimentRun],
     agent_tasks: dict[str, Any],
+    relational_features: dict[str, Any],
 ) -> list[dict[str, Any]]:
     artifact_counts = count_by([artifact.asset_type for artifact in artifacts])
     successful_jobs = [job for job in jobs if job.status == "succeeded"]
@@ -523,6 +543,22 @@ def benchmark_stages(
             artifact_counts.get("relational_catalog", 0) > 0,
             artifact_counts.get("relational_catalog", 0),
             "Table bundle profile and inferred join context are available.",
+        ),
+        stage(
+            "Relational recipe",
+            bool(relational_features.get("recipe_artifact_id")),
+            int(relational_features.get("generated_feature_count") or 0),
+            "Preview-only relational feature recipe exists."
+            if relational_features.get("recipe_artifact_id")
+            else "Build relational feature recipe preview.",
+        ),
+        stage(
+            "Relational diagnostics",
+            bool(relational_features.get("diagnostics_artifact_id")),
+            int(relational_features.get("scenario_count") or 0),
+            "Scenario diagnostics summarize usable/deferred relational features."
+            if relational_features.get("diagnostics_artifact_id")
+            else "Diagnose relational feature scenarios.",
         ),
         stage(
             "Scenario pack",
@@ -553,6 +589,68 @@ def stage(name: str, ready: bool, count: int, detail: str) -> dict[str, Any]:
         "count": count,
         "detail": detail,
     }
+
+
+def build_relational_feature_summary(artifacts: list[Artifact]) -> dict[str, Any]:
+    plan = latest_artifact_of_type(artifacts, "relational_feature_plan")
+    recipe = latest_artifact_of_type(artifacts, "relational_feature_recipe")
+    diagnostics = latest_artifact_of_type(artifacts, "relational_feature_scenario_diagnostics")
+    plan_metadata = artifact_metadata(plan)
+    recipe_metadata = artifact_metadata(recipe)
+    diagnostics_metadata = artifact_metadata(diagnostics)
+    diagnostics_payload = load_json_payload(diagnostics)
+    deferred_summary = diagnostics_payload.get("deferred_reason_summary")
+    scenario_comparison = diagnostics_payload.get("scenario_comparison")
+    recommended_scenarios = diagnostics_payload.get("recommended_agent_task_scenarios")
+    return {
+        "plan_artifact_id": plan.id if plan else None,
+        "recipe_artifact_id": recipe.id if recipe else None,
+        "diagnostics_artifact_id": diagnostics.id if diagnostics else None,
+        "aggregation_candidate_count": plan_metadata.get("aggregation_candidate_count"),
+        "high_risk_count": plan_metadata.get("high_risk_count"),
+        "generated_feature_count": recipe_metadata.get("generated_feature_count"),
+        "executed_step_count": recipe_metadata.get("executed_step_count"),
+        "recipe_deferred_step_count": recipe_metadata.get("deferred_step_count"),
+        "usable_feature_count": diagnostics_metadata.get("usable_feature_count"),
+        "constant_feature_count": diagnostics_metadata.get("constant_feature_count"),
+        "high_missing_feature_count": diagnostics_metadata.get("high_missing_feature_count"),
+        "diagnostics_deferred_step_count": diagnostics_metadata.get("deferred_step_count"),
+        "scenario_count": diagnostics_metadata.get("scenario_count"),
+        "deferred_reason_summary": deferred_summary if isinstance(deferred_summary, dict) else {},
+        "scenario_comparison": scenario_comparison if isinstance(scenario_comparison, list) else [],
+        "recommended_agent_task_scenarios": recommended_scenarios if isinstance(recommended_scenarios, list) else [],
+        "readiness": relational_readiness(recipe, diagnostics, diagnostics_metadata),
+    }
+
+
+def relational_readiness(
+    recipe: Artifact | None,
+    diagnostics: Artifact | None,
+    diagnostics_metadata: dict[str, Any],
+) -> str:
+    if diagnostics is None:
+        return "needs_diagnostics" if recipe else "needs_recipe"
+    usable_count = int(diagnostics_metadata.get("usable_feature_count") or 0)
+    deferred_count = int(diagnostics_metadata.get("deferred_step_count") or 0)
+    if usable_count > 0 and deferred_count == 0:
+        return "ready_for_agent_review"
+    if usable_count > 0:
+        return "ready_with_deferred_risks"
+    return "needs_feature_review"
+
+
+def latest_artifact_of_type(artifacts: list[Artifact], asset_type: str) -> Artifact | None:
+    return next((artifact for artifact in artifacts if artifact.asset_type == asset_type), None)
+
+
+def load_json_payload(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def source_card_summary(source_card: dict[str, Any]) -> dict[str, Any]:
@@ -714,6 +812,10 @@ def benchmark_pack_summary(entries: list[dict[str, Any]]) -> dict[str, Any]:
         "run_count": sum(len(entry["runs"]) for entry in entries),
         "agent_task_contract_count": sum(int(entry["agent_tasks"]["contract_count"]) for entry in entries),
         "agent_result_count": sum(int(entry["agent_tasks"]["agent_result_count"]) for entry in entries),
+        "relational_recipe_count": sum(1 for entry in entries if entry["relational_features"]["recipe_artifact_id"]),
+        "relational_diagnostics_count": sum(
+            1 for entry in entries if entry["relational_features"]["diagnostics_artifact_id"]
+        ),
     }
 
 
@@ -768,6 +870,8 @@ def render_benchmark_evidence_report(pack: dict[str, Any]) -> str:
         f"- Experiment runs summarized: {pack['summary']['run_count']}",
         f"- AgentTaskContracts: {pack['summary']['agent_task_contract_count']}",
         f"- AgentResults: {pack['summary']['agent_result_count']}",
+        f"- Relational recipes: {pack['summary']['relational_recipe_count']}",
+        f"- Relational diagnostics: {pack['summary']['relational_diagnostics_count']}",
         "",
     ]
     if not pack["benchmarks"]:
@@ -795,6 +899,9 @@ def render_benchmark_evidence_report(pack: dict[str, Any]) -> str:
                 f"- Runs: {len(entry['runs'])}",
                 f"- AgentTaskContracts: {entry['agent_tasks']['contract_count']}",
                 f"- AgentResults: {entry['agent_tasks']['agent_result_count']}",
+                f"- Relational readiness: {entry['relational_features']['readiness']}",
+                f"- Relational usable features: {entry['relational_features'].get('usable_feature_count') or '-'}",
+                f"- Relational deferred steps: {entry['relational_features'].get('diagnostics_deferred_step_count') or '-'}",
                 "",
                 "| Stage | Status | Count | Detail |",
                 "| --- | --- | ---: | --- |",
@@ -807,6 +914,20 @@ def render_benchmark_evidence_report(pack: dict[str, Any]) -> str:
         if entry["next_actions"]:
             lines.extend(["", "Next actions:"])
             lines.extend(f"- {action}" for action in entry["next_actions"])
+        relational = entry["relational_features"]
+        if relational.get("scenario_comparison"):
+            lines.extend(["", "Relational scenarios:"])
+            for scenario in relational["scenario_comparison"][:4]:
+                if isinstance(scenario, dict):
+                    lines.append(
+                        f"- {scenario.get('scenario')}: {scenario.get('status')} ({scenario.get('risk_level')})"
+                    )
+        top_reasons = relational.get("deferred_reason_summary", {}).get("top_reasons")
+        if isinstance(top_reasons, list) and top_reasons:
+            lines.extend(["", "Relational deferred reasons:"])
+            for reason in top_reasons[:5]:
+                if isinstance(reason, dict):
+                    lines.append(f"- {reason.get('reason')}: {reason.get('count')}")
         lines.append("")
     if pack["next_actions"]:
         lines.extend(["## Cross-Benchmark Next Actions", ""])
