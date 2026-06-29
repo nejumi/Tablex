@@ -3912,10 +3912,14 @@ function formatFeatureCount(metrics: Record<string, unknown>) {
 
 function formatStrategyArtifact(artifact: Artifact) {
   const mode = textField(artifact.metadata.strategy_mode);
+  const planningSource = textField(artifact.metadata.planning_source);
+  const resourceGuard = textField(artifact.metadata.resource_guard_level);
   const assetCount = artifact.metadata.matched_asset_count;
   const agentTaskCount = artifact.metadata.agent_task_count;
   const parts = [
     mode ? mode.replace(/_/g, " ") : null,
+    planningSource ? planningSource.replace(/_/g, " ") : null,
+    resourceGuard ? resourceGuard.replace(/_/g, " ") : null,
     typeof assetCount === "number" ? `${assetCount} assets` : null,
     typeof agentTaskCount === "number" && agentTaskCount > 0 ? `${agentTaskCount} agent tasks` : null
   ].filter(Boolean);

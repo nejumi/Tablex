@@ -1078,12 +1078,82 @@ def build_baseline_plan(
         profile_feature_column(column, rows)
         for column in feature_columns
     ]
+    return build_baseline_plan_from_column_profiles(
+        column_profiles,
+        task_type=task_type,
+        target_column=target_column,
+        primary_metric=primary_metric,
+        excluded_columns=excluded_columns,
+        evaluation_spec=evaluation_spec,
+        row_count=len(rows),
+        column_count=len(feature_columns),
+        planning_source="observed_split_rows",
+        profile_boundary=None,
+    )
+
+
+def build_baseline_plan_from_profile(
+    profile: dict[str, Any],
+    *,
+    task_type: str,
+    target_column: str,
+    primary_metric: str,
+    excluded_columns: list[str],
+    evaluation_spec: EvaluationSpec | None,
+    row_count: int,
+    column_count: int,
+) -> dict[str, Any]:
+    blocked = {target_column, *excluded_columns, *SYSTEM_COLUMNS}
+    profile_columns_raw = profile.get("columns")
+    profile_columns: list[Any] = profile_columns_raw if isinstance(profile_columns_raw, list) else []
+    column_profiles = [
+        baseline_profile_from_eda_column(item)
+        for item in profile_columns
+        if isinstance(item, dict) and str(item.get("name")) not in blocked
+    ]
+    return build_baseline_plan_from_column_profiles(
+        column_profiles,
+        task_type=task_type,
+        target_column=target_column,
+        primary_metric=primary_metric,
+        excluded_columns=excluded_columns,
+        evaluation_spec=evaluation_spec,
+        row_count=row_count,
+        column_count=column_count,
+        planning_source="eda_profile",
+        profile_boundary={
+            "profile_mode": profile.get("profile_mode"),
+            "column_stat_scope": profile.get("column_stat_scope"),
+            "sample_row_count": profile.get("profile_sample", {}).get("sample_row_count")
+            if isinstance(profile.get("profile_sample"), dict)
+            else None,
+            "deep_profile_recommended": profile.get("deferred_deep_profile", {}).get("recommended")
+            if isinstance(profile.get("deferred_deep_profile"), dict)
+            else None,
+        },
+    )
+
+
+def build_baseline_plan_from_column_profiles(
+    column_profiles: list[dict[str, Any]],
+    *,
+    task_type: str,
+    target_column: str,
+    primary_metric: str,
+    excluded_columns: list[str],
+    evaluation_spec: EvaluationSpec | None,
+    row_count: int,
+    column_count: int,
+    planning_source: str,
+    profile_boundary: dict[str, Any] | None,
+) -> dict[str, Any]:
     numeric_columns = [item["name"] for item in column_profiles if item["role"] == "numeric"]
     categorical_columns = [item["name"] for item in column_profiles if item["role"] == "categorical"]
     text_columns = [item["name"] for item in column_profiles if item["role"] == "text"]
     datetime_columns = [item["name"] for item in column_profiles if item["role"] == "datetime"]
     identifier_columns = [item["name"] for item in column_profiles if item["role"] == "identifier"]
     ignored_columns = [item["name"] for item in column_profiles if item["role"] == "ignored"]
+    feature_columns = [item["name"] for item in column_profiles]
 
     split_type = evaluation_spec.split_type if evaluation_spec else "ad_hoc"
     spec_time_column = evaluation_spec.time_column if evaluation_spec else None
@@ -1153,6 +1223,16 @@ def build_baseline_plan(
         "lag_rolling_specs": lag_rolling_specs,
         "skipped_features": skipped_features,
         "column_profiles": column_profiles,
+        "planning_source": planning_source,
+        "profile_boundary": profile_boundary or {},
+        "resource_guard": baseline_resource_guard(
+            row_count=row_count,
+            column_count=column_count,
+            numeric_count=len(numeric_columns),
+            categorical_count=len(categorical_columns),
+            text_count=len(text_columns),
+            datetime_count=len(datetime_columns),
+        ),
         "safeguards": [
             "target_column excluded from features",
             "EvaluationSpec.excluded_columns respected",
@@ -1196,19 +1276,17 @@ def create_baseline_strategy_plan(
     split_artifact = db.get(Artifact, split_manifest.artifact_id)
     if dataset_artifact is None or split_artifact is None:
         raise ValueError("Required dataset or split artifact not found")
-    rows = load_split_rows(
-        dataset_path=artifact_primary_path(dataset_artifact),
-        split_path=artifact_primary_path(split_artifact),
-        target_column=project.target_column,
-    )
-    task_type = resolve_task_type(project.task_type, rows)
-    baseline_plan = build_baseline_plan(
-        rows,
+    profile = load_profile_for_dataset(db, dataset)
+    task_type = resolve_task_type_from_profile(project.task_type, profile)
+    baseline_plan = build_baseline_plan_from_profile(
+        profile,
         task_type=task_type,
         target_column=project.target_column,
         primary_metric=evaluation_spec.primary_metric,
         excluded_columns=parse_string_list(loads_json(evaluation_spec.excluded_columns_json, [])),
         evaluation_spec=evaluation_spec,
+        row_count=int(dataset.row_count or profile.get("row_count") or 0),
+        column_count=int(dataset.column_count or profile.get("column_count") or 0),
     )
     strategy_plan = build_baseline_strategy_plan(
         db,
@@ -1237,6 +1315,8 @@ def create_baseline_strategy_plan(
             .get("library_context", {})
             .get("matched_asset_count"),
             "agent_task_count": len(strategy_plan.get("next_agent_tasks", [])),
+            "planning_source": baseline_plan.get("planning_source"),
+            "resource_guard_level": baseline_plan.get("resource_guard", {}).get("level"),
         },
     )
     for from_type, from_id, relation in [
@@ -1276,6 +1356,13 @@ def build_baseline_strategy_plan(
     table_count = int(relational_metadata.get("table_count") or 0)
     relationship_count = int(relational_metadata.get("relationship_count") or 0)
     library_context = baseline_library_context(db, baseline_plan, table_count)
+    resource_guard_raw = baseline_plan.get("resource_guard")
+    resource_guard: dict[str, Any] = resource_guard_raw if isinstance(resource_guard_raw, dict) else {}
+    strong_status = (
+        "selected_for_guarded_local_run"
+        if resource_guard.get("level") in {"large_local_run", "moderate_local_run"}
+        else "selected_for_local_run"
+    )
     candidates = [
         {
             "id": "sanity_floor",
@@ -1288,11 +1375,12 @@ def build_baseline_strategy_plan(
         {
             "id": "strong_single_table_xgboost",
             "name": "Strong single-table XGBoost baseline",
-            "status": "selected_for_local_run",
+            "status": strong_status,
             "implementation": baseline_plan.get("candidate_model"),
             "why": "Good pragmatic baseline for mixed numeric, categorical, datetime, and sparse text features when the profiled table supports it.",
             "uses": ["numeric_median_imputation", "ordinal_categorical_encoding", "text_tfidf", "datetime_calendar_features"],
             "selection_policy": "chosen from dataset signals and approved EvaluationSpec, not treated as the only acceptable modeling approach",
+            "resource_guard": resource_guard,
         },
         {
             "id": "text_tfidf",
@@ -1387,6 +1475,9 @@ def build_baseline_strategy_plan(
             "current_baseline_plan": {
                 "candidate_model": baseline_plan.get("candidate_model"),
                 "model_family": baseline_plan.get("model_family"),
+                "planning_source": baseline_plan.get("planning_source"),
+                "resource_guard": baseline_plan.get("resource_guard"),
+                "profile_boundary": baseline_plan.get("profile_boundary"),
                 "skipped_features": baseline_plan.get("skipped_features", []),
                 "safeguards": baseline_plan.get("safeguards", []),
             },
@@ -1478,6 +1569,7 @@ def baseline_runner_policy(
             "can_execute_now": True,
             "candidate_model": baseline_plan.get("candidate_model"),
             "model_family": baseline_plan.get("model_family"),
+            "resource_guard": baseline_plan.get("resource_guard"),
             "feature_families": {
                 "numeric_median_imputation": bool(baseline_plan.get("numeric_columns")),
                 "categorical_ordinal_encoding": bool(baseline_plan.get("categorical_columns")),
@@ -1631,6 +1723,111 @@ def latest_project_artifact(db: Session, project_id: str, asset_type: str) -> Ar
         .where(Artifact.project_id == project_id, Artifact.asset_type == asset_type)
         .order_by(Artifact.created_at.desc())
     )
+
+
+def load_profile_for_dataset(db: Session, dataset: DatasetSnapshot) -> dict[str, Any]:
+    artifacts = db.scalars(
+        select(Artifact)
+        .where(Artifact.project_id == dataset.project_id, Artifact.asset_type == "eda_profile")
+        .order_by(Artifact.created_at.desc())
+    ).all()
+    for artifact in artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("dataset_snapshot_id") != dataset.id:
+            continue
+        try:
+            payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+        except OSError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+    return {}
+
+
+def resolve_task_type_from_profile(task_type: str | None, profile: dict[str, Any]) -> str:
+    if task_type in {"regression", "binary_classification", "multiclass_classification"}:
+        return task_type
+    target_profile_raw = profile.get("target_profile")
+    target_profile: dict[str, Any] = target_profile_raw if isinstance(target_profile_raw, dict) else {}
+    unique_count = int(target_profile.get("unique_count") or 0)
+    if 0 < unique_count <= 2:
+        return "binary_classification"
+    if 2 < unique_count <= 20:
+        return "multiclass_classification"
+    return "regression"
+
+
+def baseline_profile_from_eda_column(column: dict[str, Any]) -> dict[str, Any]:
+    name = str(column.get("name") or "")
+    semantic_type = str(column.get("semantic_type") or "").lower()
+    role_hint = str(column.get("role") or "").lower()
+    physical_type = str(column.get("physical_type") or "")
+    role = "categorical"
+    reason = f"eda_profile semantic_type={semantic_type or 'unknown'} physical_type={physical_type}"
+    if role_hint in {"identifier", "group"} or semantic_type == "identifier":
+        role = "identifier"
+    elif semantic_type == "datetime":
+        role = "datetime"
+    elif semantic_type == "text":
+        role = "text"
+    elif semantic_type == "numeric":
+        role = "numeric"
+    elif semantic_type == "categorical":
+        role = "categorical"
+    elif any(token in physical_type.upper() for token in ("INT", "DOUBLE", "FLOAT", "DECIMAL", "NUMERIC")):
+        role = "numeric"
+        reason = f"{reason}; numeric physical type fallback"
+    return {
+        "name": name,
+        "role": role,
+        "reason": reason,
+        "unique_count": int(column.get("unique_count") or 0),
+        "missing_fraction": float(column.get("missing_rate") or 0.0),
+        "observed_count": int(column.get("stats_row_count") or 0),
+        "stats_scope": column.get("stats_scope"),
+        "unique_count_is_approximate": bool(column.get("unique_count_is_approximate")),
+        "missing_count_is_estimated": bool(column.get("missing_count_is_estimated")),
+    }
+
+
+def baseline_resource_guard(
+    *,
+    row_count: int,
+    column_count: int,
+    numeric_count: int,
+    categorical_count: int,
+    text_count: int,
+    datetime_count: int,
+) -> dict[str, Any]:
+    estimated_feature_families = {
+        "numeric": numeric_count,
+        "categorical": categorical_count,
+        "text": text_count,
+        "datetime": datetime_count,
+    }
+    if row_count >= 250_000 or column_count >= 100:
+        level = "large_local_run"
+        recommendation = "plan_first_then_run_with_operator_awareness"
+        notes = [
+            "Strategy planning uses EDA profile metadata and does not load all split rows.",
+            "A full local baseline will load the approved split into Python and may take minutes on a single Docker host.",
+            "Prefer an AgentTask/runner workspace or explicit smoke run before expanding relational features.",
+        ]
+    elif row_count >= 100_000 or column_count >= 80:
+        level = "moderate_local_run"
+        recommendation = "local_run_with_monitoring"
+        notes = ["Local strong baseline is feasible but should be monitored for memory and runtime."]
+    else:
+        level = "standard_local_run"
+        recommendation = "local_run"
+        notes = ["Local strong baseline is within MVP size assumptions."]
+    return {
+        "level": level,
+        "recommendation": recommendation,
+        "row_count": row_count,
+        "column_count": column_count,
+        "estimated_feature_families": estimated_feature_families,
+        "notes": notes,
+    }
 
 
 def collect_feature_columns(

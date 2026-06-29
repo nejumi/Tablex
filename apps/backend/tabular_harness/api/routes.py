@@ -3087,6 +3087,11 @@ def plan_baseline_strategy_endpoint(
                 "next_agent_task_count": len(result.plan.get("next_agent_tasks", [])),
                 "selected_baseline_type": result.plan["selected_execution"].get("baseline_type"),
                 "strategy_mode": result.plan.get("context", {}).get("strategy_mode"),
+                "planning_source": result.plan.get("context", {}).get("current_baseline_plan", {}).get("planning_source"),
+                "resource_guard_level": result.plan.get("context", {})
+                .get("current_baseline_plan", {})
+                .get("resource_guard", {})
+                .get("level"),
                 "matched_asset_count": result.plan.get("context", {})
                 .get("library_context", {})
                 .get("matched_asset_count"),

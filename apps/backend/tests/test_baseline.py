@@ -7,6 +7,7 @@ from tabular_harness.services.baseline import (
     SPLIT_VALUE_COLUMN,
     TARGET_VALUE_COLUMN,
     build_baseline_plan,
+    build_baseline_plan_from_profile,
     build_feature_dict,
     run_classification_baseline,
 )
@@ -65,6 +66,39 @@ def test_baseline_plan_detects_text_datetime_and_identifier_columns() -> None:
     assert "support_note" in plan["text_columns"]
     assert "created_at" in plan["datetime_columns"]
     assert "customer_id" in plan["identifier_columns"]
+
+
+def test_baseline_plan_from_profile_uses_resource_guard_without_rows() -> None:
+    profile = {
+        "profile_mode": "bounded_sample",
+        "column_stat_scope": "sample",
+        "profile_sample": {"sample_row_count": 50_000},
+        "deferred_deep_profile": {"recommended": True},
+        "columns": [
+            {"name": "SK_ID_CURR", "physical_type": "BIGINT", "semantic_type": "identifier", "role": "identifier"},
+            {"name": "TARGET", "physical_type": "BIGINT", "semantic_type": "numeric", "role": "target"},
+            {"name": "AMT_INCOME_TOTAL", "physical_type": "DOUBLE", "semantic_type": "numeric", "role": "feature"},
+            {"name": "NAME_CONTRACT_TYPE", "physical_type": "VARCHAR", "semantic_type": "categorical", "role": "feature"},
+        ],
+    }
+
+    plan = build_baseline_plan_from_profile(
+        profile,
+        task_type="binary_classification",
+        target_column="TARGET",
+        primary_metric="pr_auc",
+        excluded_columns=[],
+        evaluation_spec=None,
+        row_count=307_511,
+        column_count=122,
+    )
+
+    assert plan["planning_source"] == "eda_profile"
+    assert plan["resource_guard"]["level"] == "large_local_run"
+    assert "AMT_INCOME_TOTAL" in plan["numeric_columns"]
+    assert "NAME_CONTRACT_TYPE" in plan["categorical_columns"]
+    assert "SK_ID_CURR" in plan["identifier_columns"]
+    assert "TARGET" not in plan["numeric_columns"]
 
 
 def test_classification_baseline_runs_model_with_dummy_sanity_floor() -> None:
