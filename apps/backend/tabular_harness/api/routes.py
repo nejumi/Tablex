@@ -72,6 +72,7 @@ from tabular_harness.schemas import (
     ModelValidationRead,
     ModelVersionRead,
     ProjectCreate,
+    ProjectGuidanceRead,
     ProjectOverview,
     ProjectRead,
     ProjectUpdate,
@@ -182,6 +183,7 @@ from tabular_harness.services.planned_agent_workspace import (
     prepare_workspace_from_contract_artifact,
 )
 from tabular_harness.services.profiler import profile_tabular_file
+from tabular_harness.services.project_guidance import build_project_guidance
 from tabular_harness.services.relational_feature_diagnostics import (
     diagnose_relational_feature_scenarios,
 )
@@ -725,6 +727,12 @@ def project_overview(project_id: str, db: Annotated[Session, Depends(get_session
         "recent_artifacts": [artifact_to_dict(item) for item in recent_artifacts],
         "recent_jobs": [job_to_dict(item) for item in recent_jobs],
     }
+
+
+@router.get("/api/projects/{project_id}/guidance", response_model=ProjectGuidanceRead)
+def project_guidance(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    return build_project_guidance(db, project)
 
 
 @router.post("/api/projects/{project_id}/datasets/upload", response_model=DatasetUploadResponse)

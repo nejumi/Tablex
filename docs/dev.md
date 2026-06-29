@@ -61,6 +61,14 @@ curl http://localhost:8000/api/jobs/{job_id}/artifacts
 
 `/api/jobs/{job_id}/artifacts` resolves artifact ids from job outputs, summarizes benchmark/run/model/metric context, and returns preview/download-ready Artifact records for workflow jobs.
 
+Project Guidance is available from:
+
+```bash
+curl http://localhost:8000/api/projects/{project_id}/guidance
+```
+
+The response is `project_guidance.v1`. It is harness-owned decision support for the UI Focus Guide: one recommended focus, primary/secondary actions, state summary, supporting counts, and AgentRunner guidance. Actions can navigate, call a safe harness endpoint, or create a scoped AgentTaskContract. Approach-stage guidance should preserve flexibility by giving Codex a bounded prompt and current evidence rather than forcing a fixed modeling recipe.
+
 Queued job orchestration endpoints:
 
 ```bash

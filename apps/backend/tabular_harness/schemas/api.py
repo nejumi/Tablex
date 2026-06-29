@@ -44,6 +44,45 @@ class ProjectOverview(BaseModel):
     recent_jobs: list[dict[str, Any]]
 
 
+class ProjectGuidanceAction(BaseModel):
+    id: str
+    label: str
+    target_tab: str
+    action_type: Literal["navigate", "run_endpoint", "agent_task_prompt"]
+    method: str | None = None
+    endpoint: str | None = None
+    request_body: dict[str, Any] | None = None
+    prompt: str | None = None
+    disabled: bool = False
+    disabled_reason: str | None = None
+
+
+class ProjectGuidanceFocus(BaseModel):
+    focus_key: str
+    target_tab: str
+    title: str
+    reason: str
+    risk_level: str
+    confidence: float = Field(ge=0, le=1)
+    evidence: list[str]
+    primary_action: ProjectGuidanceAction
+    secondary_actions: list[ProjectGuidanceAction] = Field(default_factory=list)
+    suggested_agent_prompt: str | None = None
+
+
+class ProjectGuidanceRead(BaseModel):
+    schema_version: Literal["project_guidance.v1"]
+    project_id: str
+    generated_at: str
+    attention_budget: int
+    overview_mode: Literal["guided"]
+    recommended_focus: ProjectGuidanceFocus
+    state_summary: dict[str, Any]
+    supporting_counts: dict[str, int]
+    hidden_detail_groups: list[dict[str, Any]]
+    agent_guidance: list[str]
+
+
 class ArtifactRead(BaseModel):
     id: str
     project_id: str | None

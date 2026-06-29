@@ -847,6 +847,62 @@ type FocusRecommendation = {
   reason: string;
   evidence: string[];
   secondaryTabs: Tab[];
+  primaryAction: FocusAction | null;
+  secondaryActions: FocusAction[];
+  riskLevel: string | null;
+  confidence: number | null;
+  suggestedAgentPrompt: string | null;
+  source: "api" | "local";
+};
+
+type FocusAction = {
+  id: string;
+  label: string;
+  targetTab: Tab;
+  actionType: "navigate" | "run_endpoint" | "agent_task_prompt";
+  method: string | null;
+  endpoint: string | null;
+  requestBody: Record<string, unknown> | null;
+  prompt: string | null;
+  disabled: boolean;
+  disabledReason: string | null;
+};
+
+type ProjectGuidanceAction = {
+  id: string;
+  label: string;
+  target_tab: string;
+  action_type: "navigate" | "run_endpoint" | "agent_task_prompt";
+  method: string | null;
+  endpoint: string | null;
+  request_body: Record<string, unknown> | null;
+  prompt: string | null;
+  disabled: boolean;
+  disabled_reason: string | null;
+};
+
+type ProjectGuidance = {
+  schema_version: "project_guidance.v1";
+  project_id: string;
+  generated_at: string;
+  attention_budget: number;
+  overview_mode: "guided";
+  recommended_focus: {
+    focus_key: string;
+    target_tab: string;
+    title: string;
+    reason: string;
+    risk_level: string;
+    confidence: number;
+    evidence: string[];
+    primary_action: ProjectGuidanceAction;
+    secondary_actions: ProjectGuidanceAction[];
+    suggested_agent_prompt: string | null;
+  };
+  state_summary: Record<string, unknown>;
+  supporting_counts: Record<string, number>;
+  hidden_detail_groups: Array<Record<string, unknown>>;
+  agent_guidance: string[];
 };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -861,6 +917,56 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 function tabLabel(tab: Tab, text: LocaleMessages) {
   const item = tabItems.find((candidate) => candidate.id === tab);
   return item ? text[item.labelKey] : tab;
+}
+
+function normalizeTab(value: string | null | undefined): Tab {
+  return tabItems.some((item) => item.id === value) ? (value as Tab) : "Overview";
+}
+
+function guidanceActionToFocusAction(action: ProjectGuidanceAction): FocusAction {
+  return {
+    id: action.id,
+    label: action.label,
+    targetTab: normalizeTab(action.target_tab),
+    actionType: action.action_type,
+    method: action.method,
+    endpoint: action.endpoint,
+    requestBody: action.request_body,
+    prompt: action.prompt,
+    disabled: action.disabled,
+    disabledReason: action.disabled_reason
+  };
+}
+
+function focusFromGuidance(guidance: ProjectGuidance, text: LocaleMessages): FocusRecommendation {
+  const focus = guidance.recommended_focus;
+  const fallback = localizedFocusCopy(focus.focus_key, text);
+  const primaryAction = guidanceActionToFocusAction(focus.primary_action);
+  const secondaryActions = focus.secondary_actions.map(guidanceActionToFocusAction);
+  return {
+    tab: normalizeTab(focus.target_tab),
+    title: fallback?.title ?? focus.title,
+    reason: fallback?.reason ?? focus.reason,
+    evidence: focus.evidence,
+    secondaryTabs: secondaryActions.map((action) => action.targetTab),
+    primaryAction,
+    secondaryActions,
+    riskLevel: focus.risk_level,
+    confidence: focus.confidence,
+    suggestedAgentPrompt: focus.suggested_agent_prompt,
+    source: "api"
+  };
+}
+
+function localizedFocusCopy(focusKey: string, text: LocaleMessages) {
+  if (focusKey === "upload_data") return { title: text.focusUploadData, reason: text.focusUploadDataReason };
+  if (focusKey === "understand_data") return { title: text.focusUnderstandData, reason: text.focusUnderstandDataReason };
+  if (focusKey === "assumptions") return { title: text.focusAssumptions, reason: text.focusAssumptionsReason };
+  if (focusKey === "evaluation") return { title: text.focusEvaluation, reason: text.focusEvaluationReason };
+  if (focusKey === "approach") return { title: text.focusApproach, reason: text.focusApproachReason };
+  if (focusKey === "experiments") return { title: text.focusExperiments, reason: text.focusExperimentsReason };
+  if (focusKey === "reports") return { title: text.focusReports, reason: text.focusReportsReason };
+  return null;
 }
 
 function isHighRiskAssumption(assumption: Assumption) {
@@ -902,7 +1008,13 @@ function buildFocusRecommendation({
       title: text.focusUploadData,
       reason: text.focusUploadDataReason,
       evidence: [`0 DatasetSnapshots`, `phase: ${formatWorkflowState(project.current_phase)}`],
-      secondaryTabs: ["Understanding", "Approach"]
+      secondaryTabs: ["Understanding", "Approach"],
+      primaryAction: null,
+      secondaryActions: [],
+      riskLevel: "blocking",
+      confidence: 0.8,
+      suggestedAgentPrompt: null,
+      source: "local"
     };
   }
 
@@ -912,7 +1024,13 @@ function buildFocusRecommendation({
       title: text.focusUnderstandData,
       reason: text.focusUnderstandDataReason,
       evidence: [`${datasets.length} DatasetSnapshots`, "understanding report missing"],
-      secondaryTabs: ["Data", "Assumptions"]
+      secondaryTabs: ["Data", "Assumptions"],
+      primaryAction: null,
+      secondaryActions: [],
+      riskLevel: "high",
+      confidence: 0.75,
+      suggestedAgentPrompt: null,
+      source: "local"
     };
   }
 
@@ -922,7 +1040,13 @@ function buildFocusRecommendation({
       title: text.focusAssumptions,
       reason: text.focusAssumptionsReason,
       evidence: [`${highRiskAssumptions.length} high-risk assumptions`, `${assumptions.length} total assumptions`],
-      secondaryTabs: ["Understanding", "Evaluation"]
+      secondaryTabs: ["Understanding", "Evaluation"],
+      primaryAction: null,
+      secondaryActions: [],
+      riskLevel: "high",
+      confidence: 0.75,
+      suggestedAgentPrompt: null,
+      source: "local"
     };
   }
 
@@ -932,7 +1056,13 @@ function buildFocusRecommendation({
       title: text.focusEvaluation,
       reason: text.focusEvaluationReason,
       evidence: [`${candidates.length} candidates`, `${approvedSpecs.length} approved specs`],
-      secondaryTabs: ["Assumptions", "Approach"]
+      secondaryTabs: ["Assumptions", "Approach"],
+      primaryAction: null,
+      secondaryActions: [],
+      riskLevel: "high",
+      confidence: 0.72,
+      suggestedAgentPrompt: null,
+      source: "local"
     };
   }
 
@@ -942,7 +1072,13 @@ function buildFocusRecommendation({
       title: text.focusApproach,
       reason: text.focusApproachReason,
       evidence: [`${approvedSpecs.length} approved specs`, `${succeededJobs.length} succeeded jobs`],
-      secondaryTabs: ["Experiments", "Assets"]
+      secondaryTabs: ["Experiments", "Assets"],
+      primaryAction: null,
+      secondaryActions: [],
+      riskLevel: "medium",
+      confidence: 0.7,
+      suggestedAgentPrompt: null,
+      source: "local"
     };
   }
 
@@ -952,7 +1088,13 @@ function buildFocusRecommendation({
       title: text.focusExperiments,
       reason: text.focusExperimentsReason,
       evidence: [`${runs.length} experiment runs`, `${artifacts.length} artifacts`],
-      secondaryTabs: ["Leaderboard", "Reports"]
+      secondaryTabs: ["Leaderboard", "Reports"],
+      primaryAction: null,
+      secondaryActions: [],
+      riskLevel: "medium",
+      confidence: 0.68,
+      suggestedAgentPrompt: null,
+      source: "local"
     };
   }
 
@@ -961,7 +1103,13 @@ function buildFocusRecommendation({
     title: text.focusReports,
     reason: text.focusReportsReason,
     evidence: [`${reports.length} reports`, `${runs.length} experiment runs`],
-    secondaryTabs: ["Leaderboard", "Lineage"]
+    secondaryTabs: ["Leaderboard", "Lineage"],
+    primaryAction: null,
+    secondaryActions: [],
+    riskLevel: "low",
+    confidence: 0.65,
+    suggestedAgentPrompt: null,
+    source: "local"
   };
 }
 
@@ -1317,6 +1465,7 @@ function ProjectDetail({
   onProjectChanged: () => Promise<void>;
 }) {
   const [overview, setOverview] = React.useState<Overview | null>(null);
+  const [guidance, setGuidance] = React.useState<ProjectGuidance | null>(null);
   const [datasets, setDatasets] = React.useState<DatasetSnapshot[]>([]);
   const [questions, setQuestions] = React.useState<Question[]>([]);
   const [assumptions, setAssumptions] = React.useState<Assumption[]>([]);
@@ -1343,8 +1492,9 @@ function ProjectDetail({
   const [error, setError] = React.useState<string | null>(null);
   const [agentChatMessages, setAgentChatMessages] = React.useState<Array<{ role: "user" | "system"; text: string }>>([]);
   const focusRecommendation = React.useMemo(
-    () =>
-      buildFocusRecommendation({
+    () => {
+      if (guidance) return focusFromGuidance(guidance, text);
+      return buildFocusRecommendation({
         text,
         project,
         datasets,
@@ -1356,8 +1506,9 @@ function ProjectDetail({
         reports,
         jobs,
         artifacts
-      }),
-    [text, project, datasets, understanding, assumptions, candidates, specs, runs, reports, jobs, artifacts]
+      });
+    },
+    [guidance, text, project, datasets, understanding, assumptions, candidates, specs, runs, reports, jobs, artifacts]
   );
 
   const refresh = React.useCallback(async () => {
@@ -1365,6 +1516,7 @@ function ProjectDetail({
     try {
       const [
         overviewData,
+        guidanceData,
         datasetsData,
         questionsData,
         assumptionsData,
@@ -1388,6 +1540,7 @@ function ProjectDetail({
         understandingData
       ] = await Promise.all([
         api<Overview>(`/api/projects/${project.id}/overview`),
+        api<ProjectGuidance>(`/api/projects/${project.id}/guidance`).catch(() => null),
         api<DatasetSnapshot[]>(`/api/projects/${project.id}/datasets`),
         api<Question[]>(`/api/projects/${project.id}/questions`),
         api<Assumption[]>(`/api/projects/${project.id}/assumptions`),
@@ -1411,6 +1564,7 @@ function ProjectDetail({
         api<{ markdown: string | null }>(`/api/projects/${project.id}/understanding/latest`)
       ]);
       setOverview(overviewData);
+      setGuidance(guidanceData);
       setDatasets(datasetsData);
       setQuestions(questionsData);
       setAssumptions(assumptionsData);
@@ -1496,10 +1650,44 @@ function ProjectDetail({
     }
   }
 
+  async function runFocusAction(action: FocusAction | null) {
+    if (!action || action.disabled) {
+      if (action?.disabledReason) setError(action.disabledReason);
+      return;
+    }
+    if (action.actionType === "navigate") {
+      onTabChange(action.targetTab);
+      return;
+    }
+    if (action.actionType === "agent_task_prompt") {
+      await submitAgentChat(action.prompt ?? action.label);
+      onTabChange(action.targetTab);
+      return;
+    }
+    if (action.actionType === "run_endpoint" && action.endpoint) {
+      await runAction(() =>
+        api(action.endpoint as string, {
+          method: action.method ?? "POST",
+          headers: action.requestBody ? { "Content-Type": "application/json" } : undefined,
+          body: action.requestBody ? JSON.stringify(action.requestBody) : undefined
+        })
+      );
+      onTabChange(action.targetTab);
+      return;
+    }
+    onTabChange(action.targetTab);
+  }
+
   return (
     <section className="detail">
       {error ? <div className="banner danger">{error}</div> : null}
-      <FocusGuide recommendation={focusRecommendation} currentTab={tab} text={text} onTabChange={onTabChange} />
+      <FocusGuide
+        recommendation={focusRecommendation}
+        currentTab={tab}
+        text={text}
+        onTabChange={onTabChange}
+        onAction={(action) => void runFocusAction(action)}
+      />
       <AgentChatDock
         busy={busy}
         text={text}
@@ -1634,14 +1822,48 @@ function FocusGuide({
   recommendation,
   currentTab,
   text,
-  onTabChange
+  onTabChange,
+  onAction
 }: {
   recommendation: FocusRecommendation;
   currentTab: Tab;
   text: LocaleMessages;
   onTabChange: (tab: Tab) => void;
+  onAction: (action: FocusAction | null) => void;
 }) {
   const isCurrent = currentTab === recommendation.tab;
+  const primaryAction =
+    recommendation.primaryAction ??
+    ({
+      id: "navigate_recommended_focus",
+      label: isCurrent ? text.recommendedFocus : `${text.goToFocus}: ${tabLabel(recommendation.tab, text)}`,
+      targetTab: recommendation.tab,
+      actionType: "navigate",
+      method: null,
+      endpoint: null,
+      requestBody: null,
+      prompt: null,
+      disabled: isCurrent,
+      disabledReason: null
+    } satisfies FocusAction);
+  const secondaryActions = recommendation.secondaryActions.length
+    ? recommendation.secondaryActions
+    : recommendation.secondaryTabs.map(
+        (tab) =>
+          ({
+            id: `navigate_${tab}`,
+            label: tabLabel(tab, text),
+            targetTab: tab,
+            actionType: "navigate",
+            method: null,
+            endpoint: null,
+            requestBody: null,
+            prompt: null,
+            disabled: false,
+            disabledReason: null
+          }) satisfies FocusAction
+      );
+  const primaryDisabled = primaryAction.disabled || (primaryAction.actionType === "navigate" && isCurrent);
 
   return (
     <section className="focus-guide" aria-label={text.focusGuideTitle}>
@@ -1654,7 +1876,7 @@ function FocusGuide({
         <p>{recommendation.reason}</p>
         <div className="focus-evidence" aria-label={text.focusEvidence}>
           <span>{text.focusEvidence}</span>
-          {recommendation.evidence.map((item) => (
+          {recommendation.evidence.slice(0, 3).map((item) => (
             <strong key={item}>{item}</strong>
           ))}
         </div>
@@ -1662,19 +1884,25 @@ function FocusGuide({
       <div className="focus-guide-actions">
         <button
           className="primary-button"
-          disabled={isCurrent}
-          onClick={() => onTabChange(recommendation.tab)}
+          disabled={primaryDisabled}
+          onClick={() => onAction(primaryAction)}
           type="button"
         >
-          <Search size={16} />
-          {isCurrent ? text.recommendedFocus : `${text.goToFocus}: ${tabLabel(recommendation.tab, text)}`}
+          {primaryAction.actionType === "navigate" ? <Search size={16} /> : <Play size={16} />}
+          {primaryAction.label}
         </button>
         <div className="focus-secondary">
           <span>{text.otherUsefulViews}</span>
           <div>
-            {recommendation.secondaryTabs.map((tab) => (
-              <button className="secondary-button" key={tab} onClick={() => onTabChange(tab)} type="button">
-                {tabLabel(tab, text)}
+            {secondaryActions.map((action) => (
+              <button
+                className="secondary-button"
+                disabled={action.disabled}
+                key={action.id}
+                onClick={() => (action.actionType === "navigate" ? onTabChange(action.targetTab) : onAction(action))}
+                type="button"
+              >
+                {action.label}
               </button>
             ))}
           </div>
@@ -1843,7 +2071,7 @@ function OverviewTab({
           <Metric label="Phase" value={formatWorkflowState(overview.project.current_phase)} />
           <Metric label="Datasets" value={overview.counts.datasets ?? 0} />
           <Metric label="Assumptions" value={overview.counts.assumptions ?? 0} />
-          <Metric label="Runs" value={overview.counts.runs ?? 0} />
+          <Metric label="Runs" value={overview.counts.experiment_runs ?? 0} />
         </div>
       </Panel>
       <Panel title="Next Actions" icon={<ListChecks size={18} />}>

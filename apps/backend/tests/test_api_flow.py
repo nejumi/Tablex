@@ -25,6 +25,44 @@ def make_client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(settings))
 
 
+def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Guided UX"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    empty_guidance_response = client.get(f"/api/projects/{project_id}/guidance")
+    assert empty_guidance_response.status_code == 200, empty_guidance_response.text
+    empty_guidance = empty_guidance_response.json()
+    assert empty_guidance["schema_version"] == "project_guidance.v1"
+    assert empty_guidance["attention_budget"] == 1
+    assert empty_guidance["recommended_focus"]["focus_key"] == "upload_data"
+    assert empty_guidance["recommended_focus"]["target_tab"] == "Data"
+    assert empty_guidance["recommended_focus"]["primary_action"]["action_type"] == "navigate"
+    assert empty_guidance["supporting_counts"]["datasets"] == 0
+
+    csv_bytes = b"feature,target\n1,0\n2,1\n3,0\n4,1\n"
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("guided.csv", csv_bytes, "text/csv")},
+        data={"target_column": "target"},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    next_guidance_response = client.get(f"/api/projects/{project_id}/guidance")
+    assert next_guidance_response.status_code == 200, next_guidance_response.text
+    next_guidance = next_guidance_response.json()
+    assert next_guidance["supporting_counts"]["datasets"] == 1
+    assert next_guidance["recommended_focus"]["focus_key"] in {
+        "assumptions",
+        "evaluation",
+        "understand_data",
+    }
+    assert next_guidance["recommended_focus"]["primary_action"]["target_tab"]
+    assert next_guidance["agent_guidance"]
+
+
 def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
