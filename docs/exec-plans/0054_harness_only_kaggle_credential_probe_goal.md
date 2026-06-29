@@ -60,3 +60,4 @@ Enable Tablex to verify Kaggle competition access from the product without expos
 - Unit/integration tests cover credential candidate selection, secret-free probe payloads, retry after unauthorized auth candidates, and endpoint artifact creation with mocked network.
 - A real harness endpoint probe was run against `kaggle_home_credit_default_risk` using the local gitignored `.env`/process environment. It returned `probe_status=ok`, `http_status=200`, `can_access_competition_files=true`, and stored artifact `art_de479bbfae74`.
 - The real probe output exposed only credential source labels and auth schemes, not credential values.
+- Docker smoke passed with `docker build -t tablex-smoke:latest .` and a temporary container returning `{"status":"ok"}` from `/healthz`.
