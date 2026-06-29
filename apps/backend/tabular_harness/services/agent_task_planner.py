@@ -178,6 +178,7 @@ def build_agent_task_contract_payload(
     notebook_authoring_inputs = notebook_authoring_brief_contract_inputs(
         context_artifacts.get("notebook_authoring_brief")
     )
+    notebook_followup_inputs = notebook_followup_contract_inputs(context_artifacts)
     source_policy = source_pack_inputs.get("source_policy") or research_inputs.get(
         "research_source_policy",
         {"network_default": "disabled_until_runner_policy_allows"},
@@ -226,6 +227,7 @@ def build_agent_task_contract_payload(
             "relational_feature_recipe": relational_recipe_inputs,
             "relational_feature_scenario_diagnostics": relational_diagnostics_inputs,
             "notebook_authoring": notebook_authoring_inputs,
+            "notebook_followup": notebook_followup_inputs,
         },
         "required_outputs": required_outputs_for_task(task_type),
         "quality_checks": quality_checks_for_task(task_type),
@@ -291,6 +293,48 @@ def required_outputs_for_task(task_type: str) -> list[dict[str, str]]:
                 "description": "Citation/source audit for notebook craft references and any external claims.",
             },
         ]
+    if task_type == "notebook_followup_diagnostics":
+        return [
+            {
+                "path": "notebooks/notebook_followup_diagnostics.py",
+                "schema": "marimo_notebook.v1",
+                "description": (
+                    "Focused marimo follow-up that extends the current Analysis Story with artifact-backed "
+                    "diagnostics only where source artifacts support them."
+                ),
+            },
+            {
+                "path": "reports/notebook_followup_report.md",
+                "schema": "markdown_report.v1",
+                "description": (
+                    "Concise human-readable report explaining the requested diagnostic, evidence used, "
+                    "findings, blocked claims, and the next Tablex action."
+                ),
+            },
+            {
+                "path": "artifacts/notebook_followup_diagnostics.json",
+                "schema": "notebook_followup_diagnostics.v1",
+                "description": (
+                    "Structured diagnostic results for feature importance, permutation/PDP, calibration, "
+                    "thresholds, score bins, slices, or worst examples when available."
+                ),
+            },
+            {
+                "path": "artifacts/notebook_followup_evidence_bundle.json",
+                "schema": "evidence_set.v1",
+                "description": "Artifact-backed evidence bundle with source artifact IDs for every material claim.",
+            },
+            {
+                "path": "artifacts/notebook_followup_visualization_spec.json",
+                "schema": "visualization_spec.v1",
+                "description": "Portable visualization spec for rendering the follow-up inside Tablex.",
+            },
+            {
+                "path": "artifacts/notebook_followup_figure_manifest.json",
+                "schema": "notebook_figure_manifest.v1",
+                "description": "Manifest of generated figures, tables, captions, and source artifacts.",
+            },
+        ]
     return [
         {
             "path": "reports/approach_report.md",
@@ -338,6 +382,16 @@ def quality_checks_for_task(task_type: str) -> list[str]:
             "Separate observed evidence, assumptions, missing evidence, and deferred checks.",
             "Keep EvaluationSpec and SplitManifest visible before model or metric claims.",
             "Register notebook source, report, figure manifest, evidence bundle, quality review, and citation audit as artifacts.",
+        ]
+    if task_type == "notebook_followup_diagnostics":
+        return [
+            "Start from the current Analysis Story, notebook evidence, Data Review, run report, and diagnostics artifacts before choosing what to compute.",
+            "Respect EvaluationSpec and SplitManifest; use validation rows only for diagnostics unless the approved spec says otherwise.",
+            "Fit any permutation, PDP, calibration, threshold, slice, or example-review computation on allowed split artifacts only.",
+            "Do not invent feature importance, calibration curves, slice metrics, or worst examples when model or prediction artifacts are missing.",
+            "If evidence is missing, produce a precise evidence-gap report and the narrowest next artifact request.",
+            "Every figure/table must state the question it answers, source artifacts used, and what action the human should take next.",
+            "Keep the follow-up small enough to become the next Analysis Story; avoid dumping every artifact or metric.",
         ]
     return [
         "Use the approved EvaluationSpec and SplitManifest when they exist.",
@@ -718,6 +772,14 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "evaluation_diagnostics_report": latest_project_artifact(db, project_id, "evaluation_diagnostics_report"),
         "run_report": latest_project_artifact(db, project_id, "run_report"),
         "decision_dashboard": latest_project_artifact(db, project_id, "decision_dashboard"),
+        "notebook_figure_manifest": latest_project_artifact(db, project_id, "notebook_figure_manifest"),
+        "notebook_evidence_bundle": latest_project_artifact(db, project_id, "notebook_evidence_bundle"),
+        "notebook_evidence_html": latest_project_artifact(db, project_id, "notebook_evidence_html"),
+        "notebook_execution_plan": latest_project_artifact(db, project_id, "notebook_execution_plan"),
+        "notebook_execution_manifest": latest_project_artifact(db, project_id, "notebook_execution_manifest"),
+        "notebook_execution_report": latest_project_artifact(db, project_id, "notebook_execution_report"),
+        "notebook_execution_html": latest_project_artifact(db, project_id, "notebook_execution_html"),
+        "notebook_execution_source": latest_project_artifact(db, project_id, "notebook_execution_source"),
     }
 
 
@@ -855,6 +917,63 @@ def notebook_authoring_brief_contract_inputs(brief_artifact: Artifact | None) ->
         else [],
         "codex_contract": payload.get("codex_contract") if isinstance(payload.get("codex_contract"), dict) else {},
         "policy": "source_backed_notebook_craft_guidance_for_on_the_fly_codex_authoring",
+    }
+
+
+def notebook_followup_contract_inputs(context_artifacts: dict[str, Artifact | None]) -> dict[str, Any]:
+    relevant_roles = [
+        "eda_review_bundle",
+        "eda_review_html",
+        "evaluation_diagnostics",
+        "evaluation_diagnostics_report",
+        "baseline_metrics",
+        "baseline_report",
+        "run_report",
+        "decision_dashboard",
+        "notebook_figure_manifest",
+        "notebook_evidence_bundle",
+        "notebook_evidence_html",
+        "notebook_execution_plan",
+        "notebook_execution_manifest",
+        "notebook_execution_report",
+        "notebook_execution_html",
+        "notebook_execution_source",
+    ]
+    refs = []
+    for role in relevant_roles:
+        artifact = context_artifacts.get(role)
+        if artifact is None:
+            continue
+        refs.append(
+            {
+                "role": role,
+                "artifact_id": artifact.id,
+                "asset_type": artifact.asset_type,
+                "name": artifact.name,
+                "metadata": artifact_metadata(artifact),
+                "download_url": f"/api/artifacts/{artifact.id}/download",
+                "preview_url": f"/api/artifacts/{artifact.id}/preview",
+            }
+        )
+    return {
+        "schema_version": "notebook_followup_context.v1",
+        "context_artifacts": refs,
+        "context_artifact_count": len(refs),
+        "diagnostic_targets": [
+            "feature_importance",
+            "permutation_importance",
+            "partial_dependence",
+            "calibration",
+            "threshold_review",
+            "score_bins",
+            "slice_metrics",
+            "worst_examples",
+        ],
+        "artifact_policy": (
+            "Materialize diagnostics only when source model, prediction, split, or notebook evidence exists; "
+            "otherwise report the evidence gap and the next narrow artifact request."
+        ),
+        "ui_policy": "Produce one concise Analysis Story follow-up, not a broad artifact dump.",
     }
 
 

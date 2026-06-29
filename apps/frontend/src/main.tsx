@@ -6782,6 +6782,49 @@ function NotebooksTab({
     void loadPreview(storyPreviewArtifactId);
   }, [storyPreviewArtifactId]);
 
+  function isNotebookFollowUpTaskPrompt(value: string) {
+    const normalized = value.toLowerCase();
+    const focusTerms = [
+      "feature importance",
+      "importance",
+      "permutation",
+      "partial dependence",
+      "pdp",
+      "calibration",
+      "threshold",
+      "score-bin",
+      "score bin",
+      "slice",
+      "worst",
+      "failure",
+      "error",
+      "diagnostic",
+      "重要度",
+      "キャリブレーション",
+      "閾値",
+      "しきい値",
+      "スライス",
+      "失敗",
+      "診断"
+    ];
+    const actionTerms = [
+      "add",
+      "create",
+      "generate",
+      "materialize",
+      "inspect",
+      "review",
+      "plan",
+      "追加",
+      "作",
+      "生成",
+      "見て",
+      "調べ",
+      "レビュー"
+    ];
+    return focusTerms.some((term) => normalized.includes(term)) && actionTerms.some((term) => normalized.includes(term));
+  }
+
   async function askNotebookGuide(message: string) {
     const trimmed = message.trim();
     if (!trimmed) return;
@@ -6791,11 +6834,12 @@ function NotebooksTab({
       : reviewNotebook
         ? `[notebook:${reviewNotebook.notebook_artifact_id}]`
         : "[analysis-story]";
+    const instruction = isNotebookFollowUpTaskPrompt(trimmed)
+      ? "Create a targeted notebook follow-up AgentTaskContract. Keep the UI response human-readable: say what diagnostic task was prepared, which evidence it will use, what it must not invent, and route me to the runner handoff."
+      : "Reply as an interactive analysis guide: name the exact section, artifact, or figure I should inspect next, why it matters, and what action Tablex should take.";
     setGuideBusy(true);
     try {
-      const response = await onAskAgent(
-        `${scopedSource} ${trimmed}. Reply as an interactive analysis guide: name the exact section, artifact, or figure I should inspect next, why it matters, and what action Tablex should take.`
-      );
+      const response = await onAskAgent(`${scopedSource} ${trimmed}. ${instruction}`);
       if (response && typeof response.assistant_message === "string") {
         setGuideResponse(response.assistant_message);
       }

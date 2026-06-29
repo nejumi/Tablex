@@ -541,3 +541,9 @@ curl -s -X POST http://localhost:8000/api/projects/{project_id}/approach/strateg
 This creates an `adaptive_strategy_brief` JSON artifact, an `adaptive_strategy_report` Markdown artifact and Report row, and a `visualization_spec` artifact. The brief treats baseline plans as advisory evidence and keeps Codex handoff open-ended while preserving EvaluationSpec, SplitManifest, artifact registration, reporting, and credential boundaries.
 
 When an AgentTaskContract is planned after an Adaptive Strategy Brief exists, the planner includes a compact `adaptive_strategy_brief` summary in the contract and copies the full Strategy Brief artifacts through `available_context_artifacts` during planned workspace preparation. AgentTask readiness includes an `adaptive_strategy_context` check.
+
+## Notebook Follow-Up Tasks
+
+Notebook and Analysis Story prompts that ask Tablex to add diagnostics, feature importance, permutation importance, PDP, calibration, threshold review, score bins, slice metrics, or worst-example analysis are routed to a harness-owned `notebook_followup_diagnostics` AgentTaskContract.
+
+The chat response should stay human-readable and route the user to `Approach` / `approach-handoff`. The contract must preserve EvaluationSpec and SplitManifest, use notebook/run/prediction artifacts only as evidence, and write an evidence-gap report instead of inventing diagnostics when required artifacts are missing.

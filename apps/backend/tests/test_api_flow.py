@@ -322,6 +322,46 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     assert contract["inputs"]["notebook_authoring"]["source_inspirations"]
     assert contract["inputs"]["notebook_authoring"]["authoring_principles"]
 
+    followup_chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={
+            "message": (
+                "[analysis-story:model_diagnostics:art_demo] Add artifact-backed feature importance and "
+                "permutation importance for this run."
+            )
+        },
+    )
+    assert followup_chat_response.status_code == 200, followup_chat_response.text
+    followup_chat = followup_chat_response.json()
+    assert followup_chat["intent"]["type"] == "plan_notebook_followup_task"
+    assert "controlled diagnostics task" in followup_chat["assistant_message"]
+    assert followup_chat["action_summary"]["headline"] == "Notebook follow-up task prepared"
+    assert followup_chat["action_summary"]["next_step"]["target_tab"] == "Approach"
+    assert followup_chat["action_summary"]["next_step"]["target_anchor"] == "approach-handoff"
+    assert any("artifact-backed" in item for item in followup_chat["action_summary"]["boundaries"])
+    followup_action = next(
+        action for action in followup_chat["actions"] if action["type"] == "create_notebook_followup_task"
+    )
+    assert followup_action["target_anchor"] == "approach-handoff"
+    followup_contract_response = client.get(f"/api/artifacts/{followup_action['artifact_id']}/download")
+    assert followup_contract_response.status_code == 200
+    followup_contract = followup_contract_response.json()
+    assert followup_contract["task_type"] == "notebook_followup_diagnostics"
+    assert "feature importance" in followup_contract["objective"]
+    assert any(output["schema"] == "visualization_spec.v1" for output in followup_contract["required_outputs"])
+    assert any("Do not invent" in check for check in followup_contract["quality_checks"])
+    assert followup_contract["inputs"]["notebook_followup"]["diagnostic_targets"]
+
+    guide_chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "[analysis-story:eda_review:art_demo] What should I read first and why?"},
+    )
+    assert guide_chat_response.status_code == 200, guide_chat_response.text
+    guide_chat = guide_chat_response.json()
+    assert guide_chat["intent"]["type"] == "guide_notebook_review"
+    assert guide_chat["action_summary"]["next_step"]["target_tab"] == "Notebooks"
+    assert guide_chat["action_summary"]["next_step"]["target_anchor"] == "analysis-story"
+
     next_step_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "次に何を見るべき？"})
     assert next_step_response.status_code == 200, next_step_response.text
     next_step = next_step_response.json()

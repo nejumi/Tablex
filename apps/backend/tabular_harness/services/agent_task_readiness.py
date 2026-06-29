@@ -27,6 +27,8 @@ from tabular_harness.services.artifacts import (
 from tabular_harness.services.planned_agent_workspace import load_contract_payload
 from tabular_harness.services.reporting import persist_visualization_spec
 
+NOTEBOOK_CONTEXT_TASK_TYPES = {"author_analysis_notebook", "notebook_followup_diagnostics"}
+
 
 @dataclass(frozen=True)
 class AgentTaskReadinessResult:
@@ -209,14 +211,14 @@ def contract_schema_check(contract: AgentTaskContract) -> dict[str, Any]:
 def target_context_check(project: Project, constraints: dict[str, Any], *, task_type: str) -> dict[str, Any]:
     target = constraints.get("target_column") or project.target_column
     if not target:
-        if task_type == "author_analysis_notebook":
+        if task_type in NOTEBOOK_CONTEXT_TASK_TYPES:
             return check(
                 "target_context",
                 "Target column",
                 "warning",
                 "medium",
-                "Target column is not selected; notebook authoring must focus on data understanding and target-definition blockers.",
-                "Ask the user to confirm the target before target-aware plots or model claims.",
+                "Target column is not selected; notebook work must focus on data understanding and target-definition blockers.",
+                "Ask the user to confirm the target before target-aware plots, diagnostics, or model claims.",
             )
         return check(
             "target_context",
@@ -234,14 +236,14 @@ def evaluation_check(evaluation_contract: dict[str, Any], *, task_type: str) -> 
     split_manifest = evaluation_contract.get("split_manifest")
     split_id = split_manifest.get("split_manifest_id") if isinstance(split_manifest, dict) else None
     if not spec_id or not split_id:
-        if task_type == "author_analysis_notebook":
+        if task_type in NOTEBOOK_CONTEXT_TASK_TYPES:
             return check(
                 "evaluation_contract",
                 "EvaluationSpec and SplitManifest",
                 "warning",
                 "medium",
                 "Approved evaluation context or SplitManifest is missing.",
-                "The notebook can explain data understanding, but must not make metric, lift, or model-comparison claims.",
+                "Notebook work can explain available evidence, but must not make metric, lift, or model-comparison claims.",
             )
         return check(
             "evaluation_contract",
@@ -289,6 +291,34 @@ def required_outputs_check(contract: AgentTaskContract) -> dict[str, Any]:
             "pass",
             "info",
             f"{len(contract.required_outputs)} notebook authoring output(s) are declared.",
+        )
+    if contract.task_type == "notebook_followup_diagnostics":
+        missing_categories = []
+        if not any("notebook" in path for path in paths):
+            missing_categories.append("notebook")
+        if not any("report" in path for path in paths):
+            missing_categories.append("report")
+        if not any("diagnostic" in path for path in paths):
+            missing_categories.append("diagnostics")
+        if not any("evidence" in path for path in paths):
+            missing_categories.append("evidence")
+        if not any("visualization" in path for path in paths):
+            missing_categories.append("visualization")
+        if missing_categories:
+            return check(
+                "required_outputs",
+                "Required outputs",
+                "warning",
+                "medium",
+                f"Notebook follow-up outputs are missing expected categories: {', '.join(missing_categories)}.",
+                "Regenerate the notebook_followup_diagnostics contract with diagnostic output expectations.",
+            )
+        return check(
+            "required_outputs",
+            "Required outputs",
+            "pass",
+            "info",
+            f"{len(contract.required_outputs)} notebook follow-up output(s) are declared.",
         )
     missing_categories = []
     if not any("report" in path for path in paths):

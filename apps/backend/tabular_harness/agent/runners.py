@@ -957,6 +957,19 @@ def render_prompt(contract: AgentTaskContract) -> str:
                 "- Produce the requested marimo source, reader report, figure manifest, evidence bundle, quality review, and citation audit.",
             ]
         )
+    if contract.task_type == "notebook_followup_diagnostics":
+        lines.extend(
+            [
+                "",
+                "Notebook follow-up diagnostics rules:",
+                "- Read .harness/task_contract.json first, then inspect materialized notebook, Data Review, run, diagnostics, and prediction artifacts.",
+                "- Treat the current Analysis Story as the reader context, not as a fixed template.",
+                "- Materialize feature importance, permutation importance, PDP, calibration, threshold, score-bin, slice, or worst-example diagnostics only when source artifacts support them.",
+                "- If the needed model, prediction, split, or metric artifact is missing, write the evidence gap and the narrow next artifact request instead of inventing figures.",
+                "- Keep EvaluationSpec and SplitManifest read-only, and compute diagnostics only on allowed split rows.",
+                "- Produce a concise report, visualization spec, evidence bundle, figure manifest, and marimo follow-up notebook suitable for Tablex UI.",
+            ]
+        )
     lines.extend(["", "Task contract:", "", contract.model_dump_json(by_alias=True, indent=2)])
     return "\n".join(lines)
 

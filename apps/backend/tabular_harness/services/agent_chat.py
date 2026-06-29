@@ -101,6 +101,17 @@ def handle_agent_chat_turn(
             task_type="author_analysis_notebook",
         )
         actions.append(agent_task_action(planned_agent_task))
+    elif intent["type"] == "plan_notebook_followup_task":
+        planned_agent_task = plan_notebook_followup_agent_task(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            message=message,
+            focus_areas=[str(item) for item in list_value(intent.get("focus_areas"))],
+            source_ref=dict_value(intent.get("source_ref")),
+        )
+        actions.append(notebook_followup_task_action(planned_agent_task, intent))
     elif intent["type"] == "guide_notebook_review":
         actions.append(
             guide_notebook_review_action(
@@ -190,6 +201,7 @@ def infer_chat_intent(message: str) -> dict[str, Any]:
             "summary": f"User wants the evaluation metric to be {SUPPORTED_METRICS[metric]['label']}.",
         }
     notebook_id = extract_notebook_artifact_id(message)
+    story_ref = extract_analysis_story_ref(message)
     if is_notebook_authoring_request(normalized):
         return {
             "type": "author_analysis_notebook",
@@ -197,7 +209,18 @@ def infer_chat_intent(message: str) -> dict[str, Any]:
             "confidence": 0.88,
             "summary": "User wants Codex to write or revise a high-quality analysis notebook from current evidence.",
         }
-    if notebook_id or is_notebook_guide_request(normalized):
+    followup_focuses = notebook_followup_focus_areas(normalized)
+    if is_notebook_followup_task_request(normalized, has_scoped_source=bool(notebook_id or story_ref)):
+        return {
+            "type": "plan_notebook_followup_task",
+            "metric": None,
+            "notebook_artifact_id": notebook_id,
+            "source_ref": story_ref or {"source_type": "notebook", "artifact_id": notebook_id},
+            "focus_areas": followup_focuses,
+            "confidence": 0.86,
+            "summary": "User wants a notebook follow-up converted into a controlled diagnostics AgentTaskContract.",
+        }
+    if notebook_id or story_ref or is_notebook_guide_request(normalized):
         return {
             "type": "guide_notebook_review",
             "metric": None,
@@ -356,6 +379,64 @@ def dict_value(value: object) -> dict[str, Any]:
 def extract_notebook_artifact_id(message: str) -> str | None:
     match = re.search(r"\[notebook:([^\]]+)\]", message)
     return match.group(1).strip() if match else None
+
+
+def extract_analysis_story_ref(message: str) -> dict[str, str | None] | None:
+    match = re.search(r"\[analysis-story(?::([^:\]]+))?(?::([^\]]+))?\]", message)
+    if not match:
+        return None
+    return {
+        "source_type": match.group(1).strip() if match.group(1) else None,
+        "artifact_id": match.group(2).strip() if match.group(2) else None,
+    }
+
+
+def notebook_followup_focus_areas(normalized: str) -> list[str]:
+    focus_map = {
+        "feature_importance": ["feature importance", "importance", "重要度", "変数重要度", "特徴量重要度"],
+        "permutation_importance": ["permutation", "permutation importance"],
+        "partial_dependence": ["partial dependence", "pdp", "dependence"],
+        "calibration": ["calibration", "calibrate", "キャリブレーション", "較正"],
+        "threshold": ["threshold", "閾値", "しきい値"],
+        "score_bins": ["score-bin", "score bin", "score bins", "bin interpretation", "スコア"],
+        "slice_metrics": ["slice", "slices", "segment", "group", "スライス", "セグメント"],
+        "worst_examples": ["worst", "failure", "error example", "bad example", "失敗", "誤分類", "ワースト"],
+        "diagnostics": ["diagnostic", "diagnostics", "診断"],
+    }
+    return [
+        focus
+        for focus, aliases in focus_map.items()
+        if any(alias in normalized for alias in aliases)
+    ]
+
+
+def is_notebook_followup_task_request(normalized: str, *, has_scoped_source: bool) -> bool:
+    if not has_scoped_source and not any(word in normalized for word in ["notebook", "ノートブック", "analysis story"]):
+        return False
+    has_followup_focus = bool(notebook_followup_focus_areas(normalized))
+    asks_for_materialization = any(
+        word in normalized
+        for word in [
+            "add",
+            "create",
+            "generate",
+            "materialize",
+            "build",
+            "inspect",
+            "review",
+            "agenttask",
+            "agent task",
+            "contract",
+            "追加",
+            "作",
+            "生成",
+            "出し",
+            "見て",
+            "調べ",
+            "レビュー",
+        ]
+    )
+    return has_followup_focus and asks_for_materialization
 
 
 def is_notebook_guide_request(normalized: str) -> bool:
@@ -851,6 +932,40 @@ def plan_metric_agent_task(
     )
 
 
+def plan_notebook_followup_agent_task(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    job: Job,
+    message: str,
+    focus_areas: list[str],
+    source_ref: dict[str, Any],
+) -> AgentTaskPlanResult:
+    focus_text = ", ".join(focus_areas) if focus_areas else "targeted notebook diagnostics"
+    source_type = source_ref.get("source_type") or "current_analysis_story"
+    source_artifact_id = source_ref.get("artifact_id") or "latest_relevant_notebook_or_story"
+    objective = (
+        f"The user asked from the notebook surface: {message}. Convert this into a focused Tablex notebook "
+        f"follow-up diagnostics task for {focus_text}. Start from source `{source_type}` / `{source_artifact_id}`, "
+        "current Analysis Story, notebook evidence, run reports, prediction artifacts, EvaluationSpec, and "
+        "SplitManifest. Materialize only artifact-backed diagnostics: feature importance, permutation importance, "
+        "partial dependence, calibration, threshold/score-bin review, slice metrics, and worst-example analysis "
+        "when the required artifacts exist. If required model, prediction, or split evidence is missing, write a "
+        "clear evidence gap report and the narrow next artifact request instead of inventing charts or metrics. "
+        "Do not destructively change EvaluationSpec or SplitManifest. Keep the output human-readable inside Tablex "
+        "and concise enough to become the next Analysis Story."
+    )
+    return plan_project_agent_task(
+        db,
+        store=store,
+        project=project,
+        job=job,
+        objective=objective,
+        task_type="notebook_followup_diagnostics",
+    )
+
+
 def agent_task_action(result: AgentTaskPlanResult) -> dict[str, Any]:
     return {
         "type": "create_agent_task_contract",
@@ -859,6 +974,24 @@ def agent_task_action(result: AgentTaskPlanResult) -> dict[str, Any]:
         "target_tab": "Approach",
         "target_anchor": "approach-handoff",
         "detail": "The contract carries current context, safety rules, artifact expectations, and open-ended runner autonomy.",
+        "artifact_id": result.artifact.id,
+        "entity_ids": [str(result.contract["task_id"])],
+    }
+
+
+def notebook_followup_task_action(result: AgentTaskPlanResult, intent: dict[str, Any]) -> dict[str, Any]:
+    focus_areas = [str(item).replace("_", " ") for item in list_value(intent.get("focus_areas"))]
+    focus_text = ", ".join(focus_areas[:4]) if focus_areas else "notebook diagnostics"
+    return {
+        "type": "create_notebook_followup_task",
+        "status": "created",
+        "label": "Prepared a targeted notebook follow-up task",
+        "target_tab": "Approach",
+        "target_anchor": "approach-handoff",
+        "detail": (
+            f"The task asks Codex to materialize {focus_text} as artifact-backed diagnostics, while respecting "
+            "EvaluationSpec, SplitManifest, and existing notebook evidence."
+        ),
         "artifact_id": result.artifact.id,
         "entity_ids": [str(result.contract["task_id"])],
     }
@@ -929,6 +1062,14 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
             f"{task_action['detail'] if task_action else ''} "
             "Next: run the controlled Codex notebook authoring task so it reads the brief, Data Review evidence, "
             "and project artifacts, then writes the notebook on the fly with source-backed narrative quality."
+        )
+    if intent["type"] == "plan_notebook_followup_task":
+        action = actions[0]
+        return (
+            "I turned that notebook follow-up into a controlled diagnostics task, not just a note. "
+            f"{action['detail']} Open Approach to review the runner handoff. When executed, Codex should produce "
+            "a concise report, figures or visualization specs, evidence bundle, and notebook update only from "
+            "available artifacts; if prediction or model evidence is missing, it must say exactly what is missing."
         )
     if intent["type"] == "explain_next_step":
         action = actions[0]
@@ -1018,6 +1159,8 @@ def action_summary_headline(intent: dict[str, Any], outcome: str) -> str:
         return "Notebook evidence generated"
     if intent_type == "author_analysis_notebook":
         return "Notebook authoring handoff prepared"
+    if intent_type == "plan_notebook_followup_task":
+        return "Notebook follow-up task prepared"
     if intent_type == "explain_next_step":
         return "Next decision selected"
     if intent_type == "guide_notebook_review":
@@ -1034,7 +1177,10 @@ def action_summary_boundaries(intent: dict[str, Any], actions: list[dict[str, An
         boundaries.append("Approved EvaluationSpecs and SplitManifests are not destructively changed by chat.")
     if intent_type == "show_relational_map":
         boundaries.append("Uploaded or inferred ER edges are evidence, not confirmed join contracts.")
-    if any(action.get("type") == "create_agent_task_contract" for action in actions):
+    if intent_type == "plan_notebook_followup_task":
+        boundaries.append("Notebook follow-up diagnostics must be artifact-backed and must not fake unavailable model evidence.")
+        boundaries.append("EvaluationSpec and SplitManifest remain read-only constraints for the runner.")
+    if any(action.get("type") in {"create_agent_task_contract", "create_notebook_followup_task"} for action in actions):
         boundaries.append("Codex runner autonomy starts inside the generated AgentTaskContract, not outside the workbench.")
     if any(action.get("target_tab") == "Notebooks" for action in actions):
         boundaries.append("Notebook previews are in-product artifacts; executed notebook claims still need captured evidence.")
