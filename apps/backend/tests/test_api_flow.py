@@ -251,6 +251,10 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     assert overview["summary"]["project_count"] >= 1
     assert overview["summary"]["idea_count"] >= 1
     assert overview["agent_activity"]
+    recent_updates = overview["recent_updates"]
+    assert any(update["title"] == "Agent chat handled a request" for update in recent_updates)
+    assert all("agent_chat_turn" not in update["title"] for update in recent_updates)
+    assert all("agent_chat_turn" not in update["summary"] for update in recent_updates)
 
 
 def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:

@@ -309,6 +309,7 @@ The project UI includes a persistent Agent Chat dock across project tabs. Submit
 
 Project screens should keep the first viewport streamlined. The top command center exposes only `Now`, `Why`, and `Do`: one recommended focus, the reason, and one primary action. Supporting signals, alternate routes, and the full guided journey map are collapsed by default. Secondary project tabs such as Assets, Library, Jobs, and Lineage live under `More` rather than competing with the primary workflow. Portal recent updates show only the highest-signal entries first and collapse older raw updates. This preserves all harness evidence and navigation paths while reducing human cognitive load.
 The Assumptions tab follows the same rule: the Review Queue is the primary surface, while the full assumptions table, evidence-link table, and fallback batch action are behind an explicit supporting-details disclosure. Do not make users scan every assumption before showing the next review item.
+Portal Recent Updates must use human-readable activity labels such as "Agent chat handled a request" or "Decision report saved". Raw artifact names, job ids, and asset type strings belong in lineage/detail fields, not the first-viewport title or summary.
 
 Project-scoped agent activity can be inspected with:
 

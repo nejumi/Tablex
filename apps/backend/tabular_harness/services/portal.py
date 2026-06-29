@@ -103,43 +103,90 @@ def portal_idea_from_artifact(artifact: Artifact) -> dict[str, Any]:
     }
 
 
+NOISY_PORTAL_ARTIFACT_TYPES = {
+    "agent_chat_turn",
+}
+
+
 def build_recent_updates(projects: list[Project], jobs: list[Job], artifacts: list[Artifact]) -> list[dict[str, Any]]:
     updates: list[dict[str, Any]] = []
+    project_names = {project.id: project.name for project in projects}
     for project in projects[:8]:
         updates.append(
             {
                 "type": "project",
                 "project_id": project.id,
                 "title": project.name,
-                "summary": project.current_phase,
+                "summary": f"Project is in {project.current_phase.replace('_', ' ').lower()}",
                 "created_at": project.updated_at.isoformat(),
                 "target_tab": "Overview",
             }
         )
     for job in jobs[:6]:
+        project_name = project_names.get(job.project_id or "", "Project")
         updates.append(
             {
                 "type": "job",
                 "project_id": job.project_id,
-                "title": job.job_type.replace("_", " "),
-                "summary": job.status,
+                "title": portal_job_title(job.job_type),
+                "summary": f"{job.status.replace('_', ' ')} · {project_name}",
                 "created_at": job.created_at.isoformat(),
                 "target_tab": target_tab_for_job(job.job_type),
+                "lineage_ref": job.id,
             }
         )
     for artifact in artifacts[:6]:
+        if artifact.asset_type in NOISY_PORTAL_ARTIFACT_TYPES:
+            continue
+        project_name = project_names.get(artifact.project_id or "", "Cross-project library")
         updates.append(
             {
                 "type": "artifact",
                 "project_id": artifact.project_id,
-                "title": artifact.asset_type,
-                "summary": artifact.name,
+                "title": portal_artifact_title(artifact.asset_type),
+                "summary": project_name,
                 "created_at": artifact.created_at.isoformat(),
                 "target_tab": target_tab_for_artifact(artifact.asset_type),
                 "artifact": artifact_to_dict(artifact),
+                "lineage_ref": artifact.id,
             }
         )
     return sorted(updates, key=lambda item: str(item["created_at"]), reverse=True)[:12]
+
+
+def portal_job_title(job_type: str) -> str:
+    labels = {
+        "agent_chat_turn": "Agent chat handled a request",
+        "generate_decision_report": "Decision report generated",
+        "save_guided_journey_snapshot": "Guidance snapshot saved",
+        "compare_guided_journey_snapshots": "Guidance snapshots compared",
+        "run_eda_review": "Data review completed",
+        "profile_dataset": "Dataset profile updated",
+        "run_agent_task": "Agent task recorded",
+    }
+    return labels.get(job_type, humanize_identifier(job_type))
+
+
+def portal_artifact_title(asset_type: str) -> str:
+    labels = {
+        "decision_report": "Decision report saved",
+        "decision_report_bundle": "Decision report bundle saved",
+        "eda_review_html": "Data review report saved",
+        "eda_review_bundle": "Data review evidence saved",
+        "analysis_notebook": "Analysis notebook saved",
+        "notebook_html": "Notebook preview saved",
+        "agent_task_contract": "Agent task handoff saved",
+        "guided_journey_report": "Guidance report saved",
+        "guided_journey_snapshot": "Guidance snapshot saved",
+    }
+    return labels.get(asset_type, f"{humanize_identifier(asset_type)} saved")
+
+
+def humanize_identifier(value: str) -> str:
+    words = [word for word in value.replace("-", "_").split("_") if word]
+    if not words:
+        return "Workbench update"
+    return " ".join(word.capitalize() for word in words)
 
 
 def worker_events_from_job(job: Job) -> list[dict[str, Any]]:
