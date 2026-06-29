@@ -803,8 +803,16 @@ td {
   padding-top: 12px;
 }
 
+.supporting-details-body.single-column {
+  grid-template-columns: 1fr;
+}
+
 .supporting-details-body .panel:last-child {
   grid-column: 1 / -1;
+}
+
+.supporting-details-body.single-column .panel:last-child {
+  grid-column: auto;
 }
 
 .question-list {

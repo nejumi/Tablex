@@ -124,6 +124,7 @@ const englishMessages = {
   focusNotebooksReason: "Notebook previews and safe captures turn run evidence into inspectable findings before final reporting.",
   focusReports: "Read the decision report",
   focusReportsReason: "Reports summarize readiness, risks, evidence, and next actions without requiring raw artifact inspection.",
+  showAllAssumptionsEvidence: "Show all assumptions and evidence",
   guidedJourneyTitle: "Guided Journey",
   guidedJourneySubtitle: "One visible path through the harness, with approach choices left open for Codex, Skills, and evidence.",
   journeyEvidence: "Evidence",
@@ -276,6 +277,7 @@ const japaneseMessages: LocaleMessages = {
   focusNotebooksReason: "Notebook previewとsafe captureで、最終report前にrun evidenceを検査可能なfindingへ変換します。",
   focusReports: "decision reportを読む",
   focusReportsReason: "raw artifactを追わなくても、readiness、risk、evidence、next actionを把握できます。",
+  showAllAssumptionsEvidence: "すべての仮定と根拠を表示",
   guidedJourneyTitle: "Guided Journey",
   guidedJourneySubtitle: "ハーネス内の現在地を一つの流れで示し、アプローチ選択はCodex、Skill、証拠に開いたままにします。",
   journeyEvidence: "根拠",
@@ -2505,6 +2507,7 @@ function ProjectDetail({
           reviewQueue={assumptionReviewQueue}
           questions={questions}
           busy={busy}
+          text={text}
           applyFallbacks={() => runAction(() => api(`/api/projects/${project.id}/assumptions/infer`, { method: "POST" }))}
           runAction={runAction}
         />
@@ -4428,6 +4431,7 @@ function AssumptionsTab({
   reviewQueue,
   questions,
   busy,
+  text,
   applyFallbacks,
   runAction
 }: {
@@ -4435,64 +4439,78 @@ function AssumptionsTab({
   reviewQueue: AssumptionReviewQueue | null;
   questions: Question[];
   busy: boolean;
+  text: LocaleMessages;
   applyFallbacks: () => Promise<void>;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
+  const highRiskCount = assumptions.filter(isHighRiskAssumption).length;
+  const evidenceCount = assumptions.reduce((count, assumption) => count + assumption.evidence.length, 0);
+
   return (
     <div className="stack">
       <AssumptionReviewQueuePanel queue={reviewQueue} busy={busy} runAction={runAction} />
-      <div className="toolbar">
-        <button className="secondary-button" disabled={busy} onClick={() => void applyFallbacks()}>
-          {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-          Apply Fallbacks
-        </button>
-      </div>
-      <Panel title="Assumptions" icon={<AlertTriangle size={18} />}>
-        {assumptions.length ? (
-          <Table
-            headers={["Statement", "Confidence", "Risk", "Fallback", "Status", "Actions"]}
-            rows={assumptions.map((assumption) => [
-              assumption.statement,
-              `${Math.round(assumption.confidence * 100)}%`,
-              assumption.risk_level,
-              assumption.fallback_policy,
-              assumption.status,
-              <div className="row-actions" key={assumption.id}>
-                <button
-                  className="icon-button"
-                  disabled={busy || assumption.status === "confirmed"}
-                  onClick={() => void runAction(() => api(`/api/assumptions/${assumption.id}/confirm`, { method: "POST" }))}
-                  title="Confirm assumption"
-                >
-                  <Check size={16} />
-                </button>
-                <button
-                  className="icon-button"
-                  disabled={busy || assumption.status === "challenged"}
-                  onClick={() => void runAction(() => api(`/api/assumptions/${assumption.id}/reject`, { method: "POST" }))}
-                  title="Challenge assumption"
-                >
-                  <AlertTriangle size={16} />
-                </button>
-              </div>
-            ])}
-          />
-        ) : (
-          <EmptyInline text="Inferred, adopted, confirmed, challenged, and deployment-blocking assumptions will be tracked with confidence, risk, fallback policy, and evidence." />
-        )}
-      </Panel>
-      <Panel title="Evidence Links" icon={<GitBranch size={18} />}>
-        {assumptions.some((assumption) => assumption.evidence.length) ? (
-          <Table
-            headers={["Assumption", "Evidence", "Strength"]}
-            rows={assumptions.flatMap((assumption) =>
-              assumption.evidence.map((evidence) => [assumption.id, evidence.summary, evidence.strength])
+      <details className="supporting-details">
+        <summary>
+          <span>{text.showAllAssumptionsEvidence}</span>
+          <small>
+            {assumptions.length} assumptions / {highRiskCount} high risk / {evidenceCount} evidence links
+          </small>
+        </summary>
+        <div className="supporting-details-body single-column">
+          <div className="toolbar">
+            <button className="secondary-button" disabled={busy} onClick={() => void applyFallbacks()}>
+              {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+              Apply Fallbacks
+            </button>
+          </div>
+          <Panel title="Assumptions" icon={<AlertTriangle size={18} />}>
+            {assumptions.length ? (
+              <Table
+                headers={["Statement", "Confidence", "Risk", "Fallback", "Status", "Actions"]}
+                rows={assumptions.map((assumption) => [
+                  assumption.statement,
+                  `${Math.round(assumption.confidence * 100)}%`,
+                  assumption.risk_level,
+                  assumption.fallback_policy,
+                  assumption.status,
+                  <div className="row-actions" key={assumption.id}>
+                    <button
+                      className="icon-button"
+                      disabled={busy || assumption.status === "confirmed"}
+                      onClick={() => void runAction(() => api(`/api/assumptions/${assumption.id}/confirm`, { method: "POST" }))}
+                      title="Confirm assumption"
+                    >
+                      <Check size={16} />
+                    </button>
+                    <button
+                      className="icon-button"
+                      disabled={busy || assumption.status === "challenged"}
+                      onClick={() => void runAction(() => api(`/api/assumptions/${assumption.id}/reject`, { method: "POST" }))}
+                      title="Challenge assumption"
+                    >
+                      <AlertTriangle size={16} />
+                    </button>
+                  </div>
+                ])}
+              />
+            ) : (
+              <EmptyInline text="Inferred, adopted, confirmed, challenged, and deployment-blocking assumptions will be tracked with confidence, risk, fallback policy, and evidence." />
             )}
-          />
-        ) : (
-          <EmptyInline text={`Open questions: ${questions.length}. Evidence supporting or contradicting assumptions will appear here.`} />
-        )}
-      </Panel>
+          </Panel>
+          <Panel title="Evidence Links" icon={<GitBranch size={18} />}>
+            {evidenceCount ? (
+              <Table
+                headers={["Assumption", "Evidence", "Strength"]}
+                rows={assumptions.flatMap((assumption) =>
+                  assumption.evidence.map((evidence) => [assumption.id, evidence.summary, evidence.strength])
+                )}
+              />
+            ) : (
+              <EmptyInline text={`Open questions: ${questions.length}. Evidence supporting or contradicting assumptions will appear here.`} />
+            )}
+          </Panel>
+        </div>
+      </details>
     </div>
   );
 }
