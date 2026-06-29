@@ -4922,7 +4922,9 @@ function ExperimentsTab({
       "run_agent_task",
       "create_experiment_plan",
       "compare_experiments",
-      "draft_run_report"
+      "draft_run_report",
+      "analyze_evaluation_diagnostics",
+      "generate_model_diagnostics_notebook"
     ].includes(job.job_type)
   );
   const experimentArtifacts = artifacts.filter((artifact) =>
@@ -4940,7 +4942,11 @@ function ExperimentsTab({
       "experiment_plan",
       "experiment_comparison",
       "experiment_comparison_report",
-      "run_report"
+      "run_report",
+      "analysis_notebook",
+      "notebook_html",
+      "notebook_run_manifest",
+      "notebook_report"
     ].includes(artifact.asset_type)
   );
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
@@ -5031,15 +5037,41 @@ function ExperimentsTab({
               formatMetric(run.metrics),
               run.evaluation_spec_id ?? "-",
               run.split_manifest_id ?? "-",
-              <button
-                className="icon-button"
-                disabled={busy}
-                key={run.id}
-                onClick={() => void runAction(() => api(`/api/runs/${run.id}/report`, { method: "POST" }))}
-                title="Draft run report"
-              >
-                {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
-              </button>
+              <div className="row-actions" key={run.id}>
+                <button
+                  className="icon-button"
+                  disabled={busy}
+                  onClick={() => void runAction(() => api(`/api/runs/${run.id}/report`, { method: "POST" }))}
+                  title="Draft run report"
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+                </button>
+                <button
+                  className="icon-button"
+                  disabled={busy}
+                  onClick={() => void runAction(() => api(`/api/runs/${run.id}/diagnostics`, { method: "POST" }))}
+                  title="Run evaluation diagnostics"
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+                </button>
+                <button
+                  className="icon-button"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction(async () => {
+                      const job = await api<Job>(`/api/runs/${run.id}/analysis-notebook`, { method: "POST" });
+                      const htmlArtifactId = job.output.notebook_html_artifact_id;
+                      if (typeof htmlArtifactId === "string") {
+                        await loadPreview(htmlArtifactId);
+                      }
+                      return job;
+                    })
+                  }
+                  title="Generate model diagnostics notebook"
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+                </button>
+              </div>
             ])}
           />
         ) : (
@@ -5237,7 +5269,11 @@ function ExperimentsTab({
       <Panel title="Experiment Artifact Preview" icon={<FileText size={18} />}>
         {previewError ? <div className="banner danger">{previewError}</div> : null}
         {preview?.preview_available ? (
-          <TranslatablePreview preview={preview} />
+          isHtmlArtifactPreview(preview) ? (
+            <HtmlArtifactPreview preview={preview} />
+          ) : (
+            <TranslatablePreview preview={preview} />
+          )
         ) : (
           <EmptyInline text={preview?.reason ?? "Select an experiment lifecycle artifact to inspect plans, run reports, or comparisons inside the workbench."} />
         )}

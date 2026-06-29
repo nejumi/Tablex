@@ -37,7 +37,7 @@ The product name may still change. Internal package names and database tables st
 - Agent Task Results Workbench v1 with project-scoped summaries of planned and Idea-backed AgentTask runs, experiment registration, reports, citation audits, evidence, and preview/download actions in the Experiments UI.
 - Benchmark Evidence Pack v1 with source cards, local status, scenario packs, workflow results, reports, visualizations, AgentTask handoff state, Evidence, and lineage summarized inside the workbench.
 - Report & Visualization Workbench v1 with generated Insights, report preview/download, and typed VisualizationSpec rendering for metric cards, bars, stages, leaderboards, diagnostics, and agent checklists.
-- Analysis Notebook v0 with marimo source artifacts, static in-product HTML preview, run manifest, notebook report, and lineage from Data Understanding context.
+- Analysis Notebook v0 with marimo source artifacts, static in-product HTML preview, run manifest, notebook report, run-level model diagnostics notebooks, summary VisualizationSpecs, and lineage from Data Understanding and ExperimentRun context.
 - Decision Dashboard & Report v1 with readiness stages, artifact completeness, risk register, next actions, benchmark fixture policy, and decision visualization specs.
 - Agent Context Pack v0 for preparing schema-validated, harness-owned execution context before Codex/Skill/web-research runner tasks.
 - Job Orchestration v0 with queued jobs, approval gates, dependencies, retry/cancel actions, and a local worker entrypoint.

@@ -99,7 +99,10 @@ from tabular_harness.services.agent_task_planner import plan_project_agent_task
 from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
 from tabular_harness.services.agent_task_results import list_agent_task_result_summaries
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
-from tabular_harness.services.analysis_notebooks import create_data_understanding_notebook
+from tabular_harness.services.analysis_notebooks import (
+    create_data_understanding_notebook,
+    create_model_diagnostics_notebook,
+)
 from tabular_harness.services.approach import (
     create_decision_dashboard,
     create_research_plan,
@@ -3466,6 +3469,53 @@ def analyze_run_diagnostics_endpoint(
                 "diagnostics": result.diagnostics,
                 "insight_id": result.insight_id,
                 "evidence_id": result.evidence_id,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/runs/{run_id}/analysis-notebook", response_model=JobRead)
+def generate_run_analysis_notebook_endpoint(
+    run_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    run = db.get(ExperimentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="ExperimentRun not found")
+    job = create_job(
+        db,
+        job_type="generate_model_diagnostics_notebook",
+        project_id=run.project_id,
+        input_payload={"run_id": run.id, "notebook_kind": "model_diagnostics"},
+        policy={
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "execution_mode": "generate_artifacts_only",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_model_diagnostics_notebook(db, store=store, run=run)
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.notebook["schema_version"],
+                "notebook_kind": result.notebook["notebook_kind"],
+                "run_id": run.id,
+                "model_version_id": result.notebook.get("model_version_id"),
+                "analysis_notebook_artifact_id": result.notebook_artifact.id,
+                "notebook_html_artifact_id": result.html_artifact.id,
+                "notebook_run_manifest_artifact_id": result.manifest_artifact.id,
+                "notebook_report_id": result.report.id,
+                "notebook_report_artifact_id": result.report_artifact.id,
+                "visualization_id": result.visualization.id,
+                "visualization_artifact_id": result.visualization_artifact.id,
+                "artifact_ids": result.artifact_ids,
+                "execution_status": "generated_not_executed",
             },
         )
     except ValueError as exc:

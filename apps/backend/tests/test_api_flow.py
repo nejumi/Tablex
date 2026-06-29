@@ -1087,6 +1087,45 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert diagnostics_job["output"]["insight_id"]
     assert diagnostics_job["output"]["evidence_id"]
 
+    model_notebook_response = client.post(f"/api/runs/{baseline_run['id']}/analysis-notebook")
+    assert model_notebook_response.status_code == 200, model_notebook_response.text
+    model_notebook_job = model_notebook_response.json()
+    assert model_notebook_job["status"] == "succeeded"
+    assert model_notebook_job["job_type"] == "generate_model_diagnostics_notebook"
+    assert model_notebook_job["output"]["notebook_kind"] == "model_diagnostics"
+    assert model_notebook_job["output"]["run_id"] == baseline_run["id"]
+    assert model_notebook_job["output"]["analysis_notebook_artifact_id"]
+    assert model_notebook_job["output"]["notebook_html_artifact_id"]
+    assert model_notebook_job["output"]["notebook_report_id"]
+    assert model_notebook_job["output"]["visualization_id"]
+    assert model_notebook_job["output"]["visualization_artifact_id"]
+
+    model_notebook_preview_response = client.get(
+        f"/api/artifacts/{model_notebook_job['output']['analysis_notebook_artifact_id']}/preview"
+    )
+    assert model_notebook_preview_response.status_code == 200
+    model_notebook_preview = model_notebook_preview_response.json()["preview"]
+    assert "Model Diagnostics Notebook" in model_notebook_preview
+    assert "permutation importance" in model_notebook_preview
+
+    model_notebook_html_response = client.get(
+        f"/api/artifacts/{model_notebook_job['output']['notebook_html_artifact_id']}/preview"
+    )
+    assert model_notebook_html_response.status_code == 200
+    model_notebook_html = model_notebook_html_response.json()
+    assert model_notebook_html["content_type"] == "text/html"
+    assert "Tablex Model Diagnostics Notebook" in model_notebook_html["preview"]
+    assert "Feature importance" in model_notebook_html["preview"]
+
+    model_notebook_manifest_response = client.get(
+        f"/api/artifacts/{model_notebook_job['output']['notebook_run_manifest_artifact_id']}/download"
+    )
+    assert model_notebook_manifest_response.status_code == 200
+    model_notebook_manifest = model_notebook_manifest_response.json()
+    assert model_notebook_manifest["notebook_kind"] == "model_diagnostics"
+    assert model_notebook_manifest["inputs"]["prediction_output"]
+    assert "partial dependence" in " ".join(model_notebook_manifest["diagnostic_extension_points"])
+
     run_report_response = client.post(f"/api/runs/{baseline_run['id']}/report")
     assert run_report_response.status_code == 200, run_report_response.text
     run_report_job = run_report_response.json()
