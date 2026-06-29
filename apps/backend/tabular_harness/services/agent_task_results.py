@@ -16,6 +16,7 @@ from tabular_harness.models.entities import (
     VisualizationSpec,
 )
 from tabular_harness.services.agent_result_ingestion import load_json_artifact
+from tabular_harness.services.runner_context import build_relational_runner_context_summary
 
 AGENT_TASK_RESULT_JOB_TYPES = {"run_planned_agent_task_stub", "run_agent_task"}
 
@@ -105,18 +106,38 @@ def build_agent_task_result_summary(
 ) -> dict[str, Any]:
     manifest_artifact = artifacts_by_id.get(string_value(output.get("source_citation_manifest_artifact_id")) or "")
     citation_manifest = load_json_artifact(manifest_artifact)
+    workspace_artifact = artifacts_by_id.get(
+        string_value(output.get("agent_workspace_manifest_artifact_id"))
+        or string_value(output.get("workspace_artifact_id"))
+        or ""
+    )
+    workspace_manifest = load_json_artifact(workspace_artifact)
+    agent_result_artifact = first_ingested_artifact(output, artifacts_by_id, "agent_result")
+    agent_result_payload = load_json_artifact(agent_result_artifact)
+    runner_relational_context = dict_value(
+        dict_value(agent_result_payload.get("outputs")).get("relational_context_summary")
+    )
+    relational_context = (
+        runner_relational_context
+        if runner_relational_context
+        else build_relational_runner_context_summary(workspace_manifest)
+    )
+    relational_context_summary_artifact = first_ingested_artifact(
+        output, artifacts_by_id, "relational_runner_context_summary"
+    )
+    relational_context_visualization_artifact = first_ingested_artifact_by_metadata(
+        output,
+        artifacts_by_id,
+        asset_type="visualization_spec",
+        metadata_key="visualization_role",
+        metadata_value="relational_runner_context",
+    )
     run = runs_by_id.get(string_value(output.get("experiment_run_id")) or "")
     artifact_refs = {
         "agent_task_contract": artifact_ref(
             artifacts_by_id.get(string_value(output.get("agent_task_contract_artifact_id")) or "")
         ),
-        "workspace_manifest": artifact_ref(
-            artifacts_by_id.get(
-                string_value(output.get("agent_workspace_manifest_artifact_id"))
-                or string_value(output.get("workspace_artifact_id"))
-                or ""
-            )
-        ),
+        "workspace_manifest": artifact_ref(workspace_artifact),
         "readiness_review": artifact_ref(
             artifacts_by_id.get(string_value(output.get("agent_task_readiness_review_artifact_id")) or "")
         ),
@@ -131,7 +152,9 @@ def build_agent_task_result_summary(
         "citation_visualization": artifact_ref(
             artifacts_by_id.get(string_value(output.get("citation_visualization_artifact_id")) or "")
         ),
-        "agent_result": first_ingested_artifact_ref(output, artifacts_by_id, "agent_result"),
+        "relational_context_summary": artifact_ref(relational_context_summary_artifact),
+        "relational_context_visualization": artifact_ref(relational_context_visualization_artifact),
+        "agent_result": artifact_ref(agent_result_artifact),
         "agent_task_report": first_ingested_artifact_ref(output, artifacts_by_id, "agent_task_report"),
     }
     report = reports_by_id.get(string_value(output.get("report_id")) or "")
@@ -168,6 +191,7 @@ def build_agent_task_result_summary(
         "artifacts": artifact_refs,
         "artifact_ids": collect_artifact_ids(output),
         "citation_audit": citation_audit_summary(citation_manifest),
+        "relational_context": relational_context_summary(relational_context, relational_context_summary_artifact),
     }
 
 
@@ -182,12 +206,40 @@ def first_ingested_artifact_ref(
     artifacts_by_id: dict[str, Artifact],
     asset_type: str,
 ) -> dict[str, Any] | None:
+    return artifact_ref(first_ingested_artifact(output, artifacts_by_id, asset_type))
+
+
+def first_ingested_artifact(
+    output: dict[str, Any],
+    artifacts_by_id: dict[str, Artifact],
+    asset_type: str,
+) -> Artifact | None:
     for artifact_id in list_value(output.get("ingested_artifact_ids")):
         if not isinstance(artifact_id, str):
             continue
         artifact = artifacts_by_id.get(artifact_id)
         if artifact is not None and artifact.asset_type == asset_type:
-            return artifact_ref(artifact)
+            return artifact
+    return None
+
+
+def first_ingested_artifact_by_metadata(
+    output: dict[str, Any],
+    artifacts_by_id: dict[str, Artifact],
+    *,
+    asset_type: str,
+    metadata_key: str,
+    metadata_value: str,
+) -> Artifact | None:
+    for artifact_id in list_value(output.get("ingested_artifact_ids")):
+        if not isinstance(artifact_id, str):
+            continue
+        artifact = artifacts_by_id.get(artifact_id)
+        if artifact is None or artifact.asset_type != asset_type:
+            continue
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get(metadata_key) == metadata_value:
+            return artifact
     return None
 
 
@@ -288,9 +340,38 @@ def citation_audit_summary(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def relational_context_summary(
+    context: dict[str, Any],
+    summary_artifact: Artifact | None,
+) -> dict[str, Any]:
+    preview = dict_value(context.get("preview_summary"))
+    coverage = dict_value(context.get("coverage"))
+    return {
+        "status": context.get("status") or "missing",
+        "source_count": int_value(context.get("source_count")),
+        "roles": list_value(context.get("roles")),
+        "summary_artifact_id": summary_artifact.id if summary_artifact else None,
+        "usable_feature_count": int_value(preview.get("usable_feature_count")),
+        "generated_feature_count": int_value(preview.get("generated_feature_count")),
+        "deferred_safety_check_count": len(list_value(context.get("deferred_safety_checks"))),
+        "scenario_count": len(list_value(context.get("scenario_comparison"))),
+        "recommendation_count": len(list_value(context.get("recommended_agent_task_scenarios"))),
+        "coverage": coverage,
+        "runner_guidance": list_value(context.get("runner_guidance"))[:5],
+    }
+
+
 def string_value(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def dict_value(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def list_value(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def int_value(value: Any) -> int:
+    return int(value) if isinstance(value, int | float) else 0

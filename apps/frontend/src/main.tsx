@@ -384,6 +384,19 @@ type AgentTaskResult = {
     connector_credentials_materialized: boolean;
     research_source_pack_artifact_id: string | null;
   };
+  relational_context: {
+    status: string;
+    source_count: number;
+    roles: unknown[];
+    summary_artifact_id: string | null;
+    usable_feature_count: number;
+    generated_feature_count: number;
+    deferred_safety_check_count: number;
+    scenario_count: number;
+    recommendation_count: number;
+    coverage: Record<string, unknown>;
+    runner_guidance: unknown[];
+  };
 };
 
 type Insight = {
@@ -2998,11 +3011,12 @@ function ExperimentsTab({
       <Panel title="Agent Task Results" icon={<FileText size={18} />}>
         {agentTaskResults.length ? (
           <Table
-            headers={["Job", "Source", "Agent", "Readiness", "Experiment", "Citations", "Reports", "Actions"]}
+            headers={["Job", "Source", "Agent", "Readiness", "Experiment", "Relational", "Citations", "Reports", "Actions"]}
             rows={agentTaskResults.map((result) => {
               const reportArtifact = result.artifacts.agent_task_report;
               const citationReportArtifact = result.artifacts.citation_audit_report;
               const manifestArtifact = result.artifacts.source_citation_manifest;
+              const relationalArtifact = result.artifacts.relational_context_summary;
               return [
                 <div className="cell-stack" key={`${result.job_id}-job`}>
                   <span>{result.job_type.replace(/_/g, " ")}</span>
@@ -3020,6 +3034,14 @@ function ExperimentsTab({
                 </div>,
                 result.readiness_status ?? "-",
                 result.experiment_run?.id ?? "-",
+                <div className="cell-stack" key={`${result.job_id}-relational`}>
+                  <span className={result.relational_context.source_count ? "badge" : "badge muted"}>
+                    {result.relational_context.source_count} context files
+                  </span>
+                  <small>
+                    {result.relational_context.usable_feature_count} usable / {result.relational_context.deferred_safety_check_count} checks
+                  </small>
+                </div>,
                 <div className="cell-stack" key={`${result.job_id}-citations`}>
                   <span>
                     {result.citation_audit.source_count} sources / {result.citation_audit.citation_count} citations
@@ -3075,11 +3097,34 @@ function ExperimentsTab({
                       <ListChecks size={16} />
                     )}
                   </button>
+                  <button
+                    className="icon-button"
+                    disabled={!relationalArtifact || previewLoadingId === relationalArtifact.id}
+                    onClick={() => {
+                      if (relationalArtifact) void loadPreview(relationalArtifact.id);
+                    }}
+                    title="Preview relational context summary"
+                  >
+                    {relationalArtifact && previewLoadingId === relationalArtifact.id ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <Layers size={16} />
+                    )}
+                  </button>
                   {manifestArtifact ? (
                     <a
                       className="icon-link"
                       href={`${apiBase}/api/artifacts/${manifestArtifact.id}/download`}
                       title="Download source citation manifest"
+                    >
+                      <Download size={16} />
+                    </a>
+                  ) : null}
+                  {relationalArtifact ? (
+                    <a
+                      className="icon-link"
+                      href={`${apiBase}/api/artifacts/${relationalArtifact.id}/download`}
+                      title="Download relational context summary"
                     >
                       <Download size={16} />
                     </a>

@@ -674,12 +674,16 @@ def relational_feature_scenario_diagnostics_contract_inputs(diagnostics_artifact
     raw_split_compatibility = payload.get("split_compatibility")
     raw_safety = payload.get("safety")
     raw_scenarios = payload.get("scenario_comparison")
+    raw_recommended_scenarios = payload.get("recommended_agent_task_scenarios")
     preview_summary: dict[str, Any] = raw_preview_summary if isinstance(raw_preview_summary, dict) else {}
     split_compatibility: dict[str, Any] = (
         raw_split_compatibility if isinstance(raw_split_compatibility, dict) else {}
     )
     safety: dict[str, Any] = raw_safety if isinstance(raw_safety, dict) else {}
     scenarios: list[Any] = raw_scenarios if isinstance(raw_scenarios, list) else []
+    recommended_scenarios: list[Any] = (
+        raw_recommended_scenarios if isinstance(raw_recommended_scenarios, list) else []
+    )
     return {
         "artifact_id": diagnostics_artifact.id,
         "source_summary": payload.get("source_summary") if isinstance(payload.get("source_summary"), dict) else {},
@@ -687,6 +691,7 @@ def relational_feature_scenario_diagnostics_contract_inputs(diagnostics_artifact
         "split_compatibility": split_compatibility,
         "scenario_count": len(scenarios),
         "scenario_comparison": scenarios[:4],
+        "recommended_agent_task_scenarios": recommended_scenarios[:4],
         "safety": safety,
     }
 

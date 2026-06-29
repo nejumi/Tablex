@@ -2131,6 +2131,8 @@ def run_planned_agent_task_stub_endpoint(
                 "experiment_run_id": result.experiment_ingestion.experiment_run_id,
                 "agent_metrics_artifact_id": result.experiment_ingestion.metrics_artifact_id,
                 "agent_feature_recipe_artifact_id": result.experiment_ingestion.feature_recipe_artifact_id,
+                "relational_context_source_count": result.relational_context_summary.get("source_count"),
+                "relational_context_summary_artifact_id": result.relational_context_summary_artifact_id,
                 "source_citation_manifest_artifact_id": (
                     result.experiment_ingestion.citation_manifest_artifact_id
                 ),
@@ -4062,6 +4064,8 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "agent_workspace_manifest_artifact_id": output.get("agent_workspace_manifest_artifact_id"),
         "agent_metrics_artifact_id": output.get("agent_metrics_artifact_id"),
         "agent_feature_recipe_artifact_id": output.get("agent_feature_recipe_artifact_id"),
+        "relational_context_source_count": output.get("relational_context_source_count"),
+        "relational_context_summary_artifact_id": output.get("relational_context_summary_artifact_id"),
         "source_citation_manifest_artifact_id": output.get("source_citation_manifest_artifact_id"),
         "citation_audit_report_id": output.get("citation_audit_report_id"),
         "citation_audit_report_artifact_id": output.get("citation_audit_report_artifact_id"),

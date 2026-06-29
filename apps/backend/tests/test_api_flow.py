@@ -1847,6 +1847,19 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert project_report_preview_response.status_code == 200
     assert "Relational Feature Context" in project_report_preview_response.json()["preview"]
 
+    evaluation_design_response = client.post(f"/api/projects/{project_id}/evaluation/design")
+    assert evaluation_design_response.status_code == 200, evaluation_design_response.text
+    candidates_response = client.get(f"/api/projects/{project_id}/evaluation/candidates")
+    assert candidates_response.status_code == 200
+    random_candidate = next(item for item in candidates_response.json() if item["split_type"] == "random")
+    promote_response = client.post(f"/api/evaluation-candidates/{random_candidate['id']}/promote")
+    assert promote_response.status_code == 200, promote_response.text
+    spec_id = promote_response.json()["id"]
+    approval_response = client.post(f"/api/evaluation-specs/{spec_id}/approve")
+    assert approval_response.status_code == 200, approval_response.text
+    split_response = client.post(f"/api/evaluation-specs/{spec_id}/generate-split")
+    assert split_response.status_code == 200, split_response.text
+
     agent_task_plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
     assert agent_task_plan_response.status_code == 200, agent_task_plan_response.text
     agent_contract_response = client.get(
@@ -1915,6 +1928,45 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     relational_check = next(item for item in readiness["checks"] if item["check_id"] == "relational_context")
     assert relational_check["status"] == "pass"
     assert "relational context artifact" in relational_check["summary"]
+
+    stub_response = client.post(f"/api/agent-task-contracts/{contract_artifact_id}/run-local-stub")
+    assert stub_response.status_code == 200, stub_response.text
+    stub_job = stub_response.json()
+    assert stub_job["status"] == "succeeded"
+    assert stub_job["output"]["relational_context_source_count"] >= 6
+    assert stub_job["output"]["relational_context_summary_artifact_id"]
+    assert len(stub_job["output"]["visualization_ids"]) >= 2
+
+    stub_report_response = client.get(
+        f"/api/artifacts/{stub_job['output']['ingested_artifact_ids'][0]}/download"
+    )
+    assert stub_report_response.status_code == 200
+    assert "Relational Runner Context" in stub_report_response.text
+
+    relational_summary_response = client.get(
+        f"/api/artifacts/{stub_job['output']['relational_context_summary_artifact_id']}/download"
+    )
+    assert relational_summary_response.status_code == 200
+    relational_summary = relational_summary_response.json()
+    assert relational_summary["schema_version"] == "relational_runner_context_summary.v1"
+    assert relational_summary["status"] == "available"
+    assert relational_summary["source_count"] >= 6
+    assert relational_summary["coverage"]["has_scenario_report"] is True
+    assert relational_summary["deferred_safety_checks"]
+    assert relational_summary["recommended_agent_task_scenarios"]
+
+    agent_results_response = client.get(f"/api/projects/{project_id}/agent-task-results")
+    assert agent_results_response.status_code == 200
+    agent_results = agent_results_response.json()
+    relational_result = next(item for item in agent_results if item["job_id"] == stub_job["id"])
+    assert relational_result["relational_context"]["source_count"] >= 6
+    assert relational_result["relational_context"]["usable_feature_count"] >= 1
+    assert relational_result["relational_context"]["summary_artifact_id"] == stub_job["output"][
+        "relational_context_summary_artifact_id"
+    ]
+    assert relational_result["artifacts"]["relational_context_summary"]["id"] == stub_job["output"][
+        "relational_context_summary_artifact_id"
+    ]
 
     ideas_response = client.post(f"/api/projects/{project_id}/approach/ideas/generate")
     assert ideas_response.status_code == 200, ideas_response.text

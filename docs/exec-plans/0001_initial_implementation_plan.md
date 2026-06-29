@@ -88,6 +88,7 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Relational Feature Scenario Diagnostics v1 with recipe-preview feature diagnostics, scenario comparison, deferred reason summary, Report, Evidence, VisualizationSpec, Lineage, Data UI actions, and AgentTaskContract/AgentContextPack propagation.
 - Relational Evidence & Reporting Surface v1 with relational plan/recipe/diagnostics summaries in Benchmark Evidence Pack, Decision Dashboard/Report, and Project Report.
 - Relational Runner Workspace Handoff v1 with relational plan, recipe, preview CSV/profile, scenario diagnostics, and scenario report copied into controlled AgentRunner workspaces under `.harness/context/relational/`.
+- Agent Runner Relational Context Consumption v1 with LocalStub reports, metrics, feature recipes, visualization specs, and AgentTaskResults summaries carrying relational context inventory and deferred safety checks.
 - Job skeleton for:
   - `profile_dataset`
   - `infer_assumptions`
@@ -149,4 +150,5 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Relational Feature Plans, Recipe Previews, and Scenario Diagnostics are not deployment recipes. Recipe preview materializes bounded local aggregates for inspection only, and diagnostics intentionally avoids fixed model training. Real joins and model training still need FeatureRecipe or AgentTask implementation with SplitManifest-aware fitting and prediction-time availability confirmation.
 - Relational reporting surfaces summarize readiness heuristics; they should guide review and runner planning, not certify feature availability or model lift.
 - Relational runner context materialization makes artifacts inspectable in controlled workspaces, but it does not yet execute model-training joins or certify point-in-time-safe relational features.
+- LocalStub relational context consumption proves result ingestion and UI propagation, but real Codex/Skill runners still need implementation that reads these artifacts and produces split-respecting code.
 - Auth is stubbed as local single-user behavior.

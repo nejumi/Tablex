@@ -17,6 +17,7 @@ class WorkspaceRef(BaseModel):
     project_id: str
     path: str
     git_commit: str | None = None
+    context_summary: dict[str, Any] | None = None
 
 
 class ExecutionPolicy(BaseModel):
@@ -70,9 +71,12 @@ class LocalStubAgentRunner(NoopAgentRunner):
         output_schema: dict[str, Any],
         execution_policy: ExecutionPolicy,
     ) -> AgentResult:
-        report_md = render_stub_report(task_contract, execution_policy)
-        feature_recipe = render_stub_feature_recipe(task_contract)
-        experiment_metrics = render_stub_experiment_metrics(task_contract)
+        context_summary = workspace_ref.context_summary or {}
+        relational_context = dict_value(context_summary.get("relational_context"))
+        has_relational_context = bool(relational_context.get("source_count"))
+        report_md = render_stub_report(task_contract, execution_policy, relational_context)
+        feature_recipe = render_stub_feature_recipe(task_contract, relational_context)
+        experiment_metrics = render_stub_experiment_metrics(task_contract, relational_context)
         source_citation_manifest = render_stub_source_citation_manifest(task_contract, execution_policy)
         citation_audit_report = render_stub_citation_audit_report(source_citation_manifest)
         citation_visualization_spec = render_stub_citation_visualization(source_citation_manifest)
@@ -95,6 +99,82 @@ class LocalStubAgentRunner(NoopAgentRunner):
             },
             "empty_state": "Agent task has no required outputs.",
         }
+        relational_visualization_spec = (
+            render_stub_relational_context_visualization(relational_context) if has_relational_context else None
+        )
+        output_artifacts = [
+            {
+                "path": "reports/agent_task_report.md",
+                "asset_type": "agent_task_report",
+                "name": f"agent_task_report_{task_contract.task_id}",
+                "metadata": {"task_id": task_contract.task_id},
+            },
+            {
+                "path": "artifacts/feature_recipe.json",
+                "asset_type": "feature_recipe",
+                "name": f"agent_feature_recipe_{task_contract.task_id}",
+                "metadata": {"task_id": task_contract.task_id},
+            },
+            {
+                "path": "artifacts/experiment_metrics.json",
+                "asset_type": "experiment_metrics",
+                "name": f"agent_experiment_metrics_{task_contract.task_id}",
+                "metadata": {"task_id": task_contract.task_id},
+            },
+            {
+                "path": "artifacts/agent_result.json",
+                "asset_type": "agent_result",
+                "name": f"agent_result_{task_contract.task_id}",
+                "metadata": {"task_id": task_contract.task_id},
+            },
+            {
+                "path": "artifacts/visualization_spec.json",
+                "asset_type": "visualization_spec",
+                "name": f"agent_task_visualization_{task_contract.task_id}",
+                "metadata": {"task_id": task_contract.task_id},
+            },
+            {
+                "path": "artifacts/source_citation_manifest.json",
+                "asset_type": "source_citation_manifest",
+                "name": f"source_citation_manifest_{task_contract.task_id}",
+                "metadata": {"task_id": task_contract.task_id},
+            },
+            {
+                "path": "reports/citation_audit_report.md",
+                "asset_type": "citation_audit_report",
+                "name": f"citation_audit_report_{task_contract.task_id}",
+                "metadata": {"task_id": task_contract.task_id},
+            },
+            {
+                "path": "artifacts/citation_visualization_spec.json",
+                "asset_type": "visualization_spec",
+                "name": f"citation_visualization_{task_contract.task_id}",
+                "metadata": {"task_id": task_contract.task_id, "visualization_role": "citation_audit"},
+            },
+        ]
+        if has_relational_context:
+            output_artifacts.extend(
+                [
+                    {
+                        "path": "artifacts/relational_context_summary.json",
+                        "asset_type": "relational_runner_context_summary",
+                        "name": f"relational_runner_context_summary_{task_contract.task_id}",
+                        "metadata": {
+                            "task_id": task_contract.task_id,
+                            "source_count": relational_context.get("source_count"),
+                        },
+                    },
+                    {
+                        "path": "artifacts/relational_context_visualization_spec.json",
+                        "asset_type": "visualization_spec",
+                        "name": f"relational_context_visualization_{task_contract.task_id}",
+                        "metadata": {
+                            "task_id": task_contract.task_id,
+                            "visualization_role": "relational_runner_context",
+                        },
+                    },
+                ]
+            )
         result = AgentResult(
             task_id=task_contract.task_id,
             status="succeeded",
@@ -108,57 +188,9 @@ class LocalStubAgentRunner(NoopAgentRunner):
                 "visualization_spec": visualization_spec,
                 "source_citation_manifest": source_citation_manifest,
                 "citation_audit_report": citation_audit_report,
+                "relational_context_summary": relational_context if has_relational_context else None,
             },
-            artifacts=[
-                {
-                    "path": "reports/agent_task_report.md",
-                    "asset_type": "agent_task_report",
-                    "name": f"agent_task_report_{task_contract.task_id}",
-                    "metadata": {"task_id": task_contract.task_id},
-                },
-                {
-                    "path": "artifacts/feature_recipe.json",
-                    "asset_type": "feature_recipe",
-                    "name": f"agent_feature_recipe_{task_contract.task_id}",
-                    "metadata": {"task_id": task_contract.task_id},
-                },
-                {
-                    "path": "artifacts/experiment_metrics.json",
-                    "asset_type": "experiment_metrics",
-                    "name": f"agent_experiment_metrics_{task_contract.task_id}",
-                    "metadata": {"task_id": task_contract.task_id},
-                },
-                {
-                    "path": "artifacts/agent_result.json",
-                    "asset_type": "agent_result",
-                    "name": f"agent_result_{task_contract.task_id}",
-                    "metadata": {"task_id": task_contract.task_id},
-                },
-                {
-                    "path": "artifacts/visualization_spec.json",
-                    "asset_type": "visualization_spec",
-                    "name": f"agent_task_visualization_{task_contract.task_id}",
-                    "metadata": {"task_id": task_contract.task_id},
-                },
-                {
-                    "path": "artifacts/source_citation_manifest.json",
-                    "asset_type": "source_citation_manifest",
-                    "name": f"source_citation_manifest_{task_contract.task_id}",
-                    "metadata": {"task_id": task_contract.task_id},
-                },
-                {
-                    "path": "reports/citation_audit_report.md",
-                    "asset_type": "citation_audit_report",
-                    "name": f"citation_audit_report_{task_contract.task_id}",
-                    "metadata": {"task_id": task_contract.task_id},
-                },
-                {
-                    "path": "artifacts/citation_visualization_spec.json",
-                    "asset_type": "visualization_spec",
-                    "name": f"citation_visualization_{task_contract.task_id}",
-                    "metadata": {"task_id": task_contract.task_id, "visualization_role": "citation_audit"},
-                },
-            ],
+            artifacts=output_artifacts,
             warnings=["No Codex or external research execution was performed."],
             evidence_sources=source_citation_manifest["evidence_sources"],
             citations=source_citation_manifest["citations"],
@@ -174,6 +206,8 @@ class LocalStubAgentRunner(NoopAgentRunner):
             source_citation_manifest=source_citation_manifest,
             citation_audit_report=citation_audit_report,
             citation_visualization_spec=citation_visualization_spec,
+            relational_context_summary=relational_context if has_relational_context else None,
+            relational_visualization_spec=relational_visualization_spec,
             result=result,
         )
         validate_against_schema(result.model_dump(mode="json"), output_schema)
@@ -263,6 +297,8 @@ def write_stub_workspace_outputs(
     source_citation_manifest: dict[str, Any],
     citation_audit_report: str,
     citation_visualization_spec: dict[str, Any],
+    relational_context_summary: dict[str, Any] | None,
+    relational_visualization_spec: dict[str, Any] | None,
     result: AgentResult,
 ) -> None:
     reports_dir = workspace / "reports"
@@ -291,15 +327,48 @@ def write_stub_workspace_outputs(
         json.dumps(citation_visualization_spec, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    if relational_context_summary is not None:
+        (artifacts_dir / "relational_context_summary.json").write_text(
+            json.dumps(relational_context_summary, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    if relational_visualization_spec is not None:
+        (artifacts_dir / "relational_context_visualization_spec.json").write_text(
+            json.dumps(relational_visualization_spec, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
     (artifacts_dir / "agent_result.json").write_text(
         result.model_dump_json(indent=2),
         encoding="utf-8",
     )
 
 
-def render_stub_feature_recipe(contract: AgentTaskContract) -> dict[str, Any]:
+def render_stub_feature_recipe(contract: AgentTaskContract, relational_context: dict[str, Any] | None = None) -> dict[str, Any]:
     dataset_context = dict_value(contract.inputs.get("dataset_context"))
     evaluation_contract = dict_value(contract.inputs.get("evaluation_contract"))
+    relational_context = relational_context or {}
+    feature_families: list[dict[str, Any]] = [
+        {
+            "name": "dataset_specific_features",
+            "status": "planned",
+            "notes": "Future runner should select features from project evidence, Skill assets, and approved evaluation constraints.",
+        }
+    ]
+    if relational_context.get("source_count"):
+        feature_families.append(
+            {
+                "name": "relational_context_review",
+                "status": "available_for_agent_review",
+                "source_count": relational_context.get("source_count"),
+                "usable_preview_feature_count": dict_value(relational_context.get("preview_summary")).get(
+                    "usable_feature_count"
+                ),
+                "notes": (
+                    "Relational preview artifacts are available for planning. A real runner must implement "
+                    "train-fold-safe generation before model claims."
+                ),
+            }
+        )
     return {
         "recipe_version": "feature_recipe.v1",
         "recipe_name": "local_stub_planned_feature_recipe",
@@ -309,13 +378,8 @@ def render_stub_feature_recipe(contract: AgentTaskContract) -> dict[str, Any]:
         "dataset_snapshot_id": dataset_context.get("dataset_snapshot_id"),
         "evaluation_spec_id": evaluation_contract.get("evaluation_spec_id"),
         "split_manifest_id": split_manifest_id(evaluation_contract),
-        "feature_families": [
-            {
-                "name": "dataset_specific_features",
-                "status": "planned",
-                "notes": "Future runner should select features from project evidence, Skill assets, and approved evaluation constraints.",
-            }
-        ],
+        "feature_families": feature_families,
+        "relational_context": relational_context if relational_context.get("source_count") else None,
         "safety": {
             "fit_preprocessing_on_train_only": True,
             "must_respect_split_manifest": True,
@@ -325,9 +389,10 @@ def render_stub_feature_recipe(contract: AgentTaskContract) -> dict[str, Any]:
     }
 
 
-def render_stub_experiment_metrics(contract: AgentTaskContract) -> dict[str, Any]:
+def render_stub_experiment_metrics(contract: AgentTaskContract, relational_context: dict[str, Any] | None = None) -> dict[str, Any]:
     dataset_context = dict_value(contract.inputs.get("dataset_context"))
     evaluation_contract = dict_value(contract.inputs.get("evaluation_contract"))
+    relational_context = relational_context or {}
     return {
         "schema_version": "experiment_metrics.v1",
         "execution_status": "not_executed",
@@ -340,6 +405,14 @@ def render_stub_experiment_metrics(contract: AgentTaskContract) -> dict[str, Any
         "primary_metric_name": evaluation_contract.get("primary_metric"),
         "primary_metric_value": None,
         "secondary_metrics": {},
+        "relational_context": {
+            "status": relational_context.get("status") or "missing",
+            "source_count": relational_context.get("source_count") or 0,
+            "usable_feature_count": dict_value(relational_context.get("preview_summary")).get(
+                "usable_feature_count"
+            ),
+            "deferred_safety_check_count": len(list_value(relational_context.get("deferred_safety_checks"))),
+        },
         "split_manifest_respected": bool(split_manifest_id(evaluation_contract)),
         "notes": [
             "LocalStubAgentRunner does not train or evaluate a model.",
@@ -492,6 +565,45 @@ def render_stub_citation_visualization(manifest: dict[str, Any]) -> dict[str, An
     }
 
 
+def render_stub_relational_context_visualization(relational_context: dict[str, Any]) -> dict[str, Any]:
+    preview = dict_value(relational_context.get("preview_summary"))
+    coverage = dict_value(relational_context.get("coverage"))
+    deferred_count = len(list_value(relational_context.get("deferred_safety_checks")))
+    return {
+        "schema_version": "visualization_spec.v1",
+        "title": "Relational Runner Context",
+        "chart_type": "stage_status",
+        "data": [
+            {
+                "stage": "Context files",
+                "status": "ready" if relational_context.get("source_count") else "warning",
+                "count": relational_context.get("source_count") or 0,
+                "detail": "Relational artifacts materialized in the controlled workspace.",
+            },
+            {
+                "stage": "Recipe",
+                "status": "ready" if coverage.get("has_recipe") else "warning",
+                "count": 1 if coverage.get("has_recipe") else 0,
+                "detail": "Relational feature recipe available for runner review.",
+            },
+            {
+                "stage": "Usable preview features",
+                "status": "ready" if int_value(preview.get("usable_feature_count")) else "warning",
+                "count": int_value(preview.get("usable_feature_count")),
+                "detail": "Preview features are planning evidence, not train-fold-fitted model inputs.",
+            },
+            {
+                "stage": "Deferred safety checks",
+                "status": "warning" if deferred_count else "ready",
+                "count": deferred_count,
+                "detail": "Checks that must be resolved before relational model claims.",
+            },
+        ],
+        "encoding": {"x": "stage", "color": "status", "tooltip": ["stage", "status", "detail"]},
+        "empty_state": "Prepare a workspace with relational context before running an AgentRunner.",
+    }
+
+
 def split_manifest_id(evaluation_contract: dict[str, Any]) -> str | None:
     raw_manifest = evaluation_contract.get("split_manifest")
     if not isinstance(raw_manifest, dict):
@@ -506,6 +618,10 @@ def dict_value(value: Any) -> dict[str, Any]:
 
 def list_value(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def int_value(value: Any) -> int:
+    return int(value) if isinstance(value, int | float) else 0
 
 
 def codex_sandbox(policy: str) -> str:
@@ -524,7 +640,12 @@ def render_prompt(contract: AgentTaskContract) -> str:
     )
 
 
-def render_stub_report(contract: AgentTaskContract, policy: ExecutionPolicy) -> str:
+def render_stub_report(
+    contract: AgentTaskContract,
+    policy: ExecutionPolicy,
+    relational_context: dict[str, Any] | None = None,
+) -> str:
+    relational_context = relational_context or {}
     lines = [
         "# Agent Task Execution Plan",
         "",
@@ -566,6 +687,35 @@ def render_stub_report(contract: AgentTaskContract, policy: ExecutionPolicy) -> 
             "- External network execution: not performed by LocalStubAgentRunner.",
         ]
     )
+    if relational_context.get("source_count"):
+        preview = dict_value(relational_context.get("preview_summary"))
+        lines.extend(
+            [
+                "",
+                "## Relational Runner Context",
+                "",
+                f"- Materialized relational artifacts: {relational_context.get('source_count')}",
+                f"- Usable preview features: {preview.get('usable_feature_count')}",
+                f"- Generated preview features: {preview.get('generated_feature_count')}",
+                "- Context directory: `.harness/context/relational/`",
+                "- Policy: inspect relational context as advisory evidence, not a mandatory recipe.",
+                "- Runner autonomy: reject, revise, or replace relational approaches when project evidence supports a better path.",
+                "- Hard constraints: respect harness EvaluationSpec/SplitManifest, do not read secrets, and register important outputs as artifacts.",
+                "",
+                "### Scenario Recommendations",
+            ]
+        )
+        recommendations = list_value(relational_context.get("recommended_agent_task_scenarios"))
+        if recommendations:
+            for item in recommendations:
+                if isinstance(item, dict):
+                    lines.append(f"- `{item.get('name')}`: {item.get('description')}")
+        else:
+            lines.append("- No scenario recommendations were attached.")
+        lines.extend(["", "### Deferred Safety Checks"])
+        for item in list_value(relational_context.get("deferred_safety_checks")):
+            if isinstance(item, dict):
+                lines.append(f"- `{item.get('check')}` ({item.get('status')}): {item.get('reason')}")
     lines.extend(
         [
             "",

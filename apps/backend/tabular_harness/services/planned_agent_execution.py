@@ -37,6 +37,7 @@ from tabular_harness.services.planned_agent_workspace import (
     load_contract_payload,
     prepare_workspace_from_contract_artifact,
 )
+from tabular_harness.services.runner_context import build_relational_runner_context_summary
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,8 @@ class PlannedAgentTaskExecutionResult:
     ingested_artifact_ids: list[str]
     auto_prepared_workspace: bool
     experiment_ingestion: AgentResultExperimentIngestion
+    relational_context_summary: dict[str, Any]
+    relational_context_summary_artifact_id: str | None
 
 
 def run_planned_agent_task_local_stub(
@@ -98,8 +101,13 @@ def run_planned_agent_task_local_stub(
     output_schema = load_agent_result_schema()
     workspace_path = Path(str(workspace_manifest["workspace_path"]))
     policy = ExecutionPolicy(sandbox="workspace_write", network="disabled", timeout_seconds=300)
+    relational_context_summary = build_relational_runner_context_summary(workspace_manifest, contract.inputs)
     result = LocalStubAgentRunner().run_task(
-        WorkspaceRef(project_id=project.id, path=str(workspace_path)),
+        WorkspaceRef(
+            project_id=project.id,
+            path=str(workspace_path),
+            context_summary={"relational_context": relational_context_summary},
+        ),
         contract,
         output_schema,
         policy,
@@ -161,6 +169,7 @@ def run_planned_agent_task_local_stub(
             },
         )
         ingested_artifacts.append(result_artifact)
+    relational_context_artifact = first_artifact_of_type(ingested_artifacts, "relational_runner_context_summary")
 
     report_md = result.outputs.get("report_md")
     if not isinstance(report_md, str):
@@ -237,6 +246,8 @@ def run_planned_agent_task_local_stub(
         ingested_artifact_ids=[artifact.id for artifact in ingested_artifacts],
         auto_prepared_workspace=auto_prepared,
         experiment_ingestion=experiment_ingestion,
+        relational_context_summary=relational_context_summary,
+        relational_context_summary_artifact_id=relational_context_artifact.id if relational_context_artifact else None,
     )
 
 
