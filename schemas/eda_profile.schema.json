@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tablex.local/schemas/eda_profile.schema.json",
+  "title": "EDA Profile",
+  "type": "object",
+  "required": ["schema_version", "row_count", "column_count", "profile_mode", "columns"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "eda_profile.v1" },
+    "file": { "type": "string" },
+    "file_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+    "row_count": { "type": "integer", "minimum": 0 },
+    "column_count": { "type": "integer", "minimum": 0 },
+    "profile_mode": { "type": "string", "enum": ["full", "bounded_sample"] },
+    "profile_mode_requested": { "type": "string", "enum": ["auto", "full", "bounded_sample"] },
+    "profile_mode_reasons": { "type": "array", "items": { "type": "string" } },
+    "profile_sample": {
+      "type": "object",
+      "required": ["enabled", "reasons"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "sample_row_count": { "type": ["integer", "null"], "minimum": 0 },
+        "sample_limit": { "type": ["integer", "null"], "minimum": 1 },
+        "sample_method": { "type": ["string", "null"] },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "column_stat_scope": { "type": "string", "enum": ["full", "sample"] },
+    "missing_cell_count": { "type": "integer", "minimum": 0 },
+    "columns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "physical_type",
+          "semantic_type",
+          "role",
+          "missing_count",
+          "missing_rate",
+          "unique_count",
+          "stats_scope"
+        ],
+        "properties": {
+          "name": { "type": "string" },
+          "physical_type": { "type": "string" },
+          "semantic_type": { "type": "string" },
+          "role": { "type": "string" },
+          "missing_count": { "type": "integer", "minimum": 0 },
+          "missing_rate": { "type": "number", "minimum": 0 },
+          "unique_count": { "type": "integer", "minimum": 0 },
+          "stats_scope": { "type": "string", "enum": ["full", "sample"] },
+          "stats_row_count": { "type": "integer", "minimum": 0 },
+          "missing_count_is_estimated": { "type": "boolean" },
+          "unique_count_is_approximate": { "type": "boolean" },
+          "sample_missing_count": { "type": ["integer", "null"], "minimum": 0 },
+          "sample_unique_count": { "type": ["integer", "null"], "minimum": 0 },
+          "is_leakage_suspect": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "target_column": { "type": ["string", "null"] },
+    "target_profile": { "type": ["object", "null"] },
+    "time_candidates": { "type": "array", "items": { "type": "string" } },
+    "group_candidates": { "type": "array", "items": { "type": "string" } },
+    "leakage_suspects": { "type": "array", "items": { "type": "string" } },
+    "deferred_deep_profile": {
+      "type": "object",
+      "required": ["recommended", "deferred_column_count", "deferred_columns"],
+      "properties": {
+        "recommended": { "type": "boolean" },
+        "reason": { "type": ["string", "null"] },
+        "suggested_job_type": { "type": ["string", "null"] },
+        "deferred_column_count": { "type": "integer", "minimum": 0 },
+        "deferred_columns": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": true
+    },
+    "sample_rows": { "type": "array", "items": { "type": "object" } }
+  },
+  "additionalProperties": true
+}

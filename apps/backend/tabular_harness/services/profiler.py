@@ -22,6 +22,11 @@ LEAKAGE_NAME_HINTS = (
     "status",
 )
 
+DEFAULT_PROFILE_SAMPLE_ROWS = 50_000
+FULL_PROFILE_MAX_FILE_BYTES = 50 * 1024 * 1024
+FULL_PROFILE_MAX_ROWS = 100_000
+FULL_PROFILE_MAX_COLUMNS = 80
+
 
 @dataclass(frozen=True)
 class ProfileResult:
@@ -36,7 +41,17 @@ class ProfileResult:
     column_count: int
 
 
-def profile_tabular_file(path: Path, project_id: str, target_column: str | None = None) -> ProfileResult:
+def profile_tabular_file(
+    path: Path,
+    project_id: str,
+    target_column: str | None = None,
+    *,
+    profile_mode: str = "auto",
+    sample_size: int = DEFAULT_PROFILE_SAMPLE_ROWS,
+    full_profile_max_file_bytes: int = FULL_PROFILE_MAX_FILE_BYTES,
+    full_profile_max_rows: int = FULL_PROFILE_MAX_ROWS,
+    full_profile_max_columns: int = FULL_PROFILE_MAX_COLUMNS,
+) -> ProfileResult:
     con = duckdb.connect(database=":memory:")
     view_name = "uploaded_dataset"
     con.execute(f"CREATE VIEW {view_name} AS SELECT * FROM {read_sql(path)}")
@@ -45,12 +60,49 @@ def profile_tabular_file(path: Path, project_id: str, target_column: str | None 
     row_count_result = con.execute(f"SELECT COUNT(*) FROM {view_name}").fetchone()
     assert row_count_result is not None
     row_count = int(row_count_result[0])
+    column_count = len(columns)
+    file_size_bytes = path.stat().st_size if path.exists() else None
+    bounded, bounded_reasons = choose_profile_mode(
+        requested_mode=profile_mode,
+        file_size_bytes=file_size_bytes,
+        row_count=row_count,
+        column_count=column_count,
+        full_profile_max_file_bytes=full_profile_max_file_bytes,
+        full_profile_max_rows=full_profile_max_rows,
+        full_profile_max_columns=full_profile_max_columns,
+    )
+    stats_view_name = view_name
+    stats_row_count = row_count
+    sample_metadata: dict[str, Any] = {
+        "enabled": False,
+        "sample_row_count": None,
+        "sample_limit": None,
+        "sample_method": None,
+        "reasons": bounded_reasons,
+    }
+    if bounded:
+        if sample_size <= 0:
+            raise ValueError("sample_size must be positive for bounded profiling")
+        stats_view_name = "profile_sample"
+        con.execute(f"CREATE TEMP TABLE {stats_view_name} AS SELECT * FROM {view_name} LIMIT {int(sample_size)}")
+        sample_count_result = con.execute(f"SELECT COUNT(*) FROM {stats_view_name}").fetchone()
+        assert sample_count_result is not None
+        stats_row_count = int(sample_count_result[0])
+        sample_metadata = {
+            "enabled": True,
+            "sample_row_count": stats_row_count,
+            "sample_limit": int(sample_size),
+            "sample_method": "first_rows_limit",
+            "reasons": bounded_reasons,
+        }
 
     column_profiles: list[dict[str, Any]] = []
     semantic_columns: list[dict[str, Any]] = []
     leakage_columns: list[str] = []
     time_candidates: list[str] = []
     group_candidates: list[str] = []
+    deferred_columns: list[dict[str, Any]] = []
+    missing_cell_count = 0
 
     for column in columns:
         name = column["name"]
@@ -60,16 +112,29 @@ def profile_tabular_file(path: Path, project_id: str, target_column: str | None 
             SELECT
               COUNT(*) - COUNT({quote_ident(name)}) AS missing_count,
               COUNT(DISTINCT {quote_ident(name)}) AS unique_count
-            FROM {view_name}
+            FROM {stats_view_name}
             """
         ).fetchone()
         assert stats is not None
-        missing_count = int(stats[0] or 0)
-        unique_count = int(stats[1] or 0)
-        missing_rate = missing_count / row_count if row_count else 0.0
+        scoped_missing_count = int(stats[0] or 0)
+        scoped_unique_count = int(stats[1] or 0)
+        missing_rate = scoped_missing_count / stats_row_count if stats_row_count else 0.0
+        missing_count = int(round(missing_rate * row_count)) if bounded else scoped_missing_count
+        unique_count = scoped_unique_count
+        missing_cell_count += missing_count
         lower_name = name.lower()
         semantic_type = infer_semantic_type(lower_name, dtype)
-        role = "target" if target_column and name == target_column else infer_role(lower_name, unique_count, row_count)
+        role = (
+            "target"
+            if target_column and name == target_column
+            else infer_role(
+                lower_name,
+                unique_count,
+                row_count,
+                stats_row_count=stats_row_count,
+                unique_count_is_sampled=bounded,
+            )
+        )
         available = "unknown"
         leakage_suspect = any(hint in lower_name for hint in LEAKAGE_NAME_HINTS)
         if name == target_column:
@@ -90,9 +155,27 @@ def profile_tabular_file(path: Path, project_id: str, target_column: str | None 
                 "missing_count": missing_count,
                 "missing_rate": round(missing_rate, 6),
                 "unique_count": unique_count,
+                "stats_scope": "sample" if bounded else "full",
+                "stats_row_count": stats_row_count,
+                "missing_count_is_estimated": bounded,
+                "unique_count_is_approximate": bounded,
+                "sample_missing_count": scoped_missing_count if bounded else None,
+                "sample_unique_count": scoped_unique_count if bounded else None,
                 "is_leakage_suspect": leakage_suspect,
             }
         )
+        if bounded:
+            deferred_columns.append(
+                {
+                    "name": name,
+                    "physical_type": dtype,
+                    "deferred_stats": ["exact_missing_count", "exact_unique_count"],
+                    "sample_row_count": stats_row_count,
+                    "sample_missing_count": scoped_missing_count,
+                    "sample_unique_count": scoped_unique_count,
+                    "reason": "bounded_profile_mode",
+                }
+            )
         semantic_columns.append(
             {
                 "column_name": name,
@@ -110,20 +193,53 @@ def profile_tabular_file(path: Path, project_id: str, target_column: str | None 
 
     target_profile = build_target_profile(con, view_name, target_column, columns) if target_column else None
     profile = {
+        "schema_version": "eda_profile.v1",
         "file": str(path),
+        "file_size_bytes": file_size_bytes,
         "row_count": row_count,
-        "column_count": len(columns),
+        "column_count": column_count,
+        "profile_mode": "bounded_sample" if bounded else "full",
+        "profile_mode_requested": profile_mode,
+        "profile_mode_reasons": bounded_reasons,
+        "profile_sample": sample_metadata,
+        "column_stat_scope": "sample" if bounded else "full",
+        "missing_cell_count": missing_cell_count,
         "columns": column_profiles,
         "target_column": target_column,
         "target_profile": target_profile,
         "time_candidates": time_candidates,
         "group_candidates": group_candidates,
         "leakage_suspects": leakage_columns,
+        "deferred_deep_profile": {
+            "recommended": bounded,
+            "reason": (
+                "Exact per-column missing and unique counts were deferred to keep large imports responsive."
+                if bounded
+                else None
+            ),
+            "suggested_job_type": "profile_dataset_deep" if bounded else None,
+            "deferred_column_count": len(deferred_columns),
+            "deferred_columns": deferred_columns,
+        },
         "sample_rows": sample_rows(con, view_name),
     }
     schema_hash = hashlib.sha256(dumps_json(columns).encode("utf-8")).hexdigest()
-    evidence = build_evidence(project_id, leakage_columns, time_candidates, group_candidates)
-    assumptions = build_assumptions(project_id, target_column, leakage_columns, time_candidates, group_candidates)
+    evidence = build_evidence(
+        project_id,
+        leakage_columns,
+        time_candidates,
+        group_candidates,
+        profile_mode=str(profile["profile_mode"]),
+        sample_row_count=stats_row_count,
+    )
+    assumptions = build_assumptions(
+        project_id,
+        target_column,
+        leakage_columns,
+        time_candidates,
+        group_candidates,
+        bounded_profile=bounded,
+    )
     questions = build_questions(project_id, target_column, leakage_columns, time_candidates, group_candidates)
     understanding_md = render_understanding(profile, assumptions, questions)
     return ProfileResult(
@@ -135,8 +251,34 @@ def profile_tabular_file(path: Path, project_id: str, target_column: str | None 
         understanding_md=understanding_md,
         schema_hash=schema_hash,
         row_count=row_count,
-        column_count=len(columns),
+        column_count=column_count,
     )
+
+
+def choose_profile_mode(
+    *,
+    requested_mode: str,
+    file_size_bytes: int | None,
+    row_count: int,
+    column_count: int,
+    full_profile_max_file_bytes: int,
+    full_profile_max_rows: int,
+    full_profile_max_columns: int,
+) -> tuple[bool, list[str]]:
+    if requested_mode not in {"auto", "full", "bounded_sample"}:
+        raise ValueError("profile_mode must be one of: auto, full, bounded_sample")
+    reasons: list[str] = []
+    if requested_mode == "bounded_sample":
+        return True, ["requested_bounded_sample"]
+    if requested_mode == "full":
+        return False, ["requested_full"]
+    if file_size_bytes is not None and file_size_bytes > full_profile_max_file_bytes:
+        reasons.append(f"file_size_bytes>{full_profile_max_file_bytes}")
+    if row_count > full_profile_max_rows:
+        reasons.append(f"row_count>{full_profile_max_rows}")
+    if column_count > full_profile_max_columns:
+        reasons.append(f"column_count>{full_profile_max_columns}")
+    return bool(reasons), reasons or ["within_full_profile_thresholds"]
 
 
 def read_sql(path: Path) -> str:
@@ -160,7 +302,7 @@ def quote_ident(identifier: str) -> str:
 def infer_semantic_type(lower_name: str, dtype: str) -> str:
     if "date" in lower_name or "time" in lower_name or dtype.upper() in {"DATE", "TIMESTAMP"}:
         return "datetime"
-    if "id" == lower_name or lower_name.endswith("_id") or lower_name.endswith("id"):
+    if is_identifier_name(lower_name):
         return "identifier"
     if "text" in lower_name or "comment" in lower_name or "description" in lower_name:
         return "text"
@@ -169,8 +311,27 @@ def infer_semantic_type(lower_name: str, dtype: str) -> str:
     return "categorical"
 
 
-def infer_role(lower_name: str, unique_count: int, row_count: int) -> str:
-    if lower_name.endswith("_id") or lower_name in {"id", "user_id", "customer_id", "account_id"}:
+def is_identifier_name(lower_name: str) -> bool:
+    return (
+        lower_name == "id"
+        or lower_name.endswith("_id")
+        or lower_name.endswith("id")
+        or "_id_" in lower_name
+        or lower_name.startswith("id_")
+    )
+
+
+def infer_role(
+    lower_name: str,
+    unique_count: int,
+    row_count: int,
+    *,
+    stats_row_count: int | None = None,
+    unique_count_is_sampled: bool = False,
+) -> str:
+    if is_identifier_name(lower_name) or lower_name in {"user_id", "customer_id", "account_id"}:
+        if unique_count_is_sampled and stats_row_count and unique_count >= int(stats_row_count * 0.98):
+            return "identifier"
         if row_count and unique_count < row_count:
             return "group"
         return "identifier"
@@ -270,18 +431,30 @@ def normalize_sample_value(value: Any) -> Any:
 
 
 def build_evidence(
-    project_id: str, leakage_columns: list[str], time_candidates: list[str], group_candidates: list[str]
+    project_id: str,
+    leakage_columns: list[str],
+    time_candidates: list[str],
+    group_candidates: list[str],
+    *,
+    profile_mode: str,
+    sample_row_count: int,
 ) -> list[dict[str, Any]]:
     evidence = [
         {
             "id": new_id("ev"),
             "project_id": project_id,
             "evidence_type": "schema_inference",
-            "summary": "Schema, missingness, unique counts, and simple name-based semantics were profiled.",
+            "summary": (
+                "Schema and row count were profiled; column missingness and unique counts used bounded sample statistics."
+                if profile_mode == "bounded_sample"
+                else "Schema, missingness, unique counts, and simple name-based semantics were profiled."
+            ),
             "strength": "medium",
             "metadata": {
                 "time_candidates": time_candidates,
                 "group_candidates": group_candidates,
+                "profile_mode": profile_mode,
+                "sample_row_count": sample_row_count,
             },
         }
     ]
@@ -305,6 +478,8 @@ def build_assumptions(
     leakage_columns: list[str],
     time_candidates: list[str],
     group_candidates: list[str],
+    *,
+    bounded_profile: bool,
 ) -> list[dict[str, Any]]:
     assumptions = [
         {
@@ -323,6 +498,22 @@ def build_assumptions(
             "requires_user_confirmation": not bool(target_column),
         }
     ]
+    if bounded_profile:
+        assumptions.append(
+            {
+                "id": new_id("asm"),
+                "project_id": project_id,
+                "topic": "data_understanding",
+                "subject_type": "profile",
+                "subject_ref": "eda_profile",
+                "statement": "Large-dataset column statistics are sample-based until a deeper profile is requested.",
+                "status": "adopted",
+                "confidence": 0.8,
+                "risk_level": "medium",
+                "fallback_policy": "infer_and_continue",
+                "requires_user_confirmation": False,
+            }
+        )
     if leakage_columns:
         assumptions.append(
             {
@@ -502,7 +693,7 @@ def render_understanding(
     )
     top_missing = sorted(profile["columns"], key=lambda item: item["missing_rate"], reverse=True)[:5]
     missing_lines = [
-        f"- `{item['name']}`: {item['missing_rate']:.1%} missing, {item['unique_count']} unique"
+        f"- `{item['name']}`: {item['missing_rate']:.1%} missing, {item['unique_count']} unique ({item['stats_scope']})"
         for item in top_missing
     ]
     question_lines = [f"- {item['question']} ({item['fallback_policy']})" for item in questions]
@@ -517,10 +708,16 @@ def render_understanding(
             "## Executive Summary",
             f"- Rows: {profile['row_count']}",
             f"- Columns: {profile['column_count']}",
+            f"- Profile mode: {profile['profile_mode']}",
             f"- {target_line}",
             "",
             "## Dataset Overview",
             f"The upload contains {profile['row_count']} rows and {profile['column_count']} columns.",
+            (
+                "Column-level missingness and unique counts are based on a bounded sample; exact deep profiling is deferred."
+                if profile["profile_mode"] == "bounded_sample"
+                else "Column-level missingness and unique counts were computed over the full table."
+            ),
             "",
             "## Target Understanding",
             target_line,
@@ -536,7 +733,12 @@ def render_understanding(
             *missing_lines,
             "",
             "## Data Quality Findings",
-            "Missingness and uniqueness were computed for every column.",
+            (
+                "Missingness and uniqueness were estimated for every column from the bounded profile sample."
+                if profile["profile_mode"] == "bounded_sample"
+                else "Missingness and uniqueness were computed for every column."
+            ),
+            f"Deferred deep-profile columns: {profile['deferred_deep_profile']['deferred_column_count']}",
             "",
             "## Leakage Risks",
             f"Potential leakage columns: {', '.join(leakage)}",

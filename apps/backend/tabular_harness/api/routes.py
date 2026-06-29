@@ -3608,6 +3608,15 @@ def profile_dataset_artifact(
     db.add(dataset)
     db.flush()
 
+    profile_metadata = {
+        "project_id": project.id,
+        "dataset_snapshot_id": dataset.id,
+        "profile_mode": result.profile.get("profile_mode"),
+        "column_stat_scope": result.profile.get("column_stat_scope"),
+        "sample_row_count": (result.profile.get("profile_sample") or {}).get("sample_row_count"),
+        "deep_profile_recommended": (result.profile.get("deferred_deep_profile") or {}).get("recommended"),
+        "deferred_column_count": (result.profile.get("deferred_deep_profile") or {}).get("deferred_column_count"),
+    }
     profile_artifact = store_and_register_json(
         db,
         store,
@@ -3616,7 +3625,7 @@ def profile_dataset_artifact(
         name="profile",
         filename="profile.json",
         payload=result.profile,
-        metadata={"project_id": project.id, "dataset_snapshot_id": dataset.id},
+        metadata=profile_metadata,
     )
     understanding_artifact = store_and_register_text(
         db,
@@ -3626,7 +3635,12 @@ def profile_dataset_artifact(
         name="understanding",
         filename="understanding.md",
         text=result.understanding_md,
-        metadata={"project_id": project.id, "dataset_snapshot_id": dataset.id},
+        metadata={
+            "project_id": project.id,
+            "dataset_snapshot_id": dataset.id,
+            "profile_mode": result.profile.get("profile_mode"),
+            "deep_profile_recommended": (result.profile.get("deferred_deep_profile") or {}).get("recommended"),
+        },
     )
     semantic_artifact = store_and_register_json(
         db,

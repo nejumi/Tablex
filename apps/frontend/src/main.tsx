@@ -1247,6 +1247,7 @@ function DataTab({
   }
 
   const datasetArtifacts = artifacts.filter((artifact) => artifact.asset_type === "dataset_snapshot");
+  const profileArtifacts = artifacts.filter((artifact) => artifact.asset_type === "eda_profile");
   const collectionArtifacts = artifacts.filter((artifact) =>
     ["benchmark_collection_plan", "benchmark_collection_report"].includes(artifact.asset_type)
   );
@@ -1703,6 +1704,27 @@ function DataTab({
           />
         ) : (
           <EmptyInline text="Uploaded CSV or Parquet files will become DatasetSnapshot assets with schema, row count, and lineage." />
+        )}
+      </Panel>
+      <Panel title="Profile Readiness" icon={<BarChart3 size={18} />}>
+        {profileArtifacts.length ? (
+          <Table
+            headers={["Profile", "Mode", "Sample Rows", "Deferred", "Created", "Actions"]}
+            rows={profileArtifacts.map((artifact) => [
+              artifact.name,
+              String(artifact.metadata.profile_mode ?? "full").replace(/_/g, " "),
+              artifact.metadata.sample_row_count ? String(artifact.metadata.sample_row_count) : "-",
+              artifact.metadata.deep_profile_recommended
+                ? `${String(artifact.metadata.deferred_column_count ?? "-")} columns`
+                : "No",
+              formatDate(artifact.created_at),
+              <a className="icon-link" key={artifact.id} href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download profile artifact">
+                <Download size={16} />
+              </a>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Data profiles will show full or bounded-sample mode, sample coverage, target profile, and any deferred deep-profile columns after upload or benchmark import." />
         )}
       </Panel>
       <Panel title="Source Artifacts" icon={<FileText size={18} />}>

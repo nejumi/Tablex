@@ -33,6 +33,7 @@ curl http://localhost:8000/healthz
 ```
 
 Metadata defaults to `data/metadata/app.db`. Artifacts default to `data/artifacts`.
+Dataset upload and benchmark import use DuckDB-backed profiling. Small files receive full per-column missingness and unique-count statistics. Larger or wider files automatically use `bounded_sample` mode: schema and row count remain exact, target profiling still runs when a target is supplied, and column-level missingness/unique counts are sample-backed with deferred deep-profile metadata in `profile.json`. This keeps Home Credit-scale imports responsive while making the estimation boundary visible in the UI and artifacts.
 The baseline runner uses XGBoost as the strong local baseline when the dataset signals justify a single-table mixed-type run. It builds persisted `baseline_plan`, `baseline_strategy_plan`, `feature_recipe`, `baseline_report`, `baseline_metrics`, validation prediction, and `model_package.joblib` artifacts. Successful strong baseline runs also create a `ModelVersion` record linked to the package artifact. The runner applies numeric median imputation, categorical ordinal encoding, text TF-IDF, datetime calendar features, and falls back to LogisticRegression/Ridge or majority/mean sanity baselines if the strong run fails. Lag and rolling covariate features are enabled only when the approved EvaluationSpec uses a time split.
 
 Create a baseline strategy artifact without running the model:
