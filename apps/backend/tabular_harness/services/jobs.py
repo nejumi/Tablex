@@ -54,6 +54,7 @@ JOB_TYPES = {
     "download_public_benchmark_archive",
     "import_benchmark_dataset",
     "create_benchmark_scenario_pack",
+    "translate_tier3_content",
 }
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}

@@ -45,6 +45,8 @@ from tabular_harness.schemas.api import (
     ResearchBriefRead,
     SemanticCatalogRead,
     SplitManifestRead,
+    TranslationCreate,
+    TranslationRead,
     VisualizationSpecRead,
 )
 
@@ -95,5 +97,7 @@ __all__ = [
     "ResearchBriefRead",
     "SemanticCatalogRead",
     "SplitManifestRead",
+    "TranslationCreate",
+    "TranslationRead",
     "VisualizationSpecRead",
 ]

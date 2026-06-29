@@ -825,6 +825,30 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert report_preview_by_id_response.status_code == 200
     assert "## Visualizations" in report_preview_by_id_response.json()["preview"]
 
+    artifact_translation_response = client.post(
+        f"/api/artifacts/{report['artifact_id']}/translate",
+        json={"target_locale": "ja-JP", "source_locale": "en-US"},
+    )
+    assert artifact_translation_response.status_code == 200, artifact_translation_response.text
+    artifact_translation = artifact_translation_response.json()
+    assert artifact_translation["source_type"] == "artifact"
+    assert artifact_translation["target_locale"] == "ja-JP"
+    assert artifact_translation["artifact"]["asset_type"] == "translated_artifact_preview"
+    assert artifact_translation["job"]["output"]["codex_translation_contract_artifact_id"]
+    assert "Codex" in artifact_translation["preview"]["preview"]
+
+    report_translation_response = client.post(
+        f"/api/reports/{report['id']}/translate",
+        json={"target_locale": "ja-JP", "source_locale": "en-US"},
+    )
+    assert report_translation_response.status_code == 200, report_translation_response.text
+    report_translation = report_translation_response.json()
+    assert report_translation["source_type"] == "report"
+    assert report_translation["report"]["status"] == "draft_translation"
+    assert report_translation["artifact"]["asset_type"] == "translated_report"
+    assert report_translation["job"]["job_type"] == "translate_tier3_content"
+    assert report_translation["job"]["output"]["codex_translation_contract_artifact_id"]
+
     decision_response = client.post(f"/api/projects/{project_id}/decision-dashboard/generate")
     assert decision_response.status_code == 200, decision_response.text
     decision_job = decision_response.json()

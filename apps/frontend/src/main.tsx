@@ -103,6 +103,11 @@ const englishMessages = {
   createAgentTaskContract: "Create AgentTaskContract",
   downloadLatestAgentTaskContract: "Download latest AgentTaskContract",
   agentTaskContractCreated: "AgentTaskContract created.",
+  translate: "Translate",
+  translating: "Translating",
+  translatedDraft: "Translated draft",
+  originalSource: "Original source",
+  codexTranslationPending: "Codex translation task planned; showing the available draft artifact.",
   close: "Close"
 };
 
@@ -161,6 +166,11 @@ const japaneseMessages: LocaleMessages = {
   createAgentTaskContract: "AgentTaskContractを作成",
   downloadLatestAgentTaskContract: "最新のAgentTaskContractをダウンロード",
   agentTaskContractCreated: "AgentTaskContractを作成しました。",
+  translate: "翻訳",
+  translating: "翻訳中",
+  translatedDraft: "翻訳ドラフト",
+  originalSource: "原文",
+  codexTranslationPending: "Codex翻訳タスクを計画しました。利用可能なドラフトartifactを表示しています。",
   close: "閉じる"
 };
 
@@ -292,6 +302,15 @@ function createDynamicLocalePack(localeInput: string): LocalePack {
   };
 }
 
+const LocaleContext = React.createContext<{ text: LocaleMessages; locale: string }>({
+  text: englishMessages,
+  locale: "en-US"
+});
+
+function useLocale() {
+  return React.useContext(LocaleContext);
+}
+
 type Project = {
   id: string;
   name: string;
@@ -337,6 +356,20 @@ type ArtifactPreview = {
   truncated: boolean;
   size_bytes: number | null;
   reason: string | null;
+};
+
+type TranslationResult = {
+  source_type: string;
+  source_id: string;
+  source_artifact_id: string;
+  target_locale: string;
+  source_locale: string;
+  provider_status: string;
+  translation_status: string;
+  artifact: Artifact;
+  report: Report | null;
+  preview: ArtifactPreview;
+  job: Job;
 };
 
 type BenchmarkDataset = {
@@ -854,7 +887,8 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <LocaleContext.Provider value={{ text, locale: activeLocale.locale }}>
+      <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">T</div>
@@ -934,7 +968,8 @@ function App() {
           </>
         ) : null}
       </main>
-    </div>
+      </div>
+    </LocaleContext.Provider>
   );
 }
 
@@ -1465,6 +1500,69 @@ function AgentChatDock({
   );
 }
 
+function TranslatablePreview({
+  preview,
+  sourceType = "artifact",
+  sourceId
+}: {
+  preview: ArtifactPreview;
+  sourceType?: "artifact" | "report";
+  sourceId?: string;
+}) {
+  const { text, locale } = useLocale();
+  const [translation, setTranslation] = React.useState<TranslationResult | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const effectiveSourceId = sourceId ?? preview.id;
+  const isSourceLocale = locale.toLowerCase().startsWith("en");
+  const shownPreview = translation?.preview.preview_available ? translation.preview.preview : preview.preview;
+
+  async function translate() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api<TranslationResult>(
+        sourceType === "report"
+          ? `/api/reports/${effectiveSourceId}/translate`
+          : `/api/artifacts/${effectiveSourceId}/translate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source_locale: "en-US", target_locale: locale })
+        }
+      );
+      setTranslation(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="preview-block">
+      <div className="preview-toolbar">
+        <div className="preview-meta">
+          <span className="badge">{translation ? text.translatedDraft : text.originalSource}</span>
+          <span className="badge muted">{translation?.target_locale ?? "en-US"}</span>
+          {translation ? <span className="badge muted">{translation.provider_status}</span> : null}
+        </div>
+        <button
+          className="secondary-button"
+          disabled={busy || isSourceLocale || !preview.preview_available}
+          onClick={() => void translate()}
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
+          {busy ? text.translating : text.translate}
+        </button>
+      </div>
+      {translation ? <p className="translation-note">{text.codexTranslationPending}</p> : null}
+      {error ? <div className="banner danger">{error}</div> : null}
+      <pre className="markdown-preview">{shownPreview}</pre>
+    </div>
+  );
+}
+
 function OverviewTab({
   overview,
   assumptions,
@@ -1930,7 +2028,7 @@ function DataTab({
         )}
         {collectionPreviewError ? <div className="banner danger">{collectionPreviewError}</div> : null}
         {collectionPreview?.preview_available ? (
-          <pre className="markdown-preview">{collectionPreview.preview}</pre>
+          <TranslatablePreview preview={collectionPreview} />
         ) : (
           <EmptyInline text={collectionPreview?.reason ?? "Create or select a benchmark collection plan to inspect source readiness, credential policy, and recommended benchmark suite order."} />
         )}
@@ -2224,7 +2322,7 @@ function DataTab({
         )}
         {workflowPreviewError ? <div className="banner danger">{workflowPreviewError}</div> : null}
         {workflowPreview?.preview_available ? (
-          <pre className="markdown-preview">{workflowPreview.preview}</pre>
+          <TranslatablePreview preview={workflowPreview} />
         ) : (
           <EmptyInline text={workflowPreview?.reason ?? "Run a public workflow or select a report action to preview results."} />
         )}
@@ -2269,7 +2367,7 @@ function DataTab({
         )}
         {evidencePreviewError ? <div className="banner danger">{evidencePreviewError}</div> : null}
         {evidencePreview?.preview_available ? (
-          <pre className="markdown-preview">{evidencePreview.preview}</pre>
+          <TranslatablePreview preview={evidencePreview} />
         ) : (
           <EmptyInline text={evidencePreview?.reason ?? "Generate or select an evidence pack to inspect benchmark readiness and next actions."} />
         )}
@@ -2452,7 +2550,7 @@ function DataTab({
       <Panel title="Relational Preview" icon={<FileText size={18} />}>
         {relationalPreviewError ? <div className="banner danger">{relationalPreviewError}</div> : null}
         {relationalPreview?.preview_available ? (
-          <pre className="markdown-preview">{relationalPreview.preview}</pre>
+          <TranslatablePreview preview={relationalPreview} />
         ) : (
           <EmptyInline text={relationalPreview?.reason ?? "Select a relational catalog, feature plan, recipe, or scenario diagnostics artifact to inspect table profiles, key candidates, generated preview features, scenario comparisons, and guardrails."} />
         )}
@@ -2486,7 +2584,7 @@ function DataTab({
         )}
         {scenarioPreviewError ? <div className="banner danger">{scenarioPreviewError}</div> : null}
         {scenarioPreview?.preview_available ? (
-          <pre className="markdown-preview">{scenarioPreview.preview}</pre>
+          <TranslatablePreview preview={scenarioPreview} />
         ) : (
           <EmptyInline text={scenarioPreview?.reason ?? "Generate or select a benchmark scenario artifact to inspect workflow and runner handoff context."} />
         )}
@@ -2523,7 +2621,7 @@ function DataTab({
       <Panel title="Data Quality Preview" icon={<FileText size={18} />}>
         {qualityPreviewError ? <div className="banner danger">{qualityPreviewError}</div> : null}
         {qualityPreview?.preview_available ? (
-          <pre className="markdown-preview">{qualityPreview.preview}</pre>
+          <TranslatablePreview preview={qualityPreview} />
         ) : (
           <EmptyInline text={qualityPreview?.reason ?? "Analyze quality or select a quality artifact to inspect gates, guidance, and agent-context notes."} />
         )}
@@ -2882,7 +2980,7 @@ function EvaluationTab({
         )}
         {scenarioPreviewError ? <div className="banner danger">{scenarioPreviewError}</div> : null}
         {scenarioPreview?.preview_available ? (
-          <pre className="markdown-preview">{scenarioPreview.preview}</pre>
+          <TranslatablePreview preview={scenarioPreview} />
         ) : (
           <EmptyInline text={scenarioPreview?.reason ?? "Generate or select a comparison artifact to inspect decision support before adopting the primary EvaluationSpec."} />
         )}
@@ -2987,7 +3085,7 @@ function EvaluationTab({
         )}
         {approvalPreviewError ? <div className="banner danger">{approvalPreviewError}</div> : null}
         {approvalPreview?.preview_available ? (
-          <pre className="markdown-preview">{approvalPreview.preview}</pre>
+          <TranslatablePreview preview={approvalPreview} />
         ) : (
           <EmptyInline text={approvalPreview?.reason ?? "Create or select an approval review to inspect blockers and assumption-backed proceed notes."} />
         )}
@@ -3260,7 +3358,7 @@ function ApproachTab({
         )}
         {researchPlanPreviewError ? <div className="banner danger">{researchPlanPreviewError}</div> : null}
         {researchPlanPreview?.preview_available ? (
-          <pre className="markdown-preview">{researchPlanPreview.preview}</pre>
+          <TranslatablePreview preview={researchPlanPreview} />
         ) : (
           <EmptyInline text={researchPlanPreview?.reason ?? "Generate or select a ResearchPlan to inspect controlled search candidates, Skill references, source policy, evidence expectations, and reporting requirements."} />
         )}
@@ -3315,7 +3413,7 @@ function ApproachTab({
         )}
         {researchSourcePreviewError ? <div className="banner danger">{researchSourcePreviewError}</div> : null}
         {researchSourcePreview?.preview_available ? (
-          <pre className="markdown-preview">{researchSourcePreview.preview}</pre>
+          <TranslatablePreview preview={researchSourcePreview} />
         ) : (
           <EmptyInline text={researchSourcePreview?.reason ?? "Generate or select a Research Source Pack to inspect citation requirements, controlled queries, source policy, and runner handoff expectations."} />
         )}
@@ -3351,7 +3449,7 @@ function ApproachTab({
         )}
         {researchSynthesisPreviewError ? <div className="banner danger">{researchSynthesisPreviewError}</div> : null}
         {researchSynthesisPreview?.preview_available ? (
-          <pre className="markdown-preview">{researchSynthesisPreview.preview}</pre>
+          <TranslatablePreview preview={researchSynthesisPreview} />
         ) : (
           <EmptyInline text={researchSynthesisPreview?.reason ?? "Synthesize current source packs and runner findings to inspect citation audit status, open requirements, and handoff guidance."} />
         )}
@@ -3445,7 +3543,7 @@ function ApproachTab({
         )}
         {taskContractPreviewError ? <div className="banner danger">{taskContractPreviewError}</div> : null}
         {taskContractPreview?.preview_available ? (
-          <pre className="markdown-preview">{taskContractPreview.preview}</pre>
+          <TranslatablePreview preview={taskContractPreview} />
         ) : (
           <EmptyInline text={taskContractPreview?.reason ?? "Plan or select an AgentTaskContract to inspect the exact flexible runner contract before execution."} />
         )}
@@ -3603,7 +3701,7 @@ function ApproachTab({
       <Panel title="Agent Context Pack Preview" icon={<FileText size={18} />}>
         {contextPreviewError ? <div className="banner danger">{contextPreviewError}</div> : null}
         {contextPreview?.preview_available ? (
-          <pre className="markdown-preview">{contextPreview.preview}</pre>
+          <TranslatablePreview preview={contextPreview} />
         ) : (
           <EmptyInline text={contextPreview?.reason ?? "Prepare and preview an AgentContextPack to inspect the exact harness-owned context before agent execution."} />
         )}
@@ -3611,7 +3709,7 @@ function ApproachTab({
       <Panel title="Experiment Plan Preview" icon={<ListChecks size={18} />}>
         {planPreviewError ? <div className="banner danger">{planPreviewError}</div> : null}
         {planPreview?.preview_available ? (
-          <pre className="markdown-preview">{planPreview.preview}</pre>
+          <TranslatablePreview preview={planPreview} />
         ) : (
           <EmptyInline text={planPreview?.reason ?? "Create and preview an ExperimentPlan to inspect runner-ready approach choices, scenario comparisons, evaluation locks, and research governance."} />
         )}
@@ -3619,7 +3717,7 @@ function ApproachTab({
       <Panel title="Agent Workspace Preview" icon={<Layers size={18} />}>
         {workspacePreviewError ? <div className="banner danger">{workspacePreviewError}</div> : null}
         {workspacePreview?.preview_available ? (
-          <pre className="markdown-preview">{workspacePreview.preview}</pre>
+          <TranslatablePreview preview={workspacePreview} />
         ) : (
           <EmptyInline text={workspacePreview?.reason ?? "Run the stub task to materialize a controlled workspace manifest with copied context, execution policy, and safety controls."} />
         )}
@@ -3969,7 +4067,7 @@ function ExperimentsTab({
       <Panel title="Experiment Artifact Preview" icon={<FileText size={18} />}>
         {previewError ? <div className="banner danger">{previewError}</div> : null}
         {preview?.preview_available ? (
-          <pre className="markdown-preview">{preview.preview}</pre>
+          <TranslatablePreview preview={preview} />
         ) : (
           <EmptyInline text={preview?.reason ?? "Select an experiment lifecycle artifact to inspect plans, run reports, or comparisons inside the workbench."} />
         )}
@@ -4003,6 +4101,7 @@ function ReportsTab({
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const [reportPreview, setReportPreview] = React.useState<ArtifactPreview | null>(null);
+  const [reportPreviewSource, setReportPreviewSource] = React.useState<{ type: "report" | "artifact"; id: string } | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const decisionArtifacts = artifacts.filter((artifact) =>
@@ -4014,6 +4113,7 @@ function ReportsTab({
     setPreviewError(null);
     try {
       setReportPreview(await api<ArtifactPreview>(`/api/reports/${reportId}/preview`));
+      setReportPreviewSource({ type: "report", id: reportId });
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -4026,6 +4126,7 @@ function ReportsTab({
     setPreviewError(null);
     try {
       setReportPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+      setReportPreviewSource({ type: "artifact", id: artifactId });
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -4188,7 +4289,11 @@ function ReportsTab({
       <Panel title="Report Preview" icon={<FileText size={18} />}>
         {previewError ? <div className="banner danger">{previewError}</div> : null}
         {reportPreview?.preview_available ? (
-          <pre className="markdown-preview">{reportPreview.preview}</pre>
+          <TranslatablePreview
+            preview={reportPreview}
+            sourceType={reportPreviewSource?.type ?? "artifact"}
+            sourceId={reportPreviewSource?.id ?? reportPreview.id}
+          />
         ) : (
           <EmptyInline text={reportPreview?.reason ?? "Select a report preview action to inspect the Markdown report inside the workbench."} />
         )}
@@ -4439,7 +4544,7 @@ function LeaderboardTab({
       <Panel title="Diagnostics Preview" icon={<FileText size={18} />}>
         {previewError ? <div className="banner danger">{previewError}</div> : null}
         {preview?.preview_available ? (
-          <pre className="markdown-preview">{preview.preview}</pre>
+          <TranslatablePreview preview={preview} />
         ) : (
           <EmptyInline text={preview?.reason ?? "Select a diagnostics artifact to preview JSON or Markdown inside the workbench."} />
         )}
@@ -4715,7 +4820,7 @@ function AssetsTab({
                 <span className="badge muted">{formatBytes(preview.size_bytes)}</span>
                 {preview.truncated ? <span className="badge risk">truncated</span> : null}
               </div>
-              <pre className="markdown-preview">{preview.preview}</pre>
+              <TranslatablePreview preview={preview} />
             </div>
           ) : (
             <EmptyInline text={preview.reason ?? "Preview is not available for this artifact."} />
@@ -4900,7 +5005,7 @@ function JobsTab({
               <EmptyInline text="This job has no artifact ids in its output." />
             )}
             {artifactPreview?.preview_available ? (
-              <pre className="markdown-preview">{artifactPreview.preview}</pre>
+              <TranslatablePreview preview={artifactPreview} />
             ) : (
               <EmptyInline text={artifactPreview?.reason ?? "Select an artifact to preview its text, JSON, Markdown, or CSV content."} />
             )}

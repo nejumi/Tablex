@@ -83,6 +83,8 @@ from tabular_harness.schemas import (
     ResearchBriefRead,
     SemanticCatalogRead,
     SplitManifestRead,
+    TranslationCreate,
+    TranslationRead,
     VisualizationSpecRead,
 )
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
@@ -192,6 +194,8 @@ from tabular_harness.services.reporting import (
 from tabular_harness.services.research_runner import run_research_source_pack_local_stub
 from tabular_harness.services.research_sources import create_research_source_pack
 from tabular_harness.services.research_synthesis import create_research_finding_synthesis
+from tabular_harness.services.translation import TranslationResult
+from tabular_harness.services.translation import translate_artifact as translate_artifact_service
 from tabular_harness.worker.jobs import create_default_worker
 
 router = APIRouter()
@@ -2910,6 +2914,53 @@ def download_report(report_id: str, db: Annotated[Session, Depends(get_session)]
     return FileResponse(path=path, filename=path.name)
 
 
+@router.post("/api/reports/{report_id}/translate", response_model=TranslationRead)
+def translate_report_endpoint(
+    report_id: str,
+    payload: TranslationCreate,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    report = db.get(Report, report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    artifact = db.get(Artifact, report.artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Report artifact not found")
+    job = create_translation_job(
+        db,
+        project_id=report.project_id,
+        source_type="report",
+        source_id=report.id,
+        source_artifact_id=artifact.id,
+        payload=payload,
+    )
+    try:
+        mark_job_running(job)
+        result = translate_artifact_service(
+            db,
+            store=store,
+            artifact=artifact,
+            source_report=report,
+            source_locale=payload.source_locale,
+            target_locale=payload.target_locale,
+            job_id=job.id,
+        )
+        mark_translation_job_succeeded(job, result)
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return translation_result_to_dict(
+        result,
+        source_type="report",
+        source_id=report.id,
+        source_artifact_id=artifact.id,
+        source_locale=payload.source_locale,
+        target_locale=payload.target_locale,
+        job=job,
+    )
+
+
 @router.post("/api/projects/{project_id}/visualizations/generate", response_model=JobRead)
 def generate_visualization_endpoint(
     project_id: str,
@@ -3350,6 +3401,49 @@ def preview_artifact(artifact_id: str, db: Annotated[Session, Depends(get_sessio
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file not found")
     return artifact_preview_to_dict(artifact, path)
+
+
+@router.post("/api/artifacts/{artifact_id}/translate", response_model=TranslationRead)
+def translate_artifact_endpoint(
+    artifact_id: str,
+    payload: TranslationCreate,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    artifact = db.get(Artifact, artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    job = create_translation_job(
+        db,
+        project_id=artifact.project_id,
+        source_type="artifact",
+        source_id=artifact.id,
+        source_artifact_id=artifact.id,
+        payload=payload,
+    )
+    try:
+        mark_job_running(job)
+        result = translate_artifact_service(
+            db,
+            store=store,
+            artifact=artifact,
+            source_locale=payload.source_locale,
+            target_locale=payload.target_locale,
+            job_id=job.id,
+        )
+        mark_translation_job_succeeded(job, result)
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return translation_result_to_dict(
+        result,
+        source_type="artifact",
+        source_id=artifact.id,
+        source_artifact_id=artifact.id,
+        source_locale=payload.source_locale,
+        target_locale=payload.target_locale,
+        job=job,
+    )
 
 
 @router.get("/api/projects/{project_id}/lineage")
@@ -4285,6 +4379,75 @@ def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 
         "preview": preview,
         "truncated": truncated,
         "reason": None,
+    }
+
+
+def create_translation_job(
+    db: Session,
+    *,
+    project_id: str | None,
+    source_type: str,
+    source_id: str,
+    source_artifact_id: str,
+    payload: TranslationCreate,
+) -> Job:
+    return create_job(
+        db,
+        job_type="translate_tier3_content",
+        project_id=project_id,
+        input_payload={
+            "source_type": source_type,
+            "source_id": source_id,
+            "source_artifact_id": source_artifact_id,
+            "source_locale": payload.source_locale,
+            "target_locale": payload.target_locale,
+        },
+        policy={
+            "runner": "CodexCliRunner",
+            "network": "disabled_until_runner_policy_allows",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "source_of_truth": "original_english_artifact",
+        },
+    )
+
+
+def mark_translation_job_succeeded(job: Job, result: TranslationResult) -> None:
+    mark_job_succeeded(
+        job,
+        {
+            "translated_artifact_id": result.translated_artifact.id,
+            "translated_report_id": result.translated_report.id if result.translated_report else None,
+            "codex_translation_contract_artifact_id": result.contract_artifact.id,
+            "provider_status": result.provider_status,
+            "translation_status": result.translation_status,
+            "artifact_ids": [result.contract_artifact.id, result.translated_artifact.id],
+        },
+    )
+
+
+def translation_result_to_dict(
+    result: TranslationResult,
+    *,
+    source_type: str,
+    source_id: str,
+    source_artifact_id: str,
+    source_locale: str,
+    target_locale: str,
+    job: Job,
+) -> dict[str, Any]:
+    return {
+        "source_type": source_type,
+        "source_id": source_id,
+        "source_artifact_id": source_artifact_id,
+        "source_locale": source_locale,
+        "target_locale": target_locale,
+        "provider_status": result.provider_status,
+        "translation_status": result.translation_status,
+        "artifact": artifact_to_dict(result.translated_artifact),
+        "report": report_to_dict(result.translated_report) if result.translated_report else None,
+        "preview": result.preview,
+        "job": job_to_dict(job),
     }
 
 

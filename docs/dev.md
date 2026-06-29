@@ -261,6 +261,19 @@ Locale scope is intentionally tiered:
 - Tier 3: Artifact/report/runner-generated content should not be silently UI-translated. It should be localized by creating explicit translated Report/Artifact assets with lineage.
 - Tier 4: Dataset values, column names, status enum values, IDs, artifact names, schema names, and runner contract fields remain source data unless a task explicitly creates a mapped display layer.
 
+Tier3 Translate buttons on preview surfaces call harness-owned translation endpoints:
+
+```bash
+curl -X POST http://localhost:8000/api/artifacts/{artifact_id}/translate \
+  -H 'Content-Type: application/json' \
+  -d '{"source_locale":"en-US","target_locale":"ja-JP"}'
+curl -X POST http://localhost:8000/api/reports/{report_id}/translate \
+  -H 'Content-Type: application/json' \
+  -d '{"source_locale":"en-US","target_locale":"ja-JP"}'
+```
+
+Each request creates a `translate_tier3_content` Job, a Codex-ready `agent_task_contract` artifact, a derived translated artifact/report, and lineage back to the English source artifact/report. The MVP does not silently execute Codex CLI from the button yet; the generated contract is the handoff point for a configured Codex translation runner. Until that runner is enabled, the endpoint returns a local draft/fallback artifact so the UI can show an on-demand preview without mutating the source.
+
 `/api/projects/{project_id}/approach/agent-task-plan` creates a runner-ready `agent_task_contract` artifact without executing Codex or any external network call:
 
 ```bash

@@ -70,6 +70,25 @@ class ArtifactPreviewRead(BaseModel):
     reason: str | None = None
 
 
+class TranslationCreate(BaseModel):
+    target_locale: str = Field(default="en-US", min_length=2, max_length=64)
+    source_locale: str = Field(default="en-US", min_length=2, max_length=64)
+
+
+class TranslationRead(BaseModel):
+    source_type: str
+    source_id: str
+    source_artifact_id: str
+    target_locale: str
+    source_locale: str
+    provider_status: str
+    translation_status: str
+    artifact: ArtifactRead
+    report: dict[str, Any] | None = None
+    preview: ArtifactPreviewRead
+    job: dict[str, Any]
+
+
 class AssetCreate(BaseModel):
     asset_type: Literal["skill", "feature_recipe", "evaluation_pattern", "prompt_template", "visualization_template"]
     name: str = Field(min_length=1, max_length=200)
@@ -461,6 +480,7 @@ class JobCreate(BaseModel):
         "download_kaggle_selected_files",
         "import_benchmark_dataset",
         "create_benchmark_scenario_pack",
+        "translate_tier3_content",
         "run_agent_task",
     ]
     project_id: str | None = None
