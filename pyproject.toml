@@ -24,6 +24,12 @@ dependencies = [
 tablex-worker = "tabular_harness.worker.cli:main"
 
 [project.optional-dependencies]
+analysis = [
+  "marimo>=0.10",
+  "matplotlib>=3.8",
+  "pandas>=2.2",
+  "plotly>=5.22",
+]
 dev = [
   "httpx>=0.27",
   "mypy>=1.10",

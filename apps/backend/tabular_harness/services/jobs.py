@@ -43,6 +43,7 @@ JOB_TYPES = {
     "create_visualization_spec",
     "generate_insights",
     "generate_decision_dashboard",
+    "generate_data_understanding_notebook",
     "prepare_agent_context",
     "prepare_planned_agent_workspace",
     "review_agent_task_readiness",

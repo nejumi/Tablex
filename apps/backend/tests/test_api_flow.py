@@ -177,6 +177,45 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert understanding_response.status_code == 200
     assert "Data Understanding" in understanding_response.json()["markdown"]
 
+    notebook_response = client.post(f"/api/projects/{project_id}/analysis-notebooks/data-understanding")
+    assert notebook_response.status_code == 200, notebook_response.text
+    notebook_job = notebook_response.json()
+    assert notebook_job["status"] == "succeeded"
+    assert notebook_job["job_type"] == "generate_data_understanding_notebook"
+    assert notebook_job["output"]["schema_version"] == "analysis_notebook.v1"
+    assert notebook_job["output"]["analysis_notebook_artifact_id"]
+    assert notebook_job["output"]["notebook_html_artifact_id"]
+    assert notebook_job["output"]["notebook_run_manifest_artifact_id"]
+    assert notebook_job["output"]["notebook_report_id"]
+
+    notebook_source_preview_response = client.get(
+        f"/api/artifacts/{notebook_job['output']['analysis_notebook_artifact_id']}/preview"
+    )
+    assert notebook_source_preview_response.status_code == 200
+    notebook_source_preview = notebook_source_preview_response.json()
+    assert notebook_source_preview["preview_available"] is True
+    assert notebook_source_preview["content_type"] == "py"
+    assert "import marimo as mo" in notebook_source_preview["preview"]
+    assert "plotly.express" in notebook_source_preview["preview"]
+
+    notebook_html_preview_response = client.get(
+        f"/api/artifacts/{notebook_job['output']['notebook_html_artifact_id']}/preview"
+    )
+    assert notebook_html_preview_response.status_code == 200
+    notebook_html_preview = notebook_html_preview_response.json()
+    assert notebook_html_preview["preview_available"] is True
+    assert notebook_html_preview["content_type"] == "text/html"
+    assert "Tablex Analysis Notebook" in notebook_html_preview["preview"]
+    assert "partial dependence" in notebook_html_preview["preview"]
+
+    notebook_manifest_response = client.get(
+        f"/api/artifacts/{notebook_job['output']['notebook_run_manifest_artifact_id']}/download"
+    )
+    assert notebook_manifest_response.status_code == 200
+    notebook_manifest = notebook_manifest_response.json()
+    assert notebook_manifest["status"] == "generated_not_executed"
+    assert notebook_manifest["execution_policy"]["connector_credentials_embedded"] is False
+
     questions_response = client.get(f"/api/projects/{project_id}/questions")
     assert questions_response.status_code == 200
     first_question = questions_response.json()[0]

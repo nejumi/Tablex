@@ -887,6 +887,12 @@ td {
   color: var(--danger);
 }
 
+.banner.warning {
+  border: 1px solid var(--warning);
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
 .empty-state {
   display: grid;
   place-items: center;
@@ -1215,6 +1221,22 @@ td {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.html-preview-shell {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  min-height: 560px;
+}
+
+.html-preview-frame {
+  display: block;
+  width: 100%;
+  height: min(760px, 78vh);
+  border: 0;
+  background: var(--surface);
 }
 
 .translation-note {

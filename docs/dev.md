@@ -10,6 +10,12 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+To run downloaded analysis notebooks locally, install the optional analysis extra:
+
+```bash
+pip install -e ".[analysis]"
+```
+
 Frontend requires Node.js 20 or newer.
 
 ```bash
@@ -64,6 +70,14 @@ curl http://localhost:8000/api/jobs/{job_id}/artifacts
 ```
 
 `/api/jobs/{job_id}/artifacts` resolves artifact ids from job outputs, summarizes benchmark/run/model/metric context, and returns preview/download-ready Artifact records for workflow jobs.
+
+Analysis notebooks can be generated after a DatasetSnapshot/profile exists:
+
+```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/analysis-notebooks/data-understanding
+```
+
+The notebook job stores `analysis_notebook`, `notebook_html`, `notebook_run_manifest`, and `notebook_report` artifacts. The source notebook is a marimo `.py` file with pandas, matplotlib, and Plotly cells. The HTML preview is rendered inside the Reports tab through the artifact preview API, so users do not need an external notebook server for first inspection. The current milestone generates and stores the notebook but does not execute marimo; the manifest records `generated_not_executed`, disabled external network access, and that secrets/connector credentials are not embedded. Future controlled runners should capture executed figures, tables, feature importance, permutation importance, partial dependence, slice metrics, and prediction analysis as additional artifacts.
 
 Project Guidance is available from:
 

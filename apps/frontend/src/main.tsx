@@ -2344,6 +2344,37 @@ function TranslatablePreview({
   );
 }
 
+function isHtmlArtifactPreview(preview: ArtifactPreview | null): boolean {
+  if (!preview?.preview_available) return false;
+  const filename = preview.filename.toLowerCase();
+  return preview.content_type === "text/html" || filename.endsWith(".html") || filename.endsWith(".htm");
+}
+
+function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
+  return (
+    <div className="preview-block">
+      <div className="preview-toolbar">
+        <div className="preview-meta">
+          <span className="badge">HTML preview</span>
+          <span className="badge muted">{preview.filename}</span>
+          {preview.truncated ? <span className="badge risk">truncated</span> : null}
+        </div>
+      </div>
+      {preview.truncated ? (
+        <div className="banner warning">This preview is truncated. Download the artifact for the full notebook preview.</div>
+      ) : null}
+      <div className="html-preview-shell">
+        <iframe
+          className="html-preview-frame"
+          srcDoc={preview.preview ?? ""}
+          sandbox="allow-scripts"
+          title={`${preview.name} preview`}
+        />
+      </div>
+    </div>
+  );
+}
+
 function OverviewTab({
   overview,
   assumptions,
@@ -5246,6 +5277,9 @@ function ReportsTab({
   const decisionArtifacts = artifacts.filter((artifact) =>
     ["decision_dashboard", "decision_report"].includes(artifact.asset_type)
   );
+  const analysisNotebookArtifacts = artifacts.filter((artifact) =>
+    ["analysis_notebook", "notebook_html", "notebook_run_manifest", "notebook_report"].includes(artifact.asset_type)
+  );
   const guidedJourneyArtifacts = artifacts.filter((artifact) =>
     [
       "guided_journey_snapshot",
@@ -5311,6 +5345,25 @@ function ReportsTab({
         >
           {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
           Visualization Dashboard
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() =>
+            void runAction(async () => {
+              const job = await api<Job>(`/api/projects/${project.id}/analysis-notebooks/data-understanding`, {
+                method: "POST"
+              });
+              const htmlArtifactId = job.output.notebook_html_artifact_id;
+              if (typeof htmlArtifactId === "string") {
+                await loadArtifactPreview(htmlArtifactId);
+              }
+              return job;
+            })
+          }
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+          Analysis Notebook
         </button>
         <button
           className="secondary-button"
@@ -5423,6 +5476,35 @@ function ReportsTab({
           <EmptyInline text="Project reports will summarize data understanding, assumptions, evaluation design, approach candidates, runs, visualizations, and next decisions." />
         )}
       </Panel>
+      <Panel title="Analysis Notebooks" icon={<BarChart3 size={18} />}>
+        {analysisNotebookArtifacts.length ? (
+          <Table
+            headers={["Type", "Kind", "Status", "Artifact", "Created", "Actions"]}
+            rows={analysisNotebookArtifacts.map((artifact) => [
+              artifact.asset_type,
+              String(artifact.metadata.notebook_kind ?? "-"),
+              String(artifact.metadata.execution_status ?? artifact.metadata.render_mode ?? "ready"),
+              artifact.id,
+              formatDate(artifact.created_at),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={previewLoadingId === artifact.id}
+                  onClick={() => void loadArtifactPreview(artifact.id)}
+                  title="Preview notebook artifact"
+                >
+                  {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download notebook artifact">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Analysis notebooks will appear here as marimo source, in-product HTML preview, run manifest, and Markdown report artifacts. They are generated from current data understanding and can later be extended with experiment diagnostics." />
+        )}
+      </Panel>
       <Panel title="Guidance History" icon={<GitBranch size={18} />}>
         {guidedJourneyArtifacts.length ? (
           <div className="stack">
@@ -5503,11 +5585,15 @@ function ReportsTab({
       <Panel title="Report Preview" icon={<FileText size={18} />}>
         {previewError ? <div className="banner danger">{previewError}</div> : null}
         {reportPreview?.preview_available ? (
-          <TranslatablePreview
-            preview={reportPreview}
-            sourceType={reportPreviewSource?.type ?? "artifact"}
-            sourceId={reportPreviewSource?.id ?? reportPreview.id}
-          />
+          isHtmlArtifactPreview(reportPreview) ? (
+            <HtmlArtifactPreview preview={reportPreview} />
+          ) : (
+            <TranslatablePreview
+              preview={reportPreview}
+              sourceType={reportPreviewSource?.type ?? "artifact"}
+              sourceId={reportPreviewSource?.id ?? reportPreview.id}
+            />
+          )
         ) : (
           <EmptyInline text={reportPreview?.reason ?? "Select a report preview action to inspect the Markdown report inside the workbench."} />
         )}

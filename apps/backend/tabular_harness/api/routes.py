@@ -99,6 +99,7 @@ from tabular_harness.services.agent_task_planner import plan_project_agent_task
 from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
 from tabular_harness.services.agent_task_results import list_agent_task_result_summaries
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
+from tabular_harness.services.analysis_notebooks import create_data_understanding_notebook
 from tabular_harness.services.approach import (
     create_decision_dashboard,
     create_research_plan,
@@ -3213,6 +3214,47 @@ def generate_decision_dashboard_endpoint(
     return job_to_dict(job)
 
 
+@router.post("/api/projects/{project_id}/analysis-notebooks/data-understanding", response_model=JobRead)
+def generate_data_understanding_notebook_endpoint(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="generate_data_understanding_notebook",
+        project_id=project_id,
+        input_payload={"notebook_kind": "data_understanding"},
+        policy={
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "execution_mode": "generate_artifacts_only",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_data_understanding_notebook(db, store=store, project=project)
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.notebook["schema_version"],
+                "notebook_kind": result.notebook["notebook_kind"],
+                "analysis_notebook_artifact_id": result.notebook_artifact.id,
+                "notebook_html_artifact_id": result.html_artifact.id,
+                "notebook_run_manifest_artifact_id": result.manifest_artifact.id,
+                "notebook_report_id": result.report.id,
+                "notebook_report_artifact_id": result.report_artifact.id,
+                "artifact_ids": result.artifact_ids,
+                "execution_status": "generated_not_executed",
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
 @router.get("/api/projects/{project_id}/insights", response_model=list[InsightRead])
 def list_project_insights(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
     require_project(db, project_id)
@@ -4495,7 +4537,19 @@ def model_validation_to_dict(db: Session, job: Job, model_version_id: str) -> di
 
 def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 20_000) -> dict[str, Any]:
     suffix = path.suffix.lower()
-    text_suffixes = {".csv", ".json", ".md", ".txt", ".yaml", ".yml", ".tsv", ".log"}
+    text_suffixes = {
+        ".csv",
+        ".html",
+        ".htm",
+        ".json",
+        ".md",
+        ".py",
+        ".txt",
+        ".yaml",
+        ".yml",
+        ".tsv",
+        ".log",
+    }
     base = {
         "id": artifact.id,
         "asset_type": artifact.asset_type,
@@ -4510,7 +4564,7 @@ def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 
             "preview_available": False,
             "preview": None,
             "truncated": False,
-            "reason": "Preview is only available for text, JSON, Markdown, and delimited text artifacts.",
+            "reason": "Preview is only available for text, JSON, Markdown, HTML, Python, and delimited text artifacts.",
         }
 
     raw = path.open("rb").read(limit_bytes + 1)
@@ -4533,9 +4587,10 @@ def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 
             preview = json.dumps(json.loads(preview), indent=2, ensure_ascii=False)
         except json.JSONDecodeError:
             pass
+    content_type = "text/html" if suffix in {".html", ".htm"} else suffix.removeprefix(".") or "text"
     return {
         **base,
-        "content_type": suffix.removeprefix(".") or "text",
+        "content_type": content_type,
         "preview_available": True,
         "preview": preview,
         "truncated": truncated,
