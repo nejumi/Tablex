@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 220" role="img" aria-labelledby="title desc">
+  <title id="title">Tablee empty state</title>
+  <desc id="desc">Table mascot waving in a clean empty state illustration.</desc>
+  <defs>
+    <linearGradient id="panel" x1="20" x2="300" y1="20" y2="200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f4fffd"/>
+      <stop offset="1" stop-color="#eef5ff"/>
+    </linearGradient>
+    <linearGradient id="sheet" x1="110" x2="210" y1="42" y2="168" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/>
+      <stop offset="1" stop-color="#e7effa"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#17223f" flood-opacity=".16"/>
+    </filter>
+  </defs>
+  <rect x="16" y="18" width="288" height="184" rx="24" fill="url(#panel)" stroke="#cbe9ec"/>
+  <path d="M55 55h38M50 78h52M64 101h32" stroke="#d8e6f0" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="250" cy="62" r="10" fill="#28c5a8" opacity=".85"/>
+  <path d="M254 46l9-10M265 61h14M255 76l9 11" stroke="#3f7df3" stroke-width="5" stroke-linecap="round"/>
+  <g filter="url(#shadow)">
+    <path d="M206 68h22c6 0 10 4 10 10v14c0 6-4 10-10 10h-22V68Z" fill="#3f7df3"/>
+    <path d="M206 96h26c6 0 10 4 10 10v14c0 6-4 10-10 10h-26V96Z" fill="#25c7a3"/>
+    <path d="M206 124h22c6 0 10 4 10 10v14c0 6-4 10-10 10h-22v-34Z" fill="#7a57e7"/>
+    <path d="M147 51c-2-13 2-22 12-19 5 2 7 7 5 12-3 7-9 10-17 7Z" fill="#2fd1b3"/>
+    <path d="M152 51c5-12 12-18 21-12 4 3 5 9 1 14-6 5-14 5-22-2Z" fill="#2fd1b3"/>
+    <rect x="145" y="50" width="30" height="11" rx="6" fill="#172346"/>
+    <rect x="96" y="58" width="124" height="116" rx="24" fill="url(#sheet)" stroke="#d5dfef" stroke-width="3"/>
+    <path d="M118 82h78M114 105h84M114 128h84M134 72v84M162 72v84M190 74v82" stroke="#d8e1ee" stroke-width="3"/>
+    <ellipse cx="136" cy="113" rx="11" ry="16" fill="#0b1839"/>
+    <ellipse cx="183" cy="113" rx="11" ry="16" fill="#0b1839"/>
+    <ellipse cx="140" cy="105" rx="4" ry="5" fill="#fff"/>
+    <ellipse cx="187" cy="105" rx="4" ry="5" fill="#fff"/>
+    <path d="M127 94c5-4 10-4 14 0M175 94c5-4 10-4 14 0" stroke="#172346" stroke-width="4" stroke-linecap="round"/>
+    <path d="M151 131c5 7 14 7 20 0" stroke="#172346" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <circle cx="117" cy="126" r="6" fill="#56dac5"/>
+    <circle cx="202" cy="126" r="6" fill="#56dac5"/>
+    <path d="M83 110c-18-2-31-14-29-27 2-13 17-18 29-9" fill="none" stroke="#1b2c58" stroke-width="15" stroke-linecap="round"/>
+    <path d="M58 70l-4-16M72 69l5-15M83 80l15-9" stroke="#1b2c58" stroke-width="8" stroke-linecap="round"/>
+  </g>
+</svg>

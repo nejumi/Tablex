@@ -109,12 +109,20 @@ button:disabled {
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 42px;
   border-radius: 8px;
-  background: var(--accent-strong);
-  color: #ffffff;
-  font-weight: 800;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--surface-hover) 82%, transparent), var(--surface)),
+    var(--surface);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--shadow) 62%, transparent);
+  overflow: hidden;
+}
+
+.brand-mascot {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
 }
 
 .brand-name {
@@ -291,6 +299,21 @@ textarea {
   display: grid;
   gap: 9px;
   min-width: 0;
+}
+
+.focus-guide-main {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+}
+
+.focus-mascot {
+  width: 92px;
+  height: 82px;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 16px color-mix(in srgb, var(--shadow) 70%, transparent));
 }
 
 .focus-guide-eyebrow {
@@ -702,6 +725,13 @@ td {
   background: var(--surface);
   padding: 28px;
   text-align: center;
+}
+
+.empty-state-mascot {
+  width: min(260px, 80vw);
+  height: auto;
+  margin-bottom: 6px;
+  filter: drop-shadow(0 12px 20px color-mix(in srgb, var(--shadow) 62%, transparent));
 }
 
 .empty-state h2 {
@@ -1221,6 +1251,24 @@ td {
   gap: 12px;
 }
 
+.agent-chat-heading {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.agent-chat-avatar {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--shadow) 54%, transparent);
+}
+
 .agent-chat-title {
   display: inline-flex;
   align-items: center;
@@ -1230,6 +1278,8 @@ td {
 }
 
 .agent-chat-header small {
+  display: block;
+  margin-top: 2px;
   color: var(--muted);
   font-size: 11px;
 }
@@ -1305,6 +1355,22 @@ td {
   grid-template-columns: minmax(0, 1fr) minmax(240px, 340px);
   gap: 18px;
   align-items: stretch;
+}
+
+.strategy-hero-copy {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  min-width: 0;
+}
+
+.strategy-hero-mascot {
+  width: 120px;
+  height: 120px;
+  object-fit: contain;
+  align-self: start;
+  filter: drop-shadow(0 16px 24px color-mix(in srgb, var(--shadow) 66%, transparent));
 }
 
 .strategy-metrics {
@@ -1486,6 +1552,16 @@ td {
   .strategy-hero,
   .strategy-handoff {
     grid-template-columns: 1fr;
+  }
+
+  .focus-guide-main,
+  .strategy-hero-copy {
+    grid-template-columns: 1fr;
+  }
+
+  .focus-mascot,
+  .strategy-hero-mascot {
+    justify-self: center;
   }
 
   .settings-panel {

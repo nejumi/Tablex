@@ -17,6 +17,10 @@ cd apps/frontend
 npm install
 ```
 
+## Frontend Mascot Assets
+
+Mascot assets live under `apps/frontend/public/mascot`. `Tablee` is the current mascot concept name, not a final product name. Use the SVG variants for compact surfaces and the transparent PNG only for larger guidance or empty-state moments. Keep copy in locale messages rather than baking text into graphics.
+
 ## Backend
 
 Run the API on port 8000:

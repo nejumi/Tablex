@@ -1,0 +1,34 @@
+{
+  "mascot_name": "Tablee",
+  "status": "working mascot concept; not a final product name",
+  "product_name_policy": "Tablex is the current working name. Keep code and schemas tolerant of future PRODUCT_NAME changes.",
+  "source_reference": "tabular_prediction_meta_harness_spec_v2/Tablee.png",
+  "generated_asset_note": "tablee-hero.png was generated from the attached Tablee concept and chroma-keyed locally for transparent UI use.",
+  "assets": [
+    {
+      "path": "/mascot/tablee-hero.png",
+      "type": "png",
+      "usage": "Large empty states, onboarding moments, and occasional high-emotion workbench guidance."
+    },
+    {
+      "path": "/mascot/tablee-avatar.svg",
+      "type": "svg",
+      "usage": "Small brand mark, chat header avatar, and compact navigation contexts."
+    },
+    {
+      "path": "/mascot/tablee-curious.svg",
+      "type": "svg",
+      "usage": "Focus guidance, analysis prompts, and question-driven workflows."
+    },
+    {
+      "path": "/mascot/tablee-empty.svg",
+      "type": "svg",
+      "usage": "Empty states where the next user action should feel guided rather than blocked."
+    },
+    {
+      "path": "/mascot/tablee-success.svg",
+      "type": "svg",
+      "usage": "Completed workflow banners, saved artifacts, and successful job states."
+    }
+  ]
+}

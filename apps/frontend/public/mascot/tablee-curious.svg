@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 180" role="img" aria-labelledby="title desc">
+  <title id="title">Tablee curious pose</title>
+  <desc id="desc">Table mascot looking curious beside a question mark.</desc>
+  <defs>
+    <linearGradient id="sheet" x1="64" x2="148" y1="34" y2="140" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/>
+      <stop offset="1" stop-color="#e8effb"/>
+    </linearGradient>
+    <linearGradient id="mint" x1="0" x2="1">
+      <stop stop-color="#7af0d2"/>
+      <stop offset="1" stop-color="#16b99f"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-30%" width="150%" height="170%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#17223f" flood-opacity=".16"/>
+    </filter>
+  </defs>
+  <path d="M184 34c11 9 16 22 14 38-2 17-14 28-30 33" fill="none" stroke="#25bfa7" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="166" cy="130" r="7" fill="#25bfa7"/>
+  <g filter="url(#shadow)">
+    <path d="M151 56h22c5 0 9 4 9 9v14c0 5-4 9-9 9h-22V56Z" fill="#3f7df3"/>
+    <path d="M151 82h26c5 0 9 4 9 9v14c0 5-4 9-9 9h-26V82Z" fill="#25c7a3"/>
+    <path d="M151 108h22c5 0 9 4 9 9v14c0 5-4 9-9 9h-22v-32Z" fill="#7a57e7"/>
+    <path d="M58 142c12 12 66 15 94 0 6-3 6-14-1-17-23-10-64-10-91 1-8 3-9 11-2 16Z" fill="#dce6f4"/>
+    <path d="M92 44c-1-11 2-18 11-16 4 1 6 6 4 10-2 6-8 8-15 6Z" fill="url(#mint)"/>
+    <path d="M96 44c4-10 11-15 19-10 4 3 4 8 1 12-5 5-12 5-20-2Z" fill="url(#mint)"/>
+    <rect x="88" y="42" width="26" height="10" rx="5" fill="#172346"/>
+    <rect x="48" y="48" width="112" height="104" rx="20" fill="url(#sheet)" stroke="#d5dfef" stroke-width="3"/>
+    <path d="M65 68h76M62 88h82M62 108h82M78 60v76M104 60v76M130 62v74" stroke="#d8e1ee" stroke-width="3"/>
+    <ellipse cx="82" cy="98" rx="10" ry="15" fill="#0b1839"/>
+    <ellipse cx="124" cy="98" rx="10" ry="15" fill="#0b1839"/>
+    <ellipse cx="86" cy="91" rx="4" ry="5" fill="#fff"/>
+    <ellipse cx="128" cy="91" rx="4" ry="5" fill="#fff"/>
+    <path d="M75 80c4-4 9-4 13 0M117 80c4-4 9-4 13 0" stroke="#172346" stroke-width="4" stroke-linecap="round"/>
+    <path d="M95 112c5 6 13 6 18 0" stroke="#172346" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <circle cx="67" cy="110" r="6" fill="#56dac5"/>
+    <circle cx="139" cy="110" r="6" fill="#56dac5"/>
+    <path d="M36 98c-11 6-16 17-10 26 7 10 22 8 30-3" fill="none" stroke="#1b2c58" stroke-width="14" stroke-linecap="round"/>
+    <path d="M160 114c13 3 21 12 17 22-4 11-19 11-29 3" fill="none" stroke="#1b2c58" stroke-width="14" stroke-linecap="round"/>
+  </g>
+</svg>

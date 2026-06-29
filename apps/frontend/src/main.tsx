@@ -1298,7 +1298,9 @@ function App() {
       <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">T</div>
+          <div className="brand-mark">
+            <img src="/mascot/tablee-avatar.svg" alt="" aria-hidden="true" className="brand-mascot" />
+          </div>
           <div>
             <div className="brand-name">Tablex</div>
             <div className="brand-subtitle">{text.predictionWorkbench}</div>
@@ -1353,7 +1355,7 @@ function App() {
         {loading ? <LoadingBlock label={text.loadingProjects} /> : null}
         {!loading && !selectedProject ? (
           <EmptyState
-            icon={<Database size={28} />}
+            icon={<img src="/mascot/tablee-empty.svg" alt="" aria-hidden="true" className="empty-state-mascot" />}
             title={text.createFirstProject}
             body={text.createFirstProjectBody}
           />
@@ -1996,18 +1998,21 @@ function FocusGuide({
 
   return (
     <section className="focus-guide" aria-label={text.focusGuideTitle}>
-      <div className="focus-guide-copy">
-        <div className="focus-guide-eyebrow">
-          <Lightbulb size={16} />
-          {text.focusGuideTitle}
-        </div>
-        <h2>{recommendation.title}</h2>
-        <p>{recommendation.reason}</p>
-        <div className="focus-evidence" aria-label={text.focusEvidence}>
-          <span>{text.focusEvidence}</span>
-          {recommendation.evidence.slice(0, 3).map((item) => (
-            <strong key={item}>{item}</strong>
-          ))}
+      <div className="focus-guide-main">
+        <img src="/mascot/tablee-curious.svg" alt="" aria-hidden="true" className="focus-mascot" />
+        <div className="focus-guide-copy">
+          <div className="focus-guide-eyebrow">
+            <Lightbulb size={16} />
+            {text.focusGuideTitle}
+          </div>
+          <h2>{recommendation.title}</h2>
+          <p>{recommendation.reason}</p>
+          <div className="focus-evidence" aria-label={text.focusEvidence}>
+            <span>{text.focusEvidence}</span>
+            {recommendation.evidence.slice(0, 3).map((item) => (
+              <strong key={item}>{item}</strong>
+            ))}
+          </div>
         </div>
       </div>
       <div className="focus-guide-actions">
@@ -2067,12 +2072,15 @@ function AgentChatDock({
   return (
     <div className="agent-chat-dock">
       <div className="agent-chat-header">
-        <div>
-          <div className="agent-chat-title">
-            <MessageSquare size={16} />
-            {text.agentChatTitle}
+        <div className="agent-chat-heading">
+          <img src="/mascot/tablee-avatar.svg" alt="" aria-hidden="true" className="agent-chat-avatar" />
+          <div>
+            <div className="agent-chat-title">
+              <MessageSquare size={16} />
+              {text.agentChatTitle}
+            </div>
+            <small>{text.agentChatSubtitle}</small>
           </div>
-          <small>{text.agentChatSubtitle}</small>
         </div>
         {latestContract ? (
           <a
@@ -3905,19 +3913,22 @@ function StrategyBriefPanel({
   return (
     <section className="strategy-brief-panel">
       <div className="strategy-hero">
-        <div>
-          <div className="eyebrow">{text.strategyBriefTitle}</div>
-          <h2>{action.label}</h2>
-          <p>{action.reason}</p>
-          <div className="button-row">
-            <button className="primary-button" disabled={busy} onClick={() => onAction(action)}>
-              {busy ? <Loader2 className="spin" size={16} /> : strategyActionIcon(action.action_type)}
-              {text.strategyRunAction}
-            </button>
-            <button className="secondary-button" disabled={busy} onClick={() => void onSave()}>
-              {busy ? <Loader2 className="spin" size={16} /> : <Download size={16} />}
-              {text.strategySaveSnapshot}
-            </button>
+        <div className="strategy-hero-copy">
+          <img src="/mascot/tablee-hero.png" alt="" aria-hidden="true" className="strategy-hero-mascot" />
+          <div>
+            <div className="eyebrow">{text.strategyBriefTitle}</div>
+            <h2>{action.label}</h2>
+            <p>{action.reason}</p>
+            <div className="button-row">
+              <button className="primary-button" disabled={busy} onClick={() => onAction(action)}>
+                {busy ? <Loader2 className="spin" size={16} /> : strategyActionIcon(action.action_type)}
+                {text.strategyRunAction}
+              </button>
+              <button className="secondary-button" disabled={busy} onClick={() => void onSave()}>
+                {busy ? <Loader2 className="spin" size={16} /> : <Download size={16} />}
+                {text.strategySaveSnapshot}
+              </button>
+            </div>
           </div>
         </div>
         <div className="strategy-metrics" aria-label={text.strategyRecommendedAction}>
