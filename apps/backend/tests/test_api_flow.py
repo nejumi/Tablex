@@ -41,6 +41,11 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     assert empty_guidance["recommended_focus"]["target_tab"] == "Data"
     assert empty_guidance["recommended_focus"]["primary_action"]["action_type"] == "navigate"
     assert empty_guidance["supporting_counts"]["datasets"] == 0
+    empty_journey = {stage["id"]: stage for stage in empty_guidance["journey_stages"]}
+    assert empty_guidance["current_stage_id"] == "data_intake"
+    assert empty_journey["data_intake"]["status"] == "current"
+    assert empty_journey["understanding"]["status"] == "waiting"
+    assert empty_journey["approach"]["summary"].startswith("Prepare an open-ended Codex")
 
     csv_bytes = b"feature,target\n1,0\n2,1\n3,0\n4,1\n"
     upload_response = client.post(
@@ -54,6 +59,14 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     assert next_guidance_response.status_code == 200, next_guidance_response.text
     next_guidance = next_guidance_response.json()
     assert next_guidance["supporting_counts"]["datasets"] == 1
+    next_journey = {stage["id"]: stage for stage in next_guidance["journey_stages"]}
+    assert next_journey["data_intake"]["status"] == "done"
+    assert next_guidance["current_stage_id"] in {
+        "understanding",
+        "assumptions",
+        "evaluation",
+        "approach",
+    }
     assert next_guidance["recommended_focus"]["focus_key"] in {
         "assumptions",
         "evaluation",

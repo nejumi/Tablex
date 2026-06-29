@@ -46,6 +46,8 @@ def build_project_guidance(db: Session, project: Project) -> dict[str, Any]:
     }
     state = _state_summary(db, project, counts)
     focus = _recommended_focus(project, counts, state)
+    journey_stages = _journey_stages(project, counts, state, focus)
+    current_stage = _current_journey_stage(journey_stages)
     hidden_detail_groups = [
         {
             "id": "risk_and_questions",
@@ -70,6 +72,8 @@ def build_project_guidance(db: Session, project: Project) -> dict[str, Any]:
         "attention_budget": 1,
         "overview_mode": "guided",
         "recommended_focus": focus,
+        "journey_stages": journey_stages,
+        "current_stage_id": current_stage["id"] if current_stage else None,
         "state_summary": state,
         "supporting_counts": counts,
         "hidden_detail_groups": hidden_detail_groups,
@@ -322,6 +326,196 @@ def _recommended_focus(project: Project, counts: dict[str, int], state: dict[str
             _agent_prompt_action(project.id, "plan_next_iteration", _next_iteration_prompt(project)),
         ],
     )
+
+
+def _journey_stages(
+    project: Project,
+    counts: dict[str, int],
+    state: dict[str, Any],
+    focus: dict[str, Any],
+) -> list[dict[str, Any]]:
+    focus_key = str(focus["focus_key"])
+    high_risk_count = int(state["unresolved_high_risk_assumption_count"])
+    blocking_question_count = int(state["blocking_question_count"])
+    evaluation_locked = int(state["approved_evaluation_spec_count"]) > 0 and int(state["split_manifest_count"]) > 0
+    has_agent_planning = counts["ideas"] > 0 or counts["research_briefs"] > 0
+    has_successful_run = int(state["successful_run_count"]) > 0
+    has_report = int(state["report_count"]) > 0
+
+    data_status = "done" if state["has_dataset"] else "current"
+    if state["has_understanding_report"]:
+        understanding_status = "done"
+    elif focus_key == "understand_data":
+        understanding_status = "current"
+    else:
+        understanding_status = "waiting"
+    if not state["has_understanding_report"]:
+        assumption_status = "waiting"
+    elif blocking_question_count > 0:
+        assumption_status = "blocked"
+    elif high_risk_count > 0:
+        assumption_status = "current"
+    else:
+        assumption_status = "done"
+
+    if evaluation_locked:
+        evaluation_status = "done"
+    elif not state["has_understanding_report"]:
+        evaluation_status = "waiting"
+    elif blocking_question_count > 0:
+        evaluation_status = "blocked"
+    elif focus_key == "evaluation":
+        evaluation_status = "current"
+    elif high_risk_count == 0:
+        evaluation_status = "next"
+    else:
+        evaluation_status = "waiting"
+
+    if has_successful_run or has_agent_planning:
+        approach_status = "done"
+    elif focus_key == "approach":
+        approach_status = "current"
+    elif evaluation_locked:
+        approach_status = "next"
+    else:
+        approach_status = "waiting"
+
+    if has_successful_run:
+        experiments_status = "done"
+    elif focus_key == "experiments":
+        experiments_status = "current"
+    elif evaluation_locked and has_agent_planning:
+        experiments_status = "next"
+    else:
+        experiments_status = "waiting"
+
+    if has_report:
+        reports_status = "done"
+    elif focus_key == "reports":
+        reports_status = "current"
+    elif has_successful_run:
+        reports_status = "next"
+    else:
+        reports_status = "waiting"
+
+    focus_action_by_stage = {
+        "data_intake": "upload_data",
+        "understanding": "understand_data",
+        "assumptions": "assumptions",
+        "evaluation": "evaluation",
+        "approach": "approach",
+        "experiments": "experiments",
+        "reports": "reports",
+    }
+
+    def stage_action(stage_id: str) -> dict[str, Any] | None:
+        return focus["primary_action"] if focus_action_by_stage[stage_id] == focus_key else None
+
+    return [
+        _journey_stage(
+            "data_intake",
+            "Data",
+            "Data",
+            data_status,
+            "Register the prediction data as a DatasetSnapshot before deeper guidance.",
+            [f"{counts['datasets']} DatasetSnapshots", f"phase: {project.current_phase}"],
+            stage_action("data_intake"),
+        ),
+        _journey_stage(
+            "understanding",
+            "Understanding",
+            "Understanding",
+            understanding_status,
+            "Profile the data, summarize semantics, and surface target or leakage questions.",
+            [
+                "understanding report present" if state["has_understanding_report"] else "understanding report missing",
+                "EDA profile present" if state["has_eda_profile"] else "EDA profile missing",
+            ],
+            stage_action("understanding"),
+        ),
+        _journey_stage(
+            "assumptions",
+            "Assumptions",
+            "Assumptions",
+            assumption_status,
+            "Review only the assumptions that can change evaluation or feature safety.",
+            [
+                f"{high_risk_count} high-risk assumptions",
+                f"{blocking_question_count} blocking questions",
+            ],
+            stage_action("assumptions"),
+        ),
+        _journey_stage(
+            "evaluation",
+            "Evaluation",
+            "Evaluation",
+            evaluation_status,
+            "Lock an EvaluationSpec and SplitManifest before comparing model claims.",
+            [
+                f"{state['approved_evaluation_spec_count']} approved specs",
+                f"{state['split_manifest_count']} split manifests",
+            ],
+            stage_action("evaluation"),
+        ),
+        _journey_stage(
+            "approach",
+            "Approach",
+            "Approach",
+            approach_status,
+            "Prepare an open-ended Codex/Skill handoff without forcing a fixed recipe.",
+            [
+                f"{counts['research_briefs']} research briefs",
+                f"{counts['ideas']} ideas",
+            ],
+            stage_action("approach"),
+        ),
+        _journey_stage(
+            "experiments",
+            "Experiments",
+            "Experiments",
+            experiments_status,
+            "Run or ingest evidence-producing experiments under the locked evaluation design.",
+            [f"{state['successful_run_count']} successful runs", f"{counts['jobs']} jobs"],
+            stage_action("experiments"),
+        ),
+        _journey_stage(
+            "reports",
+            "Reports",
+            "Reports",
+            reports_status,
+            "Turn evidence, risks, diagnostics, and next actions into in-product reports.",
+            [f"{state['report_count']} reports", f"{state['visualization_count']} visualizations"],
+            stage_action("reports"),
+        ),
+    ]
+
+
+def _journey_stage(
+    stage_id: str,
+    label: str,
+    target_tab: str,
+    status: str,
+    summary: str,
+    evidence: list[str],
+    action: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "id": stage_id,
+        "label": label,
+        "target_tab": target_tab,
+        "status": status,
+        "summary": summary,
+        "evidence": evidence,
+        "action": action,
+    }
+
+
+def _current_journey_stage(stages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for status in ("blocked", "current", "next", "waiting"):
+        for stage in stages:
+            if stage["status"] == status:
+                return stage
+    return stages[-1] if stages else None
 
 
 def _focus(

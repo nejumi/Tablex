@@ -72,6 +72,7 @@ curl http://localhost:8000/api/projects/{project_id}/guidance
 ```
 
 The response is `project_guidance.v1`. It is harness-owned decision support for the UI Focus Guide: one recommended focus, primary/secondary actions, state summary, supporting counts, and AgentRunner guidance. Actions can navigate, call a safe harness endpoint, or create a scoped AgentTaskContract. Approach-stage guidance should preserve flexibility by giving Codex a bounded prompt and current evidence rather than forcing a fixed modeling recipe.
+The same response also includes `journey_stages` and `current_stage_id` for the Guided Journey rail. Stage statuses are `done`, `current`, `next`, `blocked`, or `waiting`; stage actions reuse `ProjectGuidanceAction` so the UI can open the relevant tab, call a harness endpoint, or create a scoped AgentTaskContract while leaving approach selection open-ended.
 
 Queued job orchestration endpoints:
 

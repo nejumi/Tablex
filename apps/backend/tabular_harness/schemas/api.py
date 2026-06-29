@@ -70,6 +70,16 @@ class ProjectGuidanceFocus(BaseModel):
     suggested_agent_prompt: str | None = None
 
 
+class ProjectGuidanceJourneyStage(BaseModel):
+    id: str
+    label: str
+    target_tab: str
+    status: Literal["done", "current", "next", "blocked", "waiting"]
+    summary: str
+    evidence: list[str] = Field(default_factory=list)
+    action: ProjectGuidanceAction | None = None
+
+
 class ProjectGuidanceRead(BaseModel):
     schema_version: Literal["project_guidance.v1"]
     project_id: str
@@ -77,6 +87,8 @@ class ProjectGuidanceRead(BaseModel):
     attention_budget: int
     overview_mode: Literal["guided"]
     recommended_focus: ProjectGuidanceFocus
+    journey_stages: list[ProjectGuidanceJourneyStage]
+    current_stage_id: str | None = None
     state_summary: dict[str, Any]
     supporting_counts: dict[str, int]
     hidden_detail_groups: list[dict[str, Any]]

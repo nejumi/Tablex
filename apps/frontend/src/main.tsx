@@ -97,6 +97,22 @@ const englishMessages = {
   focusExperimentsReason: "The project needs run evidence, diagnostics, and reports before comparing approaches.",
   focusReports: "Read the decision report",
   focusReportsReason: "Reports summarize readiness, risks, evidence, and next actions without requiring raw artifact inspection.",
+  guidedJourneyTitle: "Guided Journey",
+  guidedJourneySubtitle: "One visible path through the harness, with approach choices left open for Codex, Skills, and evidence.",
+  journeyEvidence: "Evidence",
+  journeyOpenStage: "Open stage",
+  journeyStatusDone: "Done",
+  journeyStatusCurrent: "Current",
+  journeyStatusNext: "Next",
+  journeyStatusBlocked: "Blocked",
+  journeyStatusWaiting: "Waiting",
+  journeyData: "Data",
+  journeyUnderstanding: "Understanding",
+  journeyAssumptions: "Assumptions",
+  journeyEvaluation: "Evaluation",
+  journeyApproach: "Approach",
+  journeyExperiments: "Experiments",
+  journeyReports: "Reports",
   settings: "User Settings",
   settingsHint: "Language, locale packs, and display preferences are stored locally for this workbench.",
   language: "Language",
@@ -195,6 +211,22 @@ const japaneseMessages: LocaleMessages = {
   focusExperimentsReason: "approachを比較する前に、run evidence、diagnostics、reportが必要です。",
   focusReports: "decision reportを読む",
   focusReportsReason: "raw artifactを追わなくても、readiness、risk、evidence、next actionを把握できます。",
+  guidedJourneyTitle: "Guided Journey",
+  guidedJourneySubtitle: "ハーネス内の現在地を一つの流れで示し、アプローチ選択はCodex、Skill、証拠に開いたままにします。",
+  journeyEvidence: "根拠",
+  journeyOpenStage: "ステージを開く",
+  journeyStatusDone: "完了",
+  journeyStatusCurrent: "現在",
+  journeyStatusNext: "次",
+  journeyStatusBlocked: "要確認",
+  journeyStatusWaiting: "待機",
+  journeyData: "データ",
+  journeyUnderstanding: "理解",
+  journeyAssumptions: "仮定",
+  journeyEvaluation: "評価",
+  journeyApproach: "アプローチ",
+  journeyExperiments: "実験",
+  journeyReports: "レポート",
   settings: "ユーザー設定",
   settingsHint: "言語、locale pack、表示設定をこのworkbenchのlocal設定として保存します。",
   language: "言語",
@@ -979,6 +1011,16 @@ type ProjectGuidanceAction = {
   disabled_reason: string | null;
 };
 
+type ProjectGuidanceJourneyStage = {
+  id: string;
+  label: string;
+  target_tab: string;
+  status: "done" | "current" | "next" | "blocked" | "waiting";
+  summary: string;
+  evidence: string[];
+  action: ProjectGuidanceAction | null;
+};
+
 type ProjectGuidance = {
   schema_version: "project_guidance.v1";
   project_id: string;
@@ -997,6 +1039,8 @@ type ProjectGuidance = {
     secondary_actions: ProjectGuidanceAction[];
     suggested_agent_prompt: string | null;
   };
+  journey_stages: ProjectGuidanceJourneyStage[];
+  current_stage_id: string | null;
   state_summary: Record<string, unknown>;
   supporting_counts: Record<string, number>;
   hidden_detail_groups: Array<Record<string, unknown>>;
@@ -1065,6 +1109,25 @@ function localizedFocusCopy(focusKey: string, text: LocaleMessages) {
   if (focusKey === "experiments") return { title: text.focusExperiments, reason: text.focusExperimentsReason };
   if (focusKey === "reports") return { title: text.focusReports, reason: text.focusReportsReason };
   return null;
+}
+
+function journeyStageLabel(stage: ProjectGuidanceJourneyStage, text: LocaleMessages) {
+  if (stage.id === "data_intake") return text.journeyData;
+  if (stage.id === "understanding") return text.journeyUnderstanding;
+  if (stage.id === "assumptions") return text.journeyAssumptions;
+  if (stage.id === "evaluation") return text.journeyEvaluation;
+  if (stage.id === "approach") return text.journeyApproach;
+  if (stage.id === "experiments") return text.journeyExperiments;
+  if (stage.id === "reports") return text.journeyReports;
+  return stage.label;
+}
+
+function journeyStatusLabel(status: ProjectGuidanceJourneyStage["status"], text: LocaleMessages) {
+  if (status === "done") return text.journeyStatusDone;
+  if (status === "current") return text.journeyStatusCurrent;
+  if (status === "next") return text.journeyStatusNext;
+  if (status === "blocked") return text.journeyStatusBlocked;
+  return text.journeyStatusWaiting;
 }
 
 function isHighRiskAssumption(assumption: Assumption) {
@@ -1815,6 +1878,12 @@ function ProjectDetail({
         onTabChange={onTabChange}
         onAction={(action) => void runFocusAction(action)}
       />
+      <GuidedJourneyRail
+        guidance={guidance}
+        text={text}
+        onTabChange={onTabChange}
+        onAction={(action) => void runFocusAction(action)}
+      />
       <AgentChatDock
         busy={busy}
         text={text}
@@ -2042,6 +2111,84 @@ function FocusGuide({
           </div>
         </div>
       </div>
+    </section>
+  );
+}
+
+function GuidedJourneyRail({
+  guidance,
+  text,
+  onTabChange,
+  onAction
+}: {
+  guidance: ProjectGuidance | null;
+  text: LocaleMessages;
+  onTabChange: (tab: Tab) => void;
+  onAction: (action: FocusAction | null) => void;
+}) {
+  const stages = guidance?.journey_stages ?? [];
+  if (!stages.length) return null;
+  const currentStage =
+    stages.find((stage) => stage.id === guidance?.current_stage_id) ??
+    stages.find((stage) => stage.status === "blocked" || stage.status === "current" || stage.status === "next") ??
+    stages[0];
+
+  function openStage(stage: ProjectGuidanceJourneyStage) {
+    if (stage.action) {
+      onAction(guidanceActionToFocusAction(stage.action));
+      return;
+    }
+    onTabChange(normalizeTab(stage.target_tab));
+  }
+
+  return (
+    <section className="journey-rail" aria-label={text.guidedJourneyTitle}>
+      <div className="journey-header">
+        <div className="journey-title-row">
+          <img src="/mascot/tablee-avatar.svg" alt="" aria-hidden="true" className="journey-mascot" />
+          <div>
+            <div className="eyebrow">{text.guidedJourneyTitle}</div>
+            <p>{text.guidedJourneySubtitle}</p>
+          </div>
+        </div>
+        {currentStage ? (
+          <button className="secondary-button" type="button" onClick={() => openStage(currentStage)}>
+            <Search size={16} />
+            {text.journeyOpenStage}
+          </button>
+        ) : null}
+      </div>
+      <div className="journey-stages">
+        {stages.map((stage, index) => (
+          <button
+            className={`journey-stage ${stage.status}`}
+            key={stage.id}
+            onClick={() => openStage(stage)}
+            title={stage.summary}
+            type="button"
+          >
+            <span className="journey-dot" aria-hidden="true">
+              {stage.status === "done" ? <Check size={14} /> : stage.status === "blocked" ? <AlertTriangle size={14} /> : index + 1}
+            </span>
+            <span className="journey-stage-copy">
+              <strong>{journeyStageLabel(stage, text)}</strong>
+              <small>{journeyStatusLabel(stage.status, text)}</small>
+            </span>
+          </button>
+        ))}
+      </div>
+      {currentStage ? (
+        <div className="journey-current">
+          <span>{journeyStageLabel(currentStage, text)}</span>
+          <p>{currentStage.summary}</p>
+          <div className="focus-evidence" aria-label={text.journeyEvidence}>
+            <span>{text.journeyEvidence}</span>
+            {currentStage.evidence.slice(0, 3).map((item) => (
+              <strong key={item}>{item}</strong>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
