@@ -6,6 +6,7 @@ This repository is building Tablex, a tabular-first prediction meta-harness. Tab
 
 - Do not read, log, copy, or request secrets.
 - Do not pass connector credentials, OAuth tokens, database passwords, or production write credentials to an agent runner.
+- Kaggle credentials may only be read by harness-owned credential probe/download code in-process; never materialize values into prompts, AgentTaskContracts, runner workspaces, artifacts, or logs.
 - Do not include validation or test targets in feature-generation prompts.
 - Do not destructively change an approved `evaluation_spec`; create a new version or candidate instead.
 - Respect `split_manifest` for all evaluation and baseline work.
@@ -19,6 +20,7 @@ This repository is building Tablex, a tabular-first prediction meta-harness. Tab
 - External claims from web or literature research must be returned as Evidence or artifact-backed sources; do not leave them only in runner logs.
 - Jobs with external network, production write, or agent execution policy must pass through approval gates before worker execution.
 - Reports and visualization specs are first-class outputs and should be registered as artifacts with lineage.
+- UI work should make complex ML workflow state feel rich, inspectable, and exciting to use; do not collapse product surfaces into plain tracker tables when a focused status gate, preview, or visualization would make the decision clearer.
 - Run backend tests and lint/type checks after code changes. Run frontend build or lint when touching frontend code.
 
 ## Development Scope

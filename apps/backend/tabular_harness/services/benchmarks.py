@@ -188,6 +188,7 @@ def benchmark_source_card(
             "notes": fixture_notes(benchmark_id),
             "policy": "Fixtures are synthetic smoke data and must not be used for benchmark score claims.",
         },
+        "credential_probe": benchmark_credential_probe(benchmark),
         "credential_policy": benchmark_credential_policy(benchmark),
         "safety_notes": benchmark_safety_notes(benchmark),
     }
@@ -312,6 +313,10 @@ def benchmark_import_readiness(benchmark: dict[str, Any], root: Path, status: di
         next_actions.append("Generate the credential-free fixture for product smoke testing.")
     if not local_ready:
         if access["requires_account"]:
+            if benchmark_credential_probe(benchmark)["supported"]:
+                next_actions.append(
+                    "Run the harness-only Kaggle credential probe to verify account access without exposing secrets to agents."
+                )
             next_actions.append("Download the benchmark outside Tablex with user-managed credentials, then place files under the local root.")
         elif access["supports_direct_download"]:
             next_actions.append("Download the public archive from the official URL, extract it, then place files under the local root.")
@@ -328,17 +333,41 @@ def benchmark_import_readiness(benchmark: dict[str, Any], root: Path, status: di
         "required_files": status.get("missing_required", []),
         "recommended_files": status.get("missing_recommended", []),
         "next_actions": next_actions,
+        "credential_probe": benchmark_credential_probe(benchmark),
         "credential_policy": benchmark_credential_policy(benchmark),
+    }
+
+
+def benchmark_credential_probe(benchmark: dict[str, Any]) -> dict[str, Any]:
+    access = benchmark_access(benchmark)
+    source_url = str(benchmark.get("source_url") or "")
+    supports_kaggle_probe = (
+        bool(access["requires_account"])
+        and str(benchmark.get("source_kind") or "") == "kaggle_competition"
+        and "kaggle.com/competitions/" in source_url
+    )
+    benchmark_id = str(benchmark.get("id") or "")
+    return {
+        "supported": supports_kaggle_probe,
+        "status": "not_run",
+        "job_type": "probe_kaggle_benchmark_access" if supports_kaggle_probe else None,
+        "endpoint": f"/api/benchmarks/{benchmark_id}/kaggle/probe" if supports_kaggle_probe else None,
+        "secret_boundary": "harness_process_only",
+        "credential_sources": ["KAGGLE_API_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY"] if supports_kaggle_probe else [],
+        "credential_values_returned": False,
+        "agent_receives_credentials": False,
+        "artifact_contains_secret_values": False,
     }
 
 
 def benchmark_credential_policy(benchmark: dict[str, Any]) -> dict[str, Any]:
     access = benchmark_access(benchmark)
     return {
-        "secret_access": "forbidden",
+        "secret_access": "harness_process_only_for_credential_probe" if benchmark_credential_probe(benchmark)["supported"] else "forbidden",
         "connector_credentials": "never_materialized",
         "dataset_credentials": "user_managed_outside_tablex" if access["requires_account"] else "not_required",
         "agent_task_contract_policy": "credentials are never inserted into prompts, AgentTaskContracts, or workspaces",
+        "credential_probe_policy": "probe may read Kaggle env vars inside the harness process only; secret values are not returned or artifacted",
     }
 
 
@@ -1565,7 +1594,9 @@ def render_download_instructions(benchmark: dict[str, Any], default_root: Path) 
     command = str(download.get("command") or "").replace("data/benchmarks", str(default_root.parent))
     if download.get("requires_account"):
         return (
-            "Use a user-managed account outside Tablex. Do not paste Kaggle credentials into Tablex or agent prompts. "
+            "Use a user-managed account outside Tablex. Do not paste Kaggle credentials into prompts, AgentTaskContracts, "
+            "or runner workspaces. A harness-only probe can read KAGGLE_API_TOKEN or KAGGLE_USERNAME/KAGGLE_KEY from "
+            "the process environment or gitignored .env without returning the values. "
             f"Suggested command: {command}"
         )
     return f"Place extracted files under {default_root}. Suggested source step: {command}"

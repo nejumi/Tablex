@@ -1059,6 +1059,8 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     home_credit_benchmark = next(item for item in benchmarks if item["id"] == "kaggle_home_credit_default_risk")
     assert home_credit_benchmark["source_card"]["access"]["requires_account"] is True
     assert home_credit_benchmark["source_card"]["credential_policy"]["dataset_credentials"] == "user_managed_outside_tablex"
+    assert home_credit_benchmark["source_card"]["credential_probe"]["supported"] is True
+    assert home_credit_benchmark["source_card"]["credential_probe"]["agent_receives_credentials"] is False
     assert home_credit_benchmark["source_card"]["table_bundle"]["supporting_table_count"] >= 1
     assert home_credit_benchmark["source_card"]["source_verification"]["source_count"] >= 1
     uci_benchmark = next(item for item in benchmarks if item["id"] == "uci_bank_marketing")
@@ -1066,6 +1068,7 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     assert uci_benchmark["fixture_available"] is True
     assert uci_benchmark["source_card"]["access"]["supports_direct_download"] is True
     assert uci_benchmark["source_card"]["credential_policy"]["dataset_credentials"] == "not_required"
+    assert uci_benchmark["source_card"]["credential_probe"]["supported"] is False
     assert uci_benchmark["scenario"]["kind"] == "single_table_categorical_smoke"
     openml_benchmark = next(item for item in benchmarks if item["id"] == "openml_credit_g")
     assert openml_benchmark["source_card"]["table_bundle"]["kind"] == "single_table_bundle"

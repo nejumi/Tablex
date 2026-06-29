@@ -167,6 +167,7 @@ from tabular_harness.services.jobs import (
 from tabular_harness.services.jobs import (
     cancel_job as cancel_job_service,
 )
+from tabular_harness.services.kaggle_probe import probe_kaggle_benchmark_access
 from tabular_harness.services.model_versions import validate_model_version_package
 from tabular_harness.services.planned_agent_execution import run_planned_agent_task_local_stub
 from tabular_harness.services.planned_agent_workspace import (
@@ -335,6 +336,82 @@ def download_public_benchmark_endpoint(
                 "extracted_file_count": len(manifest["extracted_files"]),
                 "skipped_file_count": len(manifest["skipped_files"]),
                 "local_ready": manifest["local_status"]["ready"],
+            },
+        )
+    except KeyError as exc:
+        mark_job_failed(job, "Benchmark dataset not found")
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/benchmarks/{benchmark_id}/kaggle/probe", response_model=JobRead)
+def probe_kaggle_benchmark_endpoint(
+    benchmark_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    job = create_job(
+        db,
+        job_type="probe_kaggle_benchmark_access",
+        project_id=None,
+        input_payload={"benchmark_id": benchmark_id},
+        policy={
+            "network": "enabled_for_kaggle_credential_probe_only",
+            "secret_access": "harness_process_only",
+            "connector_credentials": "not_materialized",
+            "agent_runner_access": False,
+            "agent_task_contract_access": False,
+            "artifact_contains_secret_values": False,
+        },
+    )
+    try:
+        mark_job_running(job)
+        benchmark = raw_benchmark_dataset(benchmark_id)
+        payload = probe_kaggle_benchmark_access(benchmark)
+        credential_status = cast(dict[str, Any], payload["credential_status"])
+        probe = cast(dict[str, Any], payload["probe"])
+        artifact = store_json_artifact(
+            db,
+            store,
+            project_id=None,
+            asset_type="kaggle_credential_probe",
+            name=f"kaggle_credential_probe_{benchmark_id}",
+            filename="kaggle_credential_probe.json",
+            payload=payload,
+            metadata={
+                "benchmark_id": benchmark_id,
+                "competition_slug": payload["competition_slug"],
+                "probe_status": probe["status"],
+                "credential_available": credential_status["available"],
+                "credential_sources": credential_status["credential_sources"],
+                "auth_schemes": credential_status["auth_schemes"],
+                "username_available": credential_status["username_available"],
+                "can_access_competition_files": probe["can_access_competition_files"],
+                "http_status": probe["http_status"],
+                "secret_value_artifacted": False,
+                "agent_runner_access": False,
+            },
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": payload["schema_version"],
+                "benchmark_id": benchmark_id,
+                "competition_slug": payload["competition_slug"],
+                "probe_status": probe["status"],
+                "credential_available": credential_status["available"],
+                "credential_sources": credential_status["credential_sources"],
+                "auth_schemes": credential_status["auth_schemes"],
+                "username_available": credential_status["username_available"],
+                "can_access_competition_files": probe["can_access_competition_files"],
+                "http_status": probe["http_status"],
+                "attempt_count": probe["attempt_count"],
+                "kaggle_probe_artifact_id": artifact.id,
+                "artifact_id": artifact.id,
+                "artifact_ids": [artifact.id],
             },
         )
     except KeyError as exc:
@@ -4061,6 +4138,11 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "benchmark_collection_report_artifact_id": output.get("benchmark_collection_report_artifact_id"),
         "benchmark_evidence_pack_artifact_id": output.get("benchmark_evidence_pack_artifact_id"),
         "benchmark_evidence_report_id": output.get("benchmark_evidence_report_id"),
+        "kaggle_probe_artifact_id": output.get("kaggle_probe_artifact_id"),
+        "probe_status": output.get("probe_status"),
+        "credential_available": output.get("credential_available"),
+        "can_access_competition_files": output.get("can_access_competition_files"),
+        "http_status": output.get("http_status"),
         "task_id": output.get("task_id"),
         "agent_task_contract_artifact_id": output.get("agent_task_contract_artifact_id"),
         "agent_workspace_manifest_artifact_id": output.get("agent_workspace_manifest_artifact_id"),

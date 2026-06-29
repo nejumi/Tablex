@@ -8,6 +8,7 @@ import {
   Download,
   Eye,
   FileText,
+  KeyRound,
   GitBranch,
   Layers,
   Library,
@@ -110,6 +111,15 @@ type BenchmarkSourceCard = {
     credential_policy: Record<string, unknown>;
   };
   fixture: Record<string, unknown>;
+  credential_probe: {
+    supported: boolean;
+    status: string;
+    endpoint: string | null;
+    secret_boundary: string;
+    credential_values_returned: boolean;
+    agent_receives_credentials: boolean;
+    artifact_contains_secret_values: boolean;
+  };
   credential_policy: Record<string, unknown>;
   safety_notes: string[];
 };
@@ -950,6 +960,7 @@ function DataTab({
   const [collectionPreview, setCollectionPreview] = React.useState<ArtifactPreview | null>(null);
   const [collectionPreviewError, setCollectionPreviewError] = React.useState<string | null>(null);
   const [collectionPreviewLoadingId, setCollectionPreviewLoadingId] = React.useState<string | null>(null);
+  const [kaggleProbeResults, setKaggleProbeResults] = React.useState<Record<string, Record<string, unknown>>>({});
 
   async function uploadDataset() {
     if (!file) return;
@@ -999,6 +1010,16 @@ function DataTab({
         body: JSON.stringify({ overwrite: false })
       })
     );
+  }
+
+  async function probeKaggleBenchmark(benchmark: BenchmarkDataset) {
+    await runAction(async () => {
+      const job = await api<Job>(`/api/benchmarks/${benchmark.id}/kaggle/probe`, {
+        method: "POST"
+      });
+      setKaggleProbeResults((current) => ({ ...current, [benchmark.id]: job.output }));
+      return job;
+    });
   }
 
   async function runBenchmarkFixtureSmoke(benchmark: BenchmarkDataset) {
@@ -1292,6 +1313,12 @@ function DataTab({
               const tableBundle = benchmark.source_card?.table_bundle ?? {};
               const requiresAccount = access.requires_account === true;
               const directDownload = access.supports_direct_download === true;
+              const credentialProbe = benchmark.source_card?.credential_probe;
+              const canProbeKaggle = credentialProbe?.supported === true;
+              const probeResult = kaggleProbeResults[benchmark.id];
+              const probeStatus = textField(probeResult?.probe_status) ?? credentialProbe?.status ?? "not_run";
+              const credentialAvailable = probeResult?.credential_available === true;
+              const canAccessFiles = probeResult?.can_access_competition_files === true;
               const nextActions = benchmark.source_card?.import_readiness.next_actions.slice(0, 2) ?? [];
               return (
                 <div className="benchmark-card" key={benchmark.id}>
@@ -1308,6 +1335,7 @@ function DataTab({
                         <span className={requiresAccount ? "badge risk" : "badge"}>
                           {requiresAccount ? "credentialed" : "credential-free"}
                         </span>
+                        {canProbeKaggle ? <span className="badge energized">probe-ready</span> : null}
                         {directDownload ? <span className="badge">public archive</span> : null}
                       </div>
                     </div>
@@ -1360,6 +1388,24 @@ function DataTab({
                       </dd>
                     </div>
                   </dl>
+                  {canProbeKaggle ? (
+                    <div className="credential-strip">
+                      <div className="credential-strip-header">
+                        <span>
+                          <KeyRound size={15} />
+                          Kaggle gate
+                        </span>
+                        <strong className={canAccessFiles ? "status-good" : probeStatus === "not_run" ? "status-muted" : "status-warn"}>
+                          {probeStatus.replace(/_/g, " ")}
+                        </strong>
+                      </div>
+                      <div className="credential-pulse">
+                        <span className={credentialAvailable ? "on" : ""}>credential</span>
+                        <span className={probeStatus !== "not_run" ? "on" : ""}>probe</span>
+                        <span className={canAccessFiles ? "on" : ""}>files</span>
+                      </div>
+                    </div>
+                  ) : null}
                   {nextActions.length ? (
                     <ul className="source-actions">
                       {nextActions.map((action) => (
@@ -1402,6 +1448,14 @@ function DataTab({
                     >
                       <Play size={16} />
                       Flow
+                    </button>
+                    <button
+                      className="secondary-button probe-button"
+                      disabled={busy || !canProbeKaggle}
+                      onClick={() => void probeKaggleBenchmark(benchmark)}
+                    >
+                      <KeyRound size={16} />
+                      Probe
                     </button>
                     <button
                       className="secondary-button"

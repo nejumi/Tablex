@@ -16,6 +16,7 @@
     "local_layout",
     "import_readiness",
     "fixture",
+    "credential_probe",
     "credential_policy",
     "safety_notes"
   ],
@@ -61,6 +62,18 @@
       "additionalProperties": true
     },
     "fixture": { "type": "object" },
+    "credential_probe": {
+      "type": "object",
+      "required": [
+        "supported",
+        "status",
+        "secret_boundary",
+        "credential_values_returned",
+        "agent_receives_credentials",
+        "artifact_contains_secret_values"
+      ],
+      "additionalProperties": true
+    },
     "credential_policy": { "type": "object" },
     "safety_notes": {
       "type": "array",

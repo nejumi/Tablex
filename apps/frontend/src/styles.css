@@ -498,6 +498,10 @@ td {
   min-width: 0;
   border: 1px solid #dfe4ea;
   border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 251, 253, 0.98)),
+    #ffffff;
+  box-shadow: 0 10px 24px rgba(22, 58, 83, 0.06);
   padding: 14px;
 }
 
@@ -557,6 +561,11 @@ td {
   color: #724b00;
 }
 
+.badge.energized {
+  background: #edf8f2;
+  color: #0f6848;
+}
+
 .facts {
   display: grid;
   gap: 8px;
@@ -586,6 +595,79 @@ td {
   color: #52606f;
   font-size: 12px;
   line-height: 1.4;
+}
+
+.credential-strip {
+  display: grid;
+  gap: 9px;
+  border-left: 4px solid #12a182;
+  background: #f5fbf8;
+  padding: 10px 12px;
+}
+
+.credential-strip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #163a53;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.credential-strip-header span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.credential-strip-header strong {
+  overflow-wrap: anywhere;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.credential-pulse {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.credential-pulse span {
+  min-height: 28px;
+  border: 1px solid #d9e4e8;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #667085;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.credential-pulse span.on {
+  border-color: #8cd8bf;
+  background: #dcf8ec;
+  color: #0f6848;
+}
+
+.status-good {
+  color: #0f6848;
+}
+
+.status-warn {
+  color: #7a4c00;
+}
+
+.status-muted {
+  color: #667085;
+}
+
+.probe-button {
+  border-color: #82cbbb;
+  background: #f5fbf8;
+  color: #0f6848;
 }
 
 .row-actions {
