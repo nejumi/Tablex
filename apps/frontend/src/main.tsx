@@ -101,6 +101,7 @@ const englishMessages = {
   guidedJourneySubtitle: "One visible path through the harness, with approach choices left open for Codex, Skills, and evidence.",
   journeyEvidence: "Evidence",
   journeyOpenStage: "Open stage",
+  journeySaveSnapshot: "Save snapshot",
   journeyStatusDone: "Done",
   journeyStatusCurrent: "Current",
   journeyStatusNext: "Next",
@@ -215,6 +216,7 @@ const japaneseMessages: LocaleMessages = {
   guidedJourneySubtitle: "ハーネス内の現在地を一つの流れで示し、アプローチ選択はCodex、Skill、証拠に開いたままにします。",
   journeyEvidence: "根拠",
   journeyOpenStage: "ステージを開く",
+  journeySaveSnapshot: "Snapshotを保存",
   journeyStatusDone: "完了",
   journeyStatusCurrent: "現在",
   journeyStatusNext: "次",
@@ -1849,6 +1851,10 @@ function ProjectDetail({
     onTabChange(action.targetTab);
   }
 
+  async function saveGuidedJourneySnapshot() {
+    await runAction(() => api(`/api/projects/${project.id}/guidance/snapshot`, { method: "POST" }));
+  }
+
   async function runStrategyAction(action: StrategyAction) {
     const targetTab = tabFromString(action.target_tab, "Approach");
     if (action.action_type === "navigate") {
@@ -1880,9 +1886,11 @@ function ProjectDetail({
       />
       <GuidedJourneyRail
         guidance={guidance}
+        busy={busy}
         text={text}
         onTabChange={onTabChange}
         onAction={(action) => void runFocusAction(action)}
+        onSaveSnapshot={() => void saveGuidedJourneySnapshot()}
       />
       <AgentChatDock
         busy={busy}
@@ -2117,14 +2125,18 @@ function FocusGuide({
 
 function GuidedJourneyRail({
   guidance,
+  busy,
   text,
   onTabChange,
-  onAction
+  onAction,
+  onSaveSnapshot
 }: {
   guidance: ProjectGuidance | null;
+  busy: boolean;
   text: LocaleMessages;
   onTabChange: (tab: Tab) => void;
   onAction: (action: FocusAction | null) => void;
+  onSaveSnapshot: () => void;
 }) {
   const stages = guidance?.journey_stages ?? [];
   if (!stages.length) return null;
@@ -2151,12 +2163,18 @@ function GuidedJourneyRail({
             <p>{text.guidedJourneySubtitle}</p>
           </div>
         </div>
-        {currentStage ? (
-          <button className="secondary-button" type="button" onClick={() => openStage(currentStage)}>
-            <Search size={16} />
-            {text.journeyOpenStage}
+        <div className="journey-actions">
+          {currentStage ? (
+            <button className="secondary-button" type="button" onClick={() => openStage(currentStage)}>
+              <Search size={16} />
+              {text.journeyOpenStage}
+            </button>
+          ) : null}
+          <button className="secondary-button" disabled={busy} type="button" onClick={onSaveSnapshot}>
+            {busy ? <Loader2 className="spin" size={16} /> : <Download size={16} />}
+            {text.journeySaveSnapshot}
           </button>
-        ) : null}
+        </div>
       </div>
       <div className="journey-stages">
         {stages.map((stage, index) => (

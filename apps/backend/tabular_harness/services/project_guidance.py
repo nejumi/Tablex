@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from tabular_harness.core.ids import new_id
+from tabular_harness.core.json import dumps_json
 from tabular_harness.models.entities import (
     Artifact,
     Assumption,
@@ -24,6 +27,19 @@ from tabular_harness.models.entities import (
     VisualizationSpec,
     utc_now,
 )
+from tabular_harness.services.approach import store_json_artifact, store_text_artifact
+from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
+
+
+@dataclass(frozen=True)
+class GuidedJourneySnapshotResult:
+    snapshot: dict[str, Any]
+    artifact: Artifact
+    report: Report
+    report_artifact: Artifact
+    visualization: VisualizationSpec
+    visualization_artifact: Artifact
+    artifact_ids: list[str]
 
 
 def build_project_guidance(db: Session, project: Project) -> dict[str, Any]:
@@ -79,6 +95,238 @@ def build_project_guidance(db: Session, project: Project) -> dict[str, Any]:
         "hidden_detail_groups": hidden_detail_groups,
         "agent_guidance": _agent_guidance(state),
     }
+
+
+def create_guided_journey_snapshot(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+) -> GuidedJourneySnapshotResult:
+    guidance = build_project_guidance(db, project)
+    current_stage = next(
+        (stage for stage in guidance["journey_stages"] if stage["id"] == guidance["current_stage_id"]),
+        None,
+    )
+    status_counts = {
+        status: sum(1 for stage in guidance["journey_stages"] if stage["status"] == status)
+        for status in ("done", "current", "next", "blocked", "waiting")
+    }
+    snapshot = {
+        "schema_version": "guided_journey_snapshot.v1",
+        "project_id": project.id,
+        "project_name": project.name,
+        "generated_at": guidance["generated_at"],
+        "current_stage_id": guidance["current_stage_id"],
+        "current_stage_label": current_stage["label"] if current_stage else None,
+        "recommended_focus_key": guidance["recommended_focus"]["focus_key"],
+        "recommended_focus_title": guidance["recommended_focus"]["title"],
+        "status_counts": status_counts,
+        "guidance": guidance,
+        "persistence_policy": {
+            "artifact_first": True,
+            "external_dashboard_required": False,
+            "agent_runner_role": "consumer_of_harness_context_not_owner",
+        },
+    }
+    suffix = new_id("journey")
+    artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="guided_journey_snapshot",
+        name=f"guided_journey_snapshot_{suffix}",
+        filename="guided_journey_snapshot.json",
+        payload=snapshot,
+        metadata={
+            "project_id": project.id,
+            "current_stage_id": snapshot["current_stage_id"],
+            "recommended_focus_key": snapshot["recommended_focus_key"],
+            "blocked_stage_count": status_counts["blocked"],
+        },
+    )
+    report_md = render_guided_journey_report(snapshot)
+    report_artifact = store_text_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="guided_journey_report",
+        name=f"guided_journey_report_{suffix}",
+        filename="guided_journey_report.md",
+        text=report_md,
+        metadata={
+            "project_id": project.id,
+            "guided_journey_snapshot_artifact_id": artifact.id,
+            "current_stage_id": snapshot["current_stage_id"],
+        },
+    )
+    report = Report(
+        id=new_id("rpt"),
+        project_id=project.id,
+        report_type="guided_journey_report",
+        title=f"{project.name} Guided Journey",
+        summary=first_sentence(report_md),
+        artifact_id=report_artifact.id,
+        source_asset_ids_json=dumps_json([{"asset_type": "artifact", "asset_id": artifact.id}]),
+        status="draft",
+        created_by_type="system",
+    )
+    db.add(report)
+    visualization_payload = build_guided_journey_visualization_spec(snapshot)
+    visualization_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="visualization_spec",
+        name=f"guided_journey_visualization_{suffix}",
+        filename="guided_journey_visualization.json",
+        payload=visualization_payload,
+        metadata={
+            "project_id": project.id,
+            "source_artifact_id": artifact.id,
+            "chart_type": visualization_payload["chart_type"],
+            "visualization_scope": "guided_journey",
+        },
+    )
+    visualization = VisualizationSpec(
+        id=new_id("viz"),
+        project_id=project.id,
+        title=visualization_payload["title"],
+        chart_type=visualization_payload["chart_type"],
+        spec_json=dumps_json(visualization_payload["spec"]),
+        source_artifact_id=artifact.id,
+        artifact_id=visualization_artifact.id,
+        status="draft",
+        created_by_type="system",
+    )
+    db.add(visualization)
+    db.flush()
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="project",
+        from_asset_id=project.id,
+        to_asset_type="artifact",
+        to_asset_id=artifact.id,
+        relation_type="snapshot_of",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=report_artifact.id,
+        relation_type="summarized_by",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=artifact.id,
+        to_asset_type="report",
+        to_asset_id=report.id,
+        relation_type="materializes",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=artifact.id,
+        to_asset_type="visualization_spec",
+        to_asset_id=visualization.id,
+        relation_type="visualized_by",
+    )
+    return GuidedJourneySnapshotResult(
+        snapshot=snapshot,
+        artifact=artifact,
+        report=report,
+        report_artifact=report_artifact,
+        visualization=visualization,
+        visualization_artifact=visualization_artifact,
+        artifact_ids=[artifact.id, report_artifact.id, visualization_artifact.id],
+    )
+
+
+def render_guided_journey_report(snapshot: dict[str, Any]) -> str:
+    guidance = snapshot["guidance"]
+    focus = guidance["recommended_focus"]
+    lines = [
+        f"# Guided Journey: {snapshot['project_name']}",
+        "",
+        "## Current Focus",
+        "",
+        f"- Stage: {snapshot.get('current_stage_label') or snapshot.get('current_stage_id') or 'unknown'}",
+        f"- Recommended focus: {focus['title']}",
+        f"- Risk level: {focus['risk_level']}",
+        f"- Confidence: {focus['confidence']}",
+        "",
+        "## Journey Stages",
+        "",
+        "| Stage | Status | Evidence | Summary |",
+        "| --- | --- | --- | --- |",
+    ]
+    for stage in guidance["journey_stages"]:
+        evidence = "; ".join(str(item) for item in stage.get("evidence", [])[:3])
+        lines.append(f"| {stage['label']} | {stage['status']} | {evidence} | {stage['summary']} |")
+    lines.extend(
+        [
+            "",
+            "## Recommended Action",
+            "",
+            f"- Action: {focus['primary_action']['label']}",
+            f"- Target tab: {focus['primary_action']['target_tab']}",
+            f"- Action type: {focus['primary_action']['action_type']}",
+            "",
+            "## Agent Guidance",
+            "",
+        ]
+    )
+    lines.extend(f"- {item}" for item in guidance["agent_guidance"])
+    lines.extend(
+        [
+            "",
+            "## Policy",
+            "",
+            "- This snapshot is an in-product artifact and report; external dashboards are not required.",
+            "- The Approach stage records handoff readiness only. It does not force Codex into a fixed modeling recipe.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def build_guided_journey_visualization_spec(snapshot: dict[str, Any]) -> dict[str, Any]:
+    rows = [
+        {
+            "stage": stage["label"],
+            "status": "ready" if stage["status"] == "done" else stage["status"],
+            "count": len(stage.get("evidence", [])),
+            "detail": stage["summary"],
+        }
+        for stage in snapshot["guidance"]["journey_stages"]
+    ]
+    return {
+        "schema_version": "visualization_spec.v1",
+        "title": f"Guided Journey: {snapshot['project_name']}",
+        "chart_type": "stage_status",
+        "data": rows,
+        "spec": {
+            "schema_version": "guided_journey_stage_status.v1",
+            "current_stage_id": snapshot["current_stage_id"],
+            "recommended_focus_key": snapshot["recommended_focus_key"],
+            "status_counts": snapshot["status_counts"],
+        },
+        "encoding": {"stage": "stage", "status": "status", "count": "count", "detail": "detail"},
+        "empty_state": "Save a guided journey snapshot after project guidance is available.",
+    }
+
+
+def first_sentence(markdown: str) -> str:
+    for line in markdown.splitlines():
+        stripped = line.strip("# ").strip()
+        if stripped:
+            return stripped[:280]
+    return "Guided journey report"
 
 
 def _state_summary(db: Session, project: Project, counts: dict[str, int]) -> dict[str, Any]:

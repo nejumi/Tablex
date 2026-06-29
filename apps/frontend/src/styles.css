@@ -428,6 +428,13 @@ textarea {
   box-shadow: 0 8px 18px color-mix(in srgb, var(--shadow) 48%, transparent);
 }
 
+.journey-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .journey-stages {
   display: grid;
   grid-template-columns: repeat(7, minmax(96px, 1fr));
@@ -438,10 +445,10 @@ textarea {
 
 .journey-stage {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-  min-height: 54px;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  align-content: start;
+  min-height: 72px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-muted);
@@ -483,7 +490,8 @@ textarea {
   color: var(--text-strong);
   font-size: 12px;
   line-height: 1.15;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .journey-stage-copy small {

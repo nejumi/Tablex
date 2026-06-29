@@ -190,7 +190,10 @@ from tabular_harness.services.planned_agent_workspace import (
     prepare_workspace_from_contract_artifact,
 )
 from tabular_harness.services.profiler import profile_tabular_file
-from tabular_harness.services.project_guidance import build_project_guidance
+from tabular_harness.services.project_guidance import (
+    build_project_guidance,
+    create_guided_journey_snapshot,
+)
 from tabular_harness.services.relational_feature_diagnostics import (
     diagnose_relational_feature_scenarios,
 )
@@ -740,6 +743,48 @@ def project_overview(project_id: str, db: Annotated[Session, Depends(get_session
 def project_guidance(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
     project = require_project(db, project_id)
     return build_project_guidance(db, project)
+
+
+@router.post("/api/projects/{project_id}/guidance/snapshot", response_model=JobRead)
+def save_project_guided_journey_snapshot(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="save_guided_journey_snapshot",
+        project_id=project_id,
+        input_payload={},
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_guided_journey_snapshot(db, store=store, project=project)
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.snapshot["schema_version"],
+                "guided_journey_snapshot_artifact_id": result.artifact.id,
+                "guided_journey_report_id": result.report.id,
+                "guided_journey_report_artifact_id": result.report_artifact.id,
+                "visualization_id": result.visualization.id,
+                "visualization_artifact_id": result.visualization_artifact.id,
+                "artifact_id": result.artifact.id,
+                "artifact_ids": result.artifact_ids,
+                "current_stage_id": result.snapshot["current_stage_id"],
+                "recommended_focus_key": result.snapshot["recommended_focus_key"],
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
 
 
 @router.post("/api/projects/{project_id}/datasets/upload", response_model=DatasetUploadResponse)

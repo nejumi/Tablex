@@ -75,6 +75,20 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     assert next_guidance["recommended_focus"]["primary_action"]["target_tab"]
     assert next_guidance["agent_guidance"]
 
+    snapshot_response = client.post(f"/api/projects/{project_id}/guidance/snapshot")
+    assert snapshot_response.status_code == 200, snapshot_response.text
+    snapshot_job = snapshot_response.json()
+    assert snapshot_job["status"] == "succeeded"
+    assert snapshot_job["job_type"] == "save_guided_journey_snapshot"
+    assert snapshot_job["output"]["schema_version"] == "guided_journey_snapshot.v1"
+    assert snapshot_job["output"]["guided_journey_snapshot_artifact_id"]
+    assert snapshot_job["output"]["guided_journey_report_id"]
+    assert snapshot_job["output"]["visualization_artifact_id"]
+
+    report_preview_response = client.get(f"/api/reports/{snapshot_job['output']['guided_journey_report_id']}/preview")
+    assert report_preview_response.status_code == 200, report_preview_response.text
+    assert "Guided Journey" in report_preview_response.json()["preview"]
+
 
 def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     client = make_client(tmp_path)
