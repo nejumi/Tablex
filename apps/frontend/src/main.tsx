@@ -1181,6 +1181,25 @@ type DecisionReportCurrent = {
   action_endpoint: string;
 };
 
+type ResultReadout = {
+  schema_version: "result_readout.v1";
+  project_id: string;
+  status: string;
+  headline: string;
+  summary: string;
+  top_run: Record<string, unknown> | null;
+  metric_story: string;
+  evaluation_contract: Record<string, unknown>;
+  comparison: Record<string, unknown>;
+  diagnostics: Record<string, unknown>;
+  notebook: Record<string, unknown>;
+  decision_report: Record<string, unknown>;
+  read_order: Array<Record<string, unknown>>;
+  next_action: Record<string, unknown>;
+  evidence_gaps: Array<Record<string, unknown>>;
+  safety: Record<string, unknown>;
+};
+
 type VisualizationSpec = {
   id: string;
   title: string;
@@ -2240,6 +2259,7 @@ function ProjectDetail({
   const [ideas, setIdeas] = React.useState<Idea[]>([]);
   const [reports, setReports] = React.useState<Report[]>([]);
   const [decisionReport, setDecisionReport] = React.useState<DecisionReportCurrent | null>(null);
+  const [resultReadout, setResultReadout] = React.useState<ResultReadout | null>(null);
   const [visualizations, setVisualizations] = React.useState<VisualizationSpec[]>([]);
   const [notebookIndex, setNotebookIndex] = React.useState<NotebookIndex | null>(null);
   const [analysisStory, setAnalysisStory] = React.useState<AnalysisStorySurface | null>(null);
@@ -2299,6 +2319,7 @@ function ProjectDetail({
         ideasData,
         reportsData,
         decisionReportData,
+        resultReadoutData,
         visualizationsData,
         notebookIndexData,
         analysisStoryData,
@@ -2329,6 +2350,7 @@ function ProjectDetail({
         api<Idea[]>(`/api/projects/${project.id}/approach/ideas`),
         api<Report[]>(`/api/projects/${project.id}/reports`),
         api<DecisionReportCurrent>(`/api/projects/${project.id}/decision-report/current`).catch(() => null),
+        api<ResultReadout>(`/api/projects/${project.id}/results/readout`).catch(() => null),
         api<VisualizationSpec[]>(`/api/projects/${project.id}/visualizations`),
         api<NotebookIndex>(`/api/projects/${project.id}/analysis-notebooks`).catch(() => null),
         api<AnalysisStorySurface>(`/api/projects/${project.id}/analysis-story`).catch(() => null),
@@ -2359,6 +2381,7 @@ function ProjectDetail({
       setIdeas(ideasData);
       setReports(reportsData);
       setDecisionReport(decisionReportData);
+      setResultReadout(resultReadoutData);
       setVisualizations(visualizationsData);
       setNotebookIndex(notebookIndexData);
       setAnalysisStory(analysisStoryData);
@@ -2676,6 +2699,7 @@ function ProjectDetail({
           specs={specs}
           artifacts={artifacts}
           leaderboard={leaderboard}
+          resultReadout={resultReadout}
           busy={busy}
           runAction={runAction}
           onAskAgent={submitAgentChat}
@@ -4950,6 +4974,10 @@ function textField(value: unknown): string | null {
 
 function numberField(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function booleanField(value: unknown): boolean {
+  return value === true;
 }
 
 function recordField(value: unknown): Record<string, unknown> {
@@ -8917,11 +8945,61 @@ function BarVisualization({
   );
 }
 
+function ResultReadoutStory({ readout }: { readout: ResultReadout }) {
+  const readOrder = readout.read_order.slice(0, 5);
+  const gaps = readout.evidence_gaps.slice(0, 4);
+  return (
+    <Panel title="How to read this result" icon={<ListChecks size={18} />}>
+      <div className="result-readout-grid">
+        <div className="result-readout-column">
+          <h3>Read in this order</h3>
+          <div className="result-readout-steps">
+            {readOrder.map((item, index) => (
+              <div className="result-readout-step" key={`${textField(item.title) ?? "step"}-${index}`}>
+                <span>{String(item.step ?? index + 1)}</span>
+                <div>
+                  <strong>{textField(item.title) ?? "Read evidence"}</strong>
+                  <p>{textField(item.body) ?? "No guidance recorded."}</p>
+                  <small>{textField(item.target_tab) ?? "Tablex"}</small>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="result-readout-column">
+          <h3>Open evidence gaps</h3>
+          {gaps.length ? (
+            <div className="result-gap-list">
+              {gaps.map((gap, index) => (
+                <div className="result-gap-item" key={`${textField(gap.area) ?? "gap"}-${index}`}>
+                  <strong>{textField(gap.area) ?? "Evidence gap"}</strong>
+                  <p>{textField(gap.summary) ?? "No summary recorded."}</p>
+                  <small>{textField(gap.target_tab) ?? "Reports"} · {(textField(gap.status) ?? "missing").replace(/_/g, " ")}</small>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyInline text="No evidence gap is currently open in the result readout." />
+          )}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function resultReadoutStatusTone(status: string, fallback: EvidenceReaderMetric["tone"]): EvidenceReaderMetric["tone"] {
+  if (status === "ready_for_review") return "ready";
+  if (status === "needs_attention" || status === "needs_decision_report" || status === "needs_diagnostics") return "warning";
+  if (status === "needs_evaluation" || status === "needs_run") return "risk";
+  return fallback;
+}
+
 function LeaderboardTab({
   project,
   specs,
   artifacts,
   leaderboard,
+  resultReadout,
   busy,
   runAction,
   onAskAgent
@@ -8930,6 +9008,7 @@ function LeaderboardTab({
   specs: EvaluationSpec[];
   artifacts: Artifact[];
   leaderboard: LeaderboardEntry[];
+  resultReadout: ResultReadout | null;
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
   onAskAgent: (objective: string) => Promise<AgentChatResponse | void>;
@@ -8997,6 +9076,37 @@ function LeaderboardTab({
   }
 
   const latestComparisonReport = comparisonReportArtifacts[0] ?? null;
+  const readoutStatus = resultReadout?.status ?? leaderboardStatus;
+  const readoutTone = resultReadoutStatusTone(readoutStatus, leaderboardTone);
+  const readoutNextAction = resultReadout?.next_action ?? null;
+  const readoutNextLabel = textField(readoutNextAction?.label) ?? (topEntry ? "Review diagnostics for the leading run" : "Create run evidence from Experiments");
+  const readoutNextPrompt =
+    textField(readoutNextAction?.agent_prompt) ??
+    (topEntry
+      ? `Diagnose the top run for ${project.name} and update the result readout.`
+      : `Help me create comparable run evidence for ${project.name}.`);
+  const readoutMetrics: EvidenceReaderMetric[] = [
+    {
+      label: "Best run",
+      value: textField(resultReadout?.top_run?.id) ?? "-",
+      tone: resultReadout?.top_run ? "ready" : "muted"
+    },
+    {
+      label: "Contract",
+      value: textField(resultReadout?.evaluation_contract.status) ?? leaderboardStatus,
+      tone: textField(resultReadout?.evaluation_contract.status) === "ready" || leaderboardTone === "ready" ? "ready" : "warning"
+    },
+    {
+      label: "Diagnostics",
+      value: booleanField(resultReadout?.diagnostics.available) ? "ready" : diagnosticArtifacts.length,
+      tone: booleanField(resultReadout?.diagnostics.available) || diagnosticArtifacts.length ? "ready" : "muted"
+    },
+    {
+      label: "Decision",
+      value: booleanField(resultReadout?.decision_report.available) ? "report" : "gap",
+      tone: booleanField(resultReadout?.decision_report.available) ? "ready" : "warning"
+    }
+  ];
   React.useEffect(() => {
     if (!latestComparisonReport) return;
     if (preview?.id === latestComparisonReport.id) return;
@@ -9008,32 +9118,32 @@ function LeaderboardTab({
   return (
     <div className="stack">
       <FocusedEvidenceReader
-        id="leaderboard-focus"
-        eyebrow="Leaderboard Reader"
-        title={leaderboard.length ? "Compare runs only inside the evaluation contract" : "No leaderboard evidence yet"}
-        body="Leaderboard values are useful only when the metric, EvaluationSpec, SplitManifest, and diagnostics are visible. Tablex keeps this as evidence for decisions, not a race to the highest number."
-        status={leaderboardStatus}
-        statusTone={leaderboardTone}
-        metrics={[
-          { label: "Runs", value: leaderboard.length, tone: leaderboard.length ? "ready" : "muted" },
-          { label: "Approved specs", value: approvedSpecCount, tone: approvedSpecCount ? "ready" : "warning" },
-          { label: "Split manifests", value: splitManifests.length, tone: splitManifests.length ? "ready" : "warning" },
-          {
-            label: latestComparisonReport ? "Comparison" : "Diagnostics",
-            value: latestComparisonReport ? "ready" : diagnosticArtifacts.length,
-            tone: latestComparisonReport || diagnosticArtifacts.length ? "ready" : "muted"
-          }
-        ]}
-        nextLabel={topEntry ? "Review diagnostics for the leading run" : "Create run evidence from Experiments"}
-        nextDetail={
-          topEntry
-            ? "A top metric is not enough. Generate diagnostics, slice checks, and split sanity evidence before trusting the rank."
-            : "Run a baseline or agent task after evaluation is approved; the leaderboard should stay empty until comparable run evidence exists."
+        id="result-readout"
+        eyebrow="Result Readout"
+        title={resultReadout?.headline ?? (leaderboard.length ? "Compare runs only inside the evaluation contract" : "No leaderboard evidence yet")}
+        body={
+          resultReadout?.summary ??
+          "Leaderboard values are useful only when the metric, EvaluationSpec, SplitManifest, and diagnostics are visible. Tablex keeps this as evidence for decisions, not a race to the highest number."
         }
-        nextButtonLabel={topEntry ? "Analyze Top Run" : "Waiting for Runs"}
-        nextDisabled={busy || !topEntry}
+        status={readoutStatus.replace(/_/g, " ")}
+        statusTone={readoutTone}
+        metrics={readoutMetrics}
+        nextLabel={readoutNextLabel}
+        nextDetail={
+          resultReadout
+            ? "Let Tablex decide whether to diagnose, compare, summarize, or route you to the next evidence gap."
+            : topEntry
+              ? "A top metric is not enough. Generate diagnostics, slice checks, and split sanity evidence before trusting the rank."
+              : "Run a baseline or agent task after evaluation is approved; the leaderboard should stay empty until comparable run evidence exists."
+        }
+        nextButtonLabel={resultReadout ? "Ask Tablex" : topEntry ? "Analyze Top Run" : "Waiting for Runs"}
+        nextDisabled={busy || (!resultReadout && !topEntry)}
         onNext={() => {
-          if (topEntry) void runAction(() => analyzeTopRun(topEntry));
+          if (resultReadout) {
+            void onAskAgent(readoutNextPrompt);
+          } else if (topEntry) {
+            void runAction(() => analyzeTopRun(topEntry));
+          }
         }}
         previewTitle={latestComparisonReport ? "Latest comparison report" : "Diagnostics preview"}
         preview={preview}
@@ -9042,6 +9152,7 @@ function LeaderboardTab({
         previewEmpty="Analyze a run or select a diagnostics artifact to read the evaluation evidence here."
         boundary="Ranks require the same evaluation contract"
       />
+      {resultReadout ? <ResultReadoutStory readout={resultReadout} /> : null}
       {topEntry ? (
         <div className="toolbar leaderboard-reader-actions" aria-label="Top run evidence actions">
           <button className="secondary-button" disabled={busy} onClick={() => void runAction(() => analyzeTopRun(topEntry))}>
@@ -9066,81 +9177,87 @@ function LeaderboardTab({
           </button>
         </div>
       ) : null}
-      <Panel title="Leaderboard" icon={<BarChart3 size={18} />}>
-        {leaderboard.length ? (
-          <Table
-            headers={["Rank", "Run", "Runner", "Model", "ModelVersion", "Metric", "Value", "Spec", "Split", "Actions"]}
-            rows={leaderboard.map((entry) => [
-              entry.rank,
-              entry.run_id,
-              entry.runner_type,
-              formatBaseline(entry.metrics),
-              entry.model_version_id ?? "-",
-              entry.primary_metric_name ?? "-",
-              entry.primary_metric_value == null ? "-" : entry.primary_metric_value.toFixed(6),
-              entry.evaluation_spec_id ?? "-",
-              entry.split_manifest_id ?? "-",
-              <button
-                className="icon-button"
-                disabled={busy}
-                key={entry.run_id}
-                onClick={() => void runAction(() => analyzeTopRun(entry))}
-                title="Analyze evaluation diagnostics"
-              >
-                {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-              </button>
-            ])}
-          />
-        ) : (
-          <EmptyInline text="Runs will be ranked here with primary metric, secondary metrics, evaluation spec version, split manifest version, and decision status." />
-        )}
-      </Panel>
-      <Panel title="Evaluation Context" icon={<Layers size={18} />}>
-        <Table
-          headers={["Approved Specs", "Split Manifests"]}
-          rows={[[approvedSpecCount, splitManifests.length]]}
-        />
-      </Panel>
-      <Panel title="Evaluation Diagnostics" icon={<ListChecks size={18} />}>
-        {diagnosticArtifacts.length ? (
-          <Table
-            headers={["Type", "Name", "Version", "Run", "Actions"]}
-            rows={diagnosticArtifacts.map((artifact) => [
-              artifact.asset_type,
-              artifact.name,
-              `v${artifact.version}`,
-              String(artifact.metadata.run_id ?? "-"),
-              <div className="row-actions" key={artifact.id}>
+      <details className="report-supporting-details leaderboard-supporting-details">
+        <summary>
+          <span>Supporting leaderboard evidence</span>
+          <small>Raw ranks, evaluation context, diagnostics artifacts, and preview controls</small>
+        </summary>
+        <Panel title="Leaderboard" icon={<BarChart3 size={18} />}>
+          {leaderboard.length ? (
+            <Table
+              headers={["Rank", "Run", "Runner", "Model", "ModelVersion", "Metric", "Value", "Spec", "Split", "Actions"]}
+              rows={leaderboard.map((entry) => [
+                entry.rank,
+                entry.run_id,
+                entry.runner_type,
+                formatBaseline(entry.metrics),
+                entry.model_version_id ?? "-",
+                entry.primary_metric_name ?? "-",
+                entry.primary_metric_value == null ? "-" : entry.primary_metric_value.toFixed(6),
+                entry.evaluation_spec_id ?? "-",
+                entry.split_manifest_id ?? "-",
                 <button
                   className="icon-button"
-                  disabled={previewLoadingId === artifact.id}
-                  onClick={() => void loadPreview(artifact.id)}
-                  title="Preview diagnostics"
+                  disabled={busy}
+                  key={entry.run_id}
+                  onClick={() => void runAction(() => analyzeTopRun(entry))}
+                  title="Analyze evaluation diagnostics"
                 >
-                  {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                  {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
                 </button>
-                <a
-                  className="icon-link"
-                  href={`${apiBase}/api/artifacts/${artifact.id}/download`}
-                  title="Download diagnostics"
-                >
-                  <Download size={16} />
-                </a>
-              </div>
-            ])}
+              ])}
+            />
+          ) : (
+            <EmptyInline text="Runs will be ranked here with primary metric, secondary metrics, evaluation spec version, split manifest version, and decision status." />
+          )}
+        </Panel>
+        <Panel title="Evaluation Context" icon={<Layers size={18} />}>
+          <Table
+            headers={["Approved Specs", "Split Manifests"]}
+            rows={[[approvedSpecCount, splitManifests.length]]}
           />
-        ) : (
-          <EmptyInline text="Evaluation diagnostics, slice metrics, error bins, worst examples, and split sanity checks will appear here after analyzing a run." />
-        )}
-      </Panel>
-      <Panel title="Diagnostics Preview" icon={<FileText size={18} />}>
-        {previewError ? <div className="banner danger">{previewError}</div> : null}
-        {preview?.preview_available ? (
-          <TranslatablePreview preview={preview} />
-        ) : (
-          <EmptyInline text={preview?.reason ?? "Select a diagnostics artifact to preview JSON or Markdown inside the workbench."} />
-        )}
-      </Panel>
+        </Panel>
+        <Panel title="Evaluation Diagnostics" icon={<ListChecks size={18} />}>
+          {diagnosticArtifacts.length ? (
+            <Table
+              headers={["Type", "Name", "Version", "Run", "Actions"]}
+              rows={diagnosticArtifacts.map((artifact) => [
+                artifact.asset_type,
+                artifact.name,
+                `v${artifact.version}`,
+                String(artifact.metadata.run_id ?? "-"),
+                <div className="row-actions" key={artifact.id}>
+                  <button
+                    className="icon-button"
+                    disabled={previewLoadingId === artifact.id}
+                    onClick={() => void loadPreview(artifact.id)}
+                    title="Preview diagnostics"
+                  >
+                    {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                  </button>
+                  <a
+                    className="icon-link"
+                    href={`${apiBase}/api/artifacts/${artifact.id}/download`}
+                    title="Download diagnostics"
+                  >
+                    <Download size={16} />
+                  </a>
+                </div>
+              ])}
+            />
+          ) : (
+            <EmptyInline text="Evaluation diagnostics, slice metrics, error bins, worst examples, and split sanity checks will appear here after analyzing a run." />
+          )}
+        </Panel>
+        <Panel title="Diagnostics Preview" icon={<FileText size={18} />}>
+          {previewError ? <div className="banner danger">{previewError}</div> : null}
+          {preview?.preview_available ? (
+            <TranslatablePreview preview={preview} />
+          ) : (
+            <EmptyInline text={preview?.reason ?? "Select a diagnostics artifact to preview JSON or Markdown inside the workbench."} />
+          )}
+        </Panel>
+      </details>
     </div>
   );
 }

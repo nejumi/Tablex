@@ -769,6 +769,25 @@ class DecisionReportCurrentRead(BaseModel):
     action_endpoint: str
 
 
+class ResultReadoutRead(BaseModel):
+    schema_version: Literal["result_readout.v1"]
+    project_id: str
+    status: str
+    headline: str
+    summary: str
+    top_run: dict[str, Any] | None
+    metric_story: str
+    evaluation_contract: dict[str, Any]
+    comparison: dict[str, Any]
+    diagnostics: dict[str, Any]
+    notebook: dict[str, Any]
+    decision_report: dict[str, Any]
+    read_order: list[dict[str, Any]]
+    next_action: dict[str, Any]
+    evidence_gaps: list[dict[str, Any]]
+    safety: dict[str, Any]
+
+
 class VisualizationSpecRead(BaseModel):
     id: str
     project_id: str

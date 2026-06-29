@@ -1076,12 +1076,12 @@ def show_leaderboard_action(db: Session, *, project: Project) -> dict[str, Any]:
     return {
         "type": "show_leaderboard",
         "status": "explained",
-        "label": "Open the Leaderboard Reader",
+        "label": "Open the Result Readout",
         "target_tab": "Leaderboard",
-        "target_anchor": "leaderboard-focus",
+        "target_anchor": "result-readout",
         "detail": (
             f"Leaderboard has {len(runs)} successful run(s). Top run is {top_run.id} with "
-            f"{primary_metric_name}={value_text}. Read diagnostics and run report evidence before trusting the rank."
+            f"{primary_metric_name}={value_text}. Start with the result readout, then drill into diagnostics only when needed."
         ),
         "entity_ids": [run.id for run in runs[:5]],
     }
@@ -1138,10 +1138,10 @@ def compare_top_runs_action(db: Session, *, store: LocalArtifactStore, project: 
         "status": "applied",
         "label": "Compared current run evidence",
         "target_tab": "Leaderboard",
-        "target_anchor": "leaderboard-focus",
+        "target_anchor": "result-readout",
         "detail": (
             f"Created experiment comparison evidence for {len(runs)} successful run(s). "
-            f"Current best run is {best_run_id}; read diagnostics and the comparison report before treating the rank as a decision."
+            f"Current best run is {best_run_id}; read the result readout and comparison report before treating rank as a decision."
         ),
         "artifact_id": result.artifact_ids[0] if result.artifact_ids else None,
         "artifact_ids": result.artifact_ids,
@@ -1208,7 +1208,7 @@ def post_run_reading_workflow_action(db: Session, *, store: LocalArtifactStore, 
             action_type="post_run_reading_workflow",
             label="Post-run reading workflow needs attention",
             target_tab="Leaderboard",
-            target_anchor="leaderboard-focus",
+            target_anchor="result-readout",
             detail=str(exc),
             job_id=action_job.id,
         )
@@ -1230,7 +1230,7 @@ def post_run_reading_workflow_action(db: Session, *, store: LocalArtifactStore, 
         "target_anchor": "decision-report",
         "detail": (
             f"Top run {top_run.id} was converted into run report, experiment comparison, and decision report evidence."
-            f"{diagnostics_note} Start with Reports, then return to Leaderboard if the rank needs diagnostics detail."
+            f"{diagnostics_note} Start with Reports, then return to the result readout if the rank needs diagnostics detail."
         ),
         "artifact_id": decision_report_artifact_id or run_report_artifact_id or (artifact_ids[0] if artifact_ids else None),
         "artifact_ids": artifact_ids,
@@ -1332,7 +1332,7 @@ def target_anchor_for_tab(tab: str) -> str:
         "Assumptions": "assumption-review",
         "Evaluation": "evaluation-design",
         "Approach": "approach-handoff",
-        "Leaderboard": "leaderboard-focus",
+        "Leaderboard": "result-readout",
         "Notebooks": "notebook-focus",
         "Reports": "decision-report",
     }
@@ -1839,15 +1839,15 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
                 "Next: open Experiments and create comparable run evidence under the approved evaluation contract."
             )
         return (
-            f"I routed you to the Leaderboard Reader. {action['detail']} "
-            "Read the top-run diagnostics and run report before treating metric rank as a decision."
+            f"I routed you to the Result Readout. {action['detail']} "
+            "Read the compact result first; the raw leaderboard is supporting evidence."
         )
     if intent["type"] == "compare_top_runs":
         action = actions[0]
         if action["status"] == "applied":
             return (
                 f"I compared the current run evidence. {action['detail']} "
-                "Next: open Leaderboard, then inspect diagnostics/report evidence for the leading run."
+                "Next: open the Result Readout, then inspect diagnostics/report evidence only where the readout asks for it."
             )
         return f"I cannot compare runs yet: {action['detail']} Open {action['target_tab']} and resolve that first."
     if intent["type"] == "post_run_reading_workflow":
@@ -1855,7 +1855,7 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
         if action["status"] == "applied":
             return (
                 f"I prepared the post-run reading workflow. {action['detail']} "
-                "Next: open Reports and read the decision report first; use Leaderboard only when you need rank-level detail."
+                "Next: open Reports and read the decision report first; use the Result Readout when you need rank-level detail."
             )
         return f"I cannot prepare post-run reading yet: {action['detail']} Open {action['target_tab']} and resolve that first."
     if intent["type"] == "author_analysis_notebook":
@@ -1971,7 +1971,7 @@ def action_summary_headline(intent: dict[str, Any], outcome: str) -> str:
     if intent_type == "generate_decision_report":
         return "Decision report is ready" if outcome == "applied" else "Decision report needs review"
     if intent_type == "show_leaderboard":
-        return "Leaderboard reader is ready" if outcome != "needs_review" else "Leaderboard needs run evidence"
+        return "Result readout is ready" if outcome != "needs_review" else "Result readout needs run evidence"
     if intent_type == "compare_top_runs":
         return "Run evidence compared" if outcome == "applied" else "Run comparison needs successful runs"
     if intent_type == "post_run_reading_workflow":

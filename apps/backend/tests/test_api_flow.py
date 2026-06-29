@@ -235,7 +235,7 @@ def test_agent_chat_runs_core_harness_actions(tmp_path: Path) -> None:
     assert empty_leaderboard_response.status_code == 200, empty_leaderboard_response.text
     empty_leaderboard = empty_leaderboard_response.json()
     assert empty_leaderboard["intent"]["type"] == "show_leaderboard"
-    assert empty_leaderboard["action_summary"]["headline"] == "Leaderboard needs run evidence"
+    assert empty_leaderboard["action_summary"]["headline"] == "Result readout needs run evidence"
     assert empty_leaderboard["action_summary"]["next_step"]["target_tab"] == "Experiments"
 
     empty_post_run_response = client.post(
@@ -832,10 +832,18 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert leaderboard_chat_response.status_code == 200, leaderboard_chat_response.text
     leaderboard_chat = leaderboard_chat_response.json()
     assert leaderboard_chat["intent"]["type"] == "show_leaderboard"
-    assert leaderboard_chat["action_summary"]["headline"] == "Leaderboard reader is ready"
+    assert leaderboard_chat["action_summary"]["headline"] == "Result readout is ready"
     assert leaderboard_chat["action_summary"]["next_step"]["target_tab"] == "Leaderboard"
-    assert leaderboard_chat["action_summary"]["next_step"]["target_anchor"] == "leaderboard-focus"
+    assert leaderboard_chat["action_summary"]["next_step"]["target_anchor"] == "result-readout"
     assert any("same EvaluationSpec and SplitManifest" in item for item in leaderboard_chat["action_summary"]["boundaries"])
+
+    initial_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
+    assert initial_readout_response.status_code == 200, initial_readout_response.text
+    initial_readout = initial_readout_response.json()
+    assert initial_readout["schema_version"] == "result_readout.v1"
+    assert initial_readout["top_run"]["id"] == baseline_job["output"]["experiment_run_id"]
+    assert initial_readout["evaluation_contract"]["status"] == "ready"
+    assert initial_readout["next_action"]["target_tab"] == "Leaderboard"
 
     compare_runs_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "上位runを比較して"})
     assert compare_runs_chat_response.status_code == 200, compare_runs_chat_response.text
@@ -846,6 +854,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     compare_runs_action = next(action for action in compare_runs_chat["actions"] if action["type"] == "compare_top_runs")
     assert compare_runs_action["status"] == "applied"
     assert compare_runs_action["artifact_id"]
+
+    comparison_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
+    assert comparison_readout_response.status_code == 200, comparison_readout_response.text
+    comparison_readout = comparison_readout_response.json()
+    assert comparison_readout["comparison"]["available"] is True
+    assert comparison_readout["comparison"]["report_artifact"]["asset_type"] == "experiment_comparison_report"
+    assert comparison_readout["read_order"][0]["title"] == "Read the result"
 
     model_response = client.get(f"/api/model-versions/{baseline_job['output']['model_version_id']}")
     assert model_response.status_code == 200, model_response.text
@@ -1615,6 +1630,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     current_post_run_report_response = client.get(f"/api/projects/{project_id}/decision-report/current")
     assert current_post_run_report_response.status_code == 200
     assert current_post_run_report_response.json()["available"] is True
+
+    post_run_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
+    assert post_run_readout_response.status_code == 200, post_run_readout_response.text
+    post_run_readout = post_run_readout_response.json()
+    assert post_run_readout["decision_report"]["available"] is True
+    assert post_run_readout["next_action"]["target_anchor"] == "decision-report"
+    assert post_run_readout["safety"]["leaderboard_is_decision"] is False
 
     decision_report_v1_response = client.post(f"/api/projects/{project_id}/decision-report/generate")
     assert decision_report_v1_response.status_code == 200, decision_report_v1_response.text

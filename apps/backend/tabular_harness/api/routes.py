@@ -91,6 +91,7 @@ from tabular_harness.schemas import (
     ReportRead,
     ResearchBriefCreate,
     ResearchBriefRead,
+    ResultReadoutRead,
     SemanticCatalogRead,
     SplitManifestRead,
     TranslationCreate,
@@ -244,6 +245,7 @@ from tabular_harness.services.reporting import (
 from tabular_harness.services.research_runner import run_research_source_pack_local_stub
 from tabular_harness.services.research_sources import create_research_source_pack
 from tabular_harness.services.research_synthesis import create_research_finding_synthesis
+from tabular_harness.services.result_readout import build_result_readout
 from tabular_harness.services.translation import TranslationResult
 from tabular_harness.services.translation import translate_artifact as translate_artifact_service
 from tabular_harness.worker.jobs import create_default_worker
@@ -3404,6 +3406,12 @@ def list_project_reports(project_id: str, db: Annotated[Session, Depends(get_ses
 def current_decision_report_endpoint(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
     project = require_project(db, project_id)
     return current_decision_report_payload(db, project=project)
+
+
+@router.get("/api/projects/{project_id}/results/readout", response_model=ResultReadoutRead)
+def result_readout_endpoint(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    return build_result_readout(db, project=project)
 
 
 @router.post("/api/projects/{project_id}/decision-report/generate", response_model=JobRead)
