@@ -67,7 +67,7 @@ The product name may still change. Internal package names and database tables st
 - Controlled Research Runner Stub v1 with Research Source Pack execution contracts, research run manifests, findings reports, source citation manifests, Evidence, VisualizationSpec, and lineage without external network access.
 - Research Findings Synthesis v1 with runner findings, citation audit, follow-up requirements, Evidence, Report, VisualizationSpec, Lineage, AgentTaskContract inputs, AgentContextPack context, and Approach UI preview/download.
 - Leaderboard backed by ExperimentRun metrics.
-- React UI with project list, dataset upload, benchmark access gates, assumptions, evaluation, approach, experiments, leaderboard, reports, assets, jobs, and lineage tabs. UI surfaces should feel rich and inspectable rather than a plain experiment tracker.
+- React UI with project list, dataset upload, benchmark access gates, assumptions, evaluation, approach, experiments, notebooks, leaderboard, reports, assets, jobs, and lineage tabs. UI surfaces should feel rich and inspectable rather than a plain experiment tracker.
 - AgentRunner interface with Noop/LocalStub and Codex CLI skeleton.
 - Single Docker image.
 

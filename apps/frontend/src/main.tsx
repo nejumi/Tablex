@@ -68,6 +68,7 @@ const englishMessages = {
   tabEvaluation: "Evaluation",
   tabApproach: "Approach",
   tabExperiments: "Experiments",
+  tabNotebooks: "Notebooks",
   tabLeaderboard: "Leaderboard",
   tabReports: "Reports",
   tabAssets: "Assets",
@@ -183,6 +184,7 @@ const japaneseMessages: LocaleMessages = {
   tabEvaluation: "評価",
   tabApproach: "アプローチ",
   tabExperiments: "実験",
+  tabNotebooks: "ノートブック",
   tabLeaderboard: "リーダーボード",
   tabReports: "レポート",
   tabAssets: "アセット",
@@ -999,6 +1001,7 @@ const tabItems = [
   { id: "Evaluation", labelKey: "tabEvaluation" },
   { id: "Approach", labelKey: "tabApproach" },
   { id: "Experiments", labelKey: "tabExperiments" },
+  { id: "Notebooks", labelKey: "tabNotebooks" },
   { id: "Leaderboard", labelKey: "tabLeaderboard" },
   { id: "Reports", labelKey: "tabReports" },
   { id: "Assets", labelKey: "tabAssets" },
@@ -1275,7 +1278,7 @@ function buildFocusRecommendation({
       title: text.focusApproach,
       reason: text.focusApproachReason,
       evidence: [`${approvedSpecs.length} approved specs`, `${succeededJobs.length} succeeded jobs`],
-      secondaryTabs: ["Experiments", "Assets"],
+      secondaryTabs: ["Experiments", "Notebooks", "Assets"],
       primaryAction: null,
       secondaryActions: [],
       riskLevel: "medium",
@@ -1291,7 +1294,7 @@ function buildFocusRecommendation({
       title: text.focusExperiments,
       reason: text.focusExperimentsReason,
       evidence: [`${runs.length} experiment runs`, `${artifacts.length} artifacts`],
-      secondaryTabs: ["Leaderboard", "Reports"],
+      secondaryTabs: ["Notebooks", "Leaderboard", "Reports"],
       primaryAction: null,
       secondaryActions: [],
       riskLevel: "medium",
@@ -1306,7 +1309,7 @@ function buildFocusRecommendation({
     title: text.focusReports,
     reason: text.focusReportsReason,
     evidence: [`${reports.length} reports`, `${runs.length} experiment runs`],
-    secondaryTabs: ["Leaderboard", "Lineage"],
+    secondaryTabs: ["Notebooks", "Leaderboard", "Lineage"],
     primaryAction: null,
     secondaryActions: [],
     riskLevel: "low",
@@ -2022,6 +2025,16 @@ function ProjectDetail({
           runs={runs}
           agentTaskResults={agentTaskResults}
           artifacts={artifacts}
+          busy={busy}
+          runAction={runAction}
+        />
+      )}
+      {tab === "Notebooks" && (
+        <NotebooksTab
+          project={project}
+          runs={runs}
+          artifacts={artifacts}
+          notebookIndex={notebookIndex}
           busy={busy}
           runAction={runAction}
         />
@@ -5328,6 +5341,249 @@ function ExperimentsTab({
           <Table headers={["Job", "Status", "Output"]} rows={experimentJobs.map((job) => [job.job_type, job.status, JSON.stringify(job.output)])} />
         ) : (
           <EmptyInline text="Baseline and agent task job status will appear here." />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function NotebooksTab({
+  project,
+  runs,
+  artifacts,
+  notebookIndex,
+  busy,
+  runAction
+}: {
+  project: Project;
+  runs: Run[];
+  artifacts: Artifact[];
+  notebookIndex: NotebookIndex | null;
+  busy: boolean;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
+  const latestRun = runs[0] ?? null;
+  const recommendedNotebook = notebookIndex?.recommended_notebook ?? null;
+  const executionArtifacts = artifacts.filter(
+    (artifact) =>
+      artifact.asset_type === "notebook_execution_plan" ||
+      (artifact.asset_type === "agent_task_contract" && typeof artifact.metadata.notebook_artifact_id === "string")
+  );
+
+  async function loadPreview(artifactId: string) {
+    setPreviewLoadingId(artifactId);
+    setPreviewError(null);
+    try {
+      setPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPreviewLoadingId(null);
+    }
+  }
+
+  async function generateDataNotebook() {
+    const job = await api<Job>(`/api/projects/${project.id}/analysis-notebooks/data-understanding`, {
+      method: "POST"
+    });
+    const htmlArtifactId = job.output.notebook_html_artifact_id;
+    if (typeof htmlArtifactId === "string") {
+      await loadPreview(htmlArtifactId);
+    }
+    return job;
+  }
+
+  async function generateModelNotebook(run: Run) {
+    const job = await api<Job>(`/api/runs/${run.id}/analysis-notebook`, { method: "POST" });
+    const htmlArtifactId = job.output.notebook_html_artifact_id;
+    if (typeof htmlArtifactId === "string") {
+      await loadPreview(htmlArtifactId);
+    }
+    return job;
+  }
+
+  async function planNotebookExecution(item: NotebookIndexItem) {
+    const job = await api<Job>(`/api/analysis-notebooks/${item.artifact_ids.notebook}/execution-plan`, {
+      method: "POST"
+    });
+    const planArtifactId = job.output.notebook_execution_plan_artifact_id;
+    if (typeof planArtifactId === "string") {
+      await loadPreview(planArtifactId);
+    }
+    return job;
+  }
+
+  return (
+    <div className="stack">
+      <div className="toolbar">
+        <button className="secondary-button" disabled={busy} onClick={() => void runAction(generateDataNotebook)}>
+          {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+          Data Notebook
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy || latestRun === null}
+          onClick={() => {
+            if (latestRun) void runAction(() => generateModelNotebook(latestRun));
+          }}
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
+          Model Notebook
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy || recommendedNotebook === null}
+          onClick={() => {
+            if (recommendedNotebook) void runAction(() => planNotebookExecution(recommendedNotebook));
+          }}
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+          Plan Execution
+        </button>
+      </div>
+
+      <Panel title="Notebook Workspace" icon={<BarChart3 size={18} />}>
+        {notebookIndex && notebookIndex.counts.total > 0 ? (
+          <div className="stack">
+            {recommendedNotebook ? (
+              <div className="focus-card">
+                <div>
+                  <div className="eyebrow">Recommended notebook</div>
+                  <h3>{recommendedNotebook.title}</h3>
+                  <p>{recommendedNotebook.recommendation_reason}</p>
+                  <div className="badge-row">
+                    <span className="badge">{recommendedNotebook.notebook_kind.replace(/_/g, " ")}</span>
+                    <span className="badge muted">{notebookCoverageLabel(recommendedNotebook)}</span>
+                    {recommendedNotebook.run_id ? <span className="badge muted">run {recommendedNotebook.run_id}</span> : null}
+                  </div>
+                </div>
+                <div className="row-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={previewLoadingId === notebookPreviewArtifactId(recommendedNotebook)}
+                    onClick={() => void loadPreview(notebookPreviewArtifactId(recommendedNotebook))}
+                  >
+                    {previewLoadingId === notebookPreviewArtifactId(recommendedNotebook) ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <Eye size={16} />
+                    )}
+                    Preview
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() => void runAction(() => planNotebookExecution(recommendedNotebook))}
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+                    Plan Execution
+                  </button>
+                  <a
+                    className="icon-link"
+                    href={`${apiBase}/api/artifacts/${recommendedNotebook.artifact_ids.notebook}/download`}
+                    title="Download marimo source"
+                  >
+                    <Download size={16} />
+                  </a>
+                </div>
+              </div>
+            ) : null}
+            <div className="metric-grid compact">
+              <Metric label="Notebooks" value={notebookIndex.counts.total} />
+              <Metric label="Data notebooks" value={notebookIndex.counts.by_kind.data_understanding ?? 0} />
+              <Metric label="Model notebooks" value={notebookIndex.counts.by_kind.model_diagnostics ?? 0} />
+              <Metric label="Execution plans" value={executionArtifacts.length} />
+            </div>
+          </div>
+        ) : (
+          <EmptyInline text="Notebook history will appear here after Data Understanding or run-level diagnostics notebooks are generated." />
+        )}
+      </Panel>
+
+      <div className="stack">
+        <Panel title="Notebook History" icon={<FileText size={18} />}>
+          {notebookIndex && notebookIndex.items.length ? (
+            <Table
+              headers={["Notebook", "Source", "Coverage", "Created", "Actions"]}
+              rows={notebookIndex.items.map((item) => [
+                <div className="cell-stack" key={`${item.notebook_artifact_id}-title`}>
+                  <span>{item.title}</span>
+                  <small>{item.notebook_kind.replace(/_/g, " ")}</small>
+                </div>,
+                notebookSourceLabel(item),
+                notebookCoverageLabel(item),
+                formatDate(item.created_at),
+                <div className="row-actions" key={`${item.notebook_artifact_id}-actions`}>
+                  <button
+                    className="icon-button"
+                    disabled={previewLoadingId === notebookPreviewArtifactId(item)}
+                    onClick={() => void loadPreview(notebookPreviewArtifactId(item))}
+                    title="Preview notebook"
+                  >
+                    {previewLoadingId === notebookPreviewArtifactId(item) ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={busy}
+                    onClick={() => void runAction(() => planNotebookExecution(item))}
+                    title="Plan controlled notebook execution"
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+                  </button>
+                  <a className="icon-link" href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`} title="Download marimo source">
+                    <Download size={16} />
+                  </a>
+                </div>
+              ])}
+            />
+          ) : (
+            <EmptyInline text="Generated marimo notebooks will be listed here with preview, planning, and source download actions." />
+          )}
+        </Panel>
+
+        <Panel title="Execution Plans" icon={<ListChecks size={18} />}>
+          {executionArtifacts.length ? (
+            <Table
+              headers={["Type", "Status", "Notebook", "Created", "Actions"]}
+              rows={executionArtifacts.map((artifact) => [
+                artifact.asset_type,
+                String(artifact.metadata.execution_status ?? "ready"),
+                String(artifact.metadata.notebook_artifact_id ?? "-"),
+                formatDate(artifact.created_at),
+                <div className="row-actions" key={artifact.id}>
+                  <button
+                    className="icon-button"
+                    disabled={previewLoadingId === artifact.id}
+                    onClick={() => void loadPreview(artifact.id)}
+                    title="Preview execution artifact"
+                  >
+                    {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                  </button>
+                  <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download execution artifact">
+                    <Download size={16} />
+                  </a>
+                </div>
+              ])}
+            />
+          ) : (
+            <EmptyInline text="Controlled execution plans and notebook AgentTaskContracts will appear here before any notebook runner executes code." />
+          )}
+        </Panel>
+      </div>
+
+      <Panel title="Notebook Preview" icon={<FileText size={18} />}>
+        {previewError ? <div className="banner danger">{previewError}</div> : null}
+        {preview?.preview_available ? (
+          isHtmlArtifactPreview(preview) ? (
+            <HtmlArtifactPreview preview={preview} />
+          ) : (
+            <TranslatablePreview preview={preview} />
+          )
+        ) : (
+          <EmptyInline text={preview?.reason ?? "Select a notebook, execution plan, or contract preview to inspect it inside the workbench."} />
         )}
       </Panel>
     </div>
