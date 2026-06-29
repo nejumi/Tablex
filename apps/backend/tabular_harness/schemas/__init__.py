@@ -1,5 +1,7 @@
 from tabular_harness.schemas.api import (
     AdaptiveStrategyBriefRead,
+    AgentChatCreate,
+    AgentChatRead,
     AgentRequiredOutput,
     AgentResult,
     AgentTaskContract,
@@ -56,6 +58,8 @@ from tabular_harness.schemas.api import (
 __all__ = [
     "AgentResult",
     "AgentRequiredOutput",
+    "AgentChatCreate",
+    "AgentChatRead",
     "AgentTaskPlanCreate",
     "AgentTaskContract",
     "AnswerRead",

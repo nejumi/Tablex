@@ -41,6 +41,8 @@ from tabular_harness.models.entities import (
 )
 from tabular_harness.schemas import (
     AdaptiveStrategyBriefRead,
+    AgentChatCreate,
+    AgentChatRead,
     AgentTaskPlanCreate,
     AnswerRead,
     ArtifactPreviewRead,
@@ -94,6 +96,7 @@ from tabular_harness.services.adaptive_strategy import (
     build_adaptive_strategy_brief,
     create_adaptive_strategy_brief,
 )
+from tabular_harness.services.agent_chat import handle_agent_chat_turn
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
 from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
@@ -450,6 +453,9 @@ def probe_kaggle_benchmark_endpoint(
     except ValueError as exc:
         mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise
     return job_to_dict(job)
 
 
@@ -2413,6 +2419,60 @@ def plan_project_agent_task_endpoint(
         mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/agent-chat", response_model=AgentChatRead)
+def create_agent_chat_turn(
+    project_id: str,
+    payload: AgentChatCreate,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="agent_chat_turn",
+        project_id=project_id,
+        input_payload={"message": payload.message},
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "runner_execution": "not_started_by_chat_endpoint",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = handle_agent_chat_turn(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            message=payload.message,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.response["schema_version"],
+                "agent_chat_turn_artifact_id": result.artifact.id,
+                "artifact_id": result.artifact.id,
+                "artifact_ids": [result.artifact.id],
+                "intent_type": result.response["intent"]["type"],
+                "action_count": len(result.response["actions"]),
+                "assistant_message": result.response["assistant_message"],
+                "worker_events": result.response["worker_events"],
+                "token_usage": result.response["token_usage"],
+                "agent_task_contract_artifact_id": result.planned_agent_task.artifact.id
+                if result.planned_agent_task
+                else None,
+            },
+        )
+        response = dict(result.response)
+        response["job"] = job_to_dict(job)
+        return response
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/api/agent-task-contracts/{artifact_id}/prepare-workspace", response_model=JobRead)

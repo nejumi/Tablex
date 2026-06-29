@@ -1,7 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import {
+  Activity,
   AlertTriangle,
+  ArrowLeft,
   BarChart3,
   Check,
   Database,
@@ -42,6 +44,7 @@ type UserSettings = {
 
 const userSettingsStorageKey = "tablex.userSettings.v1";
 const dynamicLocaleStorageKey = "tablex.dynamicLocalePacks.v1";
+const portalIdeasStorageKey = "tablex.portalIdeas.v1";
 
 const defaultUserSettings: UserSettings = {
   locale: "en-US",
@@ -52,6 +55,22 @@ const defaultUserSettings: UserSettings = {
 
 const englishMessages = {
   predictionWorkbench: "Prediction workbench",
+  portal: "Portal",
+  backToPortal: "Back to Portal",
+  portalTitle: "Team prediction portal",
+  portalSubtitle: "Cross-project health, recent activity, and ideas captured for follow-up.",
+  projectPortfolio: "Project portfolio",
+  recentUpdates: "Recent updates",
+  ideaInbox: "Idea inbox",
+  ideaInboxHint: "Capture product or analysis ideas here; promote them into project work when ready.",
+  ideaInboxPlaceholder: "Drop a UX, modeling, data, or reporting idea for later follow-up",
+  addIdea: "Add idea",
+  noIdeasYet: "No captured ideas yet.",
+  openProject: "Open project",
+  totalProjects: "Projects",
+  activeProjects: "Active",
+  totalJobs: "Jobs",
+  totalArtifacts: "Artifacts",
   projects: "Projects",
   refreshProjects: "Refresh projects",
   loadingProjects: "Loading projects",
@@ -142,11 +161,17 @@ const englishMessages = {
   localizationTaskCreated: "Localization AgentTaskContract created.",
   noProjectForLocalization: "Select a project before creating a localization AgentTask.",
   agentChatTitle: "Agent Chat",
-  agentChatSubtitle: "Codex-ready runner channel",
-  agentChatPlaceholder: "Ask for the next experiment, feature idea, diagnosis, or report",
-  createAgentTaskContract: "Create AgentTaskContract",
+  agentChatSubtitle: "Talk to Tablee; actions stay inside the harness",
+  agentChatPlaceholder: "Try: set metric to ROC-AUC, explain the next step, generate a diagnostic notebook",
+  createAgentTaskContract: "Send",
   downloadLatestAgentTaskContract: "Download latest AgentTaskContract",
   agentTaskContractCreated: "AgentTaskContract created.",
+  agentActivityTitle: "Agent Activity",
+  agentActivitySubtitle: "Workers, actions, and token telemetry",
+  estimatedTokens: "Estimated tokens",
+  telemetryEstimate: "estimate until runner telemetry",
+  workerChatPlaceholder: "Message this worker",
+  noAgentActivity: "Agent activity will appear after chat, jobs, or runner work starts.",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "One guided next step without forcing a fixed modeling recipe.",
   strategyRecommendedAction: "Recommended action",
@@ -171,6 +196,22 @@ type LocaleMessages = typeof englishMessages;
 
 const japaneseMessages: LocaleMessages = {
   predictionWorkbench: "予測ワークベンチ",
+  portal: "ポータル",
+  backToPortal: "ポータルに戻る",
+  portalTitle: "Team prediction portal",
+  portalSubtitle: "Project横断の状態、最近の更新、追っかけ対応するideaを確認します。",
+  projectPortfolio: "Project portfolio",
+  recentUpdates: "最近の更新",
+  ideaInbox: "Idea inbox",
+  ideaInboxHint: "UX、modeling、data、reportingの思いつきをここに残し、後でproject workへ昇格します。",
+  ideaInboxPlaceholder: "後で対応したいUX、モデリング、データ、レポート案を書く",
+  addIdea: "Ideaを追加",
+  noIdeasYet: "まだideaはありません。",
+  openProject: "Projectを開く",
+  totalProjects: "Projects",
+  activeProjects: "Active",
+  totalJobs: "Jobs",
+  totalArtifacts: "Artifacts",
   projects: "プロジェクト",
   refreshProjects: "プロジェクトを更新",
   loadingProjects: "プロジェクトを読み込み中",
@@ -261,11 +302,17 @@ const japaneseMessages: LocaleMessages = {
   localizationTaskCreated: "Localization AgentTaskContractを作成しました。",
   noProjectForLocalization: "Localization AgentTaskを作成する前にProjectを選択してください。",
   agentChatTitle: "Agent Chat",
-  agentChatSubtitle: "Codex対応runnerチャネル",
-  agentChatPlaceholder: "次の実験、特徴量案、診断、レポートを依頼する",
-  createAgentTaskContract: "AgentTaskContractを作成",
+  agentChatSubtitle: "Tableeに話す。アクションはハーネス内で管理されます",
+  agentChatPlaceholder: "例: metricはROC-AUCにして、次に見るべきことを説明して、診断Notebookを生成して",
+  createAgentTaskContract: "送信",
   downloadLatestAgentTaskContract: "最新のAgentTaskContractをダウンロード",
   agentTaskContractCreated: "AgentTaskContractを作成しました。",
+  agentActivityTitle: "Agent Activity",
+  agentActivitySubtitle: "Worker、action、token telemetry",
+  estimatedTokens: "推定tokens",
+  telemetryEstimate: "runner telemetryが入るまで推定",
+  workerChatPlaceholder: "このworkerにメッセージ",
+  noAgentActivity: "chat、job、runner workが始まるとagent activityが表示されます。",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "固定recipeにせず、次の一手だけをガイドします。",
   strategyRecommendedAction: "推奨アクション",
@@ -347,6 +394,26 @@ function loadUserSettings(): UserSettings {
     };
   } catch {
     return defaultUserSettings;
+  }
+}
+
+function loadPortalIdeas(): PortalIdea[] {
+  try {
+    const raw = window.localStorage.getItem(portalIdeasStorageKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is PortalIdea => {
+      return (
+        item &&
+        typeof item === "object" &&
+        typeof item.id === "string" &&
+        typeof item.text === "string" &&
+        typeof item.created_at === "string"
+      );
+    });
+  } catch {
+    return [];
   }
 }
 
@@ -761,6 +828,63 @@ type JobArtifactsResponse = {
   artifact_ids: string[];
   missing_artifact_ids: string[];
   artifacts: Artifact[];
+};
+
+type TokenSeriesPoint = {
+  step: string;
+  tokens: number;
+};
+
+type AgentWorkerEvent = {
+  worker_id: string;
+  display_name: string;
+  status: string;
+  headline: string;
+  detail: string;
+  job_id: string;
+  target_tab: string | null;
+  token_usage: {
+    source: string;
+    is_estimate: boolean;
+    series: TokenSeriesPoint[];
+  };
+};
+
+type AgentChatAction = {
+  type: string;
+  status: string;
+  label: string;
+  target_tab: string | null;
+  detail: string;
+  artifact_id?: string;
+  artifact_ids?: string[];
+  entity_ids?: string[];
+};
+
+type AgentChatResponse = {
+  schema_version: "agent_chat_turn.v1";
+  project_id: string;
+  user_message: string;
+  assistant_message: string;
+  intent: Record<string, unknown>;
+  actions: AgentChatAction[];
+  worker_events: AgentWorkerEvent[];
+  token_usage: { source: string; is_estimate: boolean; series: TokenSeriesPoint[] };
+  next_focus: Record<string, unknown>;
+  artifact_id: string;
+  job: Job;
+};
+
+type AgentChatMessage = {
+  role: "user" | "system";
+  text: string;
+  actions?: AgentChatAction[];
+};
+
+type PortalIdea = {
+  id: string;
+  text: string;
+  created_at: string;
 };
 
 type Run = {
@@ -1339,9 +1463,11 @@ function buildFocusRecommendation({
 function App() {
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = React.useState<string | null>(null);
+  const [viewMode, setViewMode] = React.useState<"portal" | "project">("portal");
   const [tab, setTab] = React.useState<Tab>("Overview");
   const [userSettings, setUserSettings] = React.useState<UserSettings>(() => loadUserSettings());
   const [dynamicLocalePacks, setDynamicLocalePacks] = React.useState<LocalePack[]>(() => loadDynamicLocalePacks());
+  const [portalIdeas, setPortalIdeas] = React.useState<PortalIdea[]>(() => loadPortalIdeas());
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -1352,10 +1478,11 @@ function App() {
   React.useEffect(() => {
     window.localStorage.setItem(userSettingsStorageKey, JSON.stringify(userSettings));
     window.localStorage.setItem(dynamicLocaleStorageKey, JSON.stringify(dynamicLocalePacks));
+    window.localStorage.setItem(portalIdeasStorageKey, JSON.stringify(portalIdeas));
     document.documentElement.lang = activeLocale.locale;
     document.documentElement.dir = activeLocale.direction;
     document.documentElement.dataset.theme = userSettings.displayTheme;
-  }, [activeLocale.direction, activeLocale.locale, dynamicLocalePacks, userSettings]);
+  }, [activeLocale.direction, activeLocale.locale, dynamicLocalePacks, portalIdeas, userSettings]);
 
   const refreshProjects = React.useCallback(async () => {
     setLoading(true);
@@ -1378,6 +1505,7 @@ function App() {
   }, [refreshProjects]);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const activeProject = viewMode === "project" ? selectedProject : null;
 
   async function createLocalizationTask(settings: UserSettings) {
     if (!selectedProjectId) {
@@ -1436,9 +1564,10 @@ function App() {
           {projects.map((project) => (
             <button
               key={project.id}
-              className={project.id === selectedProjectId ? "project-item active" : "project-item"}
+              className={project.id === selectedProjectId && viewMode === "project" ? "project-item active" : "project-item"}
               onClick={() => {
                 setSelectedProjectId(project.id);
+                setViewMode("project");
                 setTab("Overview");
               }}
             >
@@ -1449,11 +1578,21 @@ function App() {
         </div>
         <CreateProjectForm text={text} onCreated={refreshProjects} />
       </aside>
-      <main className="main">
+      <main className={activeProject ? "main with-agent-rail" : "main"}>
         <header className="topbar">
           <div>
-            <h1>{selectedProject ? selectedProject.name : text.projects}</h1>
-            <p>{selectedProject?.description || text.projectDescription}</p>
+            <div className="topbar-kicker">
+              {activeProject ? (
+                <button className="text-button" onClick={() => setViewMode("portal")} type="button">
+                  <ArrowLeft size={15} />
+                  {text.backToPortal}
+                </button>
+              ) : (
+                <span>{text.portal}</span>
+              )}
+            </div>
+            <h1>{activeProject ? activeProject.name : text.portalTitle}</h1>
+            <p>{activeProject ? activeProject.description || text.projectDescription : text.portalSubtitle}</p>
           </div>
           <div className="topbar-actions">
             <button className="icon-button" onClick={() => void refreshProjects()} title={text.refreshProjects}>
@@ -1478,14 +1617,27 @@ function App() {
         ) : null}
         {error ? <div className="banner danger">{error}</div> : null}
         {loading ? <LoadingBlock label={text.loadingProjects} /> : null}
-        {!loading && !selectedProject ? (
+        {!loading && projects.length === 0 ? (
           <EmptyState
             icon={<img src="/mascot/tablee-empty.svg" alt="" aria-hidden="true" className="empty-state-mascot" />}
             title={text.createFirstProject}
             body={text.createFirstProjectBody}
           />
         ) : null}
-        {selectedProject ? (
+        {!loading && !activeProject && projects.length > 0 ? (
+          <PortalView
+            projects={projects}
+            ideas={portalIdeas}
+            text={text}
+            onOpenProject={(projectId) => {
+              setSelectedProjectId(projectId);
+              setViewMode("project");
+              setTab("Overview");
+            }}
+            onAddIdea={(idea) => setPortalIdeas((current) => [idea, ...current].slice(0, 40))}
+          />
+        ) : null}
+        {activeProject ? (
           <>
             <nav className="tabs">
               {tabItems.map((item) => (
@@ -1499,7 +1651,7 @@ function App() {
               ))}
             </nav>
             <ProjectDetail
-              project={selectedProject}
+              project={activeProject}
               tab={tab}
               text={text}
               onTabChange={setTab}
@@ -1510,6 +1662,114 @@ function App() {
       </main>
       </div>
     </LocaleContext.Provider>
+  );
+}
+
+function PortalView({
+  projects,
+  ideas,
+  text,
+  onOpenProject,
+  onAddIdea
+}: {
+  projects: Project[];
+  ideas: PortalIdea[];
+  text: LocaleMessages;
+  onOpenProject: (projectId: string) => void;
+  onAddIdea: (idea: PortalIdea) => void;
+}) {
+  const [draft, setDraft] = React.useState("");
+  const activeCount = projects.filter((project) => project.status !== "archived").length;
+  const recentProjects = [...projects]
+    .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))
+    .slice(0, 6);
+
+  function addIdea(event: React.FormEvent) {
+    event.preventDefault();
+    const value = draft.trim();
+    if (!value) return;
+    onAddIdea({
+      id: `idea_${Date.now()}`,
+      text: value,
+      created_at: new Date().toISOString()
+    });
+    setDraft("");
+  }
+
+  return (
+    <section className="portal-grid">
+      <div className="portal-hero">
+        <div>
+          <div className="eyebrow">{text.portal}</div>
+          <h2>{text.projectPortfolio}</h2>
+          <p>{text.portalSubtitle}</p>
+        </div>
+        <img src="/mascot/tablee-success.svg" alt="" aria-hidden="true" className="portal-mascot" />
+      </div>
+
+      <section className="metric-grid compact" aria-label={text.atAGlance}>
+        <Metric label={text.totalProjects} value={projects.length} />
+        <Metric label={text.activeProjects} value={activeCount} />
+        <Metric label={text.totalJobs} value="Project tabs" />
+        <Metric label={text.totalArtifacts} value="Workbench" />
+      </section>
+
+      <section className="two-column">
+        <div className="panel">
+          <div className="panel-header">
+            <div className="panel-title">
+              <BarChart3 size={17} />
+              <h2>{text.recentUpdates}</h2>
+            </div>
+          </div>
+          <div className="portal-project-list">
+            {recentProjects.map((project) => (
+              <button key={project.id} className="portal-project-card" onClick={() => onOpenProject(project.id)} type="button">
+                <span>
+                  <strong>{project.name}</strong>
+                  <small>{formatWorkflowState(project.current_phase)} · {new Date(project.updated_at).toLocaleString()}</small>
+                </span>
+                <span className="secondary-button">{text.openProject}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-header">
+            <div className="panel-title">
+              <Lightbulb size={17} />
+              <h2>{text.ideaInbox}</h2>
+            </div>
+          </div>
+          <p className="muted-copy">{text.ideaInboxHint}</p>
+          <form className="portal-idea-form" onSubmit={addIdea}>
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder={text.ideaInboxPlaceholder}
+              rows={4}
+            />
+            <button className="primary-button" disabled={!draft.trim()}>
+              <Plus size={16} />
+              {text.addIdea}
+            </button>
+          </form>
+          <div className="portal-idea-list">
+            {ideas.length ? (
+              ideas.slice(0, 8).map((idea) => (
+                <div className="portal-idea" key={idea.id}>
+                  <p>{idea.text}</p>
+                  <small>{new Date(idea.created_at).toLocaleString()}</small>
+                </div>
+              ))
+            ) : (
+              <EmptyInline text={text.noIdeasYet} />
+            )}
+          </div>
+        </div>
+      </section>
+    </section>
   );
 }
 
@@ -1718,7 +1978,8 @@ function ProjectDetail({
   const [understanding, setUnderstanding] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [agentChatMessages, setAgentChatMessages] = React.useState<Array<{ role: "user" | "system"; text: string }>>([]);
+  const [agentChatMessages, setAgentChatMessages] = React.useState<AgentChatMessage[]>([]);
+  const [agentWorkerEvents, setAgentWorkerEvents] = React.useState<AgentWorkerEvent[]>([]);
   const focusRecommendation = React.useMemo(
     () => {
       if (guidance) return focusFromGuidance(guidance, text);
@@ -1860,22 +2121,20 @@ function ProjectDetail({
     setError(null);
     setAgentChatMessages((current) => [...current.slice(-3), { role: "user", text: trimmed }]);
     try {
-      const job = await api<Job>(`/api/projects/${project.id}/approach/agent-task-plan`, {
+      const result = await api<AgentChatResponse>(`/api/projects/${project.id}/agent-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ objective: trimmed, task_type: "implement_prediction_approach" })
+        body: JSON.stringify({ message: trimmed })
       });
-      const artifactId = job.output.agent_task_contract_artifact_id ?? job.output.artifact_id;
       setAgentChatMessages((current) => [
         ...current.slice(-4),
         {
           role: "system",
-          text:
-            typeof artifactId === "string"
-              ? `${text.agentTaskContractCreated} ${artifactId}`
-              : text.agentTaskContractCreated
+          text: result.assistant_message,
+          actions: result.actions
         }
       ]);
+      setAgentWorkerEvents((current) => [...result.worker_events, ...current].slice(0, 8));
       await refresh();
       await onProjectChanged();
     } catch (err) {
@@ -1962,6 +2221,13 @@ function ProjectDetail({
         messages={agentChatMessages}
         latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
         onSubmit={submitAgentChat}
+      />
+      <AgentActivityRail
+        text={text}
+        jobs={jobs}
+        events={agentWorkerEvents}
+        messages={agentChatMessages}
+        onWorkerMessage={submitAgentChat}
       />
       {tab === "Overview" && (
         <OverviewTab
@@ -2295,7 +2561,7 @@ function AgentChatDock({
 }: {
   busy: boolean;
   text: LocaleMessages;
-  messages: Array<{ role: "user" | "system"; text: string }>;
+  messages: AgentChatMessage[];
   latestContract: Artifact | null;
   onSubmit: (objective: string) => Promise<void>;
 }) {
@@ -2336,7 +2602,16 @@ function AgentChatDock({
         <div className="agent-chat-log">
           {messages.slice(-4).map((message, index) => (
             <div className={`agent-chat-message ${message.role}`} key={`${message.role}-${index}-${message.text}`}>
-              {message.text}
+              <p>{message.text}</p>
+              {message.actions?.length ? (
+                <div className="agent-chat-actions">
+                  {message.actions.slice(0, 3).map((action) => (
+                    <span key={`${action.type}-${action.label}`}>
+                      {action.status}: {action.label}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
@@ -2354,6 +2629,204 @@ function AgentChatDock({
       </form>
     </div>
   );
+}
+
+function AgentActivityRail({
+  text,
+  jobs,
+  events,
+  messages,
+  onWorkerMessage
+}: {
+  text: LocaleMessages;
+  jobs: Job[];
+  events: AgentWorkerEvent[];
+  messages: AgentChatMessage[];
+  onWorkerMessage: (message: string) => Promise<void>;
+}) {
+  const workerEvents = React.useMemo(() => {
+    const fromJobs = jobs.flatMap((job) => workerEventsFromJob(job));
+    const merged = [...events, ...fromJobs];
+    const byKey = new Map<string, AgentWorkerEvent>();
+    merged.forEach((event) => {
+      byKey.set(`${event.worker_id}-${event.job_id}`, event);
+    });
+    return [...byKey.values()].slice(0, 5);
+  }, [events, jobs]);
+
+  return (
+    <aside className="agent-activity-rail" aria-label={text.agentActivityTitle}>
+      <div className="agent-activity-header">
+        <div>
+          <div className="agent-activity-title">
+            <Activity size={16} />
+            {text.agentActivityTitle}
+          </div>
+          <small>{text.agentActivitySubtitle}</small>
+        </div>
+      </div>
+      {workerEvents.length ? (
+        <div className="agent-worker-list">
+          {workerEvents.map((event) => (
+            <AgentWorkerCard key={`${event.worker_id}-${event.job_id}`} event={event} text={text} onWorkerMessage={onWorkerMessage} />
+          ))}
+        </div>
+      ) : (
+        <EmptyInline text={messages.length ? text.noAgentActivity : text.noAgentActivity} />
+      )}
+    </aside>
+  );
+}
+
+function AgentWorkerCard({
+  event,
+  text,
+  onWorkerMessage
+}: {
+  event: AgentWorkerEvent;
+  text: LocaleMessages;
+  onWorkerMessage: (message: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = React.useState("");
+  const maxTokens = Math.max(...event.token_usage.series.map((point) => point.tokens), 1);
+
+  async function submit(eventSubmit: React.FormEvent) {
+    eventSubmit.preventDefault();
+    const value = draft.trim();
+    if (!value) return;
+    setDraft("");
+    await onWorkerMessage(`[worker:${event.worker_id}] ${value}`);
+  }
+
+  return (
+    <section className={`agent-worker-card ${event.status}`}>
+      <div className="agent-worker-topline">
+        <strong>{event.display_name}</strong>
+        <span>{event.status}</span>
+      </div>
+      <p>{event.headline}</p>
+      <small>{event.detail}</small>
+      <div className="token-sparkline" aria-label={text.estimatedTokens}>
+        {event.token_usage.series.map((point) => (
+          <span
+            key={point.step}
+            title={`${point.step}: ${point.tokens}`}
+            style={{ height: `${Math.max(12, (point.tokens / maxTokens) * 54)}px` }}
+          />
+        ))}
+      </div>
+      <div className="agent-worker-meta">
+        <span>{text.estimatedTokens}</span>
+        <strong>{event.token_usage.series[event.token_usage.series.length - 1]?.tokens ?? 0}</strong>
+      </div>
+      <small className="agent-worker-estimate">{text.telemetryEstimate}</small>
+      <form className="agent-worker-chat" onSubmit={(submitEvent) => void submit(submitEvent)}>
+        <input
+          value={draft}
+          onChange={(changeEvent) => setDraft(changeEvent.target.value)}
+          placeholder={text.workerChatPlaceholder}
+        />
+        <button className="icon-button" disabled={!draft.trim()} title={text.workerChatPlaceholder}>
+          <Send size={14} />
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function workerEventsFromJob(job: Job): AgentWorkerEvent[] {
+  const outputEvents = job.output.worker_events;
+  if (Array.isArray(outputEvents)) {
+    return outputEvents
+      .map((event, index) => coerceWorkerEvent(event, job, index))
+      .filter((event): event is AgentWorkerEvent => event !== null);
+  }
+  if (!job.job_type.includes("agent") && !job.job_type.includes("notebook") && !job.job_type.includes("research")) {
+    return [];
+  }
+  return [
+    {
+      worker_id: `job-${job.job_type}`,
+      display_name: workerDisplayName(job.job_type),
+      status: job.status,
+      headline: jobHeadline(job),
+      detail: job.error_message ?? `Job ${job.id}`,
+      job_id: job.id,
+      target_tab: targetTabForJob(job.job_type),
+      token_usage: {
+        source: "estimated_until_runner_telemetry",
+        is_estimate: true,
+        series: estimatedJobTokens(job)
+      }
+    }
+  ];
+}
+
+function coerceWorkerEvent(raw: unknown, job: Job, index: number): AgentWorkerEvent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const usage = record.token_usage;
+  const series =
+    usage && typeof usage === "object" && Array.isArray((usage as Record<string, unknown>).series)
+      ? ((usage as Record<string, unknown>).series as unknown[])
+          .map(coerceTokenPoint)
+          .filter((item): item is TokenSeriesPoint => item !== null)
+      : estimatedJobTokens(job);
+  return {
+    worker_id: typeof record.worker_id === "string" ? record.worker_id : `worker-${index}`,
+    display_name: typeof record.display_name === "string" ? record.display_name : workerDisplayName(job.job_type),
+    status: typeof record.status === "string" ? record.status : job.status,
+    headline: typeof record.headline === "string" ? record.headline : jobHeadline(job),
+    detail: typeof record.detail === "string" ? record.detail : `Job ${job.id}`,
+    job_id: typeof record.job_id === "string" ? record.job_id : job.id,
+    target_tab: typeof record.target_tab === "string" ? record.target_tab : targetTabForJob(job.job_type),
+    token_usage: {
+      source:
+        usage && typeof usage === "object" && typeof (usage as Record<string, unknown>).source === "string"
+          ? String((usage as Record<string, unknown>).source)
+          : "estimated_until_runner_telemetry",
+      is_estimate:
+        usage && typeof usage === "object" && typeof (usage as Record<string, unknown>).is_estimate === "boolean"
+          ? Boolean((usage as Record<string, unknown>).is_estimate)
+          : true,
+      series
+    }
+  };
+}
+
+function coerceTokenPoint(raw: unknown): TokenSeriesPoint | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  if (typeof record.step !== "string" || typeof record.tokens !== "number") return null;
+  return { step: record.step, tokens: record.tokens };
+}
+
+function estimatedJobTokens(job: Job): TokenSeriesPoint[] {
+  const base = Math.max(24, job.job_type.length * 3);
+  const multiplier = job.status === "running" ? 4 : job.status === "failed" ? 2 : 3;
+  return [
+    { step: "queued", tokens: base },
+    { step: "context", tokens: base * 3 },
+    { step: job.status, tokens: base * multiplier }
+  ];
+}
+
+function workerDisplayName(jobType: string) {
+  if (jobType.includes("notebook")) return "Notebook Worker";
+  if (jobType.includes("research")) return "Research Worker";
+  if (jobType.includes("agent")) return "Agent Runner";
+  return "Harness Worker";
+}
+
+function targetTabForJob(jobType: string): string | null {
+  if (jobType.includes("notebook")) return "Notebooks";
+  if (jobType.includes("research") || jobType.includes("agent")) return "Approach";
+  return null;
+}
+
+function jobHeadline(job: Job) {
+  if (typeof job.output.assistant_message === "string") return job.output.assistant_message;
+  return `${job.job_type.replace(/_/g, " ")} is ${job.status}`;
 }
 
 function TranslatablePreview({

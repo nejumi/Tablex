@@ -568,6 +568,7 @@ class JobCreate(BaseModel):
         "create_benchmark_scenario_pack",
         "translate_tier3_content",
         "run_agent_task",
+        "agent_chat_turn",
     ]
     project_id: str | None = None
     input: dict[str, Any] = Field(default_factory=dict)
@@ -582,6 +583,10 @@ class JobCreate(BaseModel):
 class AgentTaskPlanCreate(BaseModel):
     objective: str | None = None
     task_type: str = "implement_prediction_approach"
+
+
+class AgentChatCreate(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
 
 
 class JobRead(BaseModel):
@@ -609,6 +614,20 @@ class JobRead(BaseModel):
     updated_at: str
     started_at: str | None
     ended_at: str | None
+
+
+class AgentChatRead(BaseModel):
+    schema_version: str
+    project_id: str
+    user_message: str
+    assistant_message: str
+    intent: dict[str, Any]
+    actions: list[dict[str, Any]]
+    worker_events: list[dict[str, Any]]
+    token_usage: dict[str, Any]
+    next_focus: dict[str, Any]
+    artifact_id: str
+    job: JobRead
 
 
 class ModelValidationRead(BaseModel):

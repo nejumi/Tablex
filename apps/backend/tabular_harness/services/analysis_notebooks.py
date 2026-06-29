@@ -877,6 +877,26 @@ def _(context, mo):
 
 
 @app.cell
+def _(context, mo):
+    summary = context["summary"]
+    mo.md(
+        f"""
+        ## Reader brief
+
+        Start with the data story, not the model. This notebook should help a human answer:
+
+        1. What is one row, and what decision will be made from it?
+        2. Which columns look useful, risky, duplicated, unavailable at prediction time, or too sparse?
+        3. Is the target selected, and if so does its distribution make the proposed metric sensible?
+        4. What should EvaluationSpec and SplitManifest protect before Codex writes modeling code?
+
+        **Current read:** {{summary["overview"]}}
+        """
+    )
+    return
+
+
+@app.cell
 def _(context, pd):
     columns = pd.DataFrame(context["summary"]["columns"])
     findings = pd.DataFrame(context["summary"]["findings"])
@@ -922,6 +942,22 @@ def _(columns, px):
 def _(findings, mo):
     mo.md("## Findings and Investigation Queue")
     mo.ui.table(findings) if not findings.empty else mo.md("No findings have been generated yet.")
+    return
+
+
+@app.cell
+def _(context, mo):
+    queue = context["summary"].get("analysis_questions", [])
+    mo.md("## What to inspect next")
+    if queue:
+        mo.md("\\n".join([f"- {{item}}" for item in queue]))
+    else:
+        mo.md(
+            "- Confirm row semantics and prediction time.\\n"
+            "- Review high-missing and high-cardinality columns.\\n"
+            "- Decide whether the target is direct, delayed, or derived by aggregation.\\n"
+            "- Lock evaluation only after leakage and grouping/time risks are understood."
+        )
     return
 
 
@@ -1033,6 +1069,16 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
       {_metric_card("Missing cells", summary["missing_cell_count"])}
       {_metric_card("Target", summary["target_column"] or "not selected")}
     </section>
+    <section class="panel">
+      <h2>Reader brief</h2>
+      <p>Start with the data story before modeling. Inspect row semantics, target meaning, missingness, leakage suspects, prediction-time availability, and evaluation constraints. A strong notebook should tell the reader what matters next, not only display artifacts.</p>
+      <div class="badge-row">
+        <span class="badge">narrative EDA</span>
+        <span class="badge">evaluation-first</span>
+        <span class="badge">human-readable</span>
+        <span class="badge">artifact-backed</span>
+      </div>
+    </section>
     <section class="grid">
       <div class="panel">
         <h2>Semantic mix</h2>
@@ -1050,6 +1096,14 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
     <section class="panel">
       <h2>Findings and investigation queue</h2>
       <div class="findings">{_finding_rows(findings)}</div>
+    </section>
+    <section class="panel">
+      <h2>What to inspect next</h2>
+      <div class="findings">
+        <div class="finding"><strong>Row semantics</strong><br/>Confirm what one row represents and whether rows are independent.</div>
+        <div class="finding"><strong>Target readiness</strong><br/>Confirm whether the target is direct, delayed, derived by aggregation, or not selected yet.</div>
+        <div class="finding"><strong>Evaluation guardrails</strong><br/>Resolve leakage, time, group, and prediction-time availability questions before treating scores as evidence.</div>
+      </div>
     </section>
     <section class="panel">
       <h2>Target profile</h2>
@@ -1088,6 +1142,7 @@ def render_notebook_report(notebook: dict[str, Any], notebook_artifact_id: str, 
             "",
             "- marimo notebook source with pandas, matplotlib, and Plotly cells.",
             "- Static in-product HTML preview for immediate inspection.",
+            "- Reader brief and investigation queue for human-first review.",
             "- Placeholder diagnostics section for feature importance, permutation importance, partial dependence, and prediction analysis.",
             "- Execution policy keeps credentials out of notebooks and runner context.",
             "",
@@ -1137,6 +1192,27 @@ def _(context, mo):
 
         The harness owns EvaluationSpec, SplitManifest, artifacts, reports, and lineage. This notebook is
         editable analysis context for Codex, Skills, or a human analyst; it is not a fixed AutoML recipe.
+        """
+    )
+    return
+
+
+@app.cell
+def _(context, mo):
+    summary = context["summary"]
+    mo.md(
+        f"""
+        ## Reader brief
+
+        Treat this as the first model review, not a leaderboard screenshot.
+
+        - Is the primary metric aligned with the user decision and class balance?
+        - Does the run obey the approved EvaluationSpec and SplitManifest?
+        - Did the model beat a sanity floor for reasons we understand?
+        - Which failures, slices, calibration gaps, or feature families deserve the next Codex task?
+
+        **Current read:** primary metric {{summary["primary_metric_name"] or "unknown"}} =
+        {{summary["primary_metric_value"]}}. Validation status: {{summary.get("validation_status") or "not run"}}.
         """
     )
     return
@@ -1195,6 +1271,21 @@ def _(context, mo):
 def _(findings, mo):
     mo.md("## Next Analysis Queue")
     mo.ui.table(findings) if not findings.empty else mo.md("No follow-up findings were generated.")
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## Human review checklist
+
+        - Explain the score in plain language before optimizing it.
+        - Compare against sanity floors and the approved primary metric.
+        - Look for data slices where the model fails, not only aggregate lift.
+        - Add feature importance, permutation importance, partial dependence, calibration, and threshold analysis when artifacts exist.
+        """
+    )
     return
 
 
@@ -1298,6 +1389,16 @@ def render_model_diagnostics_html_preview(notebook: dict[str, Any], notebook_art
       {_metric_card("Predictions", prediction_summary.get("row_count", 0))}
       {_metric_card("Validation", summary.get("validation_status") or "not run")}
     </section>
+    <section class="panel">
+      <h2>Reader brief</h2>
+      <p>Treat this as a model review. The useful question is not only whether the metric is higher, but whether the metric matches the decision, the split is respected, the sanity floor is beaten for credible reasons, and the next failure analysis is obvious.</p>
+      <div class="badge-row">
+        <span class="badge">metric interpretation</span>
+        <span class="badge">split-respecting</span>
+        <span class="badge">failure analysis</span>
+        <span class="badge">next Codex task</span>
+      </div>
+    </section>
     <section class="grid">
       <div class="panel">
         <h2>Metric snapshot</h2>
@@ -1315,6 +1416,14 @@ def render_model_diagnostics_html_preview(notebook: dict[str, Any], notebook_art
     <section class="panel">
       <h2>Findings and next analysis queue</h2>
       {_finding_rows(findings)}
+    </section>
+    <section class="panel">
+      <h2>Human review checklist</h2>
+      <div class="findings">
+        <div class="finding"><strong>Metric meaning</strong><br/>Explain what {escape(str(summary.get("primary_metric_name") or "the primary metric"))} means for the user's decision.</div>
+        <div class="finding"><strong>Failure slices</strong><br/>Inspect segment, time, group, and score-bin behavior before trusting aggregate lift.</div>
+        <div class="finding"><strong>Interpretability next</strong><br/>Add feature importance, permutation importance, partial dependence, calibration, and threshold analysis when execution artifacts are available.</div>
+      </div>
     </section>
     <section class="panel">
       <h2>Diagnostics coverage</h2>
@@ -1356,6 +1465,7 @@ def render_model_diagnostics_report(notebook: dict[str, Any], notebook_artifact_
             "",
             "- marimo notebook source with pandas, matplotlib, and Plotly cells.",
             "- In-product static HTML preview for immediate model diagnostic inspection.",
+            "- Reader brief and human review checklist for interpretation before optimization.",
             "- Uses existing prediction, baseline metric, diagnostics, validation, and model package artifacts when available.",
             "- Leaves feature importance, permutation importance, partial dependence, calibration, and threshold analysis as explicit controlled-runner extension points.",
             "",

@@ -30,6 +30,7 @@ JOB_TYPES = {
     "save_guided_journey_snapshot",
     "compare_guided_journey_snapshots",
     "run_agent_task",
+    "agent_chat_turn",
     "run_planned_agent_task_stub",
     "validate_model_package",
     "plan_agent_task",

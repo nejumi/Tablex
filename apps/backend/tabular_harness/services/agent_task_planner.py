@@ -279,6 +279,7 @@ def build_agent_task_contract_payload(
             "schemas/agent_task_contract.schema.json",
             "schemas/agent_result.schema.json",
             "schemas/visualization_spec.schema.json",
+            "skills/tablex-notebook-quality/SKILL.md",
         ],
         "output_schema_path": "schemas/agent_result.schema.json",
         "assumption_context": {

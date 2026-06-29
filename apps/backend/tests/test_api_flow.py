@@ -110,6 +110,46 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     assert "Guided Journey Comparison" in comparison_preview_response.json()["preview"]
 
 
+def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Metric chat", "target_column": "target", "task_type": "binary_classification"},
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    rows = ["feature,target"] + [f"{index},0" for index in range(1, 10)] + ["10,1"]
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("metric.csv", "\n".join(rows).encode("utf-8"), "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    design_response = client.post(f"/api/projects/{project_id}/evaluation/design")
+    assert design_response.status_code == 200, design_response.text
+    candidates_before = client.get(f"/api/projects/{project_id}/evaluation/candidates").json()
+    assert any(candidate["primary_metric"] == "pr_auc" for candidate in candidates_before)
+
+    chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "metricはROC-AUCにして"})
+    assert chat_response.status_code == 200, chat_response.text
+    chat = chat_response.json()
+    assert chat["schema_version"] == "agent_chat_turn.v1"
+    assert chat["intent"]["type"] == "set_evaluation_metric"
+    assert "ROC-AUC" in chat["assistant_message"]
+    assert any(action["type"] == "update_evaluation_candidates" for action in chat["actions"])
+    assert chat["worker_events"]
+    assert chat["token_usage"]["is_estimate"] is True
+    assert chat["job"]["status"] == "succeeded"
+
+    candidates_after = client.get(f"/api/projects/{project_id}/evaluation/candidates").json()
+    assert {candidate["primary_metric"] for candidate in candidates_after} == {"roc_auc"}
+    artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
+    assert artifacts_response.status_code == 200
+    assert any(item["asset_type"] == "agent_chat_turn" for item in artifacts_response.json())
+
+
 def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
