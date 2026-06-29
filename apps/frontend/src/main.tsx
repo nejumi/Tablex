@@ -5361,7 +5361,10 @@ function ReportsTab({
     ["decision_dashboard", "decision_report"].includes(artifact.asset_type)
   );
   const analysisNotebookArtifacts = artifacts.filter((artifact) =>
-    ["analysis_notebook", "notebook_html", "notebook_run_manifest", "notebook_report"].includes(artifact.asset_type)
+    ["analysis_notebook", "notebook_html", "notebook_run_manifest", "notebook_report", "notebook_execution_plan"].includes(
+      artifact.asset_type
+    ) ||
+    (artifact.asset_type === "agent_task_contract" && typeof artifact.metadata.notebook_artifact_id === "string")
   );
   const guidedJourneyArtifacts = artifacts.filter((artifact) =>
     [
@@ -5399,6 +5402,17 @@ function ReportsTab({
     } finally {
       setPreviewLoadingId(null);
     }
+  }
+
+  async function planNotebookExecution(item: NotebookIndexItem) {
+    const job = await api<Job>(`/api/analysis-notebooks/${item.artifact_ids.notebook}/execution-plan`, {
+      method: "POST"
+    });
+    const planArtifactId = job.output.notebook_execution_plan_artifact_id;
+    if (typeof planArtifactId === "string") {
+      await loadArtifactPreview(planArtifactId);
+    }
+    return job;
   }
 
   return (
@@ -5522,6 +5536,14 @@ function ReportsTab({
                     )}
                     Preview
                   </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() => void runAction(() => planNotebookExecution(recommendedNotebook))}
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+                    Plan Execution
+                  </button>
                   <a
                     className="icon-link"
                     href={`${apiBase}/api/artifacts/${recommendedNotebook.artifact_ids.notebook}/download`}
@@ -5556,6 +5578,14 @@ function ReportsTab({
                     title="Preview notebook"
                   >
                     {previewLoadingId === notebookPreviewArtifactId(item) ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={busy}
+                    onClick={() => void runAction(() => planNotebookExecution(item))}
+                    title="Plan controlled notebook execution"
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
                   </button>
                   <a className="icon-link" href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`} title="Download marimo source">
                     <Download size={16} />

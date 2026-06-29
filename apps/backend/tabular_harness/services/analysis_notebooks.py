@@ -21,6 +21,7 @@ from tabular_harness.models.entities import (
     VisualizationSpec,
     utc_now,
 )
+from tabular_harness.services.agent_task_planner import validate_agent_task_contract
 from tabular_harness.services.approach import (
     latest_project_artifact,
     store_json_artifact,
@@ -55,6 +56,15 @@ class ModelDiagnosticsNotebookResult:
     report_artifact: Artifact
     visualization: VisualizationSpec
     visualization_artifact: Artifact
+    artifact_ids: list[str]
+
+
+@dataclass(frozen=True)
+class NotebookExecutionPlanResult:
+    contract: dict[str, Any]
+    plan: dict[str, Any]
+    contract_artifact: Artifact
+    plan_artifact: Artifact
     artifact_ids: list[str]
 
 
@@ -301,6 +311,96 @@ def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any
         "items": items_by_created,
         "next_actions": _notebook_index_next_actions(project, items_by_created),
     }
+
+
+def create_notebook_execution_plan(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    notebook_artifact: Artifact,
+) -> NotebookExecutionPlanResult:
+    if notebook_artifact.asset_type != "analysis_notebook":
+        raise ValueError("Artifact is not an analysis_notebook")
+    if notebook_artifact.project_id is None:
+        raise ValueError("Analysis notebook artifact must be project-scoped")
+    project = _require_project(db, notebook_artifact.project_id)
+    metadata = loads_json(notebook_artifact.metadata_json, {})
+    notebook_kind = str(metadata.get("notebook_kind") or "unknown")
+    linked_artifacts = _linked_notebook_artifacts(db, project.id, notebook_artifact)
+    manifest_payload = _read_json_artifact(linked_artifacts.get("manifest"))
+    task_id = new_id("agt")
+    plan = build_notebook_execution_plan_payload(
+        project=project,
+        notebook_artifact=notebook_artifact,
+        notebook_kind=notebook_kind,
+        linked_artifacts=linked_artifacts,
+        manifest_payload=manifest_payload,
+        task_id=task_id,
+    )
+    contract = build_notebook_execution_contract(
+        project=project,
+        notebook_artifact=notebook_artifact,
+        notebook_kind=notebook_kind,
+        linked_artifacts=linked_artifacts,
+        manifest_payload=manifest_payload,
+        plan=plan,
+        task_id=task_id,
+    )
+    validate_agent_task_contract(contract)
+    suffix = new_id("nbexec")
+    manifest_artifact = linked_artifacts.get("manifest")
+    contract_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="agent_task_contract",
+        name=f"notebook_execution_contract_{suffix}",
+        filename="notebook_execution_agent_task_contract.json",
+        payload=contract,
+        metadata={
+            "project_id": project.id,
+            "task_id": task_id,
+            "task_type": contract["task_type"],
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_kind": notebook_kind,
+            "source_manifest_artifact_id": manifest_artifact.id if manifest_artifact is not None else None,
+            "artifact_expectation_count": len(contract["required_outputs"]),
+            "execution_status": "planned_not_executed",
+        },
+    )
+    plan["outputs"]["agent_task_contract_artifact_id"] = contract_artifact.id
+    plan_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="notebook_execution_plan",
+        name=f"notebook_execution_plan_{suffix}",
+        filename="notebook_execution_plan.json",
+        payload=plan,
+        metadata={
+            "project_id": project.id,
+            "task_id": task_id,
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_kind": notebook_kind,
+            "agent_task_contract_artifact_id": contract_artifact.id,
+            "execution_status": "planned_not_executed",
+        },
+    )
+    _record_notebook_execution_plan_lineage(
+        db,
+        project=project,
+        notebook_artifact=notebook_artifact,
+        linked_artifacts=[artifact for artifact in linked_artifacts.values() if artifact is not None],
+        contract_artifact=contract_artifact,
+        plan_artifact=plan_artifact,
+    )
+    return NotebookExecutionPlanResult(
+        contract=contract,
+        plan=plan,
+        contract_artifact=contract_artifact,
+        plan_artifact=plan_artifact,
+        artifact_ids=[contract_artifact.id, plan_artifact.id],
+    )
 
 
 def create_model_diagnostics_notebook(
@@ -1213,6 +1313,187 @@ def _notebook_index_item(
     }
 
 
+def _linked_notebook_artifacts(
+    db: Session,
+    project_id: str,
+    notebook_artifact: Artifact,
+) -> dict[str, Artifact | None]:
+    return {
+        "notebook": notebook_artifact,
+        "html_preview": _latest_artifact_for_metadata(
+            db, project_id, "notebook_html", "notebook_artifact_id", notebook_artifact.id
+        ),
+        "manifest": _latest_artifact_for_metadata(
+            db, project_id, "notebook_run_manifest", "notebook_artifact_id", notebook_artifact.id
+        ),
+        "report": _latest_artifact_for_metadata(
+            db, project_id, "notebook_report", "notebook_artifact_id", notebook_artifact.id
+        ),
+        "visualization": _latest_artifact_for_metadata(
+            db, project_id, "visualization_spec", "source_artifact_id", notebook_artifact.id
+        ),
+    }
+
+
+def build_notebook_execution_plan_payload(
+    *,
+    project: Project,
+    notebook_artifact: Artifact,
+    notebook_kind: str,
+    linked_artifacts: dict[str, Artifact | None],
+    manifest_payload: dict[str, Any],
+    task_id: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "notebook_execution_plan.v1",
+        "project_id": project.id,
+        "task_id": task_id,
+        "notebook_artifact_id": notebook_artifact.id,
+        "notebook_kind": notebook_kind,
+        "generated_at": utc_now().isoformat(),
+        "execution_status": "planned_not_executed",
+        "runner_policy": {
+            "mode": "controlled_runner_required",
+            "execute_now": False,
+            "external_network_default": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+            "artifact_capture_required": True,
+            "human_review_required": True,
+        },
+        "linked_artifacts": _linked_artifact_refs(linked_artifacts),
+        "manifest_summary": {
+            "schema_version": manifest_payload.get("schema_version"),
+            "status": manifest_payload.get("status"),
+            "libraries_referenced": manifest_payload.get("libraries_referenced", []),
+            "diagnostic_extension_points": manifest_payload.get("diagnostic_extension_points", []),
+        },
+        "expected_outputs": notebook_execution_required_outputs(),
+        "outputs": {"agent_task_contract_artifact_id": None},
+    }
+
+
+def build_notebook_execution_contract(
+    *,
+    project: Project,
+    notebook_artifact: Artifact,
+    notebook_kind: str,
+    linked_artifacts: dict[str, Artifact | None],
+    manifest_payload: dict[str, Any],
+    plan: dict[str, Any],
+    task_id: str,
+) -> dict[str, Any]:
+    manifest_artifact = linked_artifacts.get("manifest")
+    return {
+        "task_id": task_id,
+        "task_type": "execute_analysis_notebook",
+        "project_id": project.id,
+        "objective": (
+            "Review, safely execute or extend the generated marimo analysis notebook in a controlled workspace. "
+            "Capture every useful output as Tablex artifacts and preserve EvaluationSpec, SplitManifest, and credential boundaries."
+        ),
+        "inputs": {
+            "schema_version": "notebook_execution_contract.v1",
+            "notebook": {
+                "artifact_id": notebook_artifact.id,
+                "notebook_kind": notebook_kind,
+                "download_url": f"/api/artifacts/{notebook_artifact.id}/download",
+            },
+            "linked_artifacts": _linked_artifact_refs(linked_artifacts),
+            "notebook_manifest": {
+                "artifact_id": manifest_artifact.id if manifest_artifact is not None else None,
+                "payload_summary": plan["manifest_summary"],
+            },
+            "execution_plan": plan,
+            "runtime_requirements": ["marimo", "pandas", "matplotlib", "plotly"],
+            "artifact_expectations": notebook_execution_required_outputs(),
+            "research_source_policy": {
+                "network_default": "disabled_until_runner_policy_allows",
+                "external_claims_require_citations": True,
+                "use_project_artifacts_first": True,
+            },
+            "notebook_extension_points": manifest_payload.get("diagnostic_extension_points", []),
+        },
+        "required_outputs": notebook_execution_required_outputs(),
+        "quality_checks": [
+            "Run or inspect notebook code only inside the controlled workspace.",
+            "Do not read secrets, connector credentials, or local files outside materialized context.",
+            "Preserve EvaluationSpec and SplitManifest; do not recompute metrics on ad hoc splits.",
+            "Register exported HTML, figure manifests, reports, metrics, and updated notebooks as artifacts.",
+            "Keep feature importance, permutation importance, partial dependence, and calibration claims evidence-backed.",
+        ],
+        "forbidden_actions": [
+            "Do not read secrets or connector credentials.",
+            "Do not include validation/test targets in feature generation or prompts.",
+            "Do not destructively modify evaluation_spec or split_manifest.",
+            "Do not call external dashboards as required evidence.",
+            "Do not write to production databases.",
+        ],
+        "context_files": [
+            "AGENTS.md",
+            "docs/dev.md",
+            "schemas/agent_task_contract.schema.json",
+            "schemas/agent_result.schema.json",
+            "schemas/visualization_spec.schema.json",
+        ],
+        "output_schema_path": "schemas/agent_result.schema.json",
+        "assumption_context": {
+            "product_name_status": "working_name_only",
+            "notebook_kind": notebook_kind,
+            "requires_human_review": True,
+            "external_dashboard_required": False,
+        },
+        "autonomy_level": 3,
+    }
+
+
+def notebook_execution_required_outputs() -> list[dict[str, Any]]:
+    return [
+        {
+            "path": "reports/notebook_execution_report.md",
+            "schema": "markdown_report.v1",
+            "description": "Narrative report covering notebook execution, findings, caveats, and recommended follow-up.",
+        },
+        {
+            "path": "artifacts/notebook_execution_manifest.json",
+            "schema": "notebook_execution_manifest.v1",
+            "description": "Executed cells, runtime package versions, captured outputs, and safety policy result.",
+        },
+        {
+            "path": "artifacts/notebook_export.html",
+            "schema": "html_report.v1",
+            "description": "Self-contained or workbench-renderable notebook HTML export.",
+        },
+        {
+            "path": "artifacts/notebook_figure_manifest.json",
+            "schema": "notebook_figure_manifest.v1",
+            "description": "Figures/tables generated by the notebook with lineage to source cells and artifacts.",
+        },
+        {
+            "path": "artifacts/updated_notebook.py",
+            "schema": "marimo_notebook_source.v1",
+            "description": "Updated marimo notebook source when the runner adds analysis cells.",
+        },
+    ]
+
+
+def _linked_artifact_refs(linked_artifacts: dict[str, Artifact | None]) -> list[dict[str, Any]]:
+    refs = []
+    for role, artifact in linked_artifacts.items():
+        if artifact is None:
+            continue
+        refs.append(
+            {
+                "role": role,
+                "artifact_id": artifact.id,
+                "asset_type": artifact.asset_type,
+                "download_url": f"/api/artifacts/{artifact.id}/download",
+                "preview_url": f"/api/artifacts/{artifact.id}/preview",
+            }
+        )
+    return refs
+
+
 def _notebook_recommendation_score(
     notebook_kind: str,
     coverage: dict[str, Any],
@@ -1871,6 +2152,65 @@ def _record_model_notebook_lineage(
         to_asset_type="visualization_spec",
         to_asset_id=visualization.id,
         relation_type="summarizes",
+    )
+
+
+def _record_notebook_execution_plan_lineage(
+    db: Session,
+    *,
+    project: Project,
+    notebook_artifact: Artifact,
+    linked_artifacts: list[Artifact],
+    contract_artifact: Artifact,
+    plan_artifact: Artifact,
+) -> None:
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=notebook_artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=contract_artifact.id,
+        relation_type="plans_execution_for",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=notebook_artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=plan_artifact.id,
+        relation_type="plans_execution_for",
+    )
+    for artifact in linked_artifacts:
+        if artifact.id in {notebook_artifact.id, contract_artifact.id, plan_artifact.id}:
+            continue
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=contract_artifact.id,
+            relation_type="informs",
+        )
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=plan_artifact.id,
+            relation_type="informs",
+        )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=contract_artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=plan_artifact.id,
+        relation_type="materializes",
     )
 
 

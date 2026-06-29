@@ -1137,6 +1137,45 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert notebook_index["recommended_notebook"]["artifact_ids"]["html_preview"]
     assert any(group["notebook_kind"] == "model_diagnostics" for group in notebook_index["groups"])
 
+    execution_plan_response = client.post(
+        f"/api/analysis-notebooks/{model_notebook_job['output']['analysis_notebook_artifact_id']}/execution-plan"
+    )
+    assert execution_plan_response.status_code == 200, execution_plan_response.text
+    execution_plan_job = execution_plan_response.json()
+    assert execution_plan_job["status"] == "succeeded"
+    assert execution_plan_job["job_type"] == "plan_notebook_execution"
+    assert execution_plan_job["output"]["task_type"] == "execute_analysis_notebook"
+    assert execution_plan_job["output"]["execution_status"] == "planned_not_executed"
+    assert execution_plan_job["output"]["agent_task_contract_artifact_id"]
+    assert execution_plan_job["output"]["notebook_execution_plan_artifact_id"]
+
+    execution_contract_response = client.get(
+        f"/api/artifacts/{execution_plan_job['output']['agent_task_contract_artifact_id']}/download"
+    )
+    assert execution_contract_response.status_code == 200
+    execution_contract = execution_contract_response.json()
+    assert execution_contract["task_type"] == "execute_analysis_notebook"
+    assert execution_contract["inputs"]["schema_version"] == "notebook_execution_contract.v1"
+    assert (
+        execution_contract["inputs"]["notebook"]["artifact_id"]
+        == model_notebook_job["output"]["analysis_notebook_artifact_id"]
+    )
+    assert any(output["path"] == "artifacts/notebook_export.html" for output in execution_contract["required_outputs"])
+    assert "Do not read secrets or connector credentials." in execution_contract["forbidden_actions"]
+
+    execution_plan_artifact_response = client.get(
+        f"/api/artifacts/{execution_plan_job['output']['notebook_execution_plan_artifact_id']}/download"
+    )
+    assert execution_plan_artifact_response.status_code == 200
+    execution_plan = execution_plan_artifact_response.json()
+    assert execution_plan["schema_version"] == "notebook_execution_plan.v1"
+    assert execution_plan["runner_policy"]["execute_now"] is False
+    assert execution_plan["runner_policy"]["artifact_capture_required"] is True
+    assert (
+        execution_plan["outputs"]["agent_task_contract_artifact_id"]
+        == execution_plan_job["output"]["agent_task_contract_artifact_id"]
+    )
+
     run_report_response = client.post(f"/api/runs/{baseline_run['id']}/report")
     assert run_report_response.status_code == 200, run_report_response.text
     run_report_job = run_report_response.json()
@@ -1190,6 +1229,11 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "agent_context_pack",
         "agent_task_report",
         "agent_result",
+        "analysis_notebook",
+        "notebook_html",
+        "notebook_run_manifest",
+        "notebook_report",
+        "notebook_execution_plan",
     }.issubset(asset_types)
     artifacts = artifacts_response.json()
     validation_report = next(item for item in artifacts if item["asset_type"] == "model_validation_report")

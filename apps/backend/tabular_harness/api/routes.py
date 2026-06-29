@@ -103,6 +103,7 @@ from tabular_harness.services.analysis_notebooks import (
     build_project_notebook_index,
     create_data_understanding_notebook,
     create_model_diagnostics_notebook,
+    create_notebook_execution_plan,
 )
 from tabular_harness.services.approach import (
     create_decision_dashboard,
@@ -3266,6 +3267,56 @@ def list_project_analysis_notebooks(
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
     return build_project_notebook_index(db, project)
+
+
+@router.post("/api/analysis-notebooks/{artifact_id}/execution-plan", response_model=JobRead)
+def plan_analysis_notebook_execution_endpoint(
+    artifact_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    notebook_artifact = db.get(Artifact, artifact_id)
+    if notebook_artifact is None:
+        raise HTTPException(status_code=404, detail="Analysis notebook artifact not found")
+    if notebook_artifact.asset_type != "analysis_notebook":
+        raise HTTPException(status_code=400, detail="Artifact is not an analysis_notebook")
+    if notebook_artifact.project_id is None:
+        raise HTTPException(status_code=400, detail="Analysis notebook artifact must be project-scoped")
+    require_project(db, notebook_artifact.project_id)
+    job = create_job(
+        db,
+        job_type="plan_notebook_execution",
+        project_id=notebook_artifact.project_id,
+        input_payload={"analysis_notebook_artifact_id": notebook_artifact.id},
+        policy={
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+            "execution_mode": "plan_only",
+            "executes_notebook_code": False,
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_notebook_execution_plan(db, store=store, notebook_artifact=notebook_artifact)
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.plan["schema_version"],
+                "task_id": result.contract["task_id"],
+                "task_type": result.contract["task_type"],
+                "notebook_kind": result.plan["notebook_kind"],
+                "analysis_notebook_artifact_id": notebook_artifact.id,
+                "agent_task_contract_artifact_id": result.contract_artifact.id,
+                "notebook_execution_plan_artifact_id": result.plan_artifact.id,
+                "artifact_ids": result.artifact_ids,
+                "execution_status": "planned_not_executed",
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
 
 
 @router.get("/api/projects/{project_id}/insights", response_model=list[InsightRead])
