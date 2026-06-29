@@ -22,6 +22,7 @@ JOB_TYPES = {
     "create_benchmark_evidence_pack",
     "create_relational_feature_plan",
     "build_relational_feature_recipe",
+    "diagnose_relational_feature_scenarios",
     "run_public_benchmark_workflow",
     "run_baseline",
     "plan_baseline_strategy",

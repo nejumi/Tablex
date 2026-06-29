@@ -16,6 +16,7 @@
     "relational_context",
     "relational_feature_plan_context",
     "relational_feature_recipe_context",
+    "relational_feature_scenario_diagnostics_context",
     "research_plan_context",
     "research_synthesis_context",
     "artifact_refs",
@@ -63,6 +64,9 @@
       "type": "object"
     },
     "relational_feature_recipe_context": {
+      "type": "object"
+    },
+    "relational_feature_scenario_diagnostics_context": {
       "type": "object"
     },
     "research_plan_context": {

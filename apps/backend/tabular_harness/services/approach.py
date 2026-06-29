@@ -94,6 +94,9 @@ def generate_research_brief(
     research_synthesis_artifact = latest_project_artifact(db, project.id, "research_finding_synthesis")
     relational_feature_plan_artifact = latest_project_artifact(db, project.id, "relational_feature_plan")
     relational_feature_recipe_artifact = latest_project_artifact(db, project.id, "relational_feature_recipe")
+    relational_feature_diagnostics_artifact = latest_project_artifact(
+        db, project.id, "relational_feature_scenario_diagnostics"
+    )
     sources = build_research_sources(
         project,
         dataset,
@@ -102,6 +105,7 @@ def generate_research_brief(
         research_synthesis_artifact,
         relational_feature_plan_artifact,
         relational_feature_recipe_artifact,
+        relational_feature_diagnostics_artifact,
     )
     key_findings = build_key_findings(project, dataset, evaluation_spec, profile)
     recommended_approaches = build_recommended_approaches(project, profile)
@@ -138,6 +142,9 @@ def generate_research_brief(
             else None,
             "relational_feature_recipe_artifact_id": relational_feature_recipe_artifact.id
             if relational_feature_recipe_artifact
+            else None,
+            "relational_feature_scenario_diagnostics_artifact_id": relational_feature_diagnostics_artifact.id
+            if relational_feature_diagnostics_artifact
             else None,
             "question": research_question,
         },
@@ -204,6 +211,9 @@ def create_research_plan(
         "relational_catalog": latest_project_artifact(db, project.id, "relational_catalog"),
         "relational_feature_plan": latest_project_artifact(db, project.id, "relational_feature_plan"),
         "relational_feature_recipe": latest_project_artifact(db, project.id, "relational_feature_recipe"),
+        "relational_feature_scenario_diagnostics": latest_project_artifact(
+            db, project.id, "relational_feature_scenario_diagnostics"
+        ),
         "evaluation_scenario_comparison": latest_project_artifact(db, project.id, "evaluation_scenario_comparison"),
         "evaluation_approval_review": latest_project_artifact(db, project.id, "evaluation_approval_review"),
         "evaluation_diagnostics": latest_project_artifact(db, project.id, "evaluation_diagnostics"),
@@ -350,6 +360,9 @@ def generate_approach_candidates(
     research_synthesis_artifact = latest_project_artifact(db, project.id, "research_finding_synthesis")
     relational_feature_plan_artifact = latest_project_artifact(db, project.id, "relational_feature_plan")
     relational_feature_recipe_artifact = latest_project_artifact(db, project.id, "relational_feature_recipe")
+    relational_feature_diagnostics_artifact = latest_project_artifact(
+        db, project.id, "relational_feature_scenario_diagnostics"
+    )
     ideas: list[Idea] = []
     artifact_ids: list[str] = []
     for index, approach in enumerate(recommended[:5], start=1):
@@ -365,6 +378,7 @@ def generate_approach_candidates(
             research_synthesis_artifact=research_synthesis_artifact,
             relational_feature_plan_artifact=relational_feature_plan_artifact,
             relational_feature_recipe_artifact=relational_feature_recipe_artifact,
+            relational_feature_diagnostics_artifact=relational_feature_diagnostics_artifact,
         )
         payload = {
             "schema_version": "approach_candidate.v1",
@@ -399,6 +413,9 @@ def generate_approach_candidates(
                 else None,
                 "relational_feature_recipe_artifact_id": relational_feature_recipe_artifact.id
                 if relational_feature_recipe_artifact
+                else None,
+                "relational_feature_scenario_diagnostics_artifact_id": relational_feature_diagnostics_artifact.id
+                if relational_feature_diagnostics_artifact
                 else None,
             },
         )
@@ -1245,6 +1262,7 @@ def build_research_sources(
     research_synthesis_artifact: Artifact | None = None,
     relational_feature_plan_artifact: Artifact | None = None,
     relational_feature_recipe_artifact: Artifact | None = None,
+    relational_feature_diagnostics_artifact: Artifact | None = None,
 ) -> list[dict[str, Any]]:
     sources = [
         {
@@ -1332,6 +1350,20 @@ def build_research_sources(
                     "Preview-only relational FeatureRecipe context with executed and deferred aggregation steps. "
                     f"Generated features: {metadata.get('generated_feature_count', 'unknown')}; "
                     f"deferred steps: {metadata.get('deferred_step_count', 'unknown')}."
+                ),
+            }
+        )
+    if relational_feature_diagnostics_artifact:
+        metadata = loads_json(relational_feature_diagnostics_artifact.metadata_json, {})
+        sources.append(
+            {
+                "source_type": "relational_feature_scenario_diagnostics",
+                "title": "Relational Feature Scenario Diagnostics",
+                "ref": relational_feature_diagnostics_artifact.id,
+                "summary": (
+                    "Preview scenario diagnostics for relational features, split readiness, and deferred safety checks. "
+                    f"Usable features: {metadata.get('usable_feature_count', 'unknown')}; "
+                    f"scenarios: {metadata.get('scenario_count', 'unknown')}."
                 ),
             }
         )
@@ -1708,11 +1740,15 @@ def build_agent_task_contract(
     research_synthesis_artifact: Artifact | None = None,
     relational_feature_plan_artifact: Artifact | None = None,
     relational_feature_recipe_artifact: Artifact | None = None,
+    relational_feature_diagnostics_artifact: Artifact | None = None,
 ) -> dict[str, Any]:
     research_contract_inputs = research_plan_contract_inputs(research_plan_artifact)
     research_synthesis_inputs = research_synthesis_contract_inputs(research_synthesis_artifact)
     relational_plan_inputs = relational_feature_plan_contract_inputs(relational_feature_plan_artifact)
     relational_recipe_inputs = relational_feature_recipe_contract_inputs(relational_feature_recipe_artifact)
+    relational_diagnostics_inputs = relational_feature_scenario_diagnostics_contract_inputs(
+        relational_feature_diagnostics_artifact
+    )
     return {
         "task_id": f"agt_{idea_id}",
         "task_type": "implement_prediction_approach",
@@ -1736,12 +1772,16 @@ def build_agent_task_contract(
             "relational_feature_recipe_artifact_id": relational_feature_recipe_artifact.id
             if relational_feature_recipe_artifact
             else None,
+            "relational_feature_scenario_diagnostics_artifact_id": relational_feature_diagnostics_artifact.id
+            if relational_feature_diagnostics_artifact
+            else None,
             "approach_type": approach["approach_type"],
             "allowed_research_modes": ["project_artifacts", "skill_library", "controlled_web_search"],
             "must_respect_split_manifest": True,
             "research_finding_synthesis": research_synthesis_inputs,
             "relational_feature_plan": relational_plan_inputs,
             "relational_feature_recipe": relational_recipe_inputs,
+            "relational_feature_scenario_diagnostics": relational_diagnostics_inputs,
             **research_contract_inputs,
         },
         "required_outputs": [
@@ -1894,6 +1934,36 @@ def relational_feature_recipe_contract_inputs(recipe_artifact: Artifact | None) 
         "executed_step_count": len(steps),
         "deferred_step_count": len(deferred_steps),
         "preview_only": execution_scope.get("mode") == "preview_only" if execution_scope else True,
+    }
+
+
+def relational_feature_scenario_diagnostics_contract_inputs(diagnostics_artifact: Artifact | None) -> dict[str, Any]:
+    if diagnostics_artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(diagnostics_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    raw_preview_summary = payload.get("preview_summary")
+    raw_split_compatibility = payload.get("split_compatibility")
+    raw_safety = payload.get("safety")
+    raw_scenarios = payload.get("scenario_comparison")
+    preview_summary: dict[str, Any] = raw_preview_summary if isinstance(raw_preview_summary, dict) else {}
+    split_compatibility: dict[str, Any] = (
+        raw_split_compatibility if isinstance(raw_split_compatibility, dict) else {}
+    )
+    safety: dict[str, Any] = raw_safety if isinstance(raw_safety, dict) else {}
+    scenarios: list[Any] = raw_scenarios if isinstance(raw_scenarios, list) else []
+    return {
+        "artifact_id": diagnostics_artifact.id,
+        "source_summary": payload.get("source_summary") if isinstance(payload.get("source_summary"), dict) else {},
+        "preview_summary": preview_summary,
+        "split_compatibility": split_compatibility,
+        "scenario_count": len(scenarios),
+        "scenario_comparison": scenarios[:4],
+        "safety": safety,
     }
 
 

@@ -85,6 +85,7 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Benchmark Collection Plan v1 with Home Credit-centered benchmark source readiness, credential policy, fixture/public workflow status, source audit, recommended initial suite, Report, Evidence, VisualizationSpec, Lineage, and Data UI preview/download.
 - Relational Feature Planning v1 with RelationalCatalog-derived aggregation candidates, fold-safety guardrails, point-in-time requirements, leakage/prediction-time risk register, AgentTask handoff, Report, Evidence, VisualizationSpec, Lineage, and contract/context propagation.
 - Relational Feature Recipe Preview v1 with latest-plan-driven aggregation recipe artifacts, DuckDB preview CSV/profile, deferred safety checks, Report, Evidence, VisualizationSpec, Lineage, Data UI actions, and AgentTaskContract/AgentContextPack propagation.
+- Relational Feature Scenario Diagnostics v1 with recipe-preview feature diagnostics, scenario comparison, deferred reason summary, Report, Evidence, VisualizationSpec, Lineage, Data UI actions, and AgentTaskContract/AgentContextPack propagation.
 - Job skeleton for:
   - `profile_dataset`
   - `infer_assumptions`
@@ -143,5 +144,5 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Controlled workspaces currently use LocalStubAgentRunner for real execution. CodexCliRunner remains a skeleton until external execution policy, approval, and result ingestion are hardened further.
 - Research Findings Synthesis currently summarizes stub or artifact-backed research outputs. Verified external web/literature retrieval remains controlled-runner future work and must attach source citations before decision-grade claims.
 - Benchmark Collection Plans use catalog source metadata and local readiness; they do not replace real dataset licensing review or credentialed user-managed download flows.
-- Relational Feature Plans and Recipe Previews are not deployment recipes. Recipe preview materializes bounded local aggregates for inspection only; real joins and model training still need FeatureRecipe or AgentTask implementation with SplitManifest-aware fitting and prediction-time availability confirmation.
+- Relational Feature Plans, Recipe Previews, and Scenario Diagnostics are not deployment recipes. Recipe preview materializes bounded local aggregates for inspection only, and diagnostics intentionally avoids fixed model training. Real joins and model training still need FeatureRecipe or AgentTask implementation with SplitManifest-aware fitting and prediction-time availability confirmation.
 - Auth is stubbed as local single-user behavior.

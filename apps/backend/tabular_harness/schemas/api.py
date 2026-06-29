@@ -417,6 +417,7 @@ class JobCreate(BaseModel):
         "create_benchmark_evidence_pack",
         "create_relational_feature_plan",
         "build_relational_feature_recipe",
+        "diagnose_relational_feature_scenarios",
         "run_baseline",
         "plan_baseline_strategy",
         "run_planned_agent_task_stub",

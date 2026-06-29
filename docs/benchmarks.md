@@ -150,6 +150,14 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/features/relational
 
 The recipe builder materializes `relational_feature_recipe`, `relational_feature_preview` CSV, `relational_feature_preview_profile`, `relational_feature_recipe_report`, and `visualization_spec` artifacts plus Evidence and Lineage. It is intentionally bounded to small local supporting table artifacts and safe aggregate previews. It excludes target/leakage/holdout-suspect columns, defers point-in-time-unconfirmed candidates, and passes the recipe summary into AgentTaskContracts and AgentContextPacks as context rather than a fixed modeling strategy.
 
+Diagnose relational feature scenarios from the latest recipe preview:
+
+```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/features/relational-scenarios/diagnose
+```
+
+The diagnostics endpoint creates `relational_feature_scenario_diagnostics`, `relational_feature_scenario_report`, and `visualization_spec` artifacts plus Evidence and Lineage. It does not train XGBoost or any other fixed model. Instead it measures generated feature usability, missingness, constant/high-cardinality flags, split compatibility, deferred reasons, and recommended AgentTask scenarios so the runner can later choose an approach from evidence, Skills, and evaluation constraints.
+
 Run the fixture smoke harness for a project:
 
 ```bash

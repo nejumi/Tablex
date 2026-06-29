@@ -169,6 +169,9 @@ def build_agent_task_contract_payload(
     relational_recipe_inputs = relational_feature_recipe_contract_inputs(
         context_artifacts.get("relational_feature_recipe")
     )
+    relational_diagnostics_inputs = relational_feature_scenario_diagnostics_contract_inputs(
+        context_artifacts.get("relational_feature_scenario_diagnostics")
+    )
     source_policy = source_pack_inputs.get("source_policy") or research_inputs.get(
         "research_source_policy",
         {"network_default": "disabled_until_runner_policy_allows"},
@@ -204,6 +207,7 @@ def build_agent_task_contract_payload(
             "research_finding_synthesis": synthesis_inputs,
             "relational_feature_plan": relational_plan_inputs,
             "relational_feature_recipe": relational_recipe_inputs,
+            "relational_feature_scenario_diagnostics": relational_diagnostics_inputs,
         },
         "required_outputs": [
             {
@@ -530,6 +534,9 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "relational_catalog": latest_project_artifact(db, project_id, "relational_catalog"),
         "relational_feature_plan": latest_project_artifact(db, project_id, "relational_feature_plan"),
         "relational_feature_recipe": latest_project_artifact(db, project_id, "relational_feature_recipe"),
+        "relational_feature_scenario_diagnostics": latest_project_artifact(
+            db, project_id, "relational_feature_scenario_diagnostics"
+        ),
         "benchmark_import_manifest": latest_project_artifact(db, project_id, "benchmark_import_manifest"),
         "benchmark_scenario_pack": latest_project_artifact(db, project_id, "benchmark_scenario_pack"),
         "evaluation_scenario_comparison": latest_project_artifact(
@@ -644,6 +651,36 @@ def relational_feature_recipe_contract_inputs(recipe_artifact: Artifact | None) 
         "executed_step_count": len(steps),
         "deferred_step_count": len(deferred_steps),
         "preview_only": execution_scope.get("mode") == "preview_only" if execution_scope else True,
+    }
+
+
+def relational_feature_scenario_diagnostics_contract_inputs(diagnostics_artifact: Artifact | None) -> dict[str, Any]:
+    if diagnostics_artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(diagnostics_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    raw_preview_summary = payload.get("preview_summary")
+    raw_split_compatibility = payload.get("split_compatibility")
+    raw_safety = payload.get("safety")
+    raw_scenarios = payload.get("scenario_comparison")
+    preview_summary: dict[str, Any] = raw_preview_summary if isinstance(raw_preview_summary, dict) else {}
+    split_compatibility: dict[str, Any] = (
+        raw_split_compatibility if isinstance(raw_split_compatibility, dict) else {}
+    )
+    safety: dict[str, Any] = raw_safety if isinstance(raw_safety, dict) else {}
+    scenarios: list[Any] = raw_scenarios if isinstance(raw_scenarios, list) else []
+    return {
+        "artifact_id": diagnostics_artifact.id,
+        "source_summary": payload.get("source_summary") if isinstance(payload.get("source_summary"), dict) else {},
+        "preview_summary": preview_summary,
+        "split_compatibility": split_compatibility,
+        "scenario_count": len(scenarios),
+        "scenario_comparison": scenarios[:4],
+        "safety": safety,
     }
 
 

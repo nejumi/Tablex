@@ -173,6 +173,9 @@ from tabular_harness.services.planned_agent_workspace import (
     prepare_workspace_from_contract_artifact,
 )
 from tabular_harness.services.profiler import profile_tabular_file
+from tabular_harness.services.relational_feature_diagnostics import (
+    diagnose_relational_feature_scenarios,
+)
 from tabular_harness.services.relational_feature_planning import create_relational_feature_plan
 from tabular_harness.services.relational_feature_recipe import build_relational_feature_recipe
 from tabular_harness.services.reporting import (
@@ -915,6 +918,56 @@ def build_project_relational_feature_recipe(
                 "executed_step_count": len(result.recipe["steps"]),
                 "deferred_step_count": len(result.recipe["deferred_steps"]),
                 "preview_row_count": result.preview_profile["preview_row_count"],
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/features/relational-scenarios/diagnose", response_model=JobRead)
+def diagnose_project_relational_feature_scenarios(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="diagnose_relational_feature_scenarios",
+        project_id=project_id,
+        input_payload={"project_id": project_id},
+        policy={
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "external_download": "not_performed",
+            "model_training": "not_performed_diagnostics_only",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = diagnose_relational_feature_scenarios(db, store=store, project=project, job=job)
+        summary = result.diagnostics["preview_summary"]
+        deferred = result.diagnostics["deferred_reason_summary"]
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.diagnostics["schema_version"],
+                "benchmark_id": result.diagnostics["source_summary"].get("benchmark_id"),
+                "relational_feature_scenario_diagnostics_artifact_id": result.diagnostics_artifact.id,
+                "relational_feature_scenario_report_id": result.report.id,
+                "relational_feature_scenario_report_artifact_id": result.report_artifact.id,
+                "visualization_id": result.visualization.id,
+                "visualization_artifact_id": result.visualization_artifact.id,
+                "evidence_id": result.evidence.id,
+                "artifact_ids": result.artifact_ids,
+                "generated_feature_count": summary["generated_feature_count"],
+                "usable_feature_count": summary["usable_feature_count"],
+                "constant_feature_count": summary["constant_feature_count"],
+                "high_missing_feature_count": summary["high_missing_feature_count"],
+                "deferred_step_count": deferred["total_deferred_step_count"],
+                "scenario_count": len(result.diagnostics["scenario_comparison"]),
             },
         )
     except ValueError as exc:
@@ -4025,6 +4078,13 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "relational_feature_recipe_report_artifact_id": output.get(
             "relational_feature_recipe_report_artifact_id"
         ),
+        "relational_feature_scenario_diagnostics_artifact_id": output.get(
+            "relational_feature_scenario_diagnostics_artifact_id"
+        ),
+        "relational_feature_scenario_report_id": output.get("relational_feature_scenario_report_id"),
+        "relational_feature_scenario_report_artifact_id": output.get(
+            "relational_feature_scenario_report_artifact_id"
+        ),
         "research_run_manifest_artifact_id": output.get("research_run_manifest_artifact_id"),
         "research_findings_report_id": output.get("research_findings_report_id"),
         "research_findings_report_artifact_id": output.get("research_findings_report_artifact_id"),
@@ -4054,8 +4114,12 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "relationship_count": output.get("relationship_count"),
         "aggregation_candidate_count": output.get("aggregation_candidate_count"),
         "generated_feature_count": output.get("generated_feature_count"),
+        "usable_feature_count": output.get("usable_feature_count"),
+        "constant_feature_count": output.get("constant_feature_count"),
+        "high_missing_feature_count": output.get("high_missing_feature_count"),
         "executed_step_count": output.get("executed_step_count"),
         "deferred_step_count": output.get("deferred_step_count"),
+        "scenario_count": output.get("scenario_count"),
         "preview_row_count": output.get("preview_row_count"),
         "high_risk_count": output.get("high_risk_count"),
         "recommended_asset_count": output.get("recommended_asset_count"),

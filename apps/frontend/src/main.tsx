@@ -1050,6 +1050,22 @@ function DataTab({
     });
   }
 
+  async function diagnoseRelationalFeatureScenarios() {
+    await runAction(async () => {
+      const job = await api<Job>(`/api/projects/${project.id}/features/relational-scenarios/diagnose`, {
+        method: "POST"
+      });
+      const reportArtifactId = textField(job.output.relational_feature_scenario_report_artifact_id);
+      const diagnosticsArtifactId = textField(job.output.relational_feature_scenario_diagnostics_artifact_id);
+      if (reportArtifactId) {
+        await loadRelationalPreview(reportArtifactId);
+      } else if (diagnosticsArtifactId) {
+        await loadRelationalPreview(diagnosticsArtifactId);
+      }
+      return job;
+    });
+  }
+
   async function createBenchmarkCollectionPlan() {
     await runAction(async () => {
       const job = await api<Job>(`/api/projects/${project.id}/benchmarks/collection-plan`, {
@@ -1156,6 +1172,9 @@ function DataTab({
       "relational_feature_preview_profile",
       "relational_feature_recipe_report"
     ].includes(artifact.asset_type)
+  );
+  const relationalScenarioArtifacts = artifacts.filter((artifact) =>
+    ["relational_feature_scenario_diagnostics", "relational_feature_scenario_report"].includes(artifact.asset_type)
   );
   const qualityArtifacts = artifacts.filter((artifact) =>
     ["data_quality_gate", "data_quality_report"].includes(artifact.asset_type)
@@ -1537,6 +1556,10 @@ function DataTab({
             {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
             Build Recipe
           </button>
+          <button className="secondary-button" disabled={busy} onClick={() => void diagnoseRelationalFeatureScenarios()}>
+            {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+            Diagnose
+          </button>
         </div>
         {relationalArtifacts.length ? (
           <Table
@@ -1619,13 +1642,41 @@ function DataTab({
         ) : (
           <EmptyInline text="Relational feature recipe previews will materialize safe aggregation steps, deferred checks, generated feature columns, reports, and visualization specs for later AgentRunner implementation." />
         )}
+        {relationalScenarioArtifacts.length ? (
+          <Table
+            headers={["Scenario Artifact", "Usable", "Constant", "High Missing", "Deferred", "Scenarios", "Actions"]}
+            rows={relationalScenarioArtifacts.map((artifact) => [
+              artifact.asset_type,
+              String(artifact.metadata.usable_feature_count ?? "-"),
+              String(artifact.metadata.constant_feature_count ?? "-"),
+              String(artifact.metadata.high_missing_feature_count ?? "-"),
+              String(artifact.metadata.deferred_step_count ?? "-"),
+              String(artifact.metadata.scenario_count ?? "-"),
+              <div className="row-actions" key={artifact.id}>
+                <button
+                  className="icon-button"
+                  disabled={relationalPreviewLoadingId === artifact.id}
+                  onClick={() => void loadRelationalPreview(artifact.id)}
+                  title="Preview relational scenario diagnostics"
+                >
+                  {relationalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download relational scenario diagnostics">
+                  <Download size={16} />
+                </a>
+              </div>
+            ])}
+          />
+        ) : (
+          <EmptyInline text="Relational scenario diagnostics will compare primary-only, safe relational preview, deferred feature, and evaluation-readiness scenarios without running a fixed model strategy." />
+        )}
       </Panel>
       <Panel title="Relational Preview" icon={<FileText size={18} />}>
         {relationalPreviewError ? <div className="banner danger">{relationalPreviewError}</div> : null}
         {relationalPreview?.preview_available ? (
           <pre className="markdown-preview">{relationalPreview.preview}</pre>
         ) : (
-          <EmptyInline text={relationalPreview?.reason ?? "Select a relational catalog, feature plan, or recipe artifact to inspect table profiles, key candidates, inferred joins, aggregation candidates, generated preview features, and guardrails."} />
+          <EmptyInline text={relationalPreview?.reason ?? "Select a relational catalog, feature plan, recipe, or scenario diagnostics artifact to inspect table profiles, key candidates, generated preview features, scenario comparisons, and guardrails."} />
         )}
       </Panel>
       <Panel title="Benchmark Scenario Packs" icon={<Layers size={18} />}>
