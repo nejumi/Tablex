@@ -812,7 +812,7 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
         action = actions[0]
         return (
             f"Next focus: {action['label']}. {action['detail']} "
-            f"Open {action['target_tab']} and use the Focus Guide evidence before asking a runner to continue."
+            f"Open {action['target_tab']} and use the Autonomous Navigator evidence before asking a runner to continue."
         )
     if intent["type"] == "guide_notebook_review":
         action = actions[0]

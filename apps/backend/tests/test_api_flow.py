@@ -150,6 +150,7 @@ def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path
     assert chat["intent"]["type"] == "set_evaluation_metric"
     assert "ROC-AUC" in chat["assistant_message"]
     assert any(action["type"] == "update_evaluation_candidates" for action in chat["actions"])
+    assert any(action["target_tab"] == "Evaluation" for action in chat["actions"])
     assert chat["worker_events"]
     assert chat["token_usage"]["is_estimate"] is True
     assert chat["job"]["status"] == "succeeded"
@@ -223,6 +224,7 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     assert next_step["intent"]["type"] == "explain_next_step"
     assert any(action["type"] == "explain_next_step" for action in next_step["actions"])
     assert "Next focus" in next_step["assistant_message"]
+    assert "Autonomous Navigator" in next_step["assistant_message"]
 
     generic_chat_response = client.post(
         f"/api/projects/{project_id}/agent-chat",
@@ -234,6 +236,7 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     assert "controlled runner task" in generic_chat["assistant_message"]
     assert "Artifact:" not in generic_chat["assistant_message"]
     assert any(action["type"] == "create_agent_task_contract" for action in generic_chat["actions"])
+    assert any(action["target_tab"] == "Approach" for action in generic_chat["actions"])
 
     activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
     assert activity_response.status_code == 200

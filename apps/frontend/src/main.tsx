@@ -174,6 +174,8 @@ const englishMessages = {
   createAgentTaskContract: "Send",
   downloadLatestAgentTaskContract: "Download latest AgentTaskContract",
   agentTaskContractCreated: "AgentTaskContract created.",
+  chatActionOpen: "Open",
+  chatActionReview: "Review",
   agentActivityTitle: "Agent Activity",
   agentActivitySubtitle: "Workers, actions, and token telemetry",
   estimatedTokens: "Estimated tokens",
@@ -324,6 +326,8 @@ const japaneseMessages: LocaleMessages = {
   createAgentTaskContract: "送信",
   downloadLatestAgentTaskContract: "最新のAgentTaskContractをダウンロード",
   agentTaskContractCreated: "AgentTaskContractを作成しました。",
+  chatActionOpen: "開く",
+  chatActionReview: "確認",
   agentActivityTitle: "Agent Activity",
   agentActivitySubtitle: "Worker、action、token telemetry",
   estimatedTokens: "推定tokens",
@@ -1233,6 +1237,11 @@ const secondaryTabItems = tabItems.filter((item) => secondaryTabIds.has(item.id)
 function tabFromString(value: string | null | undefined, fallback: Tab): Tab {
   const match = tabItems.find((item) => item.id === value);
   return match ? match.id : fallback;
+}
+
+function firstAgentChatTargetTab(actions: AgentChatAction[]): Tab | null {
+  const action = actions.find((candidate) => candidate.target_tab && tabItems.some((item) => item.id === candidate.target_tab));
+  return action ? tabFromString(action.target_tab, "Approach") : null;
 }
 
 type FocusRecommendation = {
@@ -2347,6 +2356,8 @@ function ProjectDetail({
       setAgentWorkerEvents((current) =>
         [...result.worker_events, ...current.filter((event) => event.job_id !== pendingWorker.job_id)].slice(0, 8)
       );
+      const targetTab = firstAgentChatTargetTab(result.actions);
+      if (targetTab) onTabChange(targetTab);
       await refreshAgentActivity();
       await refresh();
       await onProjectChanged();
@@ -2364,6 +2375,11 @@ function ProjectDetail({
 
   async function submitAgentChatWithoutResponse(objective: string): Promise<void> {
     await submitAgentChat(objective);
+  }
+
+  function openAgentChatAction(action: AgentChatAction) {
+    const targetTab = tabFromString(action.target_tab, "Approach");
+    onTabChange(targetTab);
   }
 
   async function runFocusAction(action: FocusAction | null) {
@@ -2436,6 +2452,7 @@ function ProjectDetail({
         messages={agentChatMessages}
         latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
         onSubmit={submitAgentChatWithoutResponse}
+        onActionOpen={openAgentChatAction}
       />
       <AgentActivityRail
         text={text}
@@ -2707,18 +2724,28 @@ function navigatorStatusClass(status: string) {
   return "badge muted";
 }
 
+function agentChatActionLabel(action: AgentChatAction, text: LocaleMessages) {
+  const targetTab = tabFromString(action.target_tab, "Approach");
+  const verb = ["needs_review", "created", "recorded", "explained"].includes(action.status)
+    ? text.chatActionReview
+    : text.chatActionOpen;
+  return `${verb} ${tabLabel(targetTab, text)}`;
+}
+
 function AgentChatDock({
   busy,
   text,
   messages,
   latestContract,
-  onSubmit
+  onSubmit,
+  onActionOpen
 }: {
   busy: boolean;
   text: LocaleMessages;
   messages: AgentChatMessage[];
   latestContract: Artifact | null;
   onSubmit: (objective: string) => Promise<void>;
+  onActionOpen: (action: AgentChatAction) => void;
 }) {
   const [draft, setDraft] = React.useState("");
 
@@ -2761,9 +2788,15 @@ function AgentChatDock({
               {message.actions?.length ? (
                 <div className="agent-chat-actions">
                   {message.actions.slice(0, 3).map((action) => (
-                    <span key={`${action.type}-${action.label}`}>
-                      {action.status}: {action.label}
-                    </span>
+                    <button
+                      className="agent-chat-action-button"
+                      key={`${action.type}-${action.label}`}
+                      onClick={() => onActionOpen(action)}
+                      type="button"
+                    >
+                      <span>{action.status.replace(/_/g, " ")}</span>
+                      <strong>{agentChatActionLabel(action, text)}</strong>
+                    </button>
                   ))}
                 </div>
               ) : null}

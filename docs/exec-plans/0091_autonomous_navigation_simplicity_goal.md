@@ -28,5 +28,5 @@ Move the project experience from "many visible workbench surfaces" toward one ha
 
 ## Risks
 
-- The frontend still carries older Focus Guide and Guided Journey components as internal fallback/legacy code. They are no longer rendered from the main project surface, but should be removed once no tests or fallback paths depend on them.
+- Historical docs, report names, and saved artifact types still use Guided Journey terminology for persisted snapshots. That is acceptable for lineage, but the primary live UI should speak in terms of the Autonomous Navigator.
 - `autonomous_navigation.v1` is intentionally small. If future teams add many fields and expose them by default, the UX will regress.
