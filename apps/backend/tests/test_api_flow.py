@@ -1863,6 +1863,59 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
         relational_diagnostics_job["output"]["relational_feature_scenario_diagnostics_artifact_id"]
     )
 
+    contract_artifact_id = agent_task_plan_response.json()["output"]["agent_task_contract_artifact_id"]
+    workspace_response = client.post(f"/api/agent-task-contracts/{contract_artifact_id}/prepare-workspace")
+    assert workspace_response.status_code == 200, workspace_response.text
+    workspace_job = workspace_response.json()
+    assert workspace_job["status"] == "succeeded"
+    assert workspace_job["output"]["materialized_relational_context_count"] >= 6
+    workspace_download_response = client.get(
+        f"/api/artifacts/{workspace_job['output']['agent_workspace_manifest_artifact_id']}/download"
+    )
+    assert workspace_download_response.status_code == 200
+    workspace_manifest = workspace_download_response.json()
+    relational_sources = [
+        item
+        for item in workspace_manifest["materialized_sources"]
+        if item["source_kind"] == "relational_context_artifact"
+    ]
+    assert len(relational_sources) >= 6
+    relational_paths = [item["context_path"] for item in relational_sources]
+    assert all(path.startswith(".harness/context/relational/") for path in relational_paths)
+    assert any("relational_feature_plan" in path and path.endswith(".json") for path in relational_paths)
+    assert any("relational_feature_recipe" in path and path.endswith(".json") for path in relational_paths)
+    assert any("relational_feature_preview" in path and path.endswith(".csv") for path in relational_paths)
+    assert any(
+        "relational_feature_preview_profile" in path and path.endswith(".json") for path in relational_paths
+    )
+    assert any(
+        "relational_feature_scenario_diagnostics" in path and path.endswith(".json")
+        for path in relational_paths
+    )
+    assert any(
+        "relational_feature_scenario_report" in path and path.endswith(".md") for path in relational_paths
+    )
+    assert all(item["artifact_id"] and item["content_hash"] for item in relational_sources)
+    assert all(isinstance(item["size_bytes"], int) for item in relational_sources)
+    assert any(
+        item["artifact_id"]
+        == relational_diagnostics_job["output"]["relational_feature_scenario_diagnostics_artifact_id"]
+        for item in relational_sources
+    )
+
+    readiness_response = client.post(f"/api/agent-task-contracts/{contract_artifact_id}/readiness-review")
+    assert readiness_response.status_code == 200, readiness_response.text
+    readiness_job = readiness_response.json()
+    assert readiness_job["status"] == "succeeded"
+    readiness_download_response = client.get(
+        f"/api/artifacts/{readiness_job['output']['agent_task_readiness_review_artifact_id']}/download"
+    )
+    assert readiness_download_response.status_code == 200
+    readiness = readiness_download_response.json()
+    relational_check = next(item for item in readiness["checks"] if item["check_id"] == "relational_context")
+    assert relational_check["status"] == "pass"
+    assert "relational context artifact" in relational_check["summary"]
+
     ideas_response = client.post(f"/api/projects/{project_id}/approach/ideas/generate")
     assert ideas_response.status_code == 200, ideas_response.text
     ideas_list_response = client.get(f"/api/projects/{project_id}/approach/ideas")

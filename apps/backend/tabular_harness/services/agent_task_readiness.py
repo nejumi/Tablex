@@ -170,6 +170,7 @@ def build_readiness_review(
         safety_check(contract, constraints),
         assumptions_check(assumption_context),
         context_artifacts_check(inputs),
+        relational_context_check(inputs, workspace_manifest),
         library_assets_check(inputs, workspace_manifest),
         workspace_check(workspace_artifact, workspace_manifest),
         reporting_check(inputs),
@@ -339,6 +340,65 @@ def context_artifacts_check(inputs: dict[str, Any]) -> dict[str, Any]:
         "pass",
         "info",
         f"{len(context_artifacts)} context artifact reference(s) are available.",
+    )
+
+
+def relational_context_check(inputs: dict[str, Any], workspace_manifest: dict[str, Any] | None) -> dict[str, Any]:
+    relational_inputs = [
+        dict_value(inputs.get("relational_feature_plan")),
+        dict_value(inputs.get("relational_feature_recipe")),
+        dict_value(inputs.get("relational_feature_scenario_diagnostics")),
+    ]
+    expected_ids = [
+        str(item["artifact_id"])
+        for item in relational_inputs
+        if isinstance(item.get("artifact_id"), str) and item.get("artifact_id")
+    ]
+    available_context = list_value(inputs.get("available_context_artifacts"))
+    expected_ids.extend(
+        [
+            str(item["artifact_id"])
+            for item in available_context
+            if isinstance(item, dict)
+            and str(item.get("role") or "").startswith("relational_")
+            and isinstance(item.get("artifact_id"), str)
+            and item.get("artifact_id")
+        ]
+    )
+    expected_count = len(set(expected_ids))
+    materialized = materialized_source_count(workspace_manifest, "relational_context_artifact")
+    if expected_count == 0:
+        return check(
+            "relational_context",
+            "Relational runner context",
+            "pass",
+            "info",
+            "No relational feature context is attached to this contract.",
+        )
+    if workspace_manifest is None:
+        return check(
+            "relational_context",
+            "Relational runner context",
+            "warning",
+            "medium",
+            f"{expected_count} relational context artifact(s) are attached, but no workspace is prepared.",
+            "Run Prepare Workspace so relational plan, recipe, preview, diagnostics, and reports are materialized.",
+        )
+    if materialized == 0:
+        return check(
+            "relational_context",
+            "Relational runner context",
+            "warning",
+            "medium",
+            "Relational context is attached to the contract, but no relational files were materialized.",
+            "Prepare the workspace again and inspect skipped sources before running an AgentRunner.",
+        )
+    return check(
+        "relational_context",
+        "Relational runner context",
+        "pass",
+        "info",
+        f"{materialized} relational context artifact(s) are materialized in the controlled workspace.",
     )
 
 

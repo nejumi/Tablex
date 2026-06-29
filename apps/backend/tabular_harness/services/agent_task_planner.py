@@ -534,8 +534,15 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "relational_catalog": latest_project_artifact(db, project_id, "relational_catalog"),
         "relational_feature_plan": latest_project_artifact(db, project_id, "relational_feature_plan"),
         "relational_feature_recipe": latest_project_artifact(db, project_id, "relational_feature_recipe"),
+        "relational_feature_preview": latest_project_artifact(db, project_id, "relational_feature_preview"),
+        "relational_feature_preview_profile": latest_project_artifact(
+            db, project_id, "relational_feature_preview_profile"
+        ),
         "relational_feature_scenario_diagnostics": latest_project_artifact(
             db, project_id, "relational_feature_scenario_diagnostics"
+        ),
+        "relational_feature_scenario_report": latest_project_artifact(
+            db, project_id, "relational_feature_scenario_report"
         ),
         "benchmark_import_manifest": latest_project_artifact(db, project_id, "benchmark_import_manifest"),
         "benchmark_scenario_pack": latest_project_artifact(db, project_id, "benchmark_scenario_pack"),

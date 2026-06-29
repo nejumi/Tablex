@@ -30,6 +30,7 @@ class PlannedAgentWorkspaceResult:
     manifest: dict[str, Any]
     artifact: Artifact
     materialized_context_count: int
+    materialized_relational_context_count: int
     materialized_library_asset_count: int
     skipped_source_count: int
 
@@ -121,7 +122,10 @@ def prepare_workspace_from_contract_artifact(
             "job_id": job.id,
             "task_id": contract.task_id,
             "source_contract_artifact_id": contract_artifact.id,
-            "materialized_context_count": count_sources(materialized_sources, "context_artifact"),
+            "materialized_context_count": count_context_sources(materialized_sources),
+            "materialized_relational_context_count": count_sources(
+                materialized_sources, "relational_context_artifact"
+            ),
             "materialized_library_asset_count": count_sources(materialized_sources, "library_asset"),
             "skipped_source_count": len(skipped_sources),
         },
@@ -137,7 +141,8 @@ def prepare_workspace_from_contract_artifact(
     return PlannedAgentWorkspaceResult(
         manifest=manifest,
         artifact=artifact,
-        materialized_context_count=count_sources(materialized_sources, "context_artifact"),
+        materialized_context_count=count_context_sources(materialized_sources),
+        materialized_relational_context_count=count_sources(materialized_sources, "relational_context_artifact"),
         materialized_library_asset_count=count_sources(materialized_sources, "library_asset"),
         skipped_source_count=len(skipped_sources),
     )
@@ -181,23 +186,27 @@ def materialize_contract_sources(
             if artifact is None:
                 skipped.append({"artifact_id": artifact_id, "reason": "artifact_not_found"})
                 continue
+            role = str(item.get("role") or artifact.asset_type)
+            is_relational = is_relational_context_artifact(role, artifact.asset_type)
             copied = copy_artifact_to_context(
                 artifact,
                 context_dir=context_dir,
-                relative_dir=Path("artifacts"),
-                filename_prefix=safe_filename_part(str(item.get("role") or artifact.asset_type)),
+                relative_dir=Path("relational") if is_relational else Path("artifacts"),
+                filename_prefix=safe_filename_part(role),
             )
             if copied is None:
                 skipped.append({"artifact_id": artifact.id, "reason": "too_large_or_missing"})
                 continue
             sources.append(
                 {
-                    "source_kind": "context_artifact",
-                    "role": item.get("role"),
+                    "source_kind": "relational_context_artifact" if is_relational else "context_artifact",
+                    "role": role,
                     "artifact_id": artifact.id,
                     "asset_type": artifact.asset_type,
                     "name": artifact.name,
                     "context_path": copied,
+                    "content_hash": artifact.content_hash,
+                    "size_bytes": artifact.size_bytes,
                 }
             )
 
@@ -241,6 +250,10 @@ def materialize_contract_sources(
                 }
             )
     return sources, skipped
+
+
+def is_relational_context_artifact(role: str, asset_type: str) -> bool:
+    return role.startswith("relational_") or asset_type.startswith("relational_")
 
 
 def copy_artifact_to_context(
@@ -384,6 +397,14 @@ def create_workspace_lineage(
 
 def count_sources(sources: list[dict[str, Any]], source_kind: str) -> int:
     return sum(1 for source in sources if source.get("source_kind") == source_kind)
+
+
+def count_context_sources(sources: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for source in sources
+        if source.get("source_kind") in {"context_artifact", "relational_context_artifact"}
+    )
 
 
 def load_agent_workspace_manifest_schema() -> dict[str, Any]:
