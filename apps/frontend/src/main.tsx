@@ -2445,6 +2445,7 @@ function ProjectDetail({
       {tab === "Notebooks" && (
         <NotebooksTab
           project={project}
+          datasets={datasets}
           runs={runs}
           artifacts={artifacts}
           notebookIndex={notebookIndex}
@@ -6055,6 +6056,7 @@ function ExperimentsTab({
 
 function NotebooksTab({
   project,
+  datasets,
   runs,
   artifacts,
   notebookIndex,
@@ -6063,6 +6065,7 @@ function NotebooksTab({
   onAskAgent
 }: {
   project: Project;
+  datasets: DatasetSnapshot[];
   runs: Run[];
   artifacts: Artifact[];
   notebookIndex: NotebookIndex | null;
@@ -6076,6 +6079,7 @@ function NotebooksTab({
   const [guideDraft, setGuideDraft] = React.useState("");
   const [guideResponse, setGuideResponse] = React.useState<string | null>(null);
   const [guideBusy, setGuideBusy] = React.useState(false);
+  const latestDataset = datasets[0] ?? null;
   const latestRun = runs[0] ?? null;
   const notebookItems = notebookIndex?.items ?? [];
   const recommendedNotebook = notebookIndex?.recommended_notebook ?? null;
@@ -6097,6 +6101,21 @@ function NotebooksTab({
       ].includes(artifact.asset_type) ||
       (artifact.asset_type === "agent_task_contract" && typeof artifact.metadata.notebook_artifact_id === "string")
   );
+  const edaReviewArtifacts = artifacts.filter((artifact) =>
+    ["eda_review_html", "eda_review_bundle", "eda_review_svg", "eda_review_report"].includes(artifact.asset_type)
+  );
+  const latestEdaReviewHtml =
+    edaReviewArtifacts.find(
+      (artifact) =>
+        artifact.asset_type === "eda_review_html" &&
+        (!latestDataset || artifact.metadata.dataset_snapshot_id === latestDataset.id)
+    ) ?? null;
+  const latestEdaReviewFigures = edaReviewArtifacts.filter(
+    (artifact) =>
+      artifact.asset_type === "eda_review_svg" &&
+      (!latestDataset || artifact.metadata.dataset_snapshot_id === latestDataset.id)
+  );
+  const reviewArtifacts = [...edaReviewArtifacts, ...executionArtifacts];
 
   async function loadPreview(artifactId: string) {
     setPreviewLoadingId(artifactId);
@@ -6124,6 +6143,15 @@ function NotebooksTab({
   async function generateModelNotebook(run: Run) {
     const job = await api<Job>(`/api/runs/${run.id}/analysis-notebook`, { method: "POST" });
     const htmlArtifactId = job.output.notebook_html_artifact_id;
+    if (typeof htmlArtifactId === "string") {
+      await loadPreview(htmlArtifactId);
+    }
+    return job;
+  }
+
+  async function runEdaReview(dataset: DatasetSnapshot) {
+    const job = await api<Job>(`/api/datasets/${dataset.id}/eda-review`, { method: "POST" });
+    const htmlArtifactId = job.output.eda_review_html_artifact_id;
     if (typeof htmlArtifactId === "string") {
       await loadPreview(htmlArtifactId);
     }
@@ -6175,6 +6203,10 @@ function NotebooksTab({
       notebook_figure_manifest: "Figure manifest",
       notebook_execution_plan: "Runner plan",
       notebook_execution_source: "Captured source",
+      eda_review_html: "Data Review",
+      eda_review_bundle: "Data Review bundle",
+      eda_review_svg: "Data Review figure",
+      eda_review_report: "Data Review report",
       agent_task_contract: "Agent contract"
     };
     return labels[assetType] ?? assetType.replace(/_/g, " ");
@@ -6244,6 +6276,16 @@ function NotebooksTab({
               <div className="notebook-primary-actions">
                 <button
                   className="primary-button"
+                  disabled={busy || latestDataset === null}
+                  onClick={() => {
+                    if (latestDataset) void runAction(() => runEdaReview(latestDataset));
+                  }}
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+                  Run EDA Review
+                </button>
+                <button
+                  className="secondary-button"
                   disabled={!readablePreviewArtifactId || previewLoadingId === readablePreviewArtifactId}
                   onClick={() => {
                     if (readablePreviewArtifactId) void loadPreview(readablePreviewArtifactId);
@@ -6333,7 +6375,7 @@ function NotebooksTab({
               <Metric label="Notebooks" value={notebookIndex?.counts.total ?? 0} />
               <Metric label="Captured" value={notebookIndex?.counts.with_execution_capture ?? 0} />
               <Metric label="Figures" value={reviewEvidenceFigures.length} />
-              <Metric label="Evidence files" value={executionArtifacts.length} />
+              <Metric label="Data Review" value={latestEdaReviewHtml ? "ready" : "not run"} />
             </div>
           </div>
         ) : (
@@ -6344,7 +6386,17 @@ function NotebooksTab({
               <h3>Create a Data Understanding notebook</h3>
               <p>Use the current profile and assumptions to create the first narrative review. Model diagnostics become available after a run exists.</p>
               <div className="row-actions">
-                <button className="primary-button" disabled={busy} onClick={() => void runAction(generateDataNotebook)}>
+                <button
+                  className="primary-button"
+                  disabled={busy || latestDataset === null}
+                  onClick={() => {
+                    if (latestDataset) void runAction(() => runEdaReview(latestDataset));
+                  }}
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+                  Run EDA Review
+                </button>
+                <button className="secondary-button" disabled={busy} onClick={() => void runAction(generateDataNotebook)}>
                   {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
                   Data Notebook
                 </button>
@@ -6381,6 +6433,42 @@ function NotebooksTab({
         {reviewNotebook ? (
           <div className="stack">
             <div className="card-grid notebook-evidence-grid">
+              <div className="mini-card notebook-evidence-card primary">
+                <div className="mini-card-title">Data Review</div>
+                <p>Controlled DuckDB EDA over the uploaded dataset: distributions, target relationships, findings, figures, and Codex next prompts.</p>
+                <div className="badge-row">
+                  <span className={latestEdaReviewHtml ? "badge" : "badge risk"}>
+                    {latestEdaReviewHtml ? "ready" : "not run"}
+                  </span>
+                  {latestEdaReviewFigures.length ? <span className="badge muted">{latestEdaReviewFigures.length} figures</span> : null}
+                </div>
+                <div className="row-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={!latestEdaReviewHtml || previewLoadingId === latestEdaReviewHtml.id}
+                    onClick={() => {
+                      if (latestEdaReviewHtml) void loadPreview(latestEdaReviewHtml.id);
+                    }}
+                  >
+                    {latestEdaReviewHtml && previewLoadingId === latestEdaReviewHtml.id ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <FileText size={16} />
+                    )}
+                    Open
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy || latestDataset === null}
+                    onClick={() => {
+                      if (latestDataset) void runAction(() => runEdaReview(latestDataset));
+                    }}
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                    Run
+                  </button>
+                </div>
+              </div>
               <div className="mini-card notebook-evidence-card primary">
                 <div className="mini-card-title">Review narrative</div>
                 <p>Target readiness, findings, guardrails, and rendered profile evidence in one readable page.</p>
@@ -6464,12 +6552,12 @@ function NotebooksTab({
                 </div>
               </div>
             </div>
-            {executionArtifacts.length ? (
+            {reviewArtifacts.length ? (
               <details className="artifact-shelf">
-                <summary>Artifact shelf ({executionArtifacts.length})</summary>
+                <summary>Artifact shelf ({reviewArtifacts.length})</summary>
                 <Table
                   headers={["Artifact", "Status", "Created", "Actions"]}
-                  rows={executionArtifacts.slice(0, 12).map((artifact) => [
+                  rows={reviewArtifacts.slice(0, 12).map((artifact) => [
                     <div className="cell-stack" key={`${artifact.id}-label`}>
                       <span>{notebookArtifactDisplayName(artifact.asset_type)}</span>
                       <small>{String(artifact.metadata.figure_id ?? artifact.metadata.notebook_kind ?? artifact.id)}</small>

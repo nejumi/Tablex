@@ -180,6 +180,13 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     assert chat["intent"]["type"] == "generate_data_understanding_notebook"
     assert any(action["type"] == "generate_data_understanding_notebook" for action in chat["actions"])
 
+    eda_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "EDAレビューを作って可視化して"})
+    assert eda_chat_response.status_code == 200, eda_chat_response.text
+    eda_chat = eda_chat_response.json()
+    assert eda_chat["intent"]["type"] == "run_eda_review"
+    assert any(action["type"] == "run_eda_review" and action["status"] == "applied" for action in eda_chat["actions"])
+    assert "controlled Data Review" in eda_chat["assistant_message"]
+
     next_step_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "次に何を見るべき？"})
     assert next_step_response.status_code == 200, next_step_response.text
     next_step = next_step_response.json()
@@ -246,6 +253,44 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     quality_preview_response = client.get(f"/api/artifacts/{quality_artifact_id}/preview")
     assert quality_preview_response.status_code == 200
     assert "data_quality_gate.v1" in quality_preview_response.json()["preview"]
+
+    eda_review_response = client.post(f"/api/datasets/{dataset_id}/eda-review")
+    assert eda_review_response.status_code == 200, eda_review_response.text
+    eda_review_job = eda_review_response.json()
+    assert eda_review_job["status"] == "succeeded"
+    assert eda_review_job["job_type"] == "run_eda_review"
+    assert eda_review_job["output"]["schema_version"] == "eda_review.v1"
+    assert eda_review_job["output"]["eda_review_bundle_artifact_id"]
+    assert eda_review_job["output"]["eda_review_html_artifact_id"]
+    assert eda_review_job["output"]["eda_review_report_id"]
+    assert len(eda_review_job["output"]["eda_review_figure_artifact_ids"]) >= 4
+    eda_bundle_response = client.get(
+        f"/api/artifacts/{eda_review_job['output']['eda_review_bundle_artifact_id']}/download"
+    )
+    assert eda_bundle_response.status_code == 200
+    eda_bundle = eda_bundle_response.json()
+    assert eda_bundle["schema_version"] == "eda_review.v1"
+    assert eda_bundle["dataset_snapshot_id"] == dataset_id
+    assert eda_bundle["summary"]["target_column"] == "target"
+    assert eda_bundle["read_this_first"]
+    assert eda_bundle["story_cards"]
+    assert eda_bundle["playbook"]
+    assert eda_bundle["codex_next_prompts"]
+    eda_html_response = client.get(
+        f"/api/artifacts/{eda_review_job['output']['eda_review_html_artifact_id']}/preview"
+    )
+    assert eda_html_response.status_code == 200
+    eda_html = eda_html_response.json()
+    assert eda_html["content_type"] == "text/html"
+    assert "Tablex Data Review" in eda_html["preview"]
+    assert "Read this first" in eda_html["preview"]
+    assert "Visual story cards" in eda_html["preview"]
+    assert "Ask Codex next" in eda_html["preview"]
+    eda_svg_response = client.get(
+        f"/api/artifacts/{eda_review_job['output']['eda_review_figure_artifact_ids'][0]}/preview"
+    )
+    assert eda_svg_response.status_code == 200
+    assert eda_svg_response.json()["content_type"] == "image/svg+xml"
 
     assumptions_response = client.get(f"/api/projects/{project_id}/assumptions")
     assert assumptions_response.status_code == 200
@@ -1503,6 +1548,10 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "notebook_evidence_bundle",
         "notebook_evidence_html",
         "notebook_evidence_svg",
+        "eda_review_bundle",
+        "eda_review_html",
+        "eda_review_svg",
+        "eda_review_report",
     }.issubset(asset_types)
     artifacts = artifacts_response.json()
     validation_report = next(item for item in artifacts if item["asset_type"] == "model_validation_report")

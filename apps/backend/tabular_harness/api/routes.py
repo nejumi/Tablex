@@ -166,6 +166,7 @@ from tabular_harness.services.benchmarks import (
 )
 from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
+from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
     approve_spec,
     candidate_to_dict,
@@ -934,6 +935,57 @@ def upload_dataset(
         "artifact": artifact_to_dict(dataset_artifact),
         "profile_job_id": job.id,
     }
+
+
+@router.post("/api/datasets/{dataset_id}/eda-review", response_model=JobRead)
+def run_dataset_eda_review(
+    dataset_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    dataset = db.get(DatasetSnapshot, dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="DatasetSnapshot not found")
+    job = create_job(
+        db,
+        job_type="run_eda_review",
+        project_id=dataset.project_id,
+        input_payload={"dataset_snapshot_id": dataset.id},
+        policy={
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+            "execution_mode": "harness_controlled_duckdb_analysis",
+            "executes_user_code": False,
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_dataset_eda_review(db, store=store, dataset=dataset)
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.review["schema_version"],
+                "dataset_snapshot_id": dataset.id,
+                "eda_review_bundle_artifact_id": result.bundle_artifact.id,
+                "eda_review_html_artifact_id": result.html_artifact.id,
+                "eda_review_report_id": result.report.id,
+                "eda_review_report_artifact_id": result.report_artifact.id,
+                "visualization_id": result.visualization.id,
+                "visualization_artifact_id": result.visualization_artifact.id,
+                "eda_review_figure_artifact_ids": [artifact.id for artifact in result.figure_artifacts],
+                "evidence_id": result.evidence.id,
+                "insight_id": result.insight.id,
+                "artifact_id": result.bundle_artifact.id,
+                "artifact_ids": result.artifact_ids,
+                "quality_score": result.review["summary"]["quality_score"],
+                "target_column": result.review["summary"].get("target_column"),
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
 
 
 @router.post("/api/projects/{project_id}/benchmarks/{benchmark_id}/import", response_model=BenchmarkImportResponse)

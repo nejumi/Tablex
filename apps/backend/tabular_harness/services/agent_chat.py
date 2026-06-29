@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
     Artifact,
+    DatasetSnapshot,
     EvaluationCandidate,
     EvaluationSpec,
     Job,
@@ -23,6 +24,7 @@ from tabular_harness.services.analysis_notebooks import (
 )
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
+from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
     spec_to_dict,
     write_candidates_artifact,
@@ -77,6 +79,8 @@ def handle_agent_chat_turn(
             actions.append(agent_task_action(planned_agent_task))
     elif intent["type"] == "generate_data_understanding_notebook":
         actions.append(generate_data_understanding_notebook_action(db, store=store, project=project))
+    elif intent["type"] == "run_eda_review":
+        actions.append(run_eda_review_action(db, store=store, project=project))
     elif intent["type"] == "guide_notebook_review":
         actions.append(
             guide_notebook_review_action(
@@ -180,6 +184,13 @@ def infer_chat_intent(message: str) -> dict[str, Any]:
             "confidence": 0.78,
             "summary": "User wants Tablex to generate notebook evidence inside the workbench.",
         }
+    if is_eda_review_request(normalized):
+        return {
+            "type": "run_eda_review",
+            "metric": None,
+            "confidence": 0.84,
+            "summary": "User wants Tablex to run a controlled EDA/Data Review inside the workbench.",
+        }
     if is_next_step_request(normalized):
         return {
             "type": "explain_next_step",
@@ -213,6 +224,31 @@ def is_notebook_request(normalized: str) -> bool:
     return ("notebook" in normalized or "ノートブック" in normalized) and any(
         word in normalized for word in ["generate", "create", "make", "作", "生成", "出し", "作って"]
     )
+
+
+def is_eda_review_request(normalized: str) -> bool:
+    has_eda_word = any(
+        word in normalized
+        for word in [
+            "eda",
+            "data review",
+            "data understanding review",
+            "visualization",
+            "visualize",
+            "plot",
+            "chart",
+            "可視化",
+            "データレビュー",
+            "分析レビュー",
+            "探索",
+            "探索的",
+        ]
+    )
+    has_action_word = any(
+        word in normalized
+        for word in ["run", "generate", "create", "make", "show", "作", "生成", "出し", "やって", "して", "見せ"]
+    )
+    return has_eda_word and has_action_word
 
 
 def is_next_step_request(normalized: str) -> bool:
@@ -273,6 +309,37 @@ def generate_data_understanding_notebook_action(
     }
 
 
+def run_eda_review_action(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+) -> dict[str, Any]:
+    dataset = latest_dataset(db, project.id)
+    if dataset is None:
+        return {
+            "type": "run_eda_review",
+            "status": "needs_review",
+            "label": "Upload a dataset before running Data Review",
+            "target_tab": "Data",
+            "detail": "Tablex needs a DatasetSnapshot before it can compute EDA figures, findings, and target relationships.",
+        }
+    result = create_dataset_eda_review(db, store=store, dataset=dataset)
+    return {
+        "type": "run_eda_review",
+        "status": "applied",
+        "label": "Ran a controlled Data Review",
+        "target_tab": "Notebooks",
+        "detail": (
+            "Created a Data Review with DuckDB-derived distributions, target relationships, findings, "
+            "SVG figures, an HTML narrative, report, evidence, insight, lineage, and Codex next prompts."
+        ),
+        "artifact_id": result.html_artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "entity_ids": [result.report.id, result.evidence.id, result.insight.id],
+    }
+
+
 def explain_next_step_action(db: Session, *, project: Project) -> dict[str, Any]:
     guidance = build_project_guidance(db, project)
     focus = guidance["recommended_focus"]
@@ -290,6 +357,14 @@ def explain_next_step_action(db: Session, *, project: Project) -> dict[str, Any]
             "current_stage_id": guidance["current_stage_id"],
         },
     }
+
+
+def latest_dataset(db: Session, project_id: str) -> DatasetSnapshot | None:
+    return db.scalar(
+        select(DatasetSnapshot)
+        .where(DatasetSnapshot.project_id == project_id)
+        .order_by(DatasetSnapshot.created_at.desc())
+    )
 
 
 def guide_notebook_review_action(
@@ -630,6 +705,18 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
                 "report, manifest, and lineage. Next: open Notebooks and review the reader brief, findings, "
                 "and investigation queue."
             )
+    if intent["type"] == "run_eda_review":
+        action = actions[0]
+        if action["status"] == "applied":
+            return (
+                "I ran a controlled Data Review inside Tablex. It created a human-readable HTML review, "
+                "SVG figures, a JSON evidence bundle, a report, Evidence, Insight, and lineage. "
+                "Next: open Notebooks, start with Data Review, read the verdict and findings, then ask me to turn the top finding into a focused action."
+            )
+        return (
+            f"I cannot run Data Review yet: {action['detail']} "
+            f"Open {action['target_tab']} and upload or select a dataset first."
+        )
     if intent["type"] == "explain_next_step":
         action = actions[0]
         return (
