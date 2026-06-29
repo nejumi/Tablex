@@ -3805,7 +3805,7 @@ function DataTab({
 
   return (
     <div className="stack">
-      <Panel title="Dataset Upload" icon={<Upload size={18} />}>
+      <Panel title="Dataset Upload" icon={<Upload size={18} />} className="data-primary-panel">
         <div className="upload-row">
           <input type="file" accept=".csv,.parquet" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
           <input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Target column" />
@@ -3875,9 +3875,15 @@ function DataTab({
         )}
       </Panel>
       <Panel title="Benchmark Dataset Catalog" icon={<Database size={18} />}>
-        {benchmarks.length ? (
-          <div className="benchmark-grid">
-            {benchmarks.map((benchmark) => {
+        <details className="supporting-details">
+          <summary>
+            <span>Open benchmark import catalog</span>
+            <small>{benchmarks.length} sources / credential gates and fixtures</small>
+          </summary>
+          <div className="supporting-details-body">
+            {benchmarks.length ? (
+              <div className="benchmark-grid">
+                {benchmarks.map((benchmark) => {
               const status = benchmark.local_status;
               const benchmarkPath = benchmarkPaths[benchmark.id] ?? benchmark.default_local_path;
               const targetColumn = textField(benchmark.primary_table.target_column) ?? "-";
@@ -4095,11 +4101,13 @@ function DataTab({
                   </div>
                 </div>
               );
-            })}
+                })}
+              </div>
+            ) : (
+              <EmptyInline text="Benchmark dataset entries will appear here with local import status, source links, and primary-table metadata." />
+            )}
           </div>
-        ) : (
-          <EmptyInline text="Benchmark dataset entries will appear here with local import status, source links, and primary-table metadata." />
-        )}
+        </details>
       </Panel>
       <Panel title="Public Workflow Results" icon={<ListChecks size={18} />}>
         {publicWorkflowJobs.length ? (
@@ -4213,7 +4221,7 @@ function DataTab({
           <EmptyInline text={evidencePreview?.reason ?? "Generate or select an evidence pack to inspect benchmark readiness and next actions."} />
         )}
       </Panel>
-      <Panel title="Dataset Snapshots" icon={<Database size={18} />}>
+      <Panel title="Dataset Snapshots" icon={<Database size={18} />} className="data-snapshot-panel">
         {datasets.length ? (
           <Table
             headers={["Snapshot", "Source", "Rows", "Columns", "Schema Hash"]}
@@ -4232,7 +4240,7 @@ function DataTab({
           <EmptyInline text="Uploaded CSV or Parquet files will become DatasetSnapshot assets with schema, row count, and lineage." />
         )}
       </Panel>
-      <Panel title="Profile Readiness" icon={<BarChart3 size={18} />}>
+      <Panel title="Profile Readiness" icon={<BarChart3 size={18} />} className="data-profile-panel">
         {profileArtifacts.length ? (
           <Table
             headers={["Profile", "Mode", "Sample Rows", "Deferred", "Created", "Actions"]}
@@ -4253,7 +4261,7 @@ function DataTab({
           <EmptyInline text="Data profiles will show full or bounded-sample mode, sample coverage, target profile, and any deferred deep-profile columns after upload or benchmark import." />
         )}
       </Panel>
-      <Panel title="Source Artifacts" icon={<FileText size={18} />}>
+      <Panel title="Source Artifacts" icon={<FileText size={18} />} className="data-source-panel">
         {datasetArtifacts.length ? (
           <Table
             headers={["Artifact", "Version", "Size"]}
@@ -4263,7 +4271,7 @@ function DataTab({
           <EmptyInline text="Raw uploaded files are stored in the local artifact store with content hashes." />
         )}
       </Panel>
-      <Panel title="Relational Map" icon={<GitBranch size={18} />}>
+      <Panel title="Relational Map" icon={<GitBranch size={18} />} className="data-relational-map-panel">
         <div className="relational-map-hero">
           <div>
             <div className="eyebrow">Relationship evidence</div>
@@ -4555,7 +4563,7 @@ function DataTab({
           <EmptyInline text="Data quality gates will summarize leakage, missingness, identity, time/group, duplicate, and evaluation readiness risks for each DatasetSnapshot." />
         )}
       </Panel>
-      <Panel title="Data Quality Preview" icon={<FileText size={18} />}>
+      <Panel title="Data Quality Preview" icon={<FileText size={18} />} className="data-quality-preview-panel">
         {qualityPreviewError ? <div className="banner danger">{qualityPreviewError}</div> : null}
         {qualityPreview?.preview_available ? (
           <TranslatablePreview preview={qualityPreview} />
@@ -8778,9 +8786,19 @@ function LineageTab({ lineage }: { lineage: LineageEdge[] }) {
   );
 }
 
-function Panel({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+function Panel({
+  title,
+  icon,
+  children,
+  className
+}: {
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <section className="panel">
+    <section className={`panel ${className ?? ""}`}>
       <div className="panel-header">
         <div className="panel-title">
           {icon}

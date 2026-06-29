@@ -538,6 +538,30 @@ textarea {
   padding: 16px;
 }
 
+.data-primary-panel {
+  order: -60;
+}
+
+.data-relational-map-panel {
+  order: -58;
+}
+
+.data-snapshot-panel {
+  order: -56;
+}
+
+.data-profile-panel {
+  order: -54;
+}
+
+.data-quality-preview-panel {
+  order: -52;
+}
+
+.data-source-panel {
+  order: -50;
+}
+
 .panel-header {
   display: flex;
   align-items: center;

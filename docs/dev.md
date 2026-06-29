@@ -241,6 +241,8 @@ Place extracted benchmark files under `data/benchmarks/{benchmark_id}` or anothe
 
 Benchmark Evidence Packs, Decision Dashboards/Reports, and drafted Project Reports include the latest relational plan, recipe, and scenario diagnostics when available. This keeps relational feature readiness, deferred reasons, and recommended AgentTask scenarios visible in normal in-product reports without requiring users to manually inspect raw artifacts.
 
+The Data tab should keep primary evidence before catalogs. Its first useful surfaces are Dataset Upload, Relational Map, Dataset Snapshots, Profile Readiness, Data Quality Preview, and Source Artifacts; heavy benchmark catalogs and raw relational artifacts stay behind supporting details unless the user asks for them.
+
 The Data tab now centers relational work on a single `Relational Map` surface. It renders `relational_catalog` previews as an ER-style table graph before exposing the advanced JSON artifact, and it keeps relational plans, recipes, diagnostics, and raw catalogs under supporting details. Edges are inferred relationship candidates and must be treated as review prompts until join semantics and prediction-time availability are confirmed. Users can upload ER/schema evidence with:
 
 ```bash
