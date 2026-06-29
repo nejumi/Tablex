@@ -94,6 +94,10 @@ const englishMessages = {
   tabJobs: "Jobs",
   tabLineage: "Lineage",
   focusGuideTitle: "Focus Guide",
+  focusNow: "Now",
+  focusWhy: "Why",
+  focusDo: "Do",
+  journeyMap: "Journey map",
   recommendedFocus: "Recommended focus",
   whyThisMatters: "Why this matters",
   goToFocus: "Go to focus",
@@ -235,6 +239,10 @@ const japaneseMessages: LocaleMessages = {
   tabJobs: "ジョブ",
   tabLineage: "リネージ",
   focusGuideTitle: "Focus Guide",
+  focusNow: "今",
+  focusWhy: "理由",
+  focusDo: "実行",
+  journeyMap: "全体の流れ",
   recommendedFocus: "推奨フォーカス",
   whyThisMatters: "なぜ重要か",
   goToFocus: "移動",
@@ -2547,51 +2555,67 @@ function FocusGuide({
   const primaryDisabled = primaryAction.disabled || (primaryAction.actionType === "navigate" && isCurrent);
 
   return (
-    <section className="focus-guide" aria-label={text.focusGuideTitle}>
-      <div className="focus-guide-main">
-        <img src="/mascot/tablee-curious.svg" alt="" aria-hidden="true" className="focus-mascot" />
+    <section className="focus-guide streamlined" aria-label={text.focusGuideTitle}>
+      <div className="focus-command">
         <div className="focus-guide-copy">
           <div className="focus-guide-eyebrow">
             <Lightbulb size={16} />
             {text.focusGuideTitle}
           </div>
-          <h2>{recommendation.title}</h2>
-          <p>{recommendation.reason}</p>
+          <div className="focus-brief">
+            <div>
+              <span>{text.focusNow}</span>
+              <h2>{recommendation.title}</h2>
+            </div>
+            <div>
+              <span>{text.focusWhy}</span>
+              <p>{recommendation.reason}</p>
+            </div>
+          </div>
+        </div>
+        <button
+          className="primary-button focus-primary-action"
+          disabled={primaryDisabled}
+          onClick={() => onAction(primaryAction)}
+          type="button"
+        >
+          {primaryAction.actionType === "navigate" ? <Search size={16} /> : <Play size={16} />}
+          <span>
+            <small>{text.focusDo}</small>
+            {primaryAction.label}
+          </span>
+        </button>
+      </div>
+      <details className="focus-supporting">
+        <summary>
+          <span>{text.viewDetails}</span>
+          <small>{recommendation.evidence.slice(0, 2).join(" / ")}</small>
+        </summary>
+        <div className="focus-supporting-body">
           <div className="focus-evidence" aria-label={text.focusEvidence}>
             <span>{text.focusEvidence}</span>
             {recommendation.evidence.slice(0, 3).map((item) => (
               <strong key={item}>{item}</strong>
             ))}
           </div>
-        </div>
-      </div>
-      <div className="focus-guide-actions">
-        <button
-          className="primary-button"
-          disabled={primaryDisabled}
-          onClick={() => onAction(primaryAction)}
-          type="button"
-        >
-          {primaryAction.actionType === "navigate" ? <Search size={16} /> : <Play size={16} />}
-          {primaryAction.label}
-        </button>
-        <div className="focus-secondary">
-          <span>{text.otherUsefulViews}</span>
-          <div>
-            {secondaryActions.map((action) => (
-              <button
-                className="secondary-button"
-                disabled={action.disabled}
-                key={action.id}
-                onClick={() => (action.actionType === "navigate" ? onTabChange(action.targetTab) : onAction(action))}
-                type="button"
-              >
-                {action.label}
-              </button>
-            ))}
+          <div className="focus-secondary">
+            <span>{text.otherUsefulViews}</span>
+            <div>
+              {secondaryActions.map((action) => (
+                <button
+                  className="secondary-button"
+                  disabled={action.disabled}
+                  key={action.id}
+                  onClick={() => (action.actionType === "navigate" ? onTabChange(action.targetTab) : onAction(action))}
+                  type="button"
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
+      </details>
     </section>
   );
 }
@@ -2617,6 +2641,7 @@ function GuidedJourneyRail({
     stages.find((stage) => stage.id === guidance?.current_stage_id) ??
     stages.find((stage) => stage.status === "blocked" || stage.status === "current" || stage.status === "next") ??
     stages[0];
+  const currentStageIndex = currentStage ? stages.findIndex((stage) => stage.id === currentStage.id) : -1;
 
   function openStage(stage: ProjectGuidanceJourneyStage) {
     if (stage.action) {
@@ -2630,10 +2655,21 @@ function GuidedJourneyRail({
     <section className="journey-rail" aria-label={text.guidedJourneyTitle}>
       <div className="journey-header">
         <div className="journey-title-row">
-          <img src="/mascot/tablee-avatar.svg" alt="" aria-hidden="true" className="journey-mascot" />
+          <span className={`journey-current-dot ${currentStage?.status ?? "waiting"}`} aria-hidden="true">
+            {currentStage?.status === "done" ? (
+              <Check size={14} />
+            ) : currentStage?.status === "blocked" ? (
+              <AlertTriangle size={14} />
+            ) : currentStageIndex >= 0 ? (
+              currentStageIndex + 1
+            ) : null}
+          </span>
           <div>
             <div className="eyebrow">{text.guidedJourneyTitle}</div>
-            <p>{text.guidedJourneySubtitle}</p>
+            <p>
+              <strong>{currentStage ? journeyStageLabel(currentStage, text) : text.journeyStatusWaiting}</strong>
+              {currentStage ? `: ${currentStage.summary}` : `: ${text.guidedJourneySubtitle}`}
+            </p>
           </div>
         </div>
         <div className="journey-actions">
@@ -2649,37 +2685,45 @@ function GuidedJourneyRail({
           </button>
         </div>
       </div>
-      <div className="journey-stages">
-        {stages.map((stage, index) => (
-          <button
-            className={`journey-stage ${stage.status}`}
-            key={stage.id}
-            onClick={() => openStage(stage)}
-            title={stage.summary}
-            type="button"
-          >
-            <span className="journey-dot" aria-hidden="true">
-              {stage.status === "done" ? <Check size={14} /> : stage.status === "blocked" ? <AlertTriangle size={14} /> : index + 1}
-            </span>
-            <span className="journey-stage-copy">
-              <strong>{journeyStageLabel(stage, text)}</strong>
-              <small>{journeyStatusLabel(stage.status, text)}</small>
-            </span>
-          </button>
-        ))}
-      </div>
-      {currentStage ? (
-        <div className="journey-current">
-          <span>{journeyStageLabel(currentStage, text)}</span>
-          <p>{currentStage.summary}</p>
-          <div className="focus-evidence" aria-label={text.journeyEvidence}>
-            <span>{text.journeyEvidence}</span>
-            {currentStage.evidence.slice(0, 3).map((item) => (
-              <strong key={item}>{item}</strong>
-            ))}
-          </div>
+      <details className="journey-map">
+        <summary>
+          <span>{text.journeyMap}</span>
+          <small>
+            {stages.filter((stage) => stage.status === "done").length}/{stages.length} {text.journeyStatusDone}
+          </small>
+        </summary>
+        <div className="journey-stages">
+          {stages.map((stage, index) => (
+            <button
+              className={`journey-stage ${stage.status}`}
+              key={stage.id}
+              onClick={() => openStage(stage)}
+              title={stage.summary}
+              type="button"
+            >
+              <span className="journey-dot" aria-hidden="true">
+                {stage.status === "done" ? <Check size={14} /> : stage.status === "blocked" ? <AlertTriangle size={14} /> : index + 1}
+              </span>
+              <span className="journey-stage-copy">
+                <strong>{journeyStageLabel(stage, text)}</strong>
+                <small>{journeyStatusLabel(stage.status, text)}</small>
+              </span>
+            </button>
+          ))}
         </div>
-      ) : null}
+        {currentStage ? (
+          <div className="journey-current">
+            <span>{journeyStageLabel(currentStage, text)}</span>
+            <p>{currentStage.summary}</p>
+            <div className="focus-evidence" aria-label={text.journeyEvidence}>
+              <span>{text.journeyEvidence}</span>
+              {currentStage.evidence.slice(0, 3).map((item) => (
+                <strong key={item}>{item}</strong>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </details>
     </section>
   );
 }

@@ -306,22 +306,24 @@ textarea {
 
 .focus-guide {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
-  gap: 18px;
-  align-items: center;
+  gap: 12px;
   border: 1px solid var(--border-strong);
-  border-left: 5px solid var(--accent);
   border-radius: 8px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--surface-hover) 72%, transparent), transparent 60%),
-    var(--surface);
+  background: var(--surface);
   box-shadow: 0 14px 36px var(--shadow);
-  padding: 18px;
+  padding: 16px;
+}
+
+.focus-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 280px);
+  gap: 16px;
+  align-items: center;
 }
 
 .focus-guide-copy {
   display: grid;
-  gap: 9px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -350,6 +352,27 @@ textarea {
   text-transform: uppercase;
 }
 
+.focus-brief {
+  display: grid;
+  gap: 8px;
+}
+
+.focus-brief > div {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+}
+
+.focus-brief span,
+.focus-primary-action small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 820;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .focus-guide h2 {
   margin: 0;
   color: var(--text-strong);
@@ -362,6 +385,56 @@ textarea {
   margin: 0;
   color: var(--muted-strong);
   line-height: 1.5;
+}
+
+.focus-primary-action {
+  justify-content: flex-start;
+  min-height: 56px;
+}
+
+.focus-primary-action span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+
+.focus-supporting,
+.journey-map {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.focus-supporting summary,
+.journey-map summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  color: var(--muted-strong);
+  font-size: 13px;
+  font-weight: 760;
+  list-style: none;
+}
+
+.focus-supporting summary::-webkit-details-marker,
+.journey-map summary::-webkit-details-marker {
+  display: none;
+}
+
+.focus-supporting summary small,
+.journey-map summary small {
+  overflow: hidden;
+  color: var(--muted);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-supporting-body {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
 }
 
 .focus-evidence {
@@ -427,8 +500,7 @@ textarea {
 }
 
 .journey-title-row {
-  display: grid;
-  grid-template-columns: 46px minmax(0, 1fr);
+  display: flex;
   gap: 10px;
   align-items: center;
   min-width: 0;
@@ -442,6 +514,10 @@ textarea {
   line-height: 1.4;
 }
 
+.journey-title-row p strong {
+  color: var(--text-strong);
+}
+
 .journey-mascot {
   width: 46px;
   height: 46px;
@@ -450,6 +526,30 @@ textarea {
   border-radius: 8px;
   background: var(--surface-muted);
   box-shadow: 0 8px 18px color-mix(in srgb, var(--shadow) 48%, transparent);
+}
+
+.journey-current-dot {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--accent-strong);
+}
+
+.journey-current-dot.done {
+  border-color: color-mix(in srgb, var(--success) 38%, var(--border));
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.journey-current-dot.blocked {
+  border-color: color-mix(in srgb, var(--warning) 58%, var(--border));
+  background: var(--warning-bg);
+  color: var(--warning);
 }
 
 .journey-actions {
@@ -464,7 +564,7 @@ textarea {
   grid-template-columns: repeat(8, minmax(96px, 1fr));
   gap: 7px;
   overflow-x: auto;
-  padding-bottom: 2px;
+  padding: 12px 0 2px;
 }
 
 .journey-stage {
@@ -2344,6 +2444,7 @@ td {
 
   .two-column,
   .focus-guide,
+  .focus-command,
   .supporting-details-body,
   .metric-grid,
   .metric-grid.compact,
@@ -2374,6 +2475,10 @@ td {
 
   .journey-header {
     display: grid;
+  }
+
+  .journey-actions {
+    justify-content: flex-start;
   }
 
   .journey-stages {
