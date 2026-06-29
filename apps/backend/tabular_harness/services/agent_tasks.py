@@ -40,6 +40,7 @@ class AgentTaskExecutionResult:
     workspace_artifact_id: str
     ingested_artifact_ids: list[str]
     experiment_ingestion: AgentResultExperimentIngestion
+    approach_decision_trace_artifact_id: str | None
 
 
 def run_idea_agent_task_stub(
@@ -129,6 +130,7 @@ def run_idea_agent_task_stub(
             metadata={"project_id": project.id, "idea_id": idea.id, "job_id": job.id, "task_id": result.task_id},
         )
         ingested_artifacts.append(result_artifact)
+    approach_decision_trace_artifact = first_artifact_of_type(ingested_artifacts, "approach_decision_trace")
     report = Report(
         id=new_id("rpt"),
         project_id=project.id,
@@ -206,6 +208,9 @@ def run_idea_agent_task_stub(
         workspace_artifact_id=workspace_manifest_artifact.id,
         ingested_artifact_ids=[artifact.id for artifact in ingested_artifacts],
         experiment_ingestion=experiment_ingestion,
+        approach_decision_trace_artifact_id=approach_decision_trace_artifact.id
+        if approach_decision_trace_artifact
+        else None,
     )
 
 

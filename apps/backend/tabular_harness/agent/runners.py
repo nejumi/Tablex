@@ -77,6 +77,7 @@ class LocalStubAgentRunner(NoopAgentRunner):
         report_md = render_stub_report(task_contract, execution_policy, relational_context)
         feature_recipe = render_stub_feature_recipe(task_contract, relational_context)
         experiment_metrics = render_stub_experiment_metrics(task_contract, relational_context)
+        approach_decision_trace = render_stub_approach_decision_trace(task_contract, relational_context)
         source_citation_manifest = render_stub_source_citation_manifest(task_contract, execution_policy)
         citation_audit_report = render_stub_citation_audit_report(source_citation_manifest)
         citation_visualization_spec = render_stub_citation_visualization(source_citation_manifest)
@@ -140,6 +141,16 @@ class LocalStubAgentRunner(NoopAgentRunner):
                 "metadata": {"task_id": task_contract.task_id},
             },
             {
+                "path": "artifacts/approach_decision_trace.json",
+                "asset_type": "approach_decision_trace",
+                "name": f"approach_decision_trace_{task_contract.task_id}",
+                "metadata": {
+                    "task_id": task_contract.task_id,
+                    "policy": approach_decision_trace["autonomy_policy"].get("approach_selection"),
+                    "advisory_not_prescriptive": True,
+                },
+            },
+            {
                 "path": "reports/citation_audit_report.md",
                 "asset_type": "citation_audit_report",
                 "name": f"citation_audit_report_{task_contract.task_id}",
@@ -189,6 +200,7 @@ class LocalStubAgentRunner(NoopAgentRunner):
                 "source_citation_manifest": source_citation_manifest,
                 "citation_audit_report": citation_audit_report,
                 "relational_context_summary": relational_context if has_relational_context else None,
+                "approach_decision_trace": approach_decision_trace,
             },
             artifacts=output_artifacts,
             warnings=["No Codex or external research execution was performed."],
@@ -204,6 +216,7 @@ class LocalStubAgentRunner(NoopAgentRunner):
             experiment_metrics=experiment_metrics,
             visualization_spec=visualization_spec,
             source_citation_manifest=source_citation_manifest,
+            approach_decision_trace=approach_decision_trace,
             citation_audit_report=citation_audit_report,
             citation_visualization_spec=citation_visualization_spec,
             relational_context_summary=relational_context if has_relational_context else None,
@@ -295,6 +308,7 @@ def write_stub_workspace_outputs(
     experiment_metrics: dict[str, Any],
     visualization_spec: dict[str, Any],
     source_citation_manifest: dict[str, Any],
+    approach_decision_trace: dict[str, Any],
     citation_audit_report: str,
     citation_visualization_spec: dict[str, Any],
     relational_context_summary: dict[str, Any] | None,
@@ -320,6 +334,10 @@ def write_stub_workspace_outputs(
     )
     (artifacts_dir / "source_citation_manifest.json").write_text(
         json.dumps(source_citation_manifest, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    (artifacts_dir / "approach_decision_trace.json").write_text(
+        json.dumps(approach_decision_trace, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     (reports_dir / "citation_audit_report.md").write_text(citation_audit_report, encoding="utf-8")
@@ -419,6 +437,142 @@ def render_stub_experiment_metrics(contract: AgentTaskContract, relational_conte
             "This metrics artifact exists so the harness can test AgentResult ingestion without making benchmark claims.",
         ],
     }
+
+
+def render_stub_approach_decision_trace(
+    contract: AgentTaskContract,
+    relational_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    autonomy_policy = dict_value(contract.inputs.get("runner_autonomy_policy"))
+    approach_space = dict_value(contract.inputs.get("open_ended_approach_space"))
+    candidates = list_value(contract.inputs.get("recommended_approach_candidates"))
+    recommendations = list_value(contract.inputs.get("library_recommendations"))
+    research_queries = list_value(contract.inputs.get("research_queries"))
+    relational_context = relational_context or {}
+    relational_available = bool(relational_context.get("source_count"))
+    return {
+        "schema_version": "approach_decision_trace.v1",
+        "execution_status": "not_executed",
+        "runner": "local_stub",
+        "task_id": contract.task_id,
+        "autonomy_policy": autonomy_policy,
+        "open_ended_approach_space": approach_space,
+        "context_used": {
+            "recommended_approach_count": len(candidates),
+            "recommended_asset_count": len(recommendations),
+            "research_query_count": len(research_queries),
+            "relational_context_available": relational_available,
+            "relational_context_source_count": relational_context.get("source_count") or 0,
+        },
+        "approaches_considered": summarize_approach_candidates(candidates),
+        "chosen_or_placeholder_approach": {
+            "status": "not_chosen_by_local_stub",
+            "reason": (
+                "LocalStub validates handoff shape only. A real Codex or Skill runner should choose, revise, "
+                "or replace approaches after inspecting project evidence and current research."
+            ),
+        },
+        "rejected_or_deferred_approaches": [
+            {
+                "approach": "fixed_predefined_recipe_execution",
+                "status": "rejected_as_product_default",
+                "reason": (
+                    "Tablex should preserve runner autonomy. Recommended assets and relational recipes are "
+                    "evidence and scaffolding, not a closed list of executable choices."
+                ),
+            },
+            *relational_deferred_trace_items(relational_context),
+        ],
+        "new_approach_hypotheses": [
+            {
+                "hypothesis": "A project-specific approach may outperform listed candidates when supported by data semantics, Skills, or fresh literature.",
+                "status": "open_for_runner",
+                "requires": ["evidence", "evaluation_spec", "split_manifest"],
+            }
+        ],
+        "additional_research_or_skill_needs": summarize_research_needs(research_queries, recommendations),
+        "hard_constraints_checked": autonomy_policy.get(
+            "runner_must",
+            [
+                "respect_evaluation_spec_and_split_manifest",
+                "register_important_outputs_as_artifacts",
+            ],
+        ),
+        "forbidden_constraints_checked": autonomy_policy.get(
+            "runner_must_not",
+            [
+                "read_secrets",
+                "materialize_connector_credentials",
+                "destructively_modify_evaluation_spec_or_split_manifest",
+            ],
+        ),
+        "agent_guidance": [
+            "Use structured context to stay auditable, not to restrict creativity.",
+            "Prefer evidence-backed project-specific reasoning over default recipes.",
+            "Record why any harness suggestion was accepted, modified, rejected, or deferred.",
+        ],
+    }
+
+
+def summarize_approach_candidates(candidates: list[Any]) -> list[dict[str, Any]]:
+    summarized = []
+    for item in candidates[:8]:
+        if not isinstance(item, dict):
+            continue
+        summarized.append(
+            {
+                "title": item.get("title"),
+                "approach_type": item.get("approach_type"),
+                "confidence": item.get("confidence"),
+                "risk_level": item.get("risk_level"),
+                "status": "advisory_candidate",
+            }
+        )
+    return summarized
+
+
+def relational_deferred_trace_items(relational_context: dict[str, Any]) -> list[dict[str, Any]]:
+    items = []
+    for check_item in list_value(relational_context.get("deferred_safety_checks")):
+        if not isinstance(check_item, dict):
+            continue
+        items.append(
+            {
+                "approach": f"relational_context::{check_item.get('check')}",
+                "status": check_item.get("status") or "deferred",
+                "reason": check_item.get("reason"),
+            }
+        )
+    return items
+
+
+def summarize_research_needs(research_queries: list[Any], recommendations: list[Any]) -> list[dict[str, Any]]:
+    needs = []
+    if research_queries:
+        needs.append(
+            {
+                "need": "controlled_research_follow_up",
+                "status": "available_in_contract",
+                "count": len(research_queries),
+            }
+        )
+    if recommendations:
+        needs.append(
+            {
+                "need": "skill_or_asset_review",
+                "status": "available_in_contract",
+                "count": len(recommendations),
+            }
+        )
+    if not needs:
+        needs.append(
+            {
+                "need": "runner_defined_research_questions",
+                "status": "open",
+                "count": 0,
+            }
+        )
+    return needs
 
 
 def render_stub_source_citation_manifest(
@@ -684,7 +838,14 @@ def render_stub_report(
             f"- Research Source Pack artifact: {source_pack_artifact_id or 'none'}",
             "- Citation audit artifact: `artifacts/source_citation_manifest.json`",
             "- Citation audit report: `reports/citation_audit_report.md`",
+            "- Approach decision trace: `artifacts/approach_decision_trace.json`",
             "- External network execution: not performed by LocalStubAgentRunner.",
+            "",
+            "## Runner Autonomy",
+            "",
+            "- Recommended approaches, Skills, and relational recipes are advisory context, not mandatory recipes.",
+            "- A real runner may accept, modify, reject, or replace candidates when project evidence supports it.",
+            "- The hard boundary is evaluation, safety, artifact registration, and lineage, not a closed model menu.",
         ]
     )
     if relational_context.get("source_count"):

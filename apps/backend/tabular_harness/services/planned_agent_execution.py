@@ -54,6 +54,7 @@ class PlannedAgentTaskExecutionResult:
     experiment_ingestion: AgentResultExperimentIngestion
     relational_context_summary: dict[str, Any]
     relational_context_summary_artifact_id: str | None
+    approach_decision_trace_artifact_id: str | None
 
 
 def run_planned_agent_task_local_stub(
@@ -170,6 +171,7 @@ def run_planned_agent_task_local_stub(
         )
         ingested_artifacts.append(result_artifact)
     relational_context_artifact = first_artifact_of_type(ingested_artifacts, "relational_runner_context_summary")
+    approach_decision_trace_artifact = first_artifact_of_type(ingested_artifacts, "approach_decision_trace")
 
     report_md = result.outputs.get("report_md")
     if not isinstance(report_md, str):
@@ -248,6 +250,9 @@ def run_planned_agent_task_local_stub(
         experiment_ingestion=experiment_ingestion,
         relational_context_summary=relational_context_summary,
         relational_context_summary_artifact_id=relational_context_artifact.id if relational_context_artifact else None,
+        approach_decision_trace_artifact_id=approach_decision_trace_artifact.id
+        if approach_decision_trace_artifact
+        else None,
     )
 
 

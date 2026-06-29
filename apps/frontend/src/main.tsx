@@ -397,6 +397,19 @@ type AgentTaskResult = {
     coverage: Record<string, unknown>;
     runner_guidance: unknown[];
   };
+  approach_decision_trace: {
+    status: string;
+    artifact_id: string | null;
+    policy: string | null;
+    recommended_approach_count: number;
+    recommended_asset_count: number;
+    research_query_count: number;
+    relational_context_available: boolean;
+    approach_considered_count: number;
+    deferred_or_rejected_count: number;
+    new_hypothesis_count: number;
+    runner_may: unknown[];
+  };
 };
 
 type Insight = {
@@ -3011,12 +3024,13 @@ function ExperimentsTab({
       <Panel title="Agent Task Results" icon={<FileText size={18} />}>
         {agentTaskResults.length ? (
           <Table
-            headers={["Job", "Source", "Agent", "Readiness", "Experiment", "Relational", "Citations", "Reports", "Actions"]}
+            headers={["Job", "Source", "Agent", "Readiness", "Experiment", "Strategy", "Relational", "Citations", "Reports", "Actions"]}
             rows={agentTaskResults.map((result) => {
               const reportArtifact = result.artifacts.agent_task_report;
               const citationReportArtifact = result.artifacts.citation_audit_report;
               const manifestArtifact = result.artifacts.source_citation_manifest;
               const relationalArtifact = result.artifacts.relational_context_summary;
+              const decisionTraceArtifact = result.artifacts.approach_decision_trace;
               return [
                 <div className="cell-stack" key={`${result.job_id}-job`}>
                   <span>{result.job_type.replace(/_/g, " ")}</span>
@@ -3034,6 +3048,12 @@ function ExperimentsTab({
                 </div>,
                 result.readiness_status ?? "-",
                 result.experiment_run?.id ?? "-",
+                <div className="cell-stack" key={`${result.job_id}-strategy`}>
+                  <span className="badge">{result.approach_decision_trace.policy ?? "open ended"}</span>
+                  <small>
+                    {result.approach_decision_trace.approach_considered_count} considered / {result.approach_decision_trace.deferred_or_rejected_count} deferred
+                  </small>
+                </div>,
                 <div className="cell-stack" key={`${result.job_id}-relational`}>
                   <span className={result.relational_context.source_count ? "badge" : "badge muted"}>
                     {result.relational_context.source_count} context files
@@ -3099,6 +3119,20 @@ function ExperimentsTab({
                   </button>
                   <button
                     className="icon-button"
+                    disabled={!decisionTraceArtifact || previewLoadingId === decisionTraceArtifact.id}
+                    onClick={() => {
+                      if (decisionTraceArtifact) void loadPreview(decisionTraceArtifact.id);
+                    }}
+                    title="Preview approach decision trace"
+                  >
+                    {decisionTraceArtifact && previewLoadingId === decisionTraceArtifact.id ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <Lightbulb size={16} />
+                    )}
+                  </button>
+                  <button
+                    className="icon-button"
                     disabled={!relationalArtifact || previewLoadingId === relationalArtifact.id}
                     onClick={() => {
                       if (relationalArtifact) void loadPreview(relationalArtifact.id);
@@ -3116,6 +3150,15 @@ function ExperimentsTab({
                       className="icon-link"
                       href={`${apiBase}/api/artifacts/${manifestArtifact.id}/download`}
                       title="Download source citation manifest"
+                    >
+                      <Download size={16} />
+                    </a>
+                  ) : null}
+                  {decisionTraceArtifact ? (
+                    <a
+                      className="icon-link"
+                      href={`${apiBase}/api/artifacts/${decisionTraceArtifact.id}/download`}
+                      title="Download approach decision trace"
                     >
                       <Download size={16} />
                     </a>

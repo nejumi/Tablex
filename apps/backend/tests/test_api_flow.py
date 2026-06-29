@@ -499,12 +499,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert planned_stub_job["output"]["agent_status"] == "succeeded"
     assert planned_stub_job["output"]["readiness_status"] in {"ready", "ready_with_warnings"}
     assert planned_stub_job["output"]["auto_prepared_workspace"] is False
-    assert len(planned_stub_job["output"]["ingested_artifact_ids"]) == 8
+    assert len(planned_stub_job["output"]["ingested_artifact_ids"]) == 9
     assert planned_stub_job["output"]["report_id"]
     assert planned_stub_job["output"]["evidence_id"]
     assert planned_stub_job["output"]["experiment_run_id"]
     assert planned_stub_job["output"]["agent_metrics_artifact_id"]
     assert planned_stub_job["output"]["agent_feature_recipe_artifact_id"]
+    assert planned_stub_job["output"]["approach_decision_trace_artifact_id"]
     assert planned_stub_job["output"]["source_citation_manifest_artifact_id"]
     assert planned_stub_job["output"]["citation_audit_report_id"]
     assert planned_stub_job["output"]["citation_audit_report_artifact_id"]
@@ -532,6 +533,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "visualization_spec",
         "feature_recipe",
         "experiment_metrics",
+        "approach_decision_trace",
         "source_citation_manifest",
         "citation_audit_report",
     }.issubset(planned_stub_asset_types)
@@ -554,6 +556,10 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert planned_result["reports"]["citation_audit_report"]["id"] == planned_stub_job["output"][
         "citation_audit_report_id"
     ]
+    assert planned_result["artifacts"]["approach_decision_trace"]["id"] == planned_stub_job["output"][
+        "approach_decision_trace_artifact_id"
+    ]
+    assert planned_result["approach_decision_trace"]["policy"] == "open_ended_with_harness_constraints"
     assert planned_result["citation_audit"]["citation_count"] >= 1
     assert planned_result["citation_audit"]["external_network_accessed"] is False
 
@@ -700,12 +706,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert agent_task_job["output"]["requires_human_review"] is True
     assert len(agent_task_job["output"]["artifact_ids"]) >= 4
     assert agent_task_job["output"]["workspace_artifact_id"]
-    assert len(agent_task_job["output"]["ingested_artifact_ids"]) == 8
+    assert len(agent_task_job["output"]["ingested_artifact_ids"]) == 9
     assert agent_task_job["output"]["report_id"]
     assert agent_task_job["output"]["evidence_id"]
     assert agent_task_job["output"]["experiment_run_id"]
     assert agent_task_job["output"]["agent_metrics_artifact_id"]
     assert agent_task_job["output"]["agent_feature_recipe_artifact_id"]
+    assert agent_task_job["output"]["approach_decision_trace_artifact_id"]
     assert agent_task_job["output"]["source_citation_manifest_artifact_id"]
     assert agent_task_job["output"]["citation_audit_report_id"]
     assert agent_task_job["output"]["citation_audit_report_artifact_id"]
@@ -720,6 +727,17 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     citation_manifest = citation_manifest_response.json()
     assert citation_manifest["schema_version"] == "source_citation_manifest.v1"
     assert citation_manifest["connector_credentials_materialized"] is False
+
+    idea_decision_trace_response = client.get(
+        f"/api/artifacts/{agent_task_job['output']['approach_decision_trace_artifact_id']}/download"
+    )
+    assert idea_decision_trace_response.status_code == 200
+    idea_decision_trace = idea_decision_trace_response.json()
+    assert idea_decision_trace["schema_version"] == "approach_decision_trace.v1"
+    assert any(
+        item["approach"] == "fixed_predefined_recipe_execution"
+        for item in idea_decision_trace["rejected_or_deferred_approaches"]
+    )
 
     citation_report_response = client.get(
         f"/api/reports/{agent_task_job['output']['citation_audit_report_id']}/preview"
@@ -736,6 +754,10 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert idea_result["experiment_run"]["id"] == agent_task_job["output"]["experiment_run_id"]
     assert idea_result["artifacts"]["agent_task_report"]["asset_type"] == "agent_task_report"
     assert idea_result["artifacts"]["citation_audit_report"]["asset_type"] == "citation_audit_report"
+    assert idea_result["artifacts"]["approach_decision_trace"]["id"] == agent_task_job["output"][
+        "approach_decision_trace_artifact_id"
+    ]
+    assert idea_result["approach_decision_trace"]["deferred_or_rejected_count"] >= 1
     assert idea_result["evidence"]["citation_audit"]["id"] == agent_task_job["output"]["citation_evidence_id"]
 
     updated_ideas_response = client.get(f"/api/projects/{project_id}/approach/ideas")
@@ -1935,6 +1957,7 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert stub_job["status"] == "succeeded"
     assert stub_job["output"]["relational_context_source_count"] >= 6
     assert stub_job["output"]["relational_context_summary_artifact_id"]
+    assert stub_job["output"]["approach_decision_trace_artifact_id"]
     assert len(stub_job["output"]["visualization_ids"]) >= 2
 
     stub_report_response = client.get(
@@ -1955,6 +1978,21 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert relational_summary["deferred_safety_checks"]
     assert relational_summary["recommended_agent_task_scenarios"]
 
+    decision_trace_response = client.get(
+        f"/api/artifacts/{stub_job['output']['approach_decision_trace_artifact_id']}/download"
+    )
+    assert decision_trace_response.status_code == 200
+    decision_trace = decision_trace_response.json()
+    assert decision_trace["schema_version"] == "approach_decision_trace.v1"
+    assert decision_trace["autonomy_policy"]["approach_selection"] == "open_ended_with_harness_constraints"
+    assert "propose_new_feature_families" in decision_trace["autonomy_policy"]["runner_may"]
+    assert any(
+        item["approach"] == "fixed_predefined_recipe_execution"
+        and item["status"] == "rejected_as_product_default"
+        for item in decision_trace["rejected_or_deferred_approaches"]
+    )
+    assert decision_trace["context_used"]["relational_context_available"] is True
+
     agent_results_response = client.get(f"/api/projects/{project_id}/agent-task-results")
     assert agent_results_response.status_code == 200
     agent_results = agent_results_response.json()
@@ -1967,6 +2005,11 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert relational_result["artifacts"]["relational_context_summary"]["id"] == stub_job["output"][
         "relational_context_summary_artifact_id"
     ]
+    assert relational_result["artifacts"]["approach_decision_trace"]["id"] == stub_job["output"][
+        "approach_decision_trace_artifact_id"
+    ]
+    assert relational_result["approach_decision_trace"]["policy"] == "open_ended_with_harness_constraints"
+    assert relational_result["approach_decision_trace"]["relational_context_available"] is True
 
     ideas_response = client.post(f"/api/projects/{project_id}/approach/ideas/generate")
     assert ideas_response.status_code == 200, ideas_response.text

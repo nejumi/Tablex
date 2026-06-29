@@ -198,6 +198,15 @@ def build_agent_task_contract_payload(
             "library_recommendations": asset_recommendations,
             "reporting_requirements": reporting_requirements(),
             "artifact_expectations": artifact_expectations(),
+            "runner_autonomy_policy": runner_autonomy_policy(),
+            "open_ended_approach_space": open_ended_approach_space(
+                approach_candidates=approach_candidates,
+                asset_recommendations=asset_recommendations,
+                research_queries=research_queries,
+                relational_context_available=bool(
+                    relational_plan_inputs or relational_recipe_inputs or relational_diagnostics_inputs
+                ),
+            ),
             "allowed_research_modes": ["project_artifacts", "skill_library", "controlled_web_search"],
             "must_respect_split_manifest": True,
             "recommended_asset_ids": research_inputs.get("recommended_asset_ids", []),
@@ -235,6 +244,14 @@ def build_agent_task_contract_payload(
                 "schema": "evidence_set.v1",
                 "description": "Artifact-backed evidence, including source summaries for any external claims.",
             },
+            {
+                "path": "artifacts/approach_decision_trace.json",
+                "schema": "approach_decision_trace.v1",
+                "description": (
+                    "Runner-authored trace of considered, rejected, revised, or newly proposed approaches. "
+                    "This is open-ended and should not be limited to predefined recipes."
+                ),
+            },
         ],
         "quality_checks": [
             "Use the approved EvaluationSpec and SplitManifest when they exist.",
@@ -242,6 +259,7 @@ def build_agent_task_contract_payload(
             "Compare against a sanity floor and explain failures or non-improvements.",
             "Register important outputs as artifacts with lineage-ready metadata.",
             "Return report and visualization outputs that are understandable inside Tablex UI.",
+            "Use recommended approaches as evidence, not as mandatory recipes; explain any replacement approach.",
         ],
         "forbidden_actions": [
             "Do not read secrets or connector credentials.",
@@ -524,6 +542,66 @@ def artifact_expectations() -> list[dict[str, Any]]:
         {"asset_type": "model_package", "required": False, "purpose": "persist runnable model when implemented"},
         {"asset_type": "prediction_output", "required": False, "purpose": "support diagnostics"},
     ]
+
+
+def runner_autonomy_policy() -> dict[str, Any]:
+    return {
+        "schema_version": "runner_autonomy_policy.v1",
+        "approach_selection": "open_ended_with_harness_constraints",
+        "recommended_assets_are": "advisory_evidence_not_mandatory_recipes",
+        "runner_may": [
+            "propose_new_feature_families",
+            "reject_recommended_approaches_with_reason",
+            "request_additional_research_or_skill_context",
+            "compare_alternative_modeling_strategies",
+            "write_project_specific_code_inside_controlled_workspace",
+        ],
+        "runner_must": [
+            "respect_evaluation_spec_and_split_manifest",
+            "fit_preprocessing_inside_training_folds",
+            "register_important_outputs_as_artifacts",
+            "explain_assumptions_and_unverified_claims",
+            "keep_reports_understandable_inside_tablex",
+        ],
+        "runner_must_not": [
+            "read_secrets",
+            "materialize_connector_credentials",
+            "use_validation_or_test_targets_for_feature_generation",
+            "destructively_modify_evaluation_spec_or_split_manifest",
+            "write_to_production_systems",
+        ],
+    }
+
+
+def open_ended_approach_space(
+    *,
+    approach_candidates: list[dict[str, Any]],
+    asset_recommendations: list[dict[str, Any]],
+    research_queries: list[dict[str, Any]],
+    relational_context_available: bool,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "open_ended_approach_space.v1",
+        "mode": "flexible_agent_discovery",
+        "candidate_count": len(approach_candidates),
+        "recommended_asset_count": len(asset_recommendations),
+        "research_query_count": len(research_queries),
+        "relational_context_available": relational_context_available,
+        "guidance": [
+            "Start from current evidence and reusable Skills, but do not assume the best approach is already enumerated.",
+            "Use current project artifacts, Skill/library context, and controlled research plans to justify approach choices.",
+            "Record why a suggested baseline, relational recipe, or Skill was used, modified, rejected, or deferred.",
+        ],
+        "expected_trace_sections": [
+            "context_used",
+            "approaches_considered",
+            "chosen_or_placeholder_approach",
+            "rejected_or_deferred_approaches",
+            "new_approach_hypotheses",
+            "additional_research_or_skill_needs",
+            "hard_constraints_checked",
+        ],
+    }
 
 
 def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifact | None]:

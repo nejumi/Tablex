@@ -89,6 +89,7 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Relational Evidence & Reporting Surface v1 with relational plan/recipe/diagnostics summaries in Benchmark Evidence Pack, Decision Dashboard/Report, and Project Report.
 - Relational Runner Workspace Handoff v1 with relational plan, recipe, preview CSV/profile, scenario diagnostics, and scenario report copied into controlled AgentRunner workspaces under `.harness/context/relational/`.
 - Agent Runner Relational Context Consumption v1 with LocalStub reports, metrics, feature recipes, visualization specs, and AgentTaskResults summaries carrying relational context inventory and deferred safety checks.
+- Flexible Agent Strategy Decision Trace v1 with open-ended runner autonomy policy, approach decision trace artifacts, and UI summaries that keep Codex/Skill runners from being constrained to predefined recipes.
 - Job skeleton for:
   - `profile_dataset`
   - `infer_assumptions`
@@ -151,4 +152,5 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Relational reporting surfaces summarize readiness heuristics; they should guide review and runner planning, not certify feature availability or model lift.
 - Relational runner context materialization makes artifacts inspectable in controlled workspaces, but it does not yet execute model-training joins or certify point-in-time-safe relational features.
 - LocalStub relational context consumption proves result ingestion and UI propagation, but real Codex/Skill runners still need implementation that reads these artifacts and produces split-respecting code.
+- Structured AgentTaskContracts should preserve runner creativity. They should make decisions auditable without reducing Codex to a closed list of fixed recipes.
 - Auth is stubbed as local single-user behavior.

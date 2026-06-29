@@ -12,3 +12,4 @@ apps/frontend/*.tsbuildinfo
 apps/frontend/vite.config.js
 apps/frontend/vite.config.d.ts
 .DS_Store
+.env

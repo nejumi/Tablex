@@ -125,6 +125,8 @@ def build_agent_task_result_summary(
     relational_context_summary_artifact = first_ingested_artifact(
         output, artifacts_by_id, "relational_runner_context_summary"
     )
+    approach_decision_trace_artifact = first_ingested_artifact(output, artifacts_by_id, "approach_decision_trace")
+    approach_decision_trace_payload = load_json_artifact(approach_decision_trace_artifact)
     relational_context_visualization_artifact = first_ingested_artifact_by_metadata(
         output,
         artifacts_by_id,
@@ -154,6 +156,7 @@ def build_agent_task_result_summary(
         ),
         "relational_context_summary": artifact_ref(relational_context_summary_artifact),
         "relational_context_visualization": artifact_ref(relational_context_visualization_artifact),
+        "approach_decision_trace": artifact_ref(approach_decision_trace_artifact),
         "agent_result": artifact_ref(agent_result_artifact),
         "agent_task_report": first_ingested_artifact_ref(output, artifacts_by_id, "agent_task_report"),
     }
@@ -192,6 +195,10 @@ def build_agent_task_result_summary(
         "artifact_ids": collect_artifact_ids(output),
         "citation_audit": citation_audit_summary(citation_manifest),
         "relational_context": relational_context_summary(relational_context, relational_context_summary_artifact),
+        "approach_decision_trace": approach_decision_trace_summary(
+            approach_decision_trace_payload,
+            approach_decision_trace_artifact,
+        ),
     }
 
 
@@ -358,6 +365,27 @@ def relational_context_summary(
         "recommendation_count": len(list_value(context.get("recommended_agent_task_scenarios"))),
         "coverage": coverage,
         "runner_guidance": list_value(context.get("runner_guidance"))[:5],
+    }
+
+
+def approach_decision_trace_summary(
+    trace: dict[str, Any],
+    artifact: Artifact | None,
+) -> dict[str, Any]:
+    context_used = dict_value(trace.get("context_used"))
+    autonomy_policy = dict_value(trace.get("autonomy_policy"))
+    return {
+        "status": trace.get("execution_status") or "missing",
+        "artifact_id": artifact.id if artifact else None,
+        "policy": autonomy_policy.get("approach_selection"),
+        "recommended_approach_count": int_value(context_used.get("recommended_approach_count")),
+        "recommended_asset_count": int_value(context_used.get("recommended_asset_count")),
+        "research_query_count": int_value(context_used.get("research_query_count")),
+        "relational_context_available": bool(context_used.get("relational_context_available")),
+        "approach_considered_count": len(list_value(trace.get("approaches_considered"))),
+        "deferred_or_rejected_count": len(list_value(trace.get("rejected_or_deferred_approaches"))),
+        "new_hypothesis_count": len(list_value(trace.get("new_approach_hypotheses"))),
+        "runner_may": list_value(autonomy_policy.get("runner_may"))[:8],
     }
 
 
