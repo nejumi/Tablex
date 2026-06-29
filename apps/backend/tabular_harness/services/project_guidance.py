@@ -57,6 +57,15 @@ class GuidedJourneyComparisonResult:
     artifact_ids: list[str]
 
 
+@dataclass(frozen=True)
+class AutonomousDecisionBriefResult:
+    brief: dict[str, Any]
+    artifact: Artifact
+    report: Report
+    report_artifact: Artifact
+    artifact_ids: list[str]
+
+
 def build_project_guidance(db: Session, project: Project) -> dict[str, Any]:
     counts = {
         "datasets": _count_project_rows(db, DatasetSnapshot, project.id),
@@ -278,6 +287,94 @@ def create_guided_journey_snapshot(
         visualization=visualization,
         visualization_artifact=visualization_artifact,
         artifact_ids=[artifact.id, report_artifact.id, visualization_artifact.id],
+    )
+
+
+def create_autonomous_decision_brief(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+) -> AutonomousDecisionBriefResult:
+    guidance = build_project_guidance(db, project)
+    brief = dict(guidance["autonomous_navigation"]["decision_brief"])
+    suffix = new_id("decisionbrief")
+    artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="autonomous_decision_brief",
+        name=f"autonomous_decision_brief_{suffix}",
+        filename="autonomous_decision_brief.json",
+        payload=brief,
+        metadata={
+            "project_id": project.id,
+            "focus_key": brief["focus_key"],
+            "target_tab": brief["target_tab"],
+            "risk_level": brief["risk_level"],
+        },
+    )
+    report_md = render_autonomous_decision_brief_report(brief)
+    report_artifact = store_text_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="autonomous_decision_brief_report",
+        name=f"autonomous_decision_brief_report_{suffix}",
+        filename="autonomous_decision_brief.md",
+        text=report_md,
+        metadata={
+            "project_id": project.id,
+            "autonomous_decision_brief_artifact_id": artifact.id,
+            "focus_key": brief["focus_key"],
+        },
+    )
+    report = Report(
+        id=new_id("rpt"),
+        project_id=project.id,
+        report_type="autonomous_decision_brief",
+        title=f"{project.name} Autonomous Decision Brief",
+        summary=first_sentence(report_md),
+        artifact_id=report_artifact.id,
+        source_asset_ids_json=dumps_json([{"asset_type": "artifact", "asset_id": artifact.id}]),
+        status="draft",
+        created_by_type="system",
+    )
+    db.add(report)
+    db.flush()
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="project",
+        from_asset_id=project.id,
+        to_asset_type="artifact",
+        to_asset_id=artifact.id,
+        relation_type="decision_brief_for",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=report_artifact.id,
+        relation_type="summarized_by",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=artifact.id,
+        to_asset_type="report",
+        to_asset_id=report.id,
+        relation_type="materializes",
+    )
+    return AutonomousDecisionBriefResult(
+        brief=brief,
+        artifact=artifact,
+        report=report,
+        report_artifact=report_artifact,
+        artifact_ids=[artifact.id, report_artifact.id],
     )
 
 
@@ -559,6 +656,61 @@ def render_guided_journey_report(snapshot: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_autonomous_decision_brief_report(brief: dict[str, Any]) -> str:
+    action = brief["primary_action"]
+    lines = [
+        f"# Autonomous Decision Brief: {brief['project_name']}",
+        "",
+        "## One Decision",
+        "",
+        f"- Question: {brief['decision_question']}",
+        f"- Focus: {brief['headline']}",
+        f"- Target tab: {brief['target_tab']}",
+        f"- Status: {brief['status']}",
+        f"- Risk: {brief['risk_level']}",
+        f"- Confidence: {brief['confidence']}",
+        "",
+        "## Why Now",
+        "",
+        str(brief["why_now"]),
+        "",
+        "## Evidence To Check",
+        "",
+    ]
+    lines.extend(f"- {item}" for item in brief.get("evidence_to_check", []))
+    lines.extend(
+        [
+            "",
+            "## Primary Action",
+            "",
+            f"- Action: {action['label']}",
+            f"- Action type: {action['action_type']}",
+            f"- Target tab: {action['target_tab']}",
+            "",
+            "## Not Now",
+            "",
+        ]
+    )
+    lines.extend(f"- {item}" for item in brief.get("not_now", []))
+    lines.extend(
+        [
+            "",
+            "## If Done",
+            "",
+            str(brief.get("if_done") or "Refresh the Autonomous Navigator."),
+            "",
+            "## Codex Handoff",
+            "",
+            str(brief["codex_handoff"]["prompt"]),
+            "",
+            "## Harness Boundaries",
+            "",
+        ]
+    )
+    lines.extend(f"- {item}" for item in brief.get("harness_boundaries", []))
+    return "\n".join(lines) + "\n"
+
+
 def render_guided_journey_comparison_report(comparison: dict[str, Any]) -> str:
     summary = comparison["summary"]
     lines = [
@@ -783,6 +935,13 @@ def _autonomous_navigation(
     if counts["reports"] > 0:
         hidden_complexity.append("older report shelves")
     runner_prompt = focus.get("suggested_agent_prompt") or _navigation_runner_prompt(project, focus, state)
+    decision_brief = _autonomous_decision_brief(
+        project=project,
+        state=state,
+        focus=focus,
+        attention_state=attention_state,
+        runner_prompt=runner_prompt,
+    )
     return {
         "schema_version": "autonomous_navigation.v1",
         "mode": "one_decision_at_a_time",
@@ -799,6 +958,7 @@ def _autonomous_navigation(
         "evidence": focus["evidence"][:3],
         "visible_context": visible_context,
         "hidden_complexity": hidden_complexity,
+        "decision_brief": decision_brief,
         "journey_progress": {
             "current_stage_id": current_stage["id"] if current_stage else None,
             "current_stage_label": current_stage_label,
@@ -817,6 +977,88 @@ def _autonomous_navigation(
             ],
         },
     }
+
+
+def _autonomous_decision_brief(
+    *,
+    project: Project,
+    state: dict[str, Any],
+    focus: dict[str, Any],
+    attention_state: str,
+    runner_prompt: str,
+) -> dict[str, Any]:
+    focus_key = str(focus["focus_key"])
+    decision_question = _decision_question(focus_key, state)
+    return {
+        "schema_version": "autonomous_decision_brief.v1",
+        "project_id": project.id,
+        "project_name": project.name,
+        "generated_at": utc_now().isoformat(),
+        "attention_budget": 1,
+        "focus_key": focus_key,
+        "target_tab": focus["target_tab"],
+        "headline": focus["title"],
+        "decision_question": decision_question,
+        "why_now": focus["reason"],
+        "status": attention_state,
+        "risk_level": focus["risk_level"],
+        "confidence": focus["confidence"],
+        "evidence_to_check": focus["evidence"][:3],
+        "primary_action": focus["primary_action"],
+        "not_now": _not_now_guidance(focus_key),
+        "if_done": _if_done_guidance(focus_key),
+        "codex_handoff": {
+            "prompt": runner_prompt,
+            "runner_may_choose_approach": True,
+            "do_not_force_recipe": True,
+        },
+        "harness_boundaries": [
+            "Do not expose secrets or connector credentials to runner prompts.",
+            "Do not mutate approved EvaluationSpec or SplitManifest without explicit review.",
+            "Register important outputs as artifacts with lineage.",
+        ],
+    }
+
+
+def _decision_question(focus_key: str, state: dict[str, Any]) -> str:
+    target = state.get("target_column") or "the target"
+    questions = {
+        "upload_data": "What data should Tablex understand first?",
+        "understand_data": f"What does this data mean before choosing {target}, evaluation, or features?",
+        "assumptions": "Which assumption could invalidate evaluation or feature design if left unresolved?",
+        "evaluation": "What evaluation design is reliable enough to constrain runner work?",
+        "approach": "What should Codex try next, given the evidence and harness constraints?",
+        "experiments": "What experiment evidence is missing before comparing approaches?",
+        "notebooks": "What notebook evidence would make the current results readable and decision-grade?",
+        "reports": "What decision can a human make from the current evidence, and what is still unsafe?",
+    }
+    return questions.get(focus_key, "What is the smallest useful decision now?")
+
+
+def _not_now_guidance(focus_key: str) -> list[str]:
+    shared = ["Do not start by browsing raw artifacts.", "Do not optimize a model before the current decision is resolved."]
+    specific = {
+        "assumptions": ["Do not ask Codex to engineer features around unresolved leakage or availability risks."],
+        "evaluation": ["Do not run leaderboard-style comparisons before the split and metric are owned by the harness."],
+        "approach": ["Do not reduce Codex to a fixed AutoML recipe; pass evidence and constraints instead."],
+        "notebooks": ["Do not promote empty previews or unexecuted diagnostics as decision evidence."],
+        "reports": ["Do not treat a report as deployment approval."],
+    }
+    return [*shared, *specific.get(focus_key, [])]
+
+
+def _if_done_guidance(focus_key: str) -> str:
+    followups = {
+        "upload_data": "Run Data Understanding and let the harness infer questions and assumptions.",
+        "understand_data": "Review high-risk assumptions before locking evaluation.",
+        "assumptions": "Move to Evaluation and lock a primary design only after risky assumptions are handled.",
+        "evaluation": "Prepare an open-ended Codex runner handoff with EvaluationSpec and SplitManifest attached.",
+        "approach": "Run or inspect experiments, then demand diagnostics instead of raw rank chasing.",
+        "experiments": "Generate notebook diagnostics so humans can read what changed and why.",
+        "notebooks": "Generate or refresh the decision report from notebook and run evidence.",
+        "reports": "Use the report to choose the next controlled runner task or human review decision.",
+    }
+    return followups.get(focus_key, "Refresh the Autonomous Navigator and follow the next decision.")
 
 
 def _navigation_attention_state(focus: dict[str, Any], state: dict[str, Any]) -> str:

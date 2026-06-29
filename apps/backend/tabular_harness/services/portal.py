@@ -158,6 +158,7 @@ def portal_job_title(job_type: str) -> str:
     labels = {
         "agent_chat_turn": "Agent chat handled a request",
         "generate_decision_report": "Decision report generated",
+        "save_autonomous_decision_brief": "Decision brief saved",
         "save_guided_journey_snapshot": "Guidance snapshot saved",
         "compare_guided_journey_snapshots": "Guidance snapshots compared",
         "run_eda_review": "Data review completed",
@@ -176,6 +177,8 @@ def portal_artifact_title(asset_type: str) -> str:
         "analysis_notebook": "Analysis notebook saved",
         "notebook_html": "Notebook preview saved",
         "agent_task_contract": "Agent task handoff saved",
+        "autonomous_decision_brief": "Decision brief saved",
+        "autonomous_decision_brief_report": "Decision brief report saved",
         "guided_journey_report": "Guidance report saved",
         "guided_journey_snapshot": "Guidance snapshot saved",
     }

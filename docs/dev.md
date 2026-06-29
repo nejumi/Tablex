@@ -93,11 +93,13 @@ Project Guidance is available from:
 
 ```bash
 curl http://localhost:8000/api/projects/{project_id}/guidance
+curl -X POST http://localhost:8000/api/projects/{project_id}/guidance/decision-brief
 curl -X POST http://localhost:8000/api/projects/{project_id}/guidance/snapshot
 curl -X POST http://localhost:8000/api/projects/{project_id}/guidance/snapshots/compare
 ```
 
 The response is `project_guidance.v1`. It is harness-owned decision support for the project UI and now includes `autonomous_navigation.v1`: one next-best decision, why it matters, the primary action, a small evidence set, journey progress, and a Codex navigation prompt. The UI should show this as the primary Autonomous Navigator instead of asking humans to scan the whole system topology. The attention budget is intentionally `1`.
+`autonomous_navigation.v1` includes an embedded `autonomous_decision_brief.v1` with one decision question, why-now rationale, evidence to check, primary action, not-now guidance, if-done follow-up, Codex handoff prompt, and harness boundaries. `/guidance/decision-brief` saves that current brief as JSON and Markdown report artifacts with lineage. Use it when a human or runner needs a compact checkpoint, not as a new shelf to browse by default.
 The same response still includes `recommended_focus`, `journey_stages`, and `current_stage_id` as supporting structure. Stage statuses are `done`, `current`, `next`, `blocked`, or `waiting`; stage actions reuse `ProjectGuidanceAction` so the UI can open the relevant tab, call a harness endpoint, or create a scoped AgentTaskContract while leaving approach selection open-ended. The journey includes a Notebooks stage between Experiments and Reports, so successful runs are routed through notebook generation/capture before final report review when notebook evidence is missing. These details should stay behind the Navigator's "show map only if needed" disclosure unless the user asks for them.
 `/guidance/snapshot` saves the current Guided Journey state as a `guided_journey_snapshot` JSON artifact, `guided_journey_report` Markdown artifact/Report, and `visualization_spec` stage-status artifact with lineage. It is useful before asking Codex for a larger next task or when capturing a decision checkpoint for review.
 `/guidance/snapshots/compare` compares the latest two saved Guided Journey snapshots and stores `guided_journey_comparison`, `guided_journey_comparison_report`, and a comparison `visualization_spec` with lineage from both source snapshots. The Reports tab surfaces these in Guidance History.

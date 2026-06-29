@@ -48,6 +48,9 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     assert empty_navigation["headline"] == empty_guidance["recommended_focus"]["title"]
     assert empty_navigation["primary_action"]["id"] == empty_guidance["recommended_focus"]["primary_action"]["id"]
     assert empty_navigation["codex_navigation"]["runner_may_choose_approach"] is True
+    assert empty_navigation["decision_brief"]["schema_version"] == "autonomous_decision_brief.v1"
+    assert empty_navigation["decision_brief"]["attention_budget"] == 1
+    assert empty_navigation["decision_brief"]["decision_question"]
     empty_journey = {stage["id"]: stage for stage in empty_guidance["journey_stages"]}
     assert empty_guidance["current_stage_id"] == "data_intake"
     assert empty_journey["data_intake"]["status"] == "current"
@@ -87,6 +90,7 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     assert next_navigation["attention_budget"] == 1
     assert next_navigation["journey_progress"]["total_count"] == len(next_guidance["journey_stages"])
     assert "show_the_next_decision" in next_navigation["aesthetic_principle"]
+    assert next_navigation["decision_brief"]["target_tab"] == next_guidance["recommended_focus"]["target_tab"]
 
     snapshot_response = client.post(f"/api/projects/{project_id}/guidance/snapshot")
     assert snapshot_response.status_code == 200, snapshot_response.text
@@ -101,6 +105,21 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     report_preview_response = client.get(f"/api/reports/{snapshot_job['output']['guided_journey_report_id']}/preview")
     assert report_preview_response.status_code == 200, report_preview_response.text
     assert "Guided Journey" in report_preview_response.json()["preview"]
+
+    decision_brief_response = client.post(f"/api/projects/{project_id}/guidance/decision-brief")
+    assert decision_brief_response.status_code == 200, decision_brief_response.text
+    decision_brief_job = decision_brief_response.json()
+    assert decision_brief_job["status"] == "succeeded"
+    assert decision_brief_job["job_type"] == "save_autonomous_decision_brief"
+    assert decision_brief_job["output"]["schema_version"] == "autonomous_decision_brief.v1"
+    assert decision_brief_job["output"]["autonomous_decision_brief_artifact_id"]
+    assert decision_brief_job["output"]["autonomous_decision_brief_report_id"]
+
+    decision_brief_preview_response = client.get(
+        f"/api/reports/{decision_brief_job['output']['autonomous_decision_brief_report_id']}/preview"
+    )
+    assert decision_brief_preview_response.status_code == 200, decision_brief_preview_response.text
+    assert "Autonomous Decision Brief" in decision_brief_preview_response.json()["preview"]
 
     second_snapshot_response = client.post(f"/api/projects/{project_id}/guidance/snapshot")
     assert second_snapshot_response.status_code == 200, second_snapshot_response.text
@@ -223,8 +242,10 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     next_step = next_step_response.json()
     assert next_step["intent"]["type"] == "explain_next_step"
     assert any(action["type"] == "explain_next_step" for action in next_step["actions"])
-    assert "Next focus" in next_step["assistant_message"]
+    assert "Next decision" in next_step["assistant_message"]
     assert "Autonomous Navigator" in next_step["assistant_message"]
+    next_step_action = next(action for action in next_step["actions"] if action["type"] == "explain_next_step")
+    assert next_step_action["guidance"]["decision_brief"]["schema_version"] == "autonomous_decision_brief.v1"
 
     generic_chat_response = client.post(
         f"/api/projects/{project_id}/agent-chat",

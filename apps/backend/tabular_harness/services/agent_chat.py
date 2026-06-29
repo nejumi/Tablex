@@ -424,6 +424,7 @@ def create_notebook_authoring_action(
 def explain_next_step_action(db: Session, *, project: Project) -> dict[str, Any]:
     guidance = build_project_guidance(db, project)
     focus = guidance["recommended_focus"]
+    decision_brief = guidance["autonomous_navigation"]["decision_brief"]
     return {
         "type": "explain_next_step",
         "status": "explained",
@@ -436,6 +437,7 @@ def explain_next_step_action(db: Session, *, project: Project) -> dict[str, Any]
             "confidence": focus["confidence"],
             "evidence": focus["evidence"],
             "current_stage_id": guidance["current_stage_id"],
+            "decision_brief": decision_brief,
         },
     }
 
@@ -810,9 +812,13 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
         )
     if intent["type"] == "explain_next_step":
         action = actions[0]
+        guidance = dict_value(action.get("guidance"))
+        decision_brief = dict_value(guidance.get("decision_brief"))
+        decision_question = str(decision_brief.get("decision_question") or action["label"])
+        if_done = str(decision_brief.get("if_done") or "Refresh the Autonomous Navigator after the action.")
         return (
-            f"Next focus: {action['label']}. {action['detail']} "
-            f"Open {action['target_tab']} and use the Autonomous Navigator evidence before asking a runner to continue."
+            f"Next decision: {decision_question}. {action['detail']} "
+            f"Open {action['target_tab']} and use the Autonomous Navigator evidence. After that: {if_done}"
         )
     if intent["type"] == "guide_notebook_review":
         action = actions[0]

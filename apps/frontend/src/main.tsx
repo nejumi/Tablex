@@ -146,6 +146,8 @@ const englishMessages = {
   autonomousNavigator: "Autonomous Navigator",
   oneDecisionAtATime: "one decision at a time",
   showMapOnlyIfNeeded: "Show the map only if needed",
+  decisionQuestion: "Decision question",
+  saveDecisionBrief: "Save decision brief",
   settings: "User Settings",
   settingsHint: "Language, locale packs, and display preferences are stored locally for this workbench.",
   language: "Language",
@@ -299,6 +301,8 @@ const japaneseMessages: LocaleMessages = {
   autonomousNavigator: "Autonomous Navigator",
   oneDecisionAtATime: "次の一手だけ",
   showMapOnlyIfNeeded: "必要な時だけ全体地図を開く",
+  decisionQuestion: "判断の問い",
+  saveDecisionBrief: "Decision briefを保存",
   settings: "ユーザー設定",
   settingsHint: "言語、locale pack、表示設定をこのworkbenchのlocal設定として保存します。",
   language: "言語",
@@ -2416,6 +2420,10 @@ function ProjectDetail({
     await runAction(() => api(`/api/projects/${project.id}/guidance/snapshot`, { method: "POST" }));
   }
 
+  async function saveAutonomousDecisionBrief() {
+    await runAction(() => api(`/api/projects/${project.id}/guidance/decision-brief`, { method: "POST" }));
+  }
+
   async function runStrategyAction(action: StrategyAction) {
     const targetTab = tabFromString(action.target_tab, "Approach");
     if (action.action_type === "navigate") {
@@ -2447,6 +2455,7 @@ function ProjectDetail({
         onTabChange={onTabChange}
         onAction={(action) => void runFocusAction(action)}
         onSaveSnapshot={() => void saveGuidedJourneySnapshot()}
+        onSaveDecisionBrief={() => void saveAutonomousDecisionBrief()}
       />
       <AgentChatDock
         busy={busy}
@@ -2612,7 +2621,8 @@ function AutonomousNavigator({
   text,
   onTabChange,
   onAction,
-  onSaveSnapshot
+  onSaveSnapshot,
+  onSaveDecisionBrief
 }: {
   guidance: ProjectGuidance | null;
   recommendation: FocusRecommendation;
@@ -2622,10 +2632,16 @@ function AutonomousNavigator({
   onTabChange: (tab: Tab) => void;
   onAction: (action: FocusAction | null) => void;
   onSaveSnapshot: () => void;
+  onSaveDecisionBrief: () => void;
 }) {
   const navigation = guidance?.autonomous_navigation ?? {};
+  const decisionBrief =
+    navigation.decision_brief && typeof navigation.decision_brief === "object"
+      ? (navigation.decision_brief as Record<string, unknown>)
+      : {};
   const headline = textField(navigation.headline) ?? recommendation.title;
   const why = textField(navigation.why) ?? recommendation.reason;
+  const decisionQuestion = textField(decisionBrief.decision_question);
   const status = textField(navigation.status) ?? recommendation.riskLevel ?? "ready_to_act";
   const evidence = Array.isArray(navigation.evidence)
     ? navigation.evidence.map((item) => String(item)).slice(0, 3)
@@ -2665,6 +2681,12 @@ function AutonomousNavigator({
         <div className="autonomous-copy">
           <div className="eyebrow">{text.autonomousNavigator}</div>
           <h2>{headline}</h2>
+          {decisionQuestion ? (
+            <div className="autonomous-question">
+              <span>{text.decisionQuestion}</span>
+              <strong>{decisionQuestion}</strong>
+            </div>
+          ) : null}
           <p>{why}</p>
           <div className="badge-row">
             <span className={navigatorStatusClass(status)}>{status.replace(/_/g, " ")}</span>
@@ -2713,6 +2735,10 @@ function AutonomousNavigator({
           <button className="secondary-button" disabled={busy} type="button" onClick={onSaveSnapshot}>
             {busy ? <Loader2 className="spin" size={16} /> : <Download size={16} />}
             {text.journeySaveSnapshot}
+          </button>
+          <button className="secondary-button" disabled={busy} type="button" onClick={onSaveDecisionBrief}>
+            {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+            {text.saveDecisionBrief}
           </button>
         </div>
       </details>
