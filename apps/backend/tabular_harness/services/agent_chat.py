@@ -1042,7 +1042,7 @@ def build_worker_events(
             "target_tab": next_focus_from_actions(actions).get("target_tab"),
             "created_at": job.created_at.isoformat(),
             "updated_at": job.updated_at.isoformat(),
-            "active": status == "needs_review",
+            "active": False,
             "token_usage": {
                 "source": "estimated_until_runner_telemetry",
                 "is_estimate": True,

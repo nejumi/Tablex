@@ -3025,14 +3025,17 @@ function AgentWorkerCard({
   }
 
   return (
-    <section className={`agent-worker-card ${event.status} ${event.active ? "active" : ""}`}>
+    <section className={`agent-worker-card ${event.status} ${isActiveWorkerEvent(event) ? "active" : ""}`}>
       <div className="agent-worker-topline">
         <strong>{event.display_name}</strong>
         <span>{event.status}</span>
       </div>
       <p>{event.headline}</p>
       <small>{event.detail}</small>
-      <div className={`token-sparkline ${event.active || isRunningWorkerStatus(event.status) ? "live" : ""}`} aria-label={text.estimatedTokens}>
+      <div
+        className={`token-sparkline ${isActiveWorkerEvent(event) || isRunningWorkerStatus(event.status) ? "live" : ""}`}
+        aria-label={text.estimatedTokens}
+      >
         {displaySeries.map((point, index) => (
           <span
             key={`${point.step}-${index}`}
@@ -3091,18 +3094,22 @@ function optimisticWorkerEvent(projectId: string, message: string): AgentWorkerE
 }
 
 function isRunningWorkerStatus(status: string) {
-  return ["queued", "running", "approval_required", "needs_review"].includes(status);
+  return ["queued", "running", "approval_required"].includes(status);
+}
+
+function isActiveWorkerEvent(event: AgentWorkerEvent) {
+  return event.active && isRunningWorkerStatus(event.status);
 }
 
 function isVisibleWorkerEvent(event: AgentWorkerEvent, now: number) {
   const timestamp = Date.parse(event.updated_at ?? event.created_at ?? "");
   if (event.job_id.startsWith("local-") && Number.isFinite(timestamp) && now - timestamp > 15000) return false;
-  if (event.active || isRunningWorkerStatus(event.status)) return true;
+  if (isActiveWorkerEvent(event) || isRunningWorkerStatus(event.status)) return true;
   return Number.isFinite(timestamp) && now - timestamp < 9000;
 }
 
 function animatedTokenSeries(event: AgentWorkerEvent, tick: number): TokenSeriesPoint[] {
-  if (!event.active && !isRunningWorkerStatus(event.status)) return event.token_usage.series;
+  if (!isActiveWorkerEvent(event) && !isRunningWorkerStatus(event.status)) return event.token_usage.series;
   return event.token_usage.series.map((point, index) => ({
     ...point,
     tokens: Math.max(1, Math.round(point.tokens + ((tick + index) % 3) * Math.max(4, Math.round(point.tokens * 0.035))))
@@ -3162,7 +3169,10 @@ function coerceWorkerEvent(raw: unknown, job: Job, index: number): AgentWorkerEv
     target_tab: typeof record.target_tab === "string" ? record.target_tab : targetTabForJob(job.job_type),
     created_at: typeof record.created_at === "string" ? record.created_at : job.created_at,
     updated_at: typeof record.updated_at === "string" ? record.updated_at : job.updated_at,
-    active: typeof record.active === "boolean" ? record.active : isRunningWorkerStatus(job.status),
+    active:
+      typeof record.active === "boolean" && isRunningWorkerStatus(typeof record.status === "string" ? record.status : job.status)
+        ? record.active
+        : isRunningWorkerStatus(job.status),
     token_usage: {
       source:
         usage && typeof usage === "object" && typeof (usage as Record<string, unknown>).source === "string"
