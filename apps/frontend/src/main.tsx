@@ -8960,6 +8960,34 @@ function LeaderboardTab({
       : "warning"
     : "muted";
 
+  async function analyzeTopRun(entry: LeaderboardEntry) {
+    const job = await api<Job>(`/api/runs/${entry.run_id}/diagnostics`, { method: "POST" });
+    const artifactIds = Array.isArray(job.output.artifact_ids) ? job.output.artifact_ids : [];
+    const preferredArtifactId = typeof artifactIds[1] === "string" ? artifactIds[1] : typeof artifactIds[0] === "string" ? artifactIds[0] : null;
+    if (preferredArtifactId) {
+      await loadPreview(preferredArtifactId);
+    }
+    return job;
+  }
+
+  async function draftTopRunReport(entry: LeaderboardEntry) {
+    const job = await api<Job>(`/api/runs/${entry.run_id}/report`, { method: "POST" });
+    const artifactId = textField(job.output.artifact_id);
+    if (artifactId) {
+      await loadPreview(artifactId);
+    }
+    return job;
+  }
+
+  async function generateTopRunNotebook(entry: LeaderboardEntry) {
+    const job = await api<Job>(`/api/runs/${entry.run_id}/analysis-notebook`, { method: "POST" });
+    const htmlArtifactId = textField(job.output.notebook_html_artifact_id);
+    if (htmlArtifactId) {
+      await loadPreview(htmlArtifactId);
+    }
+    return job;
+  }
+
   return (
     <div className="stack">
       <FocusedEvidenceReader
@@ -8984,7 +9012,7 @@ function LeaderboardTab({
         nextButtonLabel={topEntry ? "Analyze Top Run" : "Waiting for Runs"}
         nextDisabled={busy || !topEntry}
         onNext={() => {
-          if (topEntry) void runAction(() => api(`/api/runs/${topEntry.run_id}/diagnostics`, { method: "POST" }));
+          if (topEntry) void runAction(() => analyzeTopRun(topEntry));
         }}
         previewTitle="Diagnostics preview"
         preview={preview}
@@ -8993,6 +9021,22 @@ function LeaderboardTab({
         previewEmpty="Analyze a run or select a diagnostics artifact to read the evaluation evidence here."
         boundary="Ranks require the same evaluation contract"
       />
+      {topEntry ? (
+        <div className="toolbar leaderboard-reader-actions" aria-label="Top run evidence actions">
+          <button className="secondary-button" disabled={busy} onClick={() => void runAction(() => analyzeTopRun(topEntry))}>
+            {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+            Top Run Diagnostics
+          </button>
+          <button className="secondary-button" disabled={busy} onClick={() => void runAction(() => draftTopRunReport(topEntry))}>
+            {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+            Top Run Report
+          </button>
+          <button className="secondary-button" disabled={busy} onClick={() => void runAction(() => generateTopRunNotebook(topEntry))}>
+            {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+            Diagnostics Notebook
+          </button>
+        </div>
+      ) : null}
       <Panel title="Leaderboard" icon={<BarChart3 size={18} />}>
         {leaderboard.length ? (
           <Table
@@ -9011,7 +9055,7 @@ function LeaderboardTab({
                 className="icon-button"
                 disabled={busy}
                 key={entry.run_id}
-                onClick={() => void runAction(() => api(`/api/runs/${entry.run_id}/diagnostics`, { method: "POST" }))}
+                onClick={() => void runAction(() => analyzeTopRun(entry))}
                 title="Analyze evaluation diagnostics"
               >
                 {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}

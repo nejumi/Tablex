@@ -231,6 +231,13 @@ def test_agent_chat_runs_core_harness_actions(tmp_path: Path) -> None:
     assert report_chat["action_summary"]["next_step"]["target_tab"] == "Reports"
     assert any(action["type"] == "generate_decision_report" and action["artifact_id"] for action in report_chat["actions"])
 
+    empty_leaderboard_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "リーダーボードを見せて"})
+    assert empty_leaderboard_response.status_code == 200, empty_leaderboard_response.text
+    empty_leaderboard = empty_leaderboard_response.json()
+    assert empty_leaderboard["intent"]["type"] == "show_leaderboard"
+    assert empty_leaderboard["action_summary"]["headline"] == "Leaderboard needs run evidence"
+    assert empty_leaderboard["action_summary"]["next_step"]["target_tab"] == "Experiments"
+
 
 def test_relational_schema_hint_upload_preview_and_agent_route(tmp_path: Path) -> None:
     client = make_client(tmp_path)
@@ -810,6 +817,25 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert baseline_metrics["baseline_type"] in {"xgboost_classifier", "logistic_regression", "majority_classifier"}
     assert baseline_metrics["primary_metric_value"] >= 0
     assert len(baseline_job["output"]["artifact_ids"]) >= 7
+
+    leaderboard_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "リーダーボードを見せて"})
+    assert leaderboard_chat_response.status_code == 200, leaderboard_chat_response.text
+    leaderboard_chat = leaderboard_chat_response.json()
+    assert leaderboard_chat["intent"]["type"] == "show_leaderboard"
+    assert leaderboard_chat["action_summary"]["headline"] == "Leaderboard reader is ready"
+    assert leaderboard_chat["action_summary"]["next_step"]["target_tab"] == "Leaderboard"
+    assert leaderboard_chat["action_summary"]["next_step"]["target_anchor"] == "leaderboard-focus"
+    assert any("same EvaluationSpec and SplitManifest" in item for item in leaderboard_chat["action_summary"]["boundaries"])
+
+    compare_runs_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "上位runを比較して"})
+    assert compare_runs_chat_response.status_code == 200, compare_runs_chat_response.text
+    compare_runs_chat = compare_runs_chat_response.json()
+    assert compare_runs_chat["intent"]["type"] == "compare_top_runs"
+    assert compare_runs_chat["action_summary"]["headline"] == "Run evidence compared"
+    assert compare_runs_chat["action_summary"]["next_step"]["target_tab"] == "Leaderboard"
+    compare_runs_action = next(action for action in compare_runs_chat["actions"] if action["type"] == "compare_top_runs")
+    assert compare_runs_action["status"] == "applied"
+    assert compare_runs_action["artifact_id"]
 
     model_response = client.get(f"/api/model-versions/{baseline_job['output']['model_version_id']}")
     assert model_response.status_code == 200, model_response.text

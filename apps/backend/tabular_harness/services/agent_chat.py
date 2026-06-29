@@ -13,6 +13,7 @@ from tabular_harness.models.entities import (
     DatasetSnapshot,
     EvaluationCandidate,
     EvaluationSpec,
+    ExperimentRun,
     Job,
     Project,
     SplitManifest,
@@ -35,6 +36,7 @@ from tabular_harness.services.evaluation import (
     write_candidates_artifact,
     write_spec_artifact,
 )
+from tabular_harness.services.experiment_lifecycle import compare_project_experiments
 from tabular_harness.services.jobs import (
     create_job,
     mark_job_failed,
@@ -43,6 +45,7 @@ from tabular_harness.services.jobs import (
 )
 from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.project_guidance import build_project_guidance
+from tabular_harness.services.reporting import leaderboard_sort_key
 
 SUPPORTED_METRICS = {
     "roc_auc": {"aliases": ["roc auc", "roc-auc", "roc_auc", "auc"], "label": "ROC-AUC"},
@@ -105,6 +108,10 @@ def handle_agent_chat_turn(
         actions.append(plan_baseline_strategy_action(db, store=store, project=project))
     elif intent["type"] == "generate_decision_report":
         actions.append(generate_decision_report_action(db, store=store, project=project))
+    elif intent["type"] == "show_leaderboard":
+        actions.append(show_leaderboard_action(db, project=project))
+    elif intent["type"] == "compare_top_runs":
+        actions.append(compare_top_runs_action(db, store=store, project=project))
     elif intent["type"] == "author_analysis_notebook":
         authoring_action = create_notebook_authoring_action(db, store=store, project=project, message=message)
         actions.append(authoring_action)
@@ -305,6 +312,20 @@ def infer_chat_intent(message: str) -> dict[str, Any]:
             "confidence": 0.78,
             "summary": "User wants Tablex to synthesize the current project evidence into a decision report.",
         }
+    if is_compare_top_runs_request(normalized):
+        return {
+            "type": "compare_top_runs",
+            "metric": None,
+            "confidence": 0.82,
+            "summary": "User wants Tablex to compare current run evidence before reading leaderboard claims.",
+        }
+    if is_leaderboard_request(normalized):
+        return {
+            "type": "show_leaderboard",
+            "metric": None,
+            "confidence": 0.78,
+            "summary": "User wants Tablex to show the leaderboard reading surface.",
+        }
     if is_next_step_request(normalized):
         return {
             "type": "explain_next_step",
@@ -469,6 +490,28 @@ def is_decision_report_request(normalized: str) -> bool:
         for word in ["generate", "create", "draft", "write", "make", "show", "作", "生成", "書", "まとめ", "見せ", "して"]
     )
     return has_report_word and has_action_word
+
+
+def is_leaderboard_request(normalized: str) -> bool:
+    has_leaderboard_word = any(
+        word in normalized
+        for word in ["leaderboard", "leader board", "ranking", "rankings", "リーダーボード", "ランキング", "順位"]
+    )
+    has_action_word = any(
+        word in normalized for word in ["show", "open", "read", "inspect", "見せ", "表示", "開", "見る", "見たい", "確認"]
+    )
+    return has_leaderboard_word and has_action_word
+
+
+def is_compare_top_runs_request(normalized: str) -> bool:
+    has_run_word = any(
+        word in normalized
+        for word in ["run", "runs", "experiment", "experiments", "leaderboard", "実験", "run", "上位", "トップ"]
+    )
+    has_compare_word = any(
+        word in normalized for word in ["compare", "comparison", "best", "top", "rank", "比較", "比べ", "上位", "トップ"]
+    )
+    return has_run_word and has_compare_word
 
 
 def is_notebook_authoring_request(normalized: str) -> bool:
@@ -969,6 +1012,101 @@ def generate_decision_report_action(db: Session, *, store: LocalArtifactStore, p
     }
 
 
+def show_leaderboard_action(db: Session, *, project: Project) -> dict[str, Any]:
+    runs = leaderboard_runs(db, project.id)
+    if not runs:
+        return needs_review_action(
+            action_type="show_leaderboard",
+            label="Run evidence is needed before reading the leaderboard",
+            target_tab="Experiments",
+            target_anchor=None,
+            detail=(
+                "No successful ExperimentRun exists yet. Open Experiments after approving EvaluationSpec and "
+                "generating SplitManifest, then run a baseline or controlled agent task before ranking anything."
+            ),
+        )
+    top_run = runs[0]
+    metric = loads_json(top_run.metrics_json, {})
+    primary_metric_name = str(metric.get("primary_metric_name") or "-")
+    primary_metric_value = metric.get("primary_metric_value")
+    value_text = f"{primary_metric_value:.6f}" if isinstance(primary_metric_value, int | float) else str(primary_metric_value or "-")
+    return {
+        "type": "show_leaderboard",
+        "status": "explained",
+        "label": "Open the Leaderboard Reader",
+        "target_tab": "Leaderboard",
+        "target_anchor": "leaderboard-focus",
+        "detail": (
+            f"Leaderboard has {len(runs)} successful run(s). Top run is {top_run.id} with "
+            f"{primary_metric_name}={value_text}. Read diagnostics and run report evidence before trusting the rank."
+        ),
+        "entity_ids": [run.id for run in runs[:5]],
+    }
+
+
+def compare_top_runs_action(db: Session, *, store: LocalArtifactStore, project: Project) -> dict[str, Any]:
+    runs = leaderboard_runs(db, project.id)
+    if not runs:
+        return needs_review_action(
+            action_type="compare_top_runs",
+            label="Successful runs are needed before comparing results",
+            target_tab="Experiments",
+            target_anchor=None,
+            detail=(
+                "No successful ExperimentRun exists yet. Run a baseline or controlled agent task under an approved "
+                "EvaluationSpec and SplitManifest before comparing approaches."
+            ),
+        )
+    action_job = create_job(
+        db,
+        job_type="compare_experiments",
+        project_id=project.id,
+        input_payload={"triggered_by": "agent_chat", "run_ids": [run.id for run in runs[:5]]},
+    )
+    try:
+        mark_job_running(action_job)
+        result = compare_project_experiments(db, store=store, project=project)
+        mark_job_succeeded(
+            action_job,
+            {
+                "artifact_ids": result.artifact_ids,
+                "comparison": result.comparison,
+                "visualization_id": result.visualization_id,
+                "report_id": result.report_id,
+                "evidence_id": result.evidence_id,
+                "insight_id": result.insight_id,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(action_job, str(exc))
+        return needs_review_action(
+            action_type="compare_top_runs",
+            label="Run comparison needs attention",
+            target_tab="Experiments",
+            target_anchor=None,
+            detail=str(exc),
+            job_id=action_job.id,
+        )
+    comparison = dict_value(result.comparison)
+    decision = dict_value(comparison.get("decision"))
+    best_run_id = str(decision.get("best_run_id") or runs[0].id)
+    return {
+        "type": "compare_top_runs",
+        "status": "applied",
+        "label": "Compared current run evidence",
+        "target_tab": "Leaderboard",
+        "target_anchor": "leaderboard-focus",
+        "detail": (
+            f"Created experiment comparison evidence for {len(runs)} successful run(s). "
+            f"Current best run is {best_run_id}; read diagnostics and the comparison report before treating the rank as a decision."
+        ),
+        "artifact_id": result.artifact_ids[0] if result.artifact_ids else None,
+        "artifact_ids": result.artifact_ids,
+        "entity_ids": [run.id for run in runs[:5]],
+        "job_id": action_job.id,
+    }
+
+
 def needs_dataset_action(*, action_type: str, label: str, detail: str) -> dict[str, Any]:
     return needs_review_action(
         action_type=action_type,
@@ -1062,6 +1200,7 @@ def target_anchor_for_tab(tab: str) -> str:
         "Assumptions": "assumption-review",
         "Evaluation": "evaluation-design",
         "Approach": "approach-handoff",
+        "Leaderboard": "leaderboard-focus",
         "Notebooks": "notebook-focus",
         "Reports": "decision-report",
     }
@@ -1088,6 +1227,15 @@ def latest_split_for_spec_id(db: Session, spec_id: str) -> SplitManifest | None:
     return db.scalar(
         select(SplitManifest).where(SplitManifest.evaluation_spec_id == spec_id).order_by(SplitManifest.created_at.desc())
     )
+
+
+def leaderboard_runs(db: Session, project_id: str) -> list[ExperimentRun]:
+    runs = list(
+        db.scalars(
+            select(ExperimentRun).where(ExperimentRun.project_id == project_id, ExperimentRun.status == "succeeded")
+        ).all()
+    )
+    return sorted(runs, key=leaderboard_sort_key)
 
 
 def guide_notebook_review_action(
@@ -1551,6 +1699,25 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
                 f"{action['detail']} Next: open Reports and read the recommendation, coverage gaps, and next action before scanning raw artifacts."
             )
         return f"I cannot generate the decision report yet: {action['detail']} Open {action['target_tab']} and resolve that first."
+    if intent["type"] == "show_leaderboard":
+        action = actions[0]
+        if action["status"] == "needs_review":
+            return (
+                f"The leaderboard is not ready yet: {action['detail']} "
+                "Next: open Experiments and create comparable run evidence under the approved evaluation contract."
+            )
+        return (
+            f"I routed you to the Leaderboard Reader. {action['detail']} "
+            "Read the top-run diagnostics and run report before treating metric rank as a decision."
+        )
+    if intent["type"] == "compare_top_runs":
+        action = actions[0]
+        if action["status"] == "applied":
+            return (
+                f"I compared the current run evidence. {action['detail']} "
+                "Next: open Leaderboard, then inspect diagnostics/report evidence for the leading run."
+            )
+        return f"I cannot compare runs yet: {action['detail']} Open {action['target_tab']} and resolve that first."
     if intent["type"] == "author_analysis_notebook":
         brief_action = next((action for action in actions if action["type"] == "create_notebook_authoring_brief"), None)
         task_action = next((action for action in actions if action["type"] == "create_agent_task_contract"), None)
@@ -1663,6 +1830,10 @@ def action_summary_headline(intent: dict[str, Any], outcome: str) -> str:
         return "Baseline strategy plan is ready" if outcome == "applied" else "Baseline strategy needs evaluation context"
     if intent_type == "generate_decision_report":
         return "Decision report is ready" if outcome == "applied" else "Decision report needs review"
+    if intent_type == "show_leaderboard":
+        return "Leaderboard reader is ready" if outcome != "needs_review" else "Leaderboard needs run evidence"
+    if intent_type == "compare_top_runs":
+        return "Run evidence compared" if outcome == "applied" else "Run comparison needs successful runs"
     if intent_type == "generate_data_understanding_notebook":
         return "Notebook evidence generated"
     if intent_type == "author_analysis_notebook":
@@ -1693,6 +1864,8 @@ def action_summary_boundaries(intent: dict[str, Any], actions: list[dict[str, An
         boundaries.append("Baseline strategy is an evidence-backed plan, not a fixed AutoML recipe or deployment approval.")
     if intent_type == "generate_decision_report":
         boundaries.append("Decision reports summarize current evidence; missing evidence remains visible instead of being invented.")
+    if intent_type in {"show_leaderboard", "compare_top_runs"}:
+        boundaries.append("Leaderboard ranks are decision evidence only under the same EvaluationSpec and SplitManifest context.")
     if intent_type == "plan_notebook_followup_task":
         boundaries.append("Notebook follow-up diagnostics must be artifact-backed and must not fake unavailable model evidence.")
         boundaries.append("EvaluationSpec and SplitManifest remain read-only constraints for the runner.")
