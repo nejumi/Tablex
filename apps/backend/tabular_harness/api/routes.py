@@ -50,6 +50,7 @@ from tabular_harness.schemas import (
     AssetReferenceRead,
     AssetVersionRead,
     AssumptionRead,
+    AssumptionReviewQueueRead,
     BenchmarkDatasetRead,
     BenchmarkFixtureRequest,
     BenchmarkFixtureResponse,
@@ -117,6 +118,7 @@ from tabular_harness.services.asset_library import (
     create_library_asset,
     seed_default_assets,
 )
+from tabular_harness.services.assumption_review import build_assumption_review_queue
 from tabular_harness.services.baseline import (
     create_baseline_strategy_plan,
 )
@@ -1879,6 +1881,12 @@ def list_assumptions(project_id: str, db: Annotated[Session, Depends(get_session
         select(Assumption).where(Assumption.project_id == project_id).order_by(Assumption.risk_level.desc(), Assumption.created_at)
     ).all()
     return [assumption_to_dict(db, item) for item in assumptions]
+
+
+@router.get("/api/projects/{project_id}/assumptions/review-queue", response_model=AssumptionReviewQueueRead)
+def assumption_review_queue(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    return build_assumption_review_queue(db, project)
 
 
 @router.post("/api/projects/{project_id}/assumptions/infer", response_model=JobRead)

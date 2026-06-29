@@ -127,6 +127,14 @@ curl http://localhost:8000/api/datasets/{dataset_snapshot_id}/quality/latest
 The quality gate stores `data_quality_gate`, `data_quality_report`, and a quality `visualization_spec`. It materializes high-risk findings as Evidence, Assumptions, Questions, and an Insight. AgentContextPacks include `quality_gate_context` so future Codex/Skill runners can see harness-owned leakage, availability, temporal, duplicate, missingness, and evaluation-readiness constraints before generating features or code.
 When the source EDA profile is `bounded_sample`, duplicate and target-proxy checks run against a materialized sample table and the gate records `profile_boundary.quality_check_scope=sample`, sample row count, and deferred deep-profile status. Reports and UI metadata expose that boundary so downstream EvaluationSpec, AgentTask, and reporting steps do not confuse sample-backed checks with full-table guarantees.
 
+Assumption review queue:
+
+```bash
+curl http://localhost:8000/api/projects/{project_id}/assumptions/review-queue
+```
+
+The response is `assumption_review_queue.v1`. It merges unresolved Assumptions and unanswered Questions into a prioritized one-item-at-a-time review queue using risk level, fallback policy, confirmation requirement, question priority, blocking flags, and confidence. The UI uses this before the full Assumptions table so users can confirm, challenge, or answer the most important item without scanning every assumption first.
+
 Evaluation scenario comparison endpoint:
 
 ```bash

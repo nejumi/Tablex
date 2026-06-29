@@ -555,6 +555,41 @@ type Assumption = {
   evidence: Array<{ summary: string; strength: string }>;
 };
 
+type AssumptionReviewAction = {
+  id: string;
+  label: string;
+  action_type: "confirm_assumption" | "challenge_assumption" | "answer_question" | "navigate";
+  method: string | null;
+  endpoint: string | null;
+  request_body: Record<string, unknown> | null;
+};
+
+type AssumptionReviewItem = {
+  item_type: "assumption" | "question";
+  id: string;
+  title: string;
+  body: string;
+  why_it_matters: string | null;
+  status: string;
+  risk_level: string;
+  fallback_policy: string;
+  confidence: number | null;
+  priority_score: number;
+  evidence: Array<{ summary: string; strength: string; evidence_type?: string; source_artifact_id?: string | null }>;
+  choices: string[];
+  primary_actions: AssumptionReviewAction[];
+};
+
+type AssumptionReviewQueue = {
+  schema_version: "assumption_review_queue.v1";
+  project_id: string;
+  generated_at: string;
+  next_item: AssumptionReviewItem | null;
+  queue: AssumptionReviewItem[];
+  counts: Record<string, number>;
+  guidance: string[];
+};
+
 type EvaluationCandidate = {
   id: string;
   name: string;
@@ -1469,6 +1504,7 @@ function ProjectDetail({
   const [datasets, setDatasets] = React.useState<DatasetSnapshot[]>([]);
   const [questions, setQuestions] = React.useState<Question[]>([]);
   const [assumptions, setAssumptions] = React.useState<Assumption[]>([]);
+  const [assumptionReviewQueue, setAssumptionReviewQueue] = React.useState<AssumptionReviewQueue | null>(null);
   const [candidates, setCandidates] = React.useState<EvaluationCandidate[]>([]);
   const [specs, setSpecs] = React.useState<EvaluationSpec[]>([]);
   const [artifacts, setArtifacts] = React.useState<Artifact[]>([]);
@@ -1520,6 +1556,7 @@ function ProjectDetail({
         datasetsData,
         questionsData,
         assumptionsData,
+        assumptionReviewQueueData,
         candidatesData,
         specsData,
         artifactsData,
@@ -1544,6 +1581,7 @@ function ProjectDetail({
         api<DatasetSnapshot[]>(`/api/projects/${project.id}/datasets`),
         api<Question[]>(`/api/projects/${project.id}/questions`),
         api<Assumption[]>(`/api/projects/${project.id}/assumptions`),
+        api<AssumptionReviewQueue>(`/api/projects/${project.id}/assumptions/review-queue`).catch(() => null),
         api<EvaluationCandidate[]>(`/api/projects/${project.id}/evaluation/candidates`),
         api<EvaluationSpec[]>(`/api/projects/${project.id}/evaluation/specs`),
         api<Artifact[]>(`/api/projects/${project.id}/artifacts`),
@@ -1568,6 +1606,7 @@ function ProjectDetail({
       setDatasets(datasetsData);
       setQuestions(questionsData);
       setAssumptions(assumptionsData);
+      setAssumptionReviewQueue(assumptionReviewQueueData);
       setCandidates(candidatesData);
       setSpecs(specsData);
       setArtifacts(artifactsData);
@@ -1737,6 +1776,7 @@ function ProjectDetail({
       {tab === "Assumptions" && (
         <AssumptionsTab
           assumptions={assumptions}
+          reviewQueue={assumptionReviewQueue}
           questions={questions}
           busy={busy}
           applyFallbacks={() => runAction(() => api(`/api/projects/${project.id}/assumptions/infer`, { method: "POST" }))}
@@ -3259,12 +3299,14 @@ function QuestionCard({
 
 function AssumptionsTab({
   assumptions,
+  reviewQueue,
   questions,
   busy,
   applyFallbacks,
   runAction
 }: {
   assumptions: Assumption[];
+  reviewQueue: AssumptionReviewQueue | null;
   questions: Question[];
   busy: boolean;
   applyFallbacks: () => Promise<void>;
@@ -3272,6 +3314,7 @@ function AssumptionsTab({
 }) {
   return (
     <div className="stack">
+      <AssumptionReviewQueuePanel queue={reviewQueue} busy={busy} runAction={runAction} />
       <div className="toolbar">
         <button className="secondary-button" disabled={busy} onClick={() => void applyFallbacks()}>
           {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
@@ -3325,6 +3368,133 @@ function AssumptionsTab({
         )}
       </Panel>
     </div>
+  );
+}
+
+function AssumptionReviewQueuePanel({
+  queue,
+  busy,
+  runAction
+}: {
+  queue: AssumptionReviewQueue | null;
+  busy: boolean;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  const item = queue?.next_item ?? null;
+  const [answerValue, setAnswerValue] = React.useState("");
+  const [answerText, setAnswerText] = React.useState("");
+
+  React.useEffect(() => {
+    setAnswerValue(item?.choices[0] ?? "");
+    setAnswerText("");
+  }, [item?.id, item?.choices]);
+
+  async function runReviewAction(action: AssumptionReviewAction) {
+    if (!action.endpoint) return;
+    if (action.action_type === "answer_question") {
+      if (!answerValue.trim()) return;
+      await runAction(() =>
+        api(action.endpoint as string, {
+          method: action.method ?? "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ answer_value: answerValue, answer_text: answerText || null })
+        })
+      );
+      return;
+    }
+    await runAction(() =>
+      api(action.endpoint as string, {
+        method: action.method ?? "POST",
+        headers: action.request_body ? { "Content-Type": "application/json" } : undefined,
+        body: action.request_body ? JSON.stringify(action.request_body) : undefined
+      })
+    );
+  }
+
+  return (
+    <Panel title="Review Queue" icon={<ListChecks size={18} />}>
+      {item ? (
+        <div className="review-card">
+          <div className="review-card-main">
+            <div>
+              <div className="review-card-eyebrow">
+                {item.item_type === "question" ? "Question" : "Assumption"} · priority {Math.round(item.priority_score)}
+              </div>
+              <h3>{item.title}</h3>
+              <p>{item.body}</p>
+            </div>
+            <div className="badge-row">
+              <span className={item.risk_level === "high" || item.risk_level === "blocking" ? "badge risk" : "badge muted"}>
+                {item.risk_level}
+              </span>
+              <span className="badge muted">{item.fallback_policy}</span>
+              <span className="badge">{item.status}</span>
+              {item.confidence !== null ? <span className="badge muted">{Math.round(item.confidence * 100)}%</span> : null}
+            </div>
+            {item.why_it_matters ? <p className="review-reason">{item.why_it_matters}</p> : null}
+            {item.evidence.length ? (
+              <ul className="review-evidence">
+                {item.evidence.slice(0, 3).map((evidence) => (
+                  <li key={`${item.id}-${evidence.summary}`}>
+                    <strong>{evidence.strength}</strong>
+                    {evidence.summary}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+          {item.item_type === "question" ? (
+            <div className="answer-row">
+              <select value={answerValue} onChange={(event) => setAnswerValue(event.target.value)} disabled={busy}>
+                {item.choices.map((choice) => (
+                  <option key={choice} value={choice}>
+                    {choice}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={answerText}
+                onChange={(event) => setAnswerText(event.target.value)}
+                placeholder="Answer note"
+                disabled={busy}
+              />
+              {item.primary_actions.map((action) => (
+                <button
+                  className="primary-button"
+                  disabled={busy || !answerValue.trim()}
+                  key={action.id}
+                  onClick={() => void runReviewAction(action)}
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="button-row">
+              {item.primary_actions.map((action) => (
+                <button
+                  className={action.action_type === "confirm_assumption" ? "primary-button" : "secondary-button"}
+                  disabled={busy}
+                  key={action.id}
+                  onClick={() => void runReviewAction(action)}
+                >
+                  {action.action_type === "confirm_assumption" ? <Check size={16} /> : <AlertTriangle size={16} />}
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="review-queue-strip">
+            <span>{queue ? `${queue.counts.reviewable_assumptions ?? 0} assumptions` : "0 assumptions"}</span>
+            <span>{queue ? `${queue.counts.open_questions ?? 0} questions` : "0 questions"}</span>
+            <span>{queue ? `${queue.queue.length} queued` : "0 queued"}</span>
+          </div>
+        </div>
+      ) : (
+        <EmptyInline text="No assumption or question needs review right now. Confirmed, challenged, and answered items stay available in the supporting table." />
+      )}
+    </Panel>
   );
 }
 

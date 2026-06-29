@@ -394,6 +394,41 @@ class AssumptionRead(BaseModel):
     updated_at: str
 
 
+class AssumptionReviewAction(BaseModel):
+    id: str
+    label: str
+    action_type: Literal["confirm_assumption", "challenge_assumption", "answer_question", "navigate"]
+    method: str | None = None
+    endpoint: str | None = None
+    request_body: dict[str, Any] | None = None
+
+
+class AssumptionReviewItem(BaseModel):
+    item_type: Literal["assumption", "question"]
+    id: str
+    title: str
+    body: str
+    why_it_matters: str | None = None
+    status: str
+    risk_level: str
+    fallback_policy: str
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    priority_score: float
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    choices: list[str] = Field(default_factory=list)
+    primary_actions: list[AssumptionReviewAction] = Field(default_factory=list)
+
+
+class AssumptionReviewQueueRead(BaseModel):
+    schema_version: Literal["assumption_review_queue.v1"]
+    project_id: str
+    generated_at: str
+    next_item: AssumptionReviewItem | None = None
+    queue: list[AssumptionReviewItem]
+    counts: dict[str, int]
+    guidance: list[str]
+
+
 class EvidenceCreate(BaseModel):
     evidence_type: str
     summary: str

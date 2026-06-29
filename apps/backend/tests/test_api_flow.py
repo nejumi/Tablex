@@ -113,6 +113,21 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assumptions = assumptions_response.json()
     assert any(item["fallback_policy"] == "exclude_until_confirmed" for item in assumptions)
 
+    review_queue_response = client.get(f"/api/projects/{project_id}/assumptions/review-queue")
+    assert review_queue_response.status_code == 200, review_queue_response.text
+    review_queue = review_queue_response.json()
+    assert review_queue["schema_version"] == "assumption_review_queue.v1"
+    assert review_queue["counts"]["total_assumptions"] >= 1
+    assert review_queue["next_item"]["item_type"] in {"assumption", "question"}
+    assert review_queue["next_item"]["primary_actions"]
+    if review_queue["next_item"]["item_type"] == "assumption":
+        assert review_queue["next_item"]["evidence"]
+        confirm_review_response = client.post(f"/api/assumptions/{review_queue['next_item']['id']}/confirm")
+        assert confirm_review_response.status_code == 200, confirm_review_response.text
+        next_review_queue_response = client.get(f"/api/projects/{project_id}/assumptions/review-queue")
+        assert next_review_queue_response.status_code == 200
+        assert next_review_queue_response.json()["next_item"]["id"] != review_queue["next_item"]["id"]
+
     understanding_response = client.get(f"/api/projects/{project_id}/understanding/latest")
     assert understanding_response.status_code == 200
     assert "Data Understanding" in understanding_response.json()["markdown"]
