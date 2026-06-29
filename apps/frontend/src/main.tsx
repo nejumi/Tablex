@@ -96,6 +96,8 @@ const englishMessages = {
   focusApproachReason: "The harness has enough context to ask Codex for a scoped approach without forcing a fixed recipe.",
   focusExperiments: "Run or inspect experiments",
   focusExperimentsReason: "The project needs run evidence, diagnostics, and reports before comparing approaches.",
+  focusNotebooks: "Review notebook evidence",
+  focusNotebooksReason: "Notebook previews and safe captures turn run evidence into inspectable findings before final reporting.",
   focusReports: "Read the decision report",
   focusReportsReason: "Reports summarize readiness, risks, evidence, and next actions without requiring raw artifact inspection.",
   guidedJourneyTitle: "Guided Journey",
@@ -114,6 +116,7 @@ const englishMessages = {
   journeyEvaluation: "Evaluation",
   journeyApproach: "Approach",
   journeyExperiments: "Experiments",
+  journeyNotebooks: "Notebooks",
   journeyReports: "Reports",
   settings: "User Settings",
   settingsHint: "Language, locale packs, and display preferences are stored locally for this workbench.",
@@ -212,6 +215,8 @@ const japaneseMessages: LocaleMessages = {
   focusApproachReason: "固定recipeにせず、現時点の証拠を渡してCodexにスコープ付きで考えさせられます。",
   focusExperiments: "実験を実行または確認する",
   focusExperimentsReason: "approachを比較する前に、run evidence、diagnostics、reportが必要です。",
+  focusNotebooks: "notebook evidenceを確認する",
+  focusNotebooksReason: "Notebook previewとsafe captureで、最終report前にrun evidenceを検査可能なfindingへ変換します。",
   focusReports: "decision reportを読む",
   focusReportsReason: "raw artifactを追わなくても、readiness、risk、evidence、next actionを把握できます。",
   guidedJourneyTitle: "Guided Journey",
@@ -230,6 +235,7 @@ const japaneseMessages: LocaleMessages = {
   journeyEvaluation: "評価",
   journeyApproach: "アプローチ",
   journeyExperiments: "実験",
+  journeyNotebooks: "ノートブック",
   journeyReports: "レポート",
   settings: "ユーザー設定",
   settingsHint: "言語、locale pack、表示設定をこのworkbenchのlocal設定として保存します。",
@@ -1161,6 +1167,7 @@ function localizedFocusCopy(focusKey: string, text: LocaleMessages) {
   if (focusKey === "evaluation") return { title: text.focusEvaluation, reason: text.focusEvaluationReason };
   if (focusKey === "approach") return { title: text.focusApproach, reason: text.focusApproachReason };
   if (focusKey === "experiments") return { title: text.focusExperiments, reason: text.focusExperimentsReason };
+  if (focusKey === "notebooks") return { title: text.focusNotebooks, reason: text.focusNotebooksReason };
   if (focusKey === "reports") return { title: text.focusReports, reason: text.focusReportsReason };
   return null;
 }
@@ -1172,6 +1179,7 @@ function journeyStageLabel(stage: ProjectGuidanceJourneyStage, text: LocaleMessa
   if (stage.id === "evaluation") return text.journeyEvaluation;
   if (stage.id === "approach") return text.journeyApproach;
   if (stage.id === "experiments") return text.journeyExperiments;
+  if (stage.id === "notebooks") return text.journeyNotebooks;
   if (stage.id === "reports") return text.journeyReports;
   return stage.label;
 }

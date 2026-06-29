@@ -45,6 +45,8 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     assert empty_guidance["current_stage_id"] == "data_intake"
     assert empty_journey["data_intake"]["status"] == "current"
     assert empty_journey["understanding"]["status"] == "waiting"
+    assert empty_journey["notebooks"]["target_tab"] == "Notebooks"
+    assert empty_journey["notebooks"]["status"] == "waiting"
     assert empty_journey["approach"]["summary"].startswith("Prepare an open-ended Codex")
 
     csv_bytes = b"feature,target\n1,0\n2,1\n3,0\n4,1\n"
@@ -1239,6 +1241,14 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert captured_item["artifact_ids"]["execution_manifest"] == execution_capture_job["output"]["notebook_execution_manifest_artifact_id"]
     assert captured_item["artifact_ids"]["execution_html"] == execution_capture_job["output"]["notebook_execution_html_artifact_id"]
     assert any(action["endpoint"] and "execution-capture" in action["endpoint"] for action in notebook_index_after_capture["next_actions"])
+
+    guidance_after_capture_response = client.get(f"/api/projects/{project_id}/guidance")
+    assert guidance_after_capture_response.status_code == 200
+    guidance_after_capture = guidance_after_capture_response.json()
+    guidance_journey = {stage["id"]: stage for stage in guidance_after_capture["journey_stages"]}
+    assert guidance_journey["notebooks"]["status"] == "done"
+    assert guidance_after_capture["supporting_counts"]["analysis_notebooks"] >= 1
+    assert guidance_after_capture["supporting_counts"]["notebook_execution_captures"] >= 1
 
     run_report_response = client.post(f"/api/runs/{baseline_run['id']}/report")
     assert run_report_response.status_code == 200, run_report_response.text

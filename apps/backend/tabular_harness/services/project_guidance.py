@@ -74,6 +74,15 @@ def build_project_guidance(db: Session, project: Project) -> dict[str, Any]:
         "reports": _count_project_rows(db, Report, project.id),
         "visualizations": _count_project_rows(db, VisualizationSpec, project.id),
         "insights": _count_project_rows(db, Insight, project.id),
+        "analysis_notebooks": _count_project_rows(
+            db, Artifact, project.id, Artifact.asset_type == "analysis_notebook"
+        ),
+        "notebook_execution_plans": _count_project_rows(
+            db, Artifact, project.id, Artifact.asset_type == "notebook_execution_plan"
+        ),
+        "notebook_execution_captures": _count_project_rows(
+            db, Artifact, project.id, Artifact.asset_type == "notebook_execution_manifest"
+        ),
     }
     state = _state_summary(db, project, counts)
     focus = _recommended_focus(project, counts, state)
@@ -657,6 +666,16 @@ def _state_summary(db: Session, project: Project, counts: dict[str, int]) -> dic
         .where(EvaluationSpec.project_id == project.id, EvaluationSpec.status == "approved")
         .order_by(EvaluationSpec.created_at.desc())
     )
+    latest_successful_run = db.scalar(
+        select(ExperimentRun)
+        .where(ExperimentRun.project_id == project.id, ExperimentRun.status == "succeeded")
+        .order_by(ExperimentRun.started_at.desc().nullslast(), ExperimentRun.id.desc())
+    )
+    latest_notebook = db.scalar(
+        select(Artifact)
+        .where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+        .order_by(Artifact.created_at.desc())
+    )
     has_understanding_report = _count_project_rows(
         db,
         Artifact,
@@ -706,6 +725,8 @@ def _state_summary(db: Session, project: Project, counts: dict[str, int]) -> dic
         "target_column": project.target_column,
         "latest_dataset_snapshot_id": latest_dataset.id if latest_dataset else None,
         "latest_approved_evaluation_spec_id": latest_approved_spec.id if latest_approved_spec else None,
+        "latest_successful_run_id": latest_successful_run.id if latest_successful_run else None,
+        "latest_analysis_notebook_artifact_id": latest_notebook.id if latest_notebook else None,
         "has_dataset": counts["datasets"] > 0,
         "has_eda_profile": has_eda_profile,
         "has_understanding_report": has_understanding_report,
@@ -716,6 +737,9 @@ def _state_summary(db: Session, project: Project, counts: dict[str, int]) -> dic
         "successful_run_count": successful_run_count,
         "failed_recent_job_count": failed_recent_job_count,
         "report_count": counts["reports"],
+        "analysis_notebook_count": counts["analysis_notebooks"],
+        "notebook_execution_plan_count": counts["notebook_execution_plans"],
+        "notebook_execution_capture_count": counts["notebook_execution_captures"],
         "candidate_count": counts["evaluation_candidates"],
         "idea_count": counts["ideas"],
         "visualization_count": counts["visualizations"],
@@ -856,6 +880,60 @@ def _recommended_focus(project: Project, counts: dict[str, int], state: dict[str
             suggested_agent_prompt=prompt,
         )
 
+    if int(state["analysis_notebook_count"]) == 0:
+        latest_run_id = state.get("latest_successful_run_id")
+        primary_action = (
+            _endpoint_action(
+                "generate_model_diagnostics_notebook",
+                "Generate model diagnostics notebook",
+                "Notebooks",
+                f"/api/runs/{latest_run_id}/analysis-notebook",
+            )
+            if isinstance(latest_run_id, str)
+            else _navigate_action("inspect_notebooks", "Open Notebooks", "Notebooks")
+        )
+        return _focus(
+            focus_key="notebooks",
+            target_tab="Notebooks",
+            title="Generate notebook evidence",
+            reason="Experiment evidence is easier to review when diagnostics, findings, visual previews, and runner capture evidence are consolidated into notebook artifacts.",
+            risk_level="medium",
+            confidence=0.81,
+            evidence=[f"{state['successful_run_count']} successful runs", "0 analysis notebooks"],
+            primary_action=primary_action,
+            secondary_actions=[
+                _navigate_action("inspect_experiments_for_notebooks", "Inspect Experiments", "Experiments"),
+                _navigate_action("inspect_leaderboard_for_notebooks", "Inspect Leaderboard", "Leaderboard"),
+            ],
+        )
+
+    if int(state["notebook_execution_capture_count"]) == 0:
+        latest_notebook_id = state.get("latest_analysis_notebook_artifact_id")
+        primary_action = (
+            _endpoint_action(
+                "capture_notebook_execution",
+                "Capture notebook execution evidence",
+                "Notebooks",
+                f"/api/analysis-notebooks/{latest_notebook_id}/execution-capture",
+            )
+            if isinstance(latest_notebook_id, str)
+            else _navigate_action("inspect_notebooks_for_capture", "Open Notebooks", "Notebooks")
+        )
+        return _focus(
+            focus_key="notebooks",
+            target_tab="Notebooks",
+            title="Capture notebook execution evidence",
+            reason="A safe static capture gives the workbench an execution manifest, report, HTML preview, and figure plan before full notebook runtime execution.",
+            risk_level="medium",
+            confidence=0.8,
+            evidence=[f"{state['analysis_notebook_count']} analysis notebooks", "0 notebook captures"],
+            primary_action=primary_action,
+            secondary_actions=[
+                _navigate_action("inspect_reports_after_capture", "Inspect Reports", "Reports"),
+                _navigate_action("inspect_lineage_after_capture", "Inspect Lineage", "Lineage"),
+            ],
+        )
+
     if int(state["report_count"]) == 0:
         return _focus(
             focus_key="reports",
@@ -905,6 +983,7 @@ def _journey_stages(
     evaluation_locked = int(state["approved_evaluation_spec_count"]) > 0 and int(state["split_manifest_count"]) > 0
     has_agent_planning = counts["ideas"] > 0 or counts["research_briefs"] > 0
     has_successful_run = int(state["successful_run_count"]) > 0
+    has_notebook_capture = int(state["notebook_execution_capture_count"]) > 0
     has_report = int(state["report_count"]) > 0
 
     data_status = "done" if state["has_dataset"] else "current"
@@ -954,11 +1033,20 @@ def _journey_stages(
     else:
         experiments_status = "waiting"
 
+    if has_notebook_capture:
+        notebooks_status = "done"
+    elif focus_key == "notebooks":
+        notebooks_status = "current"
+    elif has_successful_run:
+        notebooks_status = "next"
+    else:
+        notebooks_status = "waiting"
+
     if has_report:
         reports_status = "done"
     elif focus_key == "reports":
         reports_status = "current"
-    elif has_successful_run:
+    elif has_successful_run and has_notebook_capture:
         reports_status = "next"
     else:
         reports_status = "waiting"
@@ -970,6 +1058,7 @@ def _journey_stages(
         "evaluation": "evaluation",
         "approach": "approach",
         "experiments": "experiments",
+        "notebooks": "notebooks",
         "reports": "reports",
     }
 
@@ -1042,6 +1131,18 @@ def _journey_stages(
             "Run or ingest evidence-producing experiments under the locked evaluation design.",
             [f"{state['successful_run_count']} successful runs", f"{counts['jobs']} jobs"],
             stage_action("experiments"),
+        ),
+        _journey_stage(
+            "notebooks",
+            "Notebooks",
+            "Notebooks",
+            notebooks_status,
+            "Turn run evidence into inspectable notebooks, visual previews, and controlled execution capture artifacts.",
+            [
+                f"{state['analysis_notebook_count']} analysis notebooks",
+                f"{state['notebook_execution_capture_count']} notebook captures",
+            ],
+            stage_action("notebooks"),
         ),
         _journey_stage(
             "reports",
@@ -1165,6 +1266,8 @@ def _agent_guidance(state: dict[str, Any]) -> list[str]:
         guidance.append("Review high-risk assumptions before asking Codex to generate feature or model code.")
     if int(state["successful_run_count"]) == 0 and int(state["split_manifest_count"]) > 0:
         guidance.append("Ask Codex for a flexible, evidence-backed approach rather than a fixed baseline recipe.")
+    if int(state["successful_run_count"]) > 0 and int(state["notebook_execution_capture_count"]) == 0:
+        guidance.append("Generate or capture notebook evidence before relying on final reports for experiment interpretation.")
     return guidance
 
 
