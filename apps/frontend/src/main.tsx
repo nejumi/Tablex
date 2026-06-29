@@ -179,6 +179,8 @@ const englishMessages = {
   agentTaskContractCreated: "AgentTaskContract created.",
   chatActionOpen: "Open",
   chatActionReview: "Review",
+  chatChangedLabel: "Changed",
+  chatReviewLabel: "Needs review",
   agentActivityTitle: "Agent Activity",
   agentActivitySubtitle: "Workers, actions, and token telemetry",
   estimatedTokens: "Estimated tokens",
@@ -334,6 +336,8 @@ const japaneseMessages: LocaleMessages = {
   agentTaskContractCreated: "AgentTaskContractを作成しました。",
   chatActionOpen: "開く",
   chatActionReview: "確認",
+  chatChangedLabel: "変更",
+  chatReviewLabel: "要確認",
   agentActivityTitle: "Agent Activity",
   agentActivitySubtitle: "Worker、action、token telemetry",
   estimatedTokens: "推定tokens",
@@ -2875,6 +2879,78 @@ function agentChatOutcomeClass(outcome: string) {
   return "badge";
 }
 
+function AgentChatSummaryCard({
+  summary,
+  text,
+  onActionOpen
+}: {
+  summary: AgentActionSummary;
+  text: LocaleMessages;
+  onActionOpen: (action: AgentChatAction) => void;
+}) {
+  const targetTab = summary.next_step?.target_tab ? tabFromString(summary.next_step.target_tab, "Approach") : null;
+  const nextAnchor = summary.next_step?.target_anchor ?? null;
+  const nextLabel = summary.next_step?.label ?? "Review the focused surface";
+  const targetLabel = targetTab ? tabLabel(targetTab, text) : "";
+  const summaryAction: AgentChatAction | null = targetTab
+    ? {
+        type: "summary_next_step",
+        status: summary.next_step.status ?? summary.outcome,
+        label: nextLabel,
+        target_tab: targetTab,
+        target_anchor: nextAnchor,
+        detail: "Open the surface Tablex selected for this response."
+      }
+    : null;
+  const changed = summary.what_changed.slice(0, 3);
+  const needsReview = summary.what_needs_review.slice(0, 3);
+  return (
+    <div className="agent-chat-summary">
+      <div className="agent-chat-summary-head">
+        <span className={agentChatOutcomeClass(summary.outcome)}>{summary.outcome.replace(/_/g, " ")}</span>
+        <strong>{summary.headline}</strong>
+      </div>
+      {summaryAction ? (
+        <button className="agent-chat-next-button" type="button" onClick={() => onActionOpen(summaryAction)}>
+          <span>Next</span>
+          <strong>{nextLabel}</strong>
+          <small>
+            {targetLabel}
+            {nextAnchor ? ` · ${surfaceLabel(nextAnchor)}` : ""}
+          </small>
+        </button>
+      ) : null}
+      {changed.length || needsReview.length ? (
+        <div className="agent-chat-summary-lists">
+          {changed.length ? (
+            <div>
+              <span>{text.chatChangedLabel}</span>
+              {changed.map((item) => (
+                <small key={item}>{item}</small>
+              ))}
+            </div>
+          ) : null}
+          {needsReview.length ? (
+            <div>
+              <span>{text.chatReviewLabel}</span>
+              {needsReview.map((item) => (
+                <small key={item}>{item}</small>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {summary.boundaries.length ? (
+        <div className="agent-chat-boundaries">
+          {summary.boundaries.slice(0, 2).map((item) => (
+            <span key={item}>{item}</span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function AgentChatDock({
   busy,
   text,
@@ -2929,27 +3005,7 @@ function AgentChatDock({
             <div className={`agent-chat-message ${message.role}`} key={`${message.role}-${index}-${message.text}`}>
               <p>{message.text}</p>
               {message.actionSummary ? (
-                <div className="agent-chat-summary">
-                  <div className="agent-chat-summary-head">
-                    <span className={agentChatOutcomeClass(message.actionSummary.outcome)}>
-                      {message.actionSummary.outcome.replace(/_/g, " ")}
-                    </span>
-                    <strong>{message.actionSummary.headline}</strong>
-                  </div>
-                  {message.actionSummary.next_step?.target_tab ? (
-                    <small>
-                      Next: {message.actionSummary.next_step.label ?? "Review"} in{" "}
-                      {tabLabel(tabFromString(message.actionSummary.next_step.target_tab, "Approach"), text)}
-                    </small>
-                  ) : null}
-                  {message.actionSummary.boundaries.length ? (
-                    <div className="agent-chat-boundaries">
-                      {message.actionSummary.boundaries.slice(0, 2).map((item) => (
-                        <span key={item}>{item}</span>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
+                <AgentChatSummaryCard summary={message.actionSummary} text={text} onActionOpen={onActionOpen} />
               ) : null}
               {message.actions?.length ? (
                 <div className="agent-chat-actions">
@@ -4490,7 +4546,7 @@ function DataTab({
           </div>
         ) : null}
         {relationalPreview?.preview_available ? (
-          isRelationalCatalogPreview(relationalPreview) ? (
+          isRelationalGraphPreview(relationalPreview) ? (
             <RelationalCatalogPreview preview={relationalPreview} />
           ) : isVisualArtifactPreview(relationalPreview) ? (
             <VisualArtifactPreview preview={relationalPreview} />
@@ -7161,6 +7217,30 @@ function NotebooksTab({
               </div>
             </section>
 
+            <section className="analysis-story-preview">
+              <div className="analysis-story-preview-head">
+                <div>
+                  <div className="eyebrow">Current story preview</div>
+                  <h3>{story.selected_source.title}</h3>
+                </div>
+                {storyPreviewArtifactId ? (
+                  <a className="icon-link" href={`${apiBase}/api/artifacts/${storyPreviewArtifactId}/download`} title="Download current story">
+                    <Download size={16} />
+                  </a>
+                ) : null}
+              </div>
+              {previewError ? <div className="banner danger">{previewError}</div> : null}
+              {preview?.preview_available ? (
+                isHtmlArtifactPreview(preview) ? (
+                  <HtmlArtifactPreview preview={preview} />
+                ) : (
+                  <TranslatablePreview preview={preview} />
+                )
+              ) : (
+                <EmptyInline text="The selected story appears here immediately after you open it. If it is not available, run EDA Review or capture notebook evidence." />
+              )}
+            </section>
+
             <div className="analysis-story-grid">
               <section className="analysis-story-section">
                 <div className="mini-card-title">Read order</div>
@@ -7262,30 +7342,6 @@ function NotebooksTab({
                 {guideResponse ? <div className="notebook-guide-response">{guideResponse}</div> : null}
               </section>
             </div>
-
-            <section className="analysis-story-preview">
-              <div className="analysis-story-preview-head">
-                <div>
-                  <div className="eyebrow">Current story preview</div>
-                  <h3>{story.selected_source.title}</h3>
-                </div>
-                {storyPreviewArtifactId ? (
-                  <a className="icon-link" href={`${apiBase}/api/artifacts/${storyPreviewArtifactId}/download`} title="Download current story">
-                    <Download size={16} />
-                  </a>
-                ) : null}
-              </div>
-              {previewError ? <div className="banner danger">{previewError}</div> : null}
-              {preview?.preview_available ? (
-                isHtmlArtifactPreview(preview) ? (
-                  <HtmlArtifactPreview preview={preview} />
-                ) : (
-                  <TranslatablePreview preview={preview} />
-                )
-              ) : (
-                <EmptyInline text="The selected story will render here. If it is not available, run EDA Review or capture notebook evidence." />
-              )}
-            </section>
 
             <details className="artifact-shelf analysis-supporting-shelf">
               <summary>Supporting notebooks and artifacts</summary>
@@ -8208,6 +8264,7 @@ type RelationalCatalogTable = {
   is_primary?: boolean;
   row_count?: number;
   column_count?: number;
+  columns?: string[];
   status?: string;
   target_column_present?: boolean;
   key_candidates?: Array<{ column?: string; reason?: string; uniqueness_ratio?: number }>;
@@ -8226,34 +8283,101 @@ type RelationalCatalogRelationship = {
 type RelationalCatalogPayload = {
   schema_version?: string;
   benchmark_name?: string;
+  source_filename?: string;
+  media_kind?: string;
   table_count?: number;
   relationship_count?: number;
   tables?: RelationalCatalogTable[];
   relationships?: RelationalCatalogRelationship[];
   risk_notes?: string[];
+  next_actions?: string[];
 };
 
-function isRelationalCatalogPreview(preview: ArtifactPreview | null): boolean {
-  return Boolean(
-    preview?.preview_available &&
-      preview.asset_type === "relational_catalog" &&
-      preview.preview &&
-      preview.preview.includes("relational_catalog.v1")
-  );
+function isRelationalGraphPreview(preview: ArtifactPreview | null): boolean {
+  return Boolean(preview && parseRelationalGraphPreview(preview));
 }
 
-function parseRelationalCatalogPreview(preview: ArtifactPreview): RelationalCatalogPayload | null {
+function parseRelationalGraphPreview(preview: ArtifactPreview): RelationalCatalogPayload | null {
   if (!preview.preview) return null;
   try {
-    const parsed = JSON.parse(preview.preview) as RelationalCatalogPayload;
-    return parsed && parsed.schema_version === "relational_catalog.v1" ? parsed : null;
+    const parsed = JSON.parse(preview.preview) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") return null;
+    if (parsed.schema_version === "relational_catalog.v1") return parsed as RelationalCatalogPayload;
+    if (parsed.schema_version === "relational_schema_hint.v1") return parsed as RelationalCatalogPayload;
+    if (preview.asset_type !== "relational_schema_hint") return null;
+    const tables = normalizeRelationalHintTables(parsed.tables);
+    const relationships = normalizeRelationalHintRelationships(parsed.relationships);
+    if (!tables.length && !relationships.length) return null;
+    return {
+      schema_version: "relational_schema_hint.v1",
+      source_filename: preview.filename,
+      media_kind: "structured_json",
+      table_count: tables.length,
+      relationship_count: relationships.length,
+      tables,
+      relationships,
+      risk_notes: ["Uploaded ER hints are evidence, not confirmed join contracts."],
+      next_actions: [
+        "Confirm join keys and cardinality before feature work.",
+        "Check prediction-time availability before using supporting tables.",
+        "Route relational feature work through a controlled AgentTaskContract."
+      ]
+    };
   } catch {
     return null;
   }
 }
 
+function normalizeRelationalHintTables(value: unknown): RelationalCatalogTable[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item, index): RelationalCatalogTable[] => {
+    if (typeof item === "string") return [{ table_name: item, role: index === 0 ? "source table" : "support" }];
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const name = textField(record.table_name) ?? textField(record.name) ?? textField(record.id) ?? textField(record.path);
+    if (!name) return [];
+    const columns = Array.isArray(record.columns) ? record.columns.map((column) => String(column)).slice(0, 12) : [];
+    return [
+      {
+        table_name: name,
+        path: textField(record.path) ?? undefined,
+        role: textField(record.role) ?? (index === 0 ? "source table" : "support"),
+        is_primary: record.is_primary === true,
+        column_count: numberField(record.column_count) ?? (columns.length || undefined),
+        columns,
+        key_candidates: columns
+          .filter((column) => /(^id$|_id$|id_|key)/i.test(column))
+          .slice(0, 3)
+          .map((column) => ({ column, reason: "column name looks key-like" }))
+      }
+    ];
+  });
+}
+
+function normalizeRelationalHintRelationships(value: unknown): RelationalCatalogRelationship[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): RelationalCatalogRelationship[] => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const leftTable = textField(record.left_table) ?? textField(record.from_table) ?? textField(record.source_table);
+    const rightTable = textField(record.right_table) ?? textField(record.to_table) ?? textField(record.target_table);
+    if (!leftTable || !rightTable) return [];
+    return [
+      {
+        left_table: leftTable,
+        right_table: rightTable,
+        left_column: textField(record.left_column) ?? textField(record.from_column) ?? textField(record.source_column) ?? undefined,
+        right_column: textField(record.right_column) ?? textField(record.to_column) ?? textField(record.target_column) ?? undefined,
+        relation_type: textField(record.relation_type) ?? textField(record.cardinality) ?? "unknown",
+        confidence: numberField(record.confidence) ?? undefined,
+        evidence: textField(record.evidence) ?? undefined
+      }
+    ];
+  });
+}
+
 function RelationalCatalogPreview({ preview }: { preview: ArtifactPreview }) {
-  const catalog = React.useMemo(() => parseRelationalCatalogPreview(preview), [preview]);
+  const catalog = React.useMemo(() => parseRelationalGraphPreview(preview), [preview]);
   if (!catalog) return <TranslatablePreview preview={preview} />;
   const tables = Array.isArray(catalog.tables) ? catalog.tables.slice(0, 12) : [];
   const relationships = Array.isArray(catalog.relationships) ? catalog.relationships.slice(0, 24) : [];
@@ -8261,18 +8385,24 @@ function RelationalCatalogPreview({ preview }: { preview: ArtifactPreview }) {
   const visibleRelationships = relationships.filter(
     (relationship) => relationship.left_table && relationship.right_table && tableNames.has(relationship.left_table) && tableNames.has(relationship.right_table)
   );
+  const isHint = catalog.schema_version === "relational_schema_hint.v1" || preview.asset_type === "relational_schema_hint";
+  const title = catalog.benchmark_name ?? catalog.source_filename ?? preview.name;
   return (
     <div className="relational-preview">
       <div className="relational-preview-header">
         <div>
           <div className="eyebrow">ER-style preview</div>
-          <h3>{catalog.benchmark_name ?? preview.name}</h3>
-          <p>Tables and inferred relationship candidates from the RelationalCatalog. Treat edges as review prompts until join semantics are confirmed.</p>
+          <h3>{title}</h3>
+          <p>
+            {isHint
+              ? "Uploaded ER hint rendered as a reviewable map. Use it to guide questions, not as an executable join contract."
+              : "Tables and inferred relationship candidates from the RelationalCatalog. Treat edges as review prompts until join semantics are confirmed."}
+          </p>
         </div>
         <div className="badge-row">
           <span className="badge">{catalog.table_count ?? tables.length} tables</span>
           <span className="badge muted">{relationships.length} relationships</span>
-          <span className="badge risk">inferred</span>
+          <span className="badge risk">{isHint ? "uploaded evidence" : "inferred"}</span>
         </div>
       </div>
       <RelationalErSvg tables={tables} relationships={visibleRelationships} />
@@ -8291,13 +8421,14 @@ function RelationalCatalogPreview({ preview }: { preview: ArtifactPreview }) {
               </div>
               <div>
                 <dt>Columns</dt>
-                <dd>{table.column_count ?? "-"}</dd>
+                <dd>{table.column_count ?? table.columns?.length ?? "-"}</dd>
               </div>
               <div>
                 <dt>Keys</dt>
                 <dd>{table.key_candidates?.slice(0, 3).map((key) => key.column).join(", ") || "-"}</dd>
               </div>
             </dl>
+            {table.columns?.length ? <small className="relational-column-hint">{table.columns.slice(0, 5).join(", ")}</small> : null}
           </div>
         ))}
       </div>
@@ -8308,8 +8439,15 @@ function RelationalCatalogPreview({ preview }: { preview: ArtifactPreview }) {
           ))}
         </div>
       ) : null}
+      {catalog.next_actions?.length ? (
+        <div className="relational-next-actions">
+          {catalog.next_actions.slice(0, 3).map((action) => (
+            <span key={action}>{action}</span>
+          ))}
+        </div>
+      ) : null}
       <details className="artifact-shelf">
-        <summary>Advanced JSON catalog</summary>
+        <summary>{isHint ? "Raw uploaded ER JSON" : "Advanced JSON catalog"}</summary>
         <TranslatablePreview preview={preview} />
       </details>
     </div>
@@ -8379,7 +8517,9 @@ function RelationalErSvg({
                 {table.is_primary ? "primary table" : table.role ?? "supporting table"}
               </text>
               <text x={position.x + 14} y={position.y + 74}>
-                {`${table.row_count?.toLocaleString() ?? "-"} rows / ${table.column_count ?? "-"} cols`}
+                {table.row_count
+                  ? `${table.row_count.toLocaleString()} rows / ${table.column_count ?? table.columns?.length ?? "-"} cols`
+                  : `${table.column_count ?? table.columns?.length ?? "-"} columns`}
               </text>
               <text x={position.x + 14} y={position.y + 94}>
                 {truncateLabel(keyNames, 30)}
