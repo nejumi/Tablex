@@ -1073,6 +1073,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert readiness_job["output"]["visualization_artifact_id"]
     assert readiness_job["output"]["readiness_status"] in {"ready", "ready_with_warnings", "blocked"}
     assert readiness_job["output"]["blocker_count"] == 0
+    assert readiness_job["output"]["pass_count"] > 0
+    assert isinstance(readiness_job["output"]["next_actions"], list)
 
     readiness_download_response = client.get(
         f"/api/artifacts/{readiness_job['output']['agent_task_readiness_review_artifact_id']}/download"
@@ -1080,9 +1082,16 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert readiness_download_response.status_code == 200
     readiness_payload = readiness_download_response.json()
     assert readiness_payload["schema_version"] == "agent_task_readiness_review.v1"
+    assert readiness_payload["pass_count"] == readiness_job["output"]["pass_count"]
     assert readiness_payload["workspace_artifact_id"] == planned_workspace_job["output"][
         "agent_workspace_manifest_artifact_id"
     ]
+    artifacts_after_readiness = client.get(f"/api/projects/{project_id}/artifacts").json()
+    readiness_artifact = next(
+        item for item in artifacts_after_readiness if item["id"] == readiness_job["output"]["agent_task_readiness_review_artifact_id"]
+    )
+    assert readiness_artifact["metadata"]["pass_count"] == readiness_job["output"]["pass_count"]
+    assert "first_next_action" in readiness_artifact["metadata"]
     assert any(item["check_id"] == "workspace_manifest" for item in readiness_payload["checks"])
     strategy_readiness_check = next(
         item for item in readiness_payload["checks"] if item["check_id"] == "adaptive_strategy_context"

@@ -531,6 +531,16 @@ type Artifact = {
   created_at: string;
 };
 
+type RunnerReadinessFeedback = {
+  contractArtifactId: string;
+  status: string;
+  blockerCount: number;
+  warningCount: number;
+  passCount: number;
+  nextActions: string[];
+  source: "latest_artifact" | "current_review";
+};
+
 type ArtifactPreview = {
   id: string;
   asset_type: string;
@@ -4735,6 +4745,10 @@ function recordField(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+function stringListField(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)).filter((item) => item.trim()) : [];
+}
+
 function primaryTableLabel(benchmark: BenchmarkDataset): string {
   const path = textField(benchmark.primary_table.path);
   if (path) return path;
@@ -5433,6 +5447,7 @@ function StrategyBriefPanel({
 
 function RunnerHandoffFocus({
   artifact,
+  readiness,
   busy,
   onPreview,
   onReadiness,
@@ -5441,6 +5456,7 @@ function RunnerHandoffFocus({
   onRunCodex
 }: {
   artifact: Artifact | null;
+  readiness: RunnerReadinessFeedback | null;
   busy: boolean;
   onPreview: (artifact: Artifact) => void;
   onReadiness: (artifact: Artifact) => void;
@@ -5497,6 +5513,19 @@ function RunnerHandoffFocus({
           <span>Next</span>
           <strong>{nextAction}</strong>
         </div>
+        {readiness ? (
+          <div className={`runner-readiness-result ${readiness.status}`}>
+            <span>Readiness</span>
+            <strong>{formatRunnerReadinessStatus(readiness)}</strong>
+            {readiness.nextActions.length ? <p>{readiness.nextActions[0]}</p> : null}
+          </div>
+        ) : (
+          <div className="runner-readiness-result pending">
+            <span>Readiness</span>
+            <strong>Not reviewed in this focus yet</strong>
+            <p>Run readiness before execution so blockers stay visible here.</p>
+          </div>
+        )}
         <div className="runner-handoff-actions">
           <button className="primary-button" disabled={busy} onClick={() => onReadiness(artifact)}>
             {busy ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
@@ -5522,6 +5551,16 @@ function RunnerHandoffFocus({
       </div>
     </section>
   );
+}
+
+function formatRunnerReadinessStatus(feedback: RunnerReadinessFeedback) {
+  if (feedback.status === "blocked") {
+    return `${feedback.blockerCount} blocker${feedback.blockerCount === 1 ? "" : "s"} before execution`;
+  }
+  if (feedback.status === "ready_with_warnings") {
+    return `${feedback.warningCount} warning${feedback.warningCount === 1 ? "" : "s"}; runner can proceed carefully`;
+  }
+  return `${feedback.passCount} checks passed; runner is ready`;
 }
 
 function strategyActionIcon(actionType: StrategyAction["action_type"]) {
@@ -5589,6 +5628,46 @@ function ApproachDetailGroup({
   );
 }
 
+function latestReadinessFeedbackForContract(
+  artifacts: Artifact[],
+  contractArtifact: Artifact | null
+): RunnerReadinessFeedback | null {
+  if (!contractArtifact) return null;
+  const readinessArtifact = artifacts
+    .filter(
+      (artifact) =>
+        artifact.asset_type === "agent_task_readiness_review" &&
+        artifact.metadata.source_contract_artifact_id === contractArtifact.id
+    )
+    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0];
+  return readinessArtifact ? readinessFeedbackFromArtifact(readinessArtifact, contractArtifact.id) : null;
+}
+
+function readinessFeedbackFromArtifact(artifact: Artifact, contractArtifactId: string): RunnerReadinessFeedback {
+  const firstAction = textField(artifact.metadata.first_next_action);
+  return {
+    contractArtifactId,
+    status: textField(artifact.metadata.readiness_status) ?? "unknown",
+    blockerCount: numberField(artifact.metadata.blocker_count) ?? 0,
+    warningCount: numberField(artifact.metadata.warning_count) ?? 0,
+    passCount: numberField(artifact.metadata.pass_count) ?? 0,
+    nextActions: firstAction ? [firstAction] : [],
+    source: "latest_artifact"
+  };
+}
+
+function readinessFeedbackFromJob(job: Job, contractArtifactId: string): RunnerReadinessFeedback {
+  return {
+    contractArtifactId,
+    status: textField(job.output.readiness_status) ?? "unknown",
+    blockerCount: numberField(job.output.blocker_count) ?? 0,
+    warningCount: numberField(job.output.warning_count) ?? 0,
+    passCount: numberField(job.output.pass_count) ?? 0,
+    nextActions: stringListField(job.output.next_actions).slice(0, 3),
+    source: "current_review"
+  };
+}
+
 function ApproachTab({
   project,
   strategyBrief,
@@ -5622,6 +5701,7 @@ function ApproachTab({
     .filter((artifact) => artifact.asset_type === "agent_task_contract")
     .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime());
   const latestAgentTaskContract = agentTaskContractArtifacts[0] ?? null;
+  const persistedReadinessFeedback = latestReadinessFeedbackForContract(artifacts, latestAgentTaskContract);
   const researchContextCount = researchPlanArtifacts.length + researchSourceArtifacts.length + researchSynthesisArtifacts.length;
   const runnerHandoffCount = agentTaskContractArtifacts.length + researchBriefs.length + ideas.length;
   const [researchPlanPreview, setResearchPlanPreview] = React.useState<ArtifactPreview | null>(null);
@@ -5645,6 +5725,11 @@ function ApproachTab({
   const [workspacePreview, setWorkspacePreview] = React.useState<ArtifactPreview | null>(null);
   const [workspacePreviewError, setWorkspacePreviewError] = React.useState<string | null>(null);
   const [workspacePreviewLoadingId, setWorkspacePreviewLoadingId] = React.useState<string | null>(null);
+  const [runnerReadinessFeedback, setRunnerReadinessFeedback] = React.useState<RunnerReadinessFeedback | null>(null);
+  const activeRunnerReadiness =
+    runnerReadinessFeedback?.contractArtifactId === latestAgentTaskContract?.id
+      ? runnerReadinessFeedback
+      : persistedReadinessFeedback;
   const previewCount = [contextPreview, planPreview, workspacePreview].filter(Boolean).length;
 
   async function loadContextPreview(artifactId: string) {
@@ -5754,6 +5839,7 @@ function ApproachTab({
     if (typeof reportArtifactId === "string") {
       await loadTaskContractPreview(reportArtifactId);
     }
+    setRunnerReadinessFeedback(readinessFeedbackFromJob(job, artifact.id));
     return job;
   }
 
@@ -5793,6 +5879,7 @@ function ApproachTab({
       />
       <RunnerHandoffFocus
         artifact={latestAgentTaskContract}
+        readiness={activeRunnerReadiness}
         busy={busy}
         onPreview={(artifact) => void previewContract(artifact)}
         onReadiness={(artifact) => void runAction(() => reviewContractReadiness(artifact))}

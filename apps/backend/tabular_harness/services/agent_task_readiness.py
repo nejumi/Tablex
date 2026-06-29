@@ -81,6 +81,9 @@ def review_agent_task_readiness(
             "readiness_status": review["status"],
             "blocker_count": review["blocker_count"],
             "warning_count": review["warning_count"],
+            "pass_count": review["pass_count"],
+            "next_action_count": len(review["next_actions"]),
+            "first_next_action": review["next_actions"][0] if review["next_actions"] else None,
         },
     )
     report_md = render_readiness_report(review)
@@ -181,6 +184,7 @@ def build_readiness_review(
     ]
     blocker_count = sum(1 for check in checks if check["status"] == "blocker")
     warning_count = sum(1 for check in checks if check["status"] == "warning")
+    pass_count = sum(1 for check in checks if check["status"] == "pass")
     status = "blocked" if blocker_count else "ready_with_warnings" if warning_count else "ready"
     return {
         "schema_version": "agent_task_readiness_review.v1",
@@ -192,6 +196,7 @@ def build_readiness_review(
         "status": status,
         "blocker_count": blocker_count,
         "warning_count": warning_count,
+        "pass_count": pass_count,
         "checks": checks,
         "next_actions": next_actions(checks),
         "reviewed_at": utc_now().isoformat(),

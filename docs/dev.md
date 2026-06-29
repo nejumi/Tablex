@@ -549,3 +549,5 @@ Notebook and Analysis Story prompts that ask Tablex to add diagnostics, feature 
 The chat response should stay human-readable and route the user to `Approach` / `approach-handoff`. The contract must preserve EvaluationSpec and SplitManifest, use notebook/run/prediction artifacts only as evidence, and write an evidence-gap report instead of inventing diagnostics when required artifacts are missing.
 
 The Approach tab treats `approach-handoff` as the focused Runner Handoff surface. Latest AgentTaskContracts store `agent_task_contract_summary` metadata so the UI can show the task type, objective summary, evaluation state, output/check counts, and next execution choice before opening the raw JSON preview.
+
+Runner readiness reviews store `pass_count`, `first_next_action`, and status counts in artifact metadata and return `next_actions` in the review job output. The Approach focus panel uses this to show readiness inline while keeping the full Markdown/JSON review in supporting previews.

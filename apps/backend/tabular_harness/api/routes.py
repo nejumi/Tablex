@@ -2820,6 +2820,8 @@ def review_agent_task_readiness_endpoint(
                 "readiness_status": result.review["status"],
                 "blocker_count": result.review["blocker_count"],
                 "warning_count": result.review["warning_count"],
+                "pass_count": result.review["pass_count"],
+                "next_actions": result.review["next_actions"][:3],
             },
         )
     except ValueError as exc:
