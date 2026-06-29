@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import csv
 import json
+import subprocess
+import sys
+import tempfile
+import time
 from dataclasses import dataclass
 from html import escape
 from typing import Any, cast
@@ -65,6 +69,20 @@ class NotebookExecutionPlanResult:
     plan: dict[str, Any]
     contract_artifact: Artifact
     plan_artifact: Artifact
+    artifact_ids: list[str]
+
+
+@dataclass(frozen=True)
+class NotebookExecutionCaptureResult:
+    manifest: dict[str, Any]
+    report: Report
+    manifest_artifact: Artifact
+    report_artifact: Artifact
+    html_artifact: Artifact
+    figure_manifest_artifact: Artifact
+    source_artifact: Artifact
+    plan_artifact: Artifact
+    contract_artifact: Artifact
     artifact_ids: list[str]
 
 
@@ -400,6 +418,211 @@ def create_notebook_execution_plan(
         contract_artifact=contract_artifact,
         plan_artifact=plan_artifact,
         artifact_ids=[contract_artifact.id, plan_artifact.id],
+    )
+
+
+def create_notebook_execution_capture(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    notebook_artifact: Artifact,
+) -> NotebookExecutionCaptureResult:
+    if notebook_artifact.asset_type != "analysis_notebook":
+        raise ValueError("Artifact is not an analysis_notebook")
+    if notebook_artifact.project_id is None:
+        raise ValueError("Analysis notebook artifact must be project-scoped")
+    project = _require_project(db, notebook_artifact.project_id)
+    metadata = loads_json(notebook_artifact.metadata_json, {})
+    notebook_kind = str(metadata.get("notebook_kind") or "unknown")
+    linked_artifacts = _linked_notebook_artifacts(db, project.id, notebook_artifact)
+    plan_artifact = _latest_artifact_for_metadata(
+        db, project.id, "notebook_execution_plan", "notebook_artifact_id", notebook_artifact.id
+    )
+    contract_artifact = _latest_artifact_for_metadata(
+        db, project.id, "agent_task_contract", "notebook_artifact_id", notebook_artifact.id
+    )
+    plan_created = False
+    if plan_artifact is None or contract_artifact is None:
+        plan_result = create_notebook_execution_plan(db, store=store, notebook_artifact=notebook_artifact)
+        plan_artifact = plan_result.plan_artifact
+        contract_artifact = plan_result.contract_artifact
+        plan_created = True
+    linked_artifacts["execution_plan"] = plan_artifact
+    linked_artifacts["agent_task_contract"] = contract_artifact
+
+    notebook_source = _read_text_artifact(notebook_artifact)
+    source_validation = _validate_tablex_notebook_source(notebook_source)
+    if not source_validation["is_tablex_generated"]:
+        raise ValueError("Only Tablex-generated analysis notebooks can be captured by the local execution path")
+    compile_result = run_notebook_static_compile(notebook_source)
+    execution_status = "static_capture_succeeded" if compile_result["status"] == "succeeded" else "static_capture_failed"
+    generated_at = utc_now().isoformat()
+    suffix = new_id("nbcap")
+    figure_manifest = build_notebook_figure_manifest(
+        project=project,
+        notebook_artifact=notebook_artifact,
+        notebook_kind=notebook_kind,
+        compile_result=compile_result,
+        generated_at=generated_at,
+    )
+    figure_manifest_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="notebook_figure_manifest",
+        name=f"notebook_figure_manifest_{suffix}",
+        filename="notebook_figure_manifest.json",
+        payload=figure_manifest,
+        metadata={
+            "project_id": project.id,
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_kind": notebook_kind,
+            "execution_status": execution_status,
+            "capture_mode": "safe_static_capture",
+        },
+    )
+    source_artifact = store_text_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="notebook_execution_source",
+        name=f"notebook_execution_source_{suffix}",
+        filename="updated_notebook.py",
+        text=notebook_source,
+        metadata={
+            "project_id": project.id,
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_kind": notebook_kind,
+            "execution_status": execution_status,
+            "capture_mode": "safe_static_capture",
+        },
+    )
+    manifest = build_notebook_execution_manifest(
+        project=project,
+        notebook_artifact=notebook_artifact,
+        notebook_kind=notebook_kind,
+        linked_artifacts=linked_artifacts,
+        source_validation=source_validation,
+        compile_result=compile_result,
+        execution_status=execution_status,
+        generated_at=generated_at,
+        plan_created=plan_created,
+        output_artifacts={
+            "notebook_figure_manifest_artifact_id": figure_manifest_artifact.id,
+            "notebook_execution_source_artifact_id": source_artifact.id,
+        },
+    )
+    html = render_notebook_execution_html_preview(manifest)
+    html_artifact = store_text_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="notebook_execution_html",
+        name=f"notebook_execution_preview_{suffix}",
+        filename="notebook_execution_preview.html",
+        text=html,
+        metadata={
+            "project_id": project.id,
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_kind": notebook_kind,
+            "execution_status": execution_status,
+            "capture_mode": "safe_static_capture",
+            "content_type": "text/html",
+        },
+    )
+    report_md = render_notebook_execution_report(manifest, html_artifact.id, figure_manifest_artifact.id, source_artifact.id)
+    report_artifact = store_text_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="notebook_execution_report",
+        name=f"notebook_execution_report_{suffix}",
+        filename="notebook_execution_report.md",
+        text=report_md,
+        metadata={
+            "project_id": project.id,
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_kind": notebook_kind,
+            "execution_status": execution_status,
+            "capture_mode": "safe_static_capture",
+            "notebook_execution_html_artifact_id": html_artifact.id,
+        },
+    )
+    report = Report(
+        id=new_id("rpt"),
+        project_id=project.id,
+        report_type="notebook_execution",
+        title="Notebook Execution Capture Report",
+        summary=str(manifest["summary"]["headline"]),
+        artifact_id=report_artifact.id,
+        source_asset_ids_json=dumps_json(
+            [
+                {"asset_type": "artifact", "asset_id": notebook_artifact.id},
+                {"asset_type": "artifact", "asset_id": plan_artifact.id},
+                {"asset_type": "artifact", "asset_id": contract_artifact.id},
+            ]
+        ),
+        status="ready",
+        created_by_type="system",
+    )
+    db.add(report)
+    db.flush()
+    manifest["outputs"].update(
+        {
+            "notebook_execution_html_artifact_id": html_artifact.id,
+            "notebook_execution_report_id": report.id,
+            "notebook_execution_report_artifact_id": report_artifact.id,
+        }
+    )
+    manifest_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="notebook_execution_manifest",
+        name=f"notebook_execution_manifest_{suffix}",
+        filename="notebook_execution_manifest.json",
+        payload=manifest,
+        metadata={
+            "project_id": project.id,
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_kind": notebook_kind,
+            "execution_status": execution_status,
+            "capture_mode": "safe_static_capture",
+            "notebook_execution_html_artifact_id": html_artifact.id,
+            "notebook_execution_report_id": report.id,
+            "notebook_execution_report_artifact_id": report_artifact.id,
+        },
+    )
+    _record_notebook_execution_capture_lineage(
+        db,
+        project=project,
+        notebook_artifact=notebook_artifact,
+        linked_artifacts=[artifact for artifact in linked_artifacts.values() if artifact is not None],
+        manifest_artifact=manifest_artifact,
+        report=report,
+        report_artifact=report_artifact,
+        html_artifact=html_artifact,
+        figure_manifest_artifact=figure_manifest_artifact,
+        source_artifact=source_artifact,
+    )
+    artifact_ids = [
+        manifest_artifact.id,
+        report_artifact.id,
+        html_artifact.id,
+        figure_manifest_artifact.id,
+        source_artifact.id,
+    ]
+    return NotebookExecutionCaptureResult(
+        manifest=manifest,
+        report=report,
+        manifest_artifact=manifest_artifact,
+        report_artifact=report_artifact,
+        html_artifact=html_artifact,
+        figure_manifest_artifact=figure_manifest_artifact,
+        source_artifact=source_artifact,
+        plan_artifact=plan_artifact,
+        contract_artifact=contract_artifact,
+        artifact_ids=artifact_ids,
     )
 
 
@@ -1215,6 +1438,78 @@ def _read_json_artifact(artifact: Artifact | None) -> dict[str, Any]:
         return {}
 
 
+def _read_text_artifact(artifact: Artifact) -> str:
+    try:
+        return artifact_primary_path(artifact).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"Artifact content is not readable: {artifact.id}") from exc
+
+
+def _validate_tablex_notebook_source(source: str) -> dict[str, Any]:
+    checks = {
+        "has_tablex_marker": "Generated by Tablex" in source,
+        "imports_marimo": "import marimo" in source,
+        "defines_marimo_app": "marimo.App" in source,
+        "has_main_run_guard": 'if __name__ == "__main__"' in source,
+        "mentions_artifact_policy": "EvaluationSpec" in source and "SplitManifest" in source,
+    }
+    return {
+        "schema_version": "notebook_source_validation.v1",
+        "is_tablex_generated": all(
+            checks[key] for key in ("has_tablex_marker", "imports_marimo", "defines_marimo_app", "has_main_run_guard")
+        ),
+        "checks": checks,
+    }
+
+
+def run_notebook_static_compile(source: str, timeout_seconds: int = 15) -> dict[str, Any]:
+    started = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="tablex_notebook_capture_") as tmp_dir:
+        notebook_path = f"{tmp_dir}/notebook.py"
+        with open(notebook_path, "w", encoding="utf-8") as handle:
+            handle.write(source)
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-I", "-m", "py_compile", notebook_path],
+                cwd=tmp_dir,
+                env={"PYTHONHASHSEED": "0"},
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "schema_version": "notebook_static_compile.v1",
+                "status": "timed_out",
+                "returncode": None,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "timeout_seconds": timeout_seconds,
+                "stdout_excerpt": _excerpt(exc.stdout),
+                "stderr_excerpt": _excerpt(exc.stderr),
+                "isolated_python": True,
+                "executed_user_code": False,
+            }
+    return {
+        "schema_version": "notebook_static_compile.v1",
+        "status": "succeeded" if completed.returncode == 0 else "failed",
+        "returncode": completed.returncode,
+        "duration_ms": int((time.monotonic() - started) * 1000),
+        "timeout_seconds": timeout_seconds,
+        "stdout_excerpt": _excerpt(completed.stdout),
+        "stderr_excerpt": _excerpt(completed.stderr),
+        "isolated_python": True,
+        "executed_user_code": False,
+    }
+
+
+def _excerpt(value: object, limit: int = 4000) -> str:
+    if value is None:
+        return ""
+    text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+    return text[:limit]
+
+
 def _model_diagnostics_source_artifacts(
     db: Session,
     run: ExperimentRun,
@@ -1492,6 +1787,251 @@ def _linked_artifact_refs(linked_artifacts: dict[str, Artifact | None]) -> list[
             }
         )
     return refs
+
+
+def build_notebook_figure_manifest(
+    *,
+    project: Project,
+    notebook_artifact: Artifact,
+    notebook_kind: str,
+    compile_result: dict[str, Any],
+    generated_at: str,
+) -> dict[str, Any]:
+    expected_figures = {
+        "data_understanding": [
+            "top_missing_columns_bar",
+            "semantic_type_role_mix",
+            "target_profile_summary",
+        ],
+        "model_diagnostics": [
+            "feature_family_inventory",
+            "prediction_score_bins",
+            "diagnostics_coverage_summary",
+        ],
+    }.get(notebook_kind, ["notebook_generated_figures"])
+    return {
+        "schema_version": "notebook_figure_manifest.v1",
+        "project_id": project.id,
+        "notebook_artifact_id": notebook_artifact.id,
+        "notebook_kind": notebook_kind,
+        "generated_at": generated_at,
+        "capture_mode": "safe_static_capture",
+        "status": "planned_figures_only",
+        "runtime_execution_status": "deferred",
+        "compile_status": compile_result["status"],
+        "figures": [],
+        "expected_figure_slots": [
+            {
+                "slot": slot,
+                "status": "not_rendered",
+                "reason": "Static capture validates notebook source but does not execute marimo cells.",
+            }
+            for slot in expected_figures
+        ],
+    }
+
+
+def build_notebook_execution_manifest(
+    *,
+    project: Project,
+    notebook_artifact: Artifact,
+    notebook_kind: str,
+    linked_artifacts: dict[str, Artifact | None],
+    source_validation: dict[str, Any],
+    compile_result: dict[str, Any],
+    execution_status: str,
+    generated_at: str,
+    plan_created: bool,
+    output_artifacts: dict[str, str],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "notebook_execution_manifest.v1",
+        "project_id": project.id,
+        "notebook_artifact_id": notebook_artifact.id,
+        "notebook_kind": notebook_kind,
+        "generated_at": generated_at,
+        "capture_mode": "safe_static_capture",
+        "execution_status": execution_status,
+        "summary": {
+            "headline": _notebook_execution_headline(execution_status, compile_result),
+            "runtime_execution_status": "deferred",
+            "python_compile_status": compile_result["status"],
+            "plan_created_by_capture": plan_created,
+        },
+        "safety_policy": {
+            "arbitrary_notebook_code_executed": False,
+            "python_compile_only": True,
+            "python_isolated_mode": True,
+            "external_network_accessed": False,
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+            "local_files_outside_workspace_materialized": False,
+            "human_review_required_before_full_execution": True,
+        },
+        "source_validation": source_validation,
+        "static_compile": compile_result,
+        "linked_artifacts": _linked_artifact_refs(linked_artifacts),
+        "outputs": {
+            **output_artifacts,
+            "notebook_execution_html_artifact_id": None,
+            "notebook_execution_report_id": None,
+            "notebook_execution_report_artifact_id": None,
+        },
+        "next_runner_steps": [
+            "Run marimo in a restricted workspace only after approval.",
+            "Capture executed HTML export as an artifact.",
+            "Capture generated figures and tables with source-cell lineage.",
+            "Preserve EvaluationSpec and SplitManifest when adding diagnostics.",
+        ],
+    }
+
+
+def _notebook_execution_headline(execution_status: str, compile_result: dict[str, Any]) -> str:
+    if execution_status == "static_capture_succeeded":
+        return "Notebook source passed isolated Python syntax validation; marimo runtime execution is deferred."
+    if compile_result["status"] == "timed_out":
+        return "Notebook source syntax validation timed out in the controlled static capture path."
+    return "Notebook source did not pass isolated Python syntax validation; inspect stderr before runner execution."
+
+
+def render_notebook_execution_html_preview(manifest: dict[str, Any]) -> str:
+    summary = manifest["summary"]
+    safety = manifest["safety_policy"]
+    compile_result = manifest["static_compile"]
+    source_validation = manifest["source_validation"]
+    linked_artifacts = cast(list[dict[str, Any]], manifest["linked_artifacts"])
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tablex Notebook Execution Capture</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --ink: #10183f;
+      --muted: #53617d;
+      --line: #dbe3f3;
+      --wash: #f4f9fb;
+      --teal: #18b8a6;
+      --blue: #3867f3;
+      --rose: #d84c6f;
+      --amber: #f4a62a;
+    }}
+    body {{
+      margin: 0;
+      color: var(--ink);
+      background: linear-gradient(180deg, #f8fbff 0%, #eef8f6 100%);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    main {{ display: grid; gap: 18px; padding: 28px; }}
+    h1 {{ margin: 0; font-size: 29px; letter-spacing: 0; }}
+    h2 {{ margin: 0 0 10px; font-size: 16px; }}
+    p {{ color: var(--muted); line-height: 1.55; }}
+    .eyebrow {{ color: var(--teal); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }}
+    .panel {{ border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.88); padding: 16px; box-shadow: 0 16px 42px rgba(34, 48, 88, .08); }}
+    .metric strong {{ display: block; font-size: 22px; overflow-wrap: anywhere; }}
+    .metric span, .tiny {{ color: var(--muted); font-size: 12px; }}
+    .badge-row {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+    .badge {{ border: 1px solid var(--line); border-radius: 999px; padding: 6px 9px; background: var(--wash); font-size: 12px; font-weight: 700; }}
+    .badge.good {{ color: #0f6848; }}
+    .badge.warn {{ color: var(--amber); }}
+    .badge.fail {{ color: var(--rose); }}
+    code, pre {{ background: #eef3ff; border-radius: 6px; }}
+    code {{ padding: 2px 5px; }}
+    pre {{ max-height: 260px; overflow: auto; padding: 12px; white-space: pre-wrap; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+    th, td {{ text-align: left; border-bottom: 1px solid var(--line); padding: 8px; overflow-wrap: anywhere; }}
+    @media (prefers-color-scheme: dark) {{
+      :root {{ --ink: #eef4ff; --muted: #aab6d3; --line: #2e3a5b; --wash: #17213a; }}
+      body {{ background: #0c1225; }}
+      .panel {{ background: rgba(17,24,47,.9); box-shadow: none; }}
+      code, pre {{ background: #1e2a48; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">Notebook Execution Capture</div>
+      <h1>{escape(str(summary["headline"]))}</h1>
+      <p>This capture validates the generated marimo notebook source and records runner boundaries before full execution. It does not execute notebook cells or access external dashboards.</p>
+    </header>
+    <section class="grid">
+      {_metric_card("Status", manifest["execution_status"])}
+      {_metric_card("Notebook kind", manifest["notebook_kind"])}
+      {_metric_card("Compile", compile_result["status"])}
+      {_metric_card("Runtime", summary["runtime_execution_status"])}
+    </section>
+    <section class="panel">
+      <h2>Safety boundary</h2>
+      {_html_table([{"policy": key, "value": value} for key, value in safety.items()], ["policy", "value"])}
+    </section>
+    <section class="grid">
+      <div class="panel">
+        <h2>Source validation</h2>
+        {_html_table([{"check": key, "value": value} for key, value in source_validation["checks"].items()], ["check", "value"])}
+      </div>
+      <div class="panel">
+        <h2>Linked artifacts</h2>
+        {_html_table(linked_artifacts, ["role", "asset_type", "artifact_id"])}
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Compile stderr</h2>
+      <pre>{escape(str(compile_result.get("stderr_excerpt") or "No stderr."))}</pre>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
+def render_notebook_execution_report(
+    manifest: dict[str, Any],
+    html_artifact_id: str,
+    figure_manifest_artifact_id: str,
+    source_artifact_id: str,
+) -> str:
+    compile_result = manifest["static_compile"]
+    safety = manifest["safety_policy"]
+    safety_lines = [f"- {key}: `{value}`" for key, value in safety.items()]
+    return "\n".join(
+        [
+            "# Notebook Execution Capture Report",
+            "",
+            str(manifest["summary"]["headline"]),
+            "",
+            "## Scope",
+            "",
+            "- Capture mode: `safe_static_capture`",
+            f"- Notebook artifact: `{manifest['notebook_artifact_id']}`",
+            f"- Notebook kind: `{manifest['notebook_kind']}`",
+            "- Full marimo runtime execution: `deferred`",
+            "- Python validation: `python -I -m py_compile` in a temporary workspace.",
+            "",
+            "## Safety Policy",
+            "",
+            *safety_lines,
+            "",
+            "## Compile Result",
+            "",
+            f"- Status: `{compile_result['status']}`",
+            f"- Return code: `{compile_result['returncode']}`",
+            f"- Duration: `{compile_result['duration_ms']} ms`",
+            f"- Stderr excerpt: `{compile_result.get('stderr_excerpt') or 'none'}`",
+            "",
+            "## Captured Artifacts",
+            "",
+            f"- HTML preview: `{html_artifact_id}`",
+            f"- Figure manifest: `{figure_manifest_artifact_id}`",
+            f"- Notebook source copy: `{source_artifact_id}`",
+            "",
+            "## Next Runner Steps",
+            "",
+            *[f"- {item}" for item in manifest["next_runner_steps"]],
+        ]
+    )
 
 
 def _notebook_recommendation_score(
@@ -2212,6 +2752,61 @@ def _record_notebook_execution_plan_lineage(
         to_asset_id=plan_artifact.id,
         relation_type="materializes",
     )
+
+
+def _record_notebook_execution_capture_lineage(
+    db: Session,
+    *,
+    project: Project,
+    notebook_artifact: Artifact,
+    linked_artifacts: list[Artifact],
+    manifest_artifact: Artifact,
+    report: Report,
+    report_artifact: Artifact,
+    html_artifact: Artifact,
+    figure_manifest_artifact: Artifact,
+    source_artifact: Artifact,
+) -> None:
+    outputs = [manifest_artifact, report_artifact, html_artifact, figure_manifest_artifact, source_artifact]
+    for artifact in linked_artifacts:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=manifest_artifact.id,
+            relation_type="informs",
+        )
+    for artifact in outputs:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=notebook_artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="captures_execution_as",
+        )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="report",
+        from_asset_id=report.id,
+        to_asset_type="artifact",
+        to_asset_id=report_artifact.id,
+        relation_type="materializes",
+    )
+    for artifact in [report_artifact, html_artifact, figure_manifest_artifact, source_artifact]:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=manifest_artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="documents",
+        )
 
 
 def _execution_policy() -> dict[str, Any]:

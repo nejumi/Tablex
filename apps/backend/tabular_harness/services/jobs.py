@@ -46,6 +46,7 @@ JOB_TYPES = {
     "generate_data_understanding_notebook",
     "generate_model_diagnostics_notebook",
     "plan_notebook_execution",
+    "capture_notebook_execution",
     "prepare_agent_context",
     "prepare_planned_agent_workspace",
     "review_agent_task_readiness",

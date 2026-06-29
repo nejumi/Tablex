@@ -103,6 +103,7 @@ from tabular_harness.services.analysis_notebooks import (
     build_project_notebook_index,
     create_data_understanding_notebook,
     create_model_diagnostics_notebook,
+    create_notebook_execution_capture,
     create_notebook_execution_plan,
 )
 from tabular_harness.services.approach import (
@@ -3311,6 +3312,62 @@ def plan_analysis_notebook_execution_endpoint(
                 "notebook_execution_plan_artifact_id": result.plan_artifact.id,
                 "artifact_ids": result.artifact_ids,
                 "execution_status": "planned_not_executed",
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/analysis-notebooks/{artifact_id}/execution-capture", response_model=JobRead)
+def capture_analysis_notebook_execution_endpoint(
+    artifact_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    notebook_artifact = db.get(Artifact, artifact_id)
+    if notebook_artifact is None:
+        raise HTTPException(status_code=404, detail="Analysis notebook artifact not found")
+    if notebook_artifact.asset_type != "analysis_notebook":
+        raise HTTPException(status_code=400, detail="Artifact is not an analysis_notebook")
+    if notebook_artifact.project_id is None:
+        raise HTTPException(status_code=400, detail="Analysis notebook artifact must be project-scoped")
+    require_project(db, notebook_artifact.project_id)
+    job = create_job(
+        db,
+        job_type="capture_notebook_execution",
+        project_id=notebook_artifact.project_id,
+        input_payload={"analysis_notebook_artifact_id": notebook_artifact.id},
+        policy={
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+            "execution_mode": "safe_static_capture",
+            "executes_notebook_code": False,
+            "python_compile_only": True,
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_notebook_execution_capture(db, store=store, notebook_artifact=notebook_artifact)
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.manifest["schema_version"],
+                "notebook_kind": result.manifest["notebook_kind"],
+                "analysis_notebook_artifact_id": notebook_artifact.id,
+                "notebook_execution_manifest_artifact_id": result.manifest_artifact.id,
+                "notebook_execution_report_id": result.report.id,
+                "notebook_execution_report_artifact_id": result.report_artifact.id,
+                "notebook_execution_html_artifact_id": result.html_artifact.id,
+                "notebook_figure_manifest_artifact_id": result.figure_manifest_artifact.id,
+                "notebook_execution_source_artifact_id": result.source_artifact.id,
+                "notebook_execution_plan_artifact_id": result.plan_artifact.id,
+                "agent_task_contract_artifact_id": result.contract_artifact.id,
+                "artifact_ids": result.artifact_ids,
+                "execution_status": result.manifest["execution_status"],
+                "capture_mode": result.manifest["capture_mode"],
             },
         )
     except ValueError as exc:

@@ -1176,6 +1176,54 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         == execution_plan_job["output"]["agent_task_contract_artifact_id"]
     )
 
+    execution_capture_response = client.post(
+        f"/api/analysis-notebooks/{model_notebook_job['output']['analysis_notebook_artifact_id']}/execution-capture"
+    )
+    assert execution_capture_response.status_code == 200, execution_capture_response.text
+    execution_capture_job = execution_capture_response.json()
+    assert execution_capture_job["status"] == "succeeded"
+    assert execution_capture_job["job_type"] == "capture_notebook_execution"
+    assert execution_capture_job["output"]["capture_mode"] == "safe_static_capture"
+    assert execution_capture_job["output"]["execution_status"] == "static_capture_succeeded"
+    assert execution_capture_job["output"]["notebook_execution_manifest_artifact_id"]
+    assert execution_capture_job["output"]["notebook_execution_html_artifact_id"]
+    assert execution_capture_job["output"]["notebook_figure_manifest_artifact_id"]
+    assert execution_capture_job["output"]["notebook_execution_source_artifact_id"]
+
+    execution_manifest_response = client.get(
+        f"/api/artifacts/{execution_capture_job['output']['notebook_execution_manifest_artifact_id']}/download"
+    )
+    assert execution_manifest_response.status_code == 200
+    execution_manifest = execution_manifest_response.json()
+    assert execution_manifest["schema_version"] == "notebook_execution_manifest.v1"
+    assert execution_manifest["safety_policy"]["python_compile_only"] is True
+    assert execution_manifest["safety_policy"]["arbitrary_notebook_code_executed"] is False
+    assert execution_manifest["safety_policy"]["secrets_materialized"] is False
+    assert execution_manifest["static_compile"]["status"] == "succeeded"
+    assert execution_manifest["summary"]["runtime_execution_status"] == "deferred"
+    assert (
+        execution_manifest["outputs"]["notebook_execution_html_artifact_id"]
+        == execution_capture_job["output"]["notebook_execution_html_artifact_id"]
+    )
+
+    execution_html_preview_response = client.get(
+        f"/api/artifacts/{execution_capture_job['output']['notebook_execution_html_artifact_id']}/preview"
+    )
+    assert execution_html_preview_response.status_code == 200
+    execution_html_preview = execution_html_preview_response.json()
+    assert execution_html_preview["content_type"] == "text/html"
+    assert "Notebook Execution Capture" in execution_html_preview["preview"]
+    assert "runtime execution is deferred" in execution_html_preview["preview"]
+
+    figure_manifest_response = client.get(
+        f"/api/artifacts/{execution_capture_job['output']['notebook_figure_manifest_artifact_id']}/download"
+    )
+    assert figure_manifest_response.status_code == 200
+    figure_manifest = figure_manifest_response.json()
+    assert figure_manifest["schema_version"] == "notebook_figure_manifest.v1"
+    assert figure_manifest["runtime_execution_status"] == "deferred"
+    assert figure_manifest["expected_figure_slots"]
+
     run_report_response = client.post(f"/api/runs/{baseline_run['id']}/report")
     assert run_report_response.status_code == 200, run_report_response.text
     run_report_job = run_report_response.json()
@@ -1234,6 +1282,11 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "notebook_run_manifest",
         "notebook_report",
         "notebook_execution_plan",
+        "notebook_execution_manifest",
+        "notebook_execution_report",
+        "notebook_execution_html",
+        "notebook_figure_manifest",
+        "notebook_execution_source",
     }.issubset(asset_types)
     artifacts = artifacts_response.json()
     validation_report = next(item for item in artifacts if item["asset_type"] == "model_validation_report")

@@ -5369,7 +5369,14 @@ function NotebooksTab({
   const recommendedNotebook = notebookIndex?.recommended_notebook ?? null;
   const executionArtifacts = artifacts.filter(
     (artifact) =>
-      artifact.asset_type === "notebook_execution_plan" ||
+      [
+        "notebook_execution_plan",
+        "notebook_execution_manifest",
+        "notebook_execution_report",
+        "notebook_execution_html",
+        "notebook_figure_manifest",
+        "notebook_execution_source"
+      ].includes(artifact.asset_type) ||
       (artifact.asset_type === "agent_task_contract" && typeof artifact.metadata.notebook_artifact_id === "string")
   );
 
@@ -5416,6 +5423,17 @@ function NotebooksTab({
     return job;
   }
 
+  async function captureNotebookExecution(item: NotebookIndexItem) {
+    const job = await api<Job>(`/api/analysis-notebooks/${item.artifact_ids.notebook}/execution-capture`, {
+      method: "POST"
+    });
+    const htmlArtifactId = job.output.notebook_execution_html_artifact_id;
+    if (typeof htmlArtifactId === "string") {
+      await loadPreview(htmlArtifactId);
+    }
+    return job;
+  }
+
   return (
     <div className="stack">
       <div className="toolbar">
@@ -5442,6 +5460,16 @@ function NotebooksTab({
         >
           {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
           Plan Execution
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy || recommendedNotebook === null}
+          onClick={() => {
+            if (recommendedNotebook) void runAction(() => captureNotebookExecution(recommendedNotebook));
+          }}
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+          Capture
         </button>
       </div>
 
@@ -5481,6 +5509,14 @@ function NotebooksTab({
                     {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
                     Plan Execution
                   </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() => void runAction(() => captureNotebookExecution(recommendedNotebook))}
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                    Capture
+                  </button>
                   <a
                     className="icon-link"
                     href={`${apiBase}/api/artifacts/${recommendedNotebook.artifact_ids.notebook}/download`}
@@ -5495,7 +5531,7 @@ function NotebooksTab({
               <Metric label="Notebooks" value={notebookIndex.counts.total} />
               <Metric label="Data notebooks" value={notebookIndex.counts.by_kind.data_understanding ?? 0} />
               <Metric label="Model notebooks" value={notebookIndex.counts.by_kind.model_diagnostics ?? 0} />
-              <Metric label="Execution plans" value={executionArtifacts.length} />
+              <Metric label="Execution artifacts" value={executionArtifacts.length} />
             </div>
           </div>
         ) : (
@@ -5533,6 +5569,14 @@ function NotebooksTab({
                   >
                     {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
                   </button>
+                  <button
+                    className="icon-button"
+                    disabled={busy}
+                    onClick={() => void runAction(() => captureNotebookExecution(item))}
+                    title="Capture controlled notebook execution evidence"
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                  </button>
                   <a className="icon-link" href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`} title="Download marimo source">
                     <Download size={16} />
                   </a>
@@ -5544,7 +5588,7 @@ function NotebooksTab({
           )}
         </Panel>
 
-        <Panel title="Execution Plans" icon={<ListChecks size={18} />}>
+        <Panel title="Execution Evidence" icon={<ListChecks size={18} />}>
           {executionArtifacts.length ? (
             <Table
               headers={["Type", "Status", "Notebook", "Created", "Actions"]}
@@ -5569,7 +5613,7 @@ function NotebooksTab({
               ])}
             />
           ) : (
-            <EmptyInline text="Controlled execution plans and notebook AgentTaskContracts will appear here before any notebook runner executes code." />
+            <EmptyInline text="Controlled execution plans, capture manifests, reports, HTML previews, and notebook AgentTaskContracts will appear here before any full notebook runner executes cells." />
           )}
         </Panel>
       </div>
@@ -5617,9 +5661,18 @@ function ReportsTab({
     ["decision_dashboard", "decision_report"].includes(artifact.asset_type)
   );
   const analysisNotebookArtifacts = artifacts.filter((artifact) =>
-    ["analysis_notebook", "notebook_html", "notebook_run_manifest", "notebook_report", "notebook_execution_plan"].includes(
-      artifact.asset_type
-    ) ||
+    [
+      "analysis_notebook",
+      "notebook_html",
+      "notebook_run_manifest",
+      "notebook_report",
+      "notebook_execution_plan",
+      "notebook_execution_manifest",
+      "notebook_execution_report",
+      "notebook_execution_html",
+      "notebook_figure_manifest",
+      "notebook_execution_source"
+    ].includes(artifact.asset_type) ||
     (artifact.asset_type === "agent_task_contract" && typeof artifact.metadata.notebook_artifact_id === "string")
   );
   const guidedJourneyArtifacts = artifacts.filter((artifact) =>
