@@ -845,6 +845,50 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert initial_readout["evaluation_contract"]["status"] == "ready"
     assert initial_readout["next_action"]["target_tab"] == "Leaderboard"
 
+    result_notebook_response = client.post(f"/api/projects/{project_id}/results/notebook-evidence")
+    assert result_notebook_response.status_code == 200, result_notebook_response.text
+    result_notebook_job = result_notebook_response.json()
+    assert result_notebook_job["status"] == "succeeded"
+    assert result_notebook_job["job_type"] == "prepare_result_notebook_evidence"
+    assert result_notebook_job["output"]["schema_version"] == "result_notebook_evidence.v1"
+    assert result_notebook_job["output"]["top_run_id"] == baseline_job["output"]["experiment_run_id"]
+    assert result_notebook_job["output"]["analysis_notebook_artifact_id"]
+    assert result_notebook_job["output"]["notebook_evidence_html_artifact_id"]
+    assert result_notebook_job["output"]["preview_artifact_id"] == result_notebook_job["output"]["notebook_evidence_html_artifact_id"]
+    assert result_notebook_job["output"]["capture_mode"] in {"safe_static_capture", "existing_evidence"}
+
+    result_notebook_preview_response = client.get(
+        f"/api/artifacts/{result_notebook_job['output']['notebook_evidence_html_artifact_id']}/preview"
+    )
+    assert result_notebook_preview_response.status_code == 200
+    result_notebook_preview = result_notebook_preview_response.json()
+    assert "Notebook Evidence Review" in result_notebook_preview["preview"]
+    assert "Readiness verdict" in result_notebook_preview["preview"]
+    assert "Ask Codex next" in result_notebook_preview["preview"]
+
+    notebook_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
+    assert notebook_readout_response.status_code == 200, notebook_readout_response.text
+    notebook_readout = notebook_readout_response.json()
+    assert notebook_readout["notebook"]["status"] == "ready"
+    assert notebook_readout["notebook"]["action_endpoint"].endswith("/results/notebook-evidence")
+    assert notebook_readout["notebook"]["recommended"]["artifact_ids"]["evidence_html"]
+    assert notebook_readout["read_order"][3]["target_tab"] == "Notebooks"
+    assert notebook_readout["read_order"][3]["artifact_id"] == result_notebook_job["output"]["notebook_evidence_html_artifact_id"]
+
+    result_notebook_chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "結果のNotebook evidenceを作って"},
+    )
+    assert result_notebook_chat_response.status_code == 200, result_notebook_chat_response.text
+    result_notebook_chat = result_notebook_chat_response.json()
+    assert result_notebook_chat["intent"]["type"] == "prepare_result_notebook_evidence"
+    assert result_notebook_chat["action_summary"]["headline"] == "Result notebook evidence is ready"
+    assert result_notebook_chat["action_summary"]["next_step"]["target_tab"] == "Notebooks"
+    result_notebook_action = next(
+        action for action in result_notebook_chat["actions"] if action["type"] == "prepare_result_notebook_evidence"
+    )
+    assert result_notebook_action["artifact_id"]
+
     compare_runs_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "上位runを比較して"})
     assert compare_runs_chat_response.status_code == 200, compare_runs_chat_response.text
     compare_runs_chat = compare_runs_chat_response.json()

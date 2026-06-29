@@ -50,6 +50,10 @@ from tabular_harness.services.jobs import (
 from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.project_guidance import build_project_guidance
 from tabular_harness.services.reporting import leaderboard_sort_key
+from tabular_harness.services.result_notebook_evidence import (
+    prepare_result_notebook_evidence,
+    result_notebook_evidence_job_output,
+)
 
 SUPPORTED_METRICS = {
     "roc_auc": {"aliases": ["roc auc", "roc-auc", "roc_auc", "auc"], "label": "ROC-AUC"},
@@ -118,6 +122,8 @@ def handle_agent_chat_turn(
         actions.append(compare_top_runs_action(db, store=store, project=project))
     elif intent["type"] == "post_run_reading_workflow":
         actions.append(post_run_reading_workflow_action(db, store=store, project=project))
+    elif intent["type"] == "prepare_result_notebook_evidence":
+        actions.append(prepare_result_notebook_evidence_action(db, store=store, project=project))
     elif intent["type"] == "author_analysis_notebook":
         authoring_action = create_notebook_authoring_action(db, store=store, project=project, message=message)
         actions.append(authoring_action)
@@ -242,6 +248,13 @@ def infer_chat_intent(message: str) -> dict[str, Any]:
             "metric": None,
             "confidence": 0.88,
             "summary": "User wants Codex to write or revise a high-quality analysis notebook from current evidence.",
+        }
+    if is_result_notebook_evidence_request(normalized):
+        return {
+            "type": "prepare_result_notebook_evidence",
+            "metric": None,
+            "confidence": 0.86,
+            "summary": "User wants result-level notebook evidence prepared from the top run.",
         }
     followup_focuses = notebook_followup_focus_areas(normalized)
     if is_notebook_followup_task_request(normalized, has_scoped_source=bool(notebook_id or story_ref)):
@@ -555,6 +568,47 @@ def is_post_run_workflow_request(normalized: str) -> bool:
         for word in ["generate", "create", "make", "summarize", "作", "生成", "まとめ", "して", "見せ"]
     )
     return has_run_or_result_word and has_report_or_decision_word and has_action_word
+
+
+def is_result_notebook_evidence_request(normalized: str) -> bool:
+    has_notebook_word = any(word in normalized for word in ["notebook", "ノートブック"])
+    has_result_word = any(
+        word in normalized
+        for word in [
+            "result",
+            "results",
+            "top run",
+            "leaderboard",
+            "model evidence",
+            "model diagnostics",
+            "diagnostics",
+            "結果",
+            "上位run",
+            "トップrun",
+            "リーダーボード",
+            "診断",
+        ]
+    )
+    has_evidence_word = any(
+        word in normalized
+        for word in [
+            "evidence",
+            "capture",
+            "preview",
+            "review",
+            "readout",
+            "証拠",
+            "エビデンス",
+            "プレビュー",
+            "レビュー",
+            "読める",
+        ]
+    )
+    has_action_word = any(
+        word in normalized
+        for word in ["prepare", "build", "generate", "create", "make", "show", "open", "作", "生成", "準備", "表示", "見せ"]
+    )
+    return has_notebook_word and has_result_word and has_evidence_word and has_action_word
 
 
 def is_notebook_authoring_request(normalized: str) -> bool:
@@ -1239,6 +1293,58 @@ def post_run_reading_workflow_action(db: Session, *, store: LocalArtifactStore, 
     }
 
 
+def prepare_result_notebook_evidence_action(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+) -> dict[str, Any]:
+    action_job = create_job(
+        db,
+        job_type="prepare_result_notebook_evidence",
+        project_id=project.id,
+        input_payload={"triggered_by": "agent_chat"},
+        policy={
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+            "execution_mode": "generate_and_safe_static_capture",
+            "executes_notebook_code": False,
+        },
+    )
+    try:
+        mark_job_running(action_job)
+        result = prepare_result_notebook_evidence(db, store=store, project=project)
+        mark_job_succeeded(action_job, result_notebook_evidence_job_output(result))
+    except ValueError as exc:
+        mark_job_failed(action_job, str(exc))
+        return needs_review_action(
+            action_type="prepare_result_notebook_evidence",
+            label="Successful run evidence is needed before notebook evidence",
+            target_tab="Experiments",
+            target_anchor=None,
+            detail=str(exc),
+            job_id=action_job.id,
+        )
+    status_label = "prepared" if result.capture_created or result.notebook_generated else "already ready"
+    return {
+        "type": "prepare_result_notebook_evidence",
+        "status": "applied",
+        "label": f"Result notebook evidence is {status_label}",
+        "target_tab": "Notebooks",
+        "target_anchor": "notebook-focus",
+        "detail": (
+            f"Top run {result.top_run.id} is linked to a model diagnostics notebook and readable Evidence HTML. "
+            "Start with the Notebook focus preview, then ask Codex for exactly one missing diagnostic such as "
+            "feature importance, permutation importance, calibration, threshold, or slice review."
+        ),
+        "artifact_id": result.preview_artifact_id,
+        "artifact_ids": result.artifact_ids,
+        "entity_ids": [result.top_run.id],
+        "job_id": action_job.id,
+    }
+
+
 def needs_dataset_action(*, action_type: str, label: str, detail: str) -> dict[str, Any]:
     return needs_review_action(
         action_type=action_type,
@@ -1858,6 +1964,14 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
                 "Next: open Reports and read the decision report first; use the Result Readout when you need rank-level detail."
             )
         return f"I cannot prepare post-run reading yet: {action['detail']} Open {action['target_tab']} and resolve that first."
+    if intent["type"] == "prepare_result_notebook_evidence":
+        action = actions[0]
+        if action["status"] == "applied":
+            return (
+                f"I prepared readable notebook evidence for the current top run. {action['detail']} "
+                "Next: open Notebooks. The preview should show Notebook Evidence Review, not raw source or JSON."
+            )
+        return f"I cannot prepare result notebook evidence yet: {action['detail']} Open {action['target_tab']} and resolve that first."
     if intent["type"] == "author_analysis_notebook":
         brief_action = next((action for action in actions if action["type"] == "create_notebook_authoring_brief"), None)
         task_action = next((action for action in actions if action["type"] == "create_agent_task_contract"), None)
@@ -1976,6 +2090,8 @@ def action_summary_headline(intent: dict[str, Any], outcome: str) -> str:
         return "Run evidence compared" if outcome == "applied" else "Run comparison needs successful runs"
     if intent_type == "post_run_reading_workflow":
         return "Post-run reading pack is ready" if outcome == "applied" else "Post-run reading needs successful runs"
+    if intent_type == "prepare_result_notebook_evidence":
+        return "Result notebook evidence is ready" if outcome == "applied" else "Result notebook evidence needs a successful run"
     if intent_type == "generate_data_understanding_notebook":
         return "Notebook evidence generated"
     if intent_type == "author_analysis_notebook":
@@ -2006,10 +2122,12 @@ def action_summary_boundaries(intent: dict[str, Any], actions: list[dict[str, An
         boundaries.append("Baseline strategy is an evidence-backed plan, not a fixed AutoML recipe or deployment approval.")
     if intent_type == "generate_decision_report":
         boundaries.append("Decision reports summarize current evidence; missing evidence remains visible instead of being invented.")
-    if intent_type in {"show_leaderboard", "compare_top_runs", "post_run_reading_workflow"}:
+    if intent_type in {"show_leaderboard", "compare_top_runs", "post_run_reading_workflow", "prepare_result_notebook_evidence"}:
         boundaries.append("Leaderboard ranks are decision evidence only under the same EvaluationSpec and SplitManifest context.")
     if intent_type == "post_run_reading_workflow":
         boundaries.append("Post-run reports expose missing diagnostics instead of inventing model evidence.")
+    if intent_type == "prepare_result_notebook_evidence":
+        boundaries.append("Notebook evidence is generated and safely captured from harness-owned artifacts; cells are not executed by this action.")
     if intent_type == "plan_notebook_followup_task":
         boundaries.append("Notebook follow-up diagnostics must be artifact-backed and must not fake unavailable model evidence.")
         boundaries.append("EvaluationSpec and SplitManifest remain read-only constraints for the runner.")

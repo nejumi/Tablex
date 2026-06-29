@@ -98,6 +98,10 @@ def build_result_readout(db: Session, *, project: Project) -> dict[str, Any]:
             "recommended": notebook_section.get("recommended_notebook"),
             "count": notebook_section.get("notebook_count"),
             "captured_count": notebook_section.get("captured_count"),
+            "action_endpoint": f"/api/projects/{project.id}/results/notebook-evidence",
+            "action_label": "Build Notebook Evidence",
+            "target_tab": "Notebooks",
+            "target_anchor": "notebook-focus",
         },
         "decision_report": {
             "available": decision_report["available"],
@@ -241,6 +245,8 @@ def build_read_order(
     status: str,
 ) -> list[dict[str, Any]]:
     report_ref = decision_report["report"] if decision_report["available"] else None
+    recommended_notebook = notebook_section.get("recommended_notebook")
+    notebook_artifact_id = notebook_preview_artifact_id(recommended_notebook if isinstance(recommended_notebook, dict) else None)
     return [
         {
             "step": 1,
@@ -270,10 +276,10 @@ def build_read_order(
         },
         {
             "step": 4,
-            "title": "Close the human evidence gap",
+            "title": "Open notebook evidence",
             "body": str(notebook_section.get("human_summary") or "No notebook evidence is available yet."),
-            "target_tab": "Notebooks" if notebook_section.get("status") != "ready" else "Reports",
-            "artifact_id": None,
+            "target_tab": "Notebooks",
+            "artifact_id": notebook_artifact_id,
             "state": notebook_section.get("status"),
         },
         {
@@ -285,6 +291,19 @@ def build_read_order(
             "state": "ready" if status in {"needs_attention", "ready_for_review"} and report_ref else "needs_action",
         },
     ]
+
+
+def notebook_preview_artifact_id(notebook: dict[str, Any] | None) -> str | None:
+    if not notebook:
+        return None
+    artifact_ids = notebook.get("artifact_ids")
+    if not isinstance(artifact_ids, dict):
+        return None
+    for key in ("evidence_html", "execution_html", "html_preview", "report_artifact", "notebook"):
+        value = artifact_ids.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def next_result_action(
@@ -336,7 +355,10 @@ def next_result_action(
         "label": str(bundle_next_action.get("title") or "Read the current decision report"),
         "target_tab": str(bundle_next_action.get("target_tab") or "Reports"),
         "target_anchor": "decision-report",
-        "agent_prompt": str(bundle_next_action.get("reason") or "Explain the next action from the result readout."),
+        "agent_prompt": (
+            f"{bundle_next_action.get('title') or 'Explain the next action'}: "
+            f"{bundle_next_action.get('reason') or 'Explain the next action from the result readout.'}"
+        ),
     }
 
 

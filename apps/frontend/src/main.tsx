@@ -586,6 +586,9 @@ type NotebookIndexItem = {
     execution_html: string | null;
     figure_manifest: string | null;
     execution_source: string | null;
+    evidence_bundle: string | null;
+    evidence_html: string | null;
+    evidence_figures: string[];
   };
   report_id: string | null;
   visualization_id: string | null;
@@ -7240,6 +7243,19 @@ function NotebooksTab({
     return job;
   }
 
+  async function prepareResultNotebookEvidence() {
+    const job = await api<Job>(`/api/projects/${project.id}/results/notebook-evidence`, { method: "POST" });
+    const htmlArtifactId =
+      textField(job.output.notebook_evidence_html_artifact_id) ??
+      textField(job.output.notebook_execution_html_artifact_id) ??
+      textField(job.output.notebook_html_artifact_id) ??
+      textField(job.output.analysis_notebook_artifact_id);
+    if (htmlArtifactId) {
+      await loadPreview(htmlArtifactId);
+    }
+    return job;
+  }
+
   async function runEdaReview(dataset: DatasetSnapshot) {
     const job = await api<Job>(`/api/datasets/${dataset.id}/eda-review`, { method: "POST" });
     const htmlArtifactId = job.output.eda_review_html_artifact_id;
@@ -7460,6 +7476,14 @@ function NotebooksTab({
               )}
               {storyPreviewArtifactId ? "Open Story" : "Run EDA Review"}
             </button>
+            <button
+              className="secondary-button"
+              disabled={busy || latestRun === null}
+              onClick={() => void runAction(prepareResultNotebookEvidence)}
+            >
+              {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+              Result Evidence
+            </button>
           </div>
         </div>
       </section>
@@ -7524,6 +7548,14 @@ function NotebooksTab({
                     Capture Evidence
                   </button>
                 ) : null}
+                <button
+                  className="secondary-button"
+                  disabled={busy || latestRun === null}
+                  onClick={() => void runAction(prepareResultNotebookEvidence)}
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+                  Result Evidence
+                </button>
               </div>
             </section>
 
@@ -7723,6 +7755,14 @@ function NotebooksTab({
                           {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
                           Capture
                         </button>
+                        <button
+                          className="secondary-button"
+                          disabled={busy || latestRun === null}
+                          onClick={() => void runAction(prepareResultNotebookEvidence)}
+                        >
+                          {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+                          Result
+                        </button>
                       </div>
                     </div>
                     <div className="mini-card notebook-evidence-card">
@@ -7861,6 +7901,14 @@ function NotebooksTab({
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
                   Model Notebook
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={busy || latestRun === null}
+                  onClick={() => void runAction(prepareResultNotebookEvidence)}
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+                  Result Evidence
                 </button>
               </div>
             </div>
@@ -8509,7 +8557,13 @@ function decisionReportStatusClass(status: string) {
 }
 
 function notebookPreviewArtifactId(item: NotebookIndexItem) {
-  return item.artifact_ids.html_preview ?? item.artifact_ids.report_artifact ?? item.artifact_ids.notebook;
+  return (
+    item.artifact_ids.evidence_html ??
+    item.artifact_ids.execution_html ??
+    item.artifact_ids.html_preview ??
+    item.artifact_ids.report_artifact ??
+    item.artifact_ids.notebook
+  );
 }
 
 function notebookCoverageLabel(item: NotebookIndexItem) {
@@ -9075,6 +9129,19 @@ function LeaderboardTab({
     return job;
   }
 
+  async function prepareResultNotebookEvidence() {
+    const job = await api<Job>(`/api/projects/${project.id}/results/notebook-evidence`, { method: "POST" });
+    const htmlArtifactId =
+      textField(job.output.notebook_evidence_html_artifact_id) ??
+      textField(job.output.notebook_execution_html_artifact_id) ??
+      textField(job.output.notebook_html_artifact_id) ??
+      textField(job.output.analysis_notebook_artifact_id);
+    if (htmlArtifactId) {
+      await loadPreview(htmlArtifactId);
+    }
+    return job;
+  }
+
   const latestComparisonReport = comparisonReportArtifacts[0] ?? null;
   const readoutStatus = resultReadout?.status ?? leaderboardStatus;
   const readoutTone = resultReadoutStatusTone(readoutStatus, leaderboardTone);
@@ -9105,6 +9172,11 @@ function LeaderboardTab({
       label: "Decision",
       value: booleanField(resultReadout?.decision_report.available) ? "report" : "gap",
       tone: booleanField(resultReadout?.decision_report.available) ? "ready" : "warning"
+    },
+    {
+      label: "Notebook",
+      value: textField(resultReadout?.notebook.status) ?? "missing",
+      tone: textField(resultReadout?.notebook.status) === "ready" ? "ready" : "warning"
     }
   ];
   React.useEffect(() => {
@@ -9166,6 +9238,10 @@ function LeaderboardTab({
           <button className="secondary-button" disabled={busy} onClick={() => void runAction(() => generateTopRunNotebook(topEntry))}>
             {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
             Diagnostics Notebook
+          </button>
+          <button className="secondary-button" disabled={busy} onClick={() => void runAction(prepareResultNotebookEvidence)}>
+            {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+            Notebook Evidence
           </button>
           <button
             className="secondary-button"

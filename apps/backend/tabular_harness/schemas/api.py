@@ -575,6 +575,7 @@ class JobCreate(BaseModel):
         "translate_tier3_content",
         "run_agent_task",
         "agent_chat_turn",
+        "prepare_result_notebook_evidence",
     ]
     project_id: str | None = None
     input: dict[str, Any] = Field(default_factory=dict)

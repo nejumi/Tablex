@@ -2761,6 +2761,15 @@ def _notebook_index_item(
     execution_source_artifact = _latest_artifact_for_metadata(
         db, project.id, "notebook_execution_source", "notebook_artifact_id", notebook_artifact.id
     )
+    evidence_bundle_artifact = _latest_artifact_for_metadata(
+        db, project.id, "notebook_evidence_bundle", "notebook_artifact_id", notebook_artifact.id
+    )
+    evidence_html_artifact = _latest_artifact_for_metadata(
+        db, project.id, "notebook_evidence_html", "notebook_artifact_id", notebook_artifact.id
+    )
+    evidence_figure_artifacts = _artifacts_for_metadata(
+        db, project.id, "notebook_evidence_svg", "notebook_artifact_id", notebook_artifact.id
+    )
     report = reports_by_artifact_id.get(report_artifact.id) if report_artifact else None
     visualization = visualizations_by_artifact_id.get(visualization_artifact.id) if visualization_artifact else None
     execution_metadata = loads_json(execution_manifest_artifact.metadata_json, {}) if execution_manifest_artifact else {}
@@ -2775,6 +2784,9 @@ def _notebook_index_item(
         "has_execution_capture": execution_manifest_artifact is not None,
         "has_execution_report": execution_report_artifact is not None,
         "has_execution_html": execution_html_artifact is not None,
+        "has_evidence_html": evidence_html_artifact is not None,
+        "has_evidence_bundle": evidence_bundle_artifact is not None,
+        "evidence_figure_count": len(evidence_figure_artifacts),
         "has_figure_manifest": figure_manifest_artifact is not None,
         "execution_status": str(metadata.get("execution_status") or "unknown"),
         "execution_capture_status": str(execution_metadata.get("execution_status") or "not_captured"),
@@ -2804,6 +2816,9 @@ def _notebook_index_item(
             "execution_html": execution_html_artifact.id if execution_html_artifact else None,
             "figure_manifest": figure_manifest_artifact.id if figure_manifest_artifact else None,
             "execution_source": execution_source_artifact.id if execution_source_artifact else None,
+            "evidence_bundle": evidence_bundle_artifact.id if evidence_bundle_artifact else None,
+            "evidence_html": evidence_html_artifact.id if evidence_html_artifact else None,
+            "evidence_figures": [artifact.id for artifact in evidence_figure_artifacts],
         },
         "report_id": report.id if report else None,
         "visualization_id": visualization.id if visualization else None,

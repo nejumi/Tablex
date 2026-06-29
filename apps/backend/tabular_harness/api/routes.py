@@ -245,6 +245,10 @@ from tabular_harness.services.reporting import (
 from tabular_harness.services.research_runner import run_research_source_pack_local_stub
 from tabular_harness.services.research_sources import create_research_source_pack
 from tabular_harness.services.research_synthesis import create_research_finding_synthesis
+from tabular_harness.services.result_notebook_evidence import (
+    prepare_result_notebook_evidence,
+    result_notebook_evidence_job_output,
+)
 from tabular_harness.services.result_readout import build_result_readout
 from tabular_harness.services.translation import TranslationResult
 from tabular_harness.services.translation import translate_artifact as translate_artifact_service
@@ -3412,6 +3416,36 @@ def current_decision_report_endpoint(project_id: str, db: Annotated[Session, Dep
 def result_readout_endpoint(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
     project = require_project(db, project_id)
     return build_result_readout(db, project=project)
+
+
+@router.post("/api/projects/{project_id}/results/notebook-evidence", response_model=JobRead)
+def prepare_result_notebook_evidence_endpoint(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="prepare_result_notebook_evidence",
+        project_id=project_id,
+        input_payload={"triggered_by": "result_readout"},
+        policy={
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+            "execution_mode": "generate_and_safe_static_capture",
+            "executes_notebook_code": False,
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = prepare_result_notebook_evidence(db, store=store, project=project)
+        mark_job_succeeded(job, result_notebook_evidence_job_output(result))
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
 
 
 @router.post("/api/projects/{project_id}/decision-report/generate", response_model=JobRead)
