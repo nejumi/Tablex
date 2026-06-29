@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tablex.local/schemas/relational_schema_hint.schema.json",
+  "title": "RelationalSchemaHintUpload",
+  "type": "object",
+  "properties": {
+    "tables": {
+      "type": "array",
+      "items": {
+        "type": ["object", "string"],
+        "properties": {
+          "table_name": { "type": "string" },
+          "name": { "type": "string" },
+          "role": { "type": "string" },
+          "columns": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "left_table": { "type": "string" },
+          "right_table": { "type": "string" },
+          "left_column": { "type": "string" },
+          "right_column": { "type": "string" },
+          "relation_type": { "type": "string" },
+          "confidence": { "type": "number" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "notes": { "type": "string" }
+  },
+  "additionalProperties": true
+}

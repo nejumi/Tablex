@@ -23,6 +23,7 @@ JOB_TYPES = {
     "create_relational_feature_plan",
     "build_relational_feature_recipe",
     "diagnose_relational_feature_scenarios",
+    "upload_relational_schema_hint",
     "run_public_benchmark_workflow",
     "run_baseline",
     "plan_baseline_strategy",

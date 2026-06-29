@@ -22,7 +22,7 @@ from tabular_harness.services.analysis_notebooks import (
     build_project_notebook_index,
     create_data_understanding_notebook,
 )
-from tabular_harness.services.approach import store_json_artifact
+from tabular_harness.services.approach import latest_project_artifact, store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
 from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
@@ -82,6 +82,8 @@ def handle_agent_chat_turn(
         actions.append(generate_data_understanding_notebook_action(db, store=store, project=project))
     elif intent["type"] == "run_eda_review":
         actions.append(run_eda_review_action(db, store=store, project=project))
+    elif intent["type"] == "show_relational_map":
+        actions.append(show_relational_map_action(db, project=project))
     elif intent["type"] == "author_analysis_notebook":
         authoring_action = create_notebook_authoring_action(db, store=store, project=project, message=message)
         actions.append(authoring_action)
@@ -217,6 +219,13 @@ def infer_chat_intent(message: str) -> dict[str, Any]:
             "confidence": 0.84,
             "summary": "User wants Tablex to run a controlled EDA/Data Review inside the workbench.",
         }
+    if is_relational_map_request(normalized):
+        return {
+            "type": "show_relational_map",
+            "metric": None,
+            "confidence": 0.82,
+            "summary": "User wants Tablex to show or collect relational/ER diagram evidence inside the workbench.",
+        }
     if is_next_step_request(normalized):
         return {
             "type": "explain_next_step",
@@ -275,6 +284,34 @@ def is_eda_review_request(normalized: str) -> bool:
         for word in ["run", "generate", "create", "make", "show", "作", "生成", "出し", "やって", "して", "見せ"]
     )
     return has_eda_word and has_action_word
+
+
+def is_relational_map_request(normalized: str) -> bool:
+    has_relational_word = any(
+        word in normalized
+        for word in [
+            "er diagram",
+            "erd",
+            "relationship map",
+            "relational map",
+            "schema diagram",
+            "join graph",
+            "table graph",
+            "relational preview",
+            "relationships",
+            "relationship",
+            "リレーション",
+            "関係図",
+            "er図",
+            "er 図",
+            "スキーマ図",
+        ]
+    )
+    has_action_word = any(
+        word in normalized
+        for word in ["show", "view", "visualize", "preview", "upload", "import", "見せ", "表示", "可視化", "アップロード", "取り込"]
+    )
+    return has_relational_word and has_action_word
 
 
 def is_notebook_authoring_request(normalized: str) -> bool:
@@ -388,6 +425,48 @@ def run_eda_review_action(
         "artifact_id": result.html_artifact.id,
         "artifact_ids": result.artifact_ids,
         "entity_ids": [result.report.id, result.evidence.id, result.insight.id],
+    }
+
+
+def show_relational_map_action(db: Session, *, project: Project) -> dict[str, Any]:
+    relational_catalog = latest_project_artifact(db, project.id, "relational_catalog")
+    schema_hint = latest_project_artifact(db, project.id, "relational_schema_hint")
+    report = latest_project_artifact(db, project.id, "relational_schema_hint_report")
+    if relational_catalog:
+        return {
+            "type": "show_relational_map",
+            "status": "explained",
+            "label": "Open the relational map",
+            "target_tab": "Data",
+            "detail": (
+                "A RelationalCatalog is available. The Data tab shows the ER-style map first, with raw catalog JSON "
+                "folded as supporting detail."
+            ),
+            "artifact_id": relational_catalog.id,
+            "artifact_ids": [artifact.id for artifact in [relational_catalog, schema_hint, report] if artifact],
+        }
+    if schema_hint:
+        return {
+            "type": "show_relational_map",
+            "status": "explained",
+            "label": "Review the uploaded ER evidence",
+            "target_tab": "Data",
+            "detail": (
+                "An uploaded ER/schema hint is available. The Data tab shows the diagram or structured JSON evidence, "
+                "then keeps validation guardrails visible."
+            ),
+            "artifact_id": schema_hint.id,
+            "artifact_ids": [artifact.id for artifact in [schema_hint, report] if artifact],
+        }
+    return {
+        "type": "show_relational_map",
+        "status": "needs_review",
+        "label": "Upload an ER diagram or import a multi-table benchmark",
+        "target_tab": "Data",
+        "detail": (
+            "No relational catalog or ER diagram evidence exists yet. Upload a PNG/JPEG/SVG/PDF/JSON ER hint, "
+            "or import a benchmark with supporting tables."
+        ),
     }
 
 
@@ -801,6 +880,18 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
             f"I cannot run Data Review yet: {action['detail']} "
             f"Open {action['target_tab']} and upload or select a dataset first."
         )
+    if intent["type"] == "show_relational_map":
+        action = actions[0]
+        if action["status"] == "needs_review":
+            return (
+                "I do not see relational evidence yet. Open Data and upload an ER diagram or import a multi-table "
+                "benchmark. I will treat the diagram as evidence, not a confirmed join contract, until keys, "
+                "cardinality, and prediction-time availability are reviewed."
+            )
+        return (
+            f"I found relational evidence and routed you to Data. {action['detail']} "
+            "Start with the ER-style map, then inspect only the guardrails and supporting JSON if something looks wrong."
+        )
     if intent["type"] == "author_analysis_notebook":
         brief_action = next((action for action in actions if action["type"] == "create_notebook_authoring_brief"), None)
         task_action = next((action for action in actions if action["type"] == "create_agent_task_contract"), None)
@@ -891,6 +982,8 @@ def action_summary_headline(intent: dict[str, Any], outcome: str) -> str:
         return f"{metric} preference recorded"
     if intent_type == "run_eda_review":
         return "Data Review is ready" if outcome == "applied" else "Data Review needs a dataset first"
+    if intent_type == "show_relational_map":
+        return "Relational map is ready" if outcome != "needs_review" else "Relational evidence is needed"
     if intent_type == "generate_data_understanding_notebook":
         return "Notebook evidence generated"
     if intent_type == "author_analysis_notebook":
@@ -909,6 +1002,8 @@ def action_summary_boundaries(intent: dict[str, Any], actions: list[dict[str, An
     intent_type = str(intent.get("type") or "")
     if intent_type == "set_evaluation_metric":
         boundaries.append("Approved EvaluationSpecs and SplitManifests are not destructively changed by chat.")
+    if intent_type == "show_relational_map":
+        boundaries.append("Uploaded or inferred ER edges are evidence, not confirmed join contracts.")
     if any(action.get("type") == "create_agent_task_contract" for action in actions):
         boundaries.append("Codex runner autonomy starts inside the generated AgentTaskContract, not outside the workbench.")
     if any(action.get("target_tab") == "Notebooks" for action in actions):

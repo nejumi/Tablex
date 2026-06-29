@@ -3287,6 +3287,36 @@ function isHtmlArtifactPreview(preview: ArtifactPreview | null): boolean {
   );
 }
 
+function isVisualArtifactPreview(preview: ArtifactPreview | null): boolean {
+  if (!preview?.preview_available) return false;
+  return preview.content_type.startsWith("image/") || preview.content_type === "application/pdf";
+}
+
+function VisualArtifactPreview({ preview }: { preview: ArtifactPreview }) {
+  const url = preview.preview?.startsWith("/api/") ? `${apiBase}${preview.preview}` : preview.preview ?? `${apiBase}/api/artifacts/${preview.id}/download`;
+  const isPdf = preview.content_type === "application/pdf" || preview.filename.toLowerCase().endsWith(".pdf");
+  return (
+    <div className="preview-block">
+      <div className="preview-toolbar">
+        <div className="preview-meta">
+          <span className="badge">{isPdf ? "PDF preview" : "image preview"}</span>
+          <span className="badge muted">{preview.filename}</span>
+        </div>
+        <a className="secondary-button text-link-button" href={url} target="_blank" rel="noreferrer">
+          Open original
+        </a>
+      </div>
+      <div className="visual-preview-shell">
+        {isPdf ? (
+          <iframe className="visual-preview-frame" src={url} title={`${preview.name} preview`} />
+        ) : (
+          <img className="visual-preview-image" src={url} alt={`${preview.name} preview`} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
   const previewType = preview.content_type === "image/svg+xml" || preview.filename.toLowerCase().endsWith(".svg") ? "SVG" : "HTML";
   return (
@@ -3406,6 +3436,8 @@ function DataTab({
 }) {
   const [file, setFile] = React.useState<File | null>(null);
   const [target, setTarget] = React.useState(project.target_column ?? "");
+  const [erHintFile, setErHintFile] = React.useState<File | null>(null);
+  const [erHintNote, setErHintNote] = React.useState("");
   const [benchmarkPaths, setBenchmarkPaths] = React.useState<Record<string, string>>({});
   const [qualityPreview, setQualityPreview] = React.useState<ArtifactPreview | null>(null);
   const [qualityPreviewError, setQualityPreviewError] = React.useState<string | null>(null);
@@ -3442,6 +3474,26 @@ function DataTab({
       })
     );
     setFile(null);
+  }
+
+  async function uploadRelationalSchemaHint() {
+    if (!erHintFile) return;
+    const body = new FormData();
+    body.append("file", erHintFile);
+    if (erHintNote.trim()) body.append("note", erHintNote.trim());
+    await runAction(async () => {
+      const job = await api<Job>(`/api/projects/${project.id}/relational/schema-hints/upload`, {
+        method: "POST",
+        body
+      });
+      const artifactId = textField(job.output.relational_schema_hint_artifact_id);
+      if (artifactId) {
+        await loadRelationalPreview(artifactId);
+      }
+      return job;
+    });
+    setErHintFile(null);
+    setErHintNote("");
   }
 
   async function importBenchmark(benchmark: BenchmarkDataset) {
@@ -3706,6 +3758,9 @@ function DataTab({
     ["benchmark_evidence_pack", "benchmark_evidence_report"].includes(artifact.asset_type)
   );
   const relationalArtifacts = artifacts.filter((artifact) => artifact.asset_type === "relational_catalog");
+  const relationalHintArtifacts = artifacts.filter((artifact) =>
+    ["relational_schema_hint", "relational_schema_hint_report"].includes(artifact.asset_type)
+  );
   const relationalFeatureArtifacts = artifacts.filter((artifact) =>
     ["relational_feature_plan", "relational_feature_report"].includes(artifact.asset_type)
   );
@@ -3726,15 +3781,17 @@ function DataTab({
   const publicWorkflowJobs = jobs.filter((job) => job.job_type === "run_public_benchmark_workflow");
   const latestDataset = datasets[0] ?? null;
   const latestRelationalCatalog = relationalArtifacts[0] ?? null;
+  const latestRelationalHint = relationalHintArtifacts.find((artifact) => artifact.asset_type === "relational_schema_hint") ?? null;
 
   React.useEffect(() => {
-    if (!latestRelationalCatalog) return;
-    if (relationalPreview?.id === latestRelationalCatalog.id) return;
-    if (autoLoadedRelationalCatalogRef.current === latestRelationalCatalog.id) return;
-    autoLoadedRelationalCatalogRef.current = latestRelationalCatalog.id;
-    setRelationalPreviewLoadingId(latestRelationalCatalog.id);
+    const preferredArtifact = latestRelationalCatalog ?? latestRelationalHint;
+    if (!preferredArtifact) return;
+    if (relationalPreview?.id === preferredArtifact.id) return;
+    if (autoLoadedRelationalCatalogRef.current === preferredArtifact.id) return;
+    autoLoadedRelationalCatalogRef.current = preferredArtifact.id;
+    setRelationalPreviewLoadingId(preferredArtifact.id);
     setRelationalPreviewError(null);
-    api<ArtifactPreview>(`/api/artifacts/${latestRelationalCatalog.id}/preview`)
+    api<ArtifactPreview>(`/api/artifacts/${preferredArtifact.id}/preview`)
       .then((preview) => {
         setRelationalPreview(preview);
       })
@@ -3744,7 +3801,7 @@ function DataTab({
       .finally(() => {
         setRelationalPreviewLoadingId(null);
       });
-  }, [latestRelationalCatalog, relationalPreview?.id]);
+  }, [latestRelationalCatalog, latestRelationalHint, relationalPreview?.id]);
 
   return (
     <div className="stack">
@@ -4206,132 +4263,69 @@ function DataTab({
           <EmptyInline text="Raw uploaded files are stored in the local artifact store with content hashes." />
         )}
       </Panel>
-      <Panel title="Relational Catalogs" icon={<GitBranch size={18} />}>
-        <div className="toolbar">
-          <button className="secondary-button" disabled={busy} onClick={() => void createRelationalFeaturePlan()}>
-            {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
-            Feature Plan
-          </button>
-          <button className="secondary-button" disabled={busy} onClick={() => void createRelationalFeatureRecipe()}>
-            {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-            Build Recipe
-          </button>
-          <button className="secondary-button" disabled={busy} onClick={() => void diagnoseRelationalFeatureScenarios()}>
-            {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-            Diagnose
-          </button>
+      <Panel title="Relational Map" icon={<GitBranch size={18} />}>
+        <div className="relational-map-hero">
+          <div>
+            <div className="eyebrow">Relationship evidence</div>
+            <h3>
+              {latestRelationalCatalog
+                ? "Start with the ER-style map"
+                : latestRelationalHint
+                  ? "Review the uploaded ER evidence"
+                  : "Add a relational map when tables matter"}
+            </h3>
+            <p>
+              Tablex treats inferred edges and uploaded diagrams as evidence. Confirm keys, cardinality, leakage risk, and
+              prediction-time availability before a runner creates relational features.
+            </p>
+          </div>
+          <div className="relational-map-metrics">
+            <div>
+              <span>Catalogs</span>
+              <strong>{relationalArtifacts.length}</strong>
+            </div>
+            <div>
+              <span>ER hints</span>
+              <strong>{relationalHintArtifacts.filter((artifact) => artifact.asset_type === "relational_schema_hint").length}</strong>
+            </div>
+            <div>
+              <span>Plans</span>
+              <strong>{relationalFeatureArtifacts.length + relationalRecipeArtifacts.length + relationalScenarioArtifacts.length}</strong>
+            </div>
+          </div>
         </div>
-        {relationalArtifacts.length ? (
-          <Table
-            headers={["Benchmark", "Tables", "Relationships", "Actions"]}
-            rows={relationalArtifacts.map((artifact) => [
-              String(artifact.metadata.benchmark_id ?? artifact.name),
-              String(artifact.metadata.table_count ?? "-"),
-              String(artifact.metadata.relationship_count ?? "-"),
-              <div className="row-actions" key={artifact.id}>
-                <button
-                  className="icon-button"
-                  disabled={relationalPreviewLoadingId === artifact.id}
-                  onClick={() => void loadRelationalPreview(artifact.id)}
-                  title="Preview relational catalog"
-                >
-                  {relationalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-                </button>
-                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download relational catalog">
-                  <Download size={16} />
-                </a>
-              </div>
-            ])}
-          />
-        ) : (
-          <EmptyInline text="Benchmark imports with supporting tables will register relational catalogs with table profiles and inferred join keys." />
-        )}
-        {relationalFeatureArtifacts.length ? (
-          <Table
-            headers={["Plan", "Benchmark", "Tables", "Candidates", "High Risk", "Created", "Actions"]}
-            rows={relationalFeatureArtifacts.map((artifact) => [
-              artifact.asset_type,
-              String(artifact.metadata.benchmark_id ?? "-"),
-              String(artifact.metadata.table_count ?? "-"),
-              String(artifact.metadata.aggregation_candidate_count ?? "-"),
-              String(artifact.metadata.high_risk_count ?? "-"),
-              formatDate(artifact.created_at),
-              <div className="row-actions" key={artifact.id}>
-                <button
-                  className="icon-button"
-                  disabled={relationalPreviewLoadingId === artifact.id}
-                  onClick={() => void loadRelationalPreview(artifact.id)}
-                  title="Preview relational feature plan"
-                >
-                  {relationalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-                </button>
-                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download relational feature plan">
-                  <Download size={16} />
-                </a>
-              </div>
-            ])}
-          />
-        ) : (
-          <EmptyInline text="Relational feature plans will turn table profiles and inferred joins into train-fold-safe aggregation candidates, leakage risks, and AgentTask handoff notes." />
-        )}
-        {relationalRecipeArtifacts.length ? (
-          <Table
-            headers={["Recipe Artifact", "Features", "Steps", "Deferred", "Preview Rows", "Created", "Actions"]}
-            rows={relationalRecipeArtifacts.map((artifact) => [
-              artifact.asset_type,
-              String(artifact.metadata.generated_feature_count ?? "-"),
-              String(artifact.metadata.executed_step_count ?? "-"),
-              String(artifact.metadata.deferred_step_count ?? "-"),
-              String(artifact.metadata.preview_row_count ?? "-"),
-              formatDate(artifact.created_at),
-              <div className="row-actions" key={artifact.id}>
-                <button
-                  className="icon-button"
-                  disabled={relationalPreviewLoadingId === artifact.id}
-                  onClick={() => void loadRelationalPreview(artifact.id)}
-                  title="Preview relational feature recipe"
-                >
-                  {relationalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-                </button>
-                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download relational feature recipe">
-                  <Download size={16} />
-                </a>
-              </div>
-            ])}
-          />
-        ) : (
-          <EmptyInline text="Relational feature recipe previews will materialize safe aggregation steps, deferred checks, generated feature columns, reports, and visualization specs for later AgentRunner implementation." />
-        )}
-        {relationalScenarioArtifacts.length ? (
-          <Table
-            headers={["Scenario Artifact", "Usable", "Constant", "High Missing", "Deferred", "Scenarios", "Actions"]}
-            rows={relationalScenarioArtifacts.map((artifact) => [
-              artifact.asset_type,
-              String(artifact.metadata.usable_feature_count ?? "-"),
-              String(artifact.metadata.constant_feature_count ?? "-"),
-              String(artifact.metadata.high_missing_feature_count ?? "-"),
-              String(artifact.metadata.deferred_step_count ?? "-"),
-              String(artifact.metadata.scenario_count ?? "-"),
-              <div className="row-actions" key={artifact.id}>
-                <button
-                  className="icon-button"
-                  disabled={relationalPreviewLoadingId === artifact.id}
-                  onClick={() => void loadRelationalPreview(artifact.id)}
-                  title="Preview relational scenario diagnostics"
-                >
-                  {relationalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-                </button>
-                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download relational scenario diagnostics">
-                  <Download size={16} />
-                </a>
-              </div>
-            ])}
-          />
-        ) : (
-          <EmptyInline text="Relational scenario diagnostics will compare primary-only, safe relational preview, deferred feature, and evaluation-readiness scenarios without running a fixed model strategy." />
-        )}
-      </Panel>
-      <Panel title="Relational Preview" icon={<GitBranch size={18} />}>
+        <div className="relational-command-row">
+          <div className="relational-upload-row">
+            <input
+              type="file"
+              accept=".png,.jpg,.jpeg,.svg,.pdf,.json,image/png,image/jpeg,image/svg+xml,application/pdf,application/json"
+              onChange={(event) => setErHintFile(event.target.files?.[0] ?? null)}
+            />
+            <input
+              value={erHintNote}
+              onChange={(event) => setErHintNote(event.target.value)}
+              placeholder="Optional ER note"
+            />
+            <button className="secondary-button" disabled={!erHintFile || busy} onClick={() => void uploadRelationalSchemaHint()}>
+              {busy ? <Loader2 className="spin" size={16} /> : <Upload size={16} />}
+              Upload ER
+            </button>
+          </div>
+          <div className="button-row">
+            <button className="secondary-button" disabled={busy} onClick={() => void createRelationalFeaturePlan()}>
+              {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+              Feature Plan
+            </button>
+            <button className="secondary-button" disabled={busy} onClick={() => void createRelationalFeatureRecipe()}>
+              {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+              Build Recipe
+            </button>
+            <button className="secondary-button" disabled={busy} onClick={() => void diagnoseRelationalFeatureScenarios()}>
+              {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+              Diagnose
+            </button>
+          </div>
+        </div>
         {relationalPreviewError ? <div className="banner danger">{relationalPreviewError}</div> : null}
         {relationalPreviewLoadingId ? (
           <div className="banner muted">
@@ -4342,14 +4336,161 @@ function DataTab({
         {relationalPreview?.preview_available ? (
           isRelationalCatalogPreview(relationalPreview) ? (
             <RelationalCatalogPreview preview={relationalPreview} />
+          ) : isVisualArtifactPreview(relationalPreview) ? (
+            <VisualArtifactPreview preview={relationalPreview} />
           ) : isHtmlArtifactPreview(relationalPreview) ? (
             <HtmlArtifactPreview preview={relationalPreview} />
           ) : (
             <TranslatablePreview preview={relationalPreview} />
           )
         ) : (
-          <EmptyInline text={relationalPreview?.reason ?? "Import a multi-table benchmark to see the relationship map here. Advanced JSON stays folded under the ER diagram."} />
+          <EmptyInline text={relationalPreview?.reason ?? "Import a multi-table benchmark or upload an ER diagram to see relationship evidence here."} />
         )}
+        <div className="relational-guardrail-strip">
+          <span>Evidence first, not a join contract.</span>
+          <span>Feature work must respect EvaluationSpec and SplitManifest.</span>
+          <span>Prediction-time availability must be confirmed before lift claims.</span>
+        </div>
+        <details className="supporting-details">
+          <summary>
+            <span>Supporting relational artifacts</span>
+            <small>
+              {relationalArtifacts.length} catalogs / {relationalHintArtifacts.length} uploads /{" "}
+              {relationalFeatureArtifacts.length + relationalRecipeArtifacts.length + relationalScenarioArtifacts.length} plans
+            </small>
+          </summary>
+          <div className="supporting-details-body">
+            {relationalHintArtifacts.length ? (
+              <Table
+                headers={["Type", "File", "Parsed", "Created", "Actions"]}
+                rows={relationalHintArtifacts.map((artifact) => [
+                  artifact.asset_type,
+                  String(artifact.metadata.source_filename ?? artifact.name),
+                  `${String(artifact.metadata.parsed_table_count ?? "-")} tables / ${String(
+                    artifact.metadata.parsed_relationship_count ?? "-"
+                  )} rels`,
+                  formatDate(artifact.created_at),
+                  <div className="row-actions" key={artifact.id}>
+                    <button
+                      className="icon-button"
+                      disabled={relationalPreviewLoadingId === artifact.id}
+                      onClick={() => void loadRelationalPreview(artifact.id)}
+                      title="Preview ER evidence"
+                    >
+                      {relationalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                    </button>
+                    <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download ER evidence">
+                      <Download size={16} />
+                    </a>
+                  </div>
+                ])}
+              />
+            ) : (
+              <EmptyInline text="Upload a PNG, JPEG, SVG, PDF, or JSON ER hint when the dataset meaning depends on table relationships." />
+            )}
+            {relationalArtifacts.length ? (
+              <Table
+                headers={["Benchmark", "Tables", "Relationships", "Actions"]}
+                rows={relationalArtifacts.map((artifact) => [
+                  String(artifact.metadata.benchmark_id ?? artifact.name),
+                  String(artifact.metadata.table_count ?? "-"),
+                  String(artifact.metadata.relationship_count ?? "-"),
+                  <div className="row-actions" key={artifact.id}>
+                    <button
+                      className="icon-button"
+                      disabled={relationalPreviewLoadingId === artifact.id}
+                      onClick={() => void loadRelationalPreview(artifact.id)}
+                      title="Preview relational catalog"
+                    >
+                      {relationalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                    </button>
+                    <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download relational catalog">
+                      <Download size={16} />
+                    </a>
+                  </div>
+                ])}
+              />
+            ) : null}
+            {relationalFeatureArtifacts.length ? (
+              <Table
+                headers={["Plan", "Benchmark", "Tables", "Candidates", "High Risk", "Created", "Actions"]}
+                rows={relationalFeatureArtifacts.map((artifact) => [
+                  artifact.asset_type,
+                  String(artifact.metadata.benchmark_id ?? "-"),
+                  String(artifact.metadata.table_count ?? "-"),
+                  String(artifact.metadata.aggregation_candidate_count ?? "-"),
+                  String(artifact.metadata.high_risk_count ?? "-"),
+                  formatDate(artifact.created_at),
+                  <div className="row-actions" key={artifact.id}>
+                    <button
+                      className="icon-button"
+                      disabled={relationalPreviewLoadingId === artifact.id}
+                      onClick={() => void loadRelationalPreview(artifact.id)}
+                      title="Preview relational feature plan"
+                    >
+                      {relationalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                    </button>
+                    <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download relational feature plan">
+                      <Download size={16} />
+                    </a>
+                  </div>
+                ])}
+              />
+            ) : null}
+            {relationalRecipeArtifacts.length ? (
+              <Table
+                headers={["Recipe Artifact", "Features", "Steps", "Deferred", "Preview Rows", "Created", "Actions"]}
+                rows={relationalRecipeArtifacts.map((artifact) => [
+                  artifact.asset_type,
+                  String(artifact.metadata.generated_feature_count ?? "-"),
+                  String(artifact.metadata.executed_step_count ?? "-"),
+                  String(artifact.metadata.deferred_step_count ?? "-"),
+                  String(artifact.metadata.preview_row_count ?? "-"),
+                  formatDate(artifact.created_at),
+                  <div className="row-actions" key={artifact.id}>
+                    <button
+                      className="icon-button"
+                      disabled={relationalPreviewLoadingId === artifact.id}
+                      onClick={() => void loadRelationalPreview(artifact.id)}
+                      title="Preview relational feature recipe"
+                    >
+                      {relationalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                    </button>
+                    <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download relational feature recipe">
+                      <Download size={16} />
+                    </a>
+                  </div>
+                ])}
+              />
+            ) : null}
+            {relationalScenarioArtifacts.length ? (
+              <Table
+                headers={["Scenario Artifact", "Usable", "Constant", "High Missing", "Deferred", "Scenarios", "Actions"]}
+                rows={relationalScenarioArtifacts.map((artifact) => [
+                  artifact.asset_type,
+                  String(artifact.metadata.usable_feature_count ?? "-"),
+                  String(artifact.metadata.constant_feature_count ?? "-"),
+                  String(artifact.metadata.high_missing_feature_count ?? "-"),
+                  String(artifact.metadata.deferred_step_count ?? "-"),
+                  String(artifact.metadata.scenario_count ?? "-"),
+                  <div className="row-actions" key={artifact.id}>
+                    <button
+                      className="icon-button"
+                      disabled={relationalPreviewLoadingId === artifact.id}
+                      onClick={() => void loadRelationalPreview(artifact.id)}
+                      title="Preview relational scenario diagnostics"
+                    >
+                      {relationalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                    </button>
+                    <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download relational scenario diagnostics">
+                      <Download size={16} />
+                    </a>
+                  </div>
+                ])}
+              />
+            ) : null}
+          </div>
+        </details>
       </Panel>
       <Panel title="Benchmark Scenario Packs" icon={<Layers size={18} />}>
         {scenarioArtifacts.length ? (

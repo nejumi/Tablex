@@ -186,6 +186,81 @@ def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path
     assert any(item["asset_type"] == "agent_chat_turn" for item in artifacts_response.json())
 
 
+def test_relational_schema_hint_upload_preview_and_agent_route(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "ER evidence"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    er_json = {
+        "tables": [
+            {"table_name": "customers", "columns": ["customer_id", "segment"]},
+            {"table_name": "applications", "columns": ["application_id", "customer_id", "target"]},
+        ],
+        "relationships": [
+            {
+                "left_table": "customers",
+                "left_column": "customer_id",
+                "right_table": "applications",
+                "right_column": "customer_id",
+                "relation_type": "one_to_many",
+                "confidence": 0.85,
+            }
+        ],
+    }
+    json_upload_response = client.post(
+        f"/api/projects/{project_id}/relational/schema-hints/upload",
+        files={"file": ("er_hint.json", json.dumps(er_json).encode("utf-8"), "application/json")},
+        data={"note": "Customer to application relationship from source ERD."},
+    )
+    assert json_upload_response.status_code == 200, json_upload_response.text
+    json_job = json_upload_response.json()
+    assert json_job["status"] == "succeeded"
+    assert json_job["output"]["schema_version"] == "relational_schema_hint.v1"
+    assert json_job["output"]["parsed_table_count"] == 2
+    assert json_job["output"]["parsed_relationship_count"] == 1
+
+    json_preview_response = client.get(
+        f"/api/artifacts/{json_job['output']['relational_schema_hint_artifact_id']}/preview"
+    )
+    assert json_preview_response.status_code == 200
+    json_preview = json_preview_response.json()
+    assert json_preview["content_type"] == "json"
+    assert "customers" in json_preview["preview"]
+
+    report_preview_response = client.get(
+        f"/api/artifacts/{json_job['output']['relational_schema_hint_report_artifact_id']}/preview"
+    )
+    assert report_preview_response.status_code == 200
+    report_preview = report_preview_response.json()["preview"]
+    assert "Relational Schema Hint" in report_preview
+    assert "customers.customer_id -> applications.customer_id" in report_preview
+
+    png_upload_response = client.post(
+        f"/api/projects/{project_id}/relational/schema-hints/upload",
+        files={"file": ("er_diagram.png", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR", "image/png")},
+    )
+    assert png_upload_response.status_code == 200, png_upload_response.text
+    png_job = png_upload_response.json()
+    png_preview_response = client.get(
+        f"/api/artifacts/{png_job['output']['relational_schema_hint_artifact_id']}/preview"
+    )
+    assert png_preview_response.status_code == 200
+    png_preview = png_preview_response.json()
+    assert png_preview["content_type"] == "image/png"
+    assert png_preview["preview_available"] is True
+    assert png_preview["preview"].endswith("/download")
+
+    chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "ER図を表示して"})
+    assert chat_response.status_code == 200, chat_response.text
+    chat = chat_response.json()
+    assert chat["intent"]["type"] == "show_relational_map"
+    assert chat["action_summary"]["next_step"]["target_tab"] == "Data"
+    assert "Relational" in chat["action_summary"]["headline"]
+    assert any("join contracts" in item for item in chat["action_summary"]["boundaries"])
+
+
 def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 

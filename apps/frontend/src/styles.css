@@ -1822,6 +1822,74 @@ td {
   gap: 14px;
 }
 
+.relational-map-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+  gap: 16px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 14px;
+}
+
+.relational-map-hero h3 {
+  margin: 2px 0 6px;
+  color: var(--text-strong);
+  font-size: 20px;
+}
+
+.relational-map-hero p {
+  margin: 0;
+  color: var(--muted-strong);
+  line-height: 1.45;
+}
+
+.relational-map-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.relational-map-metrics div {
+  min-height: 76px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.relational-map-metrics span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.relational-map-metrics strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-strong);
+  font-size: 26px;
+  line-height: 1;
+}
+
+.relational-command-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.relational-upload-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.8fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
 .relational-preview-header {
   display: flex;
   justify-content: space-between;
@@ -1927,6 +1995,22 @@ td {
   font-weight: 700;
 }
 
+.relational-guardrail-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.relational-guardrail-strip span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  padding: 6px 10px;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 720;
+}
+
 .eyebrow {
   color: var(--accent);
   font-size: 11px;
@@ -1965,6 +2049,30 @@ td {
   display: block;
   width: 100%;
   height: min(760px, 78vh);
+  border: 0;
+  background: var(--surface);
+}
+
+.visual-preview-shell {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  min-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+
+.visual-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: min(760px, 72vh);
+  object-fit: contain;
+}
+
+.visual-preview-frame {
+  width: 100%;
+  height: min(760px, 72vh);
   border: 0;
   background: var(--surface);
 }
@@ -2744,13 +2852,16 @@ td {
   .answer-row,
   .viz-row,
   .inventory-meter,
-	  .notebook-start-card,
-	  .notebook-steps,
-	  .analysis-story-hero,
-	  .analysis-story-grid,
-	  .analysis-story-grid.compact,
-	  .analysis-story-card-grid,
-	  .strategy-hero,
+  .relational-map-hero,
+  .relational-command-row,
+  .relational-upload-row,
+  .notebook-start-card,
+  .notebook-steps,
+  .analysis-story-hero,
+  .analysis-story-grid,
+  .analysis-story-grid.compact,
+  .analysis-story-card-grid,
+  .strategy-hero,
   .strategy-handoff,
   .decision-report-hero,
   .decision-report-score,

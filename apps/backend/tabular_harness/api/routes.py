@@ -228,6 +228,10 @@ from tabular_harness.services.project_guidance import (
     create_guided_journey_comparison,
     create_guided_journey_snapshot,
 )
+from tabular_harness.services.relational_evidence import (
+    MAX_SCHEMA_HINT_BYTES,
+    create_relational_schema_hint,
+)
 from tabular_harness.services.relational_feature_diagnostics import (
     diagnose_relational_feature_scenarios,
 )
@@ -1074,6 +1078,64 @@ def create_notebook_authoring_brief_endpoint(
                 "context_artifact_count": len(result.brief["context_artifacts"]),
                 "artifact_id": result.brief_artifact.id,
                 "artifact_ids": result.artifact_ids,
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/relational/schema-hints/upload", response_model=JobRead)
+def upload_relational_schema_hint(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+    file: Annotated[UploadFile, File()],
+    note: Annotated[str | None, Form()] = None,
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="upload_relational_schema_hint",
+        project_id=project_id,
+        input_payload={
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "note_present": bool(note and note.strip()),
+        },
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "purpose": "store_user_supplied_er_diagram_evidence",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_relational_schema_hint(
+            db,
+            store=store,
+            project=project,
+            filename=file.filename or "relational_schema_hint",
+            content_type=file.content_type,
+            data=file.file.read(MAX_SCHEMA_HINT_BYTES + 1),
+            note=note,
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.summary["schema_version"],
+                "relational_schema_hint_artifact_id": result.artifact.id,
+                "relational_schema_hint_report_artifact_id": result.report_artifact.id,
+                "report_id": result.report.id,
+                "evidence_id": result.evidence.id,
+                "artifact_id": result.artifact.id,
+                "artifact_ids": [result.artifact.id, result.report_artifact.id],
+                "content_type": result.summary["content_type"],
+                "media_kind": result.summary["media_kind"],
+                "parsed_table_count": result.summary["parsed_table_count"],
+                "parsed_relationship_count": result.summary["parsed_relationship_count"],
             },
         )
     except ValueError as exc:
@@ -5061,6 +5123,14 @@ def model_validation_to_dict(db: Session, job: Job, model_version_id: str) -> di
 
 def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 20_000) -> dict[str, Any]:
     suffix = path.suffix.lower()
+    visual_suffixes = {
+        ".gif": "image/gif",
+        ".jpeg": "image/jpeg",
+        ".jpg": "image/jpeg",
+        ".pdf": "application/pdf",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }
     text_suffixes = {
         ".csv",
         ".html",
@@ -5082,6 +5152,15 @@ def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 
         "filename": path.name,
         "size_bytes": artifact.size_bytes,
     }
+    if suffix in visual_suffixes:
+        return {
+            **base,
+            "content_type": visual_suffixes[suffix],
+            "preview_available": True,
+            "preview": f"/api/artifacts/{artifact.id}/download",
+            "truncated": False,
+            "reason": None,
+        }
     if suffix not in text_suffixes:
         return {
             **base,
@@ -5089,7 +5168,9 @@ def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 
             "preview_available": False,
             "preview": None,
             "truncated": False,
-            "reason": "Preview is only available for text, JSON, Markdown, HTML, Python, and delimited text artifacts.",
+            "reason": (
+                "Preview is only available for text, JSON, Markdown, HTML, Python, delimited text, images, and PDF artifacts."
+            ),
         }
 
     raw = path.open("rb").read(limit_bytes + 1)

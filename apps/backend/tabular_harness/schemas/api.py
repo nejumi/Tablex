@@ -570,6 +570,7 @@ class JobCreate(BaseModel):
         "download_kaggle_selected_files",
         "import_benchmark_dataset",
         "create_benchmark_scenario_pack",
+        "upload_relational_schema_hint",
         "translate_tier3_content",
         "run_agent_task",
         "agent_chat_turn",
