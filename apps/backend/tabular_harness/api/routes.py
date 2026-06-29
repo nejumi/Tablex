@@ -66,6 +66,7 @@ from tabular_harness.schemas import (
     BenchmarkSourceCardRead,
     DatasetSnapshotRead,
     DatasetUploadResponse,
+    DecisionReportCurrentRead,
     EvaluationCandidateRead,
     EvaluationSpecRead,
     EvidenceCreate,
@@ -165,6 +166,10 @@ from tabular_harness.services.benchmarks import (
     validate_required_files,
 )
 from tabular_harness.services.data_quality import analyze_dataset_quality
+from tabular_harness.services.decision_reporting import (
+    create_decision_report_v1,
+    current_decision_report_payload,
+)
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
 from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
@@ -3287,6 +3292,44 @@ def list_project_reports(project_id: str, db: Annotated[Session, Depends(get_ses
     require_project(db, project_id)
     reports = db.scalars(select(Report).where(Report.project_id == project_id).order_by(Report.created_at.desc())).all()
     return [report_to_dict(item) for item in reports]
+
+
+@router.get("/api/projects/{project_id}/decision-report/current", response_model=DecisionReportCurrentRead)
+def current_decision_report_endpoint(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    return current_decision_report_payload(db, project=project)
+
+
+@router.post("/api/projects/{project_id}/decision-report/generate", response_model=JobRead)
+def generate_decision_report_endpoint(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(db, job_type="generate_decision_report", project_id=project_id, input_payload={})
+    try:
+        mark_job_running(job)
+        result = create_decision_report_v1(db, store=store, project=project)
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.bundle["schema_version"],
+                "readiness_status": result.bundle["readiness"]["status"],
+                "report_id": result.report.id,
+                "decision_report_artifact_id": result.report_artifact.id,
+                "decision_report_bundle_artifact_id": result.bundle_artifact.id,
+                "decision_report_evidence_id": result.evidence.id,
+                "next_action_count": len(result.bundle["next_actions"]),
+                "coverage_ready_count": result.bundle["coverage_summary"]["ready_count"],
+                "coverage_attention_count": result.bundle["coverage_summary"]["attention_count"],
+                "source_asset_count": len(result.bundle["source_assets"]),
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
 
 
 @router.get("/api/reports/{report_id}/preview", response_model=ArtifactPreviewRead)

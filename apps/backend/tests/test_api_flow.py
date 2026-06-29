@@ -1284,6 +1284,58 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "Decision Report" in decision_report_preview
     assert "## Readiness Stages" in decision_report_preview
 
+    current_decision_report_empty_response = client.get(f"/api/projects/{project_id}/decision-report/current")
+    assert current_decision_report_empty_response.status_code == 200
+    assert current_decision_report_empty_response.json()["available"] is False
+
+    decision_report_v1_response = client.post(f"/api/projects/{project_id}/decision-report/generate")
+    assert decision_report_v1_response.status_code == 200, decision_report_v1_response.text
+    decision_report_v1_job = decision_report_v1_response.json()
+    assert decision_report_v1_job["status"] == "succeeded"
+    assert decision_report_v1_job["job_type"] == "generate_decision_report"
+    assert decision_report_v1_job["output"]["schema_version"] == "decision_report_bundle.v1"
+    assert decision_report_v1_job["output"]["decision_report_bundle_artifact_id"]
+    assert decision_report_v1_job["output"]["decision_report_artifact_id"]
+    assert decision_report_v1_job["output"]["decision_report_evidence_id"]
+    assert decision_report_v1_job["output"]["source_asset_count"] > 0
+
+    decision_report_bundle_response = client.get(
+        f"/api/artifacts/{decision_report_v1_job['output']['decision_report_bundle_artifact_id']}/download"
+    )
+    assert decision_report_bundle_response.status_code == 200
+    decision_report_bundle = decision_report_bundle_response.json()
+    assert decision_report_bundle["schema_version"] == "decision_report_bundle.v1"
+    assert decision_report_bundle["safety"]["external_dashboards_required"] is False
+    assert decision_report_bundle["safety"]["secret_values_included"] is False
+    assert "data_review" in decision_report_bundle["sections"]
+    assert "evaluation" in decision_report_bundle["sections"]
+    assert "notebooks" in decision_report_bundle["sections"]
+    assert "experiments" in decision_report_bundle["sections"]
+    assert "runner_results" in decision_report_bundle["sections"]
+    assert "citations" in decision_report_bundle["sections"]
+    assert any(row["area"] == "Data Review" for row in decision_report_bundle["evidence_map"])
+    assert decision_report_bundle["next_actions"]
+
+    decision_report_v1_preview_response = client.get(
+        f"/api/reports/{decision_report_v1_job['output']['report_id']}/preview"
+    )
+    assert decision_report_v1_preview_response.status_code == 200
+    decision_report_v1_preview = decision_report_v1_preview_response.json()["preview"]
+    assert "## Evidence Map" in decision_report_v1_preview
+    assert "## Data Review" in decision_report_v1_preview
+    assert "## Evaluation Design" in decision_report_v1_preview
+    assert "## Experiments And Model Evidence" in decision_report_v1_preview
+    assert "## Notebook Evidence" in decision_report_v1_preview
+    assert "## Runner Results And Citations" in decision_report_v1_preview
+    assert "## Next Actions" in decision_report_v1_preview
+
+    current_decision_report_response = client.get(f"/api/projects/{project_id}/decision-report/current")
+    assert current_decision_report_response.status_code == 200
+    current_decision_report = current_decision_report_response.json()
+    assert current_decision_report["available"] is True
+    assert current_decision_report["report"]["id"] == decision_report_v1_job["output"]["report_id"]
+    assert current_decision_report["bundle"]["schema_version"] == "decision_report_bundle.v1"
+
     runs_response = client.get(f"/api/projects/{project_id}/runs")
     assert runs_response.status_code == 200
     baseline_run = next(run for run in runs_response.json() if run["model_version_id"] == model_version["id"])

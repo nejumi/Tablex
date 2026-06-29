@@ -1313,9 +1313,19 @@ td {
   font-weight: 700;
 }
 
+.badge.success {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
 .badge.muted {
   background: var(--surface-muted);
   color: var(--muted-strong);
+}
+
+.badge.warning {
+  background: var(--warning-bg);
+  color: var(--warning);
 }
 
 .badge.risk {
@@ -1494,6 +1504,188 @@ td {
 .focus-card p {
   margin: 0 0 10px;
   color: var(--muted-strong);
+}
+
+.decision-report-hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  gap: 16px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--surface-hover) 74%, transparent), var(--surface) 58%),
+    var(--surface);
+  padding: 20px;
+}
+
+.decision-report-copy {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  max-width: 900px;
+}
+
+.decision-report-copy h3 {
+  max-width: 760px;
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 24px;
+  line-height: 1.18;
+  letter-spacing: 0;
+}
+
+.decision-report-copy p {
+  max-width: 840px;
+  margin: 0;
+  color: var(--muted-strong);
+  line-height: 1.5;
+}
+
+.decision-report-score {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.decision-report-score .metric {
+  min-height: 72px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+}
+
+.decision-report-mascot {
+  position: absolute;
+  right: 14px;
+  bottom: 10px;
+  width: 72px;
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+.decision-next-list,
+.decision-evidence-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.decision-read-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.decision-read-column {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.decision-read-column h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.decision-read-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 12px;
+}
+
+.decision-read-item strong {
+  display: block;
+  color: var(--text-strong);
+}
+
+.decision-read-item p {
+  margin: 4px 0 0;
+  color: var(--muted-strong);
+  line-height: 1.42;
+}
+
+.decision-next-item,
+.decision-evidence-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 12px;
+}
+
+.decision-next-item > span {
+  display: grid;
+  place-items: center;
+  min-width: 42px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.decision-next-item strong,
+.decision-evidence-row strong {
+  display: block;
+  color: var(--text-strong);
+}
+
+.decision-next-item p,
+.decision-evidence-row p {
+  margin: 4px 0;
+  color: var(--muted-strong);
+  line-height: 1.42;
+}
+
+.decision-next-item small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.decision-evidence-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.report-supporting-details {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.report-supporting-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.report-supporting-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.report-supporting-details summary span {
+  color: var(--text-strong);
+  font-weight: 800;
+}
+
+.report-supporting-details summary small {
+  color: var(--muted);
+}
+
+.report-supporting-details > .toolbar,
+.report-supporting-details > .panel {
+  margin: 0 14px 14px;
 }
 
 .notebook-workbench {
@@ -2516,7 +2708,10 @@ td {
   .notebook-start-card,
   .notebook-steps,
   .strategy-hero,
-  .strategy-handoff {
+  .strategy-handoff,
+  .decision-report-hero,
+  .decision-report-score,
+  .decision-read-grid {
     grid-template-columns: 1fr;
   }
 

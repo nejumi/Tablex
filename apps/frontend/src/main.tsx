@@ -1061,6 +1061,33 @@ type Report = {
   created_at: string;
 };
 
+type DecisionReportBundle = {
+  schema_version: string;
+  generated_at: string;
+  project: Record<string, unknown>;
+  readiness: Record<string, unknown>;
+  recommended_next_action: Record<string, unknown>;
+  next_actions: Array<Record<string, unknown>>;
+  coverage_summary: Record<string, unknown>;
+  evidence_map: Array<Record<string, unknown>>;
+  sections: Record<string, unknown>;
+  counts: Record<string, unknown>;
+  source_assets: Array<Record<string, unknown>>;
+  safety: Record<string, unknown>;
+};
+
+type DecisionReportCurrent = {
+  schema_version: string;
+  project_id: string;
+  available: boolean;
+  generated_at: string | null;
+  report: Record<string, unknown> | null;
+  report_artifact: Record<string, unknown> | null;
+  bundle_artifact: Record<string, unknown> | null;
+  bundle: DecisionReportBundle | null;
+  action_endpoint: string;
+};
+
 type VisualizationSpec = {
   id: string;
   title: string;
@@ -2121,6 +2148,7 @@ function ProjectDetail({
   const [researchBriefs, setResearchBriefs] = React.useState<ResearchBrief[]>([]);
   const [ideas, setIdeas] = React.useState<Idea[]>([]);
   const [reports, setReports] = React.useState<Report[]>([]);
+  const [decisionReport, setDecisionReport] = React.useState<DecisionReportCurrent | null>(null);
   const [visualizations, setVisualizations] = React.useState<VisualizationSpec[]>([]);
   const [notebookIndex, setNotebookIndex] = React.useState<NotebookIndex | null>(null);
   const [agentTaskResults, setAgentTaskResults] = React.useState<AgentTaskResult[]>([]);
@@ -2177,6 +2205,7 @@ function ProjectDetail({
         researchBriefsData,
         ideasData,
         reportsData,
+        decisionReportData,
         visualizationsData,
         notebookIndexData,
         agentTaskResultsData,
@@ -2205,6 +2234,7 @@ function ProjectDetail({
         api<ResearchBrief[]>(`/api/projects/${project.id}/approach/research-briefs`),
         api<Idea[]>(`/api/projects/${project.id}/approach/ideas`),
         api<Report[]>(`/api/projects/${project.id}/reports`),
+        api<DecisionReportCurrent>(`/api/projects/${project.id}/decision-report/current`).catch(() => null),
         api<VisualizationSpec[]>(`/api/projects/${project.id}/visualizations`),
         api<NotebookIndex>(`/api/projects/${project.id}/analysis-notebooks`).catch(() => null),
         api<AgentTaskResult[]>(`/api/projects/${project.id}/agent-task-results`),
@@ -2233,6 +2263,7 @@ function ProjectDetail({
       setResearchBriefs(researchBriefsData);
       setIdeas(ideasData);
       setReports(reportsData);
+      setDecisionReport(decisionReportData);
       setVisualizations(visualizationsData);
       setNotebookIndex(notebookIndexData);
       setAgentTaskResults(agentTaskResultsData);
@@ -2528,6 +2559,7 @@ function ProjectDetail({
         <ReportsTab
           project={project}
           reports={reports}
+          decisionReport={decisionReport}
           artifacts={artifacts}
           visualizations={visualizations}
           notebookIndex={notebookIndex}
@@ -6783,6 +6815,7 @@ function NotebooksTab({
 function ReportsTab({
   project,
   reports,
+  decisionReport,
   artifacts,
   visualizations,
   notebookIndex,
@@ -6792,6 +6825,7 @@ function ReportsTab({
 }: {
   project: Project;
   reports: Report[];
+  decisionReport: DecisionReportCurrent | null;
   artifacts: Artifact[];
   visualizations: VisualizationSpec[];
   notebookIndex: NotebookIndex | null;
@@ -6835,6 +6869,28 @@ function ReportsTab({
   const guidedJourneySnapshots = guidedJourneyArtifacts.filter((artifact) => artifact.asset_type === "guided_journey_snapshot");
   const guidedJourneyComparisons = guidedJourneyArtifacts.filter((artifact) => artifact.asset_type === "guided_journey_comparison");
   const recommendedNotebook = notebookIndex?.recommended_notebook ?? null;
+  const currentDecisionBundle = decisionReport?.bundle ?? null;
+  const currentDecisionReportId = textField(decisionReport?.report?.id);
+  const readiness = currentDecisionBundle?.readiness ?? {};
+  const coverage = currentDecisionBundle?.coverage_summary ?? {};
+  const evidenceMap = currentDecisionBundle?.evidence_map ?? [];
+  const nextActions = currentDecisionBundle?.next_actions ?? [];
+  const provenEvidence = evidenceMap.filter((row) => textField(row.status) === "ready").slice(0, 5);
+  const attentionEvidence = evidenceMap.filter((row) => textField(row.status) !== "ready").slice(0, 5);
+  const readinessStatus = textField(readiness.status) ?? (decisionReport?.available ? "ready" : "missing");
+  const readinessHeadline =
+    textField(readiness.headline) ??
+    (decisionReport?.available
+      ? "Decision report is available for review."
+      : "Generate a decision report to synthesize the current project evidence.");
+  const autoPreviewedReportRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (currentDecisionReportId && autoPreviewedReportRef.current !== currentDecisionReportId) {
+      autoPreviewedReportRef.current = currentDecisionReportId;
+      void loadReportPreview(currentDecisionReportId);
+    }
+  }, [currentDecisionReportId]);
 
   async function loadReportPreview(reportId: string) {
     setPreviewLoadingId(reportId);
@@ -6873,9 +6929,148 @@ function ReportsTab({
     return job;
   }
 
+  async function generateDecisionReport() {
+    const job = await api<Job>(`/api/projects/${project.id}/decision-report/generate`, { method: "POST" });
+    const reportId = textField(job.output.report_id);
+    if (reportId) {
+      autoPreviewedReportRef.current = reportId;
+      await loadReportPreview(reportId);
+    }
+    return job;
+  }
+
   return (
     <div className="stack">
-      <div className="toolbar">
+      <section className="decision-report-hero">
+        <div className="decision-report-copy">
+          <div className="eyebrow">Current decision report</div>
+          <h3>{readinessHeadline}</h3>
+          <p>
+            Tablex synthesizes Data Review, assumptions, evaluation design, notebooks, experiments, runner outputs,
+            citation audits, lineage, and next actions into one in-product report.
+          </p>
+          <div className="badge-row">
+            <span className={decisionReportStatusClass(readinessStatus)}>{readinessStatus.replace(/_/g, " ")}</span>
+            {decisionReport?.generated_at ? <span className="badge muted">{formatDate(decisionReport.generated_at)}</span> : null}
+            {currentDecisionBundle ? <span className="badge muted">{currentDecisionBundle.schema_version}</span> : null}
+          </div>
+          <div className="row-actions">
+            <button className="primary-button" disabled={busy} onClick={() => void runAction(generateDecisionReport)}>
+              {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+              Generate Decision Report
+            </button>
+            <button
+              className="secondary-button"
+              disabled={!currentDecisionReportId || previewLoadingId === currentDecisionReportId}
+              onClick={() => currentDecisionReportId && void loadReportPreview(currentDecisionReportId)}
+            >
+              {previewLoadingId === currentDecisionReportId ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+              Open Current
+            </button>
+            {currentDecisionReportId ? (
+              <a className="icon-link" href={`${apiBase}/api/reports/${currentDecisionReportId}/download`} title="Download decision report">
+                <Download size={16} />
+              </a>
+            ) : null}
+          </div>
+        </div>
+        <div className="decision-report-score">
+          <Metric label="Ready" value={String(coverage.ready_count ?? 0)} />
+          <Metric label="Needs attention" value={String(coverage.attention_count ?? 0)} />
+          <Metric label="Missing" value={String(coverage.missing_count ?? 0)} />
+          <Metric label="Sources" value={String(currentDecisionBundle?.source_assets.length ?? 0)} />
+        </div>
+        <img src="/mascot/tablee-avatar.svg" alt="" aria-hidden="true" className="decision-report-mascot" />
+      </section>
+      {currentDecisionBundle ? (
+        <Panel title="Read This First" icon={<FileText size={18} />}>
+          <div className="decision-read-grid">
+            <div className="decision-read-column">
+              <h3>What is proven</h3>
+              {provenEvidence.length ? (
+                provenEvidence.map((row) => (
+                  <div className="decision-read-item" key={`proven-${textField(row.area) ?? JSON.stringify(row)}`}>
+                    <strong>{textField(row.area) ?? "Evidence"}</strong>
+                    <p>{textField(row.summary) ?? "No summary recorded."}</p>
+                  </div>
+                ))
+              ) : (
+                <EmptyInline text="No evidence area is ready yet." />
+              )}
+            </div>
+            <div className="decision-read-column">
+              <h3>What needs attention</h3>
+              {attentionEvidence.length ? (
+                attentionEvidence.map((row) => (
+                  <div className="decision-read-item" key={`attention-${textField(row.area) ?? JSON.stringify(row)}`}>
+                    <strong>{textField(row.area) ?? "Evidence"}</strong>
+                    <p>{textField(row.summary) ?? "No summary recorded."}</p>
+                  </div>
+                ))
+              ) : (
+                <EmptyInline text="No attention item was generated." />
+              )}
+            </div>
+          </div>
+        </Panel>
+      ) : null}
+      {nextActions.length ? (
+        <Panel title="Next Actions" icon={<ListChecks size={18} />}>
+          <div className="decision-next-list">
+            {nextActions.slice(0, 5).map((item, index) => (
+              <div className="decision-next-item" key={`${textField(item.title) ?? "action"}-${index}`}>
+                <span>{String(item.priority ?? index + 1)}</span>
+                <div>
+                  <strong>{textField(item.title) ?? "Review next action"}</strong>
+                  <p>{textField(item.reason) ?? "No reason was recorded."}</p>
+                  <small>{textField(item.target_tab) ?? "Reports"}</small>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
+      <Panel title="Evidence Coverage" icon={<ListChecks size={18} />}>
+        {evidenceMap.length ? (
+          <div className="decision-evidence-grid">
+            {evidenceMap.map((row) => (
+              <div className="decision-evidence-row" key={textField(row.area) ?? JSON.stringify(row)}>
+                <div>
+                  <strong>{textField(row.area) ?? "Evidence"}</strong>
+                  <p>{textField(row.summary) ?? "No summary recorded."}</p>
+                </div>
+                <span className={decisionReportStatusClass(textField(row.status) ?? "missing")}>
+                  {(textField(row.status) ?? "missing").replace(/_/g, " ")}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyInline text="Evidence coverage will appear after the decision report bundle is generated." />
+        )}
+      </Panel>
+      <Panel title="Full Report Text" icon={<FileText size={18} />}>
+        {previewError ? <div className="banner danger">{previewError}</div> : null}
+        {reportPreview?.preview_available ? (
+          isHtmlArtifactPreview(reportPreview) ? (
+            <HtmlArtifactPreview preview={reportPreview} />
+          ) : (
+            <TranslatablePreview
+              preview={reportPreview}
+              sourceType={reportPreviewSource?.type ?? "artifact"}
+              sourceId={reportPreviewSource?.id ?? reportPreview.id}
+            />
+          )
+        ) : (
+          <EmptyInline text={reportPreview?.reason ?? "Generate a decision report to read the current project state here."} />
+        )}
+      </Panel>
+      <details className="report-supporting-details">
+        <summary>
+          <span>Supporting report shelves</span>
+          <small>Notebooks, insights, prior reports, visualizations, and debug artifacts</small>
+        </summary>
+        <div className="toolbar">
         <button
           className="secondary-button"
           disabled={busy}
@@ -6965,7 +7160,7 @@ function ReportsTab({
           {busy ? <Loader2 className="spin" size={16} /> : <GitBranch size={16} />}
           Compare Journey
         </button>
-      </div>
+        </div>
       <Panel title="Notebook Center" icon={<BarChart3 size={18} />}>
         {notebookIndex && notebookIndex.counts.total > 0 ? (
           <div className="stack">
@@ -7228,22 +7423,6 @@ function ReportsTab({
           <EmptyInline text="Decision dashboard artifacts will summarize readiness stages, artifact completeness, risks, next actions, benchmark fixture policy, and visualization specs." />
         )}
       </Panel>
-      <Panel title="Report Preview" icon={<FileText size={18} />}>
-        {previewError ? <div className="banner danger">{previewError}</div> : null}
-        {reportPreview?.preview_available ? (
-          isHtmlArtifactPreview(reportPreview) ? (
-            <HtmlArtifactPreview preview={reportPreview} />
-          ) : (
-            <TranslatablePreview
-              preview={reportPreview}
-              sourceType={reportPreviewSource?.type ?? "artifact"}
-              sourceId={reportPreviewSource?.id ?? reportPreview.id}
-            />
-          )
-        ) : (
-          <EmptyInline text={reportPreview?.reason ?? "Select a report preview action to inspect the Markdown report inside the workbench."} />
-        )}
-      </Panel>
       <Panel title="Visualization Dashboard" icon={<BarChart3 size={18} />}>
         {visualizations.length ? (
           <div className="stack">
@@ -7270,8 +7449,16 @@ function ReportsTab({
           <EmptyInline text="Portable visualization specs for leaderboard, diagnostics, slices, and report figures will appear here." />
         )}
       </Panel>
+      </details>
     </div>
   );
+}
+
+function decisionReportStatusClass(status: string) {
+  if (["ready", "ready_for_review", "ready_for_agent_review"].includes(status)) return "badge success";
+  if (["blocked", "needs_attention", "needs_feature_review"].includes(status)) return "badge risk";
+  if (["partial", "missing", "needs_plan", "needs_recipe", "needs_diagnostics"].includes(status)) return "badge warning";
+  return "badge muted";
 }
 
 function notebookPreviewArtifactId(item: NotebookIndexItem) {

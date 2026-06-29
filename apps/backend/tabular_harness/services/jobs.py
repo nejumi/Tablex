@@ -45,6 +45,7 @@ JOB_TYPES = {
     "create_visualization_spec",
     "generate_insights",
     "generate_decision_dashboard",
+    "generate_decision_report",
     "run_eda_review",
     "create_notebook_authoring_brief",
     "generate_data_understanding_notebook",

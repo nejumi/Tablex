@@ -555,6 +555,7 @@ class JobCreate(BaseModel):
         "create_visualization_spec",
         "generate_insights",
         "generate_decision_dashboard",
+        "generate_decision_report",
         "prepare_agent_context",
         "prepare_planned_agent_workspace",
         "review_agent_task_readiness",
@@ -750,6 +751,18 @@ class ReportRead(BaseModel):
     status: str
     created_by_type: str
     created_at: str
+
+
+class DecisionReportCurrentRead(BaseModel):
+    schema_version: str
+    project_id: str
+    available: bool
+    generated_at: str | None
+    report: dict[str, Any] | None
+    report_artifact: dict[str, Any] | None
+    bundle_artifact: dict[str, Any] | None
+    bundle: dict[str, Any] | None
+    action_endpoint: str
 
 
 class VisualizationSpecRead(BaseModel):

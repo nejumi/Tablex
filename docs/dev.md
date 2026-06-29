@@ -285,6 +285,8 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/reports/draft \
   -d '{"report_type":"project_summary"}'
 curl -X POST http://localhost:8000/api/projects/{project_id}/visualizations/generate
 curl -X POST http://localhost:8000/api/projects/{project_id}/insights/generate
+curl -X POST http://localhost:8000/api/projects/{project_id}/decision-report/generate
+curl http://localhost:8000/api/projects/{project_id}/decision-report/current
 curl -X POST http://localhost:8000/api/projects/{project_id}/decision-dashboard/generate
 curl http://localhost:8000/api/projects/{project_id}/reports
 curl http://localhost:8000/api/projects/{project_id}/visualizations
@@ -296,6 +298,8 @@ curl -L -o report.md http://localhost:8000/api/reports/{report_id}/download
 `/visualizations/generate` creates a small dashboard set, not just one chart: project readiness metric cards, assumption risk bars, evaluation readiness stages, and leaderboard primary-metric bars. `/insights/generate` stores an `insight_set` artifact, `Insight` records, Evidence records, and lineage edges so report statements remain inspectable in the workbench.
 
 The Reports tab renders `visualization_spec.v1` records with typed UI previews for metric cards, category bars, stage status tables, leaderboard/diagnostic/experiment bars, and agent artifact checklists. Unknown specs still fall back to a compact data table so users do not need to inspect raw JSON first.
+
+`/decision-report/generate` is the primary decision-grade reporting surface. It creates a `decision_report_bundle.v1` JSON artifact, a `decision_report` Markdown artifact, a Report record with source assets, Evidence, and Lineage. The bundle synthesizes Data Review, assumptions/questions, EvaluationSpec/SplitManifest, experiment metrics and diagnostics, notebook evidence, runner results, citation audits, benchmark/relational context, evidence coverage, safety boundaries, and next actions. `/decision-report/current` returns the latest bundle and report references for the Reports tab so users see one current decision report first, with raw report/notebook/dashboard shelves kept secondary.
 
 `/decision-dashboard/generate` creates a `decision_dashboard` JSON artifact shaped by `schemas/decision_dashboard.schema.json`, a `decision_report` Markdown artifact, a Report record, and three decision `visualization_spec` records. It summarizes readiness stages, artifact completeness, high-risk assumptions/questions, benchmark fixture policy, next actions, and report/visualization expectations.
 
@@ -487,7 +491,7 @@ The current UI flow is:
 14. Plan Agent Task or Plan Baseline from the Experiments tab to inspect flexible runner contracts, candidate strategies, and deferred AgentTask work.
 15. Run Baseline from the Experiments tab as a sanity floor or reference run.
 16. Draft run reports and compare experiments from the Experiments tab.
-17. Generate Insights, draft Reports, and create Visualization Dashboard specs from the Reports tab.
+17. Generate or open the Current Decision Report from the Reports tab before browsing supporting report shelves.
 18. Generate run diagnostics from the Leaderboard tab and inspect the diagnostics preview.
 19. Preview or download report artifacts from the Reports tab.
 20. Review the run in Experiments, Leaderboard, Assets, and Lineage.
