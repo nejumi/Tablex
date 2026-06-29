@@ -652,6 +652,25 @@ td {
   color: #0f6848;
 }
 
+.inventory-meter {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  align-items: center;
+}
+
+.inventory-meter span,
+.inventory-meter strong {
+  min-height: 24px;
+  overflow-wrap: anywhere;
+  color: #52606f;
+  font-size: 11px;
+}
+
+.inventory-meter strong {
+  color: #163a53;
+}
+
 .status-good {
   color: #0f6848;
 }
@@ -790,7 +809,8 @@ td {
   .metric-grid.compact,
   .upload-row,
   .answer-row,
-  .viz-row {
+  .viz-row,
+  .inventory-meter {
     grid-template-columns: 1fr;
   }
 }

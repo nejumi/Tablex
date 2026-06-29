@@ -120,6 +120,17 @@ type BenchmarkSourceCard = {
     agent_receives_credentials: boolean;
     artifact_contains_secret_values: boolean;
   };
+  credential_inventory: {
+    supported: boolean;
+    status: string;
+    endpoint: string | null;
+    latest_endpoint: string | null;
+    secret_boundary: string;
+    stores_file_names_and_sizes: boolean;
+    credential_values_returned: boolean;
+    agent_receives_credentials: boolean;
+    artifact_contains_secret_values: boolean;
+  };
   credential_policy: Record<string, unknown>;
   safety_notes: string[];
 };
@@ -961,6 +972,7 @@ function DataTab({
   const [collectionPreviewError, setCollectionPreviewError] = React.useState<string | null>(null);
   const [collectionPreviewLoadingId, setCollectionPreviewLoadingId] = React.useState<string | null>(null);
   const [kaggleProbeResults, setKaggleProbeResults] = React.useState<Record<string, Record<string, unknown>>>({});
+  const [kaggleInventoryResults, setKaggleInventoryResults] = React.useState<Record<string, Record<string, unknown>>>({});
 
   async function uploadDataset() {
     if (!file) return;
@@ -1018,6 +1030,16 @@ function DataTab({
         method: "POST"
       });
       setKaggleProbeResults((current) => ({ ...current, [benchmark.id]: job.output }));
+      return job;
+    });
+  }
+
+  async function fetchKaggleInventory(benchmark: BenchmarkDataset) {
+    await runAction(async () => {
+      const job = await api<Job>(`/api/benchmarks/${benchmark.id}/kaggle/inventory`, {
+        method: "POST"
+      });
+      setKaggleInventoryResults((current) => ({ ...current, [benchmark.id]: job.output }));
       return job;
     });
   }
@@ -1315,10 +1337,17 @@ function DataTab({
               const directDownload = access.supports_direct_download === true;
               const credentialProbe = benchmark.source_card?.credential_probe;
               const canProbeKaggle = credentialProbe?.supported === true;
+              const credentialInventory = benchmark.source_card?.credential_inventory;
+              const canFetchInventory = credentialInventory?.supported === true;
               const probeResult = kaggleProbeResults[benchmark.id];
+              const inventoryResult = kaggleInventoryResults[benchmark.id];
               const probeStatus = textField(probeResult?.probe_status) ?? credentialProbe?.status ?? "not_run";
+              const inventoryStatus = textField(inventoryResult?.inventory_status) ?? credentialInventory?.status ?? "not_fetched";
               const credentialAvailable = probeResult?.credential_available === true;
               const canAccessFiles = probeResult?.can_access_competition_files === true;
+              const inventoryFileCount = numberField(inventoryResult?.file_count);
+              const inventoryRequiredMissing = numberField(inventoryResult?.required_missing_count);
+              const inventorySize = numberField(inventoryResult?.total_size_bytes);
               const nextActions = benchmark.source_card?.import_readiness.next_actions.slice(0, 2) ?? [];
               return (
                 <div className="benchmark-card" key={benchmark.id}>
@@ -1402,7 +1431,13 @@ function DataTab({
                       <div className="credential-pulse">
                         <span className={credentialAvailable ? "on" : ""}>credential</span>
                         <span className={probeStatus !== "not_run" ? "on" : ""}>probe</span>
-                        <span className={canAccessFiles ? "on" : ""}>files</span>
+                        <span className={inventoryStatus !== "not_fetched" || canAccessFiles ? "on" : ""}>files</span>
+                      </div>
+                      <div className="inventory-meter">
+                        <span>{inventoryStatus.replace(/_/g, " ")}</span>
+                        <strong>{inventoryFileCount !== null ? `${inventoryFileCount} files` : "inventory pending"}</strong>
+                        <span>{inventoryRequiredMissing !== null ? `${inventoryRequiredMissing} required missing` : "role map pending"}</span>
+                        <strong>{inventorySize !== null ? formatBytes(inventorySize) : "-"}</strong>
                       </div>
                     </div>
                   ) : null}
@@ -1456,6 +1491,14 @@ function DataTab({
                     >
                       <KeyRound size={16} />
                       Probe
+                    </button>
+                    <button
+                      className="secondary-button probe-button"
+                      disabled={busy || !canFetchInventory}
+                      onClick={() => void fetchKaggleInventory(benchmark)}
+                    >
+                      <ListChecks size={16} />
+                      Inventory
                     </button>
                     <button
                       className="secondary-button"
@@ -1835,6 +1878,10 @@ function DataTab({
 
 function textField(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function numberField(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function primaryTableLabel(benchmark: BenchmarkDataset): string {
@@ -4425,7 +4472,8 @@ function formatBytes(value: number | null) {
   if (!value) return "-";
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

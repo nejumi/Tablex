@@ -49,6 +49,7 @@ JOB_TYPES = {
     "draft_run_report",
     "analyze_data_quality",
     "probe_kaggle_benchmark_access",
+    "fetch_kaggle_competition_inventory",
     "download_public_benchmark_archive",
     "import_benchmark_dataset",
     "create_benchmark_scenario_pack",

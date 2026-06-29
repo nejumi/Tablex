@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KaggleCompetitionFileInventory",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "benchmark_id",
+    "benchmark_name",
+    "source_kind",
+    "competition_slug",
+    "checked_at",
+    "credential_status",
+    "request",
+    "inventory",
+    "safety",
+    "next_actions"
+  ],
+  "properties": {
+    "schema_version": { "const": "kaggle_competition_file_inventory.v1" },
+    "benchmark_id": { "type": "string" },
+    "benchmark_name": { "type": "string" },
+    "source_kind": { "type": "string" },
+    "competition_slug": { "type": "string" },
+    "checked_at": { "type": "string" },
+    "credential_status": {
+      "type": "object",
+      "required": ["available", "credential_sources", "auth_schemes", "values_exposed"],
+      "properties": {
+        "available": { "type": "boolean" },
+        "credential_sources": { "type": "array", "items": { "type": "string" } },
+        "auth_schemes": { "type": "array", "items": { "type": "string" } },
+        "values_exposed": { "const": false }
+      },
+      "additionalProperties": true
+    },
+    "request": {
+      "type": "object",
+      "required": ["endpoint_kind", "url_host", "network_accessed"],
+      "additionalProperties": true
+    },
+    "inventory": {
+      "type": "object",
+      "required": [
+        "status",
+        "http_status",
+        "file_count",
+        "total_size_bytes",
+        "files",
+        "required_present_count",
+        "required_missing_count",
+        "recommended_present_count",
+        "holdout_file_count",
+        "missing_required",
+        "attempt_count",
+        "attempts"
+      ],
+      "properties": {
+        "status": { "type": "string" },
+        "http_status": { "type": ["integer", "null"] },
+        "file_count": { "type": "integer", "minimum": 0 },
+        "total_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "size_bytes", "requirement", "role", "configured_expected"],
+            "additionalProperties": true
+          }
+        },
+        "required_present_count": { "type": "integer", "minimum": 0 },
+        "required_missing_count": { "type": "integer", "minimum": 0 },
+        "recommended_present_count": { "type": "integer", "minimum": 0 },
+        "holdout_file_count": { "type": "integer", "minimum": 0 },
+        "missing_required": { "type": "array", "items": { "type": "object" } },
+        "attempt_count": { "type": "integer", "minimum": 0 },
+        "attempts": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": true
+    },
+    "safety": {
+      "type": "object",
+      "required": [
+        "secret_value_logged",
+        "secret_value_artifacted",
+        "connector_credentials_materialized",
+        "agent_runner_access",
+        "agent_task_contract_access"
+      ],
+      "properties": {
+        "secret_value_logged": { "const": false },
+        "secret_value_artifacted": { "const": false },
+        "connector_credentials_materialized": { "const": false },
+        "agent_runner_access": { "const": false },
+        "agent_task_contract_access": { "const": false }
+      },
+      "additionalProperties": true
+    },
+    "next_actions": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

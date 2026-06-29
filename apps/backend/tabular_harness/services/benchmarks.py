@@ -189,6 +189,7 @@ def benchmark_source_card(
             "policy": "Fixtures are synthetic smoke data and must not be used for benchmark score claims.",
         },
         "credential_probe": benchmark_credential_probe(benchmark),
+        "credential_inventory": benchmark_credential_inventory(benchmark),
         "credential_policy": benchmark_credential_policy(benchmark),
         "safety_notes": benchmark_safety_notes(benchmark),
     }
@@ -317,6 +318,9 @@ def benchmark_import_readiness(benchmark: dict[str, Any], root: Path, status: di
                 next_actions.append(
                     "Run the harness-only Kaggle credential probe to verify account access without exposing secrets to agents."
                 )
+                next_actions.append(
+                    "Fetch the Kaggle file inventory before planning selective download or import."
+                )
             next_actions.append("Download the benchmark outside Tablex with user-managed credentials, then place files under the local root.")
         elif access["supports_direct_download"]:
             next_actions.append("Download the public archive from the official URL, extract it, then place files under the local root.")
@@ -334,6 +338,7 @@ def benchmark_import_readiness(benchmark: dict[str, Any], root: Path, status: di
         "recommended_files": status.get("missing_recommended", []),
         "next_actions": next_actions,
         "credential_probe": benchmark_credential_probe(benchmark),
+        "credential_inventory": benchmark_credential_inventory(benchmark),
         "credential_policy": benchmark_credential_policy(benchmark),
     }
 
@@ -354,6 +359,23 @@ def benchmark_credential_probe(benchmark: dict[str, Any]) -> dict[str, Any]:
         "endpoint": f"/api/benchmarks/{benchmark_id}/kaggle/probe" if supports_kaggle_probe else None,
         "secret_boundary": "harness_process_only",
         "credential_sources": ["KAGGLE_API_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY"] if supports_kaggle_probe else [],
+        "credential_values_returned": False,
+        "agent_receives_credentials": False,
+        "artifact_contains_secret_values": False,
+    }
+
+
+def benchmark_credential_inventory(benchmark: dict[str, Any]) -> dict[str, Any]:
+    probe = benchmark_credential_probe(benchmark)
+    benchmark_id = str(benchmark.get("id") or "")
+    return {
+        "supported": bool(probe["supported"]),
+        "status": "not_fetched",
+        "job_type": "fetch_kaggle_competition_inventory" if probe["supported"] else None,
+        "endpoint": f"/api/benchmarks/{benchmark_id}/kaggle/inventory" if probe["supported"] else None,
+        "latest_endpoint": f"/api/benchmarks/{benchmark_id}/kaggle/inventory/latest" if probe["supported"] else None,
+        "secret_boundary": "harness_process_only",
+        "stores_file_names_and_sizes": bool(probe["supported"]),
         "credential_values_returned": False,
         "agent_receives_credentials": False,
         "artifact_contains_secret_values": False,

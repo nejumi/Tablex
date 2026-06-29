@@ -9,6 +9,7 @@ import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, cast
 
@@ -113,6 +114,87 @@ def probe_kaggle_benchmark_access(
     )
 
 
+def fetch_kaggle_competition_inventory(
+    benchmark: dict[str, Any],
+    *,
+    timeout_seconds: float = 15.0,
+    env: Mapping[str, str] | None = None,
+    env_files: Sequence[Path] | None = None,
+    opener: UrlOpener | None = None,
+) -> dict[str, Any]:
+    slug = kaggle_competition_slug(benchmark)
+    if not slug:
+        raise ValueError("Kaggle inventory is only supported for Kaggle competition benchmarks with a slug")
+
+    candidates, credential_state = build_kaggle_auth_candidates(env=env, env_files=env_files)
+    checked_at = datetime.now(timezone.utc).isoformat()
+    endpoint = f"{KAGGLE_API_BASE_URL}/competitions/data/list/{urllib.parse.quote(slug)}"
+    if not candidates:
+        return kaggle_inventory_payload(
+            benchmark=benchmark,
+            slug=slug,
+            checked_at=checked_at,
+            credential_state=credential_state,
+            endpoint=endpoint,
+            network_accessed=False,
+            inventory={
+                "status": "not_configured",
+                "http_status": None,
+                "file_count": 0,
+                "total_size_bytes": None,
+                "files": [],
+                "required_present_count": 0,
+                "required_missing_count": len(expected_file_specs(benchmark, required=True)),
+                "recommended_present_count": 0,
+                "holdout_file_count": 0,
+                "missing_required": expected_file_specs(benchmark, required=True),
+                "attempt_count": 0,
+                "attempts": [],
+            },
+            next_actions=[
+                "Set Kaggle credentials in the harness process environment or gitignored .env, then fetch inventory again.",
+                "Do not pass credentials to agents or runner workspaces.",
+            ],
+        )
+
+    effective_opener = opener or default_urlopen
+    attempts: list[dict[str, Any]] = []
+    final_attempt: dict[str, Any] | None = None
+    for candidate in candidates:
+        attempt = run_inventory_attempt(
+            endpoint=endpoint,
+            candidate=candidate,
+            timeout_seconds=timeout_seconds,
+            opener=effective_opener,
+        )
+        attempts.append(attempt)
+        if str(attempt["status"]) != "unauthorized":
+            final_attempt = attempt
+            break
+
+    if final_attempt is None:
+        final_attempt = attempts[-1]
+    status = str(final_attempt["status"])
+    raw_files = cast(list[dict[str, Any]], final_attempt.get("raw_files") or [])
+    inventory = build_inventory_summary(
+        benchmark=benchmark,
+        status=status,
+        http_status=cast(int | None, final_attempt.get("http_status")),
+        files=raw_files,
+        attempts=attempts,
+    )
+    return kaggle_inventory_payload(
+        benchmark=benchmark,
+        slug=slug,
+        checked_at=checked_at,
+        credential_state=credential_state,
+        endpoint=endpoint,
+        network_accessed=True,
+        inventory=inventory,
+        next_actions=kaggle_inventory_next_actions(inventory),
+    )
+
+
 def default_urlopen(request: urllib.request.Request, timeout_seconds: float) -> Any:
     return urllib.request.urlopen(request, timeout=timeout_seconds)
 
@@ -162,6 +244,59 @@ def run_probe_attempt(
             "status": "network_error",
             "http_status": None,
             "file_count": None,
+            "error_type": type(exc).__name__,
+        }
+
+
+def run_inventory_attempt(
+    *,
+    endpoint: str,
+    candidate: KaggleAuthCandidate,
+    timeout_seconds: float,
+    opener: UrlOpener,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        endpoint,
+        headers={
+            "Accept": "application/json",
+            "Authorization": candidate.authorization_header,
+            "User-Agent": "Tablex/0.1 KaggleInventory",
+        },
+        method="GET",
+    )
+    attempt_base = candidate.safe_summary()
+    try:
+        response = opener(request, timeout_seconds)
+        try:
+            status = int(getattr(response, "status", getattr(response, "code", 200)))
+            body = cast(bytes, response.read(MAX_PROBE_RESPONSE_BYTES))
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+        files = extract_kaggle_files(body) if status == 200 else []
+        return {
+            **attempt_base,
+            "status": "ok" if status == 200 else "http_error",
+            "http_status": status,
+            "file_count": len(files) if status == 200 else None,
+            "raw_files": files,
+        }
+    except urllib.error.HTTPError as exc:
+        return {
+            **attempt_base,
+            "status": classify_http_status(exc.code),
+            "http_status": int(exc.code),
+            "file_count": None,
+            "raw_files": [],
+        }
+    except (TimeoutError, urllib.error.URLError, OSError) as exc:
+        return {
+            **attempt_base,
+            "status": "network_error",
+            "http_status": None,
+            "file_count": None,
+            "raw_files": [],
             "error_type": type(exc).__name__,
         }
 
@@ -382,6 +517,163 @@ def extract_kaggle_file_count(body: bytes) -> int | None:
     return None
 
 
+def extract_kaggle_files(body: bytes) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    raw_files: Any
+    if isinstance(payload, list):
+        raw_files = payload
+    elif isinstance(payload, dict):
+        raw_files = payload.get("files") or payload.get("items") or []
+    else:
+        raw_files = []
+    files: list[dict[str, Any]] = []
+    for item in raw_files:
+        if not isinstance(item, dict):
+            continue
+        name = first_string(item, ["name", "fileName", "ref", "filename"])
+        if not name:
+            continue
+        size_bytes = first_int(item, ["totalBytes", "size", "sizeBytes", "total_bytes"])
+        files.append(
+            {
+                "name": name,
+                "size_bytes": size_bytes,
+                "creation_date": first_string(item, ["creationDate", "creation_date"]),
+                "source": "kaggle_competition_file_list",
+            }
+        )
+    return files
+
+
+def first_string(item: dict[str, Any], keys: list[str]) -> str | None:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def first_int(item: dict[str, Any], keys: list[str]) -> int | None:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value.strip())
+    return None
+
+
+def build_inventory_summary(
+    *,
+    benchmark: dict[str, Any],
+    status: str,
+    http_status: int | None,
+    files: list[dict[str, Any]],
+    attempts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    required_specs = expected_file_specs(benchmark, required=True)
+    recommended_specs = expected_file_specs(benchmark, required=False)
+    all_specs = [*required_specs, *recommended_specs]
+    matched_spec_ids: set[str] = set()
+    enriched_files: list[dict[str, Any]] = []
+    for file in sorted(files, key=lambda item: str(item.get("name") or "")):
+        match = match_expected_file(str(file["name"]), all_specs)
+        if match:
+            matched_spec_ids.add(str(match["spec_id"]))
+        enriched = dict(file)
+        enriched.update(
+            {
+                "requirement": match["requirement"] if match else "extra",
+                "role": match["role"] if match else "extra",
+                "description": match["description"] if match else None,
+                "configured_expected": bool(match),
+                "match_pattern": match["pattern"] if match else None,
+            }
+        )
+        enriched_files.append(enriched)
+    missing_required = [spec for spec in required_specs if spec["spec_id"] not in matched_spec_ids]
+    total_size_bytes = sum(file["size_bytes"] for file in enriched_files if isinstance(file.get("size_bytes"), int))
+    holdout_file_count = sum(1 for file in enriched_files if "holdout" in str(file.get("role") or ""))
+    return {
+        "status": status,
+        "http_status": http_status,
+        "file_count": len(enriched_files),
+        "total_size_bytes": total_size_bytes if enriched_files else None,
+        "files": enriched_files,
+        "required_present_count": len(required_specs) - len(missing_required),
+        "required_missing_count": len(missing_required),
+        "recommended_present_count": sum(
+            1
+            for spec in recommended_specs
+            if spec["spec_id"] in matched_spec_ids and "holdout" not in str(spec.get("role") or "")
+        ),
+        "holdout_file_count": holdout_file_count,
+        "missing_required": missing_required,
+        "attempt_count": len(attempts),
+        "attempts": [
+            {key: value for key, value in attempt.items() if key != "raw_files"} for attempt in attempts
+        ],
+    }
+
+
+def expected_file_specs(benchmark: dict[str, Any], *, required: bool) -> list[dict[str, Any]]:
+    key = "required_files" if required else "recommended_files"
+    specs: list[dict[str, Any]] = []
+    for index, item in enumerate(benchmark.get(key) or []):
+        if not isinstance(item, dict):
+            continue
+        patterns = expected_patterns(item)
+        if not patterns:
+            continue
+        specs.append(
+            {
+                "spec_id": f"{key}:{index}",
+                "requirement": "required" if required else "recommended",
+                "role": str(item.get("role") or "unspecified"),
+                "description": item.get("description") if isinstance(item.get("description"), str) else None,
+                "patterns": patterns,
+            }
+        )
+    return specs
+
+
+def expected_patterns(spec: dict[str, Any]) -> list[str]:
+    patterns: list[str] = []
+    path = spec.get("path")
+    if isinstance(path, str) and path.strip():
+        patterns.append(path.strip())
+    candidates = spec.get("path_candidates")
+    if isinstance(candidates, list):
+        patterns.extend(str(candidate).strip() for candidate in candidates if str(candidate).strip())
+    glob = spec.get("glob")
+    if isinstance(glob, str) and glob.strip():
+        patterns.append(glob.strip())
+    return list(dict.fromkeys(patterns))
+
+
+def match_expected_file(name: str, specs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    file_basename = Path(name).name
+    for spec in specs:
+        for pattern in spec["patterns"]:
+            pattern_basename = Path(str(pattern)).name
+            if name == pattern or file_basename == pattern_basename or fnmatch(name, str(pattern)) or fnmatch(file_basename, pattern_basename):
+                return {
+                    "spec_id": spec["spec_id"],
+                    "requirement": spec["requirement"],
+                    "role": spec["role"],
+                    "description": spec["description"],
+                    "pattern": pattern,
+                }
+    return None
+
+
 def kaggle_probe_payload(
     *,
     benchmark: dict[str, Any],
@@ -418,6 +710,42 @@ def kaggle_probe_payload(
     }
 
 
+def kaggle_inventory_payload(
+    *,
+    benchmark: dict[str, Any],
+    slug: str,
+    checked_at: str,
+    credential_state: dict[str, Any],
+    endpoint: str,
+    network_accessed: bool,
+    inventory: dict[str, Any],
+    next_actions: list[str],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "kaggle_competition_file_inventory.v1",
+        "benchmark_id": str(benchmark.get("id") or ""),
+        "benchmark_name": str(benchmark.get("name") or ""),
+        "source_kind": str(benchmark.get("source_kind") or ""),
+        "competition_slug": slug,
+        "checked_at": checked_at,
+        "credential_status": credential_state,
+        "request": {
+            "endpoint_kind": "competition_data_list",
+            "url_host": urllib.parse.urlparse(endpoint).netloc,
+            "network_accessed": network_accessed,
+        },
+        "inventory": inventory,
+        "safety": {
+            "secret_value_logged": False,
+            "secret_value_artifacted": False,
+            "connector_credentials_materialized": False,
+            "agent_runner_access": False,
+            "agent_task_contract_access": False,
+        },
+        "next_actions": next_actions,
+    }
+
+
 def kaggle_probe_next_actions(status: str) -> list[str]:
     if status == "ok":
         return [
@@ -441,3 +769,27 @@ def kaggle_probe_next_actions(status: str) -> list[str]:
     if status == "network_error":
         return ["Check local network access to kaggle.com, then rerun the probe."]
     return ["Inspect the stored probe artifact and rerun after resolving the reported access issue."]
+
+
+def kaggle_inventory_next_actions(inventory: dict[str, Any]) -> list[str]:
+    status = str(inventory.get("status") or "")
+    if status == "ok":
+        required_missing = int(inventory.get("required_missing_count") or 0)
+        if required_missing:
+            return [
+                "The Kaggle file list is reachable, but catalog-required files were not found by name.",
+                "Review the inventory artifact before planning download/import.",
+            ]
+        return [
+            "Use the inventory artifact to choose required, supporting, and holdout files before any managed download.",
+            "Keep download execution harness-owned and do not pass credential values to AgentRunner workspaces.",
+        ]
+    if status == "forbidden_or_rules_required":
+        return [
+            "Open the Kaggle competition page with the user account and accept rules or request access, then fetch inventory again.",
+        ]
+    if status == "unauthorized":
+        return ["Check Kaggle credential pairing, then fetch inventory again."]
+    if status == "not_configured":
+        return ["Set Kaggle credentials in the harness environment or gitignored .env, then fetch inventory again."]
+    return ["Resolve the Kaggle access issue shown in the inventory artifact, then retry."]

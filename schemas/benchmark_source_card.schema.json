@@ -17,6 +17,7 @@
     "import_readiness",
     "fixture",
     "credential_probe",
+    "credential_inventory",
     "credential_policy",
     "safety_notes"
   ],
@@ -68,6 +69,19 @@
         "supported",
         "status",
         "secret_boundary",
+        "credential_values_returned",
+        "agent_receives_credentials",
+        "artifact_contains_secret_values"
+      ],
+      "additionalProperties": true
+    },
+    "credential_inventory": {
+      "type": "object",
+      "required": [
+        "supported",
+        "status",
+        "secret_boundary",
+        "stores_file_names_and_sizes",
         "credential_values_returned",
         "agent_receives_credentials",
         "artifact_contains_secret_values"

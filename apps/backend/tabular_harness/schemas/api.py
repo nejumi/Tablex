@@ -203,6 +203,7 @@ class BenchmarkSourceCardRead(BaseModel):
     import_readiness: dict[str, Any]
     fixture: dict[str, Any]
     credential_probe: dict[str, Any]
+    credential_inventory: dict[str, Any]
     credential_policy: dict[str, Any]
     safety_notes: list[str]
 
@@ -219,6 +220,7 @@ class BenchmarkImportReadinessRead(BaseModel):
     recommended_files: list[dict[str, Any]]
     next_actions: list[str]
     credential_probe: dict[str, Any] = Field(default_factory=dict)
+    credential_inventory: dict[str, Any] = Field(default_factory=dict)
     credential_policy: dict[str, Any]
 
 
@@ -444,6 +446,7 @@ class JobCreate(BaseModel):
         "draft_run_report",
         "analyze_data_quality",
         "probe_kaggle_benchmark_access",
+        "fetch_kaggle_competition_inventory",
         "import_benchmark_dataset",
         "create_benchmark_scenario_pack",
         "run_agent_task",

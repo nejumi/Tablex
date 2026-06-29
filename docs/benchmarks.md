@@ -29,11 +29,12 @@ Every catalog entry is exposed with a generated `benchmark_source_card.v1` shape
 - `source_verification`: verified date, source count/types, and access checks.
 - `table_bundle`: primary/supporting/holdout table counts, join hints, target hints, and feature-recipe policy.
 - `credential_probe`: whether a harness-only Kaggle access check is available, its endpoint, and the guarantee that secret values are not returned or artifacted.
+- `credential_inventory`: whether a harness-only Kaggle file-list inventory can be stored before download planning.
 - `credential_policy`: secrets and connector credentials are never stored, inserted into prompts, or materialized into runner workspaces.
 - `import_readiness`: whether local files are present and what action should happen next.
 - `fixture`: whether a credential-free synthetic smoke fixture is available.
 
-Kaggle datasets remain credentialed, but Tablex can now run a harness-owned access probe before download work. The probe reads `KAGGLE_API_TOKEN`, `KAGGLE_USERNAME`, and/or `KAGGLE_KEY` from the harness process environment or gitignored `.env`, calls the Kaggle competition file-list API, and stores a `kaggle_credential_probe.v1` artifact containing only secret-free status, HTTP status, credential source labels, and next actions. It never passes credential values to Codex, AgentRunner, AgentTaskContracts, runner workspaces, logs, or artifacts. Public UCI archives and selected OpenML CSV exports are credential-free and can be downloaded by the managed public-download endpoint when `source_card.access.supports_direct_download=true` and `requires_account=false`.
+Kaggle datasets remain credentialed, but Tablex can now run harness-owned access probes and file inventories before download work. The probe reads `KAGGLE_API_TOKEN`, `KAGGLE_USERNAME`, and/or `KAGGLE_KEY` from the harness process environment or gitignored `.env`, calls the Kaggle competition file-list API, and stores a `kaggle_credential_probe.v1` artifact containing only secret-free status, HTTP status, credential source labels, and next actions. The inventory endpoint stores `kaggle_competition_file_inventory.v1` with file names, sizes, catalog role mapping, and missing required file summary. Neither endpoint passes credential values to Codex, AgentRunner, AgentTaskContracts, runner workspaces, logs, or artifacts. Public UCI archives and selected OpenML CSV exports are credential-free and can be downloaded by the managed public-download endpoint when `source_card.access.supports_direct_download=true` and `requires_account=false`.
 
 ## Local Layout
 
@@ -72,9 +73,11 @@ Probe Kaggle account access without exposing secrets to agents:
 
 ```bash
 curl -X POST http://localhost:8000/api/benchmarks/kaggle_home_credit_default_risk/kaggle/probe
+curl -X POST http://localhost:8000/api/benchmarks/kaggle_home_credit_default_risk/kaggle/inventory
+curl http://localhost:8000/api/benchmarks/kaggle_home_credit_default_risk/kaggle/inventory/latest
 ```
 
-The probe accepts modern JSON or opaque `KAGGLE_API_TOKEN` values, `KAGGLE_USERNAME` plus `KAGGLE_API_TOKEN`, and legacy `KAGGLE_USERNAME` plus `KAGGLE_KEY`. If the API returns `forbidden_or_rules_required`, open the competition in Kaggle, accept the rules with the user account, and rerun the probe.
+The probe and inventory accept modern JSON or opaque `KAGGLE_API_TOKEN` values, `KAGGLE_USERNAME` plus `KAGGLE_API_TOKEN`, and legacy `KAGGLE_USERNAME` plus `KAGGLE_KEY`. If the API returns `forbidden_or_rules_required`, open the competition in Kaggle, accept the rules with the user account, and rerun the endpoint.
 
 Download and safely extract a credential-free public archive or direct public file:
 
