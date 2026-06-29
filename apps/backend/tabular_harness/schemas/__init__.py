@@ -1,4 +1,5 @@
 from tabular_harness.schemas.api import (
+    AdaptiveStrategyBriefRead,
     AgentRequiredOutput,
     AgentResult,
     AgentTaskContract,
@@ -58,6 +59,7 @@ __all__ = [
     "AgentTaskPlanCreate",
     "AgentTaskContract",
     "AnswerRead",
+    "AdaptiveStrategyBriefRead",
     "AssetCreate",
     "ArtifactPreviewRead",
     "ArtifactRead",

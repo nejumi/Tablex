@@ -26,6 +26,7 @@ JOB_TYPES = {
     "run_public_benchmark_workflow",
     "run_baseline",
     "plan_baseline_strategy",
+    "create_adaptive_strategy_brief",
     "run_agent_task",
     "run_planned_agent_task_stub",
     "validate_model_package",

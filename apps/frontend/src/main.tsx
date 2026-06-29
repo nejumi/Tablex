@@ -126,6 +126,18 @@ const englishMessages = {
   createAgentTaskContract: "Create AgentTaskContract",
   downloadLatestAgentTaskContract: "Download latest AgentTaskContract",
   agentTaskContractCreated: "AgentTaskContract created.",
+  strategyBriefTitle: "Adaptive Strategy Brief",
+  strategyBriefSubtitle: "One guided next step without forcing a fixed modeling recipe.",
+  strategyRecommendedAction: "Recommended action",
+  strategyCodexHandoff: "Codex handoff",
+  strategyLaneMap: "Strategy lanes",
+  strategySaveSnapshot: "Save brief",
+  strategyRunAction: "Run action",
+  strategyNoBrief: "Strategy guidance will appear here after the backend summarizes project artifacts, assumptions, evaluation, research, and runner handoff state.",
+  strategyArtifacts: "Artifacts",
+  strategyOpenItems: "Open items",
+  strategyIdeas: "Ideas",
+  strategyRuns: "Runs",
   translate: "Translate",
   translating: "Translating",
   translatedDraft: "Translated draft",
@@ -212,6 +224,18 @@ const japaneseMessages: LocaleMessages = {
   createAgentTaskContract: "AgentTaskContractを作成",
   downloadLatestAgentTaskContract: "最新のAgentTaskContractをダウンロード",
   agentTaskContractCreated: "AgentTaskContractを作成しました。",
+  strategyBriefTitle: "Adaptive Strategy Brief",
+  strategyBriefSubtitle: "固定recipeにせず、次の一手だけをガイドします。",
+  strategyRecommendedAction: "推奨アクション",
+  strategyCodexHandoff: "Codexへの引き渡し",
+  strategyLaneMap: "Strategy lanes",
+  strategySaveSnapshot: "Briefを保存",
+  strategyRunAction: "実行",
+  strategyNoBrief: "project artifacts、assumptions、evaluation、research、runner handoff stateをbackendが要約すると、ここにstrategy guidanceが表示されます。",
+  strategyArtifacts: "Artifacts",
+  strategyOpenItems: "Open items",
+  strategyIdeas: "Ideas",
+  strategyRuns: "Runs",
   translate: "翻訳",
   translating: "翻訳中",
   translatedDraft: "翻訳ドラフト",
@@ -715,6 +739,40 @@ type ResearchBrief = {
   created_at: string;
 };
 
+type StrategyAction = {
+  action_type: "navigate" | "api" | "agent_task";
+  label: string;
+  target_tab: string;
+  reason: string;
+  endpoint: string | null;
+  method: string | null;
+  prompt: string | null;
+};
+
+type StrategyLane = {
+  lane_id: string;
+  title: string;
+  status: string;
+  why: string;
+  evidence_artifact_ids: string[];
+  next_action: string;
+  agent_role: string;
+};
+
+type AdaptiveStrategyBrief = {
+  schema_version: string;
+  project: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  recommended_next_action: StrategyAction;
+  candidate_lanes: StrategyLane[];
+  codex_handoff: Record<string, unknown>;
+  reporting_plan: Record<string, unknown>;
+  artifact_refs: Array<Record<string, unknown>>;
+  risk_register: Array<Record<string, unknown>>;
+  latest_artifact_id: string | null;
+  generated_at: string;
+};
+
 type Idea = {
   id: string;
   title: string;
@@ -875,6 +933,11 @@ const tabItems = [
   { id: "Lineage", labelKey: "tabLineage" }
 ] as const satisfies ReadonlyArray<{ id: string; labelKey: keyof LocaleMessages }>;
 type Tab = (typeof tabItems)[number]["id"];
+
+function tabFromString(value: string | null | undefined, fallback: Tab): Tab {
+  const match = tabItems.find((item) => item.id === value);
+  return match ? match.id : fallback;
+}
 
 type FocusRecommendation = {
   tab: Tab;
@@ -1514,6 +1577,7 @@ function ProjectDetail({
   const [leaderboard, setLeaderboard] = React.useState<LeaderboardEntry[]>([]);
   const [modelVersions, setModelVersions] = React.useState<ModelVersion[]>([]);
   const [validationsByModelVersion, setValidationsByModelVersion] = React.useState<Record<string, ModelValidation[]>>({});
+  const [strategyBrief, setStrategyBrief] = React.useState<AdaptiveStrategyBrief | null>(null);
   const [researchBriefs, setResearchBriefs] = React.useState<ResearchBrief[]>([]);
   const [ideas, setIdeas] = React.useState<Idea[]>([]);
   const [reports, setReports] = React.useState<Report[]>([]);
@@ -1565,6 +1629,7 @@ function ProjectDetail({
         runsData,
         leaderboardData,
         modelVersionsData,
+        strategyBriefData,
         researchBriefsData,
         ideasData,
         reportsData,
@@ -1590,6 +1655,7 @@ function ProjectDetail({
         api<Run[]>(`/api/projects/${project.id}/runs`),
         api<LeaderboardEntry[]>(`/api/projects/${project.id}/leaderboard`),
         api<ModelVersion[]>(`/api/projects/${project.id}/model-versions`),
+        api<AdaptiveStrategyBrief>(`/api/projects/${project.id}/approach/strategy-brief`).catch(() => null),
         api<ResearchBrief[]>(`/api/projects/${project.id}/approach/research-briefs`),
         api<Idea[]>(`/api/projects/${project.id}/approach/ideas`),
         api<Report[]>(`/api/projects/${project.id}/reports`),
@@ -1615,6 +1681,7 @@ function ProjectDetail({
       setRuns(runsData);
       setLeaderboard(leaderboardData);
       setModelVersions(modelVersionsData);
+      setStrategyBrief(strategyBriefData);
       setResearchBriefs(researchBriefsData);
       setIdeas(ideasData);
       setReports(reportsData);
@@ -1717,6 +1784,25 @@ function ProjectDetail({
     onTabChange(action.targetTab);
   }
 
+  async function runStrategyAction(action: StrategyAction) {
+    const targetTab = tabFromString(action.target_tab, "Approach");
+    if (action.action_type === "navigate") {
+      onTabChange(targetTab);
+      return;
+    }
+    if (action.action_type === "agent_task") {
+      await submitAgentChat(action.prompt ?? action.reason ?? action.label);
+      onTabChange(targetTab);
+      return;
+    }
+    if (action.action_type === "api" && action.endpoint) {
+      await runAction(() => api(action.endpoint as string, { method: action.method ?? "POST" }));
+      onTabChange(targetTab);
+      return;
+    }
+    onTabChange(targetTab);
+  }
+
   return (
     <section className="detail">
       {error ? <div className="banner danger">{error}</div> : null}
@@ -1796,11 +1882,14 @@ function ProjectDetail({
       {tab === "Approach" && (
         <ApproachTab
           project={project}
+          strategyBrief={strategyBrief}
           researchBriefs={researchBriefs}
           ideas={ideas}
           artifacts={artifacts}
           busy={busy}
+          text={text}
           runAction={runAction}
+          onStrategyAction={(action) => void runStrategyAction(action)}
         />
       )}
       {tab === "Experiments" && (
@@ -3771,20 +3860,156 @@ function EvaluationTab({
   );
 }
 
+function StrategyBriefPanel({
+  project,
+  brief,
+  busy,
+  text,
+  onAction,
+  onSave
+}: {
+  project: Project;
+  brief: AdaptiveStrategyBrief | null;
+  busy: boolean;
+  text: LocaleMessages;
+  onAction: (action: StrategyAction) => void;
+  onSave: () => Promise<void>;
+}) {
+  if (!brief) {
+    return (
+      <section className="strategy-brief-panel">
+        <div>
+          <div className="eyebrow">{text.strategyBriefTitle}</div>
+          <h2>{project.name}</h2>
+          <p>{text.strategyNoBrief}</p>
+        </div>
+        <button className="secondary-button" disabled={busy} onClick={() => void onSave()}>
+          {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+          {text.strategySaveSnapshot}
+        </button>
+      </section>
+    );
+  }
+
+  const action = brief.recommended_next_action;
+  const handoffObjective = textField(brief.codex_handoff.suggested_objective) ?? action.prompt ?? action.reason;
+  const openItems =
+    numericSummary(brief.summary.open_assumption_count) + numericSummary(brief.summary.open_question_count);
+  const metrics = [
+    { label: text.strategyArtifacts, value: numericSummary(brief.summary.artifact_count) },
+    { label: text.strategyOpenItems, value: openItems },
+    { label: text.strategyIdeas, value: numericSummary(brief.summary.idea_count) },
+    { label: text.strategyRuns, value: numericSummary(brief.summary.experiment_run_count) }
+  ];
+
+  return (
+    <section className="strategy-brief-panel">
+      <div className="strategy-hero">
+        <div>
+          <div className="eyebrow">{text.strategyBriefTitle}</div>
+          <h2>{action.label}</h2>
+          <p>{action.reason}</p>
+          <div className="button-row">
+            <button className="primary-button" disabled={busy} onClick={() => onAction(action)}>
+              {busy ? <Loader2 className="spin" size={16} /> : strategyActionIcon(action.action_type)}
+              {text.strategyRunAction}
+            </button>
+            <button className="secondary-button" disabled={busy} onClick={() => void onSave()}>
+              {busy ? <Loader2 className="spin" size={16} /> : <Download size={16} />}
+              {text.strategySaveSnapshot}
+            </button>
+          </div>
+        </div>
+        <div className="strategy-metrics" aria-label={text.strategyRecommendedAction}>
+          {metrics.map((metric) => (
+            <div key={metric.label}>
+              <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="strategy-lane-strip" aria-label={text.strategyLaneMap}>
+        {brief.candidate_lanes.map((lane) => (
+          <div key={lane.lane_id} className={`strategy-lane ${strategyLaneTone(lane.status)}`} title={lane.why}>
+            <span>{lane.title}</span>
+            <strong>{formatStrategyStatus(lane.status)}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="strategy-handoff">
+        <div>
+          <div className="eyebrow">{text.strategyCodexHandoff}</div>
+          <p>{handoffObjective}</p>
+        </div>
+        <div className="badge-row">
+          <span className="badge">open-ended</span>
+          <span className="badge muted">split locked: {formatBooleanPath(brief.codex_handoff, ["autonomy_policy", "must_respect_split_manifest"])}</span>
+          <span className="badge muted">network: {formatNestedPath(brief.codex_handoff, ["autonomy_policy", "network_default"])}</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function strategyActionIcon(actionType: StrategyAction["action_type"]) {
+  if (actionType === "api") return <Play size={16} />;
+  if (actionType === "agent_task") return <Send size={16} />;
+  return <ArrowLikeIcon />;
+}
+
+function ArrowLikeIcon() {
+  return <Layers size={16} />;
+}
+
+function numericSummary(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function strategyLaneTone(status: string) {
+  if (status === "ready") return "ready";
+  if (status.includes("review") || status.includes("decision")) return "warn";
+  return "pending";
+}
+
+function formatStrategyStatus(status: string) {
+  return status.replace(/_/g, " ");
+}
+
+function formatNestedPath(payload: Record<string, unknown>, path: string[]) {
+  let current: unknown = payload;
+  for (const key of path) {
+    if (!current || typeof current !== "object" || !(key in current)) return "-";
+    current = (current as Record<string, unknown>)[key];
+  }
+  return String(current ?? "-");
+}
+
+function formatBooleanPath(payload: Record<string, unknown>, path: string[]) {
+  const value = formatNestedPath(payload, path);
+  return value === "true" ? "yes" : value === "false" ? "no" : value;
+}
+
 function ApproachTab({
   project,
+  strategyBrief,
   researchBriefs,
   ideas,
   artifacts,
   busy,
-  runAction
+  text,
+  runAction,
+  onStrategyAction
 }: {
   project: Project;
+  strategyBrief: AdaptiveStrategyBrief | null;
   researchBriefs: ResearchBrief[];
   ideas: Idea[];
   artifacts: Artifact[];
   busy: boolean;
+  text: LocaleMessages;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
+  onStrategyAction: (action: StrategyAction) => void;
 }) {
   const latestBrief = researchBriefs[0] ?? null;
   const researchPlanArtifacts = artifacts.filter((artifact) => artifact.asset_type === "research_plan");
@@ -3903,6 +4128,14 @@ function ApproachTab({
 
   return (
     <div className="stack">
+      <StrategyBriefPanel
+        project={project}
+        brief={strategyBrief}
+        busy={busy}
+        text={text}
+        onAction={onStrategyAction}
+        onSave={() => runAction(() => api(`/api/projects/${project.id}/approach/strategy-brief`, { method: "POST" }))}
+      />
       <div className="toolbar">
         <button
           className="secondary-button"

@@ -40,6 +40,7 @@ from tabular_harness.models.entities import (
     utc_now,
 )
 from tabular_harness.schemas import (
+    AdaptiveStrategyBriefRead,
     AgentTaskPlanCreate,
     AnswerRead,
     ArtifactPreviewRead,
@@ -88,6 +89,10 @@ from tabular_harness.schemas import (
     TranslationCreate,
     TranslationRead,
     VisualizationSpecRead,
+)
+from tabular_harness.services.adaptive_strategy import (
+    build_adaptive_strategy_brief,
+    create_adaptive_strategy_brief,
 )
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
@@ -2163,6 +2168,58 @@ def get_split_manifest(split_id: str, db: Annotated[Session, Depends(get_session
     if split is None:
         raise HTTPException(status_code=404, detail="SplitManifest not found")
     return split_to_dict(split)
+
+
+@router.get("/api/projects/{project_id}/approach/strategy-brief", response_model=AdaptiveStrategyBriefRead)
+def get_project_strategy_brief(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    return build_adaptive_strategy_brief(db, project=project)
+
+
+@router.post("/api/projects/{project_id}/approach/strategy-brief", response_model=JobRead)
+def create_project_strategy_brief(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="create_adaptive_strategy_brief",
+        project_id=project_id,
+        input_payload={},
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = create_adaptive_strategy_brief(db, store=store, project=project, job=job)
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": result.brief["schema_version"],
+                "adaptive_strategy_brief_artifact_id": result.artifact.id,
+                "adaptive_strategy_report_id": result.report.id,
+                "adaptive_strategy_report_artifact_id": result.report_artifact.id,
+                "visualization_id": result.visualization.id,
+                "visualization_artifact_id": result.visualization_artifact.id,
+                "artifact_id": result.artifact.id,
+                "artifact_ids": result.artifact_ids,
+                "recommended_action_type": result.brief["recommended_next_action"]["action_type"],
+                "recommended_label": result.brief["recommended_next_action"]["label"],
+                "lane_count": len(result.brief["candidate_lanes"]),
+            },
+        )
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
 
 
 @router.post("/api/projects/{project_id}/approach/research-plan", response_model=JobRead)

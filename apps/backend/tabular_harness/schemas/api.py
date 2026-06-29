@@ -631,6 +631,20 @@ class ResearchBriefRead(BaseModel):
     created_at: str
 
 
+class AdaptiveStrategyBriefRead(BaseModel):
+    schema_version: str
+    project: dict[str, Any]
+    summary: dict[str, Any]
+    recommended_next_action: dict[str, Any]
+    candidate_lanes: list[dict[str, Any]]
+    codex_handoff: dict[str, Any]
+    reporting_plan: dict[str, Any]
+    artifact_refs: list[dict[str, Any]]
+    risk_register: list[dict[str, Any]]
+    latest_artifact_id: str | None = None
+    generated_at: str
+
+
 class IdeaRead(BaseModel):
     id: str
     project_id: str

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AdaptiveStrategyBrief",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "summary",
+    "recommended_next_action",
+    "candidate_lanes",
+    "codex_handoff",
+    "reporting_plan",
+    "artifact_refs",
+    "risk_register",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "adaptive_strategy_brief.v1"
+    },
+    "project": {
+      "type": "object"
+    },
+    "summary": {
+      "type": "object"
+    },
+    "recommended_next_action": {
+      "type": "object",
+      "required": ["action_type", "label", "target_tab", "reason"],
+      "properties": {
+        "action_type": {
+          "type": "string",
+          "enum": ["navigate", "api", "agent_task"]
+        },
+        "label": {
+          "type": "string"
+        },
+        "target_tab": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": ["string", "null"]
+        },
+        "method": {
+          "type": ["string", "null"]
+        },
+        "prompt": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "candidate_lanes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["lane_id", "title", "status", "why", "next_action", "agent_role"],
+        "properties": {
+          "lane_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "evidence_artifact_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "next_action": {
+            "type": "string"
+          },
+          "agent_role": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "codex_handoff": {
+      "type": "object"
+    },
+    "reporting_plan": {
+      "type": "object"
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "risk_register": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "latest_artifact_id": {
+      "type": ["string", "null"]
+    },
+    "generated_at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

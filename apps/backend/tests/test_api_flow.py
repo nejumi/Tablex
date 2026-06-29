@@ -210,6 +210,28 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "adaptive_baseline_planning" in strategy_preview
     assert "reporting_plan" in strategy_preview
 
+    strategy_brief_response = client.get(f"/api/projects/{project_id}/approach/strategy-brief")
+    assert strategy_brief_response.status_code == 200, strategy_brief_response.text
+    strategy_brief = strategy_brief_response.json()
+    assert strategy_brief["schema_version"] == "adaptive_strategy_brief.v1"
+    assert strategy_brief["summary"]["fixed_recipe_policy"] == "advisory_candidates_only"
+    assert strategy_brief["codex_handoff"]["autonomy_policy"]["can_propose_new_approach_classes"] is True
+    assert strategy_brief["codex_handoff"]["autonomy_policy"]["must_emit_approach_decision_trace"] is True
+    assert any(lane["lane_id"] == "adaptive_baseline" for lane in strategy_brief["candidate_lanes"])
+
+    strategy_brief_job_response = client.post(f"/api/projects/{project_id}/approach/strategy-brief")
+    assert strategy_brief_job_response.status_code == 200, strategy_brief_job_response.text
+    strategy_brief_job = strategy_brief_job_response.json()
+    assert strategy_brief_job["status"] == "succeeded"
+    assert strategy_brief_job["output"]["adaptive_strategy_brief_artifact_id"]
+    assert strategy_brief_job["output"]["adaptive_strategy_report_artifact_id"]
+    assert strategy_brief_job["output"]["visualization_artifact_id"]
+    strategy_brief_preview_response = client.get(
+        f"/api/artifacts/{strategy_brief_job['output']['adaptive_strategy_brief_artifact_id']}/preview"
+    )
+    assert strategy_brief_preview_response.status_code == 200
+    assert "adaptive_strategy_brief.v1" in strategy_brief_preview_response.json()["preview"]
+
     baseline_response = client.post(f"/api/projects/{project_id}/baseline/run")
     assert baseline_response.status_code == 200, baseline_response.text
     baseline_job = baseline_response.json()

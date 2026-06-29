@@ -421,7 +421,7 @@ The current UI flow is:
 6. Design evaluation candidates in the Evaluation tab, using the quality gate context.
 7. Promote and approve an EvaluationSpec.
 8. Generate a SplitManifest.
-9. Generate a ResearchPlan, AgentTaskContract, Research Brief, and flexible Approach Ideas from the Approach tab.
+9. Review the Adaptive Strategy Brief in the Approach tab, then generate a ResearchPlan, AgentTaskContract, Research Brief, and flexible Approach Ideas as needed.
 10. Seed or attach reusable assets from the Library tab.
 11. Prepare and preview AgentContextPacks or planned AgentTask workspaces from the Approach tab before agent execution.
 12. Create and preview ExperimentPlans from the Approach tab.
@@ -444,3 +444,19 @@ Supported SplitManifest generation modes:
 - `stratified`: deterministic per-class hash ranking using the stratify column.
 - `time`: chronological split by the approved time column; summary includes train/valid time ranges and `time_order_respected`.
 - `group`: group-level split that keeps each group on one side; summary includes group counts and `group_leakage_check_passed`.
+
+## Adaptive Strategy Brief
+
+The Approach tab can request live strategy guidance:
+
+```bash
+curl -s http://localhost:8000/api/projects/{project_id}/approach/strategy-brief
+```
+
+To persist the current strategy state as assets:
+
+```bash
+curl -s -X POST http://localhost:8000/api/projects/{project_id}/approach/strategy-brief
+```
+
+This creates an `adaptive_strategy_brief` JSON artifact, an `adaptive_strategy_report` Markdown artifact and Report row, and a `visualization_spec` artifact. The brief treats baseline plans as advisory evidence and keeps Codex handoff open-ended while preserving EvaluationSpec, SplitManifest, artifact registration, reporting, and credential boundaries.
