@@ -1391,6 +1391,74 @@ td {
   padding-top: 14px;
 }
 
+.approach-detail-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.approach-detail-group {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.approach-detail-group summary {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 68px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.approach-detail-group summary::-webkit-details-marker {
+  display: none;
+}
+
+.approach-detail-group summary::before {
+  content: "+";
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  grid-column: 1;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.approach-detail-group[open] summary::before {
+  content: "-";
+}
+
+.approach-detail-group summary > span:first-child {
+  display: grid;
+  gap: 4px;
+  grid-column: 2;
+}
+
+.approach-detail-group summary strong {
+  color: var(--text-strong);
+  font-size: 14px;
+}
+
+.approach-detail-group summary small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.approach-detail-body {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding: 12px;
+  background: var(--surface-muted);
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;

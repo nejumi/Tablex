@@ -3990,6 +3990,33 @@ function formatBooleanPath(payload: Record<string, unknown>, path: string[]) {
   return value === "true" ? "yes" : value === "false" ? "no" : value;
 }
 
+function ApproachDetailGroup({
+  title,
+  subtitle,
+  countLabel,
+  defaultOpen,
+  children
+}: {
+  title: string;
+  subtitle: string;
+  countLabel: string;
+  defaultOpen: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="approach-detail-group" open={defaultOpen}>
+      <summary>
+        <span>
+          <strong>{title}</strong>
+          <small>{subtitle}</small>
+        </span>
+        <span className="badge muted">{countLabel}</span>
+      </summary>
+      <div className="approach-detail-body">{children}</div>
+    </details>
+  );
+}
+
 function ApproachTab({
   project,
   strategyBrief,
@@ -4020,6 +4047,8 @@ function ApproachTab({
     ["research_finding_synthesis", "research_finding_synthesis_report"].includes(artifact.asset_type)
   );
   const agentTaskContractArtifacts = artifacts.filter((artifact) => artifact.asset_type === "agent_task_contract");
+  const researchContextCount = researchPlanArtifacts.length + researchSourceArtifacts.length + researchSynthesisArtifacts.length;
+  const runnerHandoffCount = agentTaskContractArtifacts.length + researchBriefs.length + ideas.length;
   const [researchPlanPreview, setResearchPlanPreview] = React.useState<ArtifactPreview | null>(null);
   const [researchPlanPreviewError, setResearchPlanPreviewError] = React.useState<string | null>(null);
   const [researchPlanPreviewLoadingId, setResearchPlanPreviewLoadingId] = React.useState<string | null>(null);
@@ -4041,6 +4070,7 @@ function ApproachTab({
   const [workspacePreview, setWorkspacePreview] = React.useState<ArtifactPreview | null>(null);
   const [workspacePreviewError, setWorkspacePreviewError] = React.useState<string | null>(null);
   const [workspacePreviewLoadingId, setWorkspacePreviewLoadingId] = React.useState<string | null>(null);
+  const previewCount = [contextPreview, planPreview, workspacePreview].filter(Boolean).length;
 
   async function loadContextPreview(artifactId: string) {
     setContextPreviewLoadingId(artifactId);
@@ -4238,6 +4268,13 @@ function ApproachTab({
           Generate Ideas
         </button>
       </div>
+      <div className="approach-detail-groups">
+        <ApproachDetailGroup
+          title="Research context"
+          subtitle="Controlled research planning, source slots, and synthesis artifacts for evidence-backed approach selection."
+          countLabel={`${researchContextCount} artifacts`}
+          defaultOpen={!strategyBrief}
+        >
       <Panel title="Research Plans" icon={<Search size={18} />}>
         {researchPlanArtifacts.length ? (
           <Table
@@ -4364,6 +4401,13 @@ function ApproachTab({
           <EmptyInline text={researchSynthesisPreview?.reason ?? "Synthesize current source packs and runner findings to inspect citation audit status, open requirements, and handoff guidance."} />
         )}
       </Panel>
+        </ApproachDetailGroup>
+        <ApproachDetailGroup
+          title="Runner handoff"
+          subtitle="AgentTaskContracts, research briefs, and Ideas that Codex can use or reject with a decision trace."
+          countLabel={`${runnerHandoffCount} items`}
+          defaultOpen={!strategyBrief}
+        >
       <Panel title="Agent Task Contracts" icon={<ListChecks size={18} />}>
         {agentTaskContractArtifacts.length ? (
           <Table
@@ -4608,6 +4652,13 @@ function ApproachTab({
           <EmptyInline text="Flexible candidate approaches will appear here as evidence-backed Ideas with AgentTaskContract payloads for Codex, Skills, and controlled research." />
         )}
       </Panel>
+        </ApproachDetailGroup>
+        <ApproachDetailGroup
+          title="Previews and manifests"
+          subtitle="Inspect materialized context packs, experiment plans, and controlled workspaces after creating them."
+          countLabel={`${previewCount} previews`}
+          defaultOpen={previewCount > 0 && !strategyBrief}
+        >
       <Panel title="Agent Context Pack Preview" icon={<FileText size={18} />}>
         {contextPreviewError ? <div className="banner danger">{contextPreviewError}</div> : null}
         {contextPreview?.preview_available ? (
@@ -4632,6 +4683,8 @@ function ApproachTab({
           <EmptyInline text={workspacePreview?.reason ?? "Run the stub task to materialize a controlled workspace manifest with copied context, execution policy, and safety controls."} />
         )}
       </Panel>
+        </ApproachDetailGroup>
+      </div>
     </div>
   );
 }

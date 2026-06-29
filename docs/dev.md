@@ -421,7 +421,7 @@ The current UI flow is:
 6. Design evaluation candidates in the Evaluation tab, using the quality gate context.
 7. Promote and approve an EvaluationSpec.
 8. Generate a SplitManifest.
-9. Review the Adaptive Strategy Brief in the Approach tab, then generate a ResearchPlan, AgentTaskContract, Research Brief, and flexible Approach Ideas as needed.
+9. Review the Adaptive Strategy Brief in the Approach tab, use the quick actions, then open supporting Research context, Runner handoff, or Preview groups as needed.
 10. Seed or attach reusable assets from the Library tab.
 11. Prepare and preview AgentContextPacks or planned AgentTask workspaces from the Approach tab before agent execution.
 12. Create and preview ExperimentPlans from the Approach tab.
