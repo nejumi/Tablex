@@ -283,9 +283,13 @@ def copy_context_artifacts(
         ("research_plan", "research_plan.json"),
         ("experiment_plan", "experiment_plan.json"),
         ("baseline_strategy_plan", "baseline_strategy_plan.json"),
+        ("baseline_metrics", "baseline_metrics.json"),
+        ("baseline_report", "baseline_report.md"),
         ("data_quality_gate", "data_quality_gate.json"),
         ("relational_catalog", "relational_catalog.json"),
         ("evaluation_diagnostics", "evaluation_diagnostics.json"),
+        ("evaluation_diagnostics_report", "evaluation_diagnostics_report.md"),
+        ("run_report", "run_report.md"),
     ]:
         artifact = latest_context_artifact(db, project_id=project_id, idea_id=idea_id, asset_type=asset_type)
         if artifact is None:

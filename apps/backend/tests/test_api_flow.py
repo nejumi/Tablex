@@ -968,6 +968,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert workspace_payload["safety"]["connector_credentials"] == "not_materialized"
     materialized_paths = [item["context_path"] for item in workspace_payload["materialized_sources"]]
     assert any("research_plan.json" in path for path in materialized_paths)
+    assert any("baseline_metrics.json" in path for path in materialized_paths)
+    assert any("baseline_report.md" in path for path in materialized_paths)
     assert any(path.startswith(".harness/context/library_assets/") for path in materialized_paths)
     assert any(item.get("asset_name") == "xgboost_mixed_type_baseline" for item in workspace_payload["materialized_sources"])
 

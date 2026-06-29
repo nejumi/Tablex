@@ -24,8 +24,9 @@ The product name may still change. Internal package names and database tables st
 - Idea-to-AgentTask stub execution with schema-validated AgentResult, report artifacts, evidence, and lineage.
 - Cross-project Asset Library v0 for Skills, FeatureRecipes, EvaluationPatterns, PromptTemplates, and VisualizationTemplates with Project/Idea references.
 - Cross-project Skill & FeatureRecipe Pack v1 with reusable tabular boosting, TF-IDF, time lag/rolling, relational aggregation, diagnostics, and decision reporting assets.
-- Agent Skill Handoff v1 with ResearchPlan-recommended library asset ids in AgentTaskContracts, AgentContextPack asset recommendations, and workspace materialization under `.harness/context/library_assets/`.
+- Agent Skill Handoff v1 with ResearchPlan-recommended library asset ids in AgentTaskContracts, AgentContextPack asset recommendations, baseline/report context, and workspace materialization under `.harness/context/library_assets/`.
 - Adaptive AgentTask Planning v1 with artifact-backed runner contracts that bundle dataset/profile context, evaluation constraints, assumptions, benchmark context, Skill/library recommendations, flexible approach candidates, research queries, reporting requirements, and artifact expectations.
+- Persistent Agent Chat dock that turns in-product instructions into harness-owned AgentTaskContracts instead of requiring an external Codex UI.
 - Planned Agent Workspace Handoff v1 for materializing planner-generated AgentTaskContracts into controlled `.harness` workspaces with context artifacts, library assets, execution policy, manifests, and lineage before runner execution.
 - Agent Task Readiness Review v1 with artifact-backed pre-run blockers/warnings, Markdown report, visualization spec, and UI preview for contract/workspace safety and completeness.
 - Planned LocalStub Agent Execution v1 with readiness-gated contract execution, AgentResult artifact ingestion, Report/Evidence creation, and lineage without running Codex or external research.

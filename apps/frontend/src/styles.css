@@ -19,7 +19,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -131,7 +132,8 @@ button:disabled {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 36px;
   border: 1px solid #ccd4df;
@@ -142,9 +144,14 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: #1d6f9f;
   outline: 2px solid #b8dff2;
+}
+
+textarea {
+  resize: vertical;
 }
 
 .main {
@@ -200,6 +207,10 @@ select:focus {
 .stack {
   display: grid;
   gap: 16px;
+}
+
+.detail {
+  padding-bottom: 210px;
 }
 
 .two-column {
@@ -286,6 +297,11 @@ select:focus {
   background: #1d6f9f;
   color: #ffffff;
   padding: 8px 12px;
+}
+
+.primary-button.icon-only {
+  width: 40px;
+  padding: 8px;
 }
 
 .secondary-button {
@@ -789,6 +805,81 @@ td {
   padding: 14px;
 }
 
+.agent-chat-dock {
+  position: fixed;
+  right: 28px;
+  bottom: 18px;
+  left: 308px;
+  z-index: 20;
+  display: grid;
+  gap: 10px;
+  border: 1px solid #b8c7d7;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 42px rgba(31, 42, 55, 0.16);
+  padding: 14px;
+}
+
+.agent-chat-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-chat-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #163a53;
+  font-weight: 800;
+}
+
+.agent-chat-header small {
+  color: #667085;
+  font-size: 11px;
+}
+
+.agent-chat-log {
+  display: grid;
+  gap: 6px;
+  max-height: 132px;
+  overflow: auto;
+}
+
+.agent-chat-message {
+  max-width: 92%;
+  border-radius: 8px;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-chat-message.user {
+  justify-self: end;
+  background: #e8f4fb;
+  color: #163a53;
+}
+
+.agent-chat-message.system {
+  justify-self: start;
+  background: #f1f4f7;
+  color: #384454;
+}
+
+.agent-chat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  gap: 8px;
+  align-items: end;
+}
+
+.agent-chat-form textarea {
+  min-height: 104px;
+  line-height: 1.5;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -812,5 +903,11 @@ td {
   .viz-row,
   .inventory-meter {
     grid-template-columns: 1fr;
+  }
+
+  .agent-chat-dock {
+    right: 12px;
+    bottom: 10px;
+    left: 12px;
   }
 }

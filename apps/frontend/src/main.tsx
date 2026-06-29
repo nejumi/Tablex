@@ -15,11 +15,13 @@ import {
   Lightbulb,
   ListChecks,
   Loader2,
+  MessageSquare,
   PieChart,
   Play,
   Plus,
   RefreshCw,
   Search,
+  Send,
   Upload
 } from "lucide-react";
 import "./styles.css";
@@ -659,6 +661,7 @@ function ProjectDetail({
   const [understanding, setUnderstanding] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [agentChatMessages, setAgentChatMessages] = React.useState<Array<{ role: "user" | "system"; text: string }>>([]);
 
   const refresh = React.useCallback(async () => {
     setError(null);
@@ -757,6 +760,37 @@ function ProjectDetail({
       await onProjectChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitAgentChat(objective: string) {
+    const trimmed = objective.trim();
+    if (!trimmed) return;
+    setBusy(true);
+    setError(null);
+    setAgentChatMessages((current) => [...current.slice(-3), { role: "user", text: trimmed }]);
+    try {
+      const job = await api<Job>(`/api/projects/${project.id}/approach/agent-task-plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ objective: trimmed, task_type: "implement_prediction_approach" })
+      });
+      const artifactId = job.output.agent_task_contract_artifact_id ?? job.output.artifact_id;
+      setAgentChatMessages((current) => [
+        ...current.slice(-4),
+        {
+          role: "system",
+          text: typeof artifactId === "string" ? `AgentTaskContract ${artifactId} created.` : "AgentTaskContract created."
+        }
+      ]);
+      await refresh();
+      await onProjectChanged();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      setAgentChatMessages((current) => [...current.slice(-4), { role: "system", text: message }]);
     } finally {
       setBusy(false);
     }
@@ -874,7 +908,74 @@ function ProjectDetail({
       )}
       {tab === "Jobs" && <JobsTab jobs={jobs} busy={busy} runAction={runAction} />}
       {tab === "Lineage" && <LineageTab lineage={lineage} />}
+      <AgentChatDock
+        busy={busy}
+        messages={agentChatMessages}
+        latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
+        onSubmit={submitAgentChat}
+      />
     </section>
+  );
+}
+
+function AgentChatDock({
+  busy,
+  messages,
+  latestContract,
+  onSubmit
+}: {
+  busy: boolean;
+  messages: Array<{ role: "user" | "system"; text: string }>;
+  latestContract: Artifact | null;
+  onSubmit: (objective: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = React.useState("");
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const objective = draft.trim();
+    if (!objective) return;
+    setDraft("");
+    await onSubmit(objective);
+  }
+
+  return (
+    <div className="agent-chat-dock">
+      <div className="agent-chat-header">
+        <div>
+          <div className="agent-chat-title">
+            <MessageSquare size={16} />
+            Agent Chat
+          </div>
+          <small>Codex-ready runner channel</small>
+        </div>
+        {latestContract ? (
+          <a className="icon-link" href={`${apiBase}/api/artifacts/${latestContract.id}/download`} title="Download latest AgentTaskContract">
+            <Download size={16} />
+          </a>
+        ) : null}
+      </div>
+      {messages.length ? (
+        <div className="agent-chat-log">
+          {messages.slice(-4).map((message, index) => (
+            <div className={`agent-chat-message ${message.role}`} key={`${message.role}-${index}-${message.text}`}>
+              {message.text}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <form className="agent-chat-form" onSubmit={(event) => void submit(event)}>
+        <textarea
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="Ask for the next experiment, feature idea, diagnosis, or report"
+          rows={4}
+        />
+        <button className="primary-button icon-only" disabled={busy || !draft.trim()} title="Create AgentTaskContract">
+          {busy ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
+        </button>
+      </form>
+    </div>
   );
 }
 

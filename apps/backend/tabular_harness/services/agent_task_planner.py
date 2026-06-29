@@ -629,10 +629,15 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         ),
         "evaluation_approval_review": latest_project_artifact(db, project_id, "evaluation_approval_review"),
         "baseline_strategy_plan": latest_project_artifact(db, project_id, "baseline_strategy_plan"),
+        "baseline_plan": latest_project_artifact(db, project_id, "baseline_plan"),
+        "baseline_metrics": latest_project_artifact(db, project_id, "baseline_metrics"),
+        "baseline_report": latest_project_artifact(db, project_id, "baseline_report"),
         "research_plan": latest_project_artifact(db, project_id, "research_plan"),
         "research_source_pack": latest_project_artifact(db, project_id, "research_source_pack"),
         "research_finding_synthesis": latest_project_artifact(db, project_id, "research_finding_synthesis"),
         "evaluation_diagnostics": latest_project_artifact(db, project_id, "evaluation_diagnostics"),
+        "evaluation_diagnostics_report": latest_project_artifact(db, project_id, "evaluation_diagnostics_report"),
+        "run_report": latest_project_artifact(db, project_id, "run_report"),
         "decision_dashboard": latest_project_artifact(db, project_id, "decision_dashboard"),
     }
 
