@@ -479,6 +479,13 @@ type NotebookIndexItem = {
     manifest: string | null;
     report_artifact: string | null;
     visualization_artifact: string | null;
+    execution_plan: string | null;
+    agent_task_contract: string | null;
+    execution_manifest: string | null;
+    execution_report: string | null;
+    execution_html: string | null;
+    figure_manifest: string | null;
+    execution_source: string | null;
   };
   report_id: string | null;
   visualization_id: string | null;
@@ -497,6 +504,8 @@ type NotebookIndex = {
     with_html_preview: number;
     with_report: number;
     with_visualization: number;
+    with_execution_plan: number;
+    with_execution_capture: number;
   };
   recommended_notebook: NotebookIndexItem | null;
   groups: Array<{ notebook_kind: string; title: string; count: number; latest_created_at: string; items: NotebookIndexItem[] }>;
@@ -5531,7 +5540,7 @@ function NotebooksTab({
               <Metric label="Notebooks" value={notebookIndex.counts.total} />
               <Metric label="Data notebooks" value={notebookIndex.counts.by_kind.data_understanding ?? 0} />
               <Metric label="Model notebooks" value={notebookIndex.counts.by_kind.model_diagnostics ?? 0} />
-              <Metric label="Execution artifacts" value={executionArtifacts.length} />
+              <Metric label="Captured" value={notebookIndex.counts.with_execution_capture} />
             </div>
           </div>
         ) : (
@@ -5867,7 +5876,7 @@ function ReportsTab({
               <Metric label="Notebooks" value={notebookIndex.counts.total} />
               <Metric label="HTML previews" value={notebookIndex.counts.with_html_preview} />
               <Metric label="Reports" value={notebookIndex.counts.with_report} />
-              <Metric label="Visual summaries" value={notebookIndex.counts.with_visualization} />
+              <Metric label="Captured" value={notebookIndex.counts.with_execution_capture} />
             </div>
             <Table
               headers={["Notebook", "Source", "Coverage", "Created", "Actions"]}
@@ -6134,7 +6143,9 @@ function notebookCoverageLabel(item: NotebookIndexItem) {
     item.coverage.has_html_preview ? "preview" : null,
     item.coverage.has_report ? "report" : null,
     item.coverage.has_visualization ? "visual" : null,
-    item.coverage.has_manifest ? "manifest" : null
+    item.coverage.has_manifest ? "manifest" : null,
+    item.coverage.has_execution_plan ? "plan" : null,
+    item.coverage.has_execution_capture ? "capture" : null
   ].filter(Boolean);
   return flags.length ? flags.join(" / ") : "source only";
 }

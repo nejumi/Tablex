@@ -1224,6 +1224,22 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert figure_manifest["runtime_execution_status"] == "deferred"
     assert figure_manifest["expected_figure_slots"]
 
+    notebook_index_after_capture_response = client.get(f"/api/projects/{project_id}/analysis-notebooks")
+    assert notebook_index_after_capture_response.status_code == 200
+    notebook_index_after_capture = notebook_index_after_capture_response.json()
+    assert notebook_index_after_capture["counts"]["with_execution_plan"] >= 1
+    assert notebook_index_after_capture["counts"]["with_execution_capture"] >= 1
+    captured_item = next(
+        item
+        for item in notebook_index_after_capture["items"]
+        if item["notebook_artifact_id"] == model_notebook_job["output"]["analysis_notebook_artifact_id"]
+    )
+    assert captured_item["coverage"]["has_execution_capture"] is True
+    assert captured_item["coverage"]["execution_capture_status"] == "static_capture_succeeded"
+    assert captured_item["artifact_ids"]["execution_manifest"] == execution_capture_job["output"]["notebook_execution_manifest_artifact_id"]
+    assert captured_item["artifact_ids"]["execution_html"] == execution_capture_job["output"]["notebook_execution_html_artifact_id"]
+    assert any(action["endpoint"] and "execution-capture" in action["endpoint"] for action in notebook_index_after_capture["next_actions"])
+
     run_report_response = client.post(f"/api/runs/{baseline_run['id']}/report")
     assert run_report_response.status_code == 200, run_report_response.text
     run_report_job = run_report_response.json()

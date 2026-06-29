@@ -323,6 +323,8 @@ def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any
             "with_html_preview": sum(1 for item in items_by_created if item["coverage"]["has_html_preview"]),
             "with_report": sum(1 for item in items_by_created if item["coverage"]["has_report"]),
             "with_visualization": sum(1 for item in items_by_created if item["coverage"]["has_visualization"]),
+            "with_execution_plan": sum(1 for item in items_by_created if item["coverage"]["has_execution_plan"]),
+            "with_execution_capture": sum(1 for item in items_by_created if item["coverage"]["has_execution_capture"]),
         },
         "recommended_notebook": recommended,
         "groups": _notebook_groups(items_by_created),
@@ -1574,14 +1576,42 @@ def _notebook_index_item(
     visualization_artifact = _latest_artifact_for_metadata(
         db, project.id, "visualization_spec", "source_artifact_id", notebook_artifact.id
     )
+    execution_plan_artifact = _latest_artifact_for_metadata(
+        db, project.id, "notebook_execution_plan", "notebook_artifact_id", notebook_artifact.id
+    )
+    agent_task_contract_artifact = _latest_artifact_for_metadata(
+        db, project.id, "agent_task_contract", "notebook_artifact_id", notebook_artifact.id
+    )
+    execution_manifest_artifact = _latest_artifact_for_metadata(
+        db, project.id, "notebook_execution_manifest", "notebook_artifact_id", notebook_artifact.id
+    )
+    execution_report_artifact = _latest_artifact_for_metadata(
+        db, project.id, "notebook_execution_report", "notebook_artifact_id", notebook_artifact.id
+    )
+    execution_html_artifact = _latest_artifact_for_metadata(
+        db, project.id, "notebook_execution_html", "notebook_artifact_id", notebook_artifact.id
+    )
+    figure_manifest_artifact = _latest_artifact_for_metadata(
+        db, project.id, "notebook_figure_manifest", "notebook_artifact_id", notebook_artifact.id
+    )
+    execution_source_artifact = _latest_artifact_for_metadata(
+        db, project.id, "notebook_execution_source", "notebook_artifact_id", notebook_artifact.id
+    )
     report = reports_by_artifact_id.get(report_artifact.id) if report_artifact else None
     visualization = visualizations_by_artifact_id.get(visualization_artifact.id) if visualization_artifact else None
+    execution_metadata = loads_json(execution_manifest_artifact.metadata_json, {}) if execution_manifest_artifact else {}
     coverage = {
         "has_html_preview": html_artifact is not None,
         "has_manifest": manifest_artifact is not None,
         "has_report": report_artifact is not None and report is not None,
         "has_visualization": visualization_artifact is not None and visualization is not None,
+        "has_execution_plan": execution_plan_artifact is not None,
+        "has_execution_capture": execution_manifest_artifact is not None,
+        "has_execution_report": execution_report_artifact is not None,
+        "has_execution_html": execution_html_artifact is not None,
+        "has_figure_manifest": figure_manifest_artifact is not None,
         "execution_status": str(metadata.get("execution_status") or "unknown"),
+        "execution_capture_status": str(execution_metadata.get("execution_status") or "not_captured"),
     }
     recommendation_score = _notebook_recommendation_score(notebook_kind, coverage, metadata)
     return {
@@ -1599,6 +1629,13 @@ def _notebook_index_item(
             "manifest": manifest_artifact.id if manifest_artifact else None,
             "report_artifact": report_artifact.id if report_artifact else None,
             "visualization_artifact": visualization_artifact.id if visualization_artifact else None,
+            "execution_plan": execution_plan_artifact.id if execution_plan_artifact else None,
+            "agent_task_contract": agent_task_contract_artifact.id if agent_task_contract_artifact else None,
+            "execution_manifest": execution_manifest_artifact.id if execution_manifest_artifact else None,
+            "execution_report": execution_report_artifact.id if execution_report_artifact else None,
+            "execution_html": execution_html_artifact.id if execution_html_artifact else None,
+            "figure_manifest": figure_manifest_artifact.id if figure_manifest_artifact else None,
+            "execution_source": execution_source_artifact.id if execution_source_artifact else None,
         },
         "report_id": report.id if report else None,
         "visualization_id": visualization.id if visualization else None,
@@ -2050,6 +2087,10 @@ def _notebook_recommendation_score(
         score += 10
     if coverage.get("has_visualization"):
         score += 10
+    if coverage.get("has_execution_plan"):
+        score += 6
+    if coverage.get("has_execution_capture"):
+        score += 14
     if metadata.get("run_id"):
         score += 8
     if coverage.get("execution_status") == "generated_not_executed":
@@ -2105,12 +2146,21 @@ def _notebook_index_next_actions(project: Project, items: list[dict[str, Any]]) 
                 "reason": "Use persisted ExperimentRun evidence, prediction outputs, validation status, and diagnostics artifacts.",
             }
         )
+    uncaptured = next((item for item in items if not item["coverage"].get("has_execution_capture")), None)
+    if uncaptured is not None:
+        actions.append(
+            {
+                "label": "Capture notebook execution evidence",
+                "endpoint": f"/api/analysis-notebooks/{uncaptured['artifact_ids']['notebook']}/execution-capture",
+                "reason": "Create a safe static capture manifest, report, HTML preview, and figure manifest before full notebook execution.",
+            }
+        )
     if not actions:
         actions.append(
             {
-                "label": "Open the recommended notebook preview",
+                "label": "Open the recommended notebook evidence",
                 "endpoint": None,
-                "reason": "The notebook index already has data understanding and model diagnostics coverage.",
+                "reason": "The notebook index already has data understanding, model diagnostics, and execution capture coverage.",
             }
         )
     return actions
@@ -2125,6 +2175,8 @@ def _notebook_title(notebook_kind: str) -> str:
 
 
 def _notebook_recommendation_reason(notebook_kind: str, coverage: dict[str, Any]) -> str:
+    if coverage.get("has_execution_capture"):
+        return "Most complete notebook evidence: preview, report, execution plan, and safe static capture are available."
     if notebook_kind == "model_diagnostics":
         return "Most actionable after experiments because it ties metrics, predictions, validation, and diagnostics together."
     if notebook_kind == "data_understanding":
