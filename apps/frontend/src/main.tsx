@@ -462,6 +462,46 @@ type ArtifactPreview = {
   reason: string | null;
 };
 
+type NotebookIndexItem = {
+  notebook_artifact_id: string;
+  notebook_kind: string;
+  title: string;
+  status: string;
+  created_at: string;
+  dataset_snapshot_id: string | null;
+  run_id: string | null;
+  model_version_id: string | null;
+  artifact_ids: {
+    notebook: string;
+    html_preview: string | null;
+    manifest: string | null;
+    report_artifact: string | null;
+    visualization_artifact: string | null;
+  };
+  report_id: string | null;
+  visualization_id: string | null;
+  coverage: Record<string, unknown>;
+  recommendation_score: number;
+  recommendation_reason: string;
+};
+
+type NotebookIndex = {
+  schema_version: string;
+  project_id: string;
+  generated_at: string;
+  counts: {
+    total: number;
+    by_kind: Record<string, number>;
+    with_html_preview: number;
+    with_report: number;
+    with_visualization: number;
+  };
+  recommended_notebook: NotebookIndexItem | null;
+  groups: Array<{ notebook_kind: string; title: string; count: number; latest_created_at: string; items: NotebookIndexItem[] }>;
+  items: NotebookIndexItem[];
+  next_actions: Array<{ label: string; endpoint: string | null; reason: string }>;
+};
+
 type TranslationResult = {
   source_type: string;
   source_id: string;
@@ -1649,6 +1689,7 @@ function ProjectDetail({
   const [ideas, setIdeas] = React.useState<Idea[]>([]);
   const [reports, setReports] = React.useState<Report[]>([]);
   const [visualizations, setVisualizations] = React.useState<VisualizationSpec[]>([]);
+  const [notebookIndex, setNotebookIndex] = React.useState<NotebookIndex | null>(null);
   const [agentTaskResults, setAgentTaskResults] = React.useState<AgentTaskResult[]>([]);
   const [insights, setInsights] = React.useState<Insight[]>([]);
   const [libraryAssets, setLibraryAssets] = React.useState<LibraryAsset[]>([]);
@@ -1701,6 +1742,7 @@ function ProjectDetail({
         ideasData,
         reportsData,
         visualizationsData,
+        notebookIndexData,
         agentTaskResultsData,
         insightsData,
         libraryAssetsData,
@@ -1727,6 +1769,7 @@ function ProjectDetail({
         api<Idea[]>(`/api/projects/${project.id}/approach/ideas`),
         api<Report[]>(`/api/projects/${project.id}/reports`),
         api<VisualizationSpec[]>(`/api/projects/${project.id}/visualizations`),
+        api<NotebookIndex>(`/api/projects/${project.id}/analysis-notebooks`).catch(() => null),
         api<AgentTaskResult[]>(`/api/projects/${project.id}/agent-task-results`),
         api<Insight[]>(`/api/projects/${project.id}/insights`),
         api<LibraryAsset[]>(`/api/assets`),
@@ -1753,6 +1796,7 @@ function ProjectDetail({
       setIdeas(ideasData);
       setReports(reportsData);
       setVisualizations(visualizationsData);
+      setNotebookIndex(notebookIndexData);
       setAgentTaskResults(agentTaskResultsData);
       setInsights(insightsData);
       setLibraryAssets(libraryAssetsData);
@@ -1997,6 +2041,7 @@ function ProjectDetail({
           reports={reports}
           artifacts={artifacts}
           visualizations={visualizations}
+          notebookIndex={notebookIndex}
           insights={insights}
           busy={busy}
           runAction={runAction}
@@ -5294,6 +5339,7 @@ function ReportsTab({
   reports,
   artifacts,
   visualizations,
+  notebookIndex,
   insights,
   busy,
   runAction
@@ -5302,6 +5348,7 @@ function ReportsTab({
   reports: Report[];
   artifacts: Artifact[];
   visualizations: VisualizationSpec[];
+  notebookIndex: NotebookIndex | null;
   insights: Insight[];
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
@@ -5326,6 +5373,7 @@ function ReportsTab({
   );
   const guidedJourneySnapshots = guidedJourneyArtifacts.filter((artifact) => artifact.asset_type === "guided_journey_snapshot");
   const guidedJourneyComparisons = guidedJourneyArtifacts.filter((artifact) => artifact.asset_type === "guided_journey_comparison");
+  const recommendedNotebook = notebookIndex?.recommended_notebook ?? null;
 
   async function loadReportPreview(reportId: string) {
     setPreviewLoadingId(reportId);
@@ -5446,6 +5494,80 @@ function ReportsTab({
           Compare Journey
         </button>
       </div>
+      <Panel title="Notebook Center" icon={<BarChart3 size={18} />}>
+        {notebookIndex && notebookIndex.counts.total > 0 ? (
+          <div className="stack">
+            {recommendedNotebook ? (
+              <div className="focus-card">
+                <div>
+                  <div className="eyebrow">Recommended notebook</div>
+                  <h3>{recommendedNotebook.title}</h3>
+                  <p>{recommendedNotebook.recommendation_reason}</p>
+                  <div className="badge-row">
+                    <span className="badge">{recommendedNotebook.notebook_kind.replace(/_/g, " ")}</span>
+                    <span className="badge muted">{notebookCoverageLabel(recommendedNotebook)}</span>
+                    {recommendedNotebook.run_id ? <span className="badge muted">run {recommendedNotebook.run_id}</span> : null}
+                  </div>
+                </div>
+                <div className="row-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={previewLoadingId === notebookPreviewArtifactId(recommendedNotebook)}
+                    onClick={() => void loadArtifactPreview(notebookPreviewArtifactId(recommendedNotebook))}
+                  >
+                    {previewLoadingId === notebookPreviewArtifactId(recommendedNotebook) ? (
+                      <Loader2 className="spin" size={16} />
+                    ) : (
+                      <Eye size={16} />
+                    )}
+                    Preview
+                  </button>
+                  <a
+                    className="icon-link"
+                    href={`${apiBase}/api/artifacts/${recommendedNotebook.artifact_ids.notebook}/download`}
+                    title="Download marimo source"
+                  >
+                    <Download size={16} />
+                  </a>
+                </div>
+              </div>
+            ) : null}
+            <div className="metric-grid compact">
+              <Metric label="Notebooks" value={notebookIndex.counts.total} />
+              <Metric label="HTML previews" value={notebookIndex.counts.with_html_preview} />
+              <Metric label="Reports" value={notebookIndex.counts.with_report} />
+              <Metric label="Visual summaries" value={notebookIndex.counts.with_visualization} />
+            </div>
+            <Table
+              headers={["Notebook", "Source", "Coverage", "Created", "Actions"]}
+              rows={notebookIndex.items.slice(0, 8).map((item) => [
+                <div className="cell-stack" key={`${item.notebook_artifact_id}-title`}>
+                  <span>{item.title}</span>
+                  <small>{item.notebook_kind.replace(/_/g, " ")}</small>
+                </div>,
+                notebookSourceLabel(item),
+                notebookCoverageLabel(item),
+                formatDate(item.created_at),
+                <div className="row-actions" key={`${item.notebook_artifact_id}-actions`}>
+                  <button
+                    className="icon-button"
+                    disabled={previewLoadingId === notebookPreviewArtifactId(item)}
+                    onClick={() => void loadArtifactPreview(notebookPreviewArtifactId(item))}
+                    title="Preview notebook"
+                  >
+                    {previewLoadingId === notebookPreviewArtifactId(item) ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                  </button>
+                  <a className="icon-link" href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`} title="Download marimo source">
+                    <Download size={16} />
+                  </a>
+                </div>
+              ])}
+            />
+          </div>
+        ) : (
+          <EmptyInline text="Generate a Data Understanding notebook or a run-level Model Diagnostics notebook to create a guided notebook history here." />
+        )}
+      </Panel>
       <Panel title="Insights" icon={<Lightbulb size={18} />}>
         {insights.length ? (
           <div className="card-grid">
@@ -5662,6 +5784,26 @@ function ReportsTab({
       </Panel>
     </div>
   );
+}
+
+function notebookPreviewArtifactId(item: NotebookIndexItem) {
+  return item.artifact_ids.html_preview ?? item.artifact_ids.report_artifact ?? item.artifact_ids.notebook;
+}
+
+function notebookCoverageLabel(item: NotebookIndexItem) {
+  const flags = [
+    item.coverage.has_html_preview ? "preview" : null,
+    item.coverage.has_report ? "report" : null,
+    item.coverage.has_visualization ? "visual" : null,
+    item.coverage.has_manifest ? "manifest" : null
+  ].filter(Boolean);
+  return flags.length ? flags.join(" / ") : "source only";
+}
+
+function notebookSourceLabel(item: NotebookIndexItem) {
+  if (item.run_id) return `run ${item.run_id}`;
+  if (item.dataset_snapshot_id) return `dataset ${item.dataset_snapshot_id}`;
+  return "project";
 }
 
 function VisualizationPreview({ visualization }: { visualization: VisualizationSpec }) {

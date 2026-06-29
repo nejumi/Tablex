@@ -1205,6 +1205,36 @@ td {
   font-size: 11px;
 }
 
+.focus-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 16px;
+}
+
+.focus-card h3 {
+  margin: 2px 0 6px;
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.focus-card p {
+  margin: 0 0 10px;
+  color: var(--muted-strong);
+}
+
+.eyebrow {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .preview-block {
   display: grid;
   gap: 10px;

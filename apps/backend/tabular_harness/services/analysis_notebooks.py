@@ -245,6 +245,64 @@ def create_data_understanding_notebook(
     )
 
 
+def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any]:
+    notebook_artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+            .order_by(Artifact.created_at.desc())
+        ).all()
+    )
+    reports = list(
+        db.scalars(
+            select(Report)
+            .where(Report.project_id == project.id, Report.report_type == "analysis_notebook")
+            .order_by(Report.created_at.desc())
+        ).all()
+    )
+    reports_by_artifact_id = {report.artifact_id: report for report in reports}
+    visualizations = list(
+        db.scalars(
+            select(VisualizationSpec)
+            .where(VisualizationSpec.project_id == project.id)
+            .order_by(VisualizationSpec.created_at.desc())
+        ).all()
+    )
+    visualizations_by_artifact_id = {visualization.artifact_id: visualization for visualization in visualizations}
+    items = [
+        _notebook_index_item(
+            db,
+            project,
+            notebook_artifact,
+            reports_by_artifact_id=reports_by_artifact_id,
+            visualizations_by_artifact_id=visualizations_by_artifact_id,
+        )
+        for notebook_artifact in notebook_artifacts
+    ]
+    items_by_created = sorted(items, key=lambda item: str(item["created_at"]), reverse=True)
+    counts_by_kind: dict[str, int] = {}
+    for item in items_by_created:
+        kind = str(item["notebook_kind"])
+        counts_by_kind[kind] = counts_by_kind.get(kind, 0) + 1
+    recommended = _recommended_notebook(items_by_created)
+    return {
+        "schema_version": "analysis_notebook_index.v1",
+        "project_id": project.id,
+        "generated_at": utc_now().isoformat(),
+        "counts": {
+            "total": len(items_by_created),
+            "by_kind": counts_by_kind,
+            "with_html_preview": sum(1 for item in items_by_created if item["coverage"]["has_html_preview"]),
+            "with_report": sum(1 for item in items_by_created if item["coverage"]["has_report"]),
+            "with_visualization": sum(1 for item in items_by_created if item["coverage"]["has_visualization"]),
+        },
+        "recommended_notebook": recommended,
+        "groups": _notebook_groups(items_by_created),
+        "items": items_by_created,
+        "next_actions": _notebook_index_next_actions(project, items_by_created),
+    }
+
+
 def create_model_diagnostics_notebook(
     db: Session,
     *,
@@ -1097,6 +1155,162 @@ def _model_diagnostics_source_artifacts(
         if model_version_id
         else None,
     }
+
+
+def _notebook_index_item(
+    db: Session,
+    project: Project,
+    notebook_artifact: Artifact,
+    *,
+    reports_by_artifact_id: dict[str, Report],
+    visualizations_by_artifact_id: dict[str, VisualizationSpec],
+) -> dict[str, Any]:
+    metadata = loads_json(notebook_artifact.metadata_json, {})
+    notebook_kind = str(metadata.get("notebook_kind") or "unknown")
+    html_artifact = _latest_artifact_for_metadata(
+        db, project.id, "notebook_html", "notebook_artifact_id", notebook_artifact.id
+    )
+    manifest_artifact = _latest_artifact_for_metadata(
+        db, project.id, "notebook_run_manifest", "notebook_artifact_id", notebook_artifact.id
+    )
+    report_artifact = _latest_artifact_for_metadata(
+        db, project.id, "notebook_report", "notebook_artifact_id", notebook_artifact.id
+    )
+    visualization_artifact = _latest_artifact_for_metadata(
+        db, project.id, "visualization_spec", "source_artifact_id", notebook_artifact.id
+    )
+    report = reports_by_artifact_id.get(report_artifact.id) if report_artifact else None
+    visualization = visualizations_by_artifact_id.get(visualization_artifact.id) if visualization_artifact else None
+    coverage = {
+        "has_html_preview": html_artifact is not None,
+        "has_manifest": manifest_artifact is not None,
+        "has_report": report_artifact is not None and report is not None,
+        "has_visualization": visualization_artifact is not None and visualization is not None,
+        "execution_status": str(metadata.get("execution_status") or "unknown"),
+    }
+    recommendation_score = _notebook_recommendation_score(notebook_kind, coverage, metadata)
+    return {
+        "notebook_artifact_id": notebook_artifact.id,
+        "notebook_kind": notebook_kind,
+        "title": _notebook_title(notebook_kind),
+        "status": str(metadata.get("execution_status") or "ready"),
+        "created_at": notebook_artifact.created_at.isoformat(),
+        "dataset_snapshot_id": metadata.get("dataset_snapshot_id"),
+        "run_id": metadata.get("run_id"),
+        "model_version_id": metadata.get("model_version_id"),
+        "artifact_ids": {
+            "notebook": notebook_artifact.id,
+            "html_preview": html_artifact.id if html_artifact else None,
+            "manifest": manifest_artifact.id if manifest_artifact else None,
+            "report_artifact": report_artifact.id if report_artifact else None,
+            "visualization_artifact": visualization_artifact.id if visualization_artifact else None,
+        },
+        "report_id": report.id if report else None,
+        "visualization_id": visualization.id if visualization else None,
+        "coverage": coverage,
+        "recommendation_score": recommendation_score,
+        "recommendation_reason": _notebook_recommendation_reason(notebook_kind, coverage),
+    }
+
+
+def _notebook_recommendation_score(
+    notebook_kind: str,
+    coverage: dict[str, Any],
+    metadata: dict[str, Any],
+) -> int:
+    score = 20
+    if notebook_kind == "model_diagnostics":
+        score += 30
+    if notebook_kind == "data_understanding":
+        score += 20
+    if coverage.get("has_html_preview"):
+        score += 20
+    if coverage.get("has_report"):
+        score += 10
+    if coverage.get("has_visualization"):
+        score += 10
+    if metadata.get("run_id"):
+        score += 8
+    if coverage.get("execution_status") == "generated_not_executed":
+        score += 2
+    return score
+
+
+def _recommended_notebook(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not items:
+        return None
+    return max(items, key=lambda item: (int(item["recommendation_score"]), str(item["created_at"])))
+
+
+def _notebook_groups(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    labels = {
+        "model_diagnostics": "Model diagnostics",
+        "data_understanding": "Data understanding",
+        "unknown": "Other notebooks",
+    }
+    groups = []
+    for kind in ("model_diagnostics", "data_understanding", "unknown"):
+        group_items = [item for item in items if item["notebook_kind"] == kind or (kind == "unknown" and item["notebook_kind"] not in labels)]
+        if not group_items:
+            continue
+        groups.append(
+            {
+                "notebook_kind": kind,
+                "title": labels[kind],
+                "count": len(group_items),
+                "latest_created_at": group_items[0]["created_at"],
+                "items": group_items,
+            }
+        )
+    return groups
+
+
+def _notebook_index_next_actions(project: Project, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    kinds = {str(item["notebook_kind"]) for item in items}
+    actions: list[dict[str, Any]] = []
+    if "data_understanding" not in kinds:
+        actions.append(
+            {
+                "label": "Generate Data Understanding notebook",
+                "endpoint": f"/api/projects/{project.id}/analysis-notebooks/data-understanding",
+                "reason": "Start with profile, target, missingness, and assumption context before model analysis.",
+            }
+        )
+    if "model_diagnostics" not in kinds:
+        actions.append(
+            {
+                "label": "Generate Model Diagnostics notebook after a run",
+                "endpoint": "/api/runs/{run_id}/analysis-notebook",
+                "reason": "Use persisted ExperimentRun evidence, prediction outputs, validation status, and diagnostics artifacts.",
+            }
+        )
+    if not actions:
+        actions.append(
+            {
+                "label": "Open the recommended notebook preview",
+                "endpoint": None,
+                "reason": "The notebook index already has data understanding and model diagnostics coverage.",
+            }
+        )
+    return actions
+
+
+def _notebook_title(notebook_kind: str) -> str:
+    if notebook_kind == "model_diagnostics":
+        return "Model Diagnostics Notebook"
+    if notebook_kind == "data_understanding":
+        return "Data Understanding Notebook"
+    return "Analysis Notebook"
+
+
+def _notebook_recommendation_reason(notebook_kind: str, coverage: dict[str, Any]) -> str:
+    if notebook_kind == "model_diagnostics":
+        return "Most actionable after experiments because it ties metrics, predictions, validation, and diagnostics together."
+    if notebook_kind == "data_understanding":
+        return "Best starting point before target, evaluation, or feature decisions."
+    if coverage.get("has_html_preview"):
+        return "Preview is available inside the workbench."
+    return "Notebook source exists, but preview/report coverage is incomplete."
 
 
 def _latest_artifact_for_metadata(

@@ -100,6 +100,7 @@ from tabular_harness.services.agent_task_readiness import review_agent_task_read
 from tabular_harness.services.agent_task_results import list_agent_task_result_summaries
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
 from tabular_harness.services.analysis_notebooks import (
+    build_project_notebook_index,
     create_data_understanding_notebook,
     create_model_diagnostics_notebook,
 )
@@ -3256,6 +3257,15 @@ def generate_data_understanding_notebook_endpoint(
         mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
+
+
+@router.get("/api/projects/{project_id}/analysis-notebooks")
+def list_project_analysis_notebooks(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    return build_project_notebook_index(db, project)
 
 
 @router.get("/api/projects/{project_id}/insights", response_model=list[InsightRead])

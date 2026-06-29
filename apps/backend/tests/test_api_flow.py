@@ -1126,6 +1126,17 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert model_notebook_manifest["inputs"]["prediction_output"]
     assert "partial dependence" in " ".join(model_notebook_manifest["diagnostic_extension_points"])
 
+    notebook_index_response = client.get(f"/api/projects/{project_id}/analysis-notebooks")
+    assert notebook_index_response.status_code == 200, notebook_index_response.text
+    notebook_index = notebook_index_response.json()
+    assert notebook_index["schema_version"] == "analysis_notebook_index.v1"
+    assert notebook_index["counts"]["total"] >= 2
+    assert notebook_index["counts"]["by_kind"]["data_understanding"] >= 1
+    assert notebook_index["counts"]["by_kind"]["model_diagnostics"] >= 1
+    assert notebook_index["recommended_notebook"]["notebook_kind"] == "model_diagnostics"
+    assert notebook_index["recommended_notebook"]["artifact_ids"]["html_preview"]
+    assert any(group["notebook_kind"] == "model_diagnostics" for group in notebook_index["groups"])
+
     run_report_response = client.post(f"/api/runs/{baseline_run['id']}/report")
     assert run_report_response.status_code == 200, run_report_response.text
     run_report_job = run_report_response.json()
