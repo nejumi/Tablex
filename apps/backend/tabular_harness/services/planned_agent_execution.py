@@ -6,7 +6,13 @@ from typing import Any, cast
 
 from sqlalchemy.orm import Session
 
-from tabular_harness.agent import ExecutionPolicy, LocalStubAgentRunner, WorkspaceRef
+from tabular_harness.agent import (
+    AgentRunner,
+    CodexCliRunner,
+    ExecutionPolicy,
+    LocalStubAgentRunner,
+    WorkspaceRef,
+)
 from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json
 from tabular_harness.models.entities import Artifact, Evidence, Job, Project, Report
@@ -65,6 +71,52 @@ def run_planned_agent_task_local_stub(
     contract_artifact: Artifact,
     job: Job,
 ) -> PlannedAgentTaskExecutionResult:
+    return run_planned_agent_task_with_runner(
+        db,
+        store=store,
+        project=project,
+        contract_artifact=contract_artifact,
+        job=job,
+        runner=LocalStubAgentRunner(),
+        policy=ExecutionPolicy(sandbox="workspace_write", network="disabled", timeout_seconds=300),
+    )
+
+
+def run_planned_agent_task_codex_cli(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    contract_artifact: Artifact,
+    job: Job,
+    timeout_seconds: int = 1800,
+) -> PlannedAgentTaskExecutionResult:
+    return run_planned_agent_task_with_runner(
+        db,
+        store=store,
+        project=project,
+        contract_artifact=contract_artifact,
+        job=job,
+        runner=CodexCliRunner(),
+        policy=ExecutionPolicy(
+            sandbox="workspace_write",
+            network="harness_only",
+            timeout_seconds=timeout_seconds,
+            allow_secret_access=False,
+        ),
+    )
+
+
+def run_planned_agent_task_with_runner(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    contract_artifact: Artifact,
+    job: Job,
+    runner: AgentRunner,
+    policy: ExecutionPolicy,
+) -> PlannedAgentTaskExecutionResult:
     contract_payload = load_contract_payload(contract_artifact)
     contract = AgentTaskContract.model_validate(contract_payload)
     workspace_artifact = latest_workspace_manifest_for_contract(db, project.id, contract_artifact.id)
@@ -101,9 +153,8 @@ def run_planned_agent_task_local_stub(
 
     output_schema = load_agent_result_schema()
     workspace_path = Path(str(workspace_manifest["workspace_path"]))
-    policy = ExecutionPolicy(sandbox="workspace_write", network="disabled", timeout_seconds=300)
     relational_context_summary = build_relational_runner_context_summary(workspace_manifest, contract.inputs)
-    result = LocalStubAgentRunner().run_task(
+    result = runner.run_task(
         WorkspaceRef(
             project_id=project.id,
             path=str(workspace_path),

@@ -3,11 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from tabular_harness.agent import (
+    CodexCliRunner,
     ExecutionPolicy,
     LocalStubAgentRunner,
     NoopAgentRunner,
     WorkspaceRef,
 )
+from tabular_harness.agent.runners import render_prompt
 from tabular_harness.schemas import AgentRequiredOutput, AgentTaskContract
 
 
@@ -116,3 +118,45 @@ def test_local_stub_agent_runner_emits_notebook_authoring_plan(tmp_path: Path) -
     plan = plan_path.read_text(encoding="utf-8")
     assert "EDA is an argument" in plan
     assert "art_eda" in plan
+
+
+def test_codex_cli_runner_missing_binary_fails_schema_safely(tmp_path: Path) -> None:
+    contract = AgentTaskContract(
+        task_id="task_codex",
+        task_type="author_analysis_notebook",
+        project_id="p_001",
+        objective="Write a notebook from the authoring brief.",
+        inputs={"notebook_authoring": {"artifact_id": "art_brief"}},
+        required_outputs=[
+            AgentRequiredOutput(path="notebooks/tablex_analysis_notebook.py", schema="marimo_notebook.v1")
+        ],
+        quality_checks=["Read notebook_authoring_brief first."],
+        forbidden_actions=["Do not read secrets."],
+    )
+    output_schema = {
+        "type": "object",
+        "required": ["task_id", "status", "final_message", "outputs", "artifacts", "warnings"],
+        "properties": {
+            "task_id": {"type": "string"},
+            "status": {"type": "string", "enum": ["succeeded", "failed", "needs_approval"]},
+            "final_message": {"type": "string"},
+            "outputs": {"type": "object"},
+            "artifacts": {"type": "array"},
+            "warnings": {"type": "array"},
+        },
+    }
+
+    prompt = render_prompt(contract)
+    assert "Read the notebook_authoring_brief" in prompt
+    assert "do not copy public prose" in prompt
+
+    result = CodexCliRunner(codex_binary=str(tmp_path / "missing-codex")).run_task(
+        WorkspaceRef(project_id="p_001", path=str(tmp_path)),
+        contract,
+        output_schema,
+        ExecutionPolicy(),
+    )
+
+    assert result.status == "failed"
+    assert result.outputs["runner"] == "codex_cli"
+    assert result.failure_reason == "codex_binary_not_found"

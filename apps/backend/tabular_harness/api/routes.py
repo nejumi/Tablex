@@ -201,7 +201,11 @@ from tabular_harness.services.kaggle_probe import (
 )
 from tabular_harness.services.model_versions import validate_model_version_package
 from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
-from tabular_harness.services.planned_agent_execution import run_planned_agent_task_local_stub
+from tabular_harness.services.planned_agent_execution import (
+    PlannedAgentTaskExecutionResult,
+    run_planned_agent_task_codex_cli,
+    run_planned_agent_task_local_stub,
+)
 from tabular_harness.services.planned_agent_workspace import (
     prepare_workspace_from_contract_artifact,
 )
@@ -2750,47 +2754,94 @@ def run_planned_agent_task_stub_endpoint(
             contract_artifact=contract_artifact,
             job=job,
         )
-        mark_job_succeeded(
-            job,
-            {
-                "agent_task_contract_artifact_id": contract_artifact.id,
-                "task_id": result.agent_result.task_id,
-                "agent_status": result.agent_result.status,
-                "agent_final_message": result.agent_result.final_message,
-                "agent_workspace_manifest_artifact_id": result.workspace_artifact_id,
-                "agent_task_readiness_review_artifact_id": result.readiness_artifact_id,
-                "readiness_status": result.readiness_status,
-                "artifact_ids": result.artifact_ids,
-                "ingested_artifact_ids": result.ingested_artifact_ids,
-                "report_id": result.report_id,
-                "evidence_id": result.evidence_id,
-                "experiment_run_id": result.experiment_ingestion.experiment_run_id,
-                "agent_metrics_artifact_id": result.experiment_ingestion.metrics_artifact_id,
-                "agent_feature_recipe_artifact_id": result.experiment_ingestion.feature_recipe_artifact_id,
-                "approach_decision_trace_artifact_id": result.approach_decision_trace_artifact_id,
-                "relational_context_source_count": result.relational_context_summary.get("source_count"),
-                "relational_context_summary_artifact_id": result.relational_context_summary_artifact_id,
-                "source_citation_manifest_artifact_id": (
-                    result.experiment_ingestion.citation_manifest_artifact_id
-                ),
-                "citation_audit_report_id": result.experiment_ingestion.citation_audit_report_id,
-                "citation_audit_report_artifact_id": (
-                    result.experiment_ingestion.citation_audit_report_artifact_id
-                ),
-                "citation_evidence_id": result.experiment_ingestion.citation_evidence_id,
-                "citation_visualization_id": result.experiment_ingestion.citation_visualization_id,
-                "citation_visualization_artifact_id": (
-                    result.experiment_ingestion.citation_visualization_artifact_id
-                ),
-                "visualization_ids": result.experiment_ingestion.visualization_ids,
-                "requires_human_review": result.agent_result.requires_human_review,
-                "auto_prepared_workspace": result.auto_prepared_workspace,
-            },
-        )
+        mark_job_succeeded(job, planned_agent_execution_job_output(contract_artifact, result))
     except ValueError as exc:
         mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
+
+
+@router.post("/api/agent-task-contracts/{artifact_id}/run-codex", response_model=JobRead)
+def run_planned_agent_task_codex_endpoint(
+    artifact_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    contract_artifact = db.get(Artifact, artifact_id)
+    if contract_artifact is None:
+        raise HTTPException(status_code=404, detail="AgentTaskContract artifact not found")
+    if contract_artifact.asset_type != "agent_task_contract":
+        raise HTTPException(status_code=400, detail="Artifact is not an agent_task_contract")
+    if contract_artifact.project_id is None:
+        raise HTTPException(status_code=400, detail="AgentTaskContract artifact is not project-scoped")
+    project = require_project(db, contract_artifact.project_id)
+    job = create_job(
+        db,
+        job_type="run_planned_agent_task_codex",
+        project_id=project.id,
+        input_payload={"agent_task_contract_artifact_id": contract_artifact.id},
+        policy={
+            "network": "harness_only",
+            "secret_access": "forbidden_to_task",
+            "connector_credentials": "not_materialized",
+            "runner": "codex_cli",
+            "approval_mode": "endpoint_invocation",
+        },
+    )
+    try:
+        mark_job_running(job)
+        result = run_planned_agent_task_codex_cli(
+            db,
+            store=store,
+            project=project,
+            contract_artifact=contract_artifact,
+            job=job,
+        )
+        output = planned_agent_execution_job_output(contract_artifact, result)
+        if result.agent_result.status == "failed":
+            mark_job_failed(job, result.agent_result.failure_reason or result.agent_result.final_message, output)
+        else:
+            mark_job_succeeded(job, output)
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+def planned_agent_execution_job_output(
+    contract_artifact: Artifact,
+    result: PlannedAgentTaskExecutionResult,
+) -> dict[str, Any]:
+    return {
+        "agent_task_contract_artifact_id": contract_artifact.id,
+        "task_id": result.agent_result.task_id,
+        "runner": result.agent_result.outputs.get("runner"),
+        "agent_status": result.agent_result.status,
+        "agent_final_message": result.agent_result.final_message,
+        "agent_failure_reason": result.agent_result.failure_reason,
+        "agent_workspace_manifest_artifact_id": result.workspace_artifact_id,
+        "agent_task_readiness_review_artifact_id": result.readiness_artifact_id,
+        "readiness_status": result.readiness_status,
+        "artifact_ids": result.artifact_ids,
+        "ingested_artifact_ids": result.ingested_artifact_ids,
+        "report_id": result.report_id,
+        "evidence_id": result.evidence_id,
+        "experiment_run_id": result.experiment_ingestion.experiment_run_id,
+        "agent_metrics_artifact_id": result.experiment_ingestion.metrics_artifact_id,
+        "agent_feature_recipe_artifact_id": result.experiment_ingestion.feature_recipe_artifact_id,
+        "approach_decision_trace_artifact_id": result.approach_decision_trace_artifact_id,
+        "relational_context_source_count": result.relational_context_summary.get("source_count"),
+        "relational_context_summary_artifact_id": result.relational_context_summary_artifact_id,
+        "source_citation_manifest_artifact_id": result.experiment_ingestion.citation_manifest_artifact_id,
+        "citation_audit_report_id": result.experiment_ingestion.citation_audit_report_id,
+        "citation_audit_report_artifact_id": result.experiment_ingestion.citation_audit_report_artifact_id,
+        "citation_evidence_id": result.experiment_ingestion.citation_evidence_id,
+        "citation_visualization_id": result.experiment_ingestion.citation_visualization_id,
+        "citation_visualization_artifact_id": result.experiment_ingestion.citation_visualization_artifact_id,
+        "visualization_ids": result.experiment_ingestion.visualization_ids,
+        "requires_human_review": result.agent_result.requires_human_review,
+        "auto_prepared_workspace": result.auto_prepared_workspace,
+    }
 
 
 @router.get("/api/projects/{project_id}/agent-task-results")

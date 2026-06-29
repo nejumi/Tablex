@@ -541,6 +541,7 @@ class JobCreate(BaseModel):
         "run_baseline",
         "plan_baseline_strategy",
         "create_notebook_authoring_brief",
+        "run_planned_agent_task_codex",
         "run_planned_agent_task_stub",
         "validate_model_package",
         "plan_agent_task",

@@ -162,10 +162,11 @@ def build_readiness_review(
     evaluation_contract = dict_value(inputs.get("evaluation_contract"))
     assumption_context = dict_value(inputs.get("assumption_context"))
     constraints = dict_value(inputs.get("constraints"))
+    task_type = contract.task_type
     checks = [
         contract_schema_check(contract),
-        target_context_check(project, constraints),
-        evaluation_check(evaluation_contract),
+        target_context_check(project, constraints, task_type=task_type),
+        evaluation_check(evaluation_contract, task_type=task_type),
         required_outputs_check(contract),
         safety_check(contract, constraints),
         assumptions_check(assumption_context),
@@ -205,9 +206,18 @@ def contract_schema_check(contract: AgentTaskContract) -> dict[str, Any]:
     )
 
 
-def target_context_check(project: Project, constraints: dict[str, Any]) -> dict[str, Any]:
+def target_context_check(project: Project, constraints: dict[str, Any], *, task_type: str) -> dict[str, Any]:
     target = constraints.get("target_column") or project.target_column
     if not target:
+        if task_type == "author_analysis_notebook":
+            return check(
+                "target_context",
+                "Target column",
+                "warning",
+                "medium",
+                "Target column is not selected; notebook authoring must focus on data understanding and target-definition blockers.",
+                "Ask the user to confirm the target before target-aware plots or model claims.",
+            )
         return check(
             "target_context",
             "Target column",
@@ -219,11 +229,20 @@ def target_context_check(project: Project, constraints: dict[str, Any]) -> dict[
     return check("target_context", "Target column", "pass", "info", f"Target column is `{target}`.")
 
 
-def evaluation_check(evaluation_contract: dict[str, Any]) -> dict[str, Any]:
+def evaluation_check(evaluation_contract: dict[str, Any], *, task_type: str) -> dict[str, Any]:
     spec_id = evaluation_contract.get("evaluation_spec_id")
     split_manifest = evaluation_contract.get("split_manifest")
     split_id = split_manifest.get("split_manifest_id") if isinstance(split_manifest, dict) else None
     if not spec_id or not split_id:
+        if task_type == "author_analysis_notebook":
+            return check(
+                "evaluation_contract",
+                "EvaluationSpec and SplitManifest",
+                "warning",
+                "medium",
+                "Approved evaluation context or SplitManifest is missing.",
+                "The notebook can explain data understanding, but must not make metric, lift, or model-comparison claims.",
+            )
         return check(
             "evaluation_contract",
             "EvaluationSpec and SplitManifest",
@@ -243,6 +262,34 @@ def evaluation_check(evaluation_contract: dict[str, Any]) -> dict[str, Any]:
 
 def required_outputs_check(contract: AgentTaskContract) -> dict[str, Any]:
     paths = [item.path for item in contract.required_outputs]
+    if contract.task_type == "author_analysis_notebook":
+        missing_categories = []
+        if not any("notebook" in path for path in paths):
+            missing_categories.append("notebook")
+        if not any("report" in path for path in paths):
+            missing_categories.append("reader report")
+        if not any("figure" in path for path in paths):
+            missing_categories.append("figure manifest")
+        if not any("evidence" in path for path in paths):
+            missing_categories.append("evidence bundle")
+        if not any("quality" in path for path in paths):
+            missing_categories.append("quality review")
+        if missing_categories:
+            return check(
+                "required_outputs",
+                "Required outputs",
+                "warning",
+                "medium",
+                f"Notebook authoring outputs are missing expected categories: {', '.join(missing_categories)}.",
+                "Regenerate the author_analysis_notebook contract with notebook-specific required outputs.",
+            )
+        return check(
+            "required_outputs",
+            "Required outputs",
+            "pass",
+            "info",
+            f"{len(contract.required_outputs)} notebook authoring output(s) are declared.",
+        )
     missing_categories = []
     if not any("report" in path for path in paths):
         missing_categories.append("report")

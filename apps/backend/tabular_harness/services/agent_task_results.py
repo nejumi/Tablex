@@ -18,7 +18,7 @@ from tabular_harness.models.entities import (
 from tabular_harness.services.agent_result_ingestion import load_json_artifact
 from tabular_harness.services.runner_context import build_relational_runner_context_summary
 
-AGENT_TASK_RESULT_JOB_TYPES = {"run_planned_agent_task_stub", "run_agent_task"}
+AGENT_TASK_RESULT_JOB_TYPES = {"run_planned_agent_task_codex", "run_planned_agent_task_stub", "run_agent_task"}
 
 
 def list_agent_task_result_summaries(db: Session, *, project: Project) -> list[dict[str, Any]]:

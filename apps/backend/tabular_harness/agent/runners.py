@@ -283,15 +283,36 @@ class CodexCliRunner(AgentRunner):
             "-",
         ]
         prompt = render_prompt(task_contract)
-        completed = subprocess.run(
-            cmd,
-            input=prompt,
-            text=True,
-            capture_output=True,
-            timeout=execution_policy.timeout_seconds,
-            env=safe_env(workspace),
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                cmd,
+                input=prompt,
+                text=True,
+                capture_output=True,
+                timeout=execution_policy.timeout_seconds,
+                env=safe_env(workspace),
+                check=False,
+            )
+        except FileNotFoundError:
+            return AgentResult(
+                task_id=task_contract.task_id,
+                status="failed",
+                final_message="Codex CLI binary was not found.",
+                outputs={"runner": "codex_cli", "codex_binary": self.codex_binary},
+                artifacts=[],
+                warnings=[],
+                failure_reason="codex_binary_not_found",
+            )
+        except subprocess.TimeoutExpired as exc:
+            return AgentResult(
+                task_id=task_contract.task_id,
+                status="failed",
+                final_message="Codex CLI timed out.",
+                outputs={"runner": "codex_cli", "timeout_seconds": execution_policy.timeout_seconds},
+                artifacts=[],
+                warnings=[],
+                failure_reason=str(exc),
+            )
         if completed.returncode != 0:
             return AgentResult(
                 task_id=task_contract.task_id,
@@ -911,11 +932,33 @@ def codex_sandbox(policy: str) -> str:
 
 
 def render_prompt(contract: AgentTaskContract) -> str:
-    return (
-        "Execute the following harness task contract. Follow AGENTS.md, do not access secrets, "
-        "and write the final result to outputs/result.json.\n\n"
-        f"{contract.model_dump_json(by_alias=True, indent=2)}"
-    )
+    lines = [
+        "Execute the following Tablex harness task contract inside this prepared workspace.",
+        "",
+        "Hard rules:",
+        "- Follow AGENTS.md and any relevant Skill files.",
+        "- Do not access secrets, connector credentials, or files outside the workspace.",
+        "- Do not destructively modify EvaluationSpec or SplitManifest.",
+        "- Register every important output in outputs/result.json as an AgentResult artifact descriptor.",
+        "- Write the final schema-valid AgentResult to outputs/result.json.",
+    ]
+    if contract.task_type == "author_analysis_notebook":
+        lines.extend(
+            [
+                "",
+                "Notebook authoring rules:",
+                "- Read .harness/task_contract.json first.",
+                "- Read skills/tablex-notebook-quality/SKILL.md if present.",
+                "- Read the notebook_authoring_brief referenced in contract.inputs.notebook_authoring.artifact_id.",
+                "- Inspect the materialized Tablex context artifacts under .harness/context before choosing the notebook flow.",
+                "- Use public Kaggle Grandmaster-style source cards as craft inspiration only; do not copy public prose, code, or section order.",
+                "- Decide the narrative, sections, figures, and caveats from current evidence instead of using a fixed template.",
+                "- If target or evaluation context is missing, write a useful data-understanding notebook and label target-aware/model claims as blocked.",
+                "- Produce the requested marimo source, reader report, figure manifest, evidence bundle, quality review, and citation audit.",
+            ]
+        )
+    lines.extend(["", "Task contract:", "", contract.model_dump_json(by_alias=True, indent=2)])
+    return "\n".join(lines)
 
 
 def render_stub_report(
