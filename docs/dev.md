@@ -162,6 +162,7 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/kaggle_h
   -d '{"overwrite":false}'
 curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/collection-plan
 curl -X POST http://localhost:8000/api/projects/{project_id}/features/relational-plan
+curl -X POST http://localhost:8000/api/projects/{project_id}/features/relational-recipe/build
 curl -X POST http://localhost:8000/api/projects/{project_id}/benchmarks/evidence-pack
 ```
 
@@ -172,6 +173,8 @@ Place extracted benchmark files under `data/benchmarks/{benchmark_id}` or anothe
 `/api/projects/{project_id}/benchmarks/collection-plan` creates `benchmark_collection_plan`, `benchmark_collection_report`, and `visualization_spec` artifacts plus Report, Evidence, and Lineage. It ranks Home Credit and other practical benchmarks by source readiness, credential policy, local file status, fixture availability, public workflow availability, multi-table/time-series shape, and recommended next action. It does not download data and never stores Kaggle credentials.
 
 `/api/projects/{project_id}/features/relational-plan` requires a `relational_catalog` artifact, then creates `relational_feature_plan`, `relational_feature_report`, and `visualization_spec` artifacts plus Report, Evidence, and Lineage. It proposes train-fold-safe relational aggregation candidates, point-in-time requirements, leakage and prediction-time availability risks, deferred AgentTask questions, and FeatureRecipe/Skill references. It is a planning artifact, not executable join code. AgentTaskContracts, ResearchPlans, ResearchBriefs, Ideas, and AgentContextPacks include the latest relational feature plan when available.
+
+`/api/projects/{project_id}/features/relational-recipe/build` requires the latest `relational_feature_plan`, `relational_catalog`, primary DatasetSnapshot, and small registered supporting table artifacts. It creates a preview-only `relational_feature_recipe`, `relational_feature_preview` CSV, `relational_feature_preview_profile`, `relational_feature_recipe_report`, `visualization_spec`, Evidence, and Lineage. v1 executes safe count/nunique/numeric aggregate previews with DuckDB, excludes target/leakage/holdout-suspect columns, defers point-in-time-unconfirmed candidates, and records that production training must fit aggregations inside training folds. AgentTaskContracts, ResearchBriefs, Ideas, and AgentContextPacks include the latest recipe summary when available.
 
 Artifact preview and download are available from:
 

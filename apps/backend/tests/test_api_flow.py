@@ -1728,6 +1728,46 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert relational_report_response.status_code == 200
     assert "Relational Feature Plan" in relational_report_response.json()["preview"]
 
+    relational_recipe_response = client.post(f"/api/projects/{project_id}/features/relational-recipe/build")
+    assert relational_recipe_response.status_code == 200, relational_recipe_response.text
+    relational_recipe_job = relational_recipe_response.json()
+    assert relational_recipe_job["status"] == "succeeded"
+    assert relational_recipe_job["output"]["schema_version"] == "relational_feature_recipe.v1"
+    assert relational_recipe_job["output"]["relational_feature_recipe_artifact_id"]
+    assert relational_recipe_job["output"]["relational_feature_preview_artifact_id"]
+    assert relational_recipe_job["output"]["relational_feature_preview_profile_artifact_id"]
+    assert relational_recipe_job["output"]["relational_feature_recipe_report_artifact_id"]
+    assert relational_recipe_job["output"]["generated_feature_count"] >= 1
+    assert relational_recipe_job["output"]["executed_step_count"] >= 1
+    assert relational_recipe_job["output"]["preview_row_count"] > 0
+
+    relational_recipe_download_response = client.get(
+        f"/api/artifacts/{relational_recipe_job['output']['relational_feature_recipe_artifact_id']}/download"
+    )
+    assert relational_recipe_download_response.status_code == 200
+    relational_recipe = relational_recipe_download_response.json()
+    assert relational_recipe["schema_version"] == "relational_feature_recipe.v1"
+    assert relational_recipe["source_summary"]["benchmark_id"] == "kaggle_home_credit_default_risk"
+    assert relational_recipe["source_summary"]["relational_feature_plan_artifact_id"] == relational_plan_job[
+        "output"
+    ]["relational_feature_plan_artifact_id"]
+    assert relational_recipe["execution_scope"]["mode"] == "preview_only"
+    assert relational_recipe["safety"]["target_column_excluded"] == "TARGET"
+    assert relational_recipe["safety"]["fit_on_training_folds_only"] is True
+    assert all("TARGET" not in item.get("columns", []) for item in relational_recipe["steps"])
+
+    relational_recipe_preview_response = client.get(
+        f"/api/artifacts/{relational_recipe_job['output']['relational_feature_preview_artifact_id']}/download"
+    )
+    assert relational_recipe_preview_response.status_code == 200
+    assert "bureau_categorical_summaries__row_count" in relational_recipe_preview_response.text
+
+    relational_recipe_report_response = client.get(
+        f"/api/artifacts/{relational_recipe_job['output']['relational_feature_recipe_report_artifact_id']}/preview"
+    )
+    assert relational_recipe_report_response.status_code == 200
+    assert "Relational Feature Recipe" in relational_recipe_report_response.json()["preview"]
+
     agent_task_plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
     assert agent_task_plan_response.status_code == 200, agent_task_plan_response.text
     agent_contract_response = client.get(
@@ -1737,6 +1777,9 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert agent_contract_response.json()["inputs"]["relational_feature_plan"]["artifact_id"] == relational_plan_job[
         "output"
     ]["relational_feature_plan_artifact_id"]
+    assert agent_contract_response.json()["inputs"]["relational_feature_recipe"]["artifact_id"] == (
+        relational_recipe_job["output"]["relational_feature_recipe_artifact_id"]
+    )
 
     ideas_response = client.post(f"/api/projects/{project_id}/approach/ideas/generate")
     assert ideas_response.status_code == 200, ideas_response.text
@@ -1750,3 +1793,6 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert context_payload_response.json()["relational_feature_plan_context"]["artifact_id"] == relational_plan_job[
         "output"
     ]["relational_feature_plan_artifact_id"]
+    assert context_payload_response.json()["relational_feature_recipe_context"]["artifact_id"] == (
+        relational_recipe_job["output"]["relational_feature_recipe_artifact_id"]
+    )

@@ -166,6 +166,9 @@ def build_agent_task_contract_payload(
     source_pack_inputs = research_source_pack_contract_inputs(context_artifacts.get("research_source_pack"))
     synthesis_inputs = research_synthesis_contract_inputs(context_artifacts.get("research_finding_synthesis"))
     relational_plan_inputs = relational_feature_plan_contract_inputs(context_artifacts.get("relational_feature_plan"))
+    relational_recipe_inputs = relational_feature_recipe_contract_inputs(
+        context_artifacts.get("relational_feature_recipe")
+    )
     source_policy = source_pack_inputs.get("source_policy") or research_inputs.get(
         "research_source_policy",
         {"network_default": "disabled_until_runner_policy_allows"},
@@ -200,6 +203,7 @@ def build_agent_task_contract_payload(
             "research_source_pack": source_pack_inputs,
             "research_finding_synthesis": synthesis_inputs,
             "relational_feature_plan": relational_plan_inputs,
+            "relational_feature_recipe": relational_recipe_inputs,
         },
         "required_outputs": [
             {
@@ -525,6 +529,7 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "data_quality_gate": latest_project_artifact(db, project_id, "data_quality_gate"),
         "relational_catalog": latest_project_artifact(db, project_id, "relational_catalog"),
         "relational_feature_plan": latest_project_artifact(db, project_id, "relational_feature_plan"),
+        "relational_feature_recipe": latest_project_artifact(db, project_id, "relational_feature_recipe"),
         "benchmark_import_manifest": latest_project_artifact(db, project_id, "benchmark_import_manifest"),
         "benchmark_scenario_pack": latest_project_artifact(db, project_id, "benchmark_scenario_pack"),
         "evaluation_scenario_comparison": latest_project_artifact(
@@ -608,6 +613,37 @@ def relational_feature_plan_contract_inputs(plan_artifact: Artifact | None) -> d
         "agent_task_handoff": payload.get("agent_task_handoff")
         if isinstance(payload.get("agent_task_handoff"), dict)
         else {},
+    }
+
+
+def relational_feature_recipe_contract_inputs(recipe_artifact: Artifact | None) -> dict[str, Any]:
+    if recipe_artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(recipe_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    raw_execution_summary = payload.get("execution_summary")
+    raw_safety = payload.get("safety")
+    raw_steps = payload.get("steps")
+    raw_deferred_steps = payload.get("deferred_steps")
+    raw_execution_scope = payload.get("execution_scope")
+    execution_summary: dict[str, Any] = raw_execution_summary if isinstance(raw_execution_summary, dict) else {}
+    safety: dict[str, Any] = raw_safety if isinstance(raw_safety, dict) else {}
+    steps: list[Any] = raw_steps if isinstance(raw_steps, list) else []
+    deferred_steps: list[Any] = raw_deferred_steps if isinstance(raw_deferred_steps, list) else []
+    execution_scope: dict[str, Any] = raw_execution_scope if isinstance(raw_execution_scope, dict) else {}
+    return {
+        "artifact_id": recipe_artifact.id,
+        "source_summary": payload.get("source_summary") if isinstance(payload.get("source_summary"), dict) else {},
+        "execution_summary": execution_summary,
+        "safety": safety,
+        "generated_feature_count": int(execution_summary.get("generated_feature_count") or 0),
+        "executed_step_count": len(steps),
+        "deferred_step_count": len(deferred_steps),
+        "preview_only": execution_scope.get("mode") == "preview_only" if execution_scope else True,
     }
 
 

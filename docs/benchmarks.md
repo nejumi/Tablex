@@ -142,6 +142,14 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/features/relational
 
 The relational feature plan reads the latest `relational_catalog`, benchmark scenario/source context, data quality and evaluation artifacts, and benchmark collection plan. It creates `relational_feature_plan`, `relational_feature_report`, and `visualization_spec` artifacts plus Report, Evidence, and Lineage. The plan proposes aggregation candidates and guardrails only; confirmed FeatureRecipes or AgentTasks still need to implement joins with SplitManifest discipline and prediction-time availability checks.
 
+Build a preview-only relational feature recipe from the latest plan:
+
+```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/features/relational-recipe/build
+```
+
+The recipe builder materializes `relational_feature_recipe`, `relational_feature_preview` CSV, `relational_feature_preview_profile`, `relational_feature_recipe_report`, and `visualization_spec` artifacts plus Evidence and Lineage. It is intentionally bounded to small local supporting table artifacts and safe aggregate previews. It excludes target/leakage/holdout-suspect columns, defers point-in-time-unconfirmed candidates, and passes the recipe summary into AgentTaskContracts and AgentContextPacks as context rather than a fixed modeling strategy.
+
 Run the fixture smoke harness for a project:
 
 ```bash

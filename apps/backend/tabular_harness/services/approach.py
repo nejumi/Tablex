@@ -93,7 +93,7 @@ def generate_research_brief(
     research_plan_artifact = latest_project_artifact(db, project.id, "research_plan")
     research_synthesis_artifact = latest_project_artifact(db, project.id, "research_finding_synthesis")
     relational_feature_plan_artifact = latest_project_artifact(db, project.id, "relational_feature_plan")
-    relational_feature_plan_artifact = latest_project_artifact(db, project.id, "relational_feature_plan")
+    relational_feature_recipe_artifact = latest_project_artifact(db, project.id, "relational_feature_recipe")
     sources = build_research_sources(
         project,
         dataset,
@@ -101,6 +101,7 @@ def generate_research_brief(
         research_plan_artifact,
         research_synthesis_artifact,
         relational_feature_plan_artifact,
+        relational_feature_recipe_artifact,
     )
     key_findings = build_key_findings(project, dataset, evaluation_spec, profile)
     recommended_approaches = build_recommended_approaches(project, profile)
@@ -134,6 +135,9 @@ def generate_research_brief(
             else None,
             "relational_feature_plan_artifact_id": relational_feature_plan_artifact.id
             if relational_feature_plan_artifact
+            else None,
+            "relational_feature_recipe_artifact_id": relational_feature_recipe_artifact.id
+            if relational_feature_recipe_artifact
             else None,
             "question": research_question,
         },
@@ -199,6 +203,7 @@ def create_research_plan(
         "data_quality_gate": latest_project_artifact(db, project.id, "data_quality_gate"),
         "relational_catalog": latest_project_artifact(db, project.id, "relational_catalog"),
         "relational_feature_plan": latest_project_artifact(db, project.id, "relational_feature_plan"),
+        "relational_feature_recipe": latest_project_artifact(db, project.id, "relational_feature_recipe"),
         "evaluation_scenario_comparison": latest_project_artifact(db, project.id, "evaluation_scenario_comparison"),
         "evaluation_approval_review": latest_project_artifact(db, project.id, "evaluation_approval_review"),
         "evaluation_diagnostics": latest_project_artifact(db, project.id, "evaluation_diagnostics"),
@@ -344,6 +349,7 @@ def generate_approach_candidates(
     research_plan_artifact = latest_project_artifact(db, project.id, "research_plan")
     research_synthesis_artifact = latest_project_artifact(db, project.id, "research_finding_synthesis")
     relational_feature_plan_artifact = latest_project_artifact(db, project.id, "relational_feature_plan")
+    relational_feature_recipe_artifact = latest_project_artifact(db, project.id, "relational_feature_recipe")
     ideas: list[Idea] = []
     artifact_ids: list[str] = []
     for index, approach in enumerate(recommended[:5], start=1):
@@ -358,6 +364,7 @@ def generate_approach_candidates(
             research_plan_artifact=research_plan_artifact,
             research_synthesis_artifact=research_synthesis_artifact,
             relational_feature_plan_artifact=relational_feature_plan_artifact,
+            relational_feature_recipe_artifact=relational_feature_recipe_artifact,
         )
         payload = {
             "schema_version": "approach_candidate.v1",
@@ -389,6 +396,9 @@ def generate_approach_candidates(
                 else None,
                 "relational_feature_plan_artifact_id": relational_feature_plan_artifact.id
                 if relational_feature_plan_artifact
+                else None,
+                "relational_feature_recipe_artifact_id": relational_feature_recipe_artifact.id
+                if relational_feature_recipe_artifact
                 else None,
             },
         )
@@ -1234,6 +1244,7 @@ def build_research_sources(
     research_plan_artifact: Artifact | None = None,
     research_synthesis_artifact: Artifact | None = None,
     relational_feature_plan_artifact: Artifact | None = None,
+    relational_feature_recipe_artifact: Artifact | None = None,
 ) -> list[dict[str, Any]]:
     sources = [
         {
@@ -1307,6 +1318,20 @@ def build_research_sources(
                     "Train-fold-safe relational feature planning context. "
                     f"Aggregation candidates: {metadata.get('aggregation_candidate_count', 'unknown')}; "
                     f"high risks: {metadata.get('high_risk_count', 'unknown')}."
+                ),
+            }
+        )
+    if relational_feature_recipe_artifact:
+        metadata = loads_json(relational_feature_recipe_artifact.metadata_json, {})
+        sources.append(
+            {
+                "source_type": "relational_feature_recipe",
+                "title": "Relational Feature Recipe Preview",
+                "ref": relational_feature_recipe_artifact.id,
+                "summary": (
+                    "Preview-only relational FeatureRecipe context with executed and deferred aggregation steps. "
+                    f"Generated features: {metadata.get('generated_feature_count', 'unknown')}; "
+                    f"deferred steps: {metadata.get('deferred_step_count', 'unknown')}."
                 ),
             }
         )
@@ -1682,10 +1707,12 @@ def build_agent_task_contract(
     research_plan_artifact: Artifact | None = None,
     research_synthesis_artifact: Artifact | None = None,
     relational_feature_plan_artifact: Artifact | None = None,
+    relational_feature_recipe_artifact: Artifact | None = None,
 ) -> dict[str, Any]:
     research_contract_inputs = research_plan_contract_inputs(research_plan_artifact)
     research_synthesis_inputs = research_synthesis_contract_inputs(research_synthesis_artifact)
     relational_plan_inputs = relational_feature_plan_contract_inputs(relational_feature_plan_artifact)
+    relational_recipe_inputs = relational_feature_recipe_contract_inputs(relational_feature_recipe_artifact)
     return {
         "task_id": f"agt_{idea_id}",
         "task_type": "implement_prediction_approach",
@@ -1706,11 +1733,15 @@ def build_agent_task_contract(
             "relational_feature_plan_artifact_id": relational_feature_plan_artifact.id
             if relational_feature_plan_artifact
             else None,
+            "relational_feature_recipe_artifact_id": relational_feature_recipe_artifact.id
+            if relational_feature_recipe_artifact
+            else None,
             "approach_type": approach["approach_type"],
             "allowed_research_modes": ["project_artifacts", "skill_library", "controlled_web_search"],
             "must_respect_split_manifest": True,
             "research_finding_synthesis": research_synthesis_inputs,
             "relational_feature_plan": relational_plan_inputs,
+            "relational_feature_recipe": relational_recipe_inputs,
             **research_contract_inputs,
         },
         "required_outputs": [
@@ -1832,6 +1863,37 @@ def relational_feature_plan_contract_inputs(plan_artifact: Artifact | None) -> d
         "agent_task_handoff": payload.get("agent_task_handoff")
         if isinstance(payload.get("agent_task_handoff"), dict)
         else {},
+    }
+
+
+def relational_feature_recipe_contract_inputs(recipe_artifact: Artifact | None) -> dict[str, Any]:
+    if recipe_artifact is None:
+        return {}
+    try:
+        payload = loads_json(artifact_primary_path(recipe_artifact).read_text(encoding="utf-8"), {})
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    raw_execution_summary = payload.get("execution_summary")
+    raw_safety = payload.get("safety")
+    raw_steps = payload.get("steps")
+    raw_deferred_steps = payload.get("deferred_steps")
+    raw_execution_scope = payload.get("execution_scope")
+    execution_summary: dict[str, Any] = raw_execution_summary if isinstance(raw_execution_summary, dict) else {}
+    safety: dict[str, Any] = raw_safety if isinstance(raw_safety, dict) else {}
+    steps: list[Any] = raw_steps if isinstance(raw_steps, list) else []
+    deferred_steps: list[Any] = raw_deferred_steps if isinstance(raw_deferred_steps, list) else []
+    execution_scope: dict[str, Any] = raw_execution_scope if isinstance(raw_execution_scope, dict) else {}
+    return {
+        "artifact_id": recipe_artifact.id,
+        "source_summary": payload.get("source_summary") if isinstance(payload.get("source_summary"), dict) else {},
+        "execution_summary": execution_summary,
+        "safety": safety,
+        "generated_feature_count": int(execution_summary.get("generated_feature_count") or 0),
+        "executed_step_count": len(steps),
+        "deferred_step_count": len(deferred_steps),
+        "preview_only": execution_scope.get("mode") == "preview_only" if execution_scope else True,
     }
 
 

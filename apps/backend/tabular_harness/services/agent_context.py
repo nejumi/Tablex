@@ -56,6 +56,7 @@ def prepare_idea_agent_context_pack(
     quality_gate_artifact = latest_project_artifact(db, project.id, "data_quality_gate")
     relational_catalog_artifact = latest_project_artifact(db, project.id, "relational_catalog")
     relational_feature_plan_artifact = latest_project_artifact(db, project.id, "relational_feature_plan")
+    relational_feature_recipe_artifact = latest_project_artifact(db, project.id, "relational_feature_recipe")
     research_plan_artifact = latest_project_artifact(db, project.id, "research_plan")
     research_synthesis_artifact = latest_project_artifact(db, project.id, "research_finding_synthesis")
     artifacts = list(
@@ -88,6 +89,7 @@ def prepare_idea_agent_context_pack(
         quality_gate_artifact=quality_gate_artifact,
         relational_catalog_artifact=relational_catalog_artifact,
         relational_feature_plan_artifact=relational_feature_plan_artifact,
+        relational_feature_recipe_artifact=relational_feature_recipe_artifact,
         research_plan_artifact=research_plan_artifact,
         research_synthesis_artifact=research_synthesis_artifact,
         artifacts=artifacts,
@@ -113,6 +115,9 @@ def prepare_idea_agent_context_pack(
             "relational_feature_plan_artifact_id": relational_feature_plan_artifact.id
             if relational_feature_plan_artifact
             else None,
+            "relational_feature_recipe_artifact_id": relational_feature_recipe_artifact.id
+            if relational_feature_recipe_artifact
+            else None,
             "research_plan_artifact_id": research_plan_artifact.id if research_plan_artifact else None,
             "research_finding_synthesis_artifact_id": research_synthesis_artifact.id
             if research_synthesis_artifact
@@ -130,6 +135,7 @@ def prepare_idea_agent_context_pack(
         evaluation_spec=evaluation_spec,
         split_manifest=split_manifest,
         relational_feature_plan_artifact=relational_feature_plan_artifact,
+        relational_feature_recipe_artifact=relational_feature_recipe_artifact,
         research_plan_artifact=research_plan_artifact,
         research_synthesis_artifact=research_synthesis_artifact,
         asset_references=asset_references,
@@ -150,6 +156,7 @@ def build_agent_context_pack(
     quality_gate_artifact: Artifact | None,
     relational_catalog_artifact: Artifact | None,
     relational_feature_plan_artifact: Artifact | None,
+    relational_feature_recipe_artifact: Artifact | None,
     research_plan_artifact: Artifact | None,
     research_synthesis_artifact: Artifact | None,
     artifacts: list[Artifact],
@@ -212,6 +219,7 @@ def build_agent_context_pack(
         "quality_gate_context": quality_gate_context(quality_gate_artifact),
         "relational_context": relational_context(relational_catalog_artifact),
         "relational_feature_plan_context": relational_feature_plan_context(relational_feature_plan_artifact),
+        "relational_feature_recipe_context": relational_feature_recipe_context(relational_feature_recipe_artifact),
         "research_plan_context": research_plan_context(research_plan_artifact),
         "research_synthesis_context": research_synthesis_context(research_synthesis_artifact),
         "artifact_refs": artifact_refs(artifacts),
@@ -332,6 +340,38 @@ def relational_feature_plan_payload(artifact: Artifact) -> dict[str, Any]:
     return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
 
 
+def relational_feature_recipe_context(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {"status": "missing", "artifact_id": None}
+    metadata = loads_json(artifact.metadata_json, {})
+    payload = relational_feature_recipe_payload(artifact)
+    raw_execution_summary = payload.get("execution_summary")
+    execution_summary: dict[str, Any] = raw_execution_summary if isinstance(raw_execution_summary, dict) else {}
+    return {
+        "status": "available",
+        "artifact_id": artifact.id,
+        "benchmark_id": metadata.get("benchmark_id"),
+        "generated_feature_count": metadata.get("generated_feature_count")
+        or execution_summary.get("generated_feature_count"),
+        "executed_step_count": metadata.get("executed_step_count") or execution_summary.get("executed_step_count"),
+        "deferred_step_count": metadata.get("deferred_step_count") or execution_summary.get("deferred_step_count"),
+        "preview_row_count": metadata.get("preview_row_count") or execution_summary.get("preview_row_count"),
+        "source_summary": payload.get("source_summary") if isinstance(payload.get("source_summary"), dict) else {},
+        "execution_scope": payload.get("execution_scope") if isinstance(payload.get("execution_scope"), dict) else {},
+        "safety": payload.get("safety") if isinstance(payload.get("safety"), dict) else {},
+        "preview_url": f"/api/artifacts/{artifact.id}/preview",
+        "download_url": f"/api/artifacts/{artifact.id}/download",
+    }
+
+
+def relational_feature_recipe_payload(artifact: Artifact) -> dict[str, Any]:
+    try:
+        payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+
+
 def research_plan_context(artifact: Artifact | None) -> dict[str, Any]:
     if artifact is None:
         return {"status": "missing", "artifact_id": None}
@@ -413,10 +453,15 @@ def compact_artifact_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         "task_id",
         "context_pack_id",
         "relational_feature_plan_artifact_id",
+        "relational_feature_recipe_artifact_id",
         "research_plan_artifact_id",
         "research_finding_synthesis_artifact_id",
         "query_count",
         "aggregation_candidate_count",
+        "generated_feature_count",
+        "executed_step_count",
+        "deferred_step_count",
+        "preview_row_count",
         "high_risk_count",
         "finding_count",
         "citation_count",
@@ -611,6 +656,7 @@ def create_context_lineage(
     evaluation_spec: EvaluationSpec | None,
     split_manifest: SplitManifest | None,
     relational_feature_plan_artifact: Artifact | None,
+    relational_feature_recipe_artifact: Artifact | None,
     research_plan_artifact: Artifact | None,
     research_synthesis_artifact: Artifact | None,
     asset_references: list[AssetReference],
@@ -672,6 +718,16 @@ def create_context_lineage(
             project_id=project.id,
             from_asset_type="artifact",
             from_asset_id=relational_feature_plan_artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=artifact.id,
+            relation_type="included_in_context",
+        )
+    if relational_feature_recipe_artifact:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=relational_feature_recipe_artifact.id,
             to_asset_type="artifact",
             to_asset_id=artifact.id,
             relation_type="included_in_context",
