@@ -131,6 +131,16 @@ type BenchmarkSourceCard = {
     agent_receives_credentials: boolean;
     artifact_contains_secret_values: boolean;
   };
+  credential_download: {
+    supported: boolean;
+    status: string;
+    endpoint: string | null;
+    default_policy: string | null;
+    secret_boundary: string;
+    credential_values_returned: boolean;
+    agent_receives_credentials: boolean;
+    artifact_contains_secret_values: boolean;
+  };
   credential_policy: Record<string, unknown>;
   safety_notes: string[];
 };
@@ -588,7 +598,6 @@ function App() {
 
 function CreateProjectForm({ onCreated }: { onCreated: () => Promise<void> }) {
   const [name, setName] = React.useState("");
-  const [target, setTarget] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
   async function submit(event: React.FormEvent) {
@@ -598,10 +607,9 @@ function CreateProjectForm({ onCreated }: { onCreated: () => Promise<void> }) {
     await api<Project>("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: name.trim(), target_column: target.trim() || null })
+      body: JSON.stringify({ name: name.trim() })
     });
     setName("");
-    setTarget("");
     setBusy(false);
     await onCreated();
   }
@@ -609,7 +617,6 @@ function CreateProjectForm({ onCreated }: { onCreated: () => Promise<void> }) {
   return (
     <form className="create-form" onSubmit={(event) => void submit(event)}>
       <input value={name} onChange={(event) => setName(event.target.value)} placeholder="New project name" />
-      <input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Target column" />
       <button className="primary-button" disabled={busy || !name.trim()}>
         {busy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
         Create
@@ -973,6 +980,7 @@ function DataTab({
   const [collectionPreviewLoadingId, setCollectionPreviewLoadingId] = React.useState<string | null>(null);
   const [kaggleProbeResults, setKaggleProbeResults] = React.useState<Record<string, Record<string, unknown>>>({});
   const [kaggleInventoryResults, setKaggleInventoryResults] = React.useState<Record<string, Record<string, unknown>>>({});
+  const [kaggleDownloadResults, setKaggleDownloadResults] = React.useState<Record<string, Record<string, unknown>>>({});
 
   async function uploadDataset() {
     if (!file) return;
@@ -1040,6 +1048,24 @@ function DataTab({
         method: "POST"
       });
       setKaggleInventoryResults((current) => ({ ...current, [benchmark.id]: job.output }));
+      return job;
+    });
+  }
+
+  async function downloadKaggleRequiredFiles(benchmark: BenchmarkDataset) {
+    await runAction(async () => {
+      const job = await api<Job>(`/api/benchmarks/${benchmark.id}/kaggle/download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          include_required: true,
+          include_recommended: false,
+          include_holdout: false,
+          overwrite: false,
+          max_total_bytes: 500 * 1024 * 1024
+        })
+      });
+      setKaggleDownloadResults((current) => ({ ...current, [benchmark.id]: job.output }));
       return job;
     });
   }
@@ -1339,15 +1365,22 @@ function DataTab({
               const canProbeKaggle = credentialProbe?.supported === true;
               const credentialInventory = benchmark.source_card?.credential_inventory;
               const canFetchInventory = credentialInventory?.supported === true;
+              const credentialDownload = benchmark.source_card?.credential_download;
+              const canDownloadKaggle = credentialDownload?.supported === true;
               const probeResult = kaggleProbeResults[benchmark.id];
               const inventoryResult = kaggleInventoryResults[benchmark.id];
+              const downloadResult = kaggleDownloadResults[benchmark.id];
               const probeStatus = textField(probeResult?.probe_status) ?? credentialProbe?.status ?? "not_run";
               const inventoryStatus = textField(inventoryResult?.inventory_status) ?? credentialInventory?.status ?? "not_fetched";
+              const downloadStatus = textField(downloadResult?.download_status) ?? credentialDownload?.status ?? "not_started";
               const credentialAvailable = probeResult?.credential_available === true;
               const canAccessFiles = probeResult?.can_access_competition_files === true;
               const inventoryFileCount = numberField(inventoryResult?.file_count);
               const inventoryRequiredMissing = numberField(inventoryResult?.required_missing_count);
               const inventorySize = numberField(inventoryResult?.total_size_bytes);
+              const downloadedCount = numberField(downloadResult?.downloaded_count);
+              const downloadedBytes = numberField(downloadResult?.downloaded_bytes);
+              const downloadLocalReady = downloadResult?.local_ready === true;
               const nextActions = benchmark.source_card?.import_readiness.next_actions.slice(0, 2) ?? [];
               return (
                 <div className="benchmark-card" key={benchmark.id}>
@@ -1432,12 +1465,17 @@ function DataTab({
                         <span className={credentialAvailable ? "on" : ""}>credential</span>
                         <span className={probeStatus !== "not_run" ? "on" : ""}>probe</span>
                         <span className={inventoryStatus !== "not_fetched" || canAccessFiles ? "on" : ""}>files</span>
+                        <span className={downloadedCount !== null || downloadLocalReady ? "on" : ""}>local</span>
                       </div>
                       <div className="inventory-meter">
                         <span>{inventoryStatus.replace(/_/g, " ")}</span>
                         <strong>{inventoryFileCount !== null ? `${inventoryFileCount} files` : "inventory pending"}</strong>
                         <span>{inventoryRequiredMissing !== null ? `${inventoryRequiredMissing} required missing` : "role map pending"}</span>
                         <strong>{inventorySize !== null ? formatBytes(inventorySize) : "-"}</strong>
+                        <span>{downloadStatus.replace(/_/g, " ")}</span>
+                        <strong>{downloadedCount !== null ? `${downloadedCount} downloaded` : "download pending"}</strong>
+                        <span>{downloadLocalReady ? "import ready" : "local not ready"}</span>
+                        <strong>{downloadedBytes !== null ? formatBytes(downloadedBytes) : "-"}</strong>
                       </div>
                     </div>
                   ) : null}
@@ -1499,6 +1537,14 @@ function DataTab({
                     >
                       <ListChecks size={16} />
                       Inventory
+                    </button>
+                    <button
+                      className="secondary-button probe-button"
+                      disabled={busy || !canDownloadKaggle}
+                      onClick={() => void downloadKaggleRequiredFiles(benchmark)}
+                    >
+                      <Download size={16} />
+                      Required
                     </button>
                     <button
                       className="secondary-button"

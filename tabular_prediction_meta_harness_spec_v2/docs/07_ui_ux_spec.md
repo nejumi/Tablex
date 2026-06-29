@@ -61,6 +61,12 @@ CTA:
 - Start Improvement
 - Deploy Candidate
 
+Project作成時の原則:
+
+- Project作成は、原則として予測課題の作業空間を作る操作であり、target columnの同時指定を必須にしない。
+- targetは、データ投入、Data Understanding、質問回答、派生/aggregate target設計、またはEvaluation設計の過程で後から確定できる。
+- UIは、target未確定の状態を異常扱いせず、Assumption/Question/Evaluation readinessとして扱う。
+
 ### 3.2 Data
 
 - dataset snapshots

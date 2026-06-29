@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+import zipfile
+from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +14,7 @@ from tabular_harness.core.config import Settings
 from tabular_harness.main import create_app
 from tabular_harness.services.kaggle_probe import (
     build_kaggle_auth_candidates,
+    download_kaggle_selected_files,
     fetch_kaggle_competition_inventory,
     probe_kaggle_benchmark_access,
 )
@@ -26,6 +30,26 @@ class FakeResponse:
         if max_bytes < 0:
             return self.body
         return self.body[:max_bytes]
+
+    def close(self) -> None:
+        return None
+
+
+class StreamingResponse:
+    status = 200
+
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+        self.offset = 0
+
+    def read(self, max_bytes: int = -1) -> bytes:
+        if self.offset >= len(self.body):
+            return b""
+        if max_bytes < 0:
+            max_bytes = len(self.body) - self.offset
+        chunk = self.body[self.offset : self.offset + max_bytes]
+        self.offset += len(chunk)
+        return chunk
 
     def close(self) -> None:
         return None
@@ -161,6 +185,54 @@ def test_kaggle_inventory_maps_catalog_roles_without_secrets() -> None:
     assert roles["bureau.csv"] == "supporting_table"
     assert roles["application_test.csv"] == "holdout_table"
     assert roles["unconfigured.csv"] == "extra"
+    serialized = json.dumps(payload)
+    assert "secret-token" not in serialized
+    assert "Authorization" not in serialized
+
+
+def test_kaggle_selective_download_required_file(tmp_path: Path) -> None:
+    file_bytes = b"id,target\n1,0\n2,1\n"
+    archive_buffer = BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("application_train.csv", file_bytes)
+    archive_bytes = archive_buffer.getvalue()
+
+    def fake_opener(request: urllib.request.Request, timeout_seconds: float) -> FakeResponse | StreamingResponse:
+        if "/competitions/data/list/" in request.full_url:
+            return FakeResponse(
+                json.dumps(
+                    [
+                        {"name": "application_train.csv", "totalBytes": len(archive_bytes)},
+                        {"name": "bureau.csv", "totalBytes": 456},
+                    ]
+                ).encode()
+            )
+        assert "/competitions/data/download/" in request.full_url
+        return StreamingResponse(archive_bytes)
+
+    benchmark = {
+        **home_credit_benchmark(),
+        "required_files": [{"path": "application_train.csv", "role": "primary_table"}],
+        "recommended_files": [{"path": "bureau.csv", "role": "supporting_table"}],
+    }
+    payload = download_kaggle_selected_files(
+        benchmark,
+        root=tmp_path / "benchmarks" / "home_credit",
+        env={"KAGGLE_USERNAME": "test-user", "KAGGLE_API_TOKEN": "secret-token"},
+        env_files=(),
+        opener=fake_opener,
+    )
+
+    download = payload["download"]
+    assert download["status"] == "completed"
+    assert download["downloaded_count"] == 1
+    assert download["skipped_count"] == 0
+    downloaded = download["downloaded_files"][0]
+    assert downloaded["name"] == "application_train.csv"
+    assert downloaded["sha256"] == sha256(file_bytes).hexdigest()
+    assert downloaded["extracted_from_archive"] is True
+    assert downloaded["archive_size_bytes"] == len(archive_bytes)
+    assert (tmp_path / "benchmarks" / "home_credit" / "application_train.csv").read_bytes() == file_bytes
     serialized = json.dumps(payload)
     assert "secret-token" not in serialized
     assert "Authorization" not in serialized
@@ -308,3 +380,87 @@ def test_kaggle_inventory_endpoint_stores_safe_artifact(tmp_path: Path, monkeypa
     latest_response = client.get("/api/benchmarks/kaggle_home_credit_default_risk/kaggle/inventory/latest")
     assert latest_response.status_code == 200
     assert latest_response.json()["id"] == job["output"]["kaggle_inventory_artifact_id"]
+
+
+def test_kaggle_download_endpoint_stores_manifest(tmp_path: Path, monkeypatch: Any) -> None:
+    client = make_client(tmp_path)
+
+    def fake_download(benchmark: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        root = kwargs["root"]
+        target = root / "application_train.csv"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("id,target\n1,0\n", encoding="utf-8")
+        return {
+            "schema_version": "kaggle_selective_download_manifest.v1",
+            "benchmark_id": benchmark["id"],
+            "benchmark_name": benchmark["name"],
+            "source_kind": benchmark["source_kind"],
+            "competition_slug": benchmark["competition_slug"],
+            "checked_at": "2026-06-29T00:00:00+00:00",
+            "root_path": str(root),
+            "request_policy": {
+                "selected_files": [],
+                "include_required": True,
+                "include_recommended": False,
+                "include_holdout": False,
+                "overwrite": False,
+                "max_total_bytes": 500 * 1024 * 1024,
+            },
+            "credential_status": {
+                "available": True,
+                "candidate_count": 1,
+                "credential_sources": ["kaggle_username_with_api_token"],
+                "auth_schemes": ["basic"],
+                "username_available": True,
+                "missing": [],
+                "warnings": [],
+                "values_exposed": False,
+            },
+            "request": {
+                "endpoint_kind": "competition_data_download",
+                "url_host": "www.kaggle.com",
+                "network_accessed": True,
+            },
+            "download": {
+                "status": "completed",
+                "planned_file_count": 1,
+                "downloaded_count": 1,
+                "skipped_count": 0,
+                "downloaded_bytes": target.stat().st_size,
+                "downloaded_files": [
+                    {
+                        "name": "application_train.csv",
+                        "relative_path": "application_train.csv",
+                        "size_bytes": target.stat().st_size,
+                        "sha256": "fake",
+                        "requirement": "required",
+                        "role": "primary_table",
+                    }
+                ],
+                "skipped_files": [],
+                "attempts": [],
+            },
+            "safety": {
+                "secret_value_logged": False,
+                "secret_value_artifacted": False,
+                "connector_credentials_materialized": False,
+                "agent_runner_access": False,
+                "agent_task_contract_access": False,
+            },
+            "next_actions": ["Run benchmark local-status or import from the resolved benchmark root."],
+        }
+
+    monkeypatch.setattr("tabular_harness.api.routes.download_kaggle_selected_files", fake_download)
+    response = client.post(
+        "/api/benchmarks/kaggle_home_credit_default_risk/kaggle/download",
+        json={"include_required": True, "overwrite": False},
+    )
+    assert response.status_code == 200, response.text
+    job = response.json()
+    assert job["status"] == "succeeded"
+    assert job["policy"]["secret_access"] == "harness_process_only"
+    assert job["output"]["download_status"] == "completed"
+    assert job["output"]["downloaded_count"] == 1
+    assert job["output"]["local_ready"] is True
+    assert job["output"]["can_import_now"] is True
+    assert job["output"]["kaggle_download_manifest_artifact_id"]

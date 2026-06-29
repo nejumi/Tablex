@@ -161,6 +161,15 @@ class BenchmarkPublicDownloadRequest(BaseModel):
     overwrite: bool = False
 
 
+class KaggleSelectiveDownloadRequest(BaseModel):
+    selected_files: list[str] = Field(default_factory=list)
+    include_required: bool = True
+    include_recommended: bool = False
+    include_holdout: bool = False
+    overwrite: bool = False
+    max_total_bytes: int = Field(default=500 * 1024 * 1024, gt=0)
+
+
 class BenchmarkDatasetRead(BaseModel):
     id: str
     name: str
@@ -204,6 +213,7 @@ class BenchmarkSourceCardRead(BaseModel):
     fixture: dict[str, Any]
     credential_probe: dict[str, Any]
     credential_inventory: dict[str, Any]
+    credential_download: dict[str, Any]
     credential_policy: dict[str, Any]
     safety_notes: list[str]
 
@@ -221,6 +231,7 @@ class BenchmarkImportReadinessRead(BaseModel):
     next_actions: list[str]
     credential_probe: dict[str, Any] = Field(default_factory=dict)
     credential_inventory: dict[str, Any] = Field(default_factory=dict)
+    credential_download: dict[str, Any] = Field(default_factory=dict)
     credential_policy: dict[str, Any]
 
 
@@ -447,6 +458,7 @@ class JobCreate(BaseModel):
         "analyze_data_quality",
         "probe_kaggle_benchmark_access",
         "fetch_kaggle_competition_inventory",
+        "download_kaggle_selected_files",
         "import_benchmark_dataset",
         "create_benchmark_scenario_pack",
         "run_agent_task",

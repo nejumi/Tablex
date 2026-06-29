@@ -1,21 +1,25 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from fnmatch import fnmatch
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 KAGGLE_API_BASE_URL = "https://www.kaggle.com/api/v1"
 KAGGLE_ENV_KEYS = ("KAGGLE_API_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY")
 MAX_PROBE_RESPONSE_BYTES = 512 * 1024
+DEFAULT_KAGGLE_DOWNLOAD_MAX_TOTAL_BYTES = 500 * 1024 * 1024
+DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -192,6 +196,220 @@ def fetch_kaggle_competition_inventory(
         network_accessed=True,
         inventory=inventory,
         next_actions=kaggle_inventory_next_actions(inventory),
+    )
+
+
+def download_kaggle_selected_files(
+    benchmark: dict[str, Any],
+    *,
+    root: Path,
+    selected_files: Sequence[str] | None = None,
+    include_required: bool = True,
+    include_recommended: bool = False,
+    include_holdout: bool = False,
+    overwrite: bool = False,
+    max_total_bytes: int = DEFAULT_KAGGLE_DOWNLOAD_MAX_TOTAL_BYTES,
+    timeout_seconds: float = 60.0,
+    env: Mapping[str, str] | None = None,
+    env_files: Sequence[Path] | None = None,
+    opener: UrlOpener | None = None,
+) -> dict[str, Any]:
+    slug = kaggle_competition_slug(benchmark)
+    if not slug:
+        raise ValueError("Kaggle download is only supported for Kaggle competition benchmarks with a slug")
+    if max_total_bytes <= 0:
+        raise ValueError("max_total_bytes must be positive")
+
+    root.mkdir(parents=True, exist_ok=True)
+    candidates, credential_state = build_kaggle_auth_candidates(env=env, env_files=env_files)
+    checked_at = datetime.now(timezone.utc).isoformat()
+    inventory_endpoint = f"{KAGGLE_API_BASE_URL}/competitions/data/list/{urllib.parse.quote(slug)}"
+    selected = [item for item in (selected_files or []) if str(item).strip()]
+    request_policy = {
+        "selected_files": selected,
+        "include_required": include_required,
+        "include_recommended": include_recommended,
+        "include_holdout": include_holdout,
+        "overwrite": overwrite,
+        "max_total_bytes": max_total_bytes,
+    }
+    if not candidates:
+        return kaggle_download_payload(
+            benchmark=benchmark,
+            slug=slug,
+            checked_at=checked_at,
+            credential_state=credential_state,
+            network_accessed=False,
+            root=root,
+            request_policy=request_policy,
+            download={
+                "status": "not_configured",
+                "inventory_status": "not_configured",
+                "planned_file_count": 0,
+                "downloaded_count": 0,
+                "skipped_count": 0,
+                "downloaded_bytes": 0,
+                "downloaded_files": [],
+                "skipped_files": [],
+                "attempts": [],
+            },
+            next_actions=[
+                "Set Kaggle credentials in the harness process environment or gitignored .env, then retry download planning.",
+            ],
+        )
+
+    effective_opener = opener or default_urlopen
+    inventory_attempts: list[dict[str, Any]] = []
+    active_candidate: KaggleAuthCandidate | None = None
+    raw_files: list[dict[str, Any]] = []
+    inventory_status = "not_configured"
+    inventory_http_status: int | None = None
+    for candidate in candidates:
+        attempt = run_inventory_attempt(
+            endpoint=inventory_endpoint,
+            candidate=candidate,
+            timeout_seconds=timeout_seconds,
+            opener=effective_opener,
+        )
+        inventory_attempts.append({key: value for key, value in attempt.items() if key != "raw_files"})
+        inventory_status = str(attempt["status"])
+        inventory_http_status = cast(int | None, attempt.get("http_status"))
+        if inventory_status == "ok":
+            active_candidate = candidate
+            raw_files = cast(list[dict[str, Any]], attempt.get("raw_files") or [])
+            break
+        if inventory_status != "unauthorized":
+            break
+
+    inventory = build_inventory_summary(
+        benchmark=benchmark,
+        status=inventory_status,
+        http_status=inventory_http_status,
+        files=raw_files,
+        attempts=inventory_attempts,
+    )
+    if active_candidate is None:
+        return kaggle_download_payload(
+            benchmark=benchmark,
+            slug=slug,
+            checked_at=checked_at,
+            credential_state=credential_state,
+            network_accessed=True,
+            root=root,
+            request_policy=request_policy,
+            download={
+                "status": inventory_status,
+                "inventory_status": inventory_status,
+                "inventory_http_status": inventory_http_status,
+                "planned_file_count": 0,
+                "downloaded_count": 0,
+                "skipped_count": 0,
+                "downloaded_bytes": 0,
+                "downloaded_files": [],
+                "skipped_files": [
+                    {
+                        "reason": "inventory_unavailable",
+                        "inventory_status": inventory_status,
+                        "http_status": inventory_http_status,
+                    }
+                ],
+                "attempts": inventory_attempts,
+            },
+            next_actions=kaggle_download_next_actions(inventory_status),
+        )
+
+    plan = plan_kaggle_download_files(
+        inventory=inventory,
+        selected_files=selected,
+        include_required=include_required,
+        include_recommended=include_recommended,
+        include_holdout=include_holdout,
+    )
+    downloaded_files: list[dict[str, Any]] = []
+    skipped_files: list[dict[str, Any]] = list(plan["skipped_files"])
+    downloaded_bytes = 0
+    for planned in plan["files"]:
+        file_name = str(planned["name"])
+        relative_path = safe_kaggle_relative_path(file_name)
+        if relative_path is None:
+            skipped_files.append({**planned, "reason": "unsafe_relative_path"})
+            continue
+        destination = root / relative_path
+        if destination.exists() and not overwrite:
+            skipped_files.append(
+                {
+                    **planned,
+                    "reason": "exists",
+                    "relative_path": str(relative_path),
+                    "existing_size_bytes": destination.stat().st_size,
+                }
+            )
+            continue
+        expected_size = planned.get("size_bytes")
+        if isinstance(expected_size, int) and downloaded_bytes + expected_size > max_total_bytes:
+            skipped_files.append(
+                {
+                    **planned,
+                    "reason": "would_exceed_max_total_bytes",
+                    "max_total_bytes": max_total_bytes,
+                    "downloaded_bytes_before_file": downloaded_bytes,
+                }
+            )
+            continue
+        remaining_bytes = max_total_bytes - downloaded_bytes
+        try:
+            result = download_one_kaggle_file(
+                slug=slug,
+                file_name=file_name,
+                destination=destination,
+                candidate=active_candidate,
+                timeout_seconds=timeout_seconds,
+                opener=effective_opener,
+                max_file_bytes=remaining_bytes,
+            )
+        except (TimeoutError, urllib.error.URLError, OSError, urllib.error.HTTPError, ValueError) as exc:
+            skipped_files.append(
+                {
+                    **planned,
+                    "reason": "download_error",
+                    "error_type": type(exc).__name__,
+                    "relative_path": str(relative_path),
+                }
+            )
+            continue
+        downloaded_bytes += int(result["size_bytes"])
+        downloaded_files.append(
+            {
+                **planned,
+                **result,
+                "relative_path": str(relative_path),
+            }
+        )
+
+    status = "completed" if downloaded_files and not skipped_files else "partial" if downloaded_files else "no_files_downloaded"
+    download = {
+        "status": status,
+        "inventory_status": inventory_status,
+        "inventory_http_status": inventory_http_status,
+        "inventory_file_count": inventory["file_count"],
+        "planned_file_count": len(plan["files"]),
+        "downloaded_count": len(downloaded_files),
+        "skipped_count": len(skipped_files),
+        "downloaded_bytes": downloaded_bytes,
+        "downloaded_files": downloaded_files,
+        "skipped_files": skipped_files,
+        "attempts": inventory_attempts,
+    }
+    return kaggle_download_payload(
+        benchmark=benchmark,
+        slug=slug,
+        checked_at=checked_at,
+        credential_state=credential_state,
+        network_accessed=True,
+        root=root,
+        request_policy=request_policy,
+        download=download,
+        next_actions=kaggle_download_next_actions(status),
     )
 
 
@@ -674,6 +892,183 @@ def match_expected_file(name: str, specs: list[dict[str, Any]]) -> dict[str, Any
     return None
 
 
+def plan_kaggle_download_files(
+    *,
+    inventory: dict[str, Any],
+    selected_files: Sequence[str],
+    include_required: bool,
+    include_recommended: bool,
+    include_holdout: bool,
+) -> dict[str, Any]:
+    selected = {str(item).strip() for item in selected_files if str(item).strip()}
+    selected_basenames = {Path(item).name for item in selected}
+    planned: list[dict[str, Any]] = []
+    selected_matches: set[str] = set()
+    for file in inventory.get("files", []):
+        if not isinstance(file, dict):
+            continue
+        name = str(file.get("name") or "")
+        role = str(file.get("role") or "")
+        requirement = str(file.get("requirement") or "")
+        is_selected = bool(selected and (name in selected or Path(name).name in selected_basenames))
+        if is_selected:
+            selected_matches.add(name)
+            selected_matches.add(Path(name).name)
+        should_include = is_selected
+        should_include = should_include or (include_required and requirement == "required")
+        should_include = should_include or (
+            include_recommended
+            and requirement == "recommended"
+            and (include_holdout or "holdout" not in role)
+        )
+        if not should_include:
+            continue
+        planned.append(
+            {
+                "name": name,
+                "size_bytes": file.get("size_bytes") if isinstance(file.get("size_bytes"), int) else None,
+                "requirement": requirement,
+                "role": role,
+                "description": file.get("description") if isinstance(file.get("description"), str) else None,
+                "match_pattern": file.get("match_pattern") if isinstance(file.get("match_pattern"), str) else None,
+            }
+        )
+    skipped_files = [
+        {"name": item, "reason": "selected_file_not_in_inventory"}
+        for item in selected
+        if item not in selected_matches and Path(item).name not in selected_matches
+    ]
+    return {"files": planned, "skipped_files": skipped_files}
+
+
+def safe_kaggle_relative_path(name: str) -> Path | None:
+    normalized = name.replace("\\", "/")
+    pure = PurePosixPath(normalized)
+    if pure.is_absolute() or not pure.parts:
+        return None
+    if any(part in {"", ".", ".."} for part in pure.parts):
+        return None
+    return Path(*pure.parts)
+
+
+def download_one_kaggle_file(
+    *,
+    slug: str,
+    file_name: str,
+    destination: Path,
+    candidate: KaggleAuthCandidate,
+    timeout_seconds: float,
+    opener: UrlOpener,
+    max_file_bytes: int,
+) -> dict[str, Any]:
+    endpoint = (
+        f"{KAGGLE_API_BASE_URL}/competitions/data/download/"
+        f"{urllib.parse.quote(slug)}/{urllib.parse.quote(file_name, safe='')}"
+    )
+    request = urllib.request.Request(
+        endpoint,
+        headers={
+            "Accept": "application/octet-stream",
+            "Authorization": candidate.authorization_header,
+            "User-Agent": "Tablex/0.1 KaggleSelectiveDownload",
+        },
+        method="GET",
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = destination.with_name(f"{destination.name}.part")
+    digest = hashlib.sha256()
+    size_bytes = 0
+    response = opener(request, timeout_seconds)
+    try:
+        with temp_path.open("wb") as handle:
+            while True:
+                chunk = response.read(DOWNLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                size_bytes += len(chunk)
+                if size_bytes > max_file_bytes:
+                    raise ValueError("Downloaded file exceeded max_total_bytes")
+                digest.update(chunk)
+                handle.write(chunk)
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+    archive_sha256 = digest.hexdigest()
+    if zipfile.is_zipfile(temp_path):
+        extracted = extract_expected_kaggle_zip_member(
+            archive_path=temp_path,
+            destination=destination,
+            expected_name=file_name,
+            max_extracted_bytes=max_file_bytes,
+        )
+        temp_path.unlink(missing_ok=True)
+        return {
+            **extracted,
+            "archive_size_bytes": size_bytes,
+            "archive_sha256": archive_sha256,
+            "extracted_from_archive": True,
+        }
+    temp_path.replace(destination)
+    return {
+        "size_bytes": size_bytes,
+        "sha256": archive_sha256,
+        "extracted_from_archive": False,
+    }
+
+
+def extract_expected_kaggle_zip_member(
+    *,
+    archive_path: Path,
+    destination: Path,
+    expected_name: str,
+    max_extracted_bytes: int,
+) -> dict[str, Any]:
+    expected_basename = Path(expected_name).name
+    with zipfile.ZipFile(archive_path) as archive:
+        candidates = [
+            member
+            for member in archive.infolist()
+            if not member.is_dir()
+            and safe_kaggle_relative_path(member.filename) is not None
+            and (member.filename == expected_name or Path(member.filename).name == expected_basename)
+        ]
+        if not candidates:
+            raise ValueError("Kaggle archive did not contain the expected file")
+        member = sorted(candidates, key=lambda item: (Path(item.filename).name != expected_basename, item.file_size))[0]
+        if member.file_size > max_extracted_bytes:
+            raise ValueError("Extracted file would exceed max_total_bytes")
+        digest = hashlib.sha256()
+        size_bytes = 0
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temp_extract = destination.with_name(f"{destination.name}.extracting")
+        try:
+            with archive.open(member, "r") as source, temp_extract.open("wb") as target:
+                while True:
+                    chunk = source.read(DOWNLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    size_bytes += len(chunk)
+                    if size_bytes > max_extracted_bytes:
+                        raise ValueError("Extracted file exceeded max_total_bytes")
+                    digest.update(chunk)
+                    target.write(chunk)
+            temp_extract.replace(destination)
+        except Exception:
+            if temp_extract.exists():
+                temp_extract.unlink()
+            raise
+    return {
+        "size_bytes": size_bytes,
+        "sha256": digest.hexdigest(),
+        "archive_member": member.filename,
+    }
+
+
 def kaggle_probe_payload(
     *,
     benchmark: dict[str, Any],
@@ -699,6 +1094,45 @@ def kaggle_probe_payload(
             "network_accessed": network_accessed,
         },
         "probe": probe,
+        "safety": {
+            "secret_value_logged": False,
+            "secret_value_artifacted": False,
+            "connector_credentials_materialized": False,
+            "agent_runner_access": False,
+            "agent_task_contract_access": False,
+        },
+        "next_actions": next_actions,
+    }
+
+
+def kaggle_download_payload(
+    *,
+    benchmark: dict[str, Any],
+    slug: str,
+    checked_at: str,
+    credential_state: dict[str, Any],
+    network_accessed: bool,
+    root: Path,
+    request_policy: dict[str, Any],
+    download: dict[str, Any],
+    next_actions: list[str],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "kaggle_selective_download_manifest.v1",
+        "benchmark_id": str(benchmark.get("id") or ""),
+        "benchmark_name": str(benchmark.get("name") or ""),
+        "source_kind": str(benchmark.get("source_kind") or ""),
+        "competition_slug": slug,
+        "checked_at": checked_at,
+        "root_path": str(root),
+        "request_policy": request_policy,
+        "credential_status": credential_state,
+        "request": {
+            "endpoint_kind": "competition_data_download",
+            "url_host": urllib.parse.urlparse(KAGGLE_API_BASE_URL).netloc,
+            "network_accessed": network_accessed,
+        },
+        "download": download,
         "safety": {
             "secret_value_logged": False,
             "secret_value_artifacted": False,
@@ -793,3 +1227,17 @@ def kaggle_inventory_next_actions(inventory: dict[str, Any]) -> list[str]:
     if status == "not_configured":
         return ["Set Kaggle credentials in the harness environment or gitignored .env, then fetch inventory again."]
     return ["Resolve the Kaggle access issue shown in the inventory artifact, then retry."]
+
+
+def kaggle_download_next_actions(status: str) -> list[str]:
+    if status == "completed":
+        return ["Run benchmark local-status or import from the resolved benchmark root."]
+    if status == "partial":
+        return ["Review skipped files in the download manifest before importing or requesting more files."]
+    if status == "no_files_downloaded":
+        return ["Review the selection policy, existing files, and size cap; adjust if a download is still needed."]
+    if status == "not_configured":
+        return ["Set Kaggle credentials in the harness environment or gitignored .env, then retry."]
+    if status == "forbidden_or_rules_required":
+        return ["Accept the competition rules in Kaggle with the user account, then retry."]
+    return ["Review the download manifest and retry after resolving the reported issue."]

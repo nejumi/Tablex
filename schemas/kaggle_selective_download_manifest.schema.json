@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KaggleSelectiveDownloadManifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "benchmark_id",
+    "benchmark_name",
+    "source_kind",
+    "competition_slug",
+    "checked_at",
+    "root_path",
+    "request_policy",
+    "credential_status",
+    "request",
+    "download",
+    "safety",
+    "next_actions"
+  ],
+  "properties": {
+    "schema_version": { "const": "kaggle_selective_download_manifest.v1" },
+    "benchmark_id": { "type": "string" },
+    "benchmark_name": { "type": "string" },
+    "source_kind": { "type": "string" },
+    "competition_slug": { "type": "string" },
+    "checked_at": { "type": "string" },
+    "root_path": { "type": "string" },
+    "request_policy": {
+      "type": "object",
+      "required": [
+        "selected_files",
+        "include_required",
+        "include_recommended",
+        "include_holdout",
+        "overwrite",
+        "max_total_bytes"
+      ],
+      "additionalProperties": true
+    },
+    "credential_status": {
+      "type": "object",
+      "required": ["available", "credential_sources", "auth_schemes", "values_exposed"],
+      "properties": {
+        "available": { "type": "boolean" },
+        "credential_sources": { "type": "array", "items": { "type": "string" } },
+        "auth_schemes": { "type": "array", "items": { "type": "string" } },
+        "values_exposed": { "const": false }
+      },
+      "additionalProperties": true
+    },
+    "request": {
+      "type": "object",
+      "required": ["endpoint_kind", "url_host", "network_accessed"],
+      "additionalProperties": true
+    },
+    "download": {
+      "type": "object",
+      "required": [
+        "status",
+        "planned_file_count",
+        "downloaded_count",
+        "skipped_count",
+        "downloaded_bytes",
+        "downloaded_files",
+        "skipped_files",
+        "attempts"
+      ],
+      "properties": {
+        "status": { "type": "string" },
+        "planned_file_count": { "type": "integer", "minimum": 0 },
+        "downloaded_count": { "type": "integer", "minimum": 0 },
+        "skipped_count": { "type": "integer", "minimum": 0 },
+        "downloaded_bytes": { "type": "integer", "minimum": 0 },
+        "downloaded_files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "relative_path", "size_bytes", "sha256", "requirement", "role"],
+            "additionalProperties": true
+          }
+        },
+        "skipped_files": { "type": "array", "items": { "type": "object" } },
+        "attempts": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": true
+    },
+    "safety": {
+      "type": "object",
+      "required": [
+        "secret_value_logged",
+        "secret_value_artifacted",
+        "connector_credentials_materialized",
+        "agent_runner_access",
+        "agent_task_contract_access"
+      ],
+      "properties": {
+        "secret_value_logged": { "const": false },
+        "secret_value_artifacted": { "const": false },
+        "connector_credentials_materialized": { "const": false },
+        "agent_runner_access": { "const": false },
+        "agent_task_contract_access": { "const": false }
+      },
+      "additionalProperties": true
+    },
+    "local_status": { "type": "object" },
+    "import_readiness": { "type": "object" },
+    "next_actions": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

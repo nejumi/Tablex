@@ -190,6 +190,7 @@ def benchmark_source_card(
         },
         "credential_probe": benchmark_credential_probe(benchmark),
         "credential_inventory": benchmark_credential_inventory(benchmark),
+        "credential_download": benchmark_credential_download(benchmark),
         "credential_policy": benchmark_credential_policy(benchmark),
         "safety_notes": benchmark_safety_notes(benchmark),
     }
@@ -321,6 +322,9 @@ def benchmark_import_readiness(benchmark: dict[str, Any], root: Path, status: di
                 next_actions.append(
                     "Fetch the Kaggle file inventory before planning selective download or import."
                 )
+                next_actions.append(
+                    "Download required Kaggle files with a harness-owned selective download job when file size and rules are acceptable."
+                )
             next_actions.append("Download the benchmark outside Tablex with user-managed credentials, then place files under the local root.")
         elif access["supports_direct_download"]:
             next_actions.append("Download the public archive from the official URL, extract it, then place files under the local root.")
@@ -339,6 +343,7 @@ def benchmark_import_readiness(benchmark: dict[str, Any], root: Path, status: di
         "next_actions": next_actions,
         "credential_probe": benchmark_credential_probe(benchmark),
         "credential_inventory": benchmark_credential_inventory(benchmark),
+        "credential_download": benchmark_credential_download(benchmark),
         "credential_policy": benchmark_credential_policy(benchmark),
     }
 
@@ -376,6 +381,22 @@ def benchmark_credential_inventory(benchmark: dict[str, Any]) -> dict[str, Any]:
         "latest_endpoint": f"/api/benchmarks/{benchmark_id}/kaggle/inventory/latest" if probe["supported"] else None,
         "secret_boundary": "harness_process_only",
         "stores_file_names_and_sizes": bool(probe["supported"]),
+        "credential_values_returned": False,
+        "agent_receives_credentials": False,
+        "artifact_contains_secret_values": False,
+    }
+
+
+def benchmark_credential_download(benchmark: dict[str, Any]) -> dict[str, Any]:
+    probe = benchmark_credential_probe(benchmark)
+    benchmark_id = str(benchmark.get("id") or "")
+    return {
+        "supported": bool(probe["supported"]),
+        "status": "not_started",
+        "job_type": "download_kaggle_selected_files" if probe["supported"] else None,
+        "endpoint": f"/api/benchmarks/{benchmark_id}/kaggle/download" if probe["supported"] else None,
+        "default_policy": "required_files_only_with_size_cap" if probe["supported"] else None,
+        "secret_boundary": "harness_process_only",
         "credential_values_returned": False,
         "agent_receives_credentials": False,
         "artifact_contains_secret_values": False,

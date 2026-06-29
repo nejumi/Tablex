@@ -68,6 +68,7 @@ from tabular_harness.schemas import (
     InsightRead,
     JobCreate,
     JobRead,
+    KaggleSelectiveDownloadRequest,
     ModelValidationRead,
     ModelVersionRead,
     ProjectCreate,
@@ -120,6 +121,7 @@ from tabular_harness.services.baseline import run_baseline as run_baseline_servi
 from tabular_harness.services.benchmark_collection import create_benchmark_collection_plan
 from tabular_harness.services.benchmark_evidence import create_benchmark_evidence_pack
 from tabular_harness.services.benchmarks import (
+    benchmark_import_readiness,
     benchmark_source_card,
     benchmark_to_dict,
     build_import_manifest,
@@ -168,6 +170,7 @@ from tabular_harness.services.jobs import (
     cancel_job as cancel_job_service,
 )
 from tabular_harness.services.kaggle_probe import (
+    download_kaggle_selected_files,
     fetch_kaggle_competition_inventory,
     probe_kaggle_benchmark_access,
 )
@@ -524,6 +527,103 @@ def get_latest_kaggle_inventory_artifact(
     if artifact is None:
         raise HTTPException(status_code=404, detail="Kaggle inventory artifact not found")
     return artifact_to_dict(artifact)
+
+
+@router.post("/api/benchmarks/{benchmark_id}/kaggle/download", response_model=JobRead)
+def download_kaggle_selected_files_endpoint(
+    benchmark_id: str,
+    payload: KaggleSelectiveDownloadRequest,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    job = create_job(
+        db,
+        job_type="download_kaggle_selected_files",
+        project_id=None,
+        input_payload={
+            "benchmark_id": benchmark_id,
+            "selected_files": payload.selected_files,
+            "include_required": payload.include_required,
+            "include_recommended": payload.include_recommended,
+            "include_holdout": payload.include_holdout,
+            "overwrite": payload.overwrite,
+            "max_total_bytes": payload.max_total_bytes,
+        },
+        policy={
+            "network": "enabled_for_kaggle_selected_download_only",
+            "secret_access": "harness_process_only",
+            "connector_credentials": "not_materialized",
+            "agent_runner_access": False,
+            "agent_task_contract_access": False,
+            "artifact_contains_secret_values": False,
+        },
+    )
+    try:
+        mark_job_running(job)
+        benchmark = raw_benchmark_dataset(benchmark_id)
+        root = default_benchmark_root(request.app.state.settings, benchmark_id)
+        manifest = download_kaggle_selected_files(
+            benchmark,
+            root=root,
+            selected_files=payload.selected_files,
+            include_required=payload.include_required,
+            include_recommended=payload.include_recommended,
+            include_holdout=payload.include_holdout,
+            overwrite=payload.overwrite,
+            max_total_bytes=payload.max_total_bytes,
+        )
+        local_status = inspect_benchmark_local_files(benchmark, root)
+        readiness = benchmark_import_readiness(benchmark, root, local_status)
+        manifest["local_status"] = local_status
+        manifest["import_readiness"] = readiness
+        credential_status = cast(dict[str, Any], manifest["credential_status"])
+        download = cast(dict[str, Any], manifest["download"])
+        artifact = store_json_artifact(
+            db,
+            store,
+            project_id=None,
+            asset_type="kaggle_selective_download_manifest",
+            name=f"kaggle_selective_download_{benchmark_id}",
+            filename="kaggle_selective_download_manifest.json",
+            payload=manifest,
+            metadata={
+                "benchmark_id": benchmark_id,
+                "competition_slug": manifest["competition_slug"],
+                "download_status": download["status"],
+                "downloaded_count": download["downloaded_count"],
+                "skipped_count": download["skipped_count"],
+                "downloaded_bytes": download["downloaded_bytes"],
+                "local_ready": local_status["ready"],
+                "credential_available": credential_status["available"],
+                "secret_value_artifacted": False,
+                "agent_runner_access": False,
+            },
+        )
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": manifest["schema_version"],
+                "benchmark_id": benchmark_id,
+                "competition_slug": manifest["competition_slug"],
+                "download_status": download["status"],
+                "downloaded_count": download["downloaded_count"],
+                "skipped_count": download["skipped_count"],
+                "downloaded_bytes": download["downloaded_bytes"],
+                "local_ready": local_status["ready"],
+                "can_import_now": readiness["can_import_now"],
+                "kaggle_download_manifest_artifact_id": artifact.id,
+                "artifact_id": artifact.id,
+                "artifact_ids": [artifact.id],
+            },
+        )
+    except KeyError as exc:
+        mark_job_failed(job, "Benchmark dataset not found")
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
 
 
 @router.get("/api/projects", response_model=list[ProjectRead])
@@ -4243,12 +4343,17 @@ def summarize_job_output(output: dict[str, Any]) -> dict[str, Any]:
         "benchmark_evidence_report_id": output.get("benchmark_evidence_report_id"),
         "kaggle_probe_artifact_id": output.get("kaggle_probe_artifact_id"),
         "kaggle_inventory_artifact_id": output.get("kaggle_inventory_artifact_id"),
+        "kaggle_download_manifest_artifact_id": output.get("kaggle_download_manifest_artifact_id"),
         "probe_status": output.get("probe_status"),
         "inventory_status": output.get("inventory_status"),
+        "download_status": output.get("download_status"),
         "credential_available": output.get("credential_available"),
         "can_access_competition_files": output.get("can_access_competition_files"),
         "http_status": output.get("http_status"),
         "file_count": output.get("file_count"),
+        "downloaded_count": output.get("downloaded_count"),
+        "downloaded_bytes": output.get("downloaded_bytes"),
+        "local_ready": output.get("local_ready"),
         "required_missing_count": output.get("required_missing_count"),
         "task_id": output.get("task_id"),
         "agent_task_contract_artifact_id": output.get("agent_task_contract_artifact_id"),
