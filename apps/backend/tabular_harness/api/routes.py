@@ -741,6 +741,7 @@ def create_project(payload: ProjectCreate, db: Annotated[Session, Depends(get_se
         description=payload.description,
         task_type=payload.task_type,
         target_column=payload.target_column,
+        autonomy_mode=payload.autonomy_mode or "approval_based",
         current_phase="DRAFT",
     )
     db.add(project)
@@ -763,6 +764,8 @@ def update_project(
     project = require_project(db, project_id)
     data = payload.model_dump(exclude_unset=True)
     for key, value in data.items():
+        if key == "autonomy_mode" and value is None:
+            continue
         setattr(project, key, value)
     project.updated_at = utc_now()
     db.flush()
@@ -5073,6 +5076,7 @@ def project_to_dict(project: Project) -> dict[str, Any]:
         "target_column": project.target_column,
         "current_phase": project.current_phase,
         "status": project.status,
+        "autonomy_mode": project.autonomy_mode,
         "created_at": project.created_at.isoformat(),
         "updated_at": project.updated_at.isoformat(),
     }

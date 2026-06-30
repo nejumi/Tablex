@@ -25,6 +25,23 @@ def make_client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(settings))
 
 
+def test_project_autonomy_mode_persists(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Mission Control"})
+    assert project_response.status_code == 200
+    project = project_response.json()
+    assert project["autonomy_mode"] == "approval_based"
+
+    update_response = client.patch(f"/api/projects/{project['id']}", json={"autonomy_mode": "full_auto"})
+    assert update_response.status_code == 200, update_response.text
+    assert update_response.json()["autonomy_mode"] == "full_auto"
+
+    read_response = client.get(f"/api/projects/{project['id']}")
+    assert read_response.status_code == 200
+    assert read_response.json()["autonomy_mode"] == "full_auto"
+
+
 def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 

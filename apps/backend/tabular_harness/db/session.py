@@ -28,28 +28,37 @@ def ensure_sqlite_mvp_columns(engine: Engine) -> None:
     if engine.dialect.name != "sqlite":
         return
     inspector = inspect(engine)
-    if "jobs" not in inspector.get_table_names():
-        return
-    existing = {column["name"] for column in inspector.get_columns("jobs")}
-    additions = {
-        "priority": "INTEGER NOT NULL DEFAULT 50",
-        "attempt_count": "INTEGER NOT NULL DEFAULT 0",
-        "max_attempts": "INTEGER NOT NULL DEFAULT 1",
-        "context_json": "TEXT NOT NULL DEFAULT '{}'",
-        "policy_json": "TEXT NOT NULL DEFAULT '{}'",
-        "dependency_job_ids_json": "TEXT NOT NULL DEFAULT '[]'",
-        "approval_required": "BOOLEAN NOT NULL DEFAULT 0",
-        "approved_by": "VARCHAR",
-        "approved_at": "DATETIME",
-        "cancelled_by": "VARCHAR",
-        "run_after": "DATETIME",
-        "locked_by": "VARCHAR",
-        "locked_at": "DATETIME",
-    }
+    table_names = set(inspector.get_table_names())
     with engine.begin() as connection:
-        for column_name, ddl in additions.items():
-            if column_name not in existing:
-                connection.execute(text(f"ALTER TABLE jobs ADD COLUMN {column_name} {ddl}"))
+        if "projects" in table_names:
+            existing = {column["name"] for column in inspector.get_columns("projects")}
+            additions = {
+                "autonomy_mode": "VARCHAR NOT NULL DEFAULT 'approval_based'",
+            }
+            for column_name, ddl in additions.items():
+                if column_name not in existing:
+                    connection.execute(text(f"ALTER TABLE projects ADD COLUMN {column_name} {ddl}"))
+
+        if "jobs" in table_names:
+            existing = {column["name"] for column in inspector.get_columns("jobs")}
+            additions = {
+                "priority": "INTEGER NOT NULL DEFAULT 50",
+                "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+                "max_attempts": "INTEGER NOT NULL DEFAULT 1",
+                "context_json": "TEXT NOT NULL DEFAULT '{}'",
+                "policy_json": "TEXT NOT NULL DEFAULT '{}'",
+                "dependency_job_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+                "approval_required": "BOOLEAN NOT NULL DEFAULT 0",
+                "approved_by": "VARCHAR",
+                "approved_at": "DATETIME",
+                "cancelled_by": "VARCHAR",
+                "run_after": "DATETIME",
+                "locked_by": "VARCHAR",
+                "locked_at": "DATETIME",
+            }
+            for column_name, ddl in additions.items():
+                if column_name not in existing:
+                    connection.execute(text(f"ALTER TABLE jobs ADD COLUMN {column_name} {ddl}"))
 
 
 def session_scope(session_factory: sessionmaker[Session]) -> Generator[Session, None, None]:

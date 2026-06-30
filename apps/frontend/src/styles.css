@@ -348,6 +348,286 @@ textarea {
   padding-bottom: 24px;
 }
 
+.mission-home {
+  gap: 18px;
+}
+
+.mission-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: 18px;
+  align-items: stretch;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 62%),
+    var(--surface);
+  box-shadow: 0 16px 42px color-mix(in srgb, var(--shadow) 70%, transparent);
+  padding: 18px;
+}
+
+.mission-hero-copy {
+  display: grid;
+  align-content: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.mission-hero-copy h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 28px;
+  line-height: 1.14;
+}
+
+.mission-hero-copy p {
+  max-width: 860px;
+  margin: 0;
+  color: var(--muted-strong);
+  line-height: 1.5;
+}
+
+.mission-hero-actions {
+  display: grid;
+  gap: 10px;
+  align-content: stretch;
+}
+
+.mission-focus-button {
+  justify-content: flex-start;
+  min-height: 52px;
+  text-align: left;
+}
+
+.autonomy-mode-panel {
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 14px;
+}
+
+.autonomy-mode-panel > span,
+.mission-panel-head > div:first-child > span,
+.mission-note > span,
+.mission-supporting > span,
+.mission-artifact-line > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.mission-panel-title span {
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.autonomy-mode-panel small {
+  color: var(--muted-strong);
+  line-height: 1.4;
+}
+
+.mission-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
+  gap: 14px;
+}
+
+.mission-plan-panel,
+.mission-task-panel,
+.mission-agent-primary,
+.mission-evidence-stack {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--shadow) 58%, transparent);
+}
+
+.mission-plan-panel,
+.mission-task-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.mission-panel-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.mission-panel-head > div:first-child,
+.mission-panel-title > div,
+.mission-note {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mission-panel-head strong,
+.mission-panel-title strong,
+.mission-note strong,
+.mission-artifact-line strong {
+  color: var(--text-strong);
+  line-height: 1.25;
+}
+
+.mission-plan-body {
+  display: grid;
+  gap: 10px;
+}
+
+.mission-next-action {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: 8px;
+  background: var(--surface-hover);
+  padding: 12px;
+  color: var(--text-strong);
+  text-align: left;
+}
+
+.mission-next-action small,
+.mission-artifact-line small,
+.mission-note small,
+.mission-surface-button small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.mission-plan-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mission-artifact-line {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) minmax(0, auto) 32px;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 9px;
+}
+
+.mission-task-card {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 11px;
+}
+
+.mission-task-card p {
+  margin: 3px 0;
+  color: var(--muted-strong);
+  line-height: 1.4;
+}
+
+.mission-task-pulse {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 44%, transparent);
+  animation: mission-pulse 1.3s ease-out infinite;
+}
+
+.mission-agent-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 14px;
+  align-items: start;
+}
+
+.mission-agent-primary {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.mission-panel-title {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.mission-evidence-stack {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.mission-surface-button {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 2px 8px;
+  align-items: center;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 10px;
+  color: var(--text-strong);
+  text-align: left;
+}
+
+.mission-surface-button:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.mission-surface-button > span {
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--accent);
+}
+
+.mission-supporting {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 10px;
+}
+
+.mission-note {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 10px;
+}
+
+@keyframes mission-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 42%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
 .autonomous-navigator {
   display: grid;
   gap: 12px;
@@ -2893,7 +3173,7 @@ td {
 .agent-chat-log {
   display: grid;
   gap: 6px;
-  max-height: 190px;
+  max-height: 430px;
   overflow: auto;
 }
 
@@ -3629,8 +3909,12 @@ td {
     padding: 18px;
   }
 
-  .two-column,
-  .autonomous-main,
+	  .two-column,
+	  .mission-hero,
+	  .mission-grid,
+	  .mission-agent-layout,
+	  .mission-plan-facts,
+	  .autonomous-main,
   .supporting-details-body,
   .metric-grid,
   .metric-grid.compact,

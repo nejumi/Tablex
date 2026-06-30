@@ -81,8 +81,10 @@ const englishMessages = {
     "Projects hold dataset snapshots, assumptions, evaluation designs, artifacts, jobs, and lineage for one prediction task.",
   newProjectName: "New project name",
   create: "Create",
+  tabHome: "Home",
   tabOverview: "Overview",
   tabData: "Data",
+  tabInsight: "Insight",
   tabUnderstanding: "Understanding",
   tabAssumptions: "Assumptions",
   tabEvaluation: "Evaluation",
@@ -189,6 +191,26 @@ const englishMessages = {
   telemetryEstimate: "estimate until runner telemetry",
   workerChatPlaceholder: "Message this worker",
   noAgentActivity: "Agent activity will appear after chat, jobs, or runner work starts.",
+  missionControlTitle: "Mission Control",
+  missionControlSubtitle:
+    "Stay here for the next decision, the current plan, and the agent conversation. Evidence surfaces stay one click away.",
+  autonomyMode: "Autonomy mode",
+  approvalBasedMode: "Approval Based",
+  approvalBasedModeHint: "Ask before risky decisions, external execution, evaluation changes, or deployment-facing steps.",
+  fullAutoMode: "Full Auto",
+  fullAutoModeHint: "Ask questions, record assumptions, and keep moving with explicit fallback policies.",
+  researchPlanTitle: "Research Plan",
+  researchPlanEmpty: "No active ResearchPlan yet. Ask the agent for a plan or generate one from the current project context.",
+  currentTaskTitle: "Current task",
+  currentTaskIdle: "Idle",
+  currentTaskEmpty: "No active task. The agent should propose the next useful move instead of making you hunt through tabs.",
+  agentWorkspaceTitle: "Agent workspace",
+  evidenceSurfacesTitle: "Evidence surfaces",
+  supportingSurfacesTitle: "Supporting surfaces",
+  openSurface: "Open",
+  generateResearchPlan: "Generate ResearchPlan",
+  generateStrategyBrief: "Refresh strategy",
+  planAgentTask: "Plan agent task",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "One guided next step without forcing a fixed modeling recipe.",
   strategyRecommendedAction: "Recommended action",
@@ -240,8 +262,10 @@ const japaneseMessages: LocaleMessages = {
     "ProjectにはDatasetSnapshot、Assumption、評価設計、artifact、job、lineageを保持します。",
   newProjectName: "新しいプロジェクト名",
   create: "作成",
+  tabHome: "ホーム",
   tabOverview: "概要",
   tabData: "データ",
+  tabInsight: "インサイト",
   tabUnderstanding: "理解",
   tabAssumptions: "仮定",
   tabEvaluation: "評価",
@@ -348,6 +372,25 @@ const japaneseMessages: LocaleMessages = {
   telemetryEstimate: "runner telemetryが入るまで推定",
   workerChatPlaceholder: "このworkerにメッセージ",
   noAgentActivity: "chat、job、runner workが始まるとagent activityが表示されます。",
+  missionControlTitle: "Mission Control",
+  missionControlSubtitle: "次の判断、現在の計画、Agentとの会話をここに集約します。根拠面にはワンクリックで移動できます。",
+  autonomyMode: "自律モード",
+  approvalBasedMode: "承認ベース",
+  approvalBasedModeHint: "重要判断、外部実行、評価変更、deployment関連は人間の承認を待ちます。",
+  fullAutoMode: "フルオート",
+  fullAutoModeHint: "質問は残しつつ、仮定とfallback policyを明示して前に進みます。",
+  researchPlanTitle: "Research Plan",
+  researchPlanEmpty: "有効なResearchPlanはまだありません。Agentに依頼するか、現在のProject contextから生成してください。",
+  currentTaskTitle: "現在のタスク",
+  currentTaskIdle: "待機中",
+  currentTaskEmpty: "実行中のタスクはありません。タブを探し回らなくても、Agentが次の有用な一手を提案するべきです。",
+  agentWorkspaceTitle: "Agent workspace",
+  evidenceSurfacesTitle: "根拠面",
+  supportingSurfacesTitle: "支援面",
+  openSurface: "開く",
+  generateResearchPlan: "ResearchPlan生成",
+  generateStrategyBrief: "Strategy更新",
+  planAgentTask: "Agent task計画",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "固定recipeにせず、次の一手だけをガイドします。",
   strategyRecommendedAction: "推奨アクション",
@@ -505,6 +548,8 @@ function useLocale() {
   return React.useContext(LocaleContext);
 }
 
+type AutonomyMode = "approval_based" | "full_auto";
+
 type Project = {
   id: string;
   name: string;
@@ -513,6 +558,7 @@ type Project = {
   target_column: string | null;
   current_phase: string;
   status: string;
+  autonomy_mode: AutonomyMode;
   created_at: string;
   updated_at: string;
 };
@@ -1332,8 +1378,10 @@ type LineageEdge = {
 
 const apiBase = import.meta.env.VITE_API_BASE ?? "";
 const tabItems = [
+  { id: "Home", labelKey: "tabHome" },
   { id: "Overview", labelKey: "tabOverview" },
   { id: "Data", labelKey: "tabData" },
+  { id: "Insight", labelKey: "tabInsight" },
   { id: "Understanding", labelKey: "tabUnderstanding" },
   { id: "Assumptions", labelKey: "tabAssumptions" },
   { id: "Evaluation", labelKey: "tabEvaluation" },
@@ -1348,18 +1396,23 @@ const tabItems = [
   { id: "Lineage", labelKey: "tabLineage" }
 ] as const satisfies ReadonlyArray<{ id: string; labelKey: keyof LocaleMessages }>;
 type Tab = (typeof tabItems)[number]["id"];
-const secondaryTabIds = new Set<Tab>(["Assets", "Library", "Jobs", "Lineage"]);
-const primaryTabItems = tabItems.filter((item) => !secondaryTabIds.has(item.id));
-const secondaryTabItems = tabItems.filter((item) => secondaryTabIds.has(item.id));
+const topLevelTabIds = new Set<Tab>(["Home", "Data", "Insight", "Leaderboard", "Assets"]);
+const hiddenLegacyTabIds = new Set<Tab>(["Overview", "Approach"]);
+const primaryTabItems = tabItems.filter((item) => topLevelTabIds.has(item.id));
+const supportingTabItems = tabItems.filter((item) => !topLevelTabIds.has(item.id) && !hiddenLegacyTabIds.has(item.id));
+const supportingTabIdSet = new Set<Tab>(supportingTabItems.map((item) => item.id));
 
 function tabFromString(value: string | null | undefined, fallback: Tab): Tab {
+  if (value === "Overview" || value === "Approach") return "Home";
+  if (value === "Reports" || value === "Notebooks") return "Insight";
+  if (value === "Library" || value === "Lineage") return "Assets";
   const match = tabItems.find((item) => item.id === value);
   return match ? match.id : fallback;
 }
 
 function firstAgentChatTarget(actions: AgentChatAction[]): { tab: Tab; anchor: string | null } | null {
   const action = actions.find((candidate) => candidate.target_tab && tabItems.some((item) => item.id === candidate.target_tab));
-  return action ? { tab: tabFromString(action.target_tab, "Approach"), anchor: action.target_anchor ?? null } : null;
+  return action ? { tab: tabFromString(action.target_tab, "Home"), anchor: action.target_anchor ?? null } : null;
 }
 
 function autoStartWorkerJobIds(actions: AgentChatAction[]): string[] {
@@ -1461,7 +1514,7 @@ function tabLabel(tab: Tab, text: LocaleMessages) {
 }
 
 function normalizeTab(value: string | null | undefined): Tab {
-  return tabItems.some((item) => item.id === value) ? (value as Tab) : "Overview";
+  return tabFromString(value, "Home");
 }
 
 function guidanceActionToFocusAction(action: ProjectGuidanceAction): FocusAction {
@@ -1509,18 +1562,6 @@ function localizedFocusCopy(focusKey: string, text: LocaleMessages) {
   if (focusKey === "notebooks") return { title: text.focusNotebooks, reason: text.focusNotebooksReason };
   if (focusKey === "reports") return { title: text.focusReports, reason: text.focusReportsReason };
   return null;
-}
-
-function journeyStageLabel(stage: ProjectGuidanceJourneyStage, text: LocaleMessages) {
-  if (stage.id === "data_intake") return text.journeyData;
-  if (stage.id === "understanding") return text.journeyUnderstanding;
-  if (stage.id === "assumptions") return text.journeyAssumptions;
-  if (stage.id === "evaluation") return text.journeyEvaluation;
-  if (stage.id === "approach") return text.journeyApproach;
-  if (stage.id === "experiments") return text.journeyExperiments;
-  if (stage.id === "notebooks") return text.journeyNotebooks;
-  if (stage.id === "reports") return text.journeyReports;
-  return stage.label;
 }
 
 function isHighRiskAssumption(assumption: Assumption) {
@@ -1622,11 +1663,11 @@ function buildFocusRecommendation({
 
   if (!runs.length) {
     return {
-      tab: "Approach",
+      tab: "Home",
       title: text.focusApproach,
       reason: text.focusApproachReason,
       evidence: [`${approvedSpecs.length} approved specs`, `${succeededJobs.length} succeeded jobs`],
-      secondaryTabs: ["Experiments", "Notebooks", "Assets"],
+      secondaryTabs: ["Leaderboard", "Insight", "Assets"],
       primaryAction: null,
       secondaryActions: [],
       riskLevel: "medium",
@@ -1638,11 +1679,11 @@ function buildFocusRecommendation({
 
   if (!reports.length) {
     return {
-      tab: "Experiments",
+      tab: "Leaderboard",
       title: text.focusExperiments,
       reason: text.focusExperimentsReason,
       evidence: [`${runs.length} experiment runs`, `${artifacts.length} artifacts`],
-      secondaryTabs: ["Notebooks", "Leaderboard", "Reports"],
+      secondaryTabs: ["Insight", "Assets", "Evaluation"],
       primaryAction: null,
       secondaryActions: [],
       riskLevel: "medium",
@@ -1653,11 +1694,11 @@ function buildFocusRecommendation({
   }
 
   return {
-    tab: "Reports",
+    tab: "Insight",
     title: text.focusReports,
     reason: text.focusReportsReason,
     evidence: [`${reports.length} reports`, `${runs.length} experiment runs`],
-    secondaryTabs: ["Notebooks", "Leaderboard", "Lineage"],
+    secondaryTabs: ["Leaderboard", "Assets", "Lineage"],
     primaryAction: null,
     secondaryActions: [],
     riskLevel: "low",
@@ -1671,7 +1712,7 @@ function App() {
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = React.useState<string | null>(null);
   const [viewMode, setViewMode] = React.useState<"portal" | "project">("portal");
-  const [tab, setTab] = React.useState<Tab>("Overview");
+  const [tab, setTab] = React.useState<Tab>("Home");
   const [userSettings, setUserSettings] = React.useState<UserSettings>(() => loadUserSettings());
   const [dynamicLocalePacks, setDynamicLocalePacks] = React.useState<LocalePack[]>(() => loadDynamicLocalePacks());
   const [portalOverview, setPortalOverview] = React.useState<PortalOverview | null>(null);
@@ -1798,7 +1839,7 @@ function App() {
               onClick={() => {
                 setSelectedProjectId(project.id);
                 setViewMode("project");
-                setTab("Overview");
+                setTab("Home");
               }}
             >
               <span>{project.name}</span>
@@ -1863,7 +1904,7 @@ function App() {
             onOpenProject={(projectId) => {
               setSelectedProjectId(projectId);
               setViewMode("project");
-              setTab("Overview");
+              setTab("Home");
             }}
             onAddIdea={addPortalIdea}
           />
@@ -1880,12 +1921,12 @@ function App() {
                   {text[item.labelKey]}
                 </button>
               ))}
-              <details className="tab-more" open={secondaryTabItems.some((item) => item.id === tab)}>
-                <summary className={secondaryTabItems.some((item) => item.id === tab) ? "tab active" : "tab"}>
+              <details className="tab-more" open={supportingTabIdSet.has(tab)}>
+                <summary className={supportingTabIdSet.has(tab) ? "tab active" : "tab"}>
                   {text.moreTabs}
                 </summary>
                 <div className="tab-menu">
-                  {secondaryTabItems.map((item) => (
+                  {supportingTabItems.map((item) => (
                     <button
                       key={item.id}
                       className={item.id === tab ? "tab-menu-item active" : "tab-menu-item"}
@@ -2505,7 +2546,7 @@ function ProjectDetail({
     setBusy(true);
     setError(null);
     const pendingWorker = optimisticWorkerEvent(project.id, trimmed);
-    setAgentChatMessages((current) => [...current.slice(-3), { role: "user", text: trimmed }]);
+    setAgentChatMessages((current) => [...current.slice(-23), { role: "user", text: trimmed }]);
     setAgentWorkerEvents((current) => [pendingWorker, ...current].slice(0, 8));
     try {
       const result = await api<AgentChatResponse>(`/api/projects/${project.id}/agent-chat`, {
@@ -2514,7 +2555,7 @@ function ProjectDetail({
         body: JSON.stringify({ message: trimmed })
       });
       setAgentChatMessages((current) => [
-        ...current.slice(-4),
+        ...current.slice(-23),
         {
           role: "system",
           text: result.assistant_message,
@@ -2536,7 +2577,7 @@ function ProjectDetail({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
-      setAgentChatMessages((current) => [...current.slice(-4), { role: "system", text: message }]);
+      setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: message }]);
       setAgentWorkerEvents((current) => current.filter((event) => event.job_id !== pendingWorker.job_id));
       return undefined;
     } finally {
@@ -2549,7 +2590,7 @@ function ProjectDetail({
   }
 
   function openAgentChatAction(action: AgentChatAction) {
-    const targetTab = tabFromString(action.target_tab, "Approach");
+    const targetTab = tabFromString(action.target_tab, "Home");
     navigateToTarget(targetTab, action.target_anchor ?? null);
   }
 
@@ -2581,16 +2622,8 @@ function ProjectDetail({
     onTabChange(action.targetTab);
   }
 
-  async function saveGuidedJourneySnapshot() {
-    await runAction(() => api(`/api/projects/${project.id}/guidance/snapshot`, { method: "POST" }));
-  }
-
-  async function saveAutonomousDecisionBrief() {
-    await runAction(() => api(`/api/projects/${project.id}/guidance/decision-brief`, { method: "POST" }));
-  }
-
   async function runStrategyAction(action: StrategyAction) {
-    const targetTab = tabFromString(action.target_tab, "Approach");
+    const targetTab = tabFromString(action.target_tab, "Home");
     if (action.action_type === "navigate") {
       onTabChange(targetTab);
       return;
@@ -2611,25 +2644,6 @@ function ProjectDetail({
   return (
     <section className="detail">
       {error ? <div className="banner danger">{error}</div> : null}
-      <AutonomousNavigator
-        guidance={guidance}
-        recommendation={focusRecommendation}
-        currentTab={tab}
-        busy={busy}
-        text={text}
-        onTabChange={onTabChange}
-        onAction={(action) => void runFocusAction(action)}
-        onSaveSnapshot={() => void saveGuidedJourneySnapshot()}
-        onSaveDecisionBrief={() => void saveAutonomousDecisionBrief()}
-      />
-      <AgentChatDock
-        busy={busy}
-        text={text}
-        messages={agentChatMessages}
-        latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
-        onSubmit={submitAgentChatWithoutResponse}
-        onActionOpen={openAgentChatAction}
-      />
       <AgentActivityRail
         text={text}
         jobs={jobs}
@@ -2638,6 +2652,34 @@ function ProjectDetail({
         tick={activityTick}
         onWorkerMessage={submitAgentChatWithoutResponse}
       />
+      {tab === "Home" && (
+        <HomeTab
+          project={project}
+          overview={overview}
+          recommendation={focusRecommendation}
+          strategyBrief={strategyBrief}
+          researchBriefs={researchBriefs}
+          ideas={ideas}
+          artifacts={artifacts}
+          jobs={jobs}
+          runs={runs}
+          assumptions={assumptions}
+          insights={insights}
+          reports={reports}
+          leaderboard={leaderboard}
+          notebookIndex={notebookIndex}
+          busy={busy}
+          text={text}
+          messages={agentChatMessages}
+          latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
+          onSubmitAgentChat={submitAgentChatWithoutResponse}
+          onActionOpen={openAgentChatAction}
+          onTabChange={onTabChange}
+          onFocusAction={(action) => void runFocusAction(action)}
+          onStrategyAction={(action) => void runStrategyAction(action)}
+          runAction={runAction}
+        />
+      )}
       {tab === "Overview" && (
         <OverviewTab
           overview={overview}
@@ -2645,6 +2687,19 @@ function ProjectDetail({
           jobs={jobs}
           artifacts={artifacts}
           text={text}
+        />
+      )}
+      {tab === "Insight" && (
+        <ReportsTab
+          project={project}
+          reports={reports}
+          decisionReport={decisionReport}
+          artifacts={artifacts}
+          visualizations={visualizations}
+          notebookIndex={notebookIndex}
+          insights={insights}
+          busy={busy}
+          runAction={runAction}
         />
       )}
       {tab === "Data" && (
@@ -2760,9 +2815,12 @@ function ProjectDetail({
       )}
       {tab === "Assets" && (
         <AssetsTab
+          project={project}
           artifacts={artifacts}
           modelVersions={modelVersions}
           validationsByModelVersion={validationsByModelVersion}
+          libraryAssets={libraryAssets}
+          projectAssetReferences={projectAssetReferences}
           busy={busy}
           runAction={runAction}
         />
@@ -2782,137 +2840,369 @@ function ProjectDetail({
   );
 }
 
-function AutonomousNavigator({
-  guidance,
+function HomeTab({
+  project,
+  overview,
   recommendation,
-  currentTab,
+  strategyBrief,
+  researchBriefs,
+  ideas,
+  artifacts,
+  jobs,
+  runs,
+  assumptions,
+  insights,
+  reports,
+  leaderboard,
+  notebookIndex,
   busy,
   text,
+  messages,
+  latestContract,
+  onSubmitAgentChat,
+  onActionOpen,
   onTabChange,
-  onAction,
-  onSaveSnapshot,
-  onSaveDecisionBrief
+  onFocusAction,
+  onStrategyAction,
+  runAction
 }: {
-  guidance: ProjectGuidance | null;
+  project: Project;
+  overview: Overview | null;
   recommendation: FocusRecommendation;
-  currentTab: Tab;
+  strategyBrief: AdaptiveStrategyBrief | null;
+  researchBriefs: ResearchBrief[];
+  ideas: Idea[];
+  artifacts: Artifact[];
+  jobs: Job[];
+  runs: Run[];
+  assumptions: Assumption[];
+  insights: Insight[];
+  reports: Report[];
+  leaderboard: LeaderboardEntry[];
+  notebookIndex: NotebookIndex | null;
   busy: boolean;
   text: LocaleMessages;
+  messages: AgentChatMessage[];
+  latestContract: Artifact | null;
+  onSubmitAgentChat: (objective: string) => Promise<void>;
+  onActionOpen: (action: AgentChatAction) => void;
   onTabChange: (tab: Tab) => void;
-  onAction: (action: FocusAction | null) => void;
-  onSaveSnapshot: () => void;
-  onSaveDecisionBrief: () => void;
+  onFocusAction: (action: FocusAction | null) => void;
+  onStrategyAction: (action: StrategyAction) => void;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
-  const navigation = guidance?.autonomous_navigation ?? {};
-  const decisionBrief =
-    navigation.decision_brief && typeof navigation.decision_brief === "object"
-      ? (navigation.decision_brief as Record<string, unknown>)
-      : {};
-  const headline = textField(navigation.headline) ?? recommendation.title;
-  const why = textField(navigation.why) ?? recommendation.reason;
-  const decisionQuestion = textField(decisionBrief.decision_question);
-  const status = textField(navigation.status) ?? recommendation.riskLevel ?? "ready_to_act";
-  const evidence = Array.isArray(navigation.evidence)
-    ? navigation.evidence.map((item) => String(item)).slice(0, 3)
-    : recommendation.evidence.slice(0, 3);
-  const journeyProgress =
-    navigation.journey_progress && typeof navigation.journey_progress === "object"
-      ? (navigation.journey_progress as Record<string, unknown>)
-      : {};
-  const doneCount = Number(journeyProgress.done_count ?? 0);
-  const totalCount = Number(journeyProgress.total_count ?? guidance?.journey_stages.length ?? 0);
-  const stages = guidance?.journey_stages ?? [];
-  const isCurrent = currentTab === recommendation.tab;
-  const navigationPrimaryAction =
-    guidance?.recommended_focus.primary_action && navigation.primary_action && typeof navigation.primary_action === "object"
-      ? guidanceActionToFocusAction(guidance.recommended_focus.primary_action)
-      : null;
-  const primaryAction =
-    navigationPrimaryAction ??
-    recommendation.primaryAction ??
-    ({
-      id: "navigate_recommended_focus",
-      label: isCurrent ? text.recommendedFocus : `${text.goToFocus}: ${tabLabel(recommendation.tab, text)}`,
-      targetTab: recommendation.tab,
-      actionType: "navigate",
-      method: null,
-      endpoint: null,
-      requestBody: null,
-      prompt: null,
-      disabled: isCurrent,
-      disabledReason: null
-    } satisfies FocusAction);
-  const primaryDisabled = primaryAction.disabled || (primaryAction.actionType === "navigate" && isCurrent);
+  const activeJobs = jobs.filter((job) => !isTerminalJob(job)).slice(0, 3);
+  const activeJob = activeJobs[0] ?? null;
+  const highRiskAssumptions = assumptions.filter(isHighRiskAssumption);
+  const latestResearchPlan = latestArtifactByType(artifacts, "research_plan");
+  const latestBrief = researchBriefs[0] ?? null;
+  const topRun = leaderboard[0] ?? null;
+  const recommendedNotebook = notebookIndex?.recommended_notebook ?? null;
+  const latestIdea = ideas[0] ?? null;
+  const mode = project.autonomy_mode ?? "approval_based";
+  const nextStrategyAction = strategyBrief?.recommended_next_action ?? null;
+  const focusAction = recommendation.primaryAction;
+
+  async function setAutonomyMode(nextMode: AutonomyMode) {
+    if (nextMode === mode) return;
+    await runAction(() =>
+      api<Project>(`/api/projects/${project.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autonomy_mode: nextMode })
+      })
+    );
+  }
 
   return (
-    <section className="autonomous-navigator" aria-label={text.autonomousNavigator}>
-      <div className="autonomous-main">
-        <div className="autonomous-copy">
-          <div className="eyebrow">{text.autonomousNavigator}</div>
-          <h2>{headline}</h2>
-          {decisionQuestion ? (
-            <div className="autonomous-question">
-              <span>{text.decisionQuestion}</span>
-              <strong>{decisionQuestion}</strong>
-            </div>
-          ) : null}
-          <p>{why}</p>
+    <div className="mission-home stack">
+      <section className="mission-hero">
+        <div className="mission-hero-copy">
+          <div className="eyebrow">{text.missionControlTitle}</div>
+          <h2>{recommendation.title}</h2>
+          <p>{recommendation.reason}</p>
           <div className="badge-row">
-            <span className={navigatorStatusClass(status)}>{status.replace(/_/g, " ")}</span>
-            {totalCount ? <span className="badge muted">{doneCount}/{totalCount} journey</span> : null}
-            <span className="badge muted">{text.oneDecisionAtATime}</span>
+            <span className={navigatorStatusClass(recommendation.riskLevel ?? "ready")}>
+              {(recommendation.riskLevel ?? "ready").replace(/_/g, " ")}
+            </span>
+            <span className="badge muted">{formatWorkflowState(project.current_phase)}</span>
+            <span className="badge muted">
+              {project.target_column ? `target: ${project.target_column}` : "target not fixed"}
+            </span>
           </div>
         </div>
+        <div className="mission-hero-actions">
+          <AutonomyModePanel
+            mode={mode}
+            busy={busy}
+            text={text}
+            onChange={(nextMode) => void setAutonomyMode(nextMode)}
+          />
+          <button
+            className="primary-button mission-focus-button"
+            disabled={busy || !focusAction || focusAction.disabled}
+            onClick={() => onFocusAction(focusAction)}
+            type="button"
+          >
+            {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+            {focusAction?.label ?? text.recommendedFocus}
+          </button>
+        </div>
+      </section>
+
+      <div className="mission-grid">
+        <section className="mission-plan-panel">
+          <div className="mission-panel-head">
+            <div>
+              <span>{text.researchPlanTitle}</span>
+              <strong>{latestResearchPlan?.name ?? strategyBrief?.recommended_next_action.label ?? text.researchPlanEmpty}</strong>
+            </div>
+            <div className="button-row">
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={() => void runAction(() => api(`/api/projects/${project.id}/approach/strategy-brief`, { method: "POST" }))}
+                type="button"
+              >
+                {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+                {text.generateStrategyBrief}
+              </button>
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={() => void runAction(() => api(`/api/projects/${project.id}/approach/research-plan`, { method: "POST" }))}
+                type="button"
+              >
+                {busy ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
+                {text.generateResearchPlan}
+              </button>
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={() =>
+                  void runAction(() =>
+                    api(`/api/projects/${project.id}/approach/agent-task-plan`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({})
+                    })
+                  )
+                }
+                type="button"
+              >
+                {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+                {text.planAgentTask}
+              </button>
+            </div>
+          </div>
+          <div className="mission-plan-body">
+            {nextStrategyAction ? (
+              <button className="mission-next-action" type="button" onClick={() => onStrategyAction(nextStrategyAction)}>
+                <span>{text.strategyRecommendedAction}</span>
+                <strong>{nextStrategyAction.label}</strong>
+                <small>{nextStrategyAction.reason}</small>
+              </button>
+            ) : null}
+            <div className="mission-plan-facts">
+              <Metric label="ResearchPlans" value={artifacts.filter((artifact) => artifact.asset_type === "research_plan").length} />
+              <Metric label="Briefs" value={researchBriefs.length} />
+              <Metric label="Ideas" value={ideas.length} />
+              <Metric label="Contracts" value={artifacts.filter((artifact) => artifact.asset_type === "agent_task_contract").length} />
+            </div>
+            {latestResearchPlan ? (
+              <div className="mission-artifact-line">
+                <span>Latest plan</span>
+                <strong>{latestResearchPlan.id}</strong>
+                <small>{formatDate(latestResearchPlan.created_at)}</small>
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${latestResearchPlan.id}/download`} title="Download ResearchPlan">
+                  <Download size={16} />
+                </a>
+              </div>
+            ) : (
+              <EmptyInline text={text.researchPlanEmpty} />
+            )}
+          </div>
+        </section>
+
+        <section className="mission-task-panel">
+          <div className="mission-panel-head">
+            <div>
+              <span>{text.currentTaskTitle}</span>
+              <strong>{activeJob ? activeJob.job_type.replace(/_/g, " ") : text.currentTaskIdle}</strong>
+            </div>
+            {activeJob ? <span className={navigatorStatusClass(activeJob.status)}>{activeJob.status}</span> : null}
+          </div>
+          {activeJob ? (
+            <div className={`mission-task-card ${activeJob.status}`}>
+              <div className="mission-task-pulse" />
+              <div>
+                <strong>{activeJob.job_type.replace(/_/g, " ")}</strong>
+                <p>{activeJob.error_message ?? latestJobHeadline(activeJob)}</p>
+                <small>updated {formatDate(activeJob.updated_at)}</small>
+              </div>
+            </div>
+          ) : (
+            <EmptyInline text={text.currentTaskEmpty} />
+          )}
+          <div className="mission-plan-facts">
+            <Metric label="Datasets" value={overview?.counts.datasets ?? 0} />
+            <Metric label="Runs" value={runs.length} />
+            <Metric label="Risks" value={highRiskAssumptions.length} />
+            <Metric label="Artifacts" value={artifacts.length} />
+          </div>
+        </section>
+      </div>
+
+      <div className="mission-agent-layout">
+        <div className="mission-agent-primary">
+          <div className="mission-panel-title">
+            <MessageSquare size={18} />
+            <div>
+              <strong>{text.agentWorkspaceTitle}</strong>
+              <span>{text.missionControlSubtitle}</span>
+            </div>
+          </div>
+          <AgentChatDock
+            busy={busy}
+            text={text}
+            messages={messages}
+            latestContract={latestContract}
+            onSubmit={onSubmitAgentChat}
+            onActionOpen={onActionOpen}
+          />
+        </div>
+        <aside className="mission-evidence-stack">
+          <MissionSurfaceButton
+            icon={<Database size={17} />}
+            label={text.tabData}
+            detail={`${overview?.counts.datasets ?? 0} datasets / ${project.target_column ? "target set" : "target open"}`}
+            onClick={() => onTabChange("Data")}
+          />
+          <MissionSurfaceButton
+            icon={<Lightbulb size={17} />}
+            label={text.tabInsight}
+            detail={`${insights.length} insights / ${reports.length} reports / ${recommendedNotebook ? "notebook ready" : "notebook open"}`}
+            onClick={() => onTabChange("Insight")}
+          />
+          <MissionSurfaceButton
+            icon={<BarChart3 size={17} />}
+            label={text.tabLeaderboard}
+            detail={
+              topRun
+                ? `#1 ${topRun.runner_type} ${metricLabel(topRun.display_metric_name)}=${formatMaybeNumber(topRun.display_metric_value)}`
+                : "ranked model runs appear here"
+            }
+            onClick={() => onTabChange("Leaderboard")}
+          />
+          <MissionSurfaceButton
+            icon={<Layers size={17} />}
+            label={text.tabAssets}
+            detail={`${artifacts.length} project artifacts / ${latestContract ? "runner contract ready" : "no contract yet"}`}
+            onClick={() => onTabChange("Assets")}
+          />
+          <div className="mission-supporting">
+            <span>{text.supportingSurfacesTitle}</span>
+            <div className="button-row">
+              {(["Understanding", "Assumptions", "Evaluation", "Experiments", "Jobs", "Lineage"] as Tab[]).map((targetTab) => (
+                <button className="text-button" key={targetTab} onClick={() => onTabChange(targetTab)} type="button">
+                  {tabLabel(targetTab, text)}
+                </button>
+              ))}
+            </div>
+          </div>
+          {latestBrief ? (
+            <div className="mission-note">
+              <span>Latest brief</span>
+              <strong>{latestBrief.title}</strong>
+              <small>{latestBrief.key_findings.slice(0, 2).join(" / ") || latestBrief.status}</small>
+            </div>
+          ) : null}
+          {latestIdea ? (
+            <div className="mission-note">
+              <span>Latest idea</span>
+              <strong>{latestIdea.title}</strong>
+              <small>{latestIdea.hypothesis}</small>
+            </div>
+          ) : null}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function AutonomyModePanel({
+  mode,
+  busy,
+  text,
+  onChange
+}: {
+  mode: AutonomyMode;
+  busy: boolean;
+  text: LocaleMessages;
+  onChange: (mode: AutonomyMode) => void;
+}) {
+  return (
+    <div className="autonomy-mode-panel">
+      <span>{text.autonomyMode}</span>
+      <div className="segmented-control">
         <button
-          className="primary-button autonomous-action"
-          disabled={primaryDisabled}
-          onClick={() => onAction(primaryAction)}
+          className={mode === "approval_based" ? "active" : ""}
+          disabled={busy || mode === "approval_based"}
+          onClick={() => onChange("approval_based")}
           type="button"
         >
-          {primaryAction.actionType === "navigate" ? <Search size={16} /> : <Play size={16} />}
-          <span>
-            <small>{text.focusDo}</small>
-            {primaryAction.label}
-          </span>
+          <Check size={15} />
+          {text.approvalBasedMode}
+        </button>
+        <button
+          className={mode === "full_auto" ? "active" : ""}
+          disabled={busy || mode === "full_auto"}
+          onClick={() => onChange("full_auto")}
+          type="button"
+        >
+          <Play size={15} />
+          {text.fullAutoMode}
         </button>
       </div>
-      {evidence.length ? (
-        <div className="autonomous-evidence">
-          {evidence.map((item) => (
-            <span key={item}>{item}</span>
-          ))}
-        </div>
-      ) : null}
-      <details className="autonomous-details">
-        <summary>
-          <span>{text.showMapOnlyIfNeeded}</span>
-          <small>{text.journeyMap}</small>
-        </summary>
-        <div className="autonomous-map">
-          {stages.map((stage, index) => (
-            <button
-              className={`autonomous-stage ${stage.status}`}
-              key={stage.id}
-              onClick={() => (stage.action ? onAction(guidanceActionToFocusAction(stage.action)) : onTabChange(normalizeTab(stage.target_tab)))}
-              title={stage.summary}
-              type="button"
-            >
-              <span>{stage.status === "done" ? <Check size={13} /> : index + 1}</span>
-              <strong>{journeyStageLabel(stage, text)}</strong>
-            </button>
-          ))}
-          <button className="secondary-button" disabled={busy} type="button" onClick={onSaveSnapshot}>
-            {busy ? <Loader2 className="spin" size={16} /> : <Download size={16} />}
-            {text.journeySaveSnapshot}
-          </button>
-          <button className="secondary-button" disabled={busy} type="button" onClick={onSaveDecisionBrief}>
-            {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
-            {text.saveDecisionBrief}
-          </button>
-        </div>
-      </details>
-    </section>
+      <small>{mode === "full_auto" ? text.fullAutoModeHint : text.approvalBasedModeHint}</small>
+    </div>
   );
+}
+
+function MissionSurfaceButton({
+  icon,
+  label,
+  detail,
+  onClick
+}: {
+  icon: React.ReactNode;
+  label: string;
+  detail: string;
+  onClick: () => void;
+}) {
+  return (
+    <button className="mission-surface-button" onClick={onClick} type="button">
+      <span>{icon}</span>
+      <strong>{label}</strong>
+      <small>{detail}</small>
+    </button>
+  );
+}
+
+function latestArtifactByType(artifacts: Artifact[], assetType: string) {
+  return artifacts
+    .filter((artifact) => artifact.asset_type === assetType)
+    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0] ?? null;
+}
+
+function latestJobHeadline(job: Job) {
+  const headline = textField(job.output.headline) ?? textField(job.context.headline) ?? textField(job.input.objective);
+  return headline ?? `${job.status.replace(/_/g, " ")} since ${formatDate(job.created_at)}`;
+}
+
+function formatMaybeNumber(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return Math.abs(value) >= 100 ? value.toFixed(1) : value.toFixed(4);
 }
 
 function navigatorStatusClass(status: string) {
@@ -2923,7 +3213,7 @@ function navigatorStatusClass(status: string) {
 }
 
 function agentChatActionLabel(action: AgentChatAction, text: LocaleMessages) {
-  const targetTab = tabFromString(action.target_tab, "Approach");
+  const targetTab = tabFromString(action.target_tab, "Home");
   const verb = ["needs_review", "created", "recorded", "explained"].includes(action.status)
     ? text.chatActionReview
     : text.chatActionOpen;
@@ -2960,7 +3250,7 @@ function AgentChatSummaryCard({
   text: LocaleMessages;
   onActionOpen: (action: AgentChatAction) => void;
 }) {
-  const targetTab = summary.next_step?.target_tab ? tabFromString(summary.next_step.target_tab, "Approach") : null;
+  const targetTab = summary.next_step?.target_tab ? tabFromString(summary.next_step.target_tab, "Home") : null;
   const nextAnchor = summary.next_step?.target_anchor ?? null;
   const nextLabel = summary.next_step?.label ?? "Review the focused surface";
   const targetLabel = targetTab ? tabLabel(targetTab, text) : "";
@@ -3073,7 +3363,7 @@ function AgentChatDock({
       </div>
       {messages.length ? (
         <div className="agent-chat-log">
-          {messages.slice(-4).map((message, index) => (
+          {messages.slice(-24).map((message, index) => (
             <div className={`agent-chat-message ${message.role}`} key={`${message.role}-${index}-${message.text}`}>
               <p>{message.text}</p>
               {message.actionSummary ? (
@@ -3258,7 +3548,7 @@ function optimisticWorkerEvent(projectId: string, message: string): AgentWorkerE
     detail: message,
     job_id: `local-${Date.now()}`,
     project_id: projectId,
-    target_tab: "Approach",
+    target_tab: "Home",
     created_at: now,
     updated_at: now,
     active: true,
@@ -9535,15 +9825,21 @@ function formatVizValue(value: unknown) {
 }
 
 function AssetsTab({
+  project,
   artifacts,
   modelVersions,
   validationsByModelVersion,
+  libraryAssets,
+  projectAssetReferences,
   busy,
   runAction
 }: {
+  project: Project;
   artifacts: Artifact[];
   modelVersions: ModelVersion[];
   validationsByModelVersion: Record<string, ModelValidation[]>;
+  libraryAssets: LibraryAsset[];
+  projectAssetReferences: AssetReference[];
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
@@ -9653,6 +9949,13 @@ function AssetsTab({
           <EmptyInline text="Project artifacts and cross-project asset references for Skills, EvaluationPatterns, PromptTemplates, and VisualizationTemplates will appear here." />
         )}
       </Panel>
+      <LibraryTab
+        project={project}
+        assets={libraryAssets}
+        references={projectAssetReferences}
+        busy={busy}
+        runAction={runAction}
+      />
       <Panel title="Artifact Preview" icon={<FileText size={18} />}>
         {previewError ? <div className="banner danger">{previewError}</div> : null}
         {preview ? (

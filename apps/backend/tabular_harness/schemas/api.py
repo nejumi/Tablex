@@ -10,6 +10,7 @@ class ProjectCreate(BaseModel):
     description: str | None = None
     task_type: str | None = None
     target_column: str | None = None
+    autonomy_mode: Literal["approval_based", "full_auto"] | None = "approval_based"
 
 
 class ProjectUpdate(BaseModel):
@@ -17,6 +18,7 @@ class ProjectUpdate(BaseModel):
     description: str | None = None
     task_type: str | None = None
     target_column: str | None = None
+    autonomy_mode: Literal["approval_based", "full_auto"] | None = None
 
 
 class ProjectRead(BaseModel):
@@ -30,6 +32,7 @@ class ProjectRead(BaseModel):
     target_column: str | None
     current_phase: str
     status: str
+    autonomy_mode: Literal["approval_based", "full_auto"]
     created_at: str
     updated_at: str
 
