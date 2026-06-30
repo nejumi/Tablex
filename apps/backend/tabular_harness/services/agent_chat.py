@@ -47,6 +47,10 @@ from tabular_harness.services.jobs import (
     mark_job_running,
     mark_job_succeeded,
 )
+from tabular_harness.services.metric_preferences import (
+    normalize_metric_name,
+    record_metric_preference,
+)
 from tabular_harness.services.model_diagnostics_artifacts import (
     materialize_model_diagnostics_artifacts,
 )
@@ -380,12 +384,15 @@ def normalize_text(value: str) -> str:
 
 
 def extract_metric(normalized: str) -> str | None:
-    comparable = normalized.replace("_", " ").replace("-", " ")
+    comparable = normalized.replace("ー", "-").replace("_", " ").replace("-", " ")
     for metric, config in SUPPORTED_METRICS.items():
         for alias in config["aliases"]:
             comparable_alias = alias.replace("_", " ").replace("-", " ")
             if comparable_alias in comparable:
                 return metric
+    normalized_metric = normalize_metric_name(normalized)
+    if normalized_metric in SUPPORTED_METRICS:
+        return normalized_metric
     return None
 
 
@@ -1619,6 +1626,27 @@ def apply_metric_preference(
     metric: str,
 ) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
+    preference_artifact = record_metric_preference(
+        db,
+        store=store,
+        project=project,
+        metric=metric,
+        source="agent_chat",
+    )
+    actions.append(
+        {
+            "type": "set_leaderboard_metric_view",
+            "status": "applied",
+            "label": f"Leaderboard now ranks by {SUPPORTED_METRICS[metric]['label']} when available",
+            "target_tab": "Leaderboard",
+            "target_anchor": "result-readout",
+            "detail": (
+                "The visible leaderboard metric preference changed immediately. Existing runs will re-rank by this "
+                "metric if it was already computed; otherwise the row shows the metric as unavailable until rerun."
+            ),
+            "artifact_id": preference_artifact.id,
+        }
+    )
     candidates = list(
         db.scalars(
             select(EvaluationCandidate)
@@ -1958,8 +1986,12 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
     recorded = [action for action in actions if action["status"] == "recorded"]
     if intent["type"] == "set_evaluation_metric":
         metric = SUPPORTED_METRICS[str(intent["metric"])]["label"]
-        parts = [f"Understood: use {metric} as the evaluation metric."]
-        if applied:
+        metric_view_applied = any(action.get("type") == "set_leaderboard_metric_view" for action in actions)
+        design_applied = any(action.get("type") in {"update_evaluation_candidates", "update_draft_evaluation_specs"} for action in applied)
+        parts = [f"Done: the leaderboard view is now set to {metric}."]
+        if metric_view_applied:
+            parts.append("Rows are ranked by that one metric when the run has it; missing scores stay blank instead of silently falling back to another metric.")
+        if design_applied:
             parts.append("I updated mutable evaluation design objects now.")
         if review:
             parts.append("I did not change approved EvaluationSpecs; I created a review artifact instead.")
@@ -1967,7 +1999,7 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
             parts.append("There is no evaluation design to edit yet, so I recorded this as a preference for the next design step.")
         if created:
             parts.append("I also prepared a controlled AgentTaskContract for a runner to revise the design safely.")
-        parts.append("Next: open Evaluation and review the metric state before running experiments.")
+        parts.append("Next: read the Leaderboard; open Evaluation only if you want to replace the approved evaluation contract.")
         return " ".join(parts)
     if intent["type"] == "generate_data_understanding_notebook":
         action = actions[0]

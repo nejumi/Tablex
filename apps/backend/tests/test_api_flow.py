@@ -162,7 +162,7 @@ def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path
     candidates_before = client.get(f"/api/projects/{project_id}/evaluation/candidates").json()
     assert any(candidate["primary_metric"] == "pr_auc" for candidate in candidates_before)
 
-    chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "metricはROC-AUCにして"})
+    chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "metricはROCーAUCにして"})
     assert chat_response.status_code == 200, chat_response.text
     chat = chat_response.json()
     assert chat["schema_version"] == "agent_chat_turn.v1"
@@ -171,9 +171,10 @@ def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path
     assert chat["action_summary"]["schema_version"] == "agent_action_summary.v1"
     assert chat["action_summary"]["outcome"] == "applied"
     assert "ROC-AUC" in chat["action_summary"]["headline"]
-    assert chat["action_summary"]["next_step"]["target_tab"] == "Evaluation"
-    assert chat["action_summary"]["next_step"]["target_anchor"] == "evaluation-design"
+    assert chat["action_summary"]["next_step"]["target_tab"] == "Leaderboard"
+    assert chat["action_summary"]["next_step"]["target_anchor"] == "result-readout"
     assert any("EvaluationSpecs" in item for item in chat["action_summary"]["boundaries"])
+    assert any(action["type"] == "set_leaderboard_metric_view" for action in chat["actions"])
     assert any(action["type"] == "update_evaluation_candidates" for action in chat["actions"])
     assert any(action["target_tab"] == "Evaluation" for action in chat["actions"])
     assert any(action["target_anchor"] == "evaluation-design" for action in chat["actions"])
@@ -183,9 +184,12 @@ def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path
 
     candidates_after = client.get(f"/api/projects/{project_id}/evaluation/candidates").json()
     assert {candidate["primary_metric"] for candidate in candidates_after} == {"roc_auc"}
+    leaderboard = client.get(f"/api/projects/{project_id}/leaderboard").json()
+    assert leaderboard == []
     artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
     assert artifacts_response.status_code == 200
     assert any(item["asset_type"] == "agent_chat_turn" for item in artifacts_response.json())
+    assert any(item["asset_type"] == "evaluation_metric_preference" for item in artifacts_response.json())
 
 
 def test_agent_chat_runs_core_harness_actions(tmp_path: Path) -> None:
@@ -826,7 +830,24 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert baseline_metrics["model_baseline_attempted"] is True
     assert baseline_metrics["baseline_type"] in {"xgboost_classifier", "logistic_regression", "majority_classifier"}
     assert baseline_metrics["primary_metric_value"] >= 0
+    assert "roc_auc" in baseline_metrics
     assert len(baseline_job["output"]["artifact_ids"]) >= 7
+
+    leaderboard_metric_response = client.post(
+        f"/api/projects/{project_id}/leaderboard/metric",
+        json={"metric": "ROCーAUC"},
+    )
+    assert leaderboard_metric_response.status_code == 200, leaderboard_metric_response.text
+    assert leaderboard_metric_response.json()["metric"] == "roc_auc"
+
+    leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
+    assert leaderboard_response.status_code == 200, leaderboard_response.text
+    leaderboard = leaderboard_response.json()
+    assert leaderboard[0]["run_id"] == baseline_job["output"]["experiment_run_id"]
+    assert leaderboard[0]["display_metric_name"] == "roc_auc"
+    assert leaderboard[0]["display_metric_source"] == "metric_preference"
+    assert leaderboard[0]["display_metric_available"] is True
+    assert abs(leaderboard[0]["display_metric_value"] - baseline_metrics["roc_auc"]) <= 1e-12
 
     leaderboard_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "リーダーボードを見せて"})
     assert leaderboard_chat_response.status_code == 200, leaderboard_chat_response.text

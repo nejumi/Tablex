@@ -1049,6 +1049,10 @@ type LeaderboardEntry = {
   runner_type: string;
   primary_metric_name: string | null;
   primary_metric_value: number | null;
+  display_metric_name: string | null;
+  display_metric_value: number | null;
+  display_metric_available: boolean;
+  display_metric_source: string;
   metrics: Record<string, unknown>;
   evaluation_spec_id: string | null;
   split_manifest_id: string | null;
@@ -9033,53 +9037,46 @@ function BarVisualization({
   );
 }
 
-function ResultReadoutStory({ readout }: { readout: ResultReadout }) {
-  const readOrder = readout.read_order.slice(0, 5);
-  const gaps = readout.evidence_gaps.slice(0, 4);
-  return (
-    <Panel title="How to read this result" icon={<ListChecks size={18} />}>
-      <div className="result-readout-grid">
-        <div className="result-readout-column">
-          <h3>Read in this order</h3>
-          <div className="result-readout-steps">
-            {readOrder.map((item, index) => (
-              <div className="result-readout-step" key={`${textField(item.title) ?? "step"}-${index}`}>
-                <span>{String(item.step ?? index + 1)}</span>
-                <div>
-                  <strong>{textField(item.title) ?? "Read evidence"}</strong>
-                  <p>{textField(item.body) ?? "No guidance recorded."}</p>
-                  <small>{textField(item.target_tab) ?? "Tablex"}</small>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="result-readout-column">
-          <h3>Open evidence gaps</h3>
-          {gaps.length ? (
-            <div className="result-gap-list">
-              {gaps.map((gap, index) => (
-                <div className="result-gap-item" key={`${textField(gap.area) ?? "gap"}-${index}`}>
-                  <strong>{textField(gap.area) ?? "Evidence gap"}</strong>
-                  <p>{textField(gap.summary) ?? "No summary recorded."}</p>
-                  <small>{textField(gap.target_tab) ?? "Reports"} · {(textField(gap.status) ?? "missing").replace(/_/g, " ")}</small>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyInline text="No evidence gap is currently open in the result readout." />
-          )}
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
 function resultReadoutStatusTone(status: string, fallback: EvidenceReaderMetric["tone"]): EvidenceReaderMetric["tone"] {
   if (status === "ready_for_review") return "ready";
   if (status === "needs_attention" || status === "needs_decision_report" || status === "needs_diagnostics") return "warning";
   if (status === "needs_evaluation" || status === "needs_run") return "risk";
   return fallback;
+}
+
+const builtinLeaderboardMetrics = ["roc_auc", "pr_auc", "accuracy", "macro_f1", "f1", "log_loss", "rmse", "mae", "r2"];
+const preferredMetricOrder = builtinLeaderboardMetrics;
+const ignoredMetricKeys = new Set([
+  "primary_metric_value",
+  "train_count",
+  "valid_count",
+  "feature_count",
+  "numeric_feature_count",
+  "categorical_feature_count",
+  "text_feature_count"
+]);
+
+function leaderboardMetricOptions(leaderboard: LeaderboardEntry[]) {
+  const options = new Set<string>(builtinLeaderboardMetrics);
+  leaderboard.forEach((entry) => {
+    Object.entries(entry.metrics).forEach(([key, value]) => {
+      if (ignoredMetricKeys.has(key)) return;
+      if (typeof value === "number" && Number.isFinite(value)) options.add(key);
+    });
+    if (entry.primary_metric_name) options.add(entry.primary_metric_name);
+  });
+  return [...options].sort((left, right) => {
+    const leftIndex = preferredMetricOrder.indexOf(left);
+    const rightIndex = preferredMetricOrder.indexOf(right);
+    if (leftIndex !== -1 || rightIndex !== -1) {
+      return (leftIndex === -1 ? 999 : leftIndex) - (rightIndex === -1 ? 999 : rightIndex);
+    }
+    return left.localeCompare(right);
+  });
+}
+
+function metricLabel(metric: string | null | undefined) {
+  return metric ? metric.replace(/_/g, "-").toUpperCase() : "metric";
 }
 
 function LeaderboardTab({
@@ -9105,14 +9102,9 @@ function LeaderboardTab({
   const diagnosticArtifacts = artifacts.filter((artifact) =>
     ["evaluation_diagnostics", "evaluation_diagnostics_report"].includes(artifact.asset_type)
   );
-  const modelDiagnosticArtifacts = artifacts.filter((artifact) =>
-    ["feature_importance", "permutation_importance", "model_diagnostics_artifact_pack", "model_diagnostics_artifact_report"].includes(artifact.asset_type)
-  );
-  const comparisonReportArtifacts = artifacts.filter((artifact) => artifact.asset_type === "experiment_comparison_report");
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
-  const autoPreviewedComparisonRef = React.useRef<string | null>(null);
 
   async function loadPreview(artifactId: string) {
     setPreviewLoadingId(artifactId);
@@ -9157,15 +9149,6 @@ function LeaderboardTab({
     return job;
   }
 
-  async function generateTopRunNotebook(entry: LeaderboardEntry) {
-    const job = await api<Job>(`/api/runs/${entry.run_id}/analysis-notebook`, { method: "POST" });
-    const htmlArtifactId = textField(job.output.notebook_html_artifact_id);
-    if (htmlArtifactId) {
-      await loadPreview(htmlArtifactId);
-    }
-    return job;
-  }
-
   async function materializeTopRunModelEvidence(entry: LeaderboardEntry) {
     const job = await api<Job>(`/api/runs/${entry.run_id}/model-diagnostics-artifacts`, { method: "POST" });
     const artifactId =
@@ -9191,234 +9174,157 @@ function LeaderboardTab({
     return job;
   }
 
-  const latestComparisonReport = comparisonReportArtifacts[0] ?? null;
   const readoutStatus = resultReadout?.status ?? leaderboardStatus;
   const readoutTone = resultReadoutStatusTone(readoutStatus, leaderboardTone);
-  const readoutNextAction = resultReadout?.next_action ?? null;
-  const readoutNextLabel = textField(readoutNextAction?.label) ?? (topEntry ? "Review diagnostics for the leading run" : "Create run evidence from Experiments");
-  const readoutNextPrompt =
-    textField(readoutNextAction?.agent_prompt) ??
-    (topEntry
-      ? `Diagnose the top run for ${project.name} and update the result readout.`
-      : `Help me create comparable run evidence for ${project.name}.`);
-  const readoutMetrics: EvidenceReaderMetric[] = [
-    {
-      label: "Best run",
-      value: textField(resultReadout?.top_run?.id) ?? "-",
-      tone: resultReadout?.top_run ? "ready" : "muted"
-    },
-    {
-      label: "Contract",
-      value: textField(resultReadout?.evaluation_contract.status) ?? leaderboardStatus,
-      tone: textField(resultReadout?.evaluation_contract.status) === "ready" || leaderboardTone === "ready" ? "ready" : "warning"
-    },
-    {
-      label: "Diagnostics",
-      value: booleanField(resultReadout?.diagnostics.available) ? "ready" : diagnosticArtifacts.length,
-      tone: booleanField(resultReadout?.diagnostics.available) || diagnosticArtifacts.length ? "ready" : "muted"
-    },
-    {
-      label: "Decision",
-      value: booleanField(resultReadout?.decision_report.available) ? "report" : "gap",
-      tone: booleanField(resultReadout?.decision_report.available) ? "ready" : "warning"
-    },
-    {
-      label: "Notebook",
-      value: textField(resultReadout?.notebook.status) ?? "missing",
-      tone: textField(resultReadout?.notebook.status) === "ready" ? "ready" : "warning"
-    }
-  ];
-  React.useEffect(() => {
-    if (!latestComparisonReport) return;
-    if (preview?.id === latestComparisonReport.id) return;
-    if (autoPreviewedComparisonRef.current === latestComparisonReport.id) return;
-    autoPreviewedComparisonRef.current = latestComparisonReport.id;
-    void loadPreview(latestComparisonReport.id);
-  }, [latestComparisonReport, preview?.id]);
+  const metricOptions = leaderboardMetricOptions(leaderboard);
+  const selectedMetric = topEntry?.display_metric_name ?? metricOptions[0] ?? null;
+  const unavailableCount = selectedMetric ? leaderboard.filter((entry) => !entry.display_metric_available).length : 0;
+  const topMetricName = selectedMetric ?? "metric";
+  const diagnosticsReady = booleanField(resultReadout?.diagnostics.available) || diagnosticArtifacts.length > 0;
+  const decisionReady = booleanField(resultReadout?.decision_report.available);
+
+  async function setLeaderboardMetric(metric: string) {
+    await api(`/api/projects/${project.id}/leaderboard/metric`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ metric })
+    });
+  }
 
   return (
     <div className="stack">
-      <FocusedEvidenceReader
-        id="result-readout"
-        eyebrow="Result Readout"
-        title={resultReadout?.headline ?? (leaderboard.length ? "Compare runs only inside the evaluation contract" : "No leaderboard evidence yet")}
-        body={
-          resultReadout?.summary ??
-          "Leaderboard values are useful only when the metric, EvaluationSpec, SplitManifest, and diagnostics are visible. Tablex keeps this as evidence for decisions, not a race to the highest number."
-        }
-        status={readoutStatus.replace(/_/g, " ")}
-        statusTone={readoutTone}
-        metrics={readoutMetrics}
-        nextLabel={readoutNextLabel}
-        nextDetail={
-          resultReadout
-            ? "Let Tablex decide whether to diagnose, compare, summarize, or route you to the next evidence gap."
-            : topEntry
-              ? "A top metric is not enough. Generate diagnostics, slice checks, and split sanity evidence before trusting the rank."
-              : "Run a baseline or agent task after evaluation is approved; the leaderboard should stay empty until comparable run evidence exists."
-        }
-        nextButtonLabel={resultReadout ? "Ask Tablex" : topEntry ? "Analyze Top Run" : "Waiting for Runs"}
-        nextDisabled={busy || (!resultReadout && !topEntry)}
-        onNext={() => {
-          if (resultReadout) {
-            void onAskAgent(readoutNextPrompt);
-          } else if (topEntry) {
-            void runAction(() => analyzeTopRun(topEntry));
-          }
-        }}
-        previewTitle={latestComparisonReport ? "Latest comparison report" : "Diagnostics preview"}
-        preview={preview}
-        previewError={previewError}
-        previewLoading={Boolean(previewLoadingId)}
-        previewEmpty="Analyze a run or select a diagnostics artifact to read the evaluation evidence here."
-        boundary="Ranks require the same evaluation contract"
-      />
-      {resultReadout ? <ResultReadoutStory readout={resultReadout} /> : null}
-      {topEntry ? (
-        <div className="toolbar leaderboard-reader-actions" aria-label="Top run evidence actions">
-          <button className="secondary-button" disabled={busy} onClick={() => void runAction(() => analyzeTopRun(topEntry))}>
-            {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
-            Top Run Diagnostics
-          </button>
-          <button className="secondary-button" disabled={busy} onClick={() => void runAction(() => materializeTopRunModelEvidence(topEntry))}>
-            {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
-            Model Evidence
-          </button>
-          <button className="secondary-button" disabled={busy} onClick={() => void runAction(() => draftTopRunReport(topEntry))}>
-            {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
-            Top Run Report
-          </button>
-          <button className="secondary-button" disabled={busy} onClick={() => void runAction(() => generateTopRunNotebook(topEntry))}>
-            {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-            Diagnostics Notebook
-          </button>
-          <button className="secondary-button" disabled={busy} onClick={() => void runAction(prepareResultNotebookEvidence)}>
-            {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-            Notebook Evidence
-          </button>
-          <button
-            className="secondary-button"
-            disabled={busy}
-            onClick={() => void onAskAgent(`Prepare a post-run decision report for ${project.name}: diagnose the top run, compare current runs, and generate the decision report.`)}
-          >
-            {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
-            Post-run Report
-          </button>
+      <section id="result-readout" className="leaderboard-surface" aria-label="Leaderboard">
+        <div className="leaderboard-head">
+          <div>
+            <div className="eyebrow">Leaderboard</div>
+            <h2>{leaderboard.length ? `${leaderboard.length} run${leaderboard.length === 1 ? "" : "s"} ranked by ${metricLabel(topMetricName)}` : "No ranked runs yet"}</h2>
+            <div className="badge-row">
+              <span className={evidenceMetricClass(readoutTone)}>{readoutStatus.replace(/_/g, " ")}</span>
+              <span className={approvedSpecCount ? "badge success" : "badge warning"}>{approvedSpecCount ? "evaluation locked" : "evaluation missing"}</span>
+              <span className={splitManifests.length ? "badge success" : "badge warning"}>{splitManifests.length ? "split ready" : "split missing"}</span>
+              {unavailableCount ? <span className="badge warning">{unavailableCount} missing score</span> : null}
+            </div>
+          </div>
+          <div className="leaderboard-controls">
+            <label>
+              <span>Metric</span>
+              <select
+                disabled={busy || !metricOptions.length}
+                value={selectedMetric ?? ""}
+                onChange={(event) => void runAction(() => setLeaderboardMetric(event.target.value))}
+              >
+                {metricOptions.map((metric) => (
+                  <option key={metric} value={metric}>
+                    {metricLabel(metric)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="secondary-button"
+              disabled={busy}
+              onClick={() => void onAskAgent(`Add or compute a new leaderboard metric for ${project.name}. Keep it as one metric across all runs and update the leaderboard view when available.`)}
+              type="button"
+            >
+              {busy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+              Add metric
+            </button>
+            <div className="leaderboard-best-score">
+              <span>Best score</span>
+              <strong>{formatScore(topEntry?.display_metric_value ?? null)}</strong>
+              <small>{metricLabel(topMetricName)} · {topEntry?.run_id ?? "no run"}</small>
+            </div>
+          </div>
         </div>
-      ) : null}
-      <details className="report-supporting-details leaderboard-supporting-details">
-        <summary>
-          <span>Supporting leaderboard evidence</span>
-          <small>Raw ranks, evaluation context, diagnostics artifacts, and preview controls</small>
-        </summary>
-        <Panel title="Leaderboard" icon={<BarChart3 size={18} />}>
-          {leaderboard.length ? (
+        {leaderboard.length ? (
+          <div className="leaderboard-table-wrap">
             <Table
-              headers={["Rank", "Run", "Runner", "Model", "ModelVersion", "Metric", "Value", "Spec", "Split", "Actions"]}
+              headers={["Rank", "Run", "Score", "Model", "Evaluation", "Evidence", "Actions"]}
               rows={leaderboard.map((entry) => [
-                entry.rank,
-                entry.run_id,
-                entry.runner_type,
-                formatBaseline(entry.metrics),
-                entry.model_version_id ?? "-",
-                entry.primary_metric_name ?? "-",
-                entry.primary_metric_value == null ? "-" : entry.primary_metric_value.toFixed(6),
-                entry.evaluation_spec_id ?? "-",
-                entry.split_manifest_id ?? "-",
-                <button
-                  className="icon-button"
-                  disabled={busy}
-                  key={entry.run_id}
-                  onClick={() => void runAction(() => analyzeTopRun(entry))}
-                  title="Analyze evaluation diagnostics"
-                >
-                  {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-                </button>
-              ])}
-            />
-          ) : (
-            <EmptyInline text="Runs will be ranked here with primary metric, secondary metrics, evaluation spec version, split manifest version, and decision status." />
-          )}
-        </Panel>
-        <Panel title="Evaluation Context" icon={<Layers size={18} />}>
-          <Table
-            headers={["Approved Specs", "Split Manifests"]}
-            rows={[[approvedSpecCount, splitManifests.length]]}
-          />
-        </Panel>
-        <Panel title="Evaluation Diagnostics" icon={<ListChecks size={18} />}>
-          {diagnosticArtifacts.length ? (
-            <Table
-              headers={["Type", "Name", "Version", "Run", "Actions"]}
-              rows={diagnosticArtifacts.map((artifact) => [
-                artifact.asset_type,
-                artifact.name,
-                `v${artifact.version}`,
-                String(artifact.metadata.run_id ?? "-"),
-                <div className="row-actions" key={artifact.id}>
+                <strong className="leaderboard-rank" key={`${entry.run_id}-rank`}>#{entry.rank}</strong>,
+                <div className="cell-stack" key={`${entry.run_id}-run`}>
+                  <span>{entry.run_id}</span>
+                  <small>{entry.runner_type}</small>
+                </div>,
+                <div className="leaderboard-score-cell" key={`${entry.run_id}-score`}>
+                  <strong>{formatScore(entry.display_metric_value)}</strong>
+                  <small>{metricLabel(entry.display_metric_name)}</small>
+                </div>,
+                <div className="cell-stack" key={`${entry.run_id}-model`}>
+                  <span>{formatBaseline(entry.metrics)}</span>
+                  <small>{entry.model_version_id ?? "no model version"}</small>
+                </div>,
+                <div className="cell-stack" key={`${entry.run_id}-eval`}>
+                  <span>{entry.evaluation_spec_id ?? "-"}</span>
+                  <small>{entry.split_manifest_id ?? "no split"}</small>
+                </div>,
+                <div className="leaderboard-evidence-badges" key={`${entry.run_id}-evidence`}>
+                  <span className={diagnosticsReady ? "badge success" : "badge muted"}>diagnostics</span>
+                  <span className={decisionReady ? "badge success" : "badge warning"}>report</span>
+                </div>,
+                <div className="row-actions" key={`${entry.run_id}-actions`}>
                   <button
                     className="icon-button"
-                    disabled={previewLoadingId === artifact.id}
-                    onClick={() => void loadPreview(artifact.id)}
-                    title="Preview diagnostics"
+                    disabled={busy}
+                    onClick={() => void runAction(() => analyzeTopRun(entry))}
+                    title="Analyze diagnostics"
                   >
-                    {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                    {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
                   </button>
-                  <a
-                    className="icon-link"
-                    href={`${apiBase}/api/artifacts/${artifact.id}/download`}
-                    title="Download diagnostics"
+                  <button
+                    className="icon-button"
+                    disabled={busy}
+                    onClick={() => void runAction(() => materializeTopRunModelEvidence(entry))}
+                    title="Materialize model evidence"
                   >
-                    <Download size={16} />
-                  </a>
+                    {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={busy}
+                    onClick={() => void runAction(prepareResultNotebookEvidence)}
+                    title="Open notebook evidence"
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={busy}
+                    onClick={() => void runAction(() => draftTopRunReport(entry))}
+                    title="Draft run report"
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+                  </button>
                 </div>
               ])}
             />
-          ) : (
-            <EmptyInline text="Evaluation diagnostics, slice metrics, error bins, worst examples, and split sanity checks will appear here after analyzing a run." />
-          )}
-        </Panel>
-        <Panel title="Model Evidence Artifacts" icon={<PieChart size={18} />}>
-          {modelDiagnosticArtifacts.length ? (
-            <Table
-              headers={["Type", "Name", "Version", "Run", "Actions"]}
-              rows={modelDiagnosticArtifacts.map((artifact) => [
-                artifact.asset_type,
-                artifact.name,
-                `v${artifact.version}`,
-                String(artifact.metadata.run_id ?? "-"),
-                <div className="row-actions" key={artifact.id}>
-                  <button
-                    className="icon-button"
-                    disabled={previewLoadingId === artifact.id}
-                    onClick={() => void loadPreview(artifact.id)}
-                    title="Preview model evidence"
-                  >
-                    {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-                  </button>
-                  <a
-                    className="icon-link"
-                    href={`${apiBase}/api/artifacts/${artifact.id}/download`}
-                    title="Download model evidence"
-                  >
-                    <Download size={16} />
-                  </a>
-                </div>
-              ])}
-            />
-          ) : (
-            <EmptyInline text="Feature importance, permutation importance, calibration, threshold, and model behavior artifacts will appear here after materializing model evidence." />
-          )}
-        </Panel>
-        <Panel title="Diagnostics Preview" icon={<FileText size={18} />}>
+          </div>
+        ) : (
+          <EmptyInline text="Run a baseline or agent task after approving evaluation. Ranked runs will appear here." />
+        )}
+      </section>
+      {(preview || previewError || previewLoadingId) ? (
+        <Panel title="Selected Run Evidence" icon={<FileText size={18} />}>
           {previewError ? <div className="banner danger">{previewError}</div> : null}
+          {previewLoadingId ? (
+            <div className="banner muted">
+              <Loader2 className="spin" size={16} />
+              Loading evidence...
+            </div>
+          ) : null}
           {preview?.preview_available ? (
-            <TranslatablePreview preview={preview} />
+            isVisualArtifactPreview(preview) ? (
+              <VisualArtifactPreview preview={preview} />
+            ) : isHtmlArtifactPreview(preview) ? (
+              <HtmlArtifactPreview preview={preview} />
+            ) : (
+              <TranslatablePreview preview={preview} />
+            )
           ) : (
-            <EmptyInline text={preview?.reason ?? "Select a diagnostics artifact to preview JSON or Markdown inside the workbench."} />
+            <EmptyInline text={preview?.reason ?? "Select a run action to inspect its diagnostics, model evidence, notebook evidence, or report."} />
           )}
         </Panel>
-      </details>
+      ) : null}
     </div>
   );
 }
@@ -9428,6 +9334,10 @@ function formatMetric(metrics: Record<string, unknown>) {
   const value = metrics.primary_metric_value;
   if (typeof name !== "string" || typeof value !== "number") return "-";
   return `${name}: ${value.toFixed(6)}`;
+}
+
+function formatScore(value: number | null) {
+  return value == null || !Number.isFinite(value) ? "-" : value.toFixed(6);
 }
 
 function formatJobSummaryMetric(summary: Record<string, unknown>) {

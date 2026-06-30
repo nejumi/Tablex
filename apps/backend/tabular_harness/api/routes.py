@@ -75,6 +75,7 @@ from tabular_harness.schemas import (
     JobCreate,
     JobRead,
     KaggleSelectiveDownloadRequest,
+    LeaderboardMetricPreferenceCreate,
     ModelValidationRead,
     ModelVersionRead,
     PortalIdeaCreate,
@@ -205,6 +206,19 @@ from tabular_harness.services.kaggle_probe import (
     download_kaggle_selected_files,
     fetch_kaggle_competition_inventory,
     probe_kaggle_benchmark_access,
+)
+from tabular_harness.services.metric_preferences import (
+    BUILTIN_METRIC_OPTIONS,
+    latest_metric_preference,
+    leaderboard_sort_key_for_metric,
+    normalize_metric_name,
+    record_metric_preference,
+)
+from tabular_harness.services.metric_preferences import (
+    metric_name as preferred_metric_name,
+)
+from tabular_harness.services.metric_preferences import (
+    metric_value as preferred_metric_value,
 )
 from tabular_harness.services.model_diagnostics_artifacts import (
     materialize_model_diagnostics_artifacts,
@@ -4140,22 +4154,63 @@ def leaderboard(project_id: str, db: Annotated[Session, Depends(get_session)]) -
     runs = db.scalars(
         select(ExperimentRun).where(ExperimentRun.project_id == project_id, ExperimentRun.status == "succeeded")
     ).all()
-    sorted_runs = sorted(runs, key=leaderboard_sort_key)
+    metric_preference = latest_metric_preference(db, project_id)
+    display_metric = metric_preference
+    if display_metric is None:
+        approved_spec = db.scalar(
+            select(EvaluationSpec)
+            .where(EvaluationSpec.project_id == project_id, EvaluationSpec.status == "approved")
+            .order_by(EvaluationSpec.created_at.desc())
+        )
+        if approved_spec is not None:
+            display_metric = approved_spec.primary_metric
+        elif runs:
+            first_metrics = loads_json(runs[0].metrics_json, {})
+            display_metric = preferred_metric_name(first_metrics, None)
+        else:
+            display_metric = str(BUILTIN_METRIC_OPTIONS[0]["name"])
+    if display_metric is None:
+        display_metric = str(BUILTIN_METRIC_OPTIONS[0]["name"])
+    sorted_runs = sorted(runs, key=lambda run: leaderboard_sort_key_for_metric(run, display_metric))
     return [
         {
             "rank": index + 1,
             "run_id": run.id,
             "status": run.status,
             "runner_type": run.runner_type,
-            "primary_metric_name": loads_json(run.metrics_json, {}).get("primary_metric_name"),
-            "primary_metric_value": loads_json(run.metrics_json, {}).get("primary_metric_value"),
-            "metrics": loads_json(run.metrics_json, {}),
+            "primary_metric_name": metrics.get("primary_metric_name"),
+            "primary_metric_value": metrics.get("primary_metric_value"),
+            "display_metric_name": display_metric,
+            "display_metric_value": display_metric_value,
+            "display_metric_available": display_metric_value is not None,
+            "display_metric_source": "metric_preference" if metric_preference else "run_primary_metric",
+            "metrics": metrics,
             "evaluation_spec_id": run.evaluation_spec_id,
             "split_manifest_id": run.split_manifest_id,
             "model_version_id": run.model_version_id,
         }
         for index, run in enumerate(sorted_runs)
+        for metrics in [loads_json(run.metrics_json, {})]
+        for display_metric_value in [preferred_metric_value(metrics, display_metric)]
     ]
+
+
+@router.post("/api/projects/{project_id}/leaderboard/metric")
+def set_leaderboard_metric(
+    project_id: str,
+    payload: LeaderboardMetricPreferenceCreate,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    metric = normalize_metric_name(payload.metric)
+    artifact = record_metric_preference(db, store=store, project=project, metric=metric, source="leaderboard_dropdown")
+    return {
+        "schema_version": "leaderboard_metric_preference.v1",
+        "project_id": project.id,
+        "metric": metric,
+        "artifact_id": artifact.id,
+    }
 
 
 @router.get("/api/projects/{project_id}/model-versions", response_model=list[ModelVersionRead])
