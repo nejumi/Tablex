@@ -42,6 +42,9 @@ type UserSettings = {
   requestedLocale: string;
   dynamicLanguageRequest: string;
   displayTheme: DisplayTheme;
+  interventionCountdownSeconds: number;
+  agentModel: string;
+  utilityModel: string;
 };
 
 const userSettingsStorageKey = "tablex.userSettings.v1";
@@ -51,7 +54,10 @@ const defaultUserSettings: UserSettings = {
   locale: "en-US",
   requestedLocale: "",
   dynamicLanguageRequest: "",
-  displayTheme: "light"
+  displayTheme: "light",
+  interventionCountdownSeconds: 15,
+  agentModel: "codex-default",
+  utilityModel: "utility-default"
 };
 
 const englishMessages = {
@@ -170,6 +176,28 @@ const englishMessages = {
   appearance: "Appearance",
   lightTheme: "Light",
   darkTheme: "Dark",
+  intervention: "Intervention",
+  models: "Models",
+  agentModel: "Agent model",
+  agentModelHint: "Used for planning, notebook authoring, modeling strategy, and autonomous reasoning.",
+  utilityModel: "Utility model",
+  utilityModelHint: "Used for translation, short summaries, UI wording, and conversation compression.",
+  modelPlaceholder: "e.g. gpt-5.1, gpt-5.5-high, gpt-5-mini",
+  interventionCountdown: "Full Auto intervention window",
+  interventionCountdownHint:
+    "Seconds to catch a Full Auto assumption or boundary before the agent continues. Set 0 to never show the dialog.",
+  seconds: "seconds",
+  autonomyInterventionTitle: "Full Auto is about to continue",
+  autonomyInterventionBody: "Tablex found a boundary or assumption. Catch it now to switch to Approval Based and review before continuing.",
+  autonomyInterventionContinue: "Let it continue",
+  autonomyInterventionCatch: "Catch and review",
+  autonomyInterventionDisabled: "Intervention dialog disabled",
+  fullAutoModeSelected: "Full Auto mode is selected. Press Start when data is ready; I will keep moving with explicit assumptions and boundaries.",
+  approvalModeSelected: "Approval Based mode is selected. Press Start when data is ready; I will prepare evidence and wait before risky decisions.",
+  stopAgentLoopUserMessage: "Stop agent loop",
+  startAgentLoopUserMessage: "Start agent loop",
+  agentLoopStopped: "Agent loop stopped.",
+  agentLoopStarted: "Agent loop started.",
   createLocalizationTask: "Create AgentTask",
   localizationTaskHint:
     "Creates a harness-owned AgentTaskContract so Codex can later generate or revise a locale pack.",
@@ -179,6 +207,12 @@ const englishMessages = {
   agentChatSubtitle: "Talk to Tablee; actions stay inside the harness",
   agentChatPlaceholder: "Try: set metric to ROC-AUC, explain the next step, generate a diagnostic notebook",
   createAgentTaskContract: "Send",
+  youAsked: "You asked",
+  tableeAnswered: "Tablee answered",
+  agentReplyPending: "Thinking and preparing the next useful response.",
+  chatTurnStatus: "Status",
+  chatBriefAvailable: "Response brief saved",
+  nextActionLabel: "Next",
   downloadLatestAgentTaskContract: "Download latest AgentTaskContract",
   agentTaskContractCreated: "AgentTaskContract created.",
   chatActionOpen: "Open",
@@ -368,6 +402,28 @@ const japaneseMessages: LocaleMessages = {
   appearance: "表示",
   lightTheme: "Light",
   darkTheme: "Dark",
+  intervention: "介入",
+  models: "モデル",
+  agentModel: "Agent用モデル",
+  agentModelHint: "計画、Notebook執筆、モデリング方針、自律的な内省に使うモデルです。",
+  utilityModel: "軽量タスク用モデル",
+  utilityModelHint: "翻訳、短い要約、UI文面整形、会話履歴圧縮に使うモデルです。",
+  modelPlaceholder: "例: gpt-5.1, gpt-5.5-high, gpt-5-mini",
+  interventionCountdown: "Full Auto介入猶予",
+  interventionCountdownHint:
+    "Full Autoが仮定やboundaryを置いて進む前に、人間が捕まえられる秒数です。0ならダイアログを一切出しません。",
+  seconds: "秒",
+  autonomyInterventionTitle: "Full Autoが続行しようとしています",
+  autonomyInterventionBody: "Tablexが仮定またはboundaryを検出しました。ここで捕まえると承認ベースに切り替えて確認できます。",
+  autonomyInterventionContinue: "そのまま続行",
+  autonomyInterventionCatch: "捕まえて確認",
+  autonomyInterventionDisabled: "介入ダイアログ無効",
+  fullAutoModeSelected: "フルオートモードを選択しました。データが準備できたら開始してください。明示的な仮定とboundaryを置きながら前に進みます。",
+  approvalModeSelected: "承認ベースモードを選択しました。データが準備できたら開始してください。根拠を準備し、リスクのある判断では承認を待ちます。",
+  stopAgentLoopUserMessage: "Agent loopを停止",
+  startAgentLoopUserMessage: "Agent loopを開始",
+  agentLoopStopped: "Agent loopを停止しました。",
+  agentLoopStarted: "Agent loopを開始しました。",
   createLocalizationTask: "AgentTaskを作成",
   localizationTaskHint:
     "Codexが将来locale packを生成・更新できるよう、Tablex管理のAgentTaskContractを作成します。",
@@ -377,6 +433,12 @@ const japaneseMessages: LocaleMessages = {
   agentChatSubtitle: "Tableeに話す。アクションはハーネス内で管理されます",
   agentChatPlaceholder: "例: metricはROC-AUCにして、次に見るべきことを説明して、診断Notebookを生成して",
   createAgentTaskContract: "送信",
+  youAsked: "あなたの依頼",
+  tableeAnswered: "Tableeからの返答",
+  agentReplyPending: "状況を確認し、次に役立つ返答を準備しています。",
+  chatTurnStatus: "状態",
+  chatBriefAvailable: "応答brief保存済み",
+  nextActionLabel: "次に開く",
   downloadLatestAgentTaskContract: "最新のAgentTaskContractをダウンロード",
   agentTaskContractCreated: "AgentTaskContractを作成しました。",
   chatActionOpen: "開く",
@@ -504,7 +566,16 @@ function loadUserSettings(): UserSettings {
             : "",
       dynamicLanguageRequest:
         typeof parsed.dynamicLanguageRequest === "string" ? parsed.dynamicLanguageRequest : "",
-      displayTheme: parsed.displayTheme === "dark" ? "dark" : "light"
+      displayTheme: parsed.displayTheme === "dark" ? "dark" : "light",
+      interventionCountdownSeconds:
+        typeof parsed.interventionCountdownSeconds === "number" && Number.isFinite(parsed.interventionCountdownSeconds)
+          ? Math.max(0, Math.min(300, Math.round(parsed.interventionCountdownSeconds)))
+          : defaultUserSettings.interventionCountdownSeconds,
+      agentModel: typeof parsed.agentModel === "string" && parsed.agentModel.trim() ? parsed.agentModel : defaultUserSettings.agentModel,
+      utilityModel:
+        typeof parsed.utilityModel === "string" && parsed.utilityModel.trim()
+          ? parsed.utilityModel
+          : defaultUserSettings.utilityModel
     };
   } catch {
     return defaultUserSettings;
@@ -1062,6 +1133,8 @@ type AgentChatResponse = {
   intent: Record<string, unknown>;
   actions: AgentChatAction[];
   action_summary?: AgentActionSummary;
+  response_brief?: Record<string, unknown> | null;
+  response_composer?: Record<string, unknown> | null;
   worker_events: AgentWorkerEvent[];
   token_usage: { source: string; is_estimate: boolean; series: TokenSeriesPoint[] };
   next_focus: Record<string, unknown>;
@@ -1069,11 +1142,27 @@ type AgentChatResponse = {
   job: Job;
 };
 
+type AgentChatHistoryTurn = Omit<AgentChatResponse, "job"> & {
+  job_id: string | null;
+  created_at: string;
+};
+
 type AgentChatMessage = {
+  id?: string;
   role: "user" | "system";
   text: string;
   actions?: AgentChatAction[];
   actionSummary?: AgentActionSummary;
+  responseBrief?: Record<string, unknown> | null;
+  responseComposer?: Record<string, unknown> | null;
+  createdAt?: string;
+};
+
+type AgentConversationTurn = {
+  id: string;
+  user?: AgentChatMessage;
+  assistant?: AgentChatMessage;
+  createdAt?: string;
 };
 
 type HomeMemoryItem = {
@@ -1486,11 +1575,6 @@ function tabFromString(value: string | null | undefined, fallback: Tab): Tab {
   if (value === "Library" || value === "Lineage") return "Assets";
   const match = tabItems.find((item) => item.id === value);
   return match ? match.id : fallback;
-}
-
-function firstAgentChatTarget(actions: AgentChatAction[]): { tab: Tab; anchor: string | null } | null {
-  const action = actions.find((candidate) => candidate.target_tab && tabItems.some((item) => item.id === candidate.target_tab));
-  return action ? { tab: tabFromString(action.target_tab, "Home"), anchor: action.target_anchor ?? null } : null;
 }
 
 function autoStartWorkerJobIds(actions: AgentChatAction[]): string[] {
@@ -2046,6 +2130,7 @@ function App() {
               project={activeProject}
               tab={tab}
               text={text}
+              userSettings={userSettings}
               onTabChange={setTab}
               onProjectChanged={refreshProjects}
             />
@@ -2344,6 +2429,58 @@ function UserSettingsPanel({
       </div>
 
       <div className="settings-section">
+        <div className="settings-label-row">
+          <span>{text.models}</span>
+          <strong>{settings.utilityModel}</strong>
+        </div>
+        <label>
+          <span>{text.agentModel}</span>
+          <input
+            value={settings.agentModel}
+            onChange={(event) => update({ agentModel: event.target.value })}
+            placeholder={text.modelPlaceholder}
+          />
+        </label>
+        <p className="settings-hint">{text.agentModelHint}</p>
+        <label>
+          <span>{text.utilityModel}</span>
+          <input
+            value={settings.utilityModel}
+            onChange={(event) => update({ utilityModel: event.target.value })}
+            placeholder={text.modelPlaceholder}
+          />
+        </label>
+        <p className="settings-hint">{text.utilityModelHint}</p>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-label-row">
+          <span>{text.intervention}</span>
+          <strong>
+            {settings.interventionCountdownSeconds === 0
+              ? text.autonomyInterventionDisabled
+              : `${settings.interventionCountdownSeconds} ${text.seconds}`}
+          </strong>
+        </div>
+        <label>
+          <span>{text.interventionCountdown}</span>
+          <input
+            type="number"
+            min={0}
+            max={300}
+            step={1}
+            value={settings.interventionCountdownSeconds}
+            onChange={(event) =>
+              update({
+                interventionCountdownSeconds: Math.max(0, Math.min(300, Math.round(Number(event.target.value) || 0)))
+              })
+            }
+          />
+        </label>
+        <p className="settings-hint">{text.interventionCountdownHint}</p>
+      </div>
+
+      <div className="settings-section">
         <label>
           <span>{text.dynamicLanguageRequest}</span>
           <textarea
@@ -2397,12 +2534,14 @@ function ProjectDetail({
   project,
   tab,
   text,
+  userSettings,
   onTabChange,
   onProjectChanged
 }: {
   project: Project;
   tab: Tab;
   text: LocaleMessages;
+  userSettings: UserSettings;
   onTabChange: (tab: Tab) => void;
   onProjectChanged: () => Promise<void>;
 }) {
@@ -2500,6 +2639,7 @@ function ProjectDetail({
         libraryAssetsData,
         projectAssetReferencesData,
         lineageData,
+        agentChatHistoryData,
         agentActivityData,
         understandingData
       ] = await Promise.all([
@@ -2531,6 +2671,7 @@ function ProjectDetail({
         api<LibraryAsset[]>(`/api/assets`),
         api<AssetReference[]>(`/api/projects/${project.id}/asset-references`),
         api<LineageEdge[]>(`/api/projects/${project.id}/lineage`),
+        api<AgentChatHistoryTurn[]>(`/api/projects/${project.id}/agent-chat/history`).catch(() => []),
         api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`).catch(() => null),
         api<{ markdown: string | null }>(`/api/projects/${project.id}/understanding/latest`)
       ]);
@@ -2561,6 +2702,7 @@ function ProjectDetail({
       setInsights(insightsData);
       setLibraryAssets(libraryAssetsData);
       setProjectAssetReferences(projectAssetReferencesData);
+      setAgentChatMessages((current) => mergeAgentChatMessages(agentChatHistoryToMessages(agentChatHistoryData), current));
       setAgentActivity(agentActivityData);
       const validationEntries = await Promise.all(
         modelVersionsData.map(async (modelVersion) => {
@@ -2660,26 +2802,32 @@ function ProjectDetail({
       const result = await api<AgentChatResponse>(`/api/projects/${project.id}/agent-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: trimmed })
+        body: JSON.stringify({
+          message: trimmed,
+          locale: userSettings.locale,
+          agent_model: userSettings.agentModel,
+          utility_model: userSettings.utilityModel
+        })
       });
       setAgentChatMessages((current) => [
         ...current.slice(-23),
         {
+          id: `${result.artifact_id}:system`,
           role: "system",
           text: result.assistant_message,
           actions: result.actions,
-          actionSummary: result.action_summary
+          actionSummary: result.action_summary,
+          responseBrief: result.response_brief ?? null,
+          responseComposer: result.response_composer ?? null
         }
       ]);
       setAgentWorkerEvents((current) =>
         [...result.worker_events, ...current.filter((event) => event.job_id !== pendingWorker.job_id)].slice(0, 8)
       );
-      const target = firstAgentChatTarget(result.actions);
       const workerJobIds = autoStartWorkerJobIds(result.actions);
       await refreshAgentActivity();
       await refresh();
       await onProjectChanged();
-      if (target) navigateToTarget(target.tab, target.anchor);
       if (workerJobIds.length) void startQueuedAgentJobs(workerJobIds);
       return result;
     } catch (err) {
@@ -2702,7 +2850,7 @@ function ProjectDetail({
     if (nextMode === currentMode) return;
     setBusy(true);
     setError(null);
-    const userText = nextMode === "full_auto" ? "Select Full Auto mode" : "Select Approval Based mode";
+    const userText = nextMode === "full_auto" ? text.fullAutoMode : text.approvalBasedMode;
     setAgentChatMessages((current) => [...current.slice(-23), { role: "user", text: userText }]);
     try {
       await api<Project>(`/api/projects/${project.id}`, {
@@ -2716,8 +2864,8 @@ function ProjectDetail({
           role: "system",
           text:
             nextMode === "full_auto"
-              ? "Full Auto mode is selected. Press Start when data is ready; I will keep moving with explicit assumptions and boundaries."
-              : "Approval Based mode is selected. Press Start when data is ready; I will prepare evidence and wait before risky decisions."
+              ? text.fullAutoModeSelected
+              : text.approvalModeSelected
         }
       ]);
       await refreshAgentActivity();
@@ -2736,7 +2884,7 @@ function ProjectDetail({
     const poweredOn = project.current_phase === "AUTONOMOUS_LOOP";
     setBusy(true);
     setError(null);
-    const userText = poweredOn ? "Stop agent loop" : `Start ${project.autonomy_mode === "full_auto" ? "Full Auto" : "Approval Based"} agent loop`;
+    const userText = poweredOn ? text.stopAgentLoopUserMessage : text.startAgentLoopUserMessage;
     setAgentChatMessages((current) => [...current.slice(-23), { role: "user", text: userText }]);
     try {
       const job = await api<Job>(`/api/projects/${project.id}/autonomy/${poweredOn ? "stop" : "start"}`, {
@@ -2746,7 +2894,10 @@ function ProjectDetail({
           ? undefined
           : JSON.stringify({
               autonomy_mode: project.autonomy_mode,
-              runner_mode: project.autonomy_mode === "full_auto" ? "codex_cli_if_available" : "harness_only"
+              runner_mode: project.autonomy_mode === "full_auto" ? "codex_cli_if_available" : "harness_only",
+              locale: userSettings.locale,
+              agent_model: userSettings.agentModel,
+              utility_model: userSettings.utilityModel
             })
       });
       const workerEvents = workerEventsFromJob(job);
@@ -2754,8 +2905,8 @@ function ProjectDetail({
         typeof job.output.assistant_message === "string"
           ? job.output.assistant_message
           : poweredOn
-            ? "Agent loop stopped."
-            : "Agent loop started.";
+            ? text.agentLoopStopped
+            : text.agentLoopStarted;
       setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: assistantMessage }]);
       setAgentWorkerEvents((current) => [...workerEvents, ...current].slice(0, 8));
       await refreshAgentActivity();
@@ -3601,6 +3752,88 @@ function buildRawAgentEvents(
   );
 }
 
+function agentChatHistoryToMessages(turns: AgentChatHistoryTurn[]): AgentChatMessage[] {
+  return turns.flatMap((turn) => [
+    {
+      id: `${turn.artifact_id}:user`,
+      role: "user" as const,
+      text: turn.user_message,
+      createdAt: turn.created_at
+    },
+    {
+      id: `${turn.artifact_id}:system`,
+      role: "system" as const,
+      text: turn.assistant_message,
+      actions: turn.actions,
+      actionSummary: turn.action_summary,
+      responseBrief: turn.response_brief ?? null,
+      responseComposer: turn.response_composer ?? null,
+      createdAt: turn.created_at
+    }
+  ]);
+}
+
+function mergeAgentChatMessages(persisted: AgentChatMessage[], transient: AgentChatMessage[]) {
+  const merged: AgentChatMessage[] = [];
+  const seen = new Set<string>();
+  const persistedContent = new Set<string>();
+  for (const message of persisted) {
+    const key = message.id ?? `${message.role}:${message.text}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    persistedContent.add(`${message.role}:${message.text}`);
+    merged.push(message);
+  }
+  for (const message of transient) {
+    const key = message.id ?? `${message.role}:${message.text}`;
+    if (seen.has(key) || (!message.id && persistedContent.has(`${message.role}:${message.text}`))) continue;
+    seen.add(key);
+    merged.push(message);
+  }
+  return merged.slice(-80);
+}
+
+function buildAgentConversationTurns(messages: AgentChatMessage[]): AgentConversationTurn[] {
+  const turns: AgentConversationTurn[] = [];
+  let pendingUser: AgentChatMessage | undefined;
+  messages.forEach((message, index) => {
+    if (message.role === "user") {
+      if (pendingUser) {
+        turns.push({
+          id: pendingUser.id ?? `turn-user-${index}-${pendingUser.text.slice(0, 24)}`,
+          user: pendingUser,
+          createdAt: pendingUser.createdAt
+        });
+      }
+      pendingUser = message;
+      return;
+    }
+    if (pendingUser) {
+      turns.push({
+        id: message.id ?? pendingUser.id ?? `turn-${index}-${message.text.slice(0, 24)}`,
+        user: pendingUser,
+        assistant: message,
+        createdAt: message.createdAt ?? pendingUser.createdAt
+      });
+      pendingUser = undefined;
+      return;
+    }
+    turns.push({
+      id: message.id ?? `turn-assistant-${index}-${message.text.slice(0, 24)}`,
+      assistant: message,
+      createdAt: message.createdAt
+    });
+  });
+  if (pendingUser) {
+    turns.push({
+      id: pendingUser.id ?? `turn-user-final-${pendingUser.text.slice(0, 24)}`,
+      user: pendingUser,
+      createdAt: pendingUser.createdAt
+    });
+  }
+  return turns;
+}
+
 function latestJobHeadline(job: Job) {
   const headline = textField(job.output.headline) ?? textField(job.context.headline) ?? textField(job.input.objective);
   return headline ?? `${job.status.replace(/_/g, " ")} since ${formatDate(job.created_at)}`;
@@ -3670,17 +3903,12 @@ function AgentChatSummaryCard({
         detail: "Open the surface Tablex selected for this response."
       }
     : null;
-  const changed = summary.what_changed.slice(0, 3);
   const needsReview = summary.what_needs_review.slice(0, 3);
   return (
     <div className="agent-chat-summary">
-      <div className="agent-chat-summary-head">
-        <span className={agentChatOutcomeClass(summary.outcome)}>{summary.outcome.replace(/_/g, " ")}</span>
-        <strong>{summary.headline}</strong>
-      </div>
       {summaryAction ? (
         <button className="agent-chat-next-button" type="button" onClick={() => onActionOpen(summaryAction)}>
-          <span>Next</span>
+          <span>{text.nextActionLabel}</span>
           <strong>{nextLabel}</strong>
           <small>
             {targetLabel}
@@ -3688,31 +3916,14 @@ function AgentChatSummaryCard({
           </small>
         </button>
       ) : null}
-      {changed.length || needsReview.length ? (
+      {needsReview.length ? (
         <div className="agent-chat-summary-lists">
-          {changed.length ? (
-            <div>
-              <span>{text.chatChangedLabel}</span>
-              {changed.map((item) => (
-                <small key={item}>{item}</small>
-              ))}
-            </div>
-          ) : null}
-          {needsReview.length ? (
-            <div>
-              <span>{text.chatReviewLabel}</span>
-              {needsReview.map((item) => (
-                <small key={item}>{item}</small>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-      {summary.boundaries.length ? (
-        <div className="agent-chat-boundaries">
-          {summary.boundaries.slice(0, 2).map((item) => (
-            <span key={item}>{item}</span>
-          ))}
+          <div>
+            <span>{text.chatReviewLabel}</span>
+            {needsReview.map((item) => (
+              <small key={item}>{item}</small>
+            ))}
+          </div>
         </div>
       ) : null}
     </div>
@@ -3779,6 +3990,73 @@ function RawAgentStream({
   );
 }
 
+function AgentConversationTurnCard({
+  turn,
+  text,
+  onActionOpen
+}: {
+  turn: AgentConversationTurn;
+  text: LocaleMessages;
+  onActionOpen: (action: AgentChatAction) => void;
+}) {
+  const assistant = turn.assistant;
+  const outcome = assistant?.actionSummary?.outcome ?? (assistant ? "response" : "waiting");
+  const statusClass = agentChatOutcomeClass(outcome);
+  const hasPrimaryNext = Boolean(assistant?.actionSummary?.next_step?.target_tab);
+  const visibleActions = hasPrimaryNext ? [] : assistant?.actions?.slice(0, 2) ?? [];
+  return (
+    <article className="agent-turn-card">
+      <div className="agent-turn-head">
+        <span className={statusClass}>{outcome.replace(/_/g, " ")}</span>
+        <small>{turn.createdAt ? formatDate(turn.createdAt) : text.chatTurnStatus}</small>
+      </div>
+      {turn.user ? (
+        <section className="agent-turn-section user">
+          <span>{text.youAsked}</span>
+          <p>{turn.user.text}</p>
+        </section>
+      ) : null}
+      {assistant ? (
+        <section className="agent-turn-section assistant">
+          <span>{text.tableeAnswered}</span>
+          <div className="agent-turn-response">
+            {assistant.text.split("\n").map((line, index) => (
+              <p key={`${index}-${line}`}>{line}</p>
+            ))}
+          </div>
+          {assistant.actionSummary ? (
+            <AgentChatSummaryCard summary={assistant.actionSummary} text={text} onActionOpen={onActionOpen} />
+          ) : null}
+          {visibleActions.length ? (
+            <div className="agent-turn-actions">
+              {visibleActions.map((action) => (
+                <button
+                  className="agent-chat-action-button"
+                  key={`${action.type}-${action.label}`}
+                  onClick={() => onActionOpen(action)}
+                  type="button"
+                >
+                  <span>{action.status.replace(/_/g, " ")}</span>
+                  <strong>{action.label}</strong>
+                  <small>{agentChatActionLabel(action, text)}</small>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {assistant.responseBrief ? <small className="agent-turn-brief">{text.chatBriefAvailable}</small> : null}
+        </section>
+      ) : (
+        <section className="agent-turn-section assistant">
+          <span>{text.tableeAnswered}</span>
+          <div className="agent-turn-response">
+            <p>{text.agentReplyPending}</p>
+          </div>
+        </section>
+      )}
+    </article>
+  );
+}
+
 function AgentChatDock({
   busy,
   text,
@@ -3797,6 +4075,7 @@ function AgentChatDock({
   onActionOpen: (action: AgentChatAction) => void;
 }) {
   const [draft, setDraft] = React.useState("");
+  const turns = React.useMemo(() => buildAgentConversationTurns(messages), [messages]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -3834,32 +4113,10 @@ function AgentChatDock({
           </a>
         ) : null}
       </div>
-      {messages.length ? (
+      {turns.length ? (
         <div className="agent-chat-log">
-          {messages.slice(-24).map((message, index) => (
-            <div className={`agent-chat-message ${message.role}`} key={`${message.role}-${index}-${message.text}`}>
-              <p>{message.text}</p>
-              {message.actionSummary ? (
-                <AgentChatSummaryCard summary={message.actionSummary} text={text} onActionOpen={onActionOpen} />
-              ) : null}
-              {message.actions?.length ? (
-                <div className="agent-chat-actions">
-                  {message.actions.slice(0, 3).map((action) => (
-                    <button
-                      className="agent-chat-action-button"
-                      key={`${action.type}-${action.label}`}
-                      onClick={() => onActionOpen(action)}
-                      type="button"
-                    >
-                      <span>{action.status.replace(/_/g, " ")}</span>
-                      <strong>{action.label}</strong>
-                      <small>{agentChatActionLabel(action, text)}</small>
-                      {action.detail ? <em>{action.detail}</em> : null}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+          {turns.slice(-16).map((turn) => (
+            <AgentConversationTurnCard key={turn.id} turn={turn} text={text} onActionOpen={onActionOpen} />
           ))}
         </div>
       ) : null}

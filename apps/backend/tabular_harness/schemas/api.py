@@ -24,6 +24,9 @@ class ProjectUpdate(BaseModel):
 class AutonomyStartCreate(BaseModel):
     runner_mode: Literal["harness_only", "codex_cli", "codex_cli_if_available"] = "harness_only"
     autonomy_mode: Literal["approval_based", "full_auto"] = "full_auto"
+    locale: str | None = None
+    agent_model: str | None = None
+    utility_model: str | None = None
 
 
 class ProjectRead(BaseModel):
@@ -606,6 +609,27 @@ class AgentTaskPlanCreate(BaseModel):
 
 class AgentChatCreate(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    locale: str | None = None
+    agent_model: str | None = None
+    utility_model: str | None = None
+
+
+class AgentChatHistoryTurnRead(BaseModel):
+    schema_version: str
+    project_id: str
+    user_message: str
+    assistant_message: str
+    intent: dict[str, Any]
+    actions: list[dict[str, Any]]
+    action_summary: dict[str, Any]
+    response_brief: dict[str, Any] | None = None
+    response_composer: dict[str, Any] | None = None
+    worker_events: list[dict[str, Any]]
+    token_usage: dict[str, Any]
+    next_focus: dict[str, Any]
+    artifact_id: str
+    job_id: str | None
+    created_at: str
 
 
 class LeaderboardMetricPreferenceCreate(BaseModel):
@@ -682,6 +706,8 @@ class AgentChatRead(BaseModel):
     intent: dict[str, Any]
     actions: list[dict[str, Any]]
     action_summary: dict[str, Any]
+    response_brief: dict[str, Any] | None = None
+    response_composer: dict[str, Any] | None = None
     worker_events: list[dict[str, Any]]
     token_usage: dict[str, Any]
     next_focus: dict[str, Any]

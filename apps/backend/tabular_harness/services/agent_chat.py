@@ -59,6 +59,7 @@ from tabular_harness.services.model_diagnostics_artifacts import (
 )
 from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.project_guidance import build_project_guidance
+from tabular_harness.services.agent_response_composer import compose_agent_chat_response
 from tabular_harness.services.reporting import leaderboard_sort_key
 from tabular_harness.services.result_notebook_evidence import (
     prepare_result_notebook_evidence,
@@ -93,6 +94,9 @@ def handle_agent_chat_turn(
     project: Project,
     job: Job,
     message: str,
+    locale: str | None = None,
+    agent_model: str | None = None,
+    utility_model: str | None = None,
 ) -> AgentChatTurnResult:
     intent = infer_chat_intent(message)
     actions: list[dict[str, Any]] = []
@@ -197,16 +201,31 @@ def handle_agent_chat_turn(
         )
         actions.append(agent_task_action(planned_agent_task))
 
-    assistant_message = render_assistant_message(intent, actions)
+    response_locale = response_locale_for_chat(locale, message)
+    action_summary = build_action_summary(intent, actions)
+    fallback_message = render_assistant_message(intent, actions)
+    composition = compose_agent_chat_response(
+        project=project,
+        user_message=message,
+        intent=intent,
+        actions=actions,
+        action_summary=action_summary,
+        locale=response_locale,
+        fallback_message=fallback_message,
+        agent_model=agent_model,
+        utility_model=utility_model,
+    )
     token_series = estimate_token_series(message, actions)
     response = {
         "schema_version": "agent_chat_turn.v1",
         "project_id": project.id,
         "user_message": message,
-        "assistant_message": assistant_message,
+        "assistant_message": composition.message,
         "intent": intent,
         "actions": actions,
-        "action_summary": build_action_summary(intent, actions),
+        "action_summary": action_summary,
+        "response_brief": composition.brief,
+        "response_composer": composition.composer,
         "worker_events": build_worker_events(job, intent, actions, token_series),
         "token_usage": {
             "source": "estimated_until_runner_telemetry",
@@ -229,6 +248,10 @@ def handle_agent_chat_turn(
             "intent_type": intent["type"],
             "action_count": len(actions),
             "token_usage_source": "estimated_until_runner_telemetry",
+            "response_locale": response_locale,
+            "agent_model": agent_model,
+            "utility_model": utility_model,
+            "response_composer_mode": composition.composer.get("mode"),
         },
     )
     response["artifact_id"] = artifact.id
@@ -2126,7 +2149,18 @@ def append_decision_note(existing: str, note: str) -> str:
     return f"{existing.rstrip()}\n\nDecision note: {note}".strip()
 
 
-def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any]]) -> str:
+def response_locale_for_chat(locale: str | None, message: str) -> str:
+    if contains_japanese_text(message):
+        return "ja-JP"
+    return locale or "en-US"
+
+
+def contains_japanese_text(value: str) -> bool:
+    return bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", value))
+
+
+def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any]], *, locale: str | None = None) -> str:
+    _ = locale
     applied = [action for action in actions if action["status"] == "applied"]
     review = [action for action in actions if action["status"] == "needs_review"]
     created = [action for action in actions if action["status"] == "created"]
@@ -2351,7 +2385,6 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
         f"{artifact_note} Next: review the runner task in Approach, then run a controlled runner when you want it to act."
     )
 
-
 def build_action_summary(intent: dict[str, Any], actions: list[dict[str, Any]]) -> dict[str, Any]:
     applied = [action for action in actions if action.get("status") == "applied"]
     review = [action for action in actions if action.get("status") == "needs_review"]
@@ -2440,9 +2473,7 @@ def action_summary_headline(intent: dict[str, Any], outcome: str) -> str:
 
 
 def action_summary_boundaries(intent: dict[str, Any], actions: list[dict[str, Any]]) -> list[str]:
-    boundaries = [
-        "Tablex keeps artifacts, lineage, safety policy, and approvals in the harness.",
-    ]
+    boundaries = ["Tablex keeps artifacts, lineage, safety policy, and approvals in the harness."]
     intent_type = str(intent.get("type") or "")
     if intent_type == "set_evaluation_metric":
         boundaries.append("Approved EvaluationSpecs and SplitManifests are not destructively changed by chat.")

@@ -43,6 +43,7 @@ from tabular_harness.schemas import (
     AdaptiveStrategyBriefRead,
     AgentActivityRead,
     AgentChatCreate,
+    AgentChatHistoryTurnRead,
     AgentChatRead,
     AgentTaskPlanCreate,
     AnswerRead,
@@ -789,7 +790,13 @@ def start_project_autonomy(
         db,
         job_type="start_autonomous_loop",
         project_id=project_id,
-        input_payload={"runner_mode": payload.runner_mode, "autonomy_mode": payload.autonomy_mode},
+        input_payload={
+            "runner_mode": payload.runner_mode,
+            "autonomy_mode": payload.autonomy_mode,
+            "locale": payload.locale,
+            "agent_model": payload.agent_model,
+            "utility_model": payload.utility_model,
+        },
         policy={
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
@@ -797,6 +804,9 @@ def start_project_autonomy(
             "evaluation_spec_mutation": "non_destructive_initial_adoption_only",
             "runner_mode": payload.runner_mode,
             "autonomy_mode": payload.autonomy_mode,
+            "response_locale": payload.locale,
+            "agent_model": payload.agent_model,
+            "utility_model": payload.utility_model,
         },
     )
     try:
@@ -808,6 +818,9 @@ def start_project_autonomy(
             job=job,
             runner_mode=payload.runner_mode,
             autonomy_mode=payload.autonomy_mode,
+            locale=payload.locale,
+            agent_model=payload.agent_model,
+            utility_model=payload.utility_model,
         )
         mark_job_succeeded(job, output)
     except ValueError as exc:
@@ -3400,12 +3413,20 @@ def create_agent_chat_turn(
         db,
         job_type="agent_chat_turn",
         project_id=project_id,
-        input_payload={"message": payload.message},
+        input_payload={
+            "message": payload.message,
+            "locale": payload.locale,
+            "agent_model": payload.agent_model,
+            "utility_model": payload.utility_model,
+        },
         policy={
             "network": "disabled",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "runner_execution": "not_started_by_chat_endpoint",
+            "response_locale": payload.locale,
+            "agent_model": payload.agent_model,
+            "utility_model": payload.utility_model,
         },
     )
     try:
@@ -3416,6 +3437,9 @@ def create_agent_chat_turn(
             project=project,
             job=job,
             message=payload.message,
+            locale=payload.locale,
+            agent_model=payload.agent_model,
+            utility_model=payload.utility_model,
         )
         mark_job_succeeded(
             job,
@@ -3440,6 +3464,53 @@ def create_agent_chat_turn(
     except ValueError as exc:
         mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/projects/{project_id}/agent-chat/history", response_model=list[AgentChatHistoryTurnRead])
+def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project_id, Artifact.asset_type == "agent_chat_turn")
+            .order_by(Artifact.created_at.desc())
+            .limit(60)
+        ).all()
+    )
+    turns: list[dict[str, Any]] = []
+    for artifact in reversed(artifacts):
+        path = artifact_primary_path(artifact)
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict) or payload.get("schema_version") != "agent_chat_turn.v1":
+            continue
+        metadata = loads_json(artifact.metadata_json, {})
+        turns.append(
+            {
+                "schema_version": "agent_chat_turn.v1",
+                "project_id": project_id,
+                "user_message": str(payload.get("user_message") or ""),
+                "assistant_message": str(payload.get("assistant_message") or ""),
+                "intent": payload.get("intent") if isinstance(payload.get("intent"), dict) else {},
+                "actions": payload.get("actions") if isinstance(payload.get("actions"), list) else [],
+                "action_summary": payload.get("action_summary") if isinstance(payload.get("action_summary"), dict) else {},
+                "response_brief": payload.get("response_brief") if isinstance(payload.get("response_brief"), dict) else None,
+                "response_composer": payload.get("response_composer")
+                if isinstance(payload.get("response_composer"), dict)
+                else None,
+                "worker_events": payload.get("worker_events") if isinstance(payload.get("worker_events"), list) else [],
+                "token_usage": payload.get("token_usage") if isinstance(payload.get("token_usage"), dict) else {},
+                "next_focus": payload.get("next_focus") if isinstance(payload.get("next_focus"), dict) else {},
+                "artifact_id": artifact.id,
+                "job_id": metadata.get("job_id") if isinstance(metadata.get("job_id"), str) else None,
+                "created_at": artifact.created_at.isoformat(),
+            }
+        )
+    return turns
 
 
 @router.post("/api/agent-task-contracts/{artifact_id}/prepare-workspace", response_model=JobRead)

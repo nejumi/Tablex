@@ -320,6 +320,24 @@ def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path
     assert artifacts_response.status_code == 200
     assert any(item["asset_type"] == "agent_chat_turn" for item in artifacts_response.json())
     assert any(item["asset_type"] == "evaluation_metric_preference" for item in artifacts_response.json())
+    history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
+    assert history_response.status_code == 200
+    history = history_response.json()
+    assert len(history) == 1
+    assert history[0]["user_message"] == "metricはROCーAUCにして"
+    assert "ROC-AUC" in history[0]["assistant_message"]
+    assert history[0]["actions"]
+    assert history[0]["action_summary"]["schema_version"] == "agent_action_summary.v1"
+    assert history[0]["artifact_id"] == chat["artifact_id"]
+
+    ja_chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "次に何を見るべき？", "locale": "en-US"},
+    )
+    assert ja_chat_response.status_code == 200, ja_chat_response.text
+    ja_chat = ja_chat_response.json()
+    assert ja_chat["response_brief"]["response_locale"] == "ja-JP"
+    assert "次" in ja_chat["assistant_message"]
 
 
 def test_agent_chat_trains_requested_model_candidates_into_leaderboard(tmp_path: Path) -> None:
@@ -716,8 +734,8 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     next_step = next_step_response.json()
     assert next_step["intent"]["type"] == "explain_next_step"
     assert any(action["type"] == "explain_next_step" for action in next_step["actions"])
-    assert "Next decision" in next_step["assistant_message"]
-    assert "Autonomous Navigator" in next_step["assistant_message"]
+    assert next_step["response_brief"]["response_locale"] == "ja-JP"
+    assert "次" in next_step["assistant_message"]
     next_step_action = next(action for action in next_step["actions"] if action["type"] == "explain_next_step")
     assert next_step_action["guidance"]["decision_brief"]["schema_version"] == "autonomous_decision_brief.v1"
 
@@ -728,7 +746,8 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     assert generic_chat_response.status_code == 200, generic_chat_response.text
     generic_chat = generic_chat_response.json()
     assert generic_chat["intent"]["type"] == "plan_agent_task"
-    assert "controlled runner task" in generic_chat["assistant_message"]
+    assert generic_chat["response_brief"]["response_locale"] == "ja-JP"
+    assert "次" in generic_chat["assistant_message"]
     assert "Artifact:" not in generic_chat["assistant_message"]
     assert generic_chat["action_summary"]["headline"] == "Controlled runner task prepared"
     assert generic_chat["action_summary"]["next_step"]["target_tab"] == "Approach"

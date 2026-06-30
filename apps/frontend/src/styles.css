@@ -3726,9 +3726,92 @@ td {
 
 .agent-chat-log {
   display: grid;
-  gap: 6px;
+  gap: 10px;
   max-height: 430px;
   overflow: auto;
+}
+
+.agent-turn-card {
+  display: grid;
+  gap: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 52%),
+    var(--surface);
+  padding: 11px;
+}
+
+.agent-turn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-turn-head small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.agent-turn-section {
+  display: grid;
+  gap: 5px;
+}
+
+.agent-turn-section > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 840;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.agent-turn-section.user p,
+.agent-turn-response p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+
+.agent-turn-section.user {
+  border-left: 2px solid color-mix(in srgb, var(--muted) 30%, transparent);
+  padding-left: 9px;
+}
+
+.agent-turn-section.user p {
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.agent-turn-section.assistant {
+  border-left: 2px solid color-mix(in srgb, var(--accent) 54%, var(--border));
+  padding-left: 9px;
+}
+
+.agent-turn-response {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.agent-turn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.agent-turn-brief {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.agent-turn-card .agent-chat-summary {
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+  border-radius: 0;
+  background: transparent;
+  padding: 4px 0 4px 9px;
 }
 
 .agent-chat-message {
@@ -3752,17 +3835,6 @@ td {
   border-radius: 8px;
   background: var(--surface);
   padding: 9px;
-}
-
-.agent-chat-summary-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-
-.agent-chat-summary-head strong {
-  color: var(--text-strong);
 }
 
 .agent-chat-summary small {
@@ -3831,14 +3903,6 @@ td {
   font-size: 10px;
   font-weight: 820;
   text-transform: uppercase;
-}
-
-.agent-chat-boundaries {
-  display: grid;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.35;
 }
 
 .agent-chat-actions {

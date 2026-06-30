@@ -93,6 +93,7 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Flexible Agent Strategy Decision Trace v1 with open-ended runner autonomy policy, approach decision trace artifacts, and UI summaries that keep Codex/Skill runners from being constrained to predefined recipes.
 - User Upload Bundle v1 with drag-and-drop CSV/Parquet multi-table intake, optional target, primary-table selection, ER image/PDF/SVG/JSON hints, `uploaded_supporting_table`, `relational_catalog`, and `relational_table_bundle_manifest` artifacts. The bundle manifest exposes tables and hints to runners while preserving the rule that Aggregate & Merge strategy is Codex/runner-designed under harness evaluation and leakage guardrails, not a fixed UI recipe.
 - Home-Centered Agent Workflow v1 with mode selection, start action, mandatory Data Understanding and plan creation, current-task display, Ideas & Findings memory, equipped Skill panel, and Agent panel display modes for wrapped Tablex chat vs Raw Codex-style event inspection.
+- Human-Facing Agent Chat v1 with persisted chat history, conversation-turn UI, `agent_human_response_brief.v1` artifacts, response composer metadata, locale-aware response contracts, and separate User Settings preferences for deep Agent model vs lightweight Utility model routing.
 - Job skeleton for:
   - `profile_dataset`
   - `infer_assumptions`
@@ -158,4 +159,5 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Structured AgentTaskContracts should preserve runner creativity. They should make decisions auditable without reducing Codex to a closed list of fixed recipes.
 - Uploaded multi-table bundles should be treated as raw evidence and available data boundaries. Codex should be free to design, compare, and reject aggregate/merge approaches, but every chosen approach must record FeatureRecipe/code artifacts, lineage, split discipline, prediction-time availability assumptions, and leakage checks.
 - Target selection is intentionally late-bindable. Target may be selected after Data Understanding or created from a user-described derivation, but target construction must become an auditable artifact before EvaluationSpec, SplitManifest, modeling, or leaderboard comparison depend on it.
+- Agent Chat must not become a rule-based ticket generator. Deterministic code should own state changes and audit records; human-facing explanation, next-step narration, translation, and summarization should flow through a response composer that can use Codex or a lightweight utility model when configured. Current local fallback is intentionally conservative and should be replaced by controlled model dispatch.
 - Auth is stubbed as local single-user behavior.

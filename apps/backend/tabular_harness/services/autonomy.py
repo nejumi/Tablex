@@ -137,6 +137,9 @@ def run_autonomous_loop_tick(
     job: Job,
     runner_mode: str = RUNNER_MODE_HARNESS_ONLY,
     autonomy_mode: str = "full_auto",
+    locale: str | None = None,
+    agent_model: str | None = None,
+    utility_model: str | None = None,
 ) -> dict[str, Any]:
     if runner_mode not in RUNNER_MODES:
         raise ValueError(f"Unsupported autonomy runner mode: {runner_mode}")
@@ -161,6 +164,9 @@ def run_autonomous_loop_tick(
             state=state,
             status="waiting_for_data",
             next_human_boundary="Upload or import a dataset. Full Auto will continue from data understanding after data exists.",
+            locale=locale,
+            agent_model=agent_model,
+            utility_model=utility_model,
         )
 
     run_data_understanding_stack(db, store=store, project=project, dataset=dataset, state=state)
@@ -206,6 +212,9 @@ def run_autonomous_loop_tick(
         state=state,
         status="advanced",
         next_human_boundary=next_boundary,
+        locale=locale,
+        agent_model=agent_model,
+        utility_model=utility_model,
     )
 
 
@@ -696,6 +705,9 @@ def finalize_autonomous_tick(
     state: AutonomousLoopState,
     status: str,
     next_human_boundary: str,
+    locale: str | None = None,
+    agent_model: str | None = None,
+    utility_model: str | None = None,
 ) -> dict[str, Any]:
     reflection_md = render_autonomous_reflection(state, status=status, next_human_boundary=next_human_boundary)
     reflection_artifact = store_text_artifact(
@@ -750,8 +762,17 @@ def finalize_autonomous_tick(
         "schema_version": "autonomous_loop_tick.v1",
         "project_id": state.project.id,
         "mode": state.project.autonomy_mode,
+        "response_locale": locale or "en-US",
+        "model_preferences": {
+            "agent_model": agent_model,
+            "utility_model": utility_model,
+            "routing": {
+                "agent_model": "autonomous planning, runner handoff, notebook/modeling strategy",
+                "utility_model": "short status summaries, translation, and chat compression",
+            },
+        },
         "status": status,
-        "assistant_message": render_assistant_message(state, status=status, next_human_boundary=next_human_boundary),
+        "assistant_message": render_assistant_message(state, status=status, next_human_boundary=next_human_boundary, locale=locale),
         "steps": [step.to_dict() for step in state.steps],
         "step_count": len(state.steps),
         "artifact_ids": state.artifact_ids,
@@ -819,10 +840,25 @@ def render_assistant_message(
     *,
     status: str,
     next_human_boundary: str,
+    locale: str | None = None,
 ) -> str:
     completed = [step for step in state.steps if step.status in {"created", "approved", "succeeded"}]
     blocked = [step for step in state.steps if step.status in {"blocked", "deferred", "dependency_required", "armed"}]
     mode_label = "Full Auto" if state.project.autonomy_mode == "full_auto" else "Approval Based"
+    if locale and locale.lower().startswith("ja"):
+        lines = [
+            f"{mode_label}のAgent loopを開始し、今できる範囲まで進めました。完了した具体ステップは{len(completed)}件、保持したboundaryは{len(state.boundaries)}件です。reflection artifactも残しました。",
+        ]
+        if completed:
+            lines.append("完了: " + "、".join(step.label for step in completed[:8]) + ("..." if len(completed) > 8 else ""))
+        if blocked:
+            lines.append("後で確認が必要: " + "、".join(f"{step.label} ({step.status})" for step in blocked[:5]))
+        if state.runner_result:
+            lines.append(f"Runner結果: {state.runner_result.get('status')} - {state.runner_result.get('final_message')}")
+        lines.append(f"次の人間の確認点: {next_human_boundary}")
+        if status == "waiting_for_data":
+            lines.append("黙って止まったわけではありません。データ投入前に作れる戦略・調査コンテキストを作成しました。")
+        return "\n".join(lines)
     lines = [
         f"{mode_label} started and advanced the agent loop. I completed {len(completed)} concrete step(s), preserved {len(state.boundaries)} boundary item(s), and wrote a reflection artifact.",
     ]
