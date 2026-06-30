@@ -136,11 +136,14 @@ def run_autonomous_loop_tick(
     project: Project,
     job: Job,
     runner_mode: str = RUNNER_MODE_HARNESS_ONLY,
+    autonomy_mode: str = "full_auto",
 ) -> dict[str, Any]:
     if runner_mode not in RUNNER_MODES:
         raise ValueError(f"Unsupported autonomy runner mode: {runner_mode}")
+    if autonomy_mode not in {"approval_based", "full_auto"}:
+        raise ValueError(f"Unsupported autonomy mode: {autonomy_mode}")
 
-    project.autonomy_mode = "full_auto"
+    project.autonomy_mode = autonomy_mode
     project.current_phase = "AUTONOMOUS_LOOP"
     project.updated_at = utc_now()
 
@@ -169,6 +172,7 @@ def run_autonomous_loop_tick(
         state=state,
         approved_spec=approved_spec,
         split=split,
+        auto_approve=autonomy_mode == "full_auto",
     )
     run_idea_and_insight_stack(
         db,
@@ -297,6 +301,7 @@ def run_evaluation_stack(
     state: AutonomousLoopState,
     approved_spec: EvaluationSpec | None,
     split: SplitManifest | None,
+    auto_approve: bool,
 ) -> tuple[EvaluationSpec | None, SplitManifest | None]:
     candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
     state.record(
@@ -317,6 +322,15 @@ def run_evaluation_stack(
             artifact_ids=[review.artifact.id],
             entity_ids={"evaluation_spec_id": spec.id},
         )
+        if not auto_approve:
+            state.record(
+                "evaluation_spec",
+                "blocked",
+                "Approval Based mode prepared the EvaluationSpec review but did not adopt it automatically.",
+                entity_ids={"evaluation_spec_id": spec.id},
+                boundary="Human approval is required before EvaluationSpec adoption and model training.",
+            )
+            return None, None
         if review.blocked:
             state.record(
                 "evaluation_spec",
@@ -735,7 +749,7 @@ def finalize_autonomous_tick(
     output = {
         "schema_version": "autonomous_loop_tick.v1",
         "project_id": state.project.id,
-        "mode": "full_auto",
+        "mode": state.project.autonomy_mode,
         "status": status,
         "assistant_message": render_assistant_message(state, status=status, next_human_boundary=next_human_boundary),
         "steps": [step.to_dict() for step in state.steps],
@@ -808,8 +822,9 @@ def render_assistant_message(
 ) -> str:
     completed = [step for step in state.steps if step.status in {"created", "approved", "succeeded"}]
     blocked = [step for step in state.steps if step.status in {"blocked", "deferred", "dependency_required", "armed"}]
+    mode_label = "Full Auto" if state.project.autonomy_mode == "full_auto" else "Approval Based"
     lines = [
-        f"Full Auto started and advanced the autonomous loop. I completed {len(completed)} concrete step(s), preserved {len(state.boundaries)} boundary item(s), and wrote a reflection artifact.",
+        f"{mode_label} started and advanced the agent loop. I completed {len(completed)} concrete step(s), preserved {len(state.boundaries)} boundary item(s), and wrote a reflection artifact.",
     ]
     if completed:
         lines.append("Done: " + ", ".join(step.label for step in completed[:8]) + ("..." if len(completed) > 8 else ""))

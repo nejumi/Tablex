@@ -63,6 +63,20 @@ def test_full_auto_start_advances_autonomous_loop_without_dataset(tmp_path: Path
     project_read_response = client.get(f"/api/projects/{project_id}")
     assert project_read_response.status_code == 200
     assert project_read_response.json()["autonomy_mode"] == "full_auto"
+    assert project_read_response.json()["current_phase"] == "AUTONOMOUS_LOOP"
+
+    stop_response = client.post(f"/api/projects/{project_id}/autonomy/stop")
+    assert stop_response.status_code == 200, stop_response.text
+    stop_job = stop_response.json()
+    assert stop_job["job_type"] == "stop_autonomous_loop"
+    assert stop_job["status"] == "succeeded"
+    assert stop_job["output"]["schema_version"] == "autonomous_loop_stop.v1"
+    assert stop_job["output"]["worker_events"][0]["status"] == "cancelled"
+
+    stopped_project_response = client.get(f"/api/projects/{project_id}")
+    assert stopped_project_response.status_code == 200
+    assert stopped_project_response.json()["autonomy_mode"] == "full_auto"
+    assert stopped_project_response.json()["current_phase"] == "IDLE"
 
     artifacts = client.get(f"/api/projects/{project_id}/artifacts").json()
     assert any(artifact["asset_type"] == "autonomous_reflection" for artifact in artifacts)
@@ -105,6 +119,40 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
     assert "eda_review_bundle" in asset_types
     assert "agent_task_contract" in asset_types
     assert "agent_workspace_manifest" in asset_types
+
+
+def test_approval_based_start_runs_but_does_not_auto_adopt_evaluation(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Approval based with data"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    rows = ["feature,segment,value"] + [f"{index},{'a' if index % 2 else 'b'},{index * 3}" for index in range(1, 31)]
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("approval.csv", "\n".join(rows).encode("utf-8"), "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    start_response = client.post(
+        f"/api/projects/{project_id}/autonomy/start",
+        json={"runner_mode": "harness_only", "autonomy_mode": "approval_based"},
+    )
+    assert start_response.status_code == 200, start_response.text
+    output = start_response.json()["output"]
+    assert output["mode"] == "approval_based"
+    assert any(step["label"] == "evaluation_review" for step in output["steps"])
+    evaluation_step = next(step for step in output["steps"] if step["label"] == "evaluation_spec")
+    assert evaluation_step["status"] == "blocked"
+    assert "Human approval" in evaluation_step["boundary"]
+
+    project_read_response = client.get(f"/api/projects/{project_id}")
+    assert project_read_response.status_code == 200
+    assert project_read_response.json()["autonomy_mode"] == "approval_based"
+    assert project_read_response.json()["current_phase"] == "AUTONOMOUS_LOOP"
+
+    specs = client.get(f"/api/projects/{project_id}/evaluation/specs").json()
+    assert all(spec["status"] != "approved" for spec in specs)
 
 
 def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:

@@ -789,13 +789,14 @@ def start_project_autonomy(
         db,
         job_type="start_autonomous_loop",
         project_id=project_id,
-        input_payload={"runner_mode": payload.runner_mode},
+        input_payload={"runner_mode": payload.runner_mode, "autonomy_mode": payload.autonomy_mode},
         policy={
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "production_write": "forbidden",
             "evaluation_spec_mutation": "non_destructive_initial_adoption_only",
             "runner_mode": payload.runner_mode,
+            "autonomy_mode": payload.autonomy_mode,
         },
     )
     try:
@@ -806,11 +807,91 @@ def start_project_autonomy(
             project=project,
             job=job,
             runner_mode=payload.runner_mode,
+            autonomy_mode=payload.autonomy_mode,
         )
         mark_job_succeeded(job, output)
     except ValueError as exc:
         mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/autonomy/stop", response_model=JobRead)
+def stop_project_autonomy(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="stop_autonomous_loop",
+        project_id=project_id,
+        input_payload={"requested_state": "off"},
+        policy={
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "production_write": "forbidden",
+            "action": "stop_autonomous_activity",
+        },
+    )
+    mark_job_running(job)
+    cancellable_job_types = {
+        "start_autonomous_loop",
+        "run_agent_task",
+        "run_planned_agent_task_codex",
+        "run_planned_agent_task_stub",
+        "train_model_candidates",
+        "run_baseline",
+        "plan_agent_task",
+    }
+    active_statuses = {"queued", "running", "approval_required"}
+    active_jobs = db.scalars(
+        select(Job).where(
+            Job.project_id == project_id,
+            Job.id != job.id,
+            Job.status.in_(active_statuses),
+            Job.job_type.in_(cancellable_job_types),
+        )
+    ).all()
+    cancelled_ids: list[str] = []
+    for active_job in active_jobs:
+        cancel_job_service(active_job, cancelled_by="tablex-autonomy-power")
+        cancelled_ids.append(active_job.id)
+    project.current_phase = "IDLE"
+    project.updated_at = utc_now()
+    mark_job_succeeded(
+        job,
+        {
+            "schema_version": "autonomous_loop_stop.v1",
+            "project_id": project_id,
+            "assistant_message": "Autonomous activity is stopped. The selected autonomy mode is preserved; press Start to resume.",
+            "cancelled_job_ids": cancelled_ids,
+            "worker_events": [
+                {
+                    "worker_id": "full-auto-loop",
+                    "display_name": "Full Auto Agent",
+                    "status": "cancelled",
+                    "headline": "Autonomous activity stopped.",
+                    "detail": f"Stopped {len(cancelled_ids)} active or queued runner/model job(s).",
+                    "job_id": job.id,
+                    "project_id": project_id,
+                    "target_tab": "Home",
+                    "target_anchor": "agent-workspace",
+                    "created_at": job.created_at.isoformat(),
+                    "updated_at": utc_now().isoformat(),
+                    "active": False,
+                    "token_usage": {
+                        "source": "autonomous_stop_event",
+                        "is_estimate": True,
+                        "series": [
+                            {"step": "stop", "tokens": 24},
+                            {"step": "cancel", "tokens": 24 + len(cancelled_ids) * 8},
+                        ],
+                    },
+                }
+            ],
+        },
+    )
     return job_to_dict(job)
 
 

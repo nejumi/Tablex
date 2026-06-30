@@ -22,6 +22,7 @@ import {
   PieChart,
   Play,
   Plus,
+  Power,
   RefreshCw,
   Search,
   Send,
@@ -196,6 +197,14 @@ const englishMessages = {
   missionControlSubtitle:
     "Stay here for the next decision, the current plan, and the agent conversation. Evidence surfaces stay one click away.",
   autonomyMode: "Autonomy mode",
+  autonomyPower: "Agent power",
+  startAgent: "Start",
+  stopAgent: "Stop",
+  agentPowerReady: "Ready after data upload",
+  agentPowerNeedsData: "Upload data to enable the agent run loop.",
+  agentPowerOn: "Agent loop is on",
+  agentPowerOff: "Agent loop is off",
+  targetCanWait: "Target can be set now, derived by the agent, or confirmed after data understanding.",
   approvalBasedMode: "Approval Based",
   approvalBasedModeHint: "Ask before risky decisions, external execution, evaluation changes, or deployment-facing steps.",
   fullAutoMode: "Full Auto",
@@ -385,6 +394,14 @@ const japaneseMessages: LocaleMessages = {
   missionControlTitle: "Mission Control",
   missionControlSubtitle: "次の判断、現在の計画、Agentとの会話をここに集約します。根拠面にはワンクリックで移動できます。",
   autonomyMode: "自律モード",
+  autonomyPower: "Agent電源",
+  startAgent: "開始",
+  stopAgent: "停止",
+  agentPowerReady: "データアップロード後に開始できます",
+  agentPowerNeedsData: "データをアップロードするとAgent run loopを開始できます。",
+  agentPowerOn: "Agent loopはONです",
+  agentPowerOff: "Agent loopはOFFです",
+  targetCanWait: "ターゲットは今設定しても、Agentに作らせても、Data Understanding後に確定しても構いません。",
   approvalBasedMode: "承認ベース",
   approvalBasedModeHint: "重要判断、外部実行、評価変更、deployment関連は人間の承認を待ちます。",
   fullAutoMode: "フルオート",
@@ -568,6 +585,7 @@ function useLocale() {
 }
 
 type AutonomyMode = "approval_based" | "full_auto";
+type TableeMotionState = "idle" | "awake" | "working";
 
 type Project = {
   id: string;
@@ -2425,6 +2443,11 @@ function ProjectDetail({
   const [agentActivity, setAgentActivity] = React.useState<AgentActivityResponse | null>(null);
   const [activityTick, setActivityTick] = React.useState(0);
   const [pendingAnchor, setPendingAnchor] = React.useState<string | null>(null);
+  const tableeMotionState: TableeMotionState = hasLiveAgentOrModelActivity(jobs, agentWorkerEvents, agentActivity)
+    ? "working"
+    : project.current_phase === "AUTONOMOUS_LOOP"
+      ? "awake"
+      : "idle";
   const focusRecommendation = React.useMemo(
     () => {
       if (guidance) return focusFromGuidance(guidance, text);
@@ -2679,36 +2702,62 @@ function ProjectDetail({
     if (nextMode === currentMode) return;
     setBusy(true);
     setError(null);
-    const userText = nextMode === "full_auto" ? "Start Full Auto" : "Switch to Approval Based";
+    const userText = nextMode === "full_auto" ? "Select Full Auto mode" : "Select Approval Based mode";
     setAgentChatMessages((current) => [...current.slice(-23), { role: "user", text: userText }]);
     try {
-      if (nextMode === "full_auto") {
-        const job = await api<Job>(`/api/projects/${project.id}/autonomy/start`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ runner_mode: "codex_cli_if_available" })
-        });
-        const workerEvents = workerEventsFromJob(job);
-        const assistantMessage =
-          typeof job.output.assistant_message === "string"
-            ? job.output.assistant_message
-            : "Full Auto started and advanced the autonomous loop.";
-        setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: assistantMessage }]);
-        setAgentWorkerEvents((current) => [...workerEvents, ...current].slice(0, 8));
-      } else {
-        await api<Project>(`/api/projects/${project.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ autonomy_mode: nextMode })
-        });
-        setAgentChatMessages((current) => [
-          ...current.slice(-23),
-          {
-            role: "system",
-            text: "Approval Based mode is active. I will keep preparing evidence, but decisions with evaluation, external execution, dependencies, or deployment impact will wait for your approval."
-          }
-        ]);
-      }
+      await api<Project>(`/api/projects/${project.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autonomy_mode: nextMode })
+      });
+      setAgentChatMessages((current) => [
+        ...current.slice(-23),
+        {
+          role: "system",
+          text:
+            nextMode === "full_auto"
+              ? "Full Auto mode is selected. Press Start when data is ready; I will keep moving with explicit assumptions and boundaries."
+              : "Approval Based mode is selected. Press Start when data is ready; I will prepare evidence and wait before risky decisions."
+        }
+      ]);
+      await refreshAgentActivity();
+      await refresh();
+      await onProjectChanged();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: message }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleAutonomyPower(): Promise<void> {
+    const poweredOn = project.current_phase === "AUTONOMOUS_LOOP";
+    setBusy(true);
+    setError(null);
+    const userText = poweredOn ? "Stop agent loop" : `Start ${project.autonomy_mode === "full_auto" ? "Full Auto" : "Approval Based"} agent loop`;
+    setAgentChatMessages((current) => [...current.slice(-23), { role: "user", text: userText }]);
+    try {
+      const job = await api<Job>(`/api/projects/${project.id}/autonomy/${poweredOn ? "stop" : "start"}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: poweredOn
+          ? undefined
+          : JSON.stringify({
+              autonomy_mode: project.autonomy_mode,
+              runner_mode: project.autonomy_mode === "full_auto" ? "codex_cli_if_available" : "harness_only"
+            })
+      });
+      const workerEvents = workerEventsFromJob(job);
+      const assistantMessage =
+        typeof job.output.assistant_message === "string"
+          ? job.output.assistant_message
+          : poweredOn
+            ? "Agent loop stopped."
+            : "Agent loop started.";
+      setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: assistantMessage }]);
+      setAgentWorkerEvents((current) => [...workerEvents, ...current].slice(0, 8));
       await refreshAgentActivity();
       await refresh();
       await onProjectChanged();
@@ -2806,12 +2855,14 @@ function ProjectDetail({
           text={text}
           messages={agentChatMessages}
           latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
+          tableeMotionState={tableeMotionState}
           onSubmitAgentChat={submitAgentChatWithoutResponse}
           onActionOpen={openAgentChatAction}
           onTabChange={onTabChange}
           onFocusAction={(action) => void runFocusAction(action)}
           onStrategyAction={(action) => void runStrategyAction(action)}
           onAutonomyModeChange={(mode) => void changeAutonomyMode(mode)}
+          onAutonomyPowerToggle={() => void toggleAutonomyPower()}
           runAction={runAction}
         />
       )}
@@ -2996,12 +3047,14 @@ function HomeTab({
   text,
   messages,
   latestContract,
+  tableeMotionState,
   onSubmitAgentChat,
   onActionOpen,
   onTabChange,
   onFocusAction,
   onStrategyAction,
   onAutonomyModeChange,
+  onAutonomyPowerToggle,
   runAction
 }: {
   project: Project;
@@ -3024,12 +3077,14 @@ function HomeTab({
   text: LocaleMessages;
   messages: AgentChatMessage[];
   latestContract: Artifact | null;
+  tableeMotionState: TableeMotionState;
   onSubmitAgentChat: (objective: string) => Promise<void>;
   onActionOpen: (action: AgentChatAction) => void;
   onTabChange: (tab: Tab) => void;
   onFocusAction: (action: FocusAction | null) => void;
   onStrategyAction: (action: StrategyAction) => void;
   onAutonomyModeChange: (mode: AutonomyMode) => void;
+  onAutonomyPowerToggle: () => void;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const activeJobs = jobs.filter((job) => !isTerminalJob(job)).slice(0, 3);
@@ -3041,6 +3096,9 @@ function HomeTab({
   const recommendedNotebook = notebookIndex?.recommended_notebook ?? null;
   const latestIdea = ideas[0] ?? null;
   const mode = project.autonomy_mode ?? "approval_based";
+  const datasetCount = overview?.counts.datasets ?? 0;
+  const autonomyPoweredOn = project.current_phase === "AUTONOMOUS_LOOP";
+  const canStartAutonomy = datasetCount > 0;
   const nextStrategyAction = strategyBrief?.recommended_next_action ?? null;
   const focusAction = recommendation.primaryAction;
   const [agentViewMode, setAgentViewMode] = React.useState<"chat" | "raw">("chat");
@@ -3066,6 +3124,15 @@ function HomeTab({
           </div>
         </div>
         <div className="mission-hero-actions">
+          <AutonomyPowerPanel
+            poweredOn={autonomyPoweredOn}
+            canStart={canStartAutonomy}
+            busy={busy}
+            mode={mode}
+            targetColumn={project.target_column}
+            text={text}
+            onToggle={onAutonomyPowerToggle}
+          />
           <AutonomyModePanel
             mode={mode}
             busy={busy}
@@ -3238,6 +3305,7 @@ function HomeTab({
               text={text}
               messages={messages}
               latestContract={latestContract}
+              tableeMotionState={tableeMotionState}
               onSubmit={onSubmitAgentChat}
               onActionOpen={onActionOpen}
             />
@@ -3322,6 +3390,47 @@ function HomeTab({
             )}
           </div>
         </aside>
+      </div>
+    </div>
+  );
+}
+
+function AutonomyPowerPanel({
+  poweredOn,
+  canStart,
+  busy,
+  mode,
+  targetColumn,
+  text,
+  onToggle
+}: {
+  poweredOn: boolean;
+  canStart: boolean;
+  busy: boolean;
+  mode: AutonomyMode;
+  targetColumn: string | null;
+  text: LocaleMessages;
+  onToggle: () => void;
+}) {
+  return (
+    <div className={`autonomy-power-panel ${poweredOn ? "on" : "off"}`}>
+      <button
+        className={`autonomy-power-button ${poweredOn ? "on" : "off"}`}
+        disabled={busy || (!poweredOn && !canStart)}
+        onClick={onToggle}
+        type="button"
+      >
+        {busy ? <Loader2 className="spin" size={22} /> : <Power size={24} />}
+        <span>{poweredOn ? text.stopAgent : text.startAgent}</span>
+      </button>
+      <div>
+        <span>{text.autonomyPower}</span>
+        <strong>{poweredOn ? text.agentPowerOn : canStart ? text.agentPowerReady : text.agentPowerNeedsData}</strong>
+        <small>
+          {mode === "full_auto" ? text.fullAutoMode : text.approvalBasedMode}
+          {" · "}
+          {targetColumn ? `target: ${targetColumn}` : text.targetCanWait}
+        </small>
       </div>
     </div>
   );
@@ -3675,6 +3784,7 @@ function AgentChatDock({
   text,
   messages,
   latestContract,
+  tableeMotionState,
   onSubmit,
   onActionOpen
 }: {
@@ -3682,6 +3792,7 @@ function AgentChatDock({
   text: LocaleMessages;
   messages: AgentChatMessage[];
   latestContract: Artifact | null;
+  tableeMotionState: TableeMotionState;
   onSubmit: (objective: string) => Promise<void>;
   onActionOpen: (action: AgentChatAction) => void;
 }) {
@@ -3699,7 +3810,12 @@ function AgentChatDock({
     <div className="agent-chat-dock">
       <div className="agent-chat-header">
         <div className="agent-chat-heading">
-          <img src="/mascot/tablee-avatar.svg" alt="" aria-hidden="true" className="agent-chat-avatar" />
+          <img
+            src="/mascot/tablee-avatar.svg"
+            alt=""
+            aria-hidden="true"
+            className={`agent-chat-avatar ${tableeMotionState !== "idle" || busy ? `is-${busy ? "working" : tableeMotionState}` : ""}`}
+          />
           <div>
             <div className="agent-chat-title">
               <MessageSquare size={16} />
@@ -3927,6 +4043,29 @@ function isRunningWorkerStatus(status: string) {
 
 function isActiveWorkerEvent(event: AgentWorkerEvent) {
   return event.active && isRunningWorkerStatus(event.status);
+}
+
+function hasLiveAgentOrModelActivity(
+  jobs: Job[],
+  events: AgentWorkerEvent[],
+  activity: AgentActivityResponse | null
+) {
+  const allEvents = [...events, ...(activity?.workers ?? [])];
+  return (
+    allEvents.some((event) => isActiveWorkerEvent(event) && isAgentOrModelActivityLabel(`${event.worker_id} ${event.display_name}`)) ||
+    jobs.some((job) => !isTerminalJob(job) && isAgentOrModelJobType(job.job_type))
+  );
+}
+
+function isAgentOrModelActivityLabel(value: string) {
+  const normalized = value.toLowerCase();
+  return ["agent", "autonomous", "codex", "runner", "train", "training", "baseline", "model", "notebook", "research"].some((token) =>
+    normalized.includes(token)
+  );
+}
+
+function isAgentOrModelJobType(jobType: string) {
+  return isAgentOrModelActivityLabel(jobType);
 }
 
 function isVisibleWorkerEvent(event: AgentWorkerEvent, now: number) {
