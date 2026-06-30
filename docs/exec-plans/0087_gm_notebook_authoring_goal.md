@@ -29,7 +29,7 @@ These references are encoded as `source_inspirations` inside a `notebook_authori
 - Added `tabular_harness.services.notebook_authoring`.
 - Added `/api/projects/{project_id}/notebook-authoring/brief`.
 - Added `create_notebook_authoring_brief` job type.
-- Agent Chat detects notebook authoring requests and creates:
+- Deprecated: natural-language Agent Chat detection was removed. Notebook authoring is started by explicit controls or future schema-validated agent proposals that create:
   - a `notebook_authoring_brief`,
   - a `notebook_authoring_report`,
   - an `author_analysis_notebook` AgentTaskContract.

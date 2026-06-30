@@ -29,6 +29,7 @@ def compose_agent_chat_response(
     action_summary: dict[str, Any],
     locale: str | None,
     fallback_message: str,
+    conversation_context: dict[str, Any] | None = None,
     agent_model: str | None = None,
     utility_model: str | None = None,
 ) -> AgentResponseComposition:
@@ -39,6 +40,7 @@ def compose_agent_chat_response(
         actions=actions,
         action_summary=action_summary,
         locale=locale,
+        conversation_context=conversation_context,
         agent_model=agent_model,
         utility_model=utility_model,
     )
@@ -77,6 +79,7 @@ def build_human_response_brief(
     actions: list[dict[str, Any]],
     action_summary: dict[str, Any],
     locale: str | None,
+    conversation_context: dict[str, Any] | None,
     agent_model: str | None,
     utility_model: str | None,
 ) -> dict[str, Any]:
@@ -121,6 +124,7 @@ def build_human_response_brief(
         },
         "outcome": action_summary.get("outcome"),
         "headline": action_summary.get("headline"),
+        "conversation_context": conversation_context or {},
         "what_changed": action_summary.get("what_changed", []),
         "what_needs_review": action_summary.get("what_needs_review", []),
         "next_step": action_summary.get("next_step", {}),

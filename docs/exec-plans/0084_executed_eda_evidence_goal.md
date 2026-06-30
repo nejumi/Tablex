@@ -22,7 +22,7 @@ Turn generated notebook artifacts from static scaffolds into readable, artifact-
 ## Deferred UX / Product Requests Captured
 
 - Agent Chat should be the universal project-level command surface. Users should be able to ask for uploads, visualization, ER diagrams, notebook guidance, evaluation changes, or runner work in natural language without hunting for a specialized field. Specialized controls can remain as shortcuts, but the Agent should mediate between the user and the meta-harness by selecting the right safe harness action, asking focused follow-up questions only when useful, and recording assumptions when the user does not answer.
-- Add intent routing for:
+- Deprecated: do not add natural-language intent routing. Use explicit controls or future schema-validated proposals for:
   - dataset or ER diagram upload guidance,
   - relational ER visualization requests,
   - chart/visualization generation requests,

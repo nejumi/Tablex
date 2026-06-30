@@ -8,7 +8,7 @@ Make the Home Credit project handoff self-contained for a future Codex/AgentRunn
 
 - Add `baseline_plan`, `baseline_metrics`, `baseline_report`, `evaluation_diagnostics_report`, and `run_report` to AgentTaskContract context artifacts.
 - Materialize baseline metrics/report, diagnostics report, and run report into controlled agent workspaces.
-- Add a persistent in-product Agent Chat dock that turns user instructions into harness-owned AgentTaskContracts instead of sending users to an external Codex UI.
+- Add a persistent in-product Agent Chat dock that keeps conversation, project context, and Codex-facing briefs inside the workbench instead of sending users to an external Codex UI. Natural-language text must not be keyword-routed into AgentTaskContracts.
 - Preserve relational catalog context and library asset materialization.
 - Keep runner autonomy policy open-ended: recommended approaches are evidence, not mandatory recipes.
 - Verify the real Home Credit project can run agent task planning, readiness review, workspace preparation, LocalStub AgentResult ingestion, and Idea AgentContextPack preparation.
@@ -29,7 +29,7 @@ Make the Home Credit project handoff self-contained for a future Codex/AgentRunn
 ## Verification Notes
 
 - Home Credit `plan-agent-task` completed in about 0.09 seconds.
-- The project UI now keeps an Agent Chat dock available across project tabs. Submitting a prompt creates an AgentTaskContract with the current project context and links to the latest contract artifact.
+- The project UI now keeps an Agent Chat dock available across project tabs. Chat turns persist project context; AgentTaskContracts are created by explicit controls or future schema-validated proposals, not by unrecognized natural-language prompts.
 - Generated contract context roles included `eda_profile`, `understanding_report`, `data_quality_gate`, `relational_catalog`, `benchmark_import_manifest`, `evaluation_scenario_comparison`, `evaluation_approval_review`, `baseline_strategy_plan`, `baseline_plan`, `baseline_metrics`, `baseline_report`, `evaluation_diagnostics`, `evaluation_diagnostics_report`, and `run_report`.
 - Readiness review completed with `ready_with_warnings`, 0 blockers, and 3 warnings.
 - Controlled workspace preparation completed with 14 materialized context artifacts and 11 materialized library assets.

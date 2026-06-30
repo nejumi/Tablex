@@ -4,7 +4,7 @@ Date: 2026-06-30
 
 ## Goal
 
-Make relational evidence understandable without asking users to read raw JSON. The Data tab should show an ER-style map or uploaded ER evidence first, keep raw catalogs secondary, and let Agent Chat route relationship-map requests to the right in-product surface.
+Make relational evidence understandable without asking users to read raw JSON. The Data tab should show an ER-style map or uploaded ER evidence first, keep raw catalogs secondary, and let Agent Chat explain where relational evidence lives without keyword-routing user text.
 
 ## Implemented
 
@@ -12,7 +12,7 @@ Make relational evidence understandable without asking users to read raw JSON. T
 - Accepted PNG, JPEG, SVG, PDF, and JSON ER/schema hints.
 - Stored uploaded evidence as `relational_schema_hint` artifacts with metadata, report, Evidence, and lineage.
 - Extended artifact preview so image/PDF ER evidence can be displayed in-product.
-- Added Agent Chat intent routing for ER/relationship map requests.
+- Deprecated: Agent Chat intent routing for ER/relationship map requests was removed. ER evidence is handled by upload/import controls and future schema-validated proposals.
 - Reworked the Data tab into a single `Relational Map` surface with:
   - relationship evidence summary,
   - ER upload control,

@@ -201,26 +201,29 @@ const englishMessages = {
   createLocalizationTask: "Create AgentTask",
   localizationTaskHint:
     "Creates a harness-owned AgentTaskContract so Codex can later generate or revise a locale pack.",
-  localizationTaskCreated: "Localization AgentTaskContract created.",
+  localizationTaskCreated: "Localization runner handoff saved.",
   noProjectForLocalization: "Select a project before creating a localization AgentTask.",
   agentChatTitle: "Agent Chat",
-  agentChatSubtitle: "Talk to Tablee; actions stay inside the harness",
-  agentChatPlaceholder: "Try: set metric to ROC-AUC, explain the next step, generate a diagnostic notebook",
+  agentChatSubtitle: "Persistent conversation, decisions, and reports. Live worker cards appear separately while work is running.",
+  agentWorkspacePersistent: "Persistent workspace",
+  agentChatPlaceholder: "Ask Tablee to explain status, discuss a target, or think through the next move",
   createAgentTaskContract: "Send",
   youAsked: "You asked",
   tableeAnswered: "Tablee answered",
   agentReplyPending: "Thinking and preparing the next useful response.",
+  agentReplyFailed: "I could not complete that request. The error is recorded here so it does not disappear.",
   chatTurnStatus: "Status",
   chatBriefAvailable: "Response brief saved",
   nextActionLabel: "Next",
   downloadLatestAgentTaskContract: "Download latest AgentTaskContract",
-  agentTaskContractCreated: "AgentTaskContract created.",
+  agentTaskContractCreated: "Runner handoff saved.",
   chatActionOpen: "Open",
   chatActionReview: "Review",
   chatChangedLabel: "Changed",
   chatReviewLabel: "Needs review",
   agentActivityTitle: "Agent Activity",
-  agentActivitySubtitle: "Workers, actions, and token telemetry",
+  agentActivitySubtitle: "Live workers only; finished work is summarized in Agent Chat.",
+  agentActivityLiveOnly: "Live only",
   estimatedTokens: "Estimated tokens",
   currentTokens: "Current",
   cumulativeTokens: "Task total",
@@ -244,7 +247,7 @@ const englishMessages = {
   fullAutoMode: "Full Auto",
   fullAutoModeHint: "Ask questions, record assumptions, and keep moving with explicit fallback policies.",
   researchPlanTitle: "Research Plan",
-  researchPlanEmpty: "No active ResearchPlan yet. Ask the agent for a plan or generate one from the current project context.",
+  researchPlanEmpty: "No active ResearchPlan yet. Start the agent or ask in Chat; Tablex will create planning artifacts when they are useful.",
   currentTaskTitle: "Current task",
   currentTaskIdle: "Idle",
   currentTaskEmpty: "No active task. The agent should propose the next useful move instead of making you hunt through tabs.",
@@ -253,17 +256,16 @@ const englishMessages = {
   supportingSurfacesTitle: "Supporting surfaces",
   ideasAndFindingsTitle: "Ideas & Findings",
   ideasAndFindingsEmpty: "Insights, domain knowledge, and candidate ideas will accumulate here as the agent learns.",
+  ideasAndFindingsReady: "signals worth opening",
+  openDeepDive: "Open deep dive",
   equippedSkillsTitle: "Equipped Skills",
   equippedSkillsEmpty: "No project skills equipped yet.",
   equippedSkillBadge: "E",
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
-  rawAgentTitle: "Raw Codex-style stream",
-  rawAgentEmpty: "Raw agent events will appear after chat, planning, or runner work.",
+  rawAgentTitle: "Raw workspace stream",
+  rawAgentEmpty: "Persistent chat turns, jobs, and artifacts will appear here after work starts.",
   openSurface: "Open",
-  generateResearchPlan: "Generate ResearchPlan",
-  generateStrategyBrief: "Refresh strategy",
-  planAgentTask: "Plan agent task",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "One guided next step without forcing a fixed modeling recipe.",
   strategyRecommendedAction: "Recommended action",
@@ -426,27 +428,30 @@ const japaneseMessages: LocaleMessages = {
   agentLoopStarted: "Agent loopを開始しました。",
   createLocalizationTask: "AgentTaskを作成",
   localizationTaskHint:
-    "Codexが将来locale packを生成・更新できるよう、Tablex管理のAgentTaskContractを作成します。",
-  localizationTaskCreated: "Localization AgentTaskContractを作成しました。",
+    "Codexが将来locale packを生成・更新できるよう、Tablex管理のrunner handoffを保存します。",
+  localizationTaskCreated: "Localization runner handoffを保存しました。",
   noProjectForLocalization: "Localization AgentTaskを作成する前にProjectを選択してください。",
   agentChatTitle: "Agent Chat",
-  agentChatSubtitle: "Tableeに話す。アクションはハーネス内で管理されます",
-  agentChatPlaceholder: "例: metricはROC-AUCにして、次に見るべきことを説明して、診断Notebookを生成して",
+  agentChatSubtitle: "永続的な会話、判断、結果報告の場です。実行中のworkerだけ右側にライブ表示されます。",
+  agentWorkspacePersistent: "永続Workspace",
+  agentChatPlaceholder: "例: 状況を説明して、ターゲットを相談したい、次に何を考えるべき？",
   createAgentTaskContract: "送信",
   youAsked: "あなたの依頼",
   tableeAnswered: "Tableeからの返答",
   agentReplyPending: "状況を確認し、次に役立つ返答を準備しています。",
+  agentReplyFailed: "この依頼を完了できませんでした。消えないように、エラーをここに記録します。",
   chatTurnStatus: "状態",
   chatBriefAvailable: "応答brief保存済み",
   nextActionLabel: "次に開く",
   downloadLatestAgentTaskContract: "最新のAgentTaskContractをダウンロード",
-  agentTaskContractCreated: "AgentTaskContractを作成しました。",
+  agentTaskContractCreated: "Runner handoffを保存しました。",
   chatActionOpen: "開く",
   chatActionReview: "確認",
   chatChangedLabel: "変更",
   chatReviewLabel: "要確認",
   agentActivityTitle: "Agent Activity",
-  agentActivitySubtitle: "Worker、action、token telemetry",
+  agentActivitySubtitle: "実行中worker専用のライブ表示です。完了後の要約はAgent Chatに残ります。",
+  agentActivityLiveOnly: "Liveのみ",
   estimatedTokens: "推定tokens",
   currentTokens: "現在",
   cumulativeTokens: "累積",
@@ -469,7 +474,7 @@ const japaneseMessages: LocaleMessages = {
   fullAutoMode: "フルオート",
   fullAutoModeHint: "質問は残しつつ、仮定とfallback policyを明示して前に進みます。",
   researchPlanTitle: "Research Plan",
-  researchPlanEmpty: "有効なResearchPlanはまだありません。Agentに依頼するか、現在のProject contextから生成してください。",
+  researchPlanEmpty: "有効なResearchPlanはまだありません。Agentを開始するかChatで依頼すると、必要な時にTablexが計画artifactを作ります。",
   currentTaskTitle: "現在のタスク",
   currentTaskIdle: "待機中",
   currentTaskEmpty: "実行中のタスクはありません。タブを探し回らなくても、Agentが次の有用な一手を提案するべきです。",
@@ -478,17 +483,16 @@ const japaneseMessages: LocaleMessages = {
   supportingSurfacesTitle: "支援面",
   ideasAndFindingsTitle: "Ideas & Findings",
   ideasAndFindingsEmpty: "Agentが学んだinsight、domain knowledge、候補ideaがここに蓄積されます。",
+  ideasAndFindingsReady: "件の開くべきシグナル",
+  openDeepDive: "深掘りを開く",
   equippedSkillsTitle: "装備中SKILL",
   equippedSkillsEmpty: "このProjectに装備されたSkillはまだありません。",
   equippedSkillBadge: "E",
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
-  rawAgentTitle: "Codex CLI風の生表示",
-  rawAgentEmpty: "chat、planning、runner workが始まるとraw eventが表示されます。",
+  rawAgentTitle: "Raw workspace stream",
+  rawAgentEmpty: "作業が始まると、永続chat turn、job、artifactがここに低レベル表示されます。",
   openSurface: "開く",
-  generateResearchPlan: "ResearchPlan生成",
-  generateStrategyBrief: "Strategy更新",
-  planAgentTask: "Agent task計画",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "固定recipeにせず、次の一手だけをガイドします。",
   strategyRecommendedAction: "推奨アクション",
@@ -1169,7 +1173,11 @@ type HomeMemoryItem = {
   id: string;
   kind: "idea" | "finding";
   title: string;
-  detail: string;
+  summary: string;
+  meta: string;
+  cta: string;
+  target_tab: string;
+  target_anchor: string;
   created_at: string;
 };
 
@@ -2795,8 +2803,22 @@ function ProjectDetail({
     if (!trimmed) return;
     setBusy(true);
     setError(null);
+    const createdAt = new Date().toISOString();
+    const localTurnId = `local-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const optimisticUser: AgentChatMessage = {
+      id: `${localTurnId}:user`,
+      role: "user",
+      text: trimmed,
+      createdAt
+    };
+    const pendingAssistant: AgentChatMessage = {
+      id: `${localTurnId}:assistant`,
+      role: "system",
+      text: text.agentReplyPending,
+      createdAt
+    };
     const pendingWorker = optimisticWorkerEvent(project.id, trimmed);
-    setAgentChatMessages((current) => [...current.slice(-23), { role: "user", text: trimmed }]);
+    setAgentChatMessages((current) => upsertAgentChatMessages(current, [optimisticUser, pendingAssistant]));
     setAgentWorkerEvents((current) => [pendingWorker, ...current].slice(0, 8));
     try {
       const result = await api<AgentChatResponse>(`/api/projects/${project.id}/agent-chat`, {
@@ -2809,18 +2831,31 @@ function ProjectDetail({
           utility_model: userSettings.utilityModel
         })
       });
-      setAgentChatMessages((current) => [
-        ...current.slice(-23),
-        {
-          id: `${result.artifact_id}:system`,
-          role: "system",
-          text: result.assistant_message,
-          actions: result.actions,
-          actionSummary: result.action_summary,
-          responseBrief: result.response_brief ?? null,
-          responseComposer: result.response_composer ?? null
-        }
-      ]);
+      const responseCreatedAt = result.job?.updated_at ?? new Date().toISOString();
+      setAgentChatMessages((current) =>
+        upsertAgentChatMessages(
+          current,
+          [
+            {
+              id: `${result.artifact_id}:user`,
+              role: "user",
+              text: result.user_message,
+              createdAt: responseCreatedAt
+            },
+            {
+              id: `${result.artifact_id}:system`,
+              role: "system",
+              text: result.assistant_message,
+              actions: result.actions,
+              actionSummary: result.action_summary,
+              responseBrief: result.response_brief ?? null,
+              responseComposer: result.response_composer ?? null,
+              createdAt: responseCreatedAt
+            }
+          ],
+          [optimisticUser.id, pendingAssistant.id]
+        )
+      );
       setAgentWorkerEvents((current) =>
         [...result.worker_events, ...current.filter((event) => event.job_id !== pendingWorker.job_id)].slice(0, 8)
       );
@@ -2833,7 +2868,26 @@ function ProjectDetail({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
-      setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: message }]);
+      setAgentChatMessages((current) =>
+        upsertAgentChatMessages(current, [
+          {
+            id: pendingAssistant.id,
+            role: "system",
+            text: `${text.agentReplyFailed}\n${message}`,
+            actionSummary: {
+              schema_version: "agent_action_summary.v1",
+              outcome: "failed",
+              headline: "Request failed",
+              what_changed: [],
+              what_needs_review: [message],
+              next_step: { label: text.agentChatTitle, target_tab: "Home", target_anchor: null, status: "failed" },
+              boundaries: [],
+              actions: []
+            },
+            createdAt: new Date().toISOString()
+          }
+        ])
+      );
       setAgentWorkerEvents((current) => current.filter((event) => event.job_id !== pendingWorker.job_id));
       return undefined;
     } finally {
@@ -2926,6 +2980,10 @@ function ProjectDetail({
     navigateToTarget(targetTab, action.target_anchor ?? null);
   }
 
+  function openHomeMemoryItem(item: HomeMemoryItem) {
+    navigateToTarget(tabFromString(item.target_tab, "Insight"), item.target_anchor);
+  }
+
   async function runFocusAction(action: FocusAction | null) {
     if (!action || action.disabled) {
       if (action?.disabledReason) setError(action.disabledReason);
@@ -3009,12 +3067,12 @@ function ProjectDetail({
           tableeMotionState={tableeMotionState}
           onSubmitAgentChat={submitAgentChatWithoutResponse}
           onActionOpen={openAgentChatAction}
+          onOpenMemoryItem={openHomeMemoryItem}
           onTabChange={onTabChange}
           onFocusAction={(action) => void runFocusAction(action)}
           onStrategyAction={(action) => void runStrategyAction(action)}
           onAutonomyModeChange={(mode) => void changeAutonomyMode(mode)}
           onAutonomyPowerToggle={() => void toggleAutonomyPower()}
-          runAction={runAction}
         />
       )}
       {tab === "Overview" && (
@@ -3034,6 +3092,7 @@ function ProjectDetail({
           artifacts={artifacts}
           visualizations={visualizations}
           notebookIndex={notebookIndex}
+          ideas={ideas}
           insights={insights}
           busy={busy}
           runAction={runAction}
@@ -3145,6 +3204,7 @@ function ProjectDetail({
           artifacts={artifacts}
           visualizations={visualizations}
           notebookIndex={notebookIndex}
+          ideas={ideas}
           insights={insights}
           busy={busy}
           runAction={runAction}
@@ -3201,12 +3261,12 @@ function HomeTab({
   tableeMotionState,
   onSubmitAgentChat,
   onActionOpen,
+  onOpenMemoryItem,
   onTabChange,
   onFocusAction,
   onStrategyAction,
   onAutonomyModeChange,
-  onAutonomyPowerToggle,
-  runAction
+  onAutonomyPowerToggle
 }: {
   project: Project;
   overview: Overview | null;
@@ -3231,12 +3291,12 @@ function HomeTab({
   tableeMotionState: TableeMotionState;
   onSubmitAgentChat: (objective: string) => Promise<void>;
   onActionOpen: (action: AgentChatAction) => void;
+  onOpenMemoryItem: (item: HomeMemoryItem) => void;
   onTabChange: (tab: Tab) => void;
   onFocusAction: (action: FocusAction | null) => void;
   onStrategyAction: (action: StrategyAction) => void;
   onAutonomyModeChange: (mode: AutonomyMode) => void;
   onAutonomyPowerToggle: () => void;
-  runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const activeJobs = jobs.filter((job) => !isTerminalJob(job)).slice(0, 3);
   const activeJob = activeJobs[0] ?? null;
@@ -3309,43 +3369,6 @@ function HomeTab({
               <span>{text.researchPlanTitle}</span>
               <strong>{latestResearchPlan?.name ?? strategyBrief?.recommended_next_action.label ?? text.researchPlanEmpty}</strong>
             </div>
-            <div className="button-row">
-              <button
-                className="secondary-button"
-                disabled={busy}
-                onClick={() => void runAction(() => api(`/api/projects/${project.id}/approach/strategy-brief`, { method: "POST" }))}
-                type="button"
-              >
-                {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-                {text.generateStrategyBrief}
-              </button>
-              <button
-                className="secondary-button"
-                disabled={busy}
-                onClick={() => void runAction(() => api(`/api/projects/${project.id}/approach/research-plan`, { method: "POST" }))}
-                type="button"
-              >
-                {busy ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
-                {text.generateResearchPlan}
-              </button>
-              <button
-                className="secondary-button"
-                disabled={busy}
-                onClick={() =>
-                  void runAction(() =>
-                    api(`/api/projects/${project.id}/approach/agent-task-plan`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({})
-                    })
-                  )
-                }
-                type="button"
-              >
-                {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
-                {text.planAgentTask}
-              </button>
-            </div>
           </div>
           <div className="mission-plan-body">
             {nextStrategyAction ? (
@@ -3409,7 +3432,11 @@ function HomeTab({
         <div className="mission-panel-head">
           <div>
             <span>{text.ideasAndFindingsTitle}</span>
-            <strong>{ideaFindingItems.length ? `${ideaFindingItems.length} stored signals` : text.ideasAndFindingsEmpty}</strong>
+            <strong>
+              {ideaFindingItems.length
+                ? `${ideaFindingItems.length} ${text.ideasAndFindingsReady}`
+                : text.ideasAndFindingsEmpty}
+            </strong>
           </div>
           <button className="secondary-button" type="button" onClick={() => onTabChange("Insight")}>
             <Lightbulb size={16} />
@@ -3419,11 +3446,17 @@ function HomeTab({
         {ideaFindingItems.length ? (
           <div className="mission-memory-list">
             {ideaFindingItems.slice(0, 5).map((item) => (
-              <div className={`mission-memory-item ${item.kind}`} key={item.id}>
-                <span>{item.kind}</span>
+              <button
+                className={`mission-memory-item ${item.kind}`}
+                key={item.id}
+                onClick={() => onOpenMemoryItem(item)}
+                type="button"
+              >
+                <span>{item.meta}</span>
                 <strong>{item.title}</strong>
-                <small>{item.detail}</small>
-              </div>
+                <p>{item.summary}</p>
+                <small>{item.cta}</small>
+              </button>
             ))}
           </div>
         ) : (
@@ -3652,20 +3685,54 @@ function latestArtifactByType(artifacts: Artifact[], assetType: string) {
     .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0] ?? null;
 }
 
+function conciseMemoryText(value: string | null | undefined, fallback: string, maxLength = 170) {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+  const text = normalized || fallback;
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1).trim()}...`;
+}
+
+function memoryAnchor(prefix: "idea" | "finding", id: string) {
+  return `${prefix}-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
+function confidenceLabel(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "confidence n/a";
+  return `${Math.round(value * 100)}% confidence`;
+}
+
+function insightDeepDiveAnchor(insight: Insight) {
+  const assetTypes = insight.source_asset_ids.map((source) => source.asset_type.toLowerCase());
+  if (assetTypes.some((assetType) => assetType.includes("notebook"))) return "notebook-focus";
+  if (assetTypes.some((assetType) => assetType.includes("report"))) return "reports";
+  return memoryAnchor("finding", insight.id);
+}
+
 function buildIdeaFindingItems(ideas: Idea[], insights: Insight[]): HomeMemoryItem[] {
   return [
     ...ideas.map((idea) => ({
       id: idea.id,
       kind: "idea" as const,
-      title: idea.title,
-      detail: idea.hypothesis,
+      title: conciseMemoryText(idea.title, "Candidate idea", 90),
+      summary: conciseMemoryText(
+        idea.hypothesis || idea.rationale_md,
+        "Review the saved rationale, expected artifacts, and proposed next experiment."
+      ),
+      meta: `Idea · ${idea.approach_type.replace(/_/g, " ")} · ${idea.risk_level.replace(/_/g, " ")}`,
+      cta: "Open this exact idea",
+      target_tab: "Insight",
+      target_anchor: memoryAnchor("idea", idea.id),
       created_at: idea.created_at
     })),
     ...insights.map((insight) => ({
       id: insight.id,
       kind: "finding" as const,
-      title: insight.title,
-      detail: insight.summary,
+      title: conciseMemoryText(insight.title, "Finding", 90),
+      summary: conciseMemoryText(insight.summary, "Review the saved evidence behind this finding."),
+      meta: `Finding · ${insight.insight_type.replace(/_/g, " ")} · ${confidenceLabel(insight.confidence)}`,
+      cta: insightDeepDiveAnchor(insight) === "notebook-focus" ? "Open notebook evidence" : "Open this exact finding",
+      target_tab: "Insight",
+      target_anchor: insightDeepDiveAnchor(insight),
       created_at: insight.created_at
     }))
   ].sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime());
@@ -3793,6 +3860,25 @@ function mergeAgentChatMessages(persisted: AgentChatMessage[], transient: AgentC
   return merged.slice(-80);
 }
 
+function upsertAgentChatMessages(
+  current: AgentChatMessage[],
+  nextMessages: AgentChatMessage[],
+  removeIds: Array<string | undefined> = []
+) {
+  const idsToRemove = new Set(removeIds.filter((id): id is string => Boolean(id)));
+  const merged = current.filter((message) => !message.id || !idsToRemove.has(message.id));
+  for (const next of nextMessages) {
+    const key = next.id ?? `${next.role}:${next.text}`;
+    const existingIndex = merged.findIndex((message) => (message.id ?? `${message.role}:${message.text}`) === key);
+    if (existingIndex >= 0) {
+      merged[existingIndex] = { ...merged[existingIndex], ...next };
+    } else {
+      merged.push(next);
+    }
+  }
+  return merged.slice(-80);
+}
+
 function buildAgentConversationTurns(messages: AgentChatMessage[]): AgentConversationTurn[] {
   const turns: AgentConversationTurn[] = [];
   let pendingUser: AgentChatMessage | undefined;
@@ -3866,7 +3952,11 @@ function surfaceLabel(anchor: string) {
     "data-focus": "Data Evidence",
     "relational-map": "Relational Map",
     "notebook-focus": "Notebook Focus",
+    "notebook-center": "Notebook Center",
     "analysis-story": "Analysis Story",
+    ideas: "Ideas",
+    insights: "Insights",
+    reports: "Reports",
     "evaluation-design": "Evaluation Design",
     "approach-handoff": "Runner Handoff"
   };
@@ -4103,15 +4193,18 @@ function AgentChatDock({
             <small>{text.agentChatSubtitle}</small>
           </div>
         </div>
-        {latestContract ? (
-          <a
-            className="icon-link"
-            href={`${apiBase}/api/artifacts/${latestContract.id}/download`}
-            title={text.downloadLatestAgentTaskContract}
-          >
-            <Download size={16} />
-          </a>
-        ) : null}
+        <div className="agent-chat-header-actions">
+          <span className="agent-scope-pill">{text.agentWorkspacePersistent}</span>
+          {latestContract ? (
+            <a
+              className="icon-link"
+              href={`${apiBase}/api/artifacts/${latestContract.id}/download`}
+              title={text.downloadLatestAgentTaskContract}
+            >
+              <Download size={16} />
+            </a>
+          ) : null}
+        </div>
       </div>
       {turns.length ? (
         <div className="agent-chat-log">
@@ -4176,6 +4269,7 @@ function AgentActivityRail({
           </div>
           <small>{text.agentActivitySubtitle}</small>
         </div>
+        <span className="agent-scope-pill live">{text.agentActivityLiveOnly}</span>
       </div>
       {workerEvents.length ? (
         <div className="agent-worker-list">
@@ -4308,21 +4402,7 @@ function hasLiveAgentOrModelActivity(
   activity: AgentActivityResponse | null
 ) {
   const allEvents = [...events, ...(activity?.workers ?? [])];
-  return (
-    allEvents.some((event) => isActiveWorkerEvent(event) && isAgentOrModelActivityLabel(`${event.worker_id} ${event.display_name}`)) ||
-    jobs.some((job) => !isTerminalJob(job) && isAgentOrModelJobType(job.job_type))
-  );
-}
-
-function isAgentOrModelActivityLabel(value: string) {
-  const normalized = value.toLowerCase();
-  return ["agent", "autonomous", "codex", "runner", "train", "training", "baseline", "model", "notebook", "research"].some((token) =>
-    normalized.includes(token)
-  );
-}
-
-function isAgentOrModelJobType(jobType: string) {
-  return isAgentOrModelActivityLabel(jobType);
+  return allEvents.some(isActiveWorkerEvent) || jobs.some((job) => !isTerminalJob(job));
 }
 
 function isVisibleWorkerEvent(event: AgentWorkerEvent, now: number) {
@@ -4358,14 +4438,7 @@ function workerEventsFromJob(job: Job): AgentWorkerEvent[] {
       .map((event, index) => coerceWorkerEvent(event, job, index))
       .filter((event): event is AgentWorkerEvent => event !== null);
   }
-  if (
-    !job.job_type.includes("agent") &&
-    !job.job_type.includes("notebook") &&
-    !job.job_type.includes("research") &&
-    !job.job_type.includes("train") &&
-    !job.job_type.includes("baseline") &&
-    !job.job_type.includes("experiment")
-  ) {
+  if (isTerminalJob(job)) {
     return [];
   }
   return [
@@ -6282,6 +6355,16 @@ function DataTab({
 
 function textField(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function compactRecordField(value: unknown) {
+  if (typeof value === "string") return value.trim() || "-";
+  if (!value || typeof value !== "object") return "-";
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entryValue]) => entryValue !== null && entryValue !== undefined && String(entryValue).trim() !== "")
+    .slice(0, 3);
+  if (!entries.length) return "-";
+  return entries.map(([key, entryValue]) => `${key.replace(/_/g, " ")}: ${String(entryValue)}`).join("; ");
 }
 
 const tableUploadExtensions = new Set([".csv", ".parquet"]);
@@ -8755,49 +8838,6 @@ function NotebooksTab({
     void loadPreview(storyPreviewArtifactId);
   }, [storyPreviewArtifactId]);
 
-  function isNotebookFollowUpTaskPrompt(value: string) {
-    const normalized = value.toLowerCase();
-    const focusTerms = [
-      "feature importance",
-      "importance",
-      "permutation",
-      "partial dependence",
-      "pdp",
-      "calibration",
-      "threshold",
-      "score-bin",
-      "score bin",
-      "slice",
-      "worst",
-      "failure",
-      "error",
-      "diagnostic",
-      "重要度",
-      "キャリブレーション",
-      "閾値",
-      "しきい値",
-      "スライス",
-      "失敗",
-      "診断"
-    ];
-    const actionTerms = [
-      "add",
-      "create",
-      "generate",
-      "materialize",
-      "inspect",
-      "review",
-      "plan",
-      "追加",
-      "作",
-      "生成",
-      "見て",
-      "調べ",
-      "レビュー"
-    ];
-    return focusTerms.some((term) => normalized.includes(term)) && actionTerms.some((term) => normalized.includes(term));
-  }
-
   async function askNotebookGuide(message: string) {
     const trimmed = message.trim();
     if (!trimmed) return;
@@ -8807,9 +8847,8 @@ function NotebooksTab({
       : reviewNotebook
         ? `[notebook:${reviewNotebook.notebook_artifact_id}]`
         : "[analysis-story]";
-    const instruction = isNotebookFollowUpTaskPrompt(trimmed)
-      ? "Create a targeted notebook follow-up AgentTaskContract. Keep the UI response human-readable: say what diagnostic task was prepared, which evidence it will use, what it must not invent, and route me to the runner handoff."
-      : "Reply as an interactive analysis guide: name the exact section, artifact, or figure I should inspect next, why it matters, and what action Tablex should take.";
+    const instruction =
+      "Reply as an interactive analysis guide. Use the provided notebook or story context, decide whether the user needs an explanation, a deeper analysis proposal, or a runner handoff, and explain the next useful move in human language.";
     setGuideBusy(true);
     try {
       const response = await onAskAgent(`${scopedSource} ${trimmed}. ${instruction}`);
@@ -9042,27 +9081,16 @@ function NotebooksTab({
                         "Which evidence is still too weak to trust?"
                       ]
                   ).slice(0, 4).map((prompt) => (
-                    (() => {
-                      const createsTask = isNotebookFollowUpTaskPrompt(prompt);
-                      return (
-                        <button
-                          className="secondary-button"
-                          disabled={busy || guideBusy}
-                          key={prompt}
-                          title={createsTask ? "Create a targeted follow-up task" : "Ask the analysis guide"}
-                          onClick={() => void askNotebookGuide(prompt)}
-                        >
-                          {guideBusy ? (
-                            <Loader2 className="spin" size={16} />
-                          ) : createsTask ? (
-                            <ListChecks size={16} />
-                          ) : (
-                            <MessageSquare size={16} />
-                          )}
-                          {prompt}
-                        </button>
-                      );
-                    })()
+                    <button
+                      className="secondary-button"
+                      disabled={busy || guideBusy}
+                      key={prompt}
+                      title="Ask the analysis guide"
+                      onClick={() => void askNotebookGuide(prompt)}
+                    >
+                      {guideBusy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
+                      {prompt}
+                    </button>
                   ))}
                 </div>
                 <form
@@ -9329,6 +9357,7 @@ function ReportsTab({
   artifacts,
   visualizations,
   notebookIndex,
+  ideas,
   insights,
   busy,
   runAction
@@ -9339,6 +9368,7 @@ function ReportsTab({
   artifacts: Artifact[];
   visualizations: VisualizationSpec[];
   notebookIndex: NotebookIndex | null;
+  ideas: Idea[];
   insights: Insight[];
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
@@ -9659,7 +9689,7 @@ function ReportsTab({
           Compare Journey
         </button>
         </div>
-      <Panel title="Notebook Center" icon={<BarChart3 size={18} />}>
+      <Panel id="notebook-center" title="Notebook Center" icon={<BarChart3 size={18} />}>
         {notebookIndex && notebookIndex.counts.total > 0 ? (
           <div className="stack">
             {recommendedNotebook ? (
@@ -9749,7 +9779,45 @@ function ReportsTab({
           <EmptyInline text="Generate a Data Understanding notebook or a run-level Model Diagnostics notebook to create a guided notebook history here." />
         )}
       </Panel>
-      <Panel title="Insights" icon={<Lightbulb size={18} />}>
+      <Panel id="ideas" title="Ideas" icon={<Lightbulb size={18} />}>
+        {ideas.length ? (
+          <div className="card-grid">
+            {ideas.map((idea) => (
+              <div key={idea.id} className="mini-card insight-card">
+                <div className="mini-card-title">{idea.title}</div>
+                <div className="badge-row">
+                  <span className="badge">{idea.status}</span>
+                  <span className="badge muted">{idea.approach_type.replace(/_/g, " ")}</span>
+                  <span className="badge risk">{idea.risk_level.replace(/_/g, " ")}</span>
+                  <span className="badge muted">priority {idea.priority}</span>
+                </div>
+                <p>{idea.hypothesis}</p>
+                <dl className="facts">
+                  <div>
+                    <dt>Confidence</dt>
+                    <dd>{Math.round(idea.confidence * 100)}%</dd>
+                  </div>
+                  <div>
+                    <dt>Feature strategy</dt>
+                    <dd>{compactRecordField(idea.feature_strategy)}</dd>
+                  </div>
+                  <div>
+                    <dt>Modeling strategy</dt>
+                    <dd>{compactRecordField(idea.modeling_strategy)}</dd>
+                  </div>
+                  <div>
+                    <dt>Artifact</dt>
+                    <dd>{idea.artifact_id ?? "-"}</dd>
+                  </div>
+                </dl>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyInline text="Agent ideas, domain observations, and improvement hypotheses will appear here with rationale and expected artifacts." />
+        )}
+      </Panel>
+      <Panel id="insights" title="Insights" icon={<Lightbulb size={18} />}>
         {insights.length ? (
           <div className="card-grid">
             {insights.map((insight) => (
@@ -9786,7 +9854,7 @@ function ReportsTab({
           <EmptyInline text="Generated insights will summarize data readiness, assumption risk, evaluation readiness, approach progress, and experiment signals with evidence and lineage." />
         )}
       </Panel>
-      <Panel title="Reports" icon={<FileText size={18} />}>
+      <Panel id="reports" title="Reports" icon={<FileText size={18} />}>
         {reports.length ? (
           <Table
             headers={["Title", "Type", "Status", "Artifact", "Created", "Actions"]}

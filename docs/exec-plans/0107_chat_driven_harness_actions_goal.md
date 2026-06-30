@@ -2,11 +2,11 @@
 
 ## Objective
 
-Make Agent Chat a real in-product command surface for common harness actions, not a passive note taker or contract logger. A user should be able to ask for core workflow actions in natural language and see a human-readable result, a protected boundary, a next-step control, and the generated Job/artifacts.
+Deprecated direction: natural-language Agent Chat must not directly run common harness actions. A user should be able to ask for help in natural language, while generated Jobs/artifacts come from explicit controls or schema-validated agent proposals with a protected boundary and human-readable result.
 
 ## Implemented Scope
 
-- Added Agent Chat intents for:
+- Deprecated: these Agent Chat natural-language intents were removed. Equivalent harness actions remain explicit endpoints or future schema-validated proposals for:
   - Data Quality Gate review.
   - EvaluationCandidate drafting.
   - Evaluation scenario comparison.
@@ -21,7 +21,7 @@ Make Agent Chat a real in-product command surface for common harness actions, no
 
 - Chat can trigger safe harness-owned actions; it must not bypass EvaluationSpec, SplitManifest, approvals, artifact registration, or lineage.
 - A direct action should produce an inspectable artifact or a clear `needs_review` reason.
-- Natural language command routing should stay explicit and test-backed. Avoid broad fragile intent matching.
+- Natural language command routing is prohibited. Tests should prevent phrase-specific routers and verify explicit endpoints/proposal validation instead.
 - The UI response should lead with what happened and where to inspect next; raw artifact ids remain supporting lineage.
 
 ## Validation Plan

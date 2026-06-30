@@ -2,11 +2,11 @@
 
 ## Objective
 
-Connect Experiments, Leaderboard, diagnostics, notebooks, and reports into a readable post-run loop. A user should be able to ask Agent Chat for the leaderboard or top-run comparison and land on evidence, not a detached metric table.
+Connect Experiments, Leaderboard, diagnostics, notebooks, and reports into a readable post-run loop. A user should be able to ask Agent Chat about results and receive guidance, while leaderboard/comparison state changes are made by explicit readout/comparison endpoints or validated proposals.
 
 ## Implemented Scope
 
-- Added Agent Chat intents for:
+- Deprecated: Agent Chat natural-language intents were removed. Result reading uses explicit readout/comparison endpoints and future schema-validated proposals for:
   - Showing the Leaderboard Reader.
   - Comparing current top/successful runs.
 - Chat routes to Experiments when no successful run exists.

@@ -657,6 +657,21 @@ textarea {
   border-radius: 8px;
   background: var(--surface-subtle);
   padding: 10px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.mission-memory-item:hover,
+.mission-memory-item:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--accent) 14%, transparent);
+  transform: translateY(-1px);
 }
 
 .mission-memory-item span,
@@ -672,9 +687,17 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.mission-memory-item p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.38;
+  overflow-wrap: anywhere;
+}
+
 .mission-memory-item small {
   color: var(--muted-strong);
   line-height: 1.35;
+  font-weight: 760;
 }
 
 .mission-memory-item.finding {
@@ -4008,6 +4031,33 @@ td {
   gap: 7px;
   color: var(--text-strong);
   font-weight: 850;
+}
+
+.agent-chat-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.agent-scope-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  padding: 3px 9px;
+  color: var(--muted-strong);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.agent-scope-pill.live {
+  border-color: color-mix(in srgb, var(--accent-2) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent-2) 10%, var(--surface));
+  color: var(--text-strong);
 }
 
 .agent-activity-header small,

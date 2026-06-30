@@ -270,7 +270,8 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     assert "Guided Journey Comparison" in comparison_preview_response.json()["preview"]
 
 
-def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path) -> None:
+
+def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
     project_response = client.post(
@@ -292,55 +293,46 @@ def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path
     candidates_before = client.get(f"/api/projects/{project_id}/evaluation/candidates").json()
     assert any(candidate["primary_metric"] == "pr_auc" for candidate in candidates_before)
 
-    chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "metricはROCーAUCにして"})
+    chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "metricはROCーAUCにして", "locale": "ja-JP"},
+    )
     assert chat_response.status_code == 200, chat_response.text
     chat = chat_response.json()
     assert chat["schema_version"] == "agent_chat_turn.v1"
-    assert chat["intent"]["type"] == "set_evaluation_metric"
-    assert "ROC-AUC" in chat["assistant_message"]
-    assert chat["action_summary"]["schema_version"] == "agent_action_summary.v1"
-    assert chat["action_summary"]["outcome"] == "applied"
-    assert "ROC-AUC" in chat["action_summary"]["headline"]
-    assert chat["action_summary"]["next_step"]["target_tab"] == "Leaderboard"
-    assert chat["action_summary"]["next_step"]["target_anchor"] == "result-readout"
-    assert any("EvaluationSpecs" in item for item in chat["action_summary"]["boundaries"])
-    assert any(action["type"] == "set_leaderboard_metric_view" for action in chat["actions"])
-    assert any(action["type"] == "update_evaluation_candidates" for action in chat["actions"])
-    assert any(action["target_tab"] == "Evaluation" for action in chat["actions"])
-    assert any(action["target_anchor"] == "evaluation-design" for action in chat["actions"])
-    assert chat["worker_events"]
+    assert chat["intent"]["type"] == "agent_conversation"
+    assert chat["actions"] == []
+    assert chat["worker_events"] == []
+    assert chat["action_summary"]["outcome"] == "answered"
+    assert "keyword" in chat["action_summary"]["boundaries"][0]
+    assert chat["response_brief"]["response_locale"] == "ja-JP"
+    assert chat["response_brief"]["conversation_context"]["schema_version"] == "agent_conversation_context.v1"
     assert chat["token_usage"]["is_estimate"] is True
     assert chat["job"]["status"] == "succeeded"
 
     candidates_after = client.get(f"/api/projects/{project_id}/evaluation/candidates").json()
-    assert {candidate["primary_metric"] for candidate in candidates_after} == {"roc_auc"}
+    assert candidates_after == candidates_before
     leaderboard = client.get(f"/api/projects/{project_id}/leaderboard").json()
     assert leaderboard == []
-    artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
-    assert artifacts_response.status_code == 200
-    assert any(item["asset_type"] == "agent_chat_turn" for item in artifacts_response.json())
-    assert any(item["asset_type"] == "evaluation_metric_preference" for item in artifacts_response.json())
+    artifacts = client.get(f"/api/projects/{project_id}/artifacts").json()
+    assert any(item["asset_type"] == "agent_chat_turn" for item in artifacts)
+    assert not any(item["asset_type"] == "evaluation_metric_preference" for item in artifacts)
+
     history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
     assert history_response.status_code == 200
     history = history_response.json()
     assert len(history) == 1
     assert history[0]["user_message"] == "metricはROCーAUCにして"
-    assert "ROC-AUC" in history[0]["assistant_message"]
-    assert history[0]["actions"]
-    assert history[0]["action_summary"]["schema_version"] == "agent_action_summary.v1"
+    assert history[0]["actions"] == []
+    assert history[0]["intent"]["type"] == "agent_conversation"
     assert history[0]["artifact_id"] == chat["artifact_id"]
 
-    ja_chat_response = client.post(
-        f"/api/projects/{project_id}/agent-chat",
-        json={"message": "次に何を見るべき？", "locale": "en-US"},
-    )
-    assert ja_chat_response.status_code == 200, ja_chat_response.text
-    ja_chat = ja_chat_response.json()
-    assert ja_chat["response_brief"]["response_locale"] == "ja-JP"
-    assert "次" in ja_chat["assistant_message"]
+    metric_response = client.post(f"/api/projects/{project_id}/leaderboard/metric", json={"metric": "ROCーAUC"})
+    assert metric_response.status_code == 200, metric_response.text
+    assert metric_response.json()["metric"] == "roc_auc"
 
 
-def test_agent_chat_trains_requested_model_candidates_into_leaderboard(tmp_path: Path) -> None:
+def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
     project_response = client.post(
@@ -374,24 +366,15 @@ def test_agent_chat_trains_requested_model_candidates_into_leaderboard(tmp_path:
     split_response = client.post(f"/api/evaluation-specs/{spec_id}/generate-split")
     assert split_response.status_code == 200, split_response.text
 
-    chat_response = client.post(
-        f"/api/projects/{project_id}/agent-chat",
-        json={"message": "LightGBMとLogisticRegressionもそれぞれ回してリーダーボードに追加して"},
+    queue_response = client.post(
+        f"/api/projects/{project_id}/model-candidates/run",
+        json={"models": ["LightGBM", "LogisticRegression"]},
     )
-    assert chat_response.status_code == 200, chat_response.text
-    chat = chat_response.json()
-    assert chat["intent"]["type"] == "run_model_candidates"
-    assert "Started Training Worker" in chat["assistant_message"]
-    action = next(item for item in chat["actions"] if item["type"] == "run_model_candidates")
-    assert action["target_tab"] == "Leaderboard"
-    assert action["target_anchor"] == "result-readout"
-    assert action["auto_start_worker"] is True
-    assert set(action["queued_models"]) == {"lightgbm", "logistic_regression"}
-
-    jobs_response = client.get(f"/api/projects/{project_id}/jobs")
-    assert jobs_response.status_code == 200
-    queued_training_job = next(item for item in jobs_response.json() if item["job_type"] == "train_model_candidates")
+    assert queue_response.status_code == 200, queue_response.text
+    queued_training_job = queue_response.json()
+    assert queued_training_job["job_type"] == "train_model_candidates"
     assert queued_training_job["status"] == "queued"
+    assert set(queued_training_job["input"]["normalized_models"]) == {"lightgbm", "logistic_regression"}
 
     run_job_response = client.post(f"/api/jobs/{queued_training_job['id']}/run")
     assert run_job_response.status_code == 200, run_job_response.text
@@ -409,66 +392,43 @@ def test_agent_chat_trains_requested_model_candidates_into_leaderboard(tmp_path:
     assert all(row["display_metric_name"] for row in leaderboard)
 
 
-def test_agent_chat_runs_core_harness_actions(tmp_path: Path) -> None:
+def test_core_harness_actions_use_explicit_endpoints(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
-    project_response = client.post("/api/projects", json={"name": "Chat action loop", "target_column": "target"})
+    project_response = client.post("/api/projects", json={"name": "Explicit action loop", "target_column": "target"})
     assert project_response.status_code == 200
     project_id = project_response.json()["id"]
 
     rows = ["feature,segment,target"] + [f"{index},{'A' if index % 2 else 'B'},{index % 2}" for index in range(1, 14)]
     upload_response = client.post(
         f"/api/projects/{project_id}/datasets/upload",
-        files={"file": ("chat_actions.csv", "\n".join(rows).encode("utf-8"), "text/csv")},
+        files={"file": ("explicit_actions.csv", "\n".join(rows).encode("utf-8"), "text/csv")},
     )
     assert upload_response.status_code == 200, upload_response.text
+    dataset_id = upload_response.json()["dataset_snapshot"]["id"]
 
-    quality_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "データ品質を確認して"})
-    assert quality_chat_response.status_code == 200, quality_chat_response.text
-    quality_chat = quality_chat_response.json()
-    assert quality_chat["intent"]["type"] == "run_data_quality"
-    assert quality_chat["action_summary"]["headline"] == "Data quality gate is ready"
-    assert quality_chat["action_summary"]["next_step"]["target_tab"] == "Data"
-    assert any(action["type"] == "run_data_quality" and action["status"] == "applied" for action in quality_chat["actions"])
-    assert any("do not silently drop" in item for item in quality_chat["action_summary"]["boundaries"])
+    quality_response = client.post(f"/api/datasets/{dataset_id}/quality/run")
+    assert quality_response.status_code == 200, quality_response.text
+    quality_job = quality_response.json()
+    assert quality_job["status"] == "succeeded"
+    assert quality_job["output"]["artifact_ids"]
 
-    evaluation_chat_response = client.post(
-        f"/api/projects/{project_id}/agent-chat",
-        json={"message": "randomとstratifiedの評価シナリオを比較して"},
-    )
-    assert evaluation_chat_response.status_code == 200, evaluation_chat_response.text
-    evaluation_chat = evaluation_chat_response.json()
-    assert evaluation_chat["intent"]["type"] == "compare_evaluation_scenarios"
-    assert evaluation_chat["action_summary"]["headline"] == "Evaluation scenarios compared"
-    assert evaluation_chat["action_summary"]["next_step"]["target_tab"] == "Evaluation"
-    scenario_action = next(action for action in evaluation_chat["actions"] if action["type"] == "compare_evaluation_scenarios")
-    assert scenario_action["artifact_id"]
+    evaluation_response = client.post(f"/api/projects/{project_id}/evaluation/compare")
+    assert evaluation_response.status_code == 200, evaluation_response.text
+    evaluation_job = evaluation_response.json()
+    assert evaluation_job["status"] == "succeeded"
+    assert evaluation_job["output"]["artifact_id"]
 
-    report_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "decision reportを作って"})
-    assert report_chat_response.status_code == 200, report_chat_response.text
-    report_chat = report_chat_response.json()
-    assert report_chat["intent"]["type"] == "generate_decision_report"
-    assert report_chat["action_summary"]["headline"] == "Decision report is ready"
-    assert report_chat["action_summary"]["next_step"]["target_tab"] == "Reports"
-    assert any(action["type"] == "generate_decision_report" and action["artifact_id"] for action in report_chat["actions"])
+    report_response = client.post(f"/api/projects/{project_id}/decision-report/generate")
+    assert report_response.status_code == 200, report_response.text
+    report_job = report_response.json()
+    assert report_job["status"] == "succeeded"
+    assert report_job["output"]["decision_report_artifact_id"]
 
-    empty_leaderboard_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "リーダーボードを見せて"})
-    assert empty_leaderboard_response.status_code == 200, empty_leaderboard_response.text
-    empty_leaderboard = empty_leaderboard_response.json()
-    assert empty_leaderboard["intent"]["type"] == "show_leaderboard"
-    assert empty_leaderboard["action_summary"]["headline"] == "Result readout needs run evidence"
-    assert empty_leaderboard["action_summary"]["next_step"]["target_tab"] == "Experiments"
-
-    empty_post_run_response = client.post(
-        f"/api/projects/{project_id}/agent-chat",
-        json={"message": "結果をdiagnostics付きでdecision reportにまとめて"},
-    )
-    assert empty_post_run_response.status_code == 200, empty_post_run_response.text
-    empty_post_run = empty_post_run_response.json()
-    assert empty_post_run["intent"]["type"] == "post_run_reading_workflow"
-    assert empty_post_run["action_summary"]["headline"] == "Post-run reading needs successful runs"
-    assert empty_post_run["action_summary"]["next_step"]["target_tab"] == "Experiments"
-
+    readout_response = client.get(f"/api/projects/{project_id}/results/readout")
+    assert readout_response.status_code == 200, readout_response.text
+    readout = readout_response.json()
+    assert readout["schema_version"] == "result_readout.v1"
 
 def test_relational_schema_hint_upload_preview_and_agent_route(tmp_path: Path) -> None:
     client = make_client(tmp_path)
@@ -536,14 +496,6 @@ def test_relational_schema_hint_upload_preview_and_agent_route(tmp_path: Path) -
     assert png_preview["preview_available"] is True
     assert png_preview["preview"].endswith("/download")
 
-    chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "ER図を表示して"})
-    assert chat_response.status_code == 200, chat_response.text
-    chat = chat_response.json()
-    assert chat["intent"]["type"] == "show_relational_map"
-    assert chat["action_summary"]["next_step"]["target_tab"] == "Data"
-    assert chat["action_summary"]["next_step"]["target_anchor"] == "relational-map"
-    assert "Relational" in chat["action_summary"]["headline"]
-    assert any("join contracts" in item for item in chat["action_summary"]["boundaries"])
 
 
 def test_upload_data_bundle_profiles_primary_supporting_tables_and_er_hint(tmp_path: Path) -> None:
@@ -623,6 +575,7 @@ def test_upload_data_bundle_profiles_primary_supporting_tables_and_er_hint(tmp_p
     assert "runner_defined" in catalog_preview["preview"]
 
 
+
 def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
@@ -646,122 +599,40 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
         files={"file": ("portal.csv", csv_bytes, "text/csv")},
     )
     assert upload_response.status_code == 200, upload_response.text
+    dataset_id = upload_response.json()["dataset_snapshot"]["id"]
 
-    chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "notebookを生成して"})
+    notebook_response = client.post(f"/api/projects/{project_id}/analysis-notebooks/data-understanding")
+    assert notebook_response.status_code == 200, notebook_response.text
+    notebook_job = notebook_response.json()
+    assert notebook_job["status"] == "succeeded"
+    assert notebook_job["output"]["analysis_notebook_artifact_id"]
+
+    eda_response = client.post(f"/api/datasets/{dataset_id}/eda-review")
+    assert eda_response.status_code == 200, eda_response.text
+    eda_job = eda_response.json()
+    assert eda_job["status"] == "succeeded"
+    assert eda_job["output"]["eda_review_html_artifact_id"]
+
+    author_response = client.post(f"/api/projects/{project_id}/notebook-authoring/brief")
+    assert author_response.status_code == 200, author_response.text
+    author_job = author_response.json()
+    assert author_job["status"] == "succeeded"
+    assert author_job["output"]["notebook_authoring_brief_artifact_id"]
+
+    chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "状況を説明してください", "locale": "ja-JP"},
+    )
     assert chat_response.status_code == 200, chat_response.text
     chat = chat_response.json()
-    assert chat["intent"]["type"] == "generate_data_understanding_notebook"
-    assert any(action["type"] == "generate_data_understanding_notebook" for action in chat["actions"])
-    assert any(action["target_anchor"] == "analysis-story" for action in chat["actions"])
-
-    eda_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "EDAレビューを作って可視化して"})
-    assert eda_chat_response.status_code == 200, eda_chat_response.text
-    eda_chat = eda_chat_response.json()
-    assert eda_chat["intent"]["type"] == "run_eda_review"
-    assert any(action["type"] == "run_eda_review" and action["status"] == "applied" for action in eda_chat["actions"])
-    assert any(action["target_anchor"] == "analysis-story" for action in eda_chat["actions"])
-    assert "controlled Data Review" in eda_chat["assistant_message"]
-
-    author_chat_response = client.post(
-        f"/api/projects/{project_id}/agent-chat",
-        json={"message": "Kaggle Grandmaster級の良いノートブックに改善して"},
-    )
-    assert author_chat_response.status_code == 200, author_chat_response.text
-    author_chat = author_chat_response.json()
-    assert author_chat["intent"]["type"] == "author_analysis_notebook"
-    assert any(action["type"] == "create_notebook_authoring_brief" for action in author_chat["actions"])
-    contract_action = next(action for action in author_chat["actions"] if action["type"] == "create_agent_task_contract")
-    contract_response = client.get(f"/api/artifacts/{contract_action['artifact_id']}/download")
-    assert contract_response.status_code == 200
-    contract = contract_response.json()
-    assert contract["task_type"] == "author_analysis_notebook"
-    assert any(output["path"] == "notebooks/tablex_analysis_notebook.py" for output in contract["required_outputs"])
-    assert any("notebook_authoring_brief" in check for check in contract["quality_checks"])
-    assert contract["inputs"]["notebook_authoring"]["artifact_id"]
-    assert contract["inputs"]["notebook_authoring"]["source_inspirations"]
-    assert contract["inputs"]["notebook_authoring"]["authoring_principles"]
-
-    followup_chat_response = client.post(
-        f"/api/projects/{project_id}/agent-chat",
-        json={
-            "message": (
-                "[analysis-story:model_diagnostics:art_demo] Add artifact-backed feature importance and "
-                "permutation importance for this run."
-            )
-        },
-    )
-    assert followup_chat_response.status_code == 200, followup_chat_response.text
-    followup_chat = followup_chat_response.json()
-    assert followup_chat["intent"]["type"] == "plan_notebook_followup_task"
-    assert "controlled diagnostics task" in followup_chat["assistant_message"]
-    assert followup_chat["action_summary"]["headline"] == "Notebook follow-up task prepared"
-    assert followup_chat["action_summary"]["next_step"]["target_tab"] == "Approach"
-    assert followup_chat["action_summary"]["next_step"]["target_anchor"] == "approach-handoff"
-    assert any("artifact-backed" in item for item in followup_chat["action_summary"]["boundaries"])
-    followup_action = next(
-        action for action in followup_chat["actions"] if action["type"] == "create_notebook_followup_task"
-    )
-    assert followup_action["target_anchor"] == "approach-handoff"
-    followup_contract_response = client.get(f"/api/artifacts/{followup_action['artifact_id']}/download")
-    assert followup_contract_response.status_code == 200
-    followup_contract = followup_contract_response.json()
-    assert followup_contract["task_type"] == "notebook_followup_diagnostics"
-    assert "feature importance" in followup_contract["objective"]
-    assert any(output["schema"] == "visualization_spec.v1" for output in followup_contract["required_outputs"])
-    assert any("Do not invent" in check for check in followup_contract["quality_checks"])
-    assert followup_contract["inputs"]["notebook_followup"]["diagnostic_targets"]
-    artifacts_after_followup = client.get(f"/api/projects/{project_id}/artifacts").json()
-    followup_artifact = next(item for item in artifacts_after_followup if item["id"] == followup_action["artifact_id"])
-    followup_summary = followup_artifact["metadata"]["agent_task_contract_summary"]
-    assert followup_summary["schema_version"] == "agent_task_contract_summary.v1"
-    assert followup_summary["task_type"] == "notebook_followup_diagnostics"
-    assert followup_summary["label"] == "Materialize notebook diagnostics"
-    assert followup_summary["required_output_count"] >= 5
-    assert followup_artifact["metadata"]["objective_summary"]
-
-    guide_chat_response = client.post(
-        f"/api/projects/{project_id}/agent-chat",
-        json={"message": "[analysis-story:eda_review:art_demo] What should I read first and why?"},
-    )
-    assert guide_chat_response.status_code == 200, guide_chat_response.text
-    guide_chat = guide_chat_response.json()
-    assert guide_chat["intent"]["type"] == "guide_notebook_review"
-    assert guide_chat["action_summary"]["next_step"]["target_tab"] == "Notebooks"
-    assert guide_chat["action_summary"]["next_step"]["target_anchor"] == "analysis-story"
-
-    next_step_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "次に何を見るべき？"})
-    assert next_step_response.status_code == 200, next_step_response.text
-    next_step = next_step_response.json()
-    assert next_step["intent"]["type"] == "explain_next_step"
-    assert any(action["type"] == "explain_next_step" for action in next_step["actions"])
-    assert next_step["response_brief"]["response_locale"] == "ja-JP"
-    assert "次" in next_step["assistant_message"]
-    next_step_action = next(action for action in next_step["actions"] if action["type"] == "explain_next_step")
-    assert next_step_action["guidance"]["decision_brief"]["schema_version"] == "autonomous_decision_brief.v1"
-
-    generic_chat_response = client.post(
-        f"/api/projects/{project_id}/agent-chat",
-        json={"message": "新しい特徴量戦略を考えて"},
-    )
-    assert generic_chat_response.status_code == 200, generic_chat_response.text
-    generic_chat = generic_chat_response.json()
-    assert generic_chat["intent"]["type"] == "plan_agent_task"
-    assert generic_chat["response_brief"]["response_locale"] == "ja-JP"
-    assert "次" in generic_chat["assistant_message"]
-    assert "Artifact:" not in generic_chat["assistant_message"]
-    assert generic_chat["action_summary"]["headline"] == "Controlled runner task prepared"
-    assert generic_chat["action_summary"]["next_step"]["target_tab"] == "Approach"
-    assert generic_chat["action_summary"]["next_step"]["target_anchor"] == "approach-handoff"
-    assert any("AgentTaskContract" in item for item in generic_chat["action_summary"]["boundaries"])
-    assert any(action["type"] == "create_agent_task_contract" for action in generic_chat["actions"])
-    assert any(action["target_tab"] == "Approach" for action in generic_chat["actions"])
-    assert any(action["target_anchor"] == "approach-handoff" for action in generic_chat["actions"])
+    assert chat["intent"]["type"] == "agent_conversation"
+    assert chat["actions"] == []
+    assert chat["response_brief"]["conversation_context"]["counts"]["datasets"] == 1
 
     activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
     assert activity_response.status_code == 200
     activity = activity_response.json()
     assert activity["schema_version"] == "agent_activity.v1"
-    assert any(worker["worker_id"] == "agent-chat-orchestrator" for worker in activity["workers"])
 
     overview_response = client.get("/api/portal/overview")
     assert overview_response.status_code == 200
@@ -769,12 +640,9 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     assert overview["schema_version"] == "portal_overview.v1"
     assert overview["summary"]["project_count"] >= 1
     assert overview["summary"]["idea_count"] >= 1
-    assert overview["agent_activity"]
     recent_updates = overview["recent_updates"]
-    assert any(update["title"] == "Agent chat handled a request" for update in recent_updates)
     assert all("agent_chat_turn" not in update["title"] for update in recent_updates)
     assert all("agent_chat_turn" not in update["summary"] for update in recent_updates)
-
 
 def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     client = make_client(tmp_path)
@@ -1082,16 +950,6 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert "adaptive_baseline_planning" in strategy_preview
     assert "reporting_plan" in strategy_preview
 
-    baseline_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "ベースライン戦略を作って"})
-    assert baseline_chat_response.status_code == 200, baseline_chat_response.text
-    baseline_chat = baseline_chat_response.json()
-    assert baseline_chat["intent"]["type"] == "plan_baseline_strategy"
-    assert baseline_chat["action_summary"]["headline"] == "Baseline strategy plan is ready"
-    assert baseline_chat["action_summary"]["next_step"]["target_tab"] == "Experiments"
-    baseline_chat_action = next(action for action in baseline_chat["actions"] if action["type"] == "plan_baseline_strategy")
-    assert baseline_chat_action["status"] == "applied"
-    assert baseline_chat_action["artifact_id"]
-    assert any("not a fixed AutoML recipe" in item for item in baseline_chat["action_summary"]["boundaries"])
 
     strategy_brief_response = client.get(f"/api/projects/{project_id}/approach/strategy-brief")
     assert strategy_brief_response.status_code == 200, strategy_brief_response.text
@@ -1144,14 +1002,6 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert leaderboard[0]["display_metric_available"] is True
     assert abs(leaderboard[0]["display_metric_value"] - baseline_metrics["roc_auc"]) <= 1e-12
 
-    leaderboard_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "リーダーボードを見せて"})
-    assert leaderboard_chat_response.status_code == 200, leaderboard_chat_response.text
-    leaderboard_chat = leaderboard_chat_response.json()
-    assert leaderboard_chat["intent"]["type"] == "show_leaderboard"
-    assert leaderboard_chat["action_summary"]["headline"] == "Result readout is ready"
-    assert leaderboard_chat["action_summary"]["next_step"]["target_tab"] == "Leaderboard"
-    assert leaderboard_chat["action_summary"]["next_step"]["target_anchor"] == "result-readout"
-    assert any("same EvaluationSpec and SplitManifest" in item for item in leaderboard_chat["action_summary"]["boundaries"])
 
     initial_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
     assert initial_readout_response.status_code == 200, initial_readout_response.text
@@ -1193,29 +1043,12 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert notebook_readout["read_order"][3]["target_tab"] == "Notebooks"
     assert notebook_readout["read_order"][3]["artifact_id"] == result_notebook_job["output"]["notebook_evidence_html_artifact_id"]
 
-    result_notebook_chat_response = client.post(
-        f"/api/projects/{project_id}/agent-chat",
-        json={"message": "結果のNotebook evidenceを作って"},
-    )
-    assert result_notebook_chat_response.status_code == 200, result_notebook_chat_response.text
-    result_notebook_chat = result_notebook_chat_response.json()
-    assert result_notebook_chat["intent"]["type"] == "prepare_result_notebook_evidence"
-    assert result_notebook_chat["action_summary"]["headline"] == "Result notebook evidence is ready"
-    assert result_notebook_chat["action_summary"]["next_step"]["target_tab"] == "Notebooks"
-    result_notebook_action = next(
-        action for action in result_notebook_chat["actions"] if action["type"] == "prepare_result_notebook_evidence"
-    )
-    assert result_notebook_action["artifact_id"]
 
-    compare_runs_chat_response = client.post(f"/api/projects/{project_id}/agent-chat", json={"message": "上位runを比較して"})
-    assert compare_runs_chat_response.status_code == 200, compare_runs_chat_response.text
-    compare_runs_chat = compare_runs_chat_response.json()
-    assert compare_runs_chat["intent"]["type"] == "compare_top_runs"
-    assert compare_runs_chat["action_summary"]["headline"] == "Run evidence compared"
-    assert compare_runs_chat["action_summary"]["next_step"]["target_tab"] == "Leaderboard"
-    compare_runs_action = next(action for action in compare_runs_chat["actions"] if action["type"] == "compare_top_runs")
-    assert compare_runs_action["status"] == "applied"
-    assert compare_runs_action["artifact_id"]
+    compare_runs_response = client.post(f"/api/projects/{project_id}/experiments/compare")
+    assert compare_runs_response.status_code == 200, compare_runs_response.text
+    compare_runs_job = compare_runs_response.json()
+    assert compare_runs_job["status"] == "succeeded"
+    assert compare_runs_job["output"]["artifact_ids"]
 
     comparison_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
     assert comparison_readout_response.status_code == 200, comparison_readout_response.text
@@ -1975,31 +1808,6 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert current_decision_report_empty_response.status_code == 200
     assert current_decision_report_empty_response.json()["available"] is False
 
-    post_run_chat_response = client.post(
-        f"/api/projects/{project_id}/agent-chat",
-        json={"message": "上位runをdiagnostics付きでdecision reportにまとめて"},
-    )
-    assert post_run_chat_response.status_code == 200, post_run_chat_response.text
-    post_run_chat = post_run_chat_response.json()
-    assert post_run_chat["intent"]["type"] == "post_run_reading_workflow"
-    assert post_run_chat["action_summary"]["headline"] == "Post-run reading pack is ready"
-    assert post_run_chat["action_summary"]["next_step"]["target_tab"] == "Reports"
-    post_run_action = next(action for action in post_run_chat["actions"] if action["type"] == "post_run_reading_workflow")
-    assert post_run_action["status"] == "applied"
-    assert post_run_action["artifact_id"]
-    assert any("missing diagnostics" in item for item in post_run_chat["action_summary"]["boundaries"])
-
-    current_post_run_report_response = client.get(f"/api/projects/{project_id}/decision-report/current")
-    assert current_post_run_report_response.status_code == 200
-    assert current_post_run_report_response.json()["available"] is True
-
-    post_run_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
-    assert post_run_readout_response.status_code == 200, post_run_readout_response.text
-    post_run_readout = post_run_readout_response.json()
-    assert post_run_readout["decision_report"]["available"] is True
-    assert post_run_readout["next_action"]["target_anchor"] == "decision-report"
-    assert post_run_readout["safety"]["leaderboard_is_decision"] is False
-
     decision_report_v1_response = client.post(f"/api/projects/{project_id}/decision-report/generate")
     assert decision_report_v1_response.status_code == 200, decision_report_v1_response.text
     decision_report_v1_job = decision_report_v1_response.json()
@@ -2047,6 +1855,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert current_decision_report["available"] is True
     assert current_decision_report["report"]["id"] == decision_report_v1_job["output"]["report_id"]
     assert current_decision_report["bundle"]["schema_version"] == "decision_report_bundle.v1"
+
+    post_run_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
+    assert post_run_readout_response.status_code == 200, post_run_readout_response.text
+    post_run_readout = post_run_readout_response.json()
+    assert post_run_readout["decision_report"]["available"] is True
+    assert post_run_readout["next_action"]["target_anchor"] == "result-readout"
+    assert post_run_readout["safety"]["leaderboard_is_decision"] is False
 
     runs_response = client.get(f"/api/projects/{project_id}/runs")
     assert runs_response.status_code == 200

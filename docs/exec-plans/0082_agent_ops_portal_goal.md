@@ -13,7 +13,7 @@ Make cross-project Portal and agent activity less local/ephemeral while reducing
 - Added cross-project `portal_idea` artifacts with no project id.
 - Added `GET /api/projects/{project_id}/agent-activity`.
 - Normalized worker events from Job output with timestamps, active flags, target tabs, and estimated token telemetry.
-- Expanded Agent Chat direct intents:
+- Deprecated: Agent Chat direct natural-language intents were removed. Agent activity now reflects explicit jobs and future schema-validated agent proposals:
   - set evaluation metric,
   - generate Data Understanding notebook,
   - explain the next guided focus.

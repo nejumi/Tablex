@@ -2,7 +2,7 @@
 
 ## Intent
 
-Turn Notebook and Analysis Story follow-up prompts into concrete, harness-owned AgentTaskContracts instead of returning vague guidance or artifact IDs.
+Deprecated direction: Notebook and Analysis Story follow-up prompts must not be keyword-routed into AgentTaskContracts. Use explicit controls or future schema-validated agent proposals instead of vague guidance or artifact-only replies.
 
 ## Why
 
@@ -10,7 +10,7 @@ Users ask Notebook surfaces for actions such as feature importance, calibration,
 
 ## Implementation Scope
 
-- Added `plan_notebook_followup_task` intent detection for scoped Notebook and Analysis Story prompts.
+- Deprecated and removed: `plan_notebook_followup_task` natural-language intent detection for scoped Notebook and Analysis Story prompts.
 - Added `notebook_followup_diagnostics` AgentTaskContract planning with source-aware objective text.
 - Added required outputs for a follow-up marimo notebook, report, diagnostics JSON, evidence bundle, visualization spec, and figure manifest.
 - Added quality checks that forbid invented feature importance, calibration, slice metrics, or worst examples when model or prediction artifacts are missing.

@@ -737,7 +737,7 @@ def finalize_autonomous_tick(
         project_id=state.project.id,
         insight_type="autonomous_loop_reflection",
         title="Full Auto loop advanced",
-        summary=first_completed_sentence(reflection_md),
+        summary=autonomous_reflection_summary(state, status=status, next_human_boundary=next_human_boundary),
         severity="info" if status != "blocked" else "warning",
         confidence=0.78,
         status="open",
@@ -787,6 +787,24 @@ def finalize_autonomous_tick(
         "token_usage": token_usage_for_state(state),
     }
     return output
+
+
+def autonomous_reflection_summary(
+    state: AutonomousLoopState,
+    *,
+    status: str,
+    next_human_boundary: str,
+) -> str:
+    completed_steps = [step for step in state.steps if step.status in {"created", "completed", "succeeded"}]
+    if completed_steps:
+        labels = ", ".join(step.label.replace("_", " ") for step in completed_steps[:3])
+        return (
+            f"Full Auto completed {len(completed_steps)} step(s): {labels}. "
+            f"Next boundary: {next_human_boundary}"
+        )
+    if state.boundaries:
+        return f"Full Auto paused at {len(state.boundaries)} boundary item(s). Next boundary: {next_human_boundary}"
+    return f"Full Auto recorded a reflection with status {status}. Next boundary: {next_human_boundary}"
 
 
 def render_autonomous_reflection(

@@ -7,10 +7,10 @@ Improve Tablex from a machine-readable artifact workbench into a human-usable ag
 ## Implemented
 
 - Added `/api/projects/{project_id}/agent-chat`.
-  - Returns `agent_chat_turn.v1` with assistant message, interpreted intent, actions, worker events, token telemetry estimates, and next focus.
+  - Returns `agent_chat_turn.v1` with assistant message, project conversation context, safety boundaries, token telemetry estimates, and next focus. Natural-language intent routing was removed.
   - Stores the chat turn as an `agent_chat_turn` artifact.
 - Added intent handling for evaluation metric changes.
-  - `metricはROC-AUCにして` is interpreted as `set_evaluation_metric`.
+  - Deprecated and removed: examples such as `metricはROC-AUCにして` must not be interpreted by keyword rules. Use explicit metric controls or validated proposals.
   - Mutable EvaluationCandidates and draft EvaluationSpecs can be updated.
   - Approved EvaluationSpecs and SplitManifests are not destructively changed; a review artifact is created instead.
 - Updated the persistent Agent Chat UI.
@@ -42,5 +42,5 @@ Improve Tablex from a machine-readable artifact workbench into a human-usable ag
 
 ## Risks
 
-- The current Agent Chat intent parser is intentionally small and heuristic. It should grow through explicit, test-backed intents rather than becoming a brittle natural-language command router.
+- The Agent Chat intent parser was removed. Tests should prevent natural-language keyword routers from returning.
 - Activity rail density can become distracting as real runners become noisier. It will need filters, collapse behavior, and severity-based prioritization.

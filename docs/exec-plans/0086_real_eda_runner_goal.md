@@ -23,7 +23,7 @@ Move beyond static notebook scaffolds by adding a harness-owned EDA execution pa
   - simple target relationships when a target exists,
   - numeric correlation candidates,
   - findings, read order, story cards, review playbook, and Codex next prompts.
-- Add Agent Chat intent routing for EDA/Data Review requests.
+- Deprecated: do not add Agent Chat intent routing. Data Review runs from explicit controls or future schema-validated agent proposals.
 - Add Notebooks tab action and Data Review evidence card so the output appears in the same Current Review surface.
 
 ## Quality Bar
@@ -32,7 +32,7 @@ Move beyond static notebook scaffolds by adding a harness-owned EDA execution pa
 - The review must be generated from actual dataset content when available.
 - If target is missing, the review should still be useful for understanding, while clearly stating that target-aware modeling is blocked.
 - Claims must remain artifact-backed and lineage-tracked.
-- Agent Chat is a valid command surface for running the review; specialized UI buttons are shortcuts.
+- Agent Chat may discuss Data Review and suggest it, but execution must be explicit or proposal-validated; UI controls are the current execution path.
 
 ## Deferred Work
 
