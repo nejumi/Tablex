@@ -828,6 +828,9 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "eda_review_bundle": latest_project_artifact(db, project_id, "eda_review_bundle"),
         "eda_review_html": latest_project_artifact(db, project_id, "eda_review_html"),
         "relational_catalog": latest_project_artifact(db, project_id, "relational_catalog"),
+        "relational_table_bundle_manifest": latest_project_artifact(
+            db, project_id, "relational_table_bundle_manifest"
+        ),
         "relational_feature_plan": latest_project_artifact(db, project_id, "relational_feature_plan"),
         "relational_feature_recipe": latest_project_artifact(db, project_id, "relational_feature_recipe"),
         "relational_feature_preview": latest_project_artifact(db, project_id, "relational_feature_preview"),

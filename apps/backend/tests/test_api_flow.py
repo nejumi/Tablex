@@ -480,6 +480,83 @@ def test_relational_schema_hint_upload_preview_and_agent_route(tmp_path: Path) -
     assert any("join contracts" in item for item in chat["action_summary"]["boundaries"])
 
 
+def test_upload_data_bundle_profiles_primary_supporting_tables_and_er_hint(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Bundle upload"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    application_csv = "\n".join(
+        [
+            "SK_ID_CURR,TARGET,AMT_INCOME_TOTAL",
+            "100001,0,150000",
+            "100002,1,90000",
+            "100003,0,120000",
+        ]
+    )
+    bureau_csv = "\n".join(
+        [
+            "SK_ID_CURR,SK_ID_BUREAU,CREDIT_ACTIVE",
+            "100001,50001,Active",
+            "100001,50002,Closed",
+            "100002,50003,Active",
+        ]
+    )
+    er_json = {
+        "tables": [{"name": "application_train"}, {"name": "bureau"}],
+        "relationships": [
+            {
+                "left_table": "application_train",
+                "left_column": "SK_ID_CURR",
+                "right_table": "bureau",
+                "right_column": "SK_ID_CURR",
+                "relation_type": "one_to_many",
+            }
+        ],
+    }
+
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload-bundle",
+        files=[
+            ("files", ("application_train.csv", application_csv.encode("utf-8"), "text/csv")),
+            ("files", ("bureau.csv", bureau_csv.encode("utf-8"), "text/csv")),
+            ("files", ("home_credit_er.json", json.dumps(er_json).encode("utf-8"), "application/json")),
+        ],
+        data={
+            "primary_filename": "application_train.csv",
+            "target_column": "TARGET",
+            "note": "Home Credit style one-to-many relationship.",
+        },
+    )
+    assert upload_response.status_code == 200, upload_response.text
+    job = upload_response.json()
+    assert job["status"] == "succeeded"
+    assert job["output"]["schema_version"] == "upload_data_bundle.v1"
+    assert job["output"]["dataset_snapshot_id"]
+    assert len(job["output"]["supporting_table_artifact_ids"]) == 1
+    assert len(job["output"]["relational_hint_artifact_ids"]) == 1
+    assert job["output"]["relational_catalog_artifact_id"]
+    assert job["output"]["relational_table_bundle_manifest_artifact_id"]
+    assert job["output"]["runner_context"]["fixed_recipe_required"] is False
+
+    artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
+    assert artifacts_response.status_code == 200
+    asset_types = {artifact["asset_type"] for artifact in artifacts_response.json()}
+    assert "dataset_snapshot" in asset_types
+    assert "uploaded_supporting_table" in asset_types
+    assert "relational_schema_hint" in asset_types
+    assert "relational_catalog" in asset_types
+    assert "relational_table_bundle_manifest" in asset_types
+
+    catalog_preview_response = client.get(f"/api/artifacts/{job['output']['relational_catalog_artifact_id']}/preview")
+    assert catalog_preview_response.status_code == 200
+    catalog_preview = catalog_preview_response.json()
+    assert catalog_preview["content_type"] == "json"
+    assert "application_train" in catalog_preview["preview"]
+    assert "runner_defined" in catalog_preview["preview"]
+
+
 def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 

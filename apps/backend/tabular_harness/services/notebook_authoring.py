@@ -253,6 +253,9 @@ def notebook_authoring_context_artifacts(db: Session, project_id: str) -> dict[s
         "evaluation_diagnostics": latest_project_artifact(db, project_id, "evaluation_diagnostics"),
         "run_report": latest_project_artifact(db, project_id, "run_report"),
         "relational_catalog": latest_project_artifact(db, project_id, "relational_catalog"),
+        "relational_table_bundle_manifest": latest_project_artifact(
+            db, project_id, "relational_table_bundle_manifest"
+        ),
     }
 
 

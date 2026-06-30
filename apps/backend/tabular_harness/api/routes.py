@@ -163,13 +163,16 @@ from tabular_harness.services.benchmarks import (
     download_public_benchmark_archive,
     generate_benchmark_fixture,
     get_benchmark_dataset,
+    infer_relationships,
     inspect_benchmark_local_files,
     list_benchmark_datasets,
+    profile_table_file,
     raw_benchmark_dataset,
     relative_path,
     resolve_benchmark_root,
     select_primary_file,
     store_benchmark_supporting_table_artifacts,
+    table_name_from_path,
     validate_required_files,
 )
 from tabular_harness.services.data_quality import analyze_dataset_quality
@@ -1058,6 +1061,585 @@ def upload_dataset(
         "artifact": artifact_to_dict(dataset_artifact),
         "profile_job_id": job.id,
     }
+
+
+TABLE_UPLOAD_SUFFIXES = {".csv", ".parquet"}
+RELATIONAL_HINT_UPLOAD_SUFFIXES = {".png", ".jpg", ".jpeg", ".svg", ".pdf", ".json"}
+
+
+@router.post("/api/projects/{project_id}/datasets/upload-bundle", response_model=JobRead)
+def upload_dataset_bundle(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+    files: Annotated[list[UploadFile], File()],
+    target_column: Annotated[str | None, Form()] = None,
+    primary_filename: Annotated[str | None, Form()] = None,
+    note: Annotated[str | None, Form()] = None,
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    if not files:
+        raise HTTPException(status_code=400, detail="Upload at least one CSV, Parquet, ER image, PDF, SVG, or JSON file")
+
+    table_uploads = [file for file in files if Path(file.filename or "").suffix.lower() in TABLE_UPLOAD_SUFFIXES]
+    hint_uploads = [file for file in files if Path(file.filename or "").suffix.lower() in RELATIONAL_HINT_UPLOAD_SUFFIXES]
+    unsupported = [
+        file.filename or "unnamed"
+        for file in files
+        if Path(file.filename or "").suffix.lower()
+        not in (TABLE_UPLOAD_SUFFIXES | RELATIONAL_HINT_UPLOAD_SUFFIXES)
+    ]
+    if unsupported:
+        raise HTTPException(status_code=400, detail=f"Unsupported upload file(s): {', '.join(unsupported[:8])}")
+    if not table_uploads and not hint_uploads:
+        raise HTTPException(status_code=400, detail="No supported files were uploaded")
+
+    requested_primary = primary_filename.strip() if primary_filename else None
+    if requested_primary and requested_primary not in {file.filename for file in table_uploads}:
+        raise HTTPException(status_code=400, detail="primary_filename must match one uploaded CSV or Parquet file")
+
+    job = create_job(
+        db,
+        job_type="upload_data_bundle",
+        project_id=project_id,
+        input_payload={
+            "file_count": len(files),
+            "table_file_count": len(table_uploads),
+            "relational_hint_file_count": len(hint_uploads),
+            "primary_filename": requested_primary,
+            "target_column": target_column,
+            "note_present": bool(note and note.strip()),
+        },
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "purpose": "store_user_supplied_table_bundle_and_relational_evidence",
+        },
+    )
+    try:
+        mark_job_running(job)
+        output = ingest_uploaded_data_bundle(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            table_uploads=table_uploads,
+            hint_uploads=hint_uploads,
+            target_column=target_column,
+            primary_filename=requested_primary,
+            note=note,
+        )
+        mark_job_succeeded(job, output)
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        mark_job_failed(job, str(exc))
+        raise
+    return job_to_dict(job)
+
+
+def ingest_uploaded_data_bundle(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    job: Job,
+    table_uploads: list[UploadFile],
+    hint_uploads: list[UploadFile],
+    target_column: str | None,
+    primary_filename: str | None,
+    note: str | None,
+) -> dict[str, Any]:
+    effective_target = target_column or project.target_column
+    if target_column and target_column != project.target_column:
+        project.target_column = target_column
+
+    selected_primary = select_uploaded_primary_table(table_uploads, primary_filename)
+    used_table_names: set[str] = set()
+    table_records: list[dict[str, Any]] = []
+    dataset: DatasetSnapshot | None = None
+    dataset_artifact: Artifact | None = None
+
+    for index, upload in enumerate(table_uploads):
+        is_primary = upload is selected_primary
+        suffix = Path(upload.filename or "").suffix.lower()
+        table_name = uploaded_table_name(upload.filename or f"table_{index + 1}{suffix}", used_table_names)
+        asset_type = "dataset_snapshot" if is_primary else "uploaded_supporting_table"
+        artifact_name = "uploaded_dataset" if is_primary else f"uploaded_{table_name}"
+        version = next_artifact_version(db, project.id, asset_type, artifact_name)
+        artifact_dir, stored, content_hash = store.store_stream(
+            org_id="local-org",
+            project_id=project.id,
+            asset_type=asset_type,
+            name=artifact_name,
+            version=version,
+            filename=upload.filename or f"{table_name}{suffix}",
+            stream=upload.file,
+            metadata={
+                "project_id": project.id,
+                "source_filename": upload.filename,
+                "table_name": table_name,
+                "bundle_role": "primary_table" if is_primary else "supporting_table",
+                "job_id": job.id,
+            },
+        )
+        artifact = register_artifact(
+            db,
+            project_id=project.id,
+            asset_type=asset_type,
+            name=artifact_name,
+            uri=str(artifact_dir),
+            content_hash=content_hash,
+            size_bytes=stored.size_bytes,
+            metadata={
+                "primary_path": str(stored.path),
+                "source_filename": upload.filename,
+                "project_id": project.id,
+                "table_name": table_name,
+                "bundle_role": "primary_table" if is_primary else "supporting_table",
+                "job_id": job.id,
+            },
+            version=version,
+        )
+        if is_primary:
+            dataset_artifact = artifact
+            dataset = profile_dataset_artifact(
+                db,
+                store,
+                project,
+                artifact,
+                effective_target,
+                source_type="user_upload_bundle",
+                source_ref=upload.filename,
+            )
+        table_profile = profile_table_file(
+            path=stored.path,
+            root=stored.path.parent,
+            role="primary_table" if is_primary else "supporting_table",
+            is_primary=is_primary,
+            target_column=effective_target,
+            primary_table={},
+        )
+        table_profile["artifact_id"] = artifact.id
+        table_profile["source_filename"] = upload.filename
+        table_records.append(
+            {
+                "artifact": artifact,
+                "stored_path": stored.path,
+                "profile": table_profile,
+                "is_primary": is_primary,
+                "table_name": table_name,
+            }
+        )
+
+    hint_results = []
+    for upload in hint_uploads:
+        result = create_relational_schema_hint(
+            db,
+            store=store,
+            project=project,
+            filename=upload.filename or "relational_schema_hint",
+            content_type=upload.content_type,
+            data=upload.file.read(MAX_SCHEMA_HINT_BYTES + 1),
+            note=note,
+        )
+        hint_results.append(result)
+
+    relational_catalog_artifact: Artifact | None = None
+    manifest_artifact: Artifact | None = None
+    if table_records:
+        relational_catalog = build_uploaded_relational_catalog(
+            project=project,
+            dataset=dataset,
+            table_records=table_records,
+            hint_results=hint_results,
+            target_column=effective_target,
+        )
+        relational_catalog_artifact = store_and_register_json(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="relational_catalog",
+            name=f"relational_catalog_uploaded_{new_id('relcat')}",
+            filename="relational_catalog.json",
+            payload=relational_catalog,
+            metadata={
+                "project_id": project.id,
+                "dataset_snapshot_id": dataset.id if dataset else None,
+                "source_kind": "user_uploaded_bundle",
+                "table_count": relational_catalog["table_count"],
+                "relationship_count": len(relational_catalog["relationships"]),
+                "primary_file": relational_catalog["primary_table"].get("selected_path"),
+                "aggregate_merge_policy": "runner_defined_with_harness_guardrails",
+            },
+        )
+        for record in table_records:
+            artifact = cast(Artifact, record["artifact"])
+            update_artifact_metadata(
+                artifact,
+                {
+                    "relational_catalog_artifact_id": relational_catalog_artifact.id,
+                    "relational_table_role": "primary_table" if record["is_primary"] else "supporting_table",
+                },
+            )
+            create_lineage_edge(
+                db,
+                project_id=project.id,
+                from_asset_type="artifact",
+                from_asset_id=artifact.id,
+                to_asset_type="artifact",
+                to_asset_id=relational_catalog_artifact.id,
+                relation_type="cataloged_by",
+            )
+        for result in hint_results:
+            create_lineage_edge(
+                db,
+                project_id=project.id,
+                from_asset_type="artifact",
+                from_asset_id=result.artifact.id,
+                to_asset_type="artifact",
+                to_asset_id=relational_catalog_artifact.id,
+                relation_type="provides_schema_hint",
+            )
+        if dataset:
+            create_lineage_edge(
+                db,
+                project_id=project.id,
+                from_asset_type="dataset_snapshot",
+                from_asset_id=dataset.id,
+                to_asset_type="artifact",
+                to_asset_id=relational_catalog_artifact.id,
+                relation_type="profiles_table_bundle",
+            )
+        manifest = build_uploaded_bundle_manifest(
+            project=project,
+            dataset=dataset,
+            dataset_artifact=dataset_artifact,
+            table_records=table_records,
+            hint_results=hint_results,
+            relational_catalog_artifact=relational_catalog_artifact,
+            target_column=effective_target,
+        )
+        manifest_artifact = store_and_register_json(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="relational_table_bundle_manifest",
+            name=f"relational_table_bundle_{new_id('rtb')}",
+            filename="relational_table_bundle_manifest.json",
+            payload=manifest,
+            metadata={
+                "project_id": project.id,
+                "dataset_snapshot_id": dataset.id if dataset else None,
+                "relational_catalog_artifact_id": relational_catalog_artifact.id,
+                "table_count": len(table_records),
+                "supporting_table_count": len([record for record in table_records if not record["is_primary"]]),
+                "aggregate_merge_policy": "runner_defined_with_harness_guardrails",
+            },
+        )
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=relational_catalog_artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=manifest_artifact.id,
+            relation_type="summarized_by",
+        )
+
+    project.current_phase = "UNDERSTANDING_REVIEW"
+    project.updated_at = utc_now()
+    artifact_ids = [
+        artifact.id
+        for artifact in [
+            dataset_artifact,
+            relational_catalog_artifact,
+            manifest_artifact,
+            *[cast(Artifact, record["artifact"]) for record in table_records if not record["is_primary"]],
+            *[result.artifact for result in hint_results],
+            *[result.report_artifact for result in hint_results],
+        ]
+        if artifact is not None
+    ]
+    return {
+        "schema_version": "upload_data_bundle.v1",
+        "dataset_snapshot_id": dataset.id if dataset else None,
+        "dataset_artifact_id": dataset_artifact.id if dataset_artifact else None,
+        "artifact_id": dataset_artifact.id if dataset_artifact else (hint_results[0].artifact.id if hint_results else None),
+        "artifact_ids": artifact_ids,
+        "table_file_count": len(table_uploads),
+        "supporting_table_artifact_ids": [
+            cast(Artifact, record["artifact"]).id for record in table_records if not record["is_primary"]
+        ],
+        "relational_hint_artifact_ids": [result.artifact.id for result in hint_results],
+        "relational_hint_report_artifact_ids": [result.report_artifact.id for result in hint_results],
+        "relational_catalog_artifact_id": relational_catalog_artifact.id if relational_catalog_artifact else None,
+        "relational_table_bundle_manifest_artifact_id": manifest_artifact.id if manifest_artifact else None,
+        "aggregate_merge_policy": "Codex runner may design, implement, compare, and reject aggregate/merge strategies inside harness guardrails.",
+        "runner_context": {
+            "fixed_recipe_required": False,
+            "supporting_tables_available": bool([record for record in table_records if not record["is_primary"]]),
+            "must_respect_split_manifest": True,
+            "must_not_use_validation_or_test_targets_for_feature_generation": True,
+            "connector_credentials_materialized": False,
+        },
+    }
+
+
+def select_uploaded_primary_table(table_uploads: list[UploadFile], primary_filename: str | None) -> UploadFile | None:
+    if not table_uploads:
+        return None
+    if primary_filename:
+        for upload in table_uploads:
+            if upload.filename == primary_filename:
+                return upload
+    return table_uploads[0]
+
+
+def uploaded_table_name(filename: str, used: set[str]) -> str:
+    base = table_name_from_path(filename)
+    candidate = base
+    suffix = 2
+    while candidate in used:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    used.add(candidate)
+    return candidate
+
+
+def build_uploaded_relational_catalog(
+    *,
+    project: Project,
+    dataset: DatasetSnapshot | None,
+    table_records: list[dict[str, Any]],
+    hint_results: list[Any],
+    target_column: str | None,
+) -> dict[str, Any]:
+    table_profiles = [cast(dict[str, Any], record["profile"]) for record in table_records]
+    primary_profile = next((profile for profile in table_profiles if profile.get("is_primary")), table_profiles[0])
+    primary_table_hint = {
+        "path": primary_profile.get("path"),
+        "table_name": primary_profile.get("table_name"),
+        "target_column": target_column,
+        "entity_id_column": first_key_candidate(primary_profile),
+    }
+    relationships = infer_relationships(table_profiles, primary_table_hint)
+    relationships.extend(additional_shared_column_relationships(table_profiles, relationships))
+    target_locations = [
+        {"table": table["table_name"], "path": table["path"]}
+        for table in table_profiles
+        if target_column and target_column in table.get("columns", [])
+    ]
+    hint_summaries = [
+        {
+            "artifact_id": result.artifact.id,
+            "report_artifact_id": result.report_artifact.id,
+            "media_kind": result.summary.get("media_kind"),
+            "content_type": result.summary.get("content_type"),
+            "parsed_table_count": result.summary.get("parsed_table_count"),
+            "parsed_relationship_count": result.summary.get("parsed_relationship_count"),
+        }
+        for result in hint_results
+    ]
+    return {
+        "schema_version": "relational_catalog.v1",
+        "source_kind": "user_uploaded_bundle",
+        "project_id": project.id,
+        "dataset_snapshot_id": dataset.id if dataset else None,
+        "primary_table": {
+            "table_name": primary_profile.get("table_name"),
+            "selected_path": primary_profile.get("path"),
+            "target_column": target_column,
+            "artifact_id": primary_profile.get("artifact_id"),
+            "entity_id_column": primary_table_hint["entity_id_column"],
+        },
+        "table_count": len(table_profiles),
+        "table_limit": len(table_profiles),
+        "table_discovery_truncated": False,
+        "tables": table_profiles,
+        "relationships": relationships,
+        "target_locations": target_locations,
+        "schema_hints": hint_summaries,
+        "evaluation_guidance": {
+            "primary_table_only_dataset_snapshot": True,
+            "multi_table_features_are_runner_defined": True,
+            "aggregate_merge_strategy": "open_ended_agent_designed",
+            "fixed_recipe_required": False,
+            "respect_split_manifest": True,
+            "notes": [
+                "Uploaded supporting tables are first-class artifacts for runner context.",
+                "Codex may design arbitrary aggregate and merge strategies after inspecting evidence.",
+                "The harness owns evaluation, leakage guardrails, lineage, and artifact registration.",
+            ],
+        },
+        "risk_notes": uploaded_relational_risk_notes(
+            table_profiles,
+            target_locations,
+            relationship_count=len(relationships),
+        ),
+        "agent_context_notes": [
+            "Treat this catalog as evidence and workspace inventory, not as a mandatory feature recipe.",
+            "Aggregate and merge choices are deliberately runner-defined; compare alternatives and reject unsafe joins.",
+            "Fit joins, encoders, aggregations, TF-IDF, lag, and rolling features inside the training folds defined by SplitManifest.",
+            "Do not pass secrets or connector credentials to the runner; uploaded table artifacts are the available data boundary.",
+        ],
+    }
+
+
+def build_uploaded_bundle_manifest(
+    *,
+    project: Project,
+    dataset: DatasetSnapshot | None,
+    dataset_artifact: Artifact | None,
+    table_records: list[dict[str, Any]],
+    hint_results: list[Any],
+    relational_catalog_artifact: Artifact,
+    target_column: str | None,
+) -> dict[str, Any]:
+    table_refs = [
+        {
+            "role": "primary_table" if record["is_primary"] else "supporting_table",
+            "table_name": record["table_name"],
+            "artifact_id": cast(Artifact, record["artifact"]).id,
+            "asset_type": cast(Artifact, record["artifact"]).asset_type,
+            "download_url": f"/api/artifacts/{cast(Artifact, record['artifact']).id}/download",
+            "preview_url": f"/api/artifacts/{cast(Artifact, record['artifact']).id}/preview",
+            "source_filename": cast(dict[str, Any], record["profile"]).get("source_filename"),
+        }
+        for record in table_records
+    ]
+    return {
+        "schema_version": "relational_table_bundle_manifest.v1",
+        "source_kind": "user_uploaded_bundle",
+        "project": {"id": project.id, "name": project.name, "target_column": target_column},
+        "dataset_snapshot_id": dataset.id if dataset else None,
+        "primary_dataset_artifact_id": dataset_artifact.id if dataset_artifact else None,
+        "relational_catalog_artifact_id": relational_catalog_artifact.id,
+        "tables": table_refs,
+        "schema_hints": [
+            {
+                "artifact_id": result.artifact.id,
+                "report_artifact_id": result.report_artifact.id,
+                "preview_url": f"/api/artifacts/{result.artifact.id}/preview",
+                "download_url": f"/api/artifacts/{result.artifact.id}/download",
+            }
+            for result in hint_results
+        ],
+        "runner_contract": {
+            "aggregate_merge_policy": "runner_defined_with_harness_guardrails",
+            "codex_may_design_custom_joins": True,
+            "codex_may_write_project_specific_feature_code": True,
+            "codex_may_reject_catalog_edges": True,
+            "codex_must_respect_evaluation_spec_and_split_manifest": True,
+            "codex_must_record_feature_recipe_and_lineage": True,
+            "validation_and_test_targets_for_feature_generation": "forbidden",
+            "connector_credentials": "never_materialized_to_agent",
+        },
+        "human_intent": {
+            "why_this_exists": "One intake bundle gives the runner enough evidence to explore multi-table data science without hard-coding a single aggregate recipe.",
+            "expected_next_actions": [
+                "Deepen data understanding across tables.",
+                "Draft candidate join and aggregation strategies with leakage checks.",
+                "Compare primary-table-only and relational approaches under the same EvaluationSpec.",
+            ],
+        },
+    }
+
+
+def first_key_candidate(profile: dict[str, Any]) -> str | None:
+    candidates = profile.get("key_candidates")
+    if not isinstance(candidates, list):
+        return None
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate.get("column"):
+            return str(candidate["column"])
+    return None
+
+
+def additional_shared_column_relationships(
+    table_profiles: list[dict[str, Any]], existing_relationships: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    seen = {
+        (
+            str(relationship.get("left_table")),
+            str(relationship.get("right_table")),
+            str(relationship.get("left_column")).lower(),
+            str(relationship.get("right_column")).lower(),
+        )
+        for relationship in existing_relationships
+    }
+    added: list[dict[str, Any]] = []
+    for left_index, left in enumerate(table_profiles):
+        left_columns = {str(column).lower(): str(column) for column in left.get("columns", [])}
+        for right in table_profiles[left_index + 1 :]:
+            right_columns = {str(column).lower(): str(column) for column in right.get("columns", [])}
+            for lower_name in sorted(set(left_columns) & set(right_columns)):
+                if not likely_join_key_name(lower_name):
+                    continue
+                key = (
+                    str(left.get("table_name")),
+                    str(right.get("table_name")),
+                    left_columns[lower_name].lower(),
+                    right_columns[lower_name].lower(),
+                )
+                if key in seen:
+                    continue
+                added.append(
+                    {
+                        "left_table": left.get("table_name"),
+                        "right_table": right.get("table_name"),
+                        "left_column": left_columns[lower_name],
+                        "right_column": right_columns[lower_name],
+                        "relation_type": "shared_column_name",
+                        "confidence": 0.48,
+                        "evidence": "matching key-like column name; runner must confirm cardinality and timing before use",
+                    }
+                )
+                seen.add(key)
+                if len(added) >= 100:
+                    return added
+    return added
+
+
+def likely_join_key_name(lower_name: str) -> bool:
+    return (
+        lower_name == "id"
+        or lower_name.endswith("_id")
+        or lower_name.startswith("id_")
+        or lower_name.startswith("sk_")
+        or "customer" in lower_name
+        or "user" in lower_name
+        or "account" in lower_name
+        or "case" in lower_name
+        or "transaction" in lower_name
+    )
+
+
+def uploaded_relational_risk_notes(
+    table_profiles: list[dict[str, Any]],
+    target_locations: list[dict[str, Any]],
+    *,
+    relationship_count: int,
+) -> list[str]:
+    notes: list[str] = []
+    failed = [str(table.get("path")) for table in table_profiles if table.get("status") == "failed"]
+    if failed:
+        notes.append(f"Some uploaded tables failed lightweight profiling: {', '.join(failed[:5])}.")
+    if len(target_locations) > 1:
+        notes.append("Target-like column appears in multiple tables; confirm no post-outcome leakage before relational features.")
+    if len(table_profiles) > 1 and relationship_count == 0:
+        notes.append("Relationship edges are inferred only from names and profiles; uploaded ER hints or user confirmation should guide joins.")
+    if not any(table.get("is_primary") and table.get("time_candidates") for table in table_profiles):
+        notes.append("No primary-table time column was confirmed; time-aware validation may require user or runner investigation.")
+    return notes
+
+
+def update_artifact_metadata(artifact: Artifact, updates: dict[str, Any]) -> None:
+    metadata = loads_json(artifact.metadata_json, {})
+    metadata.update(updates)
+    artifact.metadata_json = dumps_json(metadata)
 
 
 @router.post("/api/datasets/{dataset_id}/eda-review", response_model=JobRead)

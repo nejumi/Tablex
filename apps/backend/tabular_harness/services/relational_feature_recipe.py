@@ -632,7 +632,10 @@ def supporting_table_artifacts(db: Session, project_id: str) -> list[Artifact]:
     return list(
         db.scalars(
             select(Artifact)
-            .where(Artifact.project_id == project_id, Artifact.asset_type == "benchmark_supporting_table")
+            .where(
+                Artifact.project_id == project_id,
+                Artifact.asset_type.in_(["benchmark_supporting_table", "uploaded_supporting_table"]),
+            )
             .order_by(Artifact.created_at.desc())
         ).all()
     )

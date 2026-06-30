@@ -27,7 +27,8 @@ import {
   Send,
   Settings as SettingsIcon,
   Sun,
-  Upload
+  Upload,
+  X
 } from "lucide-react";
 import "./styles.css";
 
@@ -207,6 +208,15 @@ const englishMessages = {
   agentWorkspaceTitle: "Agent workspace",
   evidenceSurfacesTitle: "Evidence surfaces",
   supportingSurfacesTitle: "Supporting surfaces",
+  ideasAndFindingsTitle: "Ideas & Findings",
+  ideasAndFindingsEmpty: "Insights, domain knowledge, and candidate ideas will accumulate here as the agent learns.",
+  equippedSkillsTitle: "Equipped Skills",
+  equippedSkillsEmpty: "No project skills equipped yet.",
+  equippedSkillBadge: "E",
+  agentModeChat: "Chat",
+  agentModeRaw: "Raw",
+  rawAgentTitle: "Raw Codex-style stream",
+  rawAgentEmpty: "Raw agent events will appear after chat, planning, or runner work.",
   openSurface: "Open",
   generateResearchPlan: "Generate ResearchPlan",
   generateStrategyBrief: "Refresh strategy",
@@ -387,6 +397,15 @@ const japaneseMessages: LocaleMessages = {
   agentWorkspaceTitle: "Agent workspace",
   evidenceSurfacesTitle: "根拠面",
   supportingSurfacesTitle: "支援面",
+  ideasAndFindingsTitle: "Ideas & Findings",
+  ideasAndFindingsEmpty: "Agentが学んだinsight、domain knowledge、候補ideaがここに蓄積されます。",
+  equippedSkillsTitle: "装備中SKILL",
+  equippedSkillsEmpty: "このProjectに装備されたSkillはまだありません。",
+  equippedSkillBadge: "E",
+  agentModeChat: "Chat",
+  agentModeRaw: "Raw",
+  rawAgentTitle: "Codex CLI風の生表示",
+  rawAgentEmpty: "chat、planning、runner workが始まるとraw eventが表示されます。",
   openSurface: "開く",
   generateResearchPlan: "ResearchPlan生成",
   generateStrategyBrief: "Strategy更新",
@@ -1039,6 +1058,47 @@ type AgentChatMessage = {
   actionSummary?: AgentActionSummary;
 };
 
+type HomeMemoryItem = {
+  id: string;
+  kind: "idea" | "finding";
+  title: string;
+  detail: string;
+  created_at: string;
+};
+
+type EquippedSkillItem = {
+  id: string;
+  name: string;
+  description: string | null;
+  tags: string[];
+  relation_type: string;
+};
+
+type RawAgentEvent = {
+  id: string;
+  timestamp: string;
+  source: string;
+  level: string;
+  title: string;
+  payload: Record<string, unknown>;
+};
+
+type UploadFileProgress = {
+  key: string;
+  name: string;
+  kind: string;
+  size: number;
+  progress: number;
+};
+
+type UploadBundleProgress = {
+  active: boolean;
+  overall: number;
+  loadedBytes: number;
+  totalBytes: number;
+  files: UploadFileProgress[];
+};
+
 type PortalIdea = {
   id: string;
   artifact_id?: string;
@@ -1506,6 +1566,31 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(detail || response.statusText);
   }
   return response.json() as Promise<T>;
+}
+
+function uploadFormData<T>(
+  path: string,
+  body: FormData,
+  onProgress: (event: ProgressEvent<EventTarget>) => void
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${apiBase}${path}`);
+    xhr.upload.onprogress = onProgress;
+    xhr.onerror = () => reject(new Error("Upload failed before the server returned a response."));
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(xhr.responseText || xhr.statusText));
+        return;
+      }
+      try {
+        resolve(JSON.parse(xhr.responseText) as T);
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
+    xhr.send(body);
+  });
 }
 
 function tabLabel(tab: Tab, text: LocaleMessages) {
@@ -2715,6 +2800,8 @@ function ProjectDetail({
           reports={reports}
           leaderboard={leaderboard}
           notebookIndex={notebookIndex}
+          libraryAssets={libraryAssets}
+          projectAssetReferences={projectAssetReferences}
           busy={busy}
           text={text}
           messages={agentChatMessages}
@@ -2903,6 +2990,8 @@ function HomeTab({
   reports,
   leaderboard,
   notebookIndex,
+  libraryAssets,
+  projectAssetReferences,
   busy,
   text,
   messages,
@@ -2929,6 +3018,8 @@ function HomeTab({
   reports: Report[];
   leaderboard: LeaderboardEntry[];
   notebookIndex: NotebookIndex | null;
+  libraryAssets: LibraryAsset[];
+  projectAssetReferences: AssetReference[];
   busy: boolean;
   text: LocaleMessages;
   messages: AgentChatMessage[];
@@ -2952,6 +3043,10 @@ function HomeTab({
   const mode = project.autonomy_mode ?? "approval_based";
   const nextStrategyAction = strategyBrief?.recommended_next_action ?? null;
   const focusAction = recommendation.primaryAction;
+  const [agentViewMode, setAgentViewMode] = React.useState<"chat" | "raw">("chat");
+  const ideaFindingItems = buildIdeaFindingItems(ideas, insights);
+  const equippedSkills = equippedSkillItems(projectAssetReferences, libraryAssets);
+  const rawAgentEvents = buildRawAgentEvents(messages, jobs, latestContract);
 
   return (
     <div className="mission-home stack">
@@ -3092,23 +3187,68 @@ function HomeTab({
         </section>
       </div>
 
+      <section className="mission-memory-panel">
+        <div className="mission-panel-head">
+          <div>
+            <span>{text.ideasAndFindingsTitle}</span>
+            <strong>{ideaFindingItems.length ? `${ideaFindingItems.length} stored signals` : text.ideasAndFindingsEmpty}</strong>
+          </div>
+          <button className="secondary-button" type="button" onClick={() => onTabChange("Insight")}>
+            <Lightbulb size={16} />
+            {text.openSurface}
+          </button>
+        </div>
+        {ideaFindingItems.length ? (
+          <div className="mission-memory-list">
+            {ideaFindingItems.slice(0, 5).map((item) => (
+              <div className={`mission-memory-item ${item.kind}`} key={item.id}>
+                <span>{item.kind}</span>
+                <strong>{item.title}</strong>
+                <small>{item.detail}</small>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyInline text={text.ideasAndFindingsEmpty} />
+        )}
+      </section>
+
       <div className="mission-agent-layout">
         <div className="mission-agent-primary">
-          <div className="mission-panel-title">
-            <MessageSquare size={18} />
-            <div>
-              <strong>{text.agentWorkspaceTitle}</strong>
-              <span>{text.missionControlSubtitle}</span>
+          <div className="mission-agent-head">
+            <div className="mission-panel-title">
+              <MessageSquare size={18} />
+              <div>
+                <strong>{text.agentWorkspaceTitle}</strong>
+                <span>{text.missionControlSubtitle}</span>
+              </div>
+            </div>
+            <div className="agent-view-toggle" aria-label="Agent display mode">
+              <button className={agentViewMode === "chat" ? "active" : ""} onClick={() => setAgentViewMode("chat")} type="button">
+                {text.agentModeChat}
+              </button>
+              <button className={agentViewMode === "raw" ? "active" : ""} onClick={() => setAgentViewMode("raw")} type="button">
+                {text.agentModeRaw}
+              </button>
             </div>
           </div>
-          <AgentChatDock
-            busy={busy}
-            text={text}
-            messages={messages}
-            latestContract={latestContract}
-            onSubmit={onSubmitAgentChat}
-            onActionOpen={onActionOpen}
-          />
+          {agentViewMode === "chat" ? (
+            <AgentChatDock
+              busy={busy}
+              text={text}
+              messages={messages}
+              latestContract={latestContract}
+              onSubmit={onSubmitAgentChat}
+              onActionOpen={onActionOpen}
+            />
+          ) : (
+            <RawAgentStream
+              busy={busy}
+              text={text}
+              events={rawAgentEvents}
+              onSubmit={onSubmitAgentChat}
+            />
+          )}
         </div>
         <aside className="mission-evidence-stack">
           <MissionSurfaceButton
@@ -3163,6 +3303,24 @@ function HomeTab({
               <small>{latestIdea.hypothesis}</small>
             </div>
           ) : null}
+          <div className="mission-skills-panel">
+            <span>{text.equippedSkillsTitle}</span>
+            {equippedSkills.length ? (
+              <div className="equipped-skill-list">
+                {equippedSkills.slice(0, 6).map((skill) => (
+                  <div className="equipped-skill" key={skill.id} title={skill.description ?? skill.name}>
+                    <b>{text.equippedSkillBadge}</b>
+                    <div>
+                      <strong>{skill.name}</strong>
+                      <small>{skill.tags.slice(0, 2).join(" / ") || skill.relation_type}</small>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <small>{text.equippedSkillsEmpty}</small>
+            )}
+          </div>
         </aside>
       </div>
     </div>
@@ -3232,6 +3390,106 @@ function latestArtifactByType(artifacts: Artifact[], assetType: string) {
   return artifacts
     .filter((artifact) => artifact.asset_type === assetType)
     .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0] ?? null;
+}
+
+function buildIdeaFindingItems(ideas: Idea[], insights: Insight[]): HomeMemoryItem[] {
+  return [
+    ...ideas.map((idea) => ({
+      id: idea.id,
+      kind: "idea" as const,
+      title: idea.title,
+      detail: idea.hypothesis,
+      created_at: idea.created_at
+    })),
+    ...insights.map((insight) => ({
+      id: insight.id,
+      kind: "finding" as const,
+      title: insight.title,
+      detail: insight.summary,
+      created_at: insight.created_at
+    }))
+  ].sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime());
+}
+
+function equippedSkillItems(references: AssetReference[], assets: LibraryAsset[]): EquippedSkillItem[] {
+  const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+  return references
+    .map((reference) => {
+      const asset = reference.asset ?? assetById.get(reference.target_asset_id) ?? null;
+      if (!asset || asset.asset_type !== "skill") return null;
+      return {
+        id: reference.id,
+        name: asset.name,
+        description: asset.description,
+        tags: asset.semantic_tags.length ? asset.semantic_tags : asset.tags,
+        relation_type: reference.relation_type
+      };
+    })
+    .filter((item): item is EquippedSkillItem => item !== null);
+}
+
+function buildRawAgentEvents(
+  messages: AgentChatMessage[],
+  jobs: Job[],
+  latestContract: Artifact | null
+): RawAgentEvent[] {
+  const now = new Date().toISOString();
+  const chatEvents = messages.slice(-12).map((message, index) => ({
+    id: `chat-${index}-${message.role}-${message.text.slice(0, 18)}`,
+    timestamp: now,
+    source: message.role === "user" ? "user" : "tablex-agent",
+    level: message.actionSummary?.outcome ?? "message",
+    title: message.role === "user" ? "user_message" : message.actionSummary?.headline ?? "assistant_message",
+    payload: {
+      text: message.text,
+      action_summary: message.actionSummary ?? null,
+      actions: message.actions?.map((action) => ({
+        type: action.type,
+        status: action.status,
+        label: action.label,
+        target_tab: action.target_tab,
+        target_anchor: action.target_anchor,
+        job_id: action.job_id,
+        artifact_id: action.artifact_id,
+        artifact_ids: action.artifact_ids
+      })) ?? []
+    }
+  }));
+  const jobEvents = jobs.slice(0, 8).map((job) => ({
+    id: `job-${job.id}`,
+    timestamp: job.updated_at,
+    source: "job",
+    level: job.status,
+    title: job.job_type,
+    payload: {
+      job_id: job.id,
+      status: job.status,
+      input: job.input,
+      output: job.output,
+      error_message: job.error_message,
+      approval_required: job.approval_required
+    }
+  }));
+  const contractEvents = latestContract
+    ? [
+        {
+          id: `contract-${latestContract.id}`,
+          timestamp: latestContract.created_at,
+          source: "artifact",
+          level: "available",
+          title: "latest_agent_task_contract",
+          payload: {
+            artifact_id: latestContract.id,
+            name: latestContract.name,
+            version: latestContract.version,
+            metadata: latestContract.metadata
+          }
+        }
+      ]
+    : [];
+  return [...chatEvents, ...jobEvents, ...contractEvents].sort(
+    (left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime()
+  );
 }
 
 function latestJobHeadline(job: Job) {
@@ -3348,6 +3606,66 @@ function AgentChatSummaryCard({
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function RawAgentStream({
+  busy,
+  text,
+  events,
+  onSubmit
+}: {
+  busy: boolean;
+  text: LocaleMessages;
+  events: RawAgentEvent[];
+  onSubmit: (objective: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = React.useState("");
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const objective = draft.trim();
+    if (!objective) return;
+    setDraft("");
+    await onSubmit(objective);
+  }
+
+  return (
+    <div className="raw-agent-stream">
+      <div className="raw-agent-head">
+        <span>{text.rawAgentTitle}</span>
+        <small>{events.length} events</small>
+      </div>
+      <div className="raw-agent-log">
+        {events.length ? (
+          events.map((event) => (
+            <div className="raw-agent-event" key={event.id}>
+              <div className="raw-agent-line">
+                <span>{formatDate(event.timestamp)}</span>
+                <b>{event.source}</b>
+                <em>{event.level}</em>
+                <strong>{event.title}</strong>
+              </div>
+              <pre>{JSON.stringify(event.payload, null, 2)}</pre>
+            </div>
+          ))
+        ) : (
+          <EmptyInline text={text.rawAgentEmpty} />
+        )}
+      </div>
+      <form className="agent-chat-form raw-agent-form" onSubmit={(event) => void submit(event)}>
+        <textarea
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder={text.agentChatPlaceholder}
+          rows={3}
+        />
+        <button className="primary-button" disabled={busy || !draft.trim()} type="submit">
+          {busy ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
+          {text.createAgentTaskContract}
+        </button>
+      </form>
     </div>
   );
 }
@@ -4090,7 +4408,10 @@ function DataTab({
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
-  const [file, setFile] = React.useState<File | null>(null);
+  const [queuedFiles, setQueuedFiles] = React.useState<File[]>([]);
+  const [primaryFileName, setPrimaryFileName] = React.useState("");
+  const [isDraggingData, setIsDraggingData] = React.useState(false);
+  const [uploadProgress, setUploadProgress] = React.useState<UploadBundleProgress | null>(null);
   const [target, setTarget] = React.useState(project.target_column ?? "");
   const [erHintFile, setErHintFile] = React.useState<File | null>(null);
   const [erHintNote, setErHintNote] = React.useState("");
@@ -4117,19 +4438,79 @@ function DataTab({
   const [kaggleProbeResults, setKaggleProbeResults] = React.useState<Record<string, Record<string, unknown>>>({});
   const [kaggleInventoryResults, setKaggleInventoryResults] = React.useState<Record<string, Record<string, unknown>>>({});
   const [kaggleDownloadResults, setKaggleDownloadResults] = React.useState<Record<string, Record<string, unknown>>>({});
+  const queuedTableFiles = queuedFiles.filter(isTableUploadFile);
+  const queuedErHintFiles = queuedFiles.filter(isRelationalHintUploadFile);
+  const unsupportedQueuedFiles = queuedFiles.filter((item) => !isTableUploadFile(item) && !isRelationalHintUploadFile(item));
+  const selectedPrimaryFileName = primaryFileName || queuedTableFiles[0]?.name || "";
+  const canUploadDataBundle = queuedFiles.length > 0 && unsupportedQueuedFiles.length === 0;
 
-  async function uploadDataset() {
-    if (!file) return;
+  React.useEffect(() => {
+    setPrimaryFileName((current) => {
+      const tableNames = queuedFiles.filter(isTableUploadFile).map((item) => item.name);
+      if (!tableNames.length) return "";
+      return current && tableNames.includes(current) ? current : tableNames[0];
+    });
+  }, [queuedFiles]);
+
+  function addQueuedUploadFiles(files: FileList | File[]) {
+    const incoming = Array.from(files);
+    if (!incoming.length) return;
+    setUploadProgress(null);
+    setQueuedFiles((current) => {
+      const seen = new Set(current.map(uploadFileKey));
+      const next = [...current];
+      for (const item of incoming) {
+        const key = uploadFileKey(item);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        next.push(item);
+      }
+      return next;
+    });
+  }
+
+  function removeQueuedUploadFile(fileToRemove: File) {
+    const key = uploadFileKey(fileToRemove);
+    setUploadProgress(null);
+    setQueuedFiles((current) => current.filter((item) => uploadFileKey(item) !== key));
+  }
+
+  async function uploadDataBundle() {
+    if (!canUploadDataBundle) return;
+    const uploadFiles = [...queuedFiles];
+    const uploadTotalBytes = uploadFiles.reduce((total, item) => total + item.size, 0);
+    setUploadProgress(buildUploadProgress(uploadFiles, 0, uploadTotalBytes, true));
     const body = new FormData();
-    body.append("file", file);
+    uploadFiles.forEach((queuedFile) => body.append("files", queuedFile));
     if (target.trim()) body.append("target_column", target.trim());
-    await runAction(() =>
-      api(`/api/projects/${project.id}/datasets/upload`, {
-        method: "POST",
-        body
-      })
-    );
-    setFile(null);
+    if (selectedPrimaryFileName) body.append("primary_filename", selectedPrimaryFileName);
+    if (erHintNote.trim()) body.append("note", erHintNote.trim());
+    let uploaded = false;
+    await runAction(async () => {
+      const job = await uploadFormData<Job>(`/api/projects/${project.id}/datasets/upload-bundle`, body, (event) => {
+        const requestTotal = event.lengthComputable && event.total > 0 ? event.total : uploadTotalBytes;
+        const estimatedFileBytes =
+          requestTotal > 0 ? Math.min(uploadTotalBytes, (event.loaded / requestTotal) * uploadTotalBytes) : 0;
+        setUploadProgress(buildUploadProgress(uploadFiles, estimatedFileBytes, uploadTotalBytes, true));
+      });
+      const hintArtifactIds = Array.isArray(job.output.relational_hint_artifact_ids)
+        ? job.output.relational_hint_artifact_ids
+        : [];
+      const relationalArtifactId =
+        textField(job.output.relational_catalog_artifact_id) ?? textField(hintArtifactIds[0]);
+      uploaded = true;
+      setUploadProgress(buildUploadProgress(uploadFiles, uploadTotalBytes, uploadTotalBytes, false));
+      if (relationalArtifactId) {
+        await loadRelationalPreview(relationalArtifactId);
+      }
+      return job;
+    });
+    if (uploaded) {
+      setQueuedFiles([]);
+      setErHintNote("");
+    } else {
+      setUploadProgress((current) => (current ? { ...current, active: false } : current));
+    }
   }
 
   async function uploadRelationalSchemaHint() {
@@ -4542,26 +4923,154 @@ function DataTab({
   return (
     <div className="stack">
       <Panel id="dataset-upload" title="Dataset Upload" icon={<Upload size={18} />} className="data-primary-panel">
-        <div className="upload-row">
-          <input type="file" accept=".csv,.parquet" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-          <input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Target column" />
-          <button className="primary-button" disabled={!file || busy} onClick={() => void uploadDataset()}>
-            {busy ? <Loader2 className="spin" size={16} /> : <Upload size={16} />}
-            Upload
-          </button>
-          <button
-            className="secondary-button"
-            disabled={!latestDataset || busy}
-            onClick={() =>
-              latestDataset
-                ? void runAction(() => api(`/api/datasets/${latestDataset.id}/quality/run`, { method: "POST" }))
-                : undefined
-            }
+        <div className="data-intake-layout">
+          <label
+            className={`data-dropzone ${isDraggingData ? "dragging" : ""}`}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setIsDraggingData(true);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setIsDraggingData(true);
+            }}
+            onDragLeave={(event) => {
+              event.preventDefault();
+              setIsDraggingData(false);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setIsDraggingData(false);
+              addQueuedUploadFiles(event.dataTransfer.files);
+            }}
           >
-            {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
-            Analyze Quality
-          </button>
+            <input
+              className="data-dropzone-input"
+              type="file"
+              multiple
+              accept=".csv,.parquet,.png,.jpg,.jpeg,.svg,.pdf,.json,image/png,image/jpeg,image/svg+xml,application/pdf,application/json"
+              onChange={(event) => {
+                if (event.target.files) addQueuedUploadFiles(event.target.files);
+                event.currentTarget.value = "";
+              }}
+            />
+            <span className="data-dropzone-icon">
+              <Upload size={26} />
+            </span>
+            <strong>Drop tables and ER evidence here</strong>
+            <p>CSV or Parquet for one or many tables. Add PNG, SVG, PDF, or JSON ER hints in the same drop.</p>
+            <small>
+              {queuedFiles.length
+                ? `${queuedTableFiles.length} table file(s), ${queuedErHintFiles.length} ER hint(s) queued`
+                : "Target column can stay blank until Data Understanding."}
+            </small>
+          </label>
+          <div className="data-intake-controls">
+            <div className="field-stack">
+              <label>Target column</label>
+              <input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Optional after understanding" />
+            </div>
+            <div className="field-stack">
+              <label>Primary table</label>
+              <select
+                value={selectedPrimaryFileName}
+                disabled={!queuedTableFiles.length}
+                onChange={(event) => setPrimaryFileName(event.target.value)}
+              >
+                {queuedTableFiles.length ? (
+                  queuedTableFiles.map((queuedFile) => (
+                    <option key={uploadFileKey(queuedFile)} value={queuedFile.name}>
+                      {queuedFile.name}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">Add a CSV or Parquet file</option>
+                )}
+              </select>
+            </div>
+            <div className="button-row">
+              <button className="primary-button" disabled={!canUploadDataBundle || busy} onClick={() => void uploadDataBundle()}>
+                {busy ? <Loader2 className="spin" size={16} /> : <Upload size={16} />}
+                Ingest Bundle
+              </button>
+              <button
+                className="secondary-button"
+                disabled={!latestDataset || busy}
+                onClick={() =>
+                  latestDataset
+                    ? void runAction(() => api(`/api/datasets/${latestDataset.id}/quality/run`, { method: "POST" }))
+                    : undefined
+                }
+              >
+                {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+                Analyze Quality
+              </button>
+            </div>
+            <div className="db-connector-card">
+              <Database size={18} />
+              <div>
+                <strong>Database connectors</strong>
+                <p>Connection profiles belong in Tablex. Credentials stay in a vault and are never passed to Codex.</p>
+              </div>
+              <span className="badge muted">next intake path</span>
+            </div>
+          </div>
         </div>
+        {queuedFiles.length ? (
+          <div className="queued-file-list">
+            {queuedFiles.map((queuedFile) => {
+              const kind = isTableUploadFile(queuedFile)
+                ? "table"
+                : isRelationalHintUploadFile(queuedFile)
+                  ? "ER hint"
+                  : "unsupported";
+              return (
+                <div className={`queued-file-item ${kind === "unsupported" ? "unsupported" : ""}`} key={uploadFileKey(queuedFile)}>
+                  <span>{kind}</span>
+                  <strong>{queuedFile.name}</strong>
+                  <small>{formatBytes(queuedFile.size)}</small>
+                  <button className="icon-button" onClick={() => removeQueuedUploadFile(queuedFile)} title={`Remove ${queuedFile.name}`}>
+                    <X size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        {uploadProgress ? (
+          <div className={`upload-progress-panel ${uploadProgress.active ? "active" : "complete"}`}>
+            <div className="upload-progress-head">
+              <div>
+                <span>{uploadProgress.active ? "Uploading bundle" : "Bundle uploaded"}</span>
+                <strong>{Math.round(uploadProgress.overall)}%</strong>
+              </div>
+              <small>
+                {formatBytes(uploadProgress.loadedBytes)} / {formatBytes(uploadProgress.totalBytes)}
+              </small>
+            </div>
+            <div className="progress-track" aria-label="Overall upload progress">
+              <div style={{ width: `${uploadProgress.overall}%` }} />
+            </div>
+            <div className="upload-file-progress-list">
+              {uploadProgress.files.map((item) => (
+                <div className="upload-file-progress" key={item.key}>
+                  <div>
+                    <span>{item.kind}</span>
+                    <strong>{item.name}</strong>
+                    <small>{formatBytes(item.size)}</small>
+                  </div>
+                  <div className="progress-track compact" aria-label={`${item.name} upload progress`}>
+                    <div style={{ width: `${item.progress}%` }} />
+                  </div>
+                  <b>{Math.round(item.progress)}%</b>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {unsupportedQueuedFiles.length ? (
+          <div className="banner danger">Remove unsupported files before ingesting this bundle.</div>
+        ) : null}
       </Panel>
       <FocusedEvidenceReader
         id="data-focus"
@@ -5369,6 +5878,52 @@ function DataTab({
 
 function textField(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+const tableUploadExtensions = new Set([".csv", ".parquet"]);
+const relationalHintUploadExtensions = new Set([".png", ".jpg", ".jpeg", ".svg", ".pdf", ".json"]);
+
+function uploadFileExtension(file: File) {
+  const index = file.name.lastIndexOf(".");
+  return index >= 0 ? file.name.slice(index).toLowerCase() : "";
+}
+
+function isTableUploadFile(file: File) {
+  return tableUploadExtensions.has(uploadFileExtension(file));
+}
+
+function isRelationalHintUploadFile(file: File) {
+  return relationalHintUploadExtensions.has(uploadFileExtension(file));
+}
+
+function uploadFileKey(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function buildUploadProgress(files: File[], loadedBytes: number, totalBytes: number, active: boolean): UploadBundleProgress {
+  const safeTotal = Math.max(totalBytes, 0);
+  const boundedLoaded = Math.max(0, Math.min(loadedBytes, safeTotal || loadedBytes));
+  let offset = 0;
+  const fileProgress = files.map((file) => {
+    const start = offset;
+    offset += file.size;
+    const progress =
+      file.size > 0 ? Math.max(0, Math.min(100, ((boundedLoaded - start) / file.size) * 100)) : boundedLoaded >= start ? 100 : 0;
+    return {
+      key: uploadFileKey(file),
+      name: file.name,
+      kind: isTableUploadFile(file) ? "table" : isRelationalHintUploadFile(file) ? "ER hint" : "unsupported",
+      size: file.size,
+      progress
+    };
+  });
+  return {
+    active,
+    overall: safeTotal > 0 ? Math.max(0, Math.min(100, (boundedLoaded / safeTotal) * 100)) : active ? 0 : 100,
+    loadedBytes: Math.round(boundedLoaded),
+    totalBytes: safeTotal,
+    files: fileProgress
+  };
 }
 
 function numberField(value: unknown): number | null {
@@ -10442,7 +10997,8 @@ function LoadingBlock({ label }: { label: string }) {
 }
 
 function formatBytes(value: number | null) {
-  if (!value) return "-";
+  if (value === null) return "-";
+  if (value === 0) return "0 B";
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;

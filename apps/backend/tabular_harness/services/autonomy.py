@@ -52,10 +52,11 @@ from tabular_harness.services.evaluation import (
 )
 from tabular_harness.services.experiment_lifecycle import draft_run_report
 from tabular_harness.services.planned_agent_execution import run_planned_agent_task_codex_cli
-from tabular_harness.services.planned_agent_workspace import prepare_workspace_from_contract_artifact
+from tabular_harness.services.planned_agent_workspace import (
+    prepare_workspace_from_contract_artifact,
+)
 from tabular_harness.services.reporting import generate_project_insights
 from tabular_harness.services.result_notebook_evidence import prepare_result_notebook_evidence
-
 
 RUNNER_MODE_HARNESS_ONLY = "harness_only"
 RUNNER_MODE_CODEX_CLI = "codex_cli"

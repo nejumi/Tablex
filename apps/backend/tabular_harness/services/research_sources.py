@@ -191,6 +191,7 @@ def collect_context_artifacts(db: Session, project_id: str) -> dict[str, Artifac
         "research_plan",
         "data_quality_gate",
         "relational_catalog",
+        "relational_table_bundle_manifest",
         "evaluation_scenario_comparison",
         "evaluation_approval_review",
         "evaluation_diagnostics",

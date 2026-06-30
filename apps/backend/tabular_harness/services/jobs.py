@@ -24,6 +24,7 @@ JOB_TYPES = {
     "build_relational_feature_recipe",
     "diagnose_relational_feature_scenarios",
     "upload_relational_schema_hint",
+    "upload_data_bundle",
     "run_public_benchmark_workflow",
     "run_baseline",
     "train_model_candidates",
