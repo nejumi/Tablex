@@ -55,6 +55,7 @@ from tabular_harness.schemas import (
     AssetVersionRead,
     AssumptionRead,
     AssumptionReviewQueueRead,
+    AutonomyStartCreate,
     BenchmarkDatasetRead,
     BenchmarkFixtureRequest,
     BenchmarkFixtureResponse,
@@ -143,6 +144,7 @@ from tabular_harness.services.asset_library import (
     seed_default_assets,
 )
 from tabular_harness.services.assumption_review import build_assumption_review_queue
+from tabular_harness.services.autonomy import run_autonomous_loop_tick
 from tabular_harness.services.baseline import (
     create_baseline_strategy_plan,
     normalize_model_candidate_name,
@@ -770,6 +772,43 @@ def update_project(
     project.updated_at = utc_now()
     db.flush()
     return project_to_dict(project)
+
+
+@router.post("/api/projects/{project_id}/autonomy/start", response_model=JobRead)
+def start_project_autonomy(
+    project_id: str,
+    payload: AutonomyStartCreate,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="start_autonomous_loop",
+        project_id=project_id,
+        input_payload={"runner_mode": payload.runner_mode},
+        policy={
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "production_write": "forbidden",
+            "evaluation_spec_mutation": "non_destructive_initial_adoption_only",
+            "runner_mode": payload.runner_mode,
+        },
+    )
+    try:
+        mark_job_running(job)
+        output = run_autonomous_loop_tick(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            runner_mode=payload.runner_mode,
+        )
+        mark_job_succeeded(job, output)
+    except ValueError as exc:
+        mark_job_failed(job, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job_to_dict(job)
 
 
 @router.post("/api/projects/{project_id}/archive", response_model=ProjectRead)

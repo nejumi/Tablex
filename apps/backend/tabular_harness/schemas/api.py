@@ -21,6 +21,10 @@ class ProjectUpdate(BaseModel):
     autonomy_mode: Literal["approval_based", "full_auto"] | None = None
 
 
+class AutonomyStartCreate(BaseModel):
+    runner_mode: Literal["harness_only", "codex_cli", "codex_cli_if_available"] = "harness_only"
+
+
 class ProjectRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -542,6 +546,7 @@ class JobCreate(BaseModel):
         "create_relational_feature_plan",
         "build_relational_feature_recipe",
         "diagnose_relational_feature_scenarios",
+        "start_autonomous_loop",
         "run_baseline",
         "train_model_candidates",
         "plan_baseline_strategy",

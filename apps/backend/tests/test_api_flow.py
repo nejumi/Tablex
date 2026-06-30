@@ -42,6 +42,71 @@ def test_project_autonomy_mode_persists(tmp_path: Path) -> None:
     assert read_response.json()["autonomy_mode"] == "full_auto"
 
 
+def test_full_auto_start_advances_autonomous_loop_without_dataset(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Autonomous no data"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    start_response = client.post(f"/api/projects/{project_id}/autonomy/start", json={"runner_mode": "harness_only"})
+    assert start_response.status_code == 200, start_response.text
+    job = start_response.json()
+    assert job["job_type"] == "start_autonomous_loop"
+    assert job["status"] == "succeeded"
+    assert job["output"]["schema_version"] == "autonomous_loop_tick.v1"
+    assert job["output"]["status"] == "waiting_for_data"
+    assert "Full Auto started" in job["output"]["assistant_message"]
+    assert job["output"]["worker_events"]
+    assert job["output"]["reflection_artifact_id"]
+
+    project_read_response = client.get(f"/api/projects/{project_id}")
+    assert project_read_response.status_code == 200
+    assert project_read_response.json()["autonomy_mode"] == "full_auto"
+
+    artifacts = client.get(f"/api/projects/{project_id}/artifacts").json()
+    assert any(artifact["asset_type"] == "autonomous_reflection" for artifact in artifacts)
+
+
+def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Autonomous with data"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    rows = ["feature,segment,value"] + [f"{index},{'a' if index % 2 else 'b'},{index * 3}" for index in range(1, 31)]
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("autonomous.csv", "\n".join(rows).encode("utf-8"), "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    start_response = client.post(f"/api/projects/{project_id}/autonomy/start", json={"runner_mode": "harness_only"})
+    assert start_response.status_code == 200, start_response.text
+    output = start_response.json()["output"]
+    assert output["status"] == "advanced"
+    labels = {step["label"] for step in output["steps"]}
+    assert {
+        "data_quality",
+        "eda_review",
+        "evaluation_candidates",
+        "research_brief",
+        "approach_ideas",
+        "agent_task_contract",
+        "agent_workspace",
+        "reflection",
+    }.issubset(labels)
+    assert output["artifact_ids"]
+    assert output["next_human_boundary"].startswith("Confirm or derive the prediction target")
+
+    artifacts = client.get(f"/api/projects/{project_id}/artifacts").json()
+    asset_types = {artifact["asset_type"] for artifact in artifacts}
+    assert "data_quality_gate" in asset_types
+    assert "eda_review_bundle" in asset_types
+    assert "agent_task_contract" in asset_types
+    assert "agent_workspace_manifest" in asset_types
+
+
 def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 

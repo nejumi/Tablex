@@ -32,6 +32,7 @@ JOB_TYPES = {
     "save_guided_journey_snapshot",
     "save_autonomous_decision_brief",
     "compare_guided_journey_snapshots",
+    "start_autonomous_loop",
     "run_agent_task",
     "agent_chat_turn",
     "run_planned_agent_task_codex",

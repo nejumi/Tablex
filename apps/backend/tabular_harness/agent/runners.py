@@ -279,6 +279,8 @@ class CodexCliRunner(AgentRunner):
             codex_sandbox(execution_policy.sandbox),
             "--output-schema",
             str(schema_path),
+            "--output-last-message",
+            str(result_path),
             "--skip-git-repo-check",
             "-",
         ]

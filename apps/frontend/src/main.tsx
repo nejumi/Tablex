@@ -2589,6 +2589,53 @@ function ProjectDetail({
     await submitAgentChat(objective);
   }
 
+  async function changeAutonomyMode(nextMode: AutonomyMode): Promise<void> {
+    const currentMode = project.autonomy_mode ?? "approval_based";
+    if (nextMode === currentMode) return;
+    setBusy(true);
+    setError(null);
+    const userText = nextMode === "full_auto" ? "Start Full Auto" : "Switch to Approval Based";
+    setAgentChatMessages((current) => [...current.slice(-23), { role: "user", text: userText }]);
+    try {
+      if (nextMode === "full_auto") {
+        const job = await api<Job>(`/api/projects/${project.id}/autonomy/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ runner_mode: "codex_cli_if_available" })
+        });
+        const workerEvents = workerEventsFromJob(job);
+        const assistantMessage =
+          typeof job.output.assistant_message === "string"
+            ? job.output.assistant_message
+            : "Full Auto started and advanced the autonomous loop.";
+        setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: assistantMessage }]);
+        setAgentWorkerEvents((current) => [...workerEvents, ...current].slice(0, 8));
+      } else {
+        await api<Project>(`/api/projects/${project.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ autonomy_mode: nextMode })
+        });
+        setAgentChatMessages((current) => [
+          ...current.slice(-23),
+          {
+            role: "system",
+            text: "Approval Based mode is active. I will keep preparing evidence, but decisions with evaluation, external execution, dependencies, or deployment impact will wait for your approval."
+          }
+        ]);
+      }
+      await refreshAgentActivity();
+      await refresh();
+      await onProjectChanged();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: message }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function openAgentChatAction(action: AgentChatAction) {
     const targetTab = tabFromString(action.target_tab, "Home");
     navigateToTarget(targetTab, action.target_anchor ?? null);
@@ -2677,6 +2724,7 @@ function ProjectDetail({
           onTabChange={onTabChange}
           onFocusAction={(action) => void runFocusAction(action)}
           onStrategyAction={(action) => void runStrategyAction(action)}
+          onAutonomyModeChange={(mode) => void changeAutonomyMode(mode)}
           runAction={runAction}
         />
       )}
@@ -2864,6 +2912,7 @@ function HomeTab({
   onTabChange,
   onFocusAction,
   onStrategyAction,
+  onAutonomyModeChange,
   runAction
 }: {
   project: Project;
@@ -2889,6 +2938,7 @@ function HomeTab({
   onTabChange: (tab: Tab) => void;
   onFocusAction: (action: FocusAction | null) => void;
   onStrategyAction: (action: StrategyAction) => void;
+  onAutonomyModeChange: (mode: AutonomyMode) => void;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const activeJobs = jobs.filter((job) => !isTerminalJob(job)).slice(0, 3);
@@ -2902,17 +2952,6 @@ function HomeTab({
   const mode = project.autonomy_mode ?? "approval_based";
   const nextStrategyAction = strategyBrief?.recommended_next_action ?? null;
   const focusAction = recommendation.primaryAction;
-
-  async function setAutonomyMode(nextMode: AutonomyMode) {
-    if (nextMode === mode) return;
-    await runAction(() =>
-      api<Project>(`/api/projects/${project.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ autonomy_mode: nextMode })
-      })
-    );
-  }
 
   return (
     <div className="mission-home stack">
@@ -2936,7 +2975,7 @@ function HomeTab({
             mode={mode}
             busy={busy}
             text={text}
-            onChange={(nextMode) => void setAutonomyMode(nextMode)}
+            onChange={onAutonomyModeChange}
           />
           <button
             className="primary-button mission-focus-button"
@@ -3702,6 +3741,7 @@ function workerDisplayName(jobType: string) {
 }
 
 function targetTabForJob(jobType: string): string | null {
+  if (jobType.includes("autonomous")) return "Home";
   if (jobType.includes("train") || jobType.includes("baseline")) return "Leaderboard";
   if (jobType.includes("notebook")) return "Notebooks";
   if (jobType.includes("research") || jobType.includes("agent")) return "Approach";
