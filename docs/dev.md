@@ -54,6 +54,17 @@ curl -X POST http://localhost:8000/api/projects/{project_id}/baseline/strategy-p
 
 The strategy plan records `adaptive_baseline_planning`, sanity-floor, strong single-table, text TF-IDF, categorical, datetime, time-series, and relational aggregation candidates. It also stores runner scope, dependency checks, Skill/library semantic tag matches, next AgentTasks, and reporting/visualization expectations. Relational aggregation is marked as AgentTask work until join semantics and prediction-time availability are validated.
 
+Queue explicit model candidates under the approved EvaluationSpec and SplitManifest:
+
+```bash
+curl -X POST http://localhost:8000/api/projects/{project_id}/model-candidates/run \
+  -H 'Content-Type: application/json' \
+  -d '{"models":["lightgbm","logistic_regression"]}'
+curl -X POST http://localhost:8000/api/jobs/{job_id}/run
+```
+
+Agent Chat requests such as "LightGBMとLogisticRegressionも回して" create the same `train_model_candidates` Job, return immediately with a human-facing Training Worker message, and let the UI start that exact job in the background. The worker records successful ExperimentRuns/ModelVersions in the Leaderboard. If a package is missing, the Job output records `dependency_required`, `package`, `install_spec`, and `approval_required=true`; Tablex must ask for approval before adding dependencies rather than silently installing them or reading secrets.
+
 Saved ModelVersion packages can be replay-validated from the Assets tab or with:
 
 ```bash
@@ -62,10 +73,11 @@ curl -X POST http://localhost:8000/api/model-versions/{model_version_id}/validat
 
 The validation job reloads `model_package.joblib`, rebuilds validation features from the linked DatasetSnapshot and SplitManifest, recomputes metrics, and stores `model_validation_report`, `model_validation_metrics`, and `prediction_replay` artifacts with lineage from the ModelVersion.
 
-Project job history is available from:
+Project job history and exact job execution are available from:
 
 ```bash
 curl http://localhost:8000/api/projects/{project_id}/jobs
+curl -X POST http://localhost:8000/api/jobs/{job_id}/run
 curl http://localhost:8000/api/jobs/{job_id}/artifacts
 ```
 
@@ -321,7 +333,7 @@ Approach Ideas are not fixed recipes. They are evidence-backed proposals with `A
 
 The project UI includes a persistent Agent Chat dock across project tabs. Submitting text posts to `/api/projects/{project_id}/agent-chat`, which returns a human-facing assistant message, interpreted intent, actions taken, a structured `action_summary`, worker events, estimated token telemetry, and an `agent_chat_turn` artifact. Safe harness-owned intents can act immediately; for example, "metricはROC-AUCにして" updates mutable EvaluationCandidates or draft EvaluationSpecs, but records a review artifact instead of destructively changing approved EvaluationSpecs/SplitManifests. EDA and visualization requests such as "EDAレビューを作って可視化して" run the controlled Data Review action when a DatasetSnapshot exists. ER/relationship requests such as "ER図を表示して" route to the Data tab's Relational Map, using uploaded `relational_schema_hint` or inferred `relational_catalog` evidence when available and asking for an upload/import when not. Notebook reading requests route to notebook-specific guidance that points users to the review, evidence figures, or capture step. Notebook authoring requests such as "Kaggle Grandmaster級の良いノートブックに改善して" create a `notebook_authoring_brief` first, then create an `author_analysis_notebook` AgentTaskContract whose inputs include that brief. Requests that need runner work still create a harness-owned `AgentTaskContract` using the current project context, so later Codex/LocalStub runners operate through Tablex approvals, artifacts, lineage, safety policy, and reporting requirements. The assistant message and `action_summary` must explain what was understood, what action Tablex took, whether it was applied/planned/needs-review, what boundary protected the project, and what to inspect next; raw artifact ids are lineage details, not the main answer. The UI renders the `action_summary.next_step` as the primary response control, then shows changed/review-needed items and only then secondary action chips. Returned chat actions must include useful `target_tab` metadata because the UI turns them into clickable next-step controls and automatically routes successful or review-needed turns toward the relevant product surface. Agent Chat should become the universal project command surface for upload guidance, visualization requests, ER diagram requests, notebook navigation, evaluation changes, and runner work; specialized UI controls are shortcuts, not the only path. The project UI also includes a right-edge Agent Activity overlay that appears only while agent/notebook/research work is active or has just completed. It shows worker cards, status, action summaries, animated estimated token time series, and a small worker-specific chat input. `needs_review` is not an active worker state; it should be handled by the chat answer, action summary, and next-step buttons instead of remaining pinned over the workspace. Token counts are marked as estimates until real Codex runner telemetry is available.
 
-Agent Chat can also run safe harness actions directly when prerequisites are satisfied. Current direct actions include Data Quality Gate requests such as "データ品質を確認して", EvaluationCandidate drafting, evaluation scenario comparison such as "randomとstratifiedの評価シナリオを比較して", baseline strategy planning after an approved EvaluationSpec and SplitManifest exist, and Decision Report generation. Each direct action creates the corresponding Job record and artifacts rather than only returning text. If prerequisites are missing, Chat returns `needs_review` with the exact tab/anchor to resolve first. Baseline strategy remains planning only: it records evidence-backed candidate strategies and Codex/Skill handoff requirements without claiming that one fixed recipe is universally correct or running deployment-grade modeling from chat.
+Agent Chat can also run safe harness actions directly when prerequisites are satisfied. Current direct actions include Data Quality Gate requests such as "データ品質を確認して", EvaluationCandidate drafting, evaluation scenario comparison such as "randomとstratifiedの評価シナリオを比較して", baseline strategy planning after an approved EvaluationSpec and SplitManifest exist, model candidate training requests such as "LightGBMとLogisticRegressionも回して", and Decision Report generation. Each direct action creates the corresponding Job record and artifacts rather than only returning text. Model candidate requests queue a `train_model_candidates` Job and return a Training Worker response immediately; the UI starts that job by id so long training does not block the chat response and does not get lost behind older queued work. If prerequisites are missing, Chat returns `needs_review` with the exact tab/anchor to resolve first. Baseline strategy remains planning only: it records evidence-backed candidate strategies and Codex/Skill handoff requirements without claiming that one fixed recipe is universally correct or running deployment-grade modeling from chat.
 
 Chat-triggered results should land on a focused reader, not a distant raw table. Data, Evaluation, Leaderboard, and Reports use the same "Evidence Reader" pattern: one headline, current status, four small evidence metrics, the next useful action, a short boundary statement, and the most relevant preview directly below. Supporting artifact shelves remain available but collapsed. Leaderboard is a primary project tab, not hidden under More, because users need an obvious place to inspect comparable run evidence after Experiments. Treat leaderboard ranks as decision evidence only when EvaluationSpec, SplitManifest, and diagnostics context are visible.
 

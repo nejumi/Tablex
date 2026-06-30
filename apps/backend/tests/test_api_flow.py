@@ -192,6 +192,75 @@ def test_agent_chat_updates_evaluation_metric_with_human_response(tmp_path: Path
     assert any(item["asset_type"] == "evaluation_metric_preference" for item in artifacts_response.json())
 
 
+def test_agent_chat_trains_requested_model_candidates_into_leaderboard(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Candidate training", "target_column": "target", "task_type": "binary_classification"},
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    rows = ["feature,segment,target"]
+    for index in range(1, 61):
+        target = 1 if index % 3 == 0 else 0
+        segment = "high" if index % 5 in {0, 1} else "low"
+        rows.append(f"{index},{segment},{target}")
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("candidate_training.csv", "\n".join(rows).encode("utf-8"), "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    design_response = client.post(f"/api/projects/{project_id}/evaluation/design")
+    assert design_response.status_code == 200, design_response.text
+    candidates_response = client.get(f"/api/projects/{project_id}/evaluation/candidates")
+    assert candidates_response.status_code == 200
+    primary = next(item for item in candidates_response.json() if item["status"] == "primary_candidate")
+    promote_response = client.post(f"/api/evaluation-candidates/{primary['id']}/promote")
+    assert promote_response.status_code == 200, promote_response.text
+    spec_id = promote_response.json()["id"]
+    approve_response = client.post(f"/api/evaluation-specs/{spec_id}/approve")
+    assert approve_response.status_code == 200, approve_response.text
+    split_response = client.post(f"/api/evaluation-specs/{spec_id}/generate-split")
+    assert split_response.status_code == 200, split_response.text
+
+    chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "LightGBMとLogisticRegressionもそれぞれ回してリーダーボードに追加して"},
+    )
+    assert chat_response.status_code == 200, chat_response.text
+    chat = chat_response.json()
+    assert chat["intent"]["type"] == "run_model_candidates"
+    assert "Started Training Worker" in chat["assistant_message"]
+    action = next(item for item in chat["actions"] if item["type"] == "run_model_candidates")
+    assert action["target_tab"] == "Leaderboard"
+    assert action["target_anchor"] == "result-readout"
+    assert action["auto_start_worker"] is True
+    assert set(action["queued_models"]) == {"lightgbm", "logistic_regression"}
+
+    jobs_response = client.get(f"/api/projects/{project_id}/jobs")
+    assert jobs_response.status_code == 200
+    queued_training_job = next(item for item in jobs_response.json() if item["job_type"] == "train_model_candidates")
+    assert queued_training_job["status"] == "queued"
+
+    run_job_response = client.post(f"/api/jobs/{queued_training_job['id']}/run")
+    assert run_job_response.status_code == 200, run_job_response.text
+    training_job = run_job_response.json()
+    assert training_job["status"] == "succeeded"
+    assert training_job["output"]["success_count"] == 2
+    assert training_job["output"]["worker_events"][0]["display_name"] == "Training Worker"
+
+    leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
+    assert leaderboard_response.status_code == 200, leaderboard_response.text
+    leaderboard = leaderboard_response.json()
+    assert len(leaderboard) == 2
+    baseline_types = {row["metrics"]["baseline_type"] for row in leaderboard}
+    assert baseline_types == {"lightgbm_classifier", "logistic_regression"}
+    assert all(row["display_metric_name"] for row in leaderboard)
+
+
 def test_agent_chat_runs_core_harness_actions(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 

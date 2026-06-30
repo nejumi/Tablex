@@ -164,6 +164,7 @@ def portal_job_title(job_type: str) -> str:
         "run_eda_review": "Data review completed",
         "profile_dataset": "Dataset profile updated",
         "run_agent_task": "Agent task recorded",
+        "train_model_candidates": "Model candidates trained",
     }
     return labels.get(job_type, humanize_identifier(job_type))
 
@@ -249,10 +250,19 @@ def estimated_tokens(job: Job) -> dict[str, Any]:
 
 
 def is_agentish_job(job_type: str) -> bool:
-    return "agent" in job_type or "notebook" in job_type or "research" in job_type
+    return (
+        "agent" in job_type
+        or "notebook" in job_type
+        or "research" in job_type
+        or "train" in job_type
+        or "baseline" in job_type
+        or "experiment" in job_type
+    )
 
 
 def worker_display_name(job_type: str) -> str:
+    if "train" in job_type or "baseline" in job_type:
+        return "Training Worker"
     if "notebook" in job_type:
         return "Notebook Worker"
     if "research" in job_type:
@@ -263,6 +273,8 @@ def worker_display_name(job_type: str) -> str:
 
 
 def target_tab_for_job(job_type: str) -> str | None:
+    if "train" in job_type:
+        return "Leaderboard"
     if "notebook" in job_type:
         return "Notebooks"
     if "agent" in job_type or "research" in job_type:

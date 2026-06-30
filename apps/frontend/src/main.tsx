@@ -946,6 +946,11 @@ type AgentChatAction = {
   target_tab: string | null;
   target_anchor?: string | null;
   detail: string;
+  job_id?: string;
+  auto_start_worker?: boolean;
+  queued_models?: string[];
+  failures?: Array<Record<string, unknown>>;
+  results?: Array<Record<string, unknown>>;
   artifact_id?: string;
   artifact_ids?: string[];
   entity_ids?: string[];
@@ -1351,6 +1356,13 @@ function tabFromString(value: string | null | undefined, fallback: Tab): Tab {
 function firstAgentChatTarget(actions: AgentChatAction[]): { tab: Tab; anchor: string | null } | null {
   const action = actions.find((candidate) => candidate.target_tab && tabItems.some((item) => item.id === candidate.target_tab));
   return action ? { tab: tabFromString(action.target_tab, "Approach"), anchor: action.target_anchor ?? null } : null;
+}
+
+function autoStartWorkerJobIds(actions: AgentChatAction[]): string[] {
+  return actions
+    .filter((action) => action.auto_start_worker && action.job_id)
+    .map((action) => action.job_id)
+    .filter((jobId): jobId is string => Boolean(jobId));
 }
 
 type FocusRecommendation = {
@@ -2468,6 +2480,21 @@ function ProjectDetail({
     }
   }
 
+  async function startQueuedAgentJobs(jobIds: string[]) {
+    if (!jobIds.length) return;
+    const runs = jobIds.map((jobId) => api<Job>(`/api/jobs/${jobId}/run`, { method: "POST" }));
+    await refreshAgentActivity();
+    const results = await Promise.allSettled(runs);
+    const failures = results.filter((result) => result.status === "rejected");
+    if (failures.length) {
+      const first = failures[0];
+      setError(first.status === "rejected" && first.reason instanceof Error ? first.reason.message : "Worker failed to start.");
+    }
+    await refreshAgentActivity();
+    await refresh();
+    await onProjectChanged();
+  }
+
   async function submitAgentChat(objective: string): Promise<AgentChatResponse | void> {
     const trimmed = objective.trim();
     if (!trimmed) return;
@@ -2495,10 +2522,12 @@ function ProjectDetail({
         [...result.worker_events, ...current.filter((event) => event.job_id !== pendingWorker.job_id)].slice(0, 8)
       );
       const target = firstAgentChatTarget(result.actions);
+      const workerJobIds = autoStartWorkerJobIds(result.actions);
       await refreshAgentActivity();
       await refresh();
       await onProjectChanged();
       if (target) navigateToTarget(target.tab, target.anchor);
+      if (workerJobIds.length) void startQueuedAgentJobs(workerJobIds);
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -3263,7 +3292,14 @@ function workerEventsFromJob(job: Job): AgentWorkerEvent[] {
       .map((event, index) => coerceWorkerEvent(event, job, index))
       .filter((event): event is AgentWorkerEvent => event !== null);
   }
-  if (!job.job_type.includes("agent") && !job.job_type.includes("notebook") && !job.job_type.includes("research")) {
+  if (
+    !job.job_type.includes("agent") &&
+    !job.job_type.includes("notebook") &&
+    !job.job_type.includes("research") &&
+    !job.job_type.includes("train") &&
+    !job.job_type.includes("baseline") &&
+    !job.job_type.includes("experiment")
+  ) {
     return [];
   }
   return [
@@ -3345,6 +3381,7 @@ function estimatedJobTokens(job: Job): TokenSeriesPoint[] {
 }
 
 function workerDisplayName(jobType: string) {
+  if (jobType.includes("train") || jobType.includes("baseline")) return "Training Worker";
   if (jobType.includes("notebook")) return "Notebook Worker";
   if (jobType.includes("research")) return "Research Worker";
   if (jobType.includes("agent")) return "Agent Runner";
@@ -3352,8 +3389,10 @@ function workerDisplayName(jobType: string) {
 }
 
 function targetTabForJob(jobType: string): string | null {
+  if (jobType.includes("train") || jobType.includes("baseline")) return "Leaderboard";
   if (jobType.includes("notebook")) return "Notebooks";
   if (jobType.includes("research") || jobType.includes("agent")) return "Approach";
+  if (jobType.includes("experiment")) return "Experiments";
   return null;
 }
 
@@ -6779,6 +6818,7 @@ function ExperimentsTab({
       "plan_baseline_strategy",
       "plan_agent_task",
       "run_baseline",
+      "train_model_candidates",
       "run_public_benchmark_workflow",
       "run_agent_task",
       "create_experiment_plan",

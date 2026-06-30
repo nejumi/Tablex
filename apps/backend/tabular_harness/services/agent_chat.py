@@ -25,7 +25,10 @@ from tabular_harness.services.analysis_notebooks import (
 )
 from tabular_harness.services.approach import latest_project_artifact, store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
-from tabular_harness.services.baseline import create_baseline_strategy_plan
+from tabular_harness.services.baseline import (
+    create_baseline_strategy_plan,
+    normalize_model_candidate_name,
+)
 from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.decision_reporting import create_decision_report_v1
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
@@ -121,6 +124,15 @@ def handle_agent_chat_turn(
         actions.append(design_evaluation_action(db, store=store, project=project))
     elif intent["type"] == "plan_baseline_strategy":
         actions.append(plan_baseline_strategy_action(db, store=store, project=project))
+    elif intent["type"] == "run_model_candidates":
+        actions.append(
+            run_model_candidates_action(
+                db,
+                store=store,
+                project=project,
+                model_candidates=[str(item) for item in list_value(intent.get("model_candidates"))],
+            )
+        )
     elif intent["type"] == "generate_decision_report":
         actions.append(generate_decision_report_action(db, store=store, project=project))
     elif intent["type"] == "show_leaderboard":
@@ -251,6 +263,16 @@ def infer_chat_intent(message: str) -> dict[str, Any]:
             "metric": metric,
             "confidence": 0.9,
             "summary": f"User wants the evaluation metric to be {SUPPORTED_METRICS[metric]['label']}.",
+        }
+    model_candidates = extract_model_candidates(normalized)
+    if model_candidates and is_model_candidate_run_request(normalized):
+        labels = ", ".join(model_candidates)
+        return {
+            "type": "run_model_candidates",
+            "metric": None,
+            "model_candidates": model_candidates,
+            "confidence": 0.88,
+            "summary": f"User wants Tablex to train model candidates and add them to the leaderboard: {labels}.",
         }
     notebook_id = extract_notebook_artifact_id(message)
     story_ref = extract_analysis_story_ref(message)
@@ -394,6 +416,42 @@ def extract_metric(normalized: str) -> str | None:
     if normalized_metric in SUPPORTED_METRICS:
         return normalized_metric
     return None
+
+
+def extract_model_candidates(normalized: str) -> list[str]:
+    candidates: list[str] = []
+    comparable = normalized.replace("ー", "-").replace("_", " ").replace("-", " ")
+    checks = [
+        ("lightgbm", ["lightgbm", "lgbm", "light gbm"]),
+        ("logistic_regression", ["logisticregression", "logistic regression", "logistic", "logreg"]),
+        ("xgboost", ["xgboost", "xgb", "xg boost"]),
+    ]
+    for canonical, aliases in checks:
+        if any(alias in comparable for alias in aliases) and canonical not in candidates:
+            candidates.append(canonical)
+    normalized_candidate = normalize_model_candidate_name(normalized)
+    if normalized_candidate and normalized_candidate not in candidates:
+        candidates.append(normalized_candidate)
+    return candidates
+
+
+def is_model_candidate_run_request(normalized: str) -> bool:
+    return any(
+        word in normalized
+        for word in [
+            "train",
+            "fit",
+            "run",
+            "add",
+            "leaderboard",
+            "リーダーボード",
+            "学習",
+            "訓練",
+            "回し",
+            "回して",
+            "追加",
+        ]
+    )
 
 
 def is_notebook_request(normalized: str) -> bool:
@@ -1095,6 +1153,95 @@ def plan_baseline_strategy_action(db: Session, *, store: LocalArtifactStore, pro
         "artifact_id": result.artifact.id,
         "artifact_ids": [result.artifact.id],
         "job_id": action_job.id,
+    }
+
+
+def run_model_candidates_action(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    model_candidates: list[str],
+) -> dict[str, Any]:
+    del store
+    spec = latest_approved_spec_for_project(db, project.id)
+    if spec is None:
+        return needs_review_action(
+            action_type="run_model_candidates",
+            label="Approve an EvaluationSpec before training models",
+            target_tab="Evaluation",
+            target_anchor="evaluation-design",
+            detail="Model candidates can only be compared after the evaluation contract is approved.",
+        )
+    split = latest_split_for_spec_id(db, spec.id)
+    if split is None:
+        return needs_review_action(
+            action_type="run_model_candidates",
+            label="Generate a SplitManifest before training models",
+            target_tab="Evaluation",
+            target_anchor="evaluation-design",
+            detail="Training must respect the approved SplitManifest so leaderboard rows are comparable.",
+        )
+    normalized_models: list[str] = []
+    unsupported_models: list[str] = []
+    for model in model_candidates:
+        normalized = normalize_model_candidate_name(model)
+        if normalized is None:
+            unsupported_models.append(model)
+            continue
+        if normalized not in normalized_models:
+            normalized_models.append(normalized)
+    if not normalized_models:
+        return needs_review_action(
+            action_type="run_model_candidates",
+            label="No supported model candidates were recognized",
+            target_tab="Experiments",
+            target_anchor=None,
+            detail=f"Requested models were not recognized: {', '.join(unsupported_models) or 'none'}",
+        )
+    action_job = create_job(
+        db,
+        job_type="train_model_candidates",
+        project_id=project.id,
+        input_payload={
+            "requested_models": model_candidates,
+            "normalized_models": normalized_models,
+            "unsupported_models": unsupported_models,
+            "evaluation_spec_id": spec.id,
+            "split_manifest_id": split.id,
+            "triggered_by": "agent_chat",
+        },
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "dependency_changes": "approval_required_when_missing",
+        },
+    )
+    failures: list[dict[str, Any]] = [
+        {"model": model, "status": "unsupported", "reason": "Model candidate is not recognized by Tablex yet."}
+        for model in unsupported_models
+    ]
+    return {
+        "type": "run_model_candidates",
+        "status": "applied" if not failures else "needs_review",
+        "label": f"Started Training Worker for {len(normalized_models)} model candidate(s)",
+        "target_tab": "Leaderboard",
+        "target_anchor": "result-readout",
+        "detail": (
+            "Queued a Training Worker that will fit the requested model candidates under the approved "
+            "EvaluationSpec and SplitManifest, then write comparable runs to the Leaderboard. "
+            + (
+                f"{len(failures)} requested candidate(s) need review: "
+                + "; ".join(f"{item['model']}={item['status']}" for item in failures)
+                if failures
+                else "Dependency changes remain approval-gated if a package is missing."
+            )
+        ),
+        "job_id": action_job.id,
+        "queued_models": normalized_models,
+        "failures": failures,
+        "auto_start_worker": True,
     }
 
 
@@ -2001,6 +2148,43 @@ def render_assistant_message(intent: dict[str, Any], actions: list[dict[str, Any
             parts.append("I also prepared a controlled AgentTaskContract for a runner to revise the design safely.")
         parts.append("Next: read the Leaderboard; open Evaluation only if you want to replace the approved evaluation contract.")
         return " ".join(parts)
+    if intent["type"] == "run_model_candidates":
+        action = actions[0]
+        results = list_value(action.get("results"))
+        queued_models = list_value(action.get("queued_models"))
+        failures = list_value(action.get("failures"))
+        if action.get("status") in {"applied", "needs_review"} and results:
+            models = ", ".join(str(item.get("model")) for item in results if isinstance(item, dict))
+            parts = [f"Done: trained {len(results)} model candidate(s): {models}."]
+            parts.append("I added the completed runs to the Leaderboard under the approved EvaluationSpec and SplitManifest.")
+            if failures:
+                parts.append(
+                    "Some candidates need review before they can run: "
+                    + "; ".join(
+                        f"{item.get('model')}={item.get('status')}" for item in failures if isinstance(item, dict)
+                    )
+                    + "."
+                )
+            parts.append("Next: read the Leaderboard; open a model row for diagnostics and threshold review.")
+            return " ".join(parts)
+        if action.get("status") in {"applied", "needs_review"} and queued_models:
+            models = ", ".join(str(model) for model in queued_models)
+            parts = [f"Started Training Worker for {models}."]
+            parts.append("It will train under the approved EvaluationSpec and SplitManifest, then add completed runs to the Leaderboard.")
+            if failures:
+                parts.append(
+                    "Some requested candidates need review: "
+                    + "; ".join(
+                        f"{item.get('model')}={item.get('status')}" for item in failures if isinstance(item, dict)
+                    )
+                    + "."
+                )
+            parts.append("Next: watch Training activity; when it finishes, read the Leaderboard as the ranked result table.")
+            return " ".join(parts)
+        return (
+            "I could not train the requested model candidates yet. "
+            f"{action.get('detail') or 'Check Experiments for the blocking condition.'}"
+        )
     if intent["type"] == "generate_data_understanding_notebook":
         action = actions[0]
         if action["status"] == "applied":
@@ -2230,6 +2414,8 @@ def action_summary_headline(intent: dict[str, Any], outcome: str) -> str:
         return "Evaluation scenarios compared" if outcome == "applied" else "Evaluation comparison needs data first"
     if intent_type == "plan_baseline_strategy":
         return "Baseline strategy plan is ready" if outcome == "applied" else "Baseline strategy needs evaluation context"
+    if intent_type == "run_model_candidates":
+        return "Model training started" if outcome in {"applied", "needs_review"} else "Model training needs attention"
     if intent_type == "generate_decision_report":
         return "Decision report is ready" if outcome == "applied" else "Decision report needs review"
     if intent_type == "show_leaderboard":
@@ -2268,6 +2454,9 @@ def action_summary_boundaries(intent: dict[str, Any], actions: list[dict[str, An
         boundaries.append("Evaluation Chat actions draft or compare designs; approval and SplitManifest generation remain explicit.")
     if intent_type == "plan_baseline_strategy":
         boundaries.append("Baseline strategy is an evidence-backed plan, not a fixed AutoML recipe or deployment approval.")
+    if intent_type == "run_model_candidates":
+        boundaries.append("Training uses the approved EvaluationSpec and SplitManifest; leaderboard rows remain comparable.")
+        boundaries.append("Dependency changes require an explicit approval path instead of silent package installation.")
     if intent_type == "generate_decision_report":
         boundaries.append("Decision reports summarize current evidence; missing evidence remains visible instead of being invented.")
     if intent_type in {"show_leaderboard", "compare_top_runs", "post_run_reading_workflow", "prepare_result_notebook_evidence"}:

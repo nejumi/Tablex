@@ -13,6 +13,7 @@ dependencies = [
   "fastapi>=0.111",
   "joblib>=1.4",
   "jsonschema>=4.22",
+  "lightgbm>=4.0",
   "python-multipart>=0.0.9",
   "scikit-learn>=1.4",
   "sqlalchemy>=2.0",
@@ -57,7 +58,7 @@ warn_unused_configs = true
 exclude = ["alembic/"]
 
 [[tool.mypy.overrides]]
-module = ["joblib.*", "scipy.*", "sklearn.*", "xgboost.*"]
+module = ["joblib.*", "lightgbm.*", "scipy.*", "sklearn.*", "xgboost.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

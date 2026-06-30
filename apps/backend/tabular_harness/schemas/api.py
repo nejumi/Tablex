@@ -540,6 +540,7 @@ class JobCreate(BaseModel):
         "build_relational_feature_recipe",
         "diagnose_relational_feature_scenarios",
         "run_baseline",
+        "train_model_candidates",
         "plan_baseline_strategy",
         "create_notebook_authoring_brief",
         "materialize_model_diagnostics_artifacts",
@@ -599,6 +600,10 @@ class AgentChatCreate(BaseModel):
 
 class LeaderboardMetricPreferenceCreate(BaseModel):
     metric: str = Field(min_length=1, max_length=80)
+
+
+class ModelCandidatesRunCreate(BaseModel):
+    models: list[str] = Field(min_length=1, max_length=8)
 
 
 class PortalIdeaCreate(BaseModel):

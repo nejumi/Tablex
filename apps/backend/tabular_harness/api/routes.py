@@ -76,6 +76,7 @@ from tabular_harness.schemas import (
     JobRead,
     KaggleSelectiveDownloadRequest,
     LeaderboardMetricPreferenceCreate,
+    ModelCandidatesRunCreate,
     ModelValidationRead,
     ModelVersionRead,
     PortalIdeaCreate,
@@ -144,6 +145,7 @@ from tabular_harness.services.asset_library import (
 from tabular_harness.services.assumption_review import build_assumption_review_queue
 from tabular_harness.services.baseline import (
     create_baseline_strategy_plan,
+    normalize_model_candidate_name,
 )
 from tabular_harness.services.baseline import run_baseline as run_baseline_service
 from tabular_harness.services.benchmark_collection import create_benchmark_collection_plan
@@ -3885,6 +3887,51 @@ def run_baseline_endpoint(
     return job_to_dict(job)
 
 
+@router.post("/api/projects/{project_id}/model-candidates/run", response_model=JobRead)
+def run_model_candidates_endpoint(
+    project_id: str,
+    payload: ModelCandidatesRunCreate,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    require_project(db, project_id)
+    spec = latest_approved_spec(db, project_id)
+    if spec is None:
+        raise HTTPException(status_code=400, detail="Approve an EvaluationSpec before training model candidates")
+    split = latest_split_for_spec(db, spec.id)
+    if split is None:
+        raise HTTPException(status_code=400, detail="Generate a SplitManifest before training model candidates")
+    normalized_models: list[str] = []
+    unsupported_models: list[str] = []
+    for model in payload.models:
+        normalized = normalize_model_candidate_name(model)
+        if normalized is None:
+            unsupported_models.append(model)
+            continue
+        if normalized not in normalized_models:
+            normalized_models.append(normalized)
+    if not normalized_models:
+        raise HTTPException(status_code=400, detail=f"No supported model candidates requested: {unsupported_models}")
+    job = create_job(
+        db,
+        job_type="train_model_candidates",
+        project_id=project_id,
+        input_payload={
+            "requested_models": payload.models,
+            "normalized_models": normalized_models,
+            "unsupported_models": unsupported_models,
+            "evaluation_spec_id": spec.id,
+            "split_manifest_id": split.id,
+        },
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "dependency_changes": "approval_required_when_missing",
+        },
+    )
+    return job_to_dict(job)
+
+
 @router.post("/api/projects/{project_id}/baseline/strategy-plan", response_model=JobRead)
 def plan_baseline_strategy_endpoint(
     project_id: str,
@@ -4489,11 +4536,32 @@ def retry_job_endpoint(job_id: str, db: Annotated[Session, Depends(get_session)]
 
 
 @router.post("/api/worker/run-once", response_model=JobRead | None)
-def run_worker_once(db: Annotated[Session, Depends(get_session)]) -> dict[str, Any] | None:
-    worker = create_default_worker()
+def run_worker_once(
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any] | None:
+    worker = create_default_worker(store=store)
     job = worker.run_next_job(db)
     if job is None:
         return None
+    return job_to_dict(job)
+
+
+@router.post("/api/jobs/{job_id}/run", response_model=JobRead)
+def run_job_now(
+    job_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status == "approval_required":
+        raise HTTPException(status_code=400, detail="Job requires approval before it can run")
+    if job.status != "queued":
+        return job_to_dict(job)
+    worker = create_default_worker(store=store)
+    worker.run_job(db, job)
     return job_to_dict(job)
 
 

@@ -26,6 +26,7 @@ JOB_TYPES = {
     "upload_relational_schema_hint",
     "run_public_benchmark_workflow",
     "run_baseline",
+    "train_model_candidates",
     "plan_baseline_strategy",
     "create_adaptive_strategy_brief",
     "save_guided_journey_snapshot",

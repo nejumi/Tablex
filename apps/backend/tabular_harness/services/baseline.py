@@ -55,6 +55,32 @@ SYSTEM_COLUMNS = {ROW_INDEX_COLUMN, TARGET_VALUE_COLUMN, SPLIT_VALUE_COLUMN}
 TEXT_MAX_FEATURES_PER_COLUMN = 128
 MAX_LAG_ROLLING_SOURCE_COLUMNS = 8
 TEXT_TOKEN_PATTERN = re.compile(r"\w+")
+MODEL_CANDIDATE_ALIASES = {
+    "xgboost": "xgboost",
+    "xgb": "xgboost",
+    "xgboost_classifier": "xgboost",
+    "xgboost_regressor": "xgboost",
+    "lightgbm": "lightgbm",
+    "lgbm": "lightgbm",
+    "lightgbm_classifier": "lightgbm",
+    "lightgbm_regressor": "lightgbm",
+    "logisticregression": "logistic_regression",
+    "logistic_regression": "logistic_regression",
+    "logistic regression": "logistic_regression",
+    "logreg": "logistic_regression",
+    "ridge": "ridge_regression",
+    "ridge_regression": "ridge_regression",
+}
+
+
+class ModelDependencyRequiredError(ValueError):
+    def __init__(self, *, model_candidate: str, package_name: str, install_spec: str) -> None:
+        super().__init__(
+            f"{model_candidate} requires dependency {install_spec}. Create an approved dependency change before running it."
+        )
+        self.model_candidate = model_candidate
+        self.package_name = package_name
+        self.install_spec = install_spec
 
 
 @dataclass(frozen=True)
@@ -87,6 +113,50 @@ def run_baseline(
     evaluation_spec: EvaluationSpec,
     split_manifest: SplitManifest,
 ) -> BaselineResult:
+    return _run_model_candidate(
+        db,
+        store=store,
+        project=project,
+        evaluation_spec=evaluation_spec,
+        split_manifest=split_manifest,
+        model_candidate=None,
+        runner_type="local_baseline",
+    )
+
+
+def run_model_candidate(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    evaluation_spec: EvaluationSpec,
+    split_manifest: SplitManifest,
+    model_candidate: str,
+) -> BaselineResult:
+    normalized = normalize_model_candidate_name(model_candidate)
+    if normalized is None:
+        raise ValueError(f"Unsupported model candidate: {model_candidate}")
+    return _run_model_candidate(
+        db,
+        store=store,
+        project=project,
+        evaluation_spec=evaluation_spec,
+        split_manifest=split_manifest,
+        model_candidate=normalized,
+        runner_type="local_training",
+    )
+
+
+def _run_model_candidate(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    evaluation_spec: EvaluationSpec,
+    split_manifest: SplitManifest,
+    model_candidate: str | None,
+    runner_type: str,
+) -> BaselineResult:
     if not project.target_column:
         raise ValueError("Project target_column is required before running baseline")
     if evaluation_spec.status != "approved":
@@ -117,6 +187,8 @@ def run_baseline(
         excluded_columns=excluded_columns,
         evaluation_spec=evaluation_spec,
     )
+    if model_candidate is not None:
+        apply_model_candidate_to_baseline_plan(baseline_plan, model_candidate, task_type)
     baseline_strategy_plan = build_baseline_strategy_plan(
         db,
         project=project,
@@ -126,22 +198,42 @@ def run_baseline(
         baseline_plan=baseline_plan,
     )
     if task_type == "regression":
-        metrics, predictions = run_regression_baseline(
-            rows,
-            evaluation_spec.primary_metric,
-            target_column=project.target_column,
-            excluded_columns=excluded_columns,
-            baseline_plan=baseline_plan,
-        )
+        if model_candidate is None:
+            metrics, predictions = run_regression_baseline(
+                rows,
+                evaluation_spec.primary_metric,
+                target_column=project.target_column,
+                excluded_columns=excluded_columns,
+                baseline_plan=baseline_plan,
+            )
+        else:
+            metrics, predictions = run_regression_model_candidate(
+                rows,
+                evaluation_spec.primary_metric,
+                model_candidate=model_candidate,
+                target_column=project.target_column,
+                excluded_columns=excluded_columns,
+                baseline_plan=baseline_plan,
+            )
         baseline_name = str(metrics["baseline_type"])
     else:
-        metrics, predictions = run_classification_baseline(
-            rows,
-            evaluation_spec.primary_metric,
-            target_column=project.target_column,
-            excluded_columns=excluded_columns,
-            baseline_plan=baseline_plan,
-        )
+        if model_candidate is None:
+            metrics, predictions = run_classification_baseline(
+                rows,
+                evaluation_spec.primary_metric,
+                target_column=project.target_column,
+                excluded_columns=excluded_columns,
+                baseline_plan=baseline_plan,
+            )
+        else:
+            metrics, predictions = run_classification_model_candidate(
+                rows,
+                evaluation_spec.primary_metric,
+                model_candidate=model_candidate,
+                target_column=project.target_column,
+                excluded_columns=excluded_columns,
+                baseline_plan=baseline_plan,
+            )
         baseline_name = str(metrics["baseline_type"])
     model_package_payload = metrics.pop("_model_package_payload", None)
     feature_recipe = metrics.pop("feature_recipe", build_fallback_feature_recipe(baseline_name))
@@ -174,13 +266,14 @@ def run_baseline(
         dataset_snapshot_id=dataset.id,
         evaluation_spec_id=evaluation_spec.id,
         split_manifest_id=split_manifest.id,
-        runner_type="local_baseline",
+        runner_type=runner_type,
         status="succeeded",
         started_at=utc_now(),
         ended_at=utc_now(),
         params_json=dumps_json(
             {
                 "baseline": baseline_name,
+                "model_candidate": model_candidate,
                 "target_column": project.target_column,
                 "excluded_columns": excluded_columns,
             }
@@ -478,6 +571,43 @@ def resolve_task_type(task_type: str | None, rows: list[dict[str, Any]]) -> str:
     return "regression"
 
 
+def normalize_model_candidate_name(value: str) -> str | None:
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.strip().casefold()).strip("_")
+    return MODEL_CANDIDATE_ALIASES.get(normalized) or MODEL_CANDIDATE_ALIASES.get(
+        normalized.replace("_", " ")
+    )
+
+
+def apply_model_candidate_to_baseline_plan(
+    baseline_plan: dict[str, Any], model_candidate: str, task_type: str
+) -> None:
+    baseline_plan["requested_model_candidate"] = model_candidate
+    baseline_plan["candidate_model"] = baseline_type_for_candidate(model_candidate, task_type)
+    baseline_plan["model_family"] = model_family_for_candidate(model_candidate)
+    baseline_plan["selection_policy"] = "explicit_user_requested_model_candidate"
+
+
+def baseline_type_for_candidate(model_candidate: str, task_type: str) -> str:
+    if model_candidate == "xgboost":
+        return "xgboost_regressor" if task_type == "regression" else "xgboost_classifier"
+    if model_candidate == "lightgbm":
+        return "lightgbm_regressor" if task_type == "regression" else "lightgbm_classifier"
+    if model_candidate == "logistic_regression":
+        return "logistic_regression"
+    if model_candidate == "ridge_regression":
+        return "ridge_regression"
+    return model_candidate
+
+
+def model_family_for_candidate(model_candidate: str) -> str:
+    return {
+        "xgboost": "xgboost",
+        "lightgbm": "lightgbm",
+        "logistic_regression": "linear",
+        "ridge_regression": "linear",
+    }.get(model_candidate, model_candidate)
+
+
 def run_classification_baseline(
     rows: list[dict[str, Any]],
     primary_metric: str,
@@ -506,6 +636,7 @@ def run_classification_baseline(
             primary_metric,
             target_column=target_column,
             excluded_columns=excluded_columns,
+            baseline_plan=plan,
         )
     except Exception as linear_exc:
         metrics, predictions = run_dummy_classification_baseline(rows, primary_metric)
@@ -514,6 +645,30 @@ def run_classification_baseline(
         metrics["fallback_reason"] = "xgboost_and_logistic_regression_failed"
         metrics["feature_recipe"] = build_fallback_feature_recipe("majority_classifier")
         return metrics, predictions
+
+
+def run_classification_model_candidate(
+    rows: list[dict[str, Any]],
+    primary_metric: str,
+    *,
+    model_candidate: str,
+    target_column: str,
+    excluded_columns: list[str],
+    baseline_plan: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if model_candidate == "xgboost":
+        return run_xgboost_classification_baseline(rows, primary_metric, baseline_plan=baseline_plan)
+    if model_candidate == "lightgbm":
+        return run_lightgbm_classification_baseline(rows, primary_metric, baseline_plan=baseline_plan)
+    if model_candidate == "logistic_regression":
+        return run_logistic_regression_baseline(
+            rows,
+            primary_metric,
+            target_column=target_column,
+            excluded_columns=excluded_columns,
+            baseline_plan=baseline_plan,
+        )
+    raise ValueError(f"{model_candidate} is not supported for classification training")
 
 
 def run_xgboost_classification_baseline(
@@ -643,53 +798,67 @@ def run_xgboost_classification_baseline(
     return metrics, predictions
 
 
-def run_logistic_regression_baseline(
+def run_lightgbm_classification_baseline(
     rows: list[dict[str, Any]],
     primary_metric: str,
     *,
-    target_column: str,
-    excluded_columns: list[str],
+    baseline_plan: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    try:
+        from lightgbm import LGBMClassifier
+    except ImportError as exc:
+        raise ModelDependencyRequiredError(
+            model_candidate="lightgbm",
+            package_name="lightgbm",
+            install_spec="lightgbm>=4.0",
+        ) from exc
+
+    feature_rows = augment_rows_for_baseline_plan(rows, baseline_plan)
     train_rows = [
         row
-        for row in rows
+        for row in feature_rows
         if row[SPLIT_VALUE_COLUMN] == "train" and row[TARGET_VALUE_COLUMN] is not None
     ]
     valid_rows = [
         row
-        for row in rows
+        for row in feature_rows
         if row[SPLIT_VALUE_COLUMN] == "valid" and row[TARGET_VALUE_COLUMN] is not None
     ]
     if not train_rows or not valid_rows:
-        raise ValueError("Baseline requires non-empty train and valid target values")
+        raise ValueError("LightGBM baseline requires non-empty train and valid target values")
 
-    y_train = [str(row[TARGET_VALUE_COLUMN]) for row in train_rows]
+    y_train_raw = [str(row[TARGET_VALUE_COLUMN]) for row in train_rows]
     y_true = [str(row[TARGET_VALUE_COLUMN]) for row in valid_rows]
-    if len(set(y_train)) < 2:
-        raise ValueError("Logistic regression requires at least two train classes")
+    label_encoder = LabelEncoder()
+    y_train = label_encoder.fit_transform(y_train_raw)
+    classes = [str(label) for label in label_encoder.classes_]
+    if len(classes) < 2:
+        raise ValueError("LightGBM classification requires at least two train classes")
 
-    x_train = [
-        build_feature_dict(row, target_column=target_column, excluded_columns=excluded_columns)
-        for row in train_rows
-    ]
-    x_valid = [
-        build_feature_dict(row, target_column=target_column, excluded_columns=excluded_columns)
-        for row in valid_rows
-    ]
-    pipeline = Pipeline(
-        [
-            ("features", DictVectorizer(sparse=True)),
-            ("classifier", LogisticRegression(class_weight="balanced", max_iter=1000)),
-        ]
-    )
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", ConvergenceWarning)
-        pipeline.fit(x_train, y_train)
+    feature_builder = StrongFeatureBuilder(baseline_plan)
+    x_train = feature_builder.fit_transform(train_rows)
+    x_valid = feature_builder.transform(valid_rows)
+    model_params: dict[str, Any] = {
+        "n_estimators": 120,
+        "learning_rate": 0.05,
+        "num_leaves": 31,
+        "subsample": 0.9,
+        "colsample_bytree": 0.9,
+        "random_state": 42,
+        "n_jobs": 1,
+        "verbose": -1,
+    }
+    if len(classes) == 2:
+        model_params["objective"] = "binary"
+    else:
+        model_params["objective"] = "multiclass"
+        model_params["num_class"] = len(classes)
+    model = LGBMClassifier(**model_params)
+    model.fit(x_train, y_train)
 
-    predicted = [str(value) for value in pipeline.predict(x_valid)]
-    classifier = pipeline.named_steps["classifier"]
-    classes = [str(value) for value in classifier.classes_]
-    probabilities = pipeline.predict_proba(x_valid)
+    predicted_encoded = model.predict(x_valid)
+    predicted = [str(value) for value in label_encoder.inverse_transform(predicted_encoded)]
+    probabilities = model.predict_proba(x_valid)
     probability_maps = [
         {classes[index]: float(probability) for index, probability in enumerate(row)}
         for row in probabilities
@@ -720,19 +889,160 @@ def run_logistic_regression_baseline(
 
     dummy_metrics, _ = run_dummy_classification_baseline(rows, primary_metric)
     macro_f1_value = macro_f1(y_true, predicted, labels)
+    feature_recipe = feature_builder.recipe("lightgbm_classifier", model_params)
     metrics: dict[str, Any] = {
-        "baseline_type": "logistic_regression",
+        "baseline_type": "lightgbm_classifier",
+        "baseline_strength": "strong",
+        "model_family": "lightgbm",
         "model_baseline_attempted": True,
         "primary_metric_name": primary_metric,
         "valid_count": len(y_true),
-        "train_count": len(y_train),
-        "feature_count": len(pipeline.named_steps["features"].get_feature_names_out()),
-        "excluded_columns": excluded_columns,
+        "train_count": len(y_train_raw),
+        "feature_count": feature_recipe["feature_count"],
+        "numeric_feature_count": feature_recipe["numeric_feature_count"],
+        "categorical_feature_count": feature_recipe["categorical_feature_count"],
+        "text_feature_count": feature_recipe["text_feature_count"],
+        "excluded_columns": baseline_plan.get("excluded_columns", []),
         "accuracy": accuracy(y_true, predicted),
         "macro_f1": macro_f1_value,
         "f1": macro_f1_value,
         "log_loss": log_loss_from_probability_maps(y_true, probability_maps),
         "sanity_floor": compact_sanity_metrics(dummy_metrics),
+        "feature_recipe": feature_recipe,
+        "_model_package_payload": ModelPackagePayload(
+            package={
+                "schema_version": "model_package.v1",
+                "model": model,
+                "feature_builder": feature_builder,
+                "label_encoder": label_encoder,
+                "classes": classes,
+                "prediction_kind": "classification",
+            },
+            baseline_type="lightgbm_classifier",
+            model_family="lightgbm",
+            task_type=str(baseline_plan.get("task_type", "classification")),
+        ),
+    }
+    if positive_label:
+        y_binary = [1 if value == positive_label else 0 for value in y_true]
+        metrics["positive_label"] = positive_label
+        metrics["f1"] = label_f1(y_true, predicted, positive_label)
+        metrics["roc_auc"] = binary_roc_auc(y_binary, positive_scores)
+        metrics["pr_auc"] = average_precision(y_binary, positive_scores)
+    metrics["primary_metric_value"] = metric_value(metrics, primary_metric, metrics["accuracy"])
+    return metrics, predictions
+
+
+def run_logistic_regression_baseline(
+    rows: list[dict[str, Any]],
+    primary_metric: str,
+    *,
+    target_column: str,
+    excluded_columns: list[str],
+    baseline_plan: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    plan = baseline_plan or build_baseline_plan(
+        rows,
+        task_type="binary_classification",
+        target_column=target_column,
+        primary_metric=primary_metric,
+        excluded_columns=excluded_columns,
+        evaluation_spec=None,
+    )
+    feature_rows = augment_rows_for_baseline_plan(rows, plan)
+    train_rows = [
+        row
+        for row in feature_rows
+        if row[SPLIT_VALUE_COLUMN] == "train" and row[TARGET_VALUE_COLUMN] is not None
+    ]
+    valid_rows = [
+        row
+        for row in feature_rows
+        if row[SPLIT_VALUE_COLUMN] == "valid" and row[TARGET_VALUE_COLUMN] is not None
+    ]
+    if not train_rows or not valid_rows:
+        raise ValueError("Baseline requires non-empty train and valid target values")
+
+    y_train = [str(row[TARGET_VALUE_COLUMN]) for row in train_rows]
+    y_true = [str(row[TARGET_VALUE_COLUMN]) for row in valid_rows]
+    if len(set(y_train)) < 2:
+        raise ValueError("Logistic regression requires at least two train classes")
+
+    feature_builder = StrongFeatureBuilder(plan)
+    x_train = feature_builder.fit_transform(train_rows)
+    x_valid = feature_builder.transform(valid_rows)
+    model_params = {"class_weight": "balanced", "max_iter": 1000, "n_jobs": 1}
+    model = LogisticRegression(**model_params)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ConvergenceWarning)
+        model.fit(x_train, y_train)
+
+    predicted = [str(value) for value in model.predict(x_valid)]
+    classes = [str(value) for value in model.classes_]
+    probabilities = model.predict_proba(x_valid)
+    probability_maps = [
+        {classes[index]: float(probability) for index, probability in enumerate(row)}
+        for row in probabilities
+    ]
+    labels = sorted({*classes, *y_true, *predicted})
+    positive_label = labels[-1] if len(labels) == 2 else None
+
+    predictions: list[dict[str, Any]] = []
+    positive_scores: list[float] = []
+    for source_row, actual, prediction, probability_map in zip(
+        valid_rows, y_true, predicted, probability_maps, strict=True
+    ):
+        score = (
+            probability_map.get(positive_label, 0.0)
+            if positive_label
+            else probability_map.get(prediction, 0.0)
+        )
+        positive_scores.append(score)
+        predictions.append(
+            {
+                "row_index": source_row[ROW_INDEX_COLUMN],
+                "split": "valid",
+                "target": actual,
+                "prediction": prediction,
+                "score": score,
+            }
+        )
+
+    dummy_metrics, _ = run_dummy_classification_baseline(rows, primary_metric)
+    macro_f1_value = macro_f1(y_true, predicted, labels)
+    feature_recipe = feature_builder.recipe("logistic_regression", model_params)
+    metrics: dict[str, Any] = {
+        "baseline_type": "logistic_regression",
+        "baseline_strength": "interpretable",
+        "model_family": "linear",
+        "model_baseline_attempted": True,
+        "primary_metric_name": primary_metric,
+        "valid_count": len(y_true),
+        "train_count": len(y_train),
+        "feature_count": feature_recipe["feature_count"],
+        "numeric_feature_count": feature_recipe["numeric_feature_count"],
+        "categorical_feature_count": feature_recipe["categorical_feature_count"],
+        "text_feature_count": feature_recipe["text_feature_count"],
+        "excluded_columns": plan.get("excluded_columns", excluded_columns),
+        "accuracy": accuracy(y_true, predicted),
+        "macro_f1": macro_f1_value,
+        "f1": macro_f1_value,
+        "log_loss": log_loss_from_probability_maps(y_true, probability_maps),
+        "sanity_floor": compact_sanity_metrics(dummy_metrics),
+        "feature_recipe": feature_recipe,
+        "_model_package_payload": ModelPackagePayload(
+            package={
+                "schema_version": "model_package.v1",
+                "model": model,
+                "feature_builder": feature_builder,
+                "label_encoder": None,
+                "classes": classes,
+                "prediction_kind": "classification",
+            },
+            baseline_type="logistic_regression",
+            model_family="linear",
+            task_type=str(plan.get("task_type", "classification")),
+        ),
     }
     if positive_label:
         y_binary = [1 if value == positive_label else 0 for value in y_true]
@@ -848,6 +1158,29 @@ def run_regression_baseline(
         return metrics, predictions
 
 
+def run_regression_model_candidate(
+    rows: list[dict[str, Any]],
+    primary_metric: str,
+    *,
+    model_candidate: str,
+    target_column: str,
+    excluded_columns: list[str],
+    baseline_plan: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if model_candidate == "xgboost":
+        return run_xgboost_regression_baseline(rows, primary_metric, baseline_plan=baseline_plan)
+    if model_candidate == "lightgbm":
+        return run_lightgbm_regression_baseline(rows, primary_metric, baseline_plan=baseline_plan)
+    if model_candidate == "ridge_regression":
+        return run_ridge_regression_baseline(
+            rows,
+            primary_metric,
+            target_column=target_column,
+            excluded_columns=excluded_columns,
+        )
+    raise ValueError(f"{model_candidate} is not supported for regression training")
+
+
 def run_xgboost_regression_baseline(
     rows: list[dict[str, Any]],
     primary_metric: str,
@@ -934,6 +1267,107 @@ def run_xgboost_regression_baseline(
             },
             baseline_type="xgboost_regressor",
             model_family="xgboost",
+            task_type=str(baseline_plan.get("task_type", "regression")),
+        ),
+    }
+    metrics["primary_metric_value"] = metric_value(metrics, primary_metric, rmse_value)
+    return metrics, predictions
+
+
+def run_lightgbm_regression_baseline(
+    rows: list[dict[str, Any]],
+    primary_metric: str,
+    *,
+    baseline_plan: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    try:
+        from lightgbm import LGBMRegressor
+    except ImportError as exc:
+        raise ModelDependencyRequiredError(
+            model_candidate="lightgbm",
+            package_name="lightgbm",
+            install_spec="lightgbm>=4.0",
+        ) from exc
+
+    feature_rows = augment_rows_for_baseline_plan(rows, baseline_plan)
+    train_rows = [
+        row
+        for row in feature_rows
+        if row[SPLIT_VALUE_COLUMN] == "train" and row[TARGET_VALUE_COLUMN] is not None
+    ]
+    valid_rows = [
+        row
+        for row in feature_rows
+        if row[SPLIT_VALUE_COLUMN] == "valid" and row[TARGET_VALUE_COLUMN] is not None
+    ]
+    if not train_rows or not valid_rows:
+        raise ValueError("LightGBM baseline requires non-empty train and valid target values")
+
+    y_train = [float(row[TARGET_VALUE_COLUMN]) for row in train_rows]
+    y_true = [float(row[TARGET_VALUE_COLUMN]) for row in valid_rows]
+    feature_builder = StrongFeatureBuilder(baseline_plan)
+    x_train = feature_builder.fit_transform(train_rows)
+    x_valid = feature_builder.transform(valid_rows)
+    model_params: dict[str, Any] = {
+        "n_estimators": 140,
+        "learning_rate": 0.04,
+        "num_leaves": 31,
+        "subsample": 0.9,
+        "colsample_bytree": 0.9,
+        "random_state": 42,
+        "n_jobs": 1,
+        "objective": "regression",
+        "verbose": -1,
+    }
+    model = LGBMRegressor(**model_params)
+    model.fit(x_train, y_train)
+    predicted = [float(value) for value in model.predict(x_valid)]
+
+    predictions: list[dict[str, Any]] = []
+    for row, actual, prediction in zip(valid_rows, y_true, predicted, strict=True):
+        predictions.append(
+            {
+                "row_index": row[ROW_INDEX_COLUMN],
+                "split": "valid",
+                "target": actual,
+                "prediction": prediction,
+            }
+        )
+
+    dummy_metrics, _ = run_dummy_regression_baseline(rows, primary_metric)
+    rmse_value = root_mean_squared_error(y_true, predicted)
+    mae_value = mean_absolute_error(y_true, predicted)
+    r2_value = r2_score(y_true, predicted)
+    feature_recipe = feature_builder.recipe("lightgbm_regressor", model_params)
+    metrics: dict[str, Any] = {
+        "baseline_type": "lightgbm_regressor",
+        "baseline_strength": "strong",
+        "model_family": "lightgbm",
+        "model_baseline_attempted": True,
+        "primary_metric_name": primary_metric,
+        "valid_count": len(y_true),
+        "train_count": len(y_train),
+        "feature_count": feature_recipe["feature_count"],
+        "numeric_feature_count": feature_recipe["numeric_feature_count"],
+        "categorical_feature_count": feature_recipe["categorical_feature_count"],
+        "text_feature_count": feature_recipe["text_feature_count"],
+        "excluded_columns": baseline_plan.get("excluded_columns", []),
+        "rmse": rmse_value,
+        "mae": mae_value,
+        "r2": r2_value,
+        "sanity_floor": compact_sanity_metrics(dummy_metrics),
+        "feature_recipe": feature_recipe,
+        "_model_package_payload": ModelPackagePayload(
+            package={
+                "schema_version": "model_package.v1",
+                "model": model,
+                "feature_builder": feature_builder,
+                "label_encoder": None,
+                "classes": None,
+                "prediction_kind": "regression",
+            },
+            baseline_type="lightgbm_regressor",
+            model_family="lightgbm",
             task_type=str(baseline_plan.get("task_type", "regression")),
         ),
     }

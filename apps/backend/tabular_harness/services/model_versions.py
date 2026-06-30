@@ -206,10 +206,14 @@ def replay_classification_predictions(
     model = package["model"]
     label_encoder = package.get("label_encoder")
     classes = [str(value) for value in package.get("classes") or []]
-    if label_encoder is None or not classes:
-        raise ValueError("Classification package is missing label_encoder or classes")
-    predicted_encoded = model.predict(x_valid)
-    predicted = [str(value) for value in label_encoder.inverse_transform(predicted_encoded)]
+    if not classes:
+        raise ValueError("Classification package is missing classes")
+    predicted_raw = model.predict(x_valid)
+    predicted = (
+        [str(value) for value in label_encoder.inverse_transform(predicted_raw)]
+        if label_encoder is not None
+        else [str(value) for value in predicted_raw]
+    )
     probabilities = model.predict_proba(x_valid)
     probability_maps = [
         {classes[index]: float(probability) for index, probability in enumerate(row)}
