@@ -184,6 +184,8 @@ const englishMessages = {
   agentActivityTitle: "Agent Activity",
   agentActivitySubtitle: "Workers, actions, and token telemetry",
   estimatedTokens: "Estimated tokens",
+  currentTokens: "Current",
+  cumulativeTokens: "Task total",
   telemetryEstimate: "estimate until runner telemetry",
   workerChatPlaceholder: "Message this worker",
   noAgentActivity: "Agent activity will appear after chat, jobs, or runner work starts.",
@@ -341,6 +343,8 @@ const japaneseMessages: LocaleMessages = {
   agentActivityTitle: "Agent Activity",
   agentActivitySubtitle: "Worker、action、token telemetry",
   estimatedTokens: "推定tokens",
+  currentTokens: "現在",
+  cumulativeTokens: "累積",
   telemetryEstimate: "runner telemetryが入るまで推定",
   workerChatPlaceholder: "このworkerにメッセージ",
   noAgentActivity: "chat、job、runner workが始まるとagent activityが表示されます。",
@@ -3184,6 +3188,8 @@ function AgentWorkerCard({
   const [draft, setDraft] = React.useState("");
   const displaySeries = animatedTokenSeries(event, tick);
   const maxTokens = Math.max(...displaySeries.map((point) => point.tokens), 1);
+  const currentTokens = displaySeries[displaySeries.length - 1]?.tokens ?? 0;
+  const cumulativeTokens = cumulativeTokenTotal(displaySeries);
 
   async function submit(eventSubmit: React.FormEvent) {
     eventSubmit.preventDefault();
@@ -3217,8 +3223,14 @@ function AgentWorkerCard({
         ))}
       </div>
       <div className="agent-worker-meta">
-        <span>{text.estimatedTokens}</span>
-        <strong>{displaySeries[displaySeries.length - 1]?.tokens ?? 0}</strong>
+        <div>
+          <span>{text.currentTokens}</span>
+          <strong>{formatTokenCount(currentTokens)}</strong>
+        </div>
+        <div>
+          <span>{text.cumulativeTokens}</span>
+          <strong>{formatTokenCount(cumulativeTokens)}</strong>
+        </div>
       </div>
       <small className="agent-worker-estimate">{text.telemetryEstimate}</small>
       <form className="agent-worker-chat" onSubmit={(submitEvent) => void submit(submitEvent)}>
@@ -3283,6 +3295,17 @@ function animatedTokenSeries(event: AgentWorkerEvent, tick: number): TokenSeries
     ...point,
     tokens: Math.max(1, Math.round(point.tokens + ((tick + index) % 3) * Math.max(4, Math.round(point.tokens * 0.035))))
   }));
+}
+
+function cumulativeTokenTotal(series: TokenSeriesPoint[]) {
+  return series.reduce((sum, point) => sum + Math.max(0, point.tokens), 0);
+}
+
+function formatTokenCount(value: number) {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 10_000) return `${Math.round(value / 1000)}k`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
+  return String(Math.round(value));
 }
 
 function workerEventsFromJob(job: Job): AgentWorkerEvent[] {

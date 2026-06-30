@@ -3238,16 +3238,32 @@ td {
 }
 
 .agent-worker-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.agent-worker-meta div {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 7px 8px;
+}
+
+.agent-worker-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-worker-meta strong {
   color: var(--text-strong);
   font-size: 13px;
+  line-height: 1.1;
 }
 
 .agent-worker-estimate {
