@@ -1612,15 +1612,76 @@ textarea {
   margin-top: 14px;
 }
 
+.queued-file-overall {
+  display: grid;
+  grid-template-columns: minmax(150px, auto) minmax(180px, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.queued-file-overall.active {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+}
+
+.queued-file-overall.complete {
+  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+}
+
+.queued-file-overall > div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.queued-file-overall span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.queued-file-overall strong {
+  color: var(--text-strong);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.queued-file-overall small {
+  color: var(--muted-strong);
+  white-space: nowrap;
+}
+
 .queued-file-item {
   display: grid;
-  grid-template-columns: 82px minmax(0, 1fr) auto auto;
+  grid-template-columns: 82px minmax(0, 1fr) minmax(140px, 0.72fr) 36px;
   gap: 10px;
   align-items: center;
   padding: 9px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    opacity 160ms ease;
+}
+
+.queued-file-item.waiting,
+.queued-file-item.uploading {
+  opacity: 0.58;
+}
+
+.queued-file-item.uploaded {
+  border-color: color-mix(in srgb, var(--success) 36%, var(--border));
+  background: color-mix(in srgb, var(--success) 7%, var(--surface));
+}
+
+.queued-file-item.stopped {
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
 }
 
 .queued-file-item span {
@@ -1639,7 +1700,13 @@ textarea {
   color: var(--danger);
 }
 
-.queued-file-item strong {
+.queued-file-name {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.queued-file-name strong {
   min-width: 0;
   overflow: hidden;
   color: var(--text-strong);
@@ -1647,57 +1714,23 @@ textarea {
   white-space: nowrap;
 }
 
-.queued-file-item small {
+.queued-file-name small {
   color: var(--muted-strong);
   white-space: nowrap;
 }
 
-.upload-progress-panel {
+.queued-file-progress {
   display: grid;
-  gap: 10px;
-  margin-top: 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  padding: 12px;
+  grid-template-columns: minmax(80px, 1fr) 40px;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
 }
 
-.upload-progress-panel.active {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
-}
-
-.upload-progress-panel.complete {
-  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
-}
-
-.upload-progress-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: end;
-}
-
-.upload-progress-head > div {
-  display: grid;
-  gap: 3px;
-}
-
-.upload-progress-head span,
-.upload-file-progress span {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.upload-progress-head strong {
-  color: var(--text-strong);
-  font-size: 20px;
-  line-height: 1;
-}
-
-.upload-progress-head small {
+.queued-file-progress b {
   color: var(--muted-strong);
+  font-size: 12px;
+  text-align: right;
 }
 
 .progress-track {
@@ -1716,43 +1749,6 @@ textarea {
 
 .progress-track.compact {
   height: 7px;
-}
-
-.upload-file-progress-list {
-  display: grid;
-  gap: 8px;
-}
-
-.upload-file-progress {
-  display: grid;
-  grid-template-columns: minmax(140px, 0.9fr) minmax(140px, 1fr) 44px;
-  gap: 10px;
-  align-items: center;
-  min-width: 0;
-}
-
-.upload-file-progress > div:first-child {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.upload-file-progress strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-strong);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.upload-file-progress small,
-.upload-file-progress b {
-  color: var(--muted-strong);
-  font-size: 12px;
-}
-
-.upload-file-progress b {
-  text-align: right;
 }
 
 .db-connector-card {
@@ -4389,8 +4385,8 @@ td {
   .metric-grid.compact,
   .upload-row,
   .data-intake-layout,
+  .queued-file-overall,
   .queued-file-item,
-  .upload-file-progress,
   .db-connector-card,
   .answer-row,
   .data-focus-panel,

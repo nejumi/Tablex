@@ -4443,6 +4443,14 @@ function DataTab({
   const unsupportedQueuedFiles = queuedFiles.filter((item) => !isTableUploadFile(item) && !isRelationalHintUploadFile(item));
   const selectedPrimaryFileName = primaryFileName || queuedTableFiles[0]?.name || "";
   const canUploadDataBundle = queuedFiles.length > 0 && unsupportedQueuedFiles.length === 0;
+  const uploadProgressByKey = new Map((uploadProgress?.files ?? []).map((item) => [item.key, item]));
+  const currentUploadComplete =
+    uploadProgress !== null &&
+    !uploadProgress.active &&
+    uploadProgress.overall >= 100 &&
+    queuedFiles.length > 0 &&
+    queuedFiles.every((item) => uploadProgressByKey.get(uploadFileKey(item))?.progress === 100);
+  const canSubmitDataBundle = canUploadDataBundle && !currentUploadComplete;
 
   React.useEffect(() => {
     setPrimaryFileName((current) => {
@@ -4506,7 +4514,6 @@ function DataTab({
       return job;
     });
     if (uploaded) {
-      setQueuedFiles([]);
       setErHintNote("");
     } else {
       setUploadProgress((current) => (current ? { ...current, active: false } : current));
@@ -4989,9 +4996,9 @@ function DataTab({
               </select>
             </div>
             <div className="button-row">
-              <button className="primary-button" disabled={!canUploadDataBundle || busy} onClick={() => void uploadDataBundle()}>
-                {busy ? <Loader2 className="spin" size={16} /> : <Upload size={16} />}
-                Ingest Bundle
+              <button className="primary-button" disabled={!canSubmitDataBundle || busy} onClick={() => void uploadDataBundle()}>
+                {busy ? <Loader2 className="spin" size={16} /> : currentUploadComplete ? <Check size={16} /> : <Upload size={16} />}
+                {currentUploadComplete ? "Uploaded" : "Ingest Bundle"}
               </button>
               <button
                 className="secondary-button"
@@ -5018,54 +5025,55 @@ function DataTab({
         </div>
         {queuedFiles.length ? (
           <div className="queued-file-list">
+            {uploadProgress ? (
+              <div className={`queued-file-overall ${uploadProgress.active ? "active" : "complete"}`}>
+                <div>
+                  <span>{uploadProgress.active ? "Uploading bundle" : "Bundle uploaded"}</span>
+                  <strong>{Math.round(uploadProgress.overall)}%</strong>
+                  <small>
+                    {formatBytes(uploadProgress.loadedBytes)} / {formatBytes(uploadProgress.totalBytes)}
+                  </small>
+                </div>
+                <div className="progress-track" aria-label="Overall upload progress">
+                  <div style={{ width: `${uploadProgress.overall}%` }} />
+                </div>
+              </div>
+            ) : null}
             {queuedFiles.map((queuedFile) => {
               const kind = isTableUploadFile(queuedFile)
                 ? "table"
                 : isRelationalHintUploadFile(queuedFile)
                   ? "ER hint"
                   : "unsupported";
+              const progress = uploadProgressByKey.get(uploadFileKey(queuedFile));
+              const uploadState = uploadFileState(progress, uploadProgress);
+              const percent = progress?.progress ?? 0;
               return (
-                <div className={`queued-file-item ${kind === "unsupported" ? "unsupported" : ""}`} key={uploadFileKey(queuedFile)}>
+                <div className={`queued-file-item ${kind === "unsupported" ? "unsupported" : ""} ${uploadState}`} key={uploadFileKey(queuedFile)}>
                   <span>{kind}</span>
-                  <strong>{queuedFile.name}</strong>
-                  <small>{formatBytes(queuedFile.size)}</small>
-                  <button className="icon-button" onClick={() => removeQueuedUploadFile(queuedFile)} title={`Remove ${queuedFile.name}`}>
+                  <div className="queued-file-name">
+                    <strong>{queuedFile.name}</strong>
+                    <small>
+                      {formatBytes(queuedFile.size)} · {uploadState}
+                    </small>
+                  </div>
+                  <div className="queued-file-progress">
+                    <div className="progress-track compact" aria-label={`${queuedFile.name} upload progress`}>
+                      <div style={{ width: `${percent}%` }} />
+                    </div>
+                    <b>{Math.round(percent)}%</b>
+                  </div>
+                  <button
+                    className="icon-button"
+                    disabled={uploadProgress?.active}
+                    onClick={() => removeQueuedUploadFile(queuedFile)}
+                    title={`Remove ${queuedFile.name}`}
+                  >
                     <X size={14} />
                   </button>
                 </div>
               );
             })}
-          </div>
-        ) : null}
-        {uploadProgress ? (
-          <div className={`upload-progress-panel ${uploadProgress.active ? "active" : "complete"}`}>
-            <div className="upload-progress-head">
-              <div>
-                <span>{uploadProgress.active ? "Uploading bundle" : "Bundle uploaded"}</span>
-                <strong>{Math.round(uploadProgress.overall)}%</strong>
-              </div>
-              <small>
-                {formatBytes(uploadProgress.loadedBytes)} / {formatBytes(uploadProgress.totalBytes)}
-              </small>
-            </div>
-            <div className="progress-track" aria-label="Overall upload progress">
-              <div style={{ width: `${uploadProgress.overall}%` }} />
-            </div>
-            <div className="upload-file-progress-list">
-              {uploadProgress.files.map((item) => (
-                <div className="upload-file-progress" key={item.key}>
-                  <div>
-                    <span>{item.kind}</span>
-                    <strong>{item.name}</strong>
-                    <small>{formatBytes(item.size)}</small>
-                  </div>
-                  <div className="progress-track compact" aria-label={`${item.name} upload progress`}>
-                    <div style={{ width: `${item.progress}%` }} />
-                  </div>
-                  <b>{Math.round(item.progress)}%</b>
-                </div>
-              ))}
-            </div>
           </div>
         ) : null}
         {unsupportedQueuedFiles.length ? (
@@ -5924,6 +5932,19 @@ function buildUploadProgress(files: File[], loadedBytes: number, totalBytes: num
     totalBytes: safeTotal,
     files: fileProgress
   };
+}
+
+function uploadFileState(progress: UploadFileProgress | undefined, uploadProgress: UploadBundleProgress | null) {
+  if (!progress || !uploadProgress) {
+    return "queued";
+  }
+  if (progress.progress >= 100) {
+    return "uploaded";
+  }
+  if (!uploadProgress.active) {
+    return "stopped";
+  }
+  return progress.progress > 0 ? "uploading" : "waiting";
 }
 
 function numberField(value: unknown): number | null {
