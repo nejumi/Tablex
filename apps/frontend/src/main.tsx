@@ -324,7 +324,7 @@ const englishMessages = {
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
   rawAgentTitle: "Raw Codex transcript",
-  rawAgentEmpty: "Actual Codex commands, stdout, stderr, and runner transcripts will appear here. Harness-only events are shown separately as sidecar records.",
+  rawAgentEmpty: "No Codex execution transcript is available yet. Harness-only events stay in Chat and Jobs, not Raw.",
   openSurface: "Open",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "One guided next step without forcing a fixed modeling recipe.",
@@ -596,7 +596,7 @@ const japaneseMessages: LocaleMessages = {
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
   rawAgentTitle: "Raw Codex transcript",
-  rawAgentEmpty: "Codexの実行コマンド、stdout、stderr、runner transcriptを表示します。Harnessだけのイベントはsidecar recordとして分けて表示します。",
+  rawAgentEmpty: "Codexの実行transcriptはまだありません。HarnessだけのイベントはRawではなくChatとJobsに残します。",
   openSurface: "開く",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "固定recipeにせず、次の一手だけをガイドします。",
@@ -4325,73 +4325,55 @@ function buildRawAgentEvents(messages: AgentChatMessage[], jobs: Job[]): RawAgen
   const turns = buildAgentConversationTurns(messages).slice(-8);
   const chatEvents = turns.flatMap((turn, index) => {
     const events: RawAgentEvent[] = [];
+    if (!turn.assistant) return events;
+    const composerMode = textField(turn.assistant.responseComposer?.mode);
+    const composerStatus = textField(turn.assistant.responseComposer?.status) ?? "pending";
+    const active = isActiveAgentTurn(turn);
+    const isCodexCli = composerMode === "codex_cli";
+    if (!isCodexCli && !active) return events;
     if (turn.user) {
       events.push({
         id: `raw-user-${index}-${turn.user.id ?? turn.user.text.slice(0, 18)}`,
         timestamp: turn.user.createdAt ?? turn.createdAt ?? now,
         source: "User",
         level: "prompt",
-        title: "Prompt sent from Tablex UI",
+        title: "Prompt sent to Codex",
         body: turn.user.text,
         payload: { text: turn.user.text }
       });
     }
-    if (turn.assistant) {
-      const composerMode = textField(turn.assistant.responseComposer?.mode);
-      const composerStatus = textField(turn.assistant.responseComposer?.status) ?? "pending";
-      const active = isActiveAgentTurn(turn);
-      const promptPreamble = Array.isArray(turn.assistant.responseComposer?.prompt_preamble)
-        ? turn.assistant.responseComposer.prompt_preamble.join("\n")
-        : null;
-      const command = textField(turn.assistant.responseComposer?.command);
-      const stdoutTail = textField(turn.assistant.responseComposer?.stdout_tail);
-      const stderrTail = textField(turn.assistant.responseComposer?.stderr_tail);
-      const isCodexCli = composerMode === "codex_cli";
-      const isHarnessOnly = !isCodexCli;
-      events.push({
-        id: `raw-assistant-${index}-${turn.assistant.id ?? turn.assistant.text.slice(0, 18)}`,
-        timestamp: turn.assistant.createdAt ?? turn.createdAt ?? now,
-        source: isCodexCli || active ? "Codex" : "Harness sidecar",
-        level: composerStatus,
-        title:
-          active
-            ? "Codex composer request is in flight"
-            : composerStatus === "pending"
-              ? "Stored Codex reply state"
-              : isCodexCli
-                ? "Codex exec transcript"
-                : "Harness record, not a Codex transcript",
-        active,
-        body: isHarnessOnly ? null : turn.assistant.text,
-        details: [
-          ...(command ? [{ label: "Codex command", value: command }] : []),
-          ...(promptPreamble
-            ? [{ label: "Codex prompt preamble", value: promptPreamble }]
-            : []),
-          ...(turn.assistant.responseBrief
-            ? [{ label: "Exact prompt brief passed to Codex", value: turn.assistant.responseBrief }]
-            : []),
-          ...(stdoutTail ? [{ label: "Codex stdout", value: stdoutTail }] : []),
-          ...(stderrTail ? [{ label: "Codex stderr", value: stderrTail }] : []),
-          ...(turn.assistant.responseComposer
-            ? [{ label: isCodexCli ? "Codex run metadata" : "Harness sidecar metadata", value: turn.assistant.responseComposer }]
-            : []),
-          ...(turn.assistant.actions?.length
-            ? [{ label: "Harness sidecar actions", value: turn.assistant.actions }]
-            : []),
-          ...(turn.assistant.actionSummary
-            ? [{ label: "Human-facing summary record", value: turn.assistant.actionSummary }]
-            : [])
-        ],
-        payload: {
-          text: turn.assistant.text,
-          response_brief: turn.assistant.responseBrief ?? null,
-          response_composer: turn.assistant.responseComposer ?? null,
-          action_summary: turn.assistant.actionSummary ?? null,
-          actions: turn.assistant.actions ?? []
-        }
-      });
-    }
+    const promptPreamble = Array.isArray(turn.assistant.responseComposer?.prompt_preamble)
+      ? turn.assistant.responseComposer.prompt_preamble.join("\n")
+      : null;
+    const command = textField(turn.assistant.responseComposer?.command);
+    const stdoutTail = textField(turn.assistant.responseComposer?.stdout_tail);
+    const stderrTail = textField(turn.assistant.responseComposer?.stderr_tail);
+    events.push({
+      id: `raw-assistant-${index}-${turn.assistant.id ?? turn.assistant.text.slice(0, 18)}`,
+      timestamp: turn.assistant.createdAt ?? turn.createdAt ?? now,
+      source: "Codex",
+      level: composerStatus,
+      title: active ? "Codex composer request is in flight" : "Codex exec transcript",
+      active,
+      body: active ? null : turn.assistant.text,
+      details: [
+        ...(command ? [{ label: "Codex command", value: command }] : []),
+        ...(promptPreamble ? [{ label: "Codex prompt preamble", value: promptPreamble }] : []),
+        ...(turn.assistant.responseBrief
+          ? [{ label: "Exact prompt brief passed to Codex", value: turn.assistant.responseBrief }]
+          : []),
+        ...(stdoutTail ? [{ label: "Codex stdout", value: stdoutTail }] : []),
+        ...(stderrTail ? [{ label: "Codex stderr", value: stderrTail }] : []),
+        ...(turn.assistant.responseComposer
+          ? [{ label: "Codex run metadata", value: turn.assistant.responseComposer }]
+          : [])
+      ],
+      payload: {
+        text: turn.assistant.text,
+        response_brief: turn.assistant.responseBrief ?? null,
+        response_composer: turn.assistant.responseComposer ?? null
+      }
+    });
     return events;
   });
   return dedupeRawAgentEvents([...chatEvents, ...buildRawJobEvents(jobs)]).sort(
@@ -4404,38 +4386,7 @@ function buildRawJobEvents(jobs: Job[]): RawAgentEvent[] {
     if (!isRawRelevantJob(job)) return [];
     const events: RawAgentEvent[] = [];
     const output = job.output ?? {};
-    const context = job.context ?? {};
-    const composer = output.response_composer;
     const codexCli = output.codex_cli;
-    const humanDescription = context.human_description;
-    const description =
-      humanDescription && typeof humanDescription === "object" ? (humanDescription as Record<string, unknown>) : {};
-    const title = textField(description.title) ?? textField(output.agent_final_message) ?? latestJobHeadline(job);
-    if (composer && typeof composer === "object") {
-      const composerRecord = composer as Record<string, unknown>;
-      const mode = textField(composerRecord.mode);
-      const status = textField(composerRecord.status) ?? job.status;
-      const command = textField(composerRecord.command);
-      const stdoutTail = textField(composerRecord.stdout_tail);
-      const stderrTail = textField(composerRecord.stderr_tail);
-      const isCodexCli = mode === "codex_cli";
-      events.push({
-        id: `raw-job-composer-${job.id}`,
-        timestamp: job.updated_at,
-        source: isCodexCli ? "Codex" : "Harness sidecar",
-        level: status,
-        title: isCodexCli ? "Codex response composer transcript" : "Harness composer record, not Codex execution",
-        active: jobActiveForActivity(job),
-        body: isCodexCli ? textField(output.assistant_message) : null,
-        details: [
-          ...(command ? [{ label: "Codex command", value: command }] : []),
-          ...(stdoutTail ? [{ label: "Codex stdout", value: stdoutTail }] : []),
-          ...(stderrTail ? [{ label: "Codex stderr", value: stderrTail }] : []),
-          { label: isCodexCli ? "Codex metadata" : "Harness sidecar metadata", value: composerRecord }
-        ],
-        payload: { job_id: job.id, job_type: job.job_type, response_composer: composerRecord }
-      });
-    }
     if (codexCli && typeof codexCli === "object") {
       const codexRecord = codexCli as Record<string, unknown>;
       events.push({
@@ -4454,15 +4405,15 @@ function buildRawJobEvents(jobs: Job[]): RawAgentEvent[] {
         ],
         payload: { job_id: job.id, job_type: job.job_type, codex_cli: codexRecord }
       });
-    } else if (job.job_type === "run_planned_agent_task_codex" || job.status === "running" || job.status === "queued") {
+    } else if (job.job_type === "run_planned_agent_task_codex" && jobActiveForActivity(job)) {
       events.push({
         id: `raw-job-state-${job.id}`,
         timestamp: job.updated_at,
-        source: job.job_type === "run_planned_agent_task_codex" ? "Codex runner" : "Harness sidecar",
+        source: "Codex runner",
         level: job.status,
-        title: job.job_type === "run_planned_agent_task_codex" ? "Codex runner has no transcript yet" : "Job state, not Codex transcript",
+        title: "Codex runner has not emitted a transcript yet",
         active: jobActiveForActivity(job),
-        body: textField(description.summary) ?? title,
+        body: latestJobHeadline(job),
         details: [{ label: "Job record", value: job }],
         payload: { job_id: job.id, job_type: job.job_type, status: job.status }
       });
@@ -4472,7 +4423,7 @@ function buildRawJobEvents(jobs: Job[]): RawAgentEvent[] {
 }
 
 function isRawRelevantJob(job: Job) {
-  return job.job_type === "agent_chat_turn" || job.job_type === "run_planned_agent_task_codex" || jobActiveForActivity(job);
+  return Boolean(job.output?.codex_cli) || (job.job_type === "run_planned_agent_task_codex" && jobActiveForActivity(job));
 }
 
 function dedupeRawAgentEvents(events: RawAgentEvent[]) {
