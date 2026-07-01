@@ -464,6 +464,10 @@ def download_public_benchmark_endpoint(
     except ValueError as exc:
         mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        message = f"Autonomous loop start failed: {exc}"
+        mark_job_failed(job, message)
+        raise HTTPException(status_code=500, detail=message) from exc
     return job_to_dict(job)
 
 

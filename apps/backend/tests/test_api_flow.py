@@ -128,6 +128,55 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
     assert contract_step["entity_ids"]["task_type"] == "target_definition_review"
 
 
+def test_full_auto_start_queues_training_for_large_dataset_boundary(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("TABLEX_AUTONOMY_SYNC_TRAINING_ROW_LIMIT", "10")
+    monkeypatch.setattr("tabular_harness.services.autonomy.shutil.which", lambda name: "/usr/bin/codex")
+    client = make_client(tmp_path)
+
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Autonomous queued training", "target_column": "label", "task_type": "binary_classification"},
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    rows = ["feature,segment,label"] + [
+        f"{index},{'a' if index % 2 else 'b'},{1 if index % 3 == 0 else 0}" for index in range(1, 80)
+    ]
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("queued_training.csv", "\n".join(rows).encode("utf-8"), "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    start_response = client.post(
+        f"/api/projects/{project_id}/autonomy/start",
+        json={"runner_mode": "codex_cli_if_available", "autonomy_mode": "full_auto"},
+    )
+    assert start_response.status_code == 200, start_response.text
+    output = start_response.json()["output"]
+    labels = {step["label"]: step for step in output["steps"]}
+    assert labels["experiment_loop"]["status"] == "queued"
+    assert labels["baseline_run"]["status"] == "queued"
+    assert labels["model_candidates"]["status"] == "queued"
+    assert len(output["created_job_ids"]) == 3
+
+    jobs = client.get(f"/api/projects/{project_id}/jobs").json()
+    queued_training = [job for job in jobs if job["id"] in output["created_job_ids"]]
+    assert {job["job_type"] for job in queued_training} == {
+        "run_baseline",
+        "train_model_candidates",
+        "run_planned_agent_task_codex",
+    }
+    assert all(job["status"] == "queued" for job in queued_training)
+
+    activity = client.get(f"/api/projects/{project_id}/agent-activity").json()
+    active_job_ids = {worker["job_id"] for worker in activity["workers"] if worker["active"]}
+    assert set(output["created_job_ids"]).issubset(active_job_ids)
+
+
 def test_full_auto_codex_target_proposal_drives_evaluation_and_runs(tmp_path: Path, monkeypatch: Any) -> None:
     client = make_client(tmp_path)
 
@@ -206,7 +255,10 @@ def test_full_auto_codex_target_proposal_drives_evaluation_and_runs(tmp_path: Pa
 def test_approval_based_start_runs_but_does_not_auto_adopt_evaluation(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
-    project_response = client.post("/api/projects", json={"name": "Approval based with data"})
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Approval based with data", "target_column": "value", "task_type": "regression"},
+    )
     assert project_response.status_code == 200
     project_id = project_response.json()["id"]
     rows = ["feature,segment,value"] + [f"{index},{'a' if index % 2 else 'b'},{index * 3}" for index in range(1, 31)]

@@ -1880,6 +1880,37 @@ textarea {
   height: 7px;
 }
 
+.avatar-generation-progress {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(28, 184, 163, 0.24);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  padding: 10px;
+}
+
+.avatar-progress-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.avatar-progress-copy span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.avatar-progress-copy strong {
+  flex: 0 0 auto;
+  color: var(--text-strong);
+  font-size: 11px;
+}
+
 .db-connector-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

@@ -207,6 +207,10 @@ const englishMessages = {
   userAvatarGenerationHint:
     "Uses the backend Codex image bridge by default. API credentials are only needed for an optional backend API provider, and candidates are not saved until you choose one.",
   userAvatarNoCandidates: "No generated candidates yet.",
+  userAvatarProgressPreparing: "Preparing the Codex image request",
+  userAvatarProgressGenerating: "Codex is generating avatar candidates",
+  userAvatarProgressFinalizing: "Waiting for generated files",
+  userAvatarElapsed: "Elapsed",
   intervention: "Intervention",
   models: "Models",
   agentModel: "Agent model",
@@ -459,6 +463,10 @@ const japaneseMessages: LocaleMessages = {
   userAvatarGenerationHint:
     "既定ではバックエンドのCodex画像生成bridgeを使います。API credentialは任意のbackend API provider用で、候補は選ぶまで保存しません。",
   userAvatarNoCandidates: "生成候補はまだありません。",
+  userAvatarProgressPreparing: "Codex画像生成リクエストを準備中",
+  userAvatarProgressGenerating: "Codexがアイコン候補を生成中",
+  userAvatarProgressFinalizing: "生成ファイルの返却を待機中",
+  userAvatarElapsed: "経過",
   intervention: "介入",
   models: "モデル",
   agentModel: "Agent用モデル",
@@ -1799,6 +1807,21 @@ function apiErrorMessage(body: string, fallback: string): string {
   return body;
 }
 
+function avatarGenerationProgress(elapsedSeconds: number, text: LocaleMessages) {
+  const percent = Math.min(92, 12 + Math.floor(elapsedSeconds * 0.7));
+  let label = text.userAvatarProgressPreparing;
+  if (elapsedSeconds >= 8) label = text.userAvatarProgressGenerating;
+  if (elapsedSeconds >= 90) label = text.userAvatarProgressFinalizing;
+  return { percent, label };
+}
+
+function formatElapsedSeconds(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes <= 0) return `${remainder}s`;
+  return `${minutes}m ${String(remainder).padStart(2, "0")}s`;
+}
+
 function uploadFormData<T>(
   path: string,
   body: FormData,
@@ -2481,6 +2504,16 @@ function UserSettingsPanel({
   const [avatarCandidates, setAvatarCandidates] = React.useState<AvatarCandidate[]>([]);
   const [localeStatus, setLocaleStatus] = React.useState<string | null>(null);
   const [avatarStatus, setAvatarStatus] = React.useState<string | null>(null);
+  const [avatarStartedAt, setAvatarStartedAt] = React.useState<number | null>(null);
+  const [avatarElapsedSeconds, setAvatarElapsedSeconds] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!avatarBusy || avatarStartedAt === null) return undefined;
+    const tick = () => setAvatarElapsedSeconds(Math.max(0, Math.floor((Date.now() - avatarStartedAt) / 1000)));
+    tick();
+    const handle = window.setInterval(tick, 1000);
+    return () => window.clearInterval(handle);
+  }, [avatarBusy, avatarStartedAt]);
 
   function update(patch: Partial<UserSettings>) {
     setLocaleStatus(null);
@@ -2541,6 +2574,8 @@ function UserSettingsPanel({
       return;
     }
     setAvatarBusy(true);
+    setAvatarStartedAt(Date.now());
+    setAvatarElapsedSeconds(0);
     setAvatarStatus(text.userAvatarGenerating);
     try {
       const candidates = await onGenerateAvatarCandidates(prompt);
@@ -2551,8 +2586,11 @@ function UserSettingsPanel({
       setAvatarStatus(err instanceof Error ? err.message : String(err));
     } finally {
       setAvatarBusy(false);
+      setAvatarStartedAt(null);
     }
   }
+
+  const avatarProgress = avatarBusy ? avatarGenerationProgress(avatarElapsedSeconds, text) : null;
 
   return (
     <aside className="settings-panel" aria-label={text.settings}>
@@ -2673,6 +2711,19 @@ function UserSettingsPanel({
           {avatarBusy ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />}
           {avatarBusy ? text.userAvatarGenerating : text.userAvatarGenerate}
         </button>
+        {avatarProgress ? (
+          <div className="avatar-generation-progress" role="status" aria-live="polite">
+            <div className="avatar-progress-copy">
+              <span>{avatarProgress.label}</span>
+              <strong>
+                {text.userAvatarElapsed} {formatElapsedSeconds(avatarElapsedSeconds)}
+              </strong>
+            </div>
+            <div className="progress-track compact" aria-label={avatarProgress.label}>
+              <div style={{ width: `${avatarProgress.percent}%` }} />
+            </div>
+          </div>
+        ) : null}
         {avatarStatus ? <div className="settings-status">{avatarStatus}</div> : null}
         <p className="settings-hint">{text.userAvatarGenerationHint}</p>
         <div className="avatar-candidate-panel">

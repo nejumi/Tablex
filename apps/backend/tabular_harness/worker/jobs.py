@@ -6,14 +6,23 @@ from sqlalchemy.orm import Session
 
 from tabular_harness.core.config import get_settings
 from tabular_harness.core.json import loads_json
-from tabular_harness.models.entities import EvaluationSpec, Job, Project, SplitManifest, utc_now
+from tabular_harness.models.entities import (
+    Artifact,
+    EvaluationSpec,
+    Job,
+    Project,
+    SplitManifest,
+    utc_now,
+)
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.baseline import (
     ModelDependencyRequiredError,
     normalize_model_candidate_name,
+    run_baseline,
     run_model_candidate,
 )
 from tabular_harness.services.jobs import JOB_TYPES
+from tabular_harness.services.planned_agent_execution import run_planned_agent_task_codex_cli
 from tabular_harness.worker.runner import JobHandler, SyncWorker
 
 INITIAL_JOB_TYPES = tuple(sorted(JOB_TYPES))
@@ -29,6 +38,61 @@ def stub_job_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[s
         "context": loads_json(job.context_json, {}),
         "policy": loads_json(job.policy_json, {}),
         "attempt_count": job.attempt_count,
+    }
+
+
+def run_baseline_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project_id = job.project_id
+    if project_id is None:
+        raise ValueError("run_baseline requires a project_id")
+    project = db.get(Project, project_id)
+    if project is None:
+        raise ValueError("Project not found")
+    spec_id = payload.get("evaluation_spec_id")
+    split_id = payload.get("split_manifest_id")
+    spec = db.get(EvaluationSpec, spec_id) if isinstance(spec_id, str) else None
+    split = db.get(SplitManifest, split_id) if isinstance(split_id, str) else None
+    if spec is None:
+        raise ValueError("EvaluationSpec not found")
+    if split is None:
+        raise ValueError("SplitManifest not found")
+    result = run_baseline(db, store=store, project=project, evaluation_spec=spec, split_manifest=split)
+    return {
+        "schema_version": "baseline_training.v1",
+        "evaluation_spec_id": spec.id,
+        "split_manifest_id": split.id,
+        "experiment_run_id": result.run.id,
+        "model_version_id": result.model_version_id,
+        "artifact_ids": result.artifact_ids,
+        "metrics": result.metrics,
+        "primary_metric_name": result.metrics.get("primary_metric_name"),
+        "primary_metric_value": result.metrics.get("primary_metric_value"),
+        "worker_events": [
+            {
+                "worker_id": "adaptive-baseline",
+                "display_name": "Training Worker",
+                "status": "succeeded",
+                "headline": f"Adaptive baseline trained: {result.run.id}",
+                "detail": "Registered the baseline run, model package, metrics, and supporting artifacts.",
+                "job_id": job.id,
+                "target_tab": "Leaderboard",
+                "target_anchor": "result-readout",
+                "created_at": job.created_at.isoformat(),
+                "updated_at": utc_now().isoformat(),
+                "active": False,
+                "token_usage": {
+                    "source": "training_progress_estimate",
+                    "is_estimate": True,
+                    "series": [
+                        {"step": "load split", "tokens": 80},
+                        {"step": "fit baseline", "tokens": 180},
+                        {"step": "score", "tokens": 120},
+                        {"step": "register artifacts", "tokens": 140},
+                    ],
+                },
+            }
+        ],
     }
 
 
@@ -176,9 +240,88 @@ def train_model_candidates_handler(db: Session, job: Job, store: LocalArtifactSt
     return output
 
 
+def run_planned_agent_task_codex_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    artifact_id = payload.get("agent_task_contract_artifact_id")
+    if not isinstance(artifact_id, str):
+        raise ValueError("run_planned_agent_task_codex requires agent_task_contract_artifact_id")
+    contract_artifact = db.get(Artifact, artifact_id)
+    if contract_artifact is None:
+        raise ValueError("AgentTaskContract artifact not found")
+    if contract_artifact.asset_type != "agent_task_contract":
+        raise ValueError("Artifact is not an agent_task_contract")
+    if contract_artifact.project_id is None:
+        raise ValueError("AgentTaskContract artifact is not project-scoped")
+    project = db.get(Project, contract_artifact.project_id)
+    if project is None:
+        raise ValueError("Project not found")
+    result = run_planned_agent_task_codex_cli(
+        db,
+        store=store,
+        project=project,
+        contract_artifact=contract_artifact,
+        job=job,
+    )
+    status = "failed" if result.agent_result.status == "failed" else "succeeded"
+    output: dict[str, Any] = {
+        "schema_version": "planned_agent_task_codex_execution.v1",
+        "agent_task_contract_artifact_id": contract_artifact.id,
+        "task_id": result.agent_result.task_id,
+        "agent_status": result.agent_result.status,
+        "agent_final_message": result.agent_result.final_message,
+        "agent_failure_reason": result.agent_result.failure_reason,
+        "agent_workspace_manifest_artifact_id": result.workspace_artifact_id,
+        "agent_task_readiness_review_artifact_id": result.readiness_artifact_id,
+        "readiness_status": result.readiness_status,
+        "artifact_ids": result.artifact_ids,
+        "ingested_artifact_ids": result.ingested_artifact_ids,
+        "report_id": result.report_id,
+        "evidence_id": result.evidence_id,
+        "experiment_run_id": result.experiment_ingestion.experiment_run_id,
+        "agent_metrics_artifact_id": result.experiment_ingestion.metrics_artifact_id,
+        "agent_feature_recipe_artifact_id": result.experiment_ingestion.feature_recipe_artifact_id,
+        "approach_decision_trace_artifact_id": result.approach_decision_trace_artifact_id,
+        "visualization_ids": result.experiment_ingestion.visualization_ids,
+        "worker_events": [
+            {
+                "worker_id": "codex-runner",
+                "display_name": "Codex Runner",
+                "status": status,
+                "headline": (
+                    "Codex completed the planned agent task"
+                    if status == "succeeded"
+                    else "Codex runner needs attention"
+                ),
+                "detail": result.agent_result.final_message,
+                "job_id": job.id,
+                "target_tab": "Home",
+                "target_anchor": "agent-workspace",
+                "created_at": job.created_at.isoformat(),
+                "updated_at": utc_now().isoformat(),
+                "active": False,
+                "token_usage": {
+                    "source": "codex_runner_result",
+                    "is_estimate": True,
+                    "series": [
+                        {"step": "load workspace", "tokens": 160},
+                        {"step": "reason", "tokens": 900},
+                        {"step": "write artifacts", "tokens": 240},
+                    ],
+                },
+            }
+        ],
+    }
+    if status == "failed":
+        output["job_status"] = "failed"
+        output["error_message"] = result.agent_result.failure_reason or result.agent_result.final_message
+    return output
+
+
 def default_handlers() -> dict[str, JobHandler]:
     handlers = {job_type: stub_job_handler for job_type in JOB_TYPES}
+    handlers["run_baseline"] = run_baseline_handler
     handlers["train_model_candidates"] = train_model_candidates_handler
+    handlers["run_planned_agent_task_codex"] = run_planned_agent_task_codex_handler
     return handlers
 
 

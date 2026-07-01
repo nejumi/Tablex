@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass, field
 from typing import Any
@@ -11,6 +12,7 @@ from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
     Answer,
+    Artifact,
     Assumption,
     AssumptionEvidenceLink,
     DatasetSnapshot,
@@ -57,6 +59,7 @@ from tabular_harness.services.evaluation import (
     write_spec_artifact,
 )
 from tabular_harness.services.experiment_lifecycle import draft_run_report
+from tabular_harness.services.jobs import create_job
 from tabular_harness.services.planned_agent_execution import run_planned_agent_task_codex_cli
 from tabular_harness.services.planned_agent_workspace import (
     prepare_workspace_from_contract_artifact,
@@ -68,6 +71,7 @@ RUNNER_MODE_HARNESS_ONLY = "harness_only"
 RUNNER_MODE_CODEX_CLI = "codex_cli"
 RUNNER_MODE_CODEX_IF_AVAILABLE = "codex_cli_if_available"
 RUNNER_MODES = {RUNNER_MODE_HARNESS_ONLY, RUNNER_MODE_CODEX_CLI, RUNNER_MODE_CODEX_IF_AVAILABLE}
+DEFAULT_SYNC_TRAINING_ROW_LIMIT = 50_000
 
 
 @dataclass
@@ -287,34 +291,62 @@ def run_data_understanding_stack(
     dataset: DatasetSnapshot,
     state: AutonomousLoopState,
 ) -> None:
-    try:
-        quality = analyze_dataset_quality(db, store=store, project=project, dataset=dataset)
+    existing_quality = latest_project_artifact(db, project.id, "data_quality_gate")
+    if existing_quality is not None:
         state.record(
             "data_quality",
-            "created",
-            "Ran data quality analysis and materialized assumptions, questions, evidence, and an insight.",
-            artifact_ids=quality.artifact_ids,
-            entity_ids={
-                "insight_id": quality.insight_id,
-                "evidence_ids": quality.evidence_ids,
-                "assumption_ids": quality.assumption_ids,
-                "question_ids": quality.question_ids,
-            },
+            "reused",
+            "Reused the latest data quality artifact instead of recomputing it during Agent loop start.",
+            artifact_ids=[existing_quality.id],
         )
-    except ValueError as exc:
-        state.warn(f"Data quality analysis skipped: {exc}")
+    else:
+        try:
+            quality = analyze_dataset_quality(db, store=store, project=project, dataset=dataset)
+            state.record(
+                "data_quality",
+                "created",
+                "Ran data quality analysis and materialized assumptions, questions, evidence, and an insight.",
+                artifact_ids=quality.artifact_ids,
+                entity_ids={
+                    "insight_id": quality.insight_id,
+                    "evidence_ids": quality.evidence_ids,
+                    "assumption_ids": quality.assumption_ids,
+                    "question_ids": quality.question_ids,
+                },
+            )
+        except ValueError as exc:
+            state.warn(f"Data quality analysis skipped: {exc}")
 
-    try:
-        eda = create_dataset_eda_review(db, store=store, dataset=dataset)
+    existing_eda = latest_project_artifact(db, project.id, "eda_review_bundle")
+    if existing_eda is not None:
         state.record(
             "eda_review",
-            "created",
-            "Created a deeper EDA review with findings, figures, HTML, report, evidence, and Codex follow-up prompts.",
-            artifact_ids=eda.artifact_ids,
-            entity_ids={"report_id": eda.report.id, "insight_id": eda.insight.id, "evidence_id": eda.evidence.id},
+            "reused",
+            "Reused the latest EDA review bundle instead of recomputing it during Agent loop start.",
+            artifact_ids=[existing_eda.id],
         )
-    except ValueError as exc:
-        state.warn(f"EDA review skipped: {exc}")
+    else:
+        try:
+            eda = create_dataset_eda_review(db, store=store, dataset=dataset)
+            state.record(
+                "eda_review",
+                "created",
+                "Created a deeper EDA review with findings, figures, HTML, report, evidence, and Codex follow-up prompts.",
+                artifact_ids=eda.artifact_ids,
+                entity_ids={"report_id": eda.report.id, "insight_id": eda.insight.id, "evidence_id": eda.evidence.id},
+            )
+        except ValueError as exc:
+            state.warn(f"EDA review skipped: {exc}")
+
+    existing_notebook = latest_project_artifact(db, project.id, "analysis_notebook")
+    if existing_notebook is not None:
+        state.record(
+            "data_understanding_notebook",
+            "reused",
+            "Reused the latest analysis notebook artifact instead of regenerating it during Agent loop start.",
+            artifact_ids=[existing_notebook.id],
+        )
+        return
 
     try:
         notebook = create_data_understanding_notebook(db, store=store, project=project)
@@ -326,6 +358,14 @@ def run_data_understanding_stack(
         )
     except ValueError as exc:
         state.warn(f"Data Understanding notebook skipped: {exc}")
+
+
+def latest_project_artifact(db: Session, project_id: str, asset_type: str) -> Artifact | None:
+    return db.scalar(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.asset_type == asset_type)
+        .order_by(Artifact.created_at.desc())
+    )
 
 
 def run_evaluation_stack(
@@ -503,6 +543,16 @@ def run_experiment_stack(
     except ValueError as exc:
         state.warn(f"Baseline strategy skipped: {exc}")
 
+    if should_queue_experiment_training(db, project):
+        queue_experiment_training_jobs(
+            db,
+            project=project,
+            state=state,
+            spec=spec,
+            split=split,
+        )
+        return
+
     successful_runs: list[ExperimentRun] = []
     try:
         baseline = run_baseline(db, store=store, project=project, evaluation_spec=spec, split_manifest=split)
@@ -584,6 +634,83 @@ def run_experiment_stack(
         )
     except ValueError as exc:
         state.warn(f"Decision dashboard skipped: {exc}")
+
+
+def should_queue_experiment_training(db: Session, project: Project) -> bool:
+    limit = sync_training_row_limit()
+    if limit < 0:
+        return False
+    dataset = latest_dataset(db, project.id)
+    if dataset is None:
+        return False
+    return dataset.row_count > limit
+
+
+def sync_training_row_limit() -> int:
+    raw = os.getenv("TABLEX_AUTONOMY_SYNC_TRAINING_ROW_LIMIT", str(DEFAULT_SYNC_TRAINING_ROW_LIMIT)).strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return DEFAULT_SYNC_TRAINING_ROW_LIMIT
+
+
+def queue_experiment_training_jobs(
+    db: Session,
+    *,
+    project: Project,
+    state: AutonomousLoopState,
+    spec: EvaluationSpec,
+    split: SplitManifest,
+) -> None:
+    common_policy = {
+        "network": "disabled",
+        "secret_access": "forbidden",
+        "connector_credentials": "not_materialized",
+        "evaluation_spec_id": spec.id,
+        "split_manifest_id": split.id,
+        "queued_by": "autonomous_loop",
+    }
+    baseline_job = create_job(
+        db,
+        job_type="run_baseline",
+        project_id=project.id,
+        input_payload={"evaluation_spec_id": spec.id, "split_manifest_id": split.id},
+        policy=common_policy,
+        priority=70,
+    )
+    model_job = create_job(
+        db,
+        job_type="train_model_candidates",
+        project_id=project.id,
+        input_payload={
+            "requested_models": ["xgboost", "logistic_regression", "lightgbm"],
+            "normalized_models": ["xgboost", "logistic_regression", "lightgbm"],
+            "unsupported_models": [],
+            "evaluation_spec_id": spec.id,
+            "split_manifest_id": split.id,
+        },
+        policy=common_policy,
+        priority=65,
+    )
+    state.created_job_ids.extend([baseline_job.id, model_job.id])
+    state.record(
+        "experiment_loop",
+        "queued",
+        "Queued model training instead of blocking the Start request. Training Worker activity will track progress.",
+        entity_ids={"job_ids": [baseline_job.id, model_job.id], "evaluation_spec_id": spec.id, "split_manifest_id": split.id},
+    )
+    state.record(
+        "baseline_run",
+        "queued",
+        "Queued the adaptive local baseline under the approved EvaluationSpec and SplitManifest.",
+        entity_ids={"job_id": baseline_job.id},
+    )
+    state.record(
+        "model_candidates",
+        "queued",
+        "Queued XGBoost, LogisticRegression, and LightGBM candidate training for the local worker.",
+        entity_ids={"job_id": model_job.id},
+    )
 
 
 def run_runner_handoff(
@@ -687,6 +814,30 @@ def run_runner_handoff(
         )
         return
 
+    if runner_mode == RUNNER_MODE_CODEX_IF_AVAILABLE:
+        codex_job = create_job(
+            db,
+            job_type="run_planned_agent_task_codex",
+            project_id=project.id,
+            input_payload={"agent_task_contract_artifact_id": plan.artifact.id},
+            policy={
+                "network": "harness_only",
+                "secret_access": "forbidden_to_task",
+                "connector_credentials": "not_materialized",
+                "runner": "codex_cli",
+                "approval_mode": "autonomous_loop",
+            },
+            priority=75,
+        )
+        state.created_job_ids.append(codex_job.id)
+        state.record(
+            "codex_execution",
+            "queued",
+            "Queued Codex execution so the Start request can return immediately while Agent Activity tracks the runner.",
+            entity_ids={"job_id": codex_job.id, "agent_task_contract_artifact_id": plan.artifact.id},
+        )
+        return
+
     try:
         result = run_planned_agent_task_codex_cli(
             db,
@@ -704,6 +855,7 @@ def run_runner_handoff(
             boundary="Resolve runner readiness or Codex execution blocker.",
         )
         return
+    experiment_run_id = experiment_run_id_from_runner_result(result.experiment_ingestion)
     state.runner_result = {
         "status": result.agent_result.status,
         "final_message": result.agent_result.final_message,
@@ -711,7 +863,7 @@ def run_runner_handoff(
         "evidence_id": result.evidence_id,
         "workspace_artifact_id": result.workspace_artifact_id,
         "readiness_status": result.readiness_status,
-        "experiment_run_id": result.experiment_ingestion.run.id if result.experiment_ingestion.run else None,
+        "experiment_run_id": experiment_run_id,
     }
     if task_type == "target_definition_review":
         ingest_codex_target_definition_proposal(
@@ -729,9 +881,18 @@ def run_runner_handoff(
         entity_ids={
             "report_id": result.report_id,
             "evidence_id": result.evidence_id,
-            "experiment_run_id": result.experiment_ingestion.run.id if result.experiment_ingestion.run else "",
+            "experiment_run_id": experiment_run_id or "",
         },
     )
+
+
+def experiment_run_id_from_runner_result(experiment_ingestion: Any) -> str | None:
+    experiment_run_id = getattr(experiment_ingestion, "experiment_run_id", None)
+    if isinstance(experiment_run_id, str):
+        return experiment_run_id
+    run = getattr(experiment_ingestion, "run", None)
+    run_id = getattr(run, "id", None)
+    return run_id if isinstance(run_id, str) else None
 
 
 def ingest_codex_target_definition_proposal(
