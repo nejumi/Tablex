@@ -205,7 +205,7 @@ const englishMessages = {
   userAvatarUseCandidate: "Use this avatar",
   userAvatarPromptRequired: "Enter an avatar prompt first.",
   userAvatarGenerationHint:
-    "Uses the backend image-generation bridge. Credentials stay backend-only, and candidates are not saved until you choose one.",
+    "Uses the backend Codex image bridge by default. API credentials are only needed for an optional backend API provider, and candidates are not saved until you choose one.",
   userAvatarNoCandidates: "No generated candidates yet.",
   intervention: "Intervention",
   models: "Models",
@@ -457,7 +457,7 @@ const japaneseMessages: LocaleMessages = {
   userAvatarUseCandidate: "このアイコンを使う",
   userAvatarPromptRequired: "先にアイコン生成プロンプトを入力してください。",
   userAvatarGenerationHint:
-    "バックエンドの画像生成bridgeを使います。credentialはブラウザへ渡さず、候補は選ぶまで保存しません。",
+    "既定ではバックエンドのCodex画像生成bridgeを使います。API credentialは任意のbackend API provider用で、候補は選ぶまで保存しません。",
   userAvatarNoCandidates: "生成候補はまだありません。",
   intervention: "介入",
   models: "モデル",
