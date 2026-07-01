@@ -4514,8 +4514,12 @@ td {
 }
 
 .agent-worker-topline strong {
+  min-width: 0;
   color: var(--text-strong);
   font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-worker-topline span {
@@ -4536,6 +4540,36 @@ td {
 .agent-worker-topline span.waiting {
   background: color-mix(in srgb, var(--warning) 12%, var(--surface));
   color: var(--text-strong);
+}
+
+.agent-worker-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.agent-worker-cancel {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted-strong);
+  cursor: pointer;
+}
+
+.agent-worker-cancel:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  color: var(--danger);
+}
+
+.agent-worker-cancel:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .agent-worker-card p {

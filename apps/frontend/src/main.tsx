@@ -276,6 +276,7 @@ const englishMessages = {
   cumulativeTokens: "Task total",
   telemetryEstimate: "estimate until runner telemetry",
   telemetryWaiting: "waiting for local worker",
+  workerCancelLabel: "Cancel job",
   workerStatusQueued: "Waiting",
   workerStatusRunning: "Running",
   workerStatusApproval: "Approval",
@@ -545,6 +546,7 @@ const japaneseMessages: LocaleMessages = {
   cumulativeTokens: "累積",
   telemetryEstimate: "runner telemetryが入るまで推定",
   telemetryWaiting: "local worker待ち",
+  workerCancelLabel: "キャンセル",
   workerStatusQueued: "Waiting",
   workerStatusRunning: "Running",
   workerStatusApproval: "Approval",
@@ -3358,7 +3360,7 @@ function ProjectDetail({
               utility_model: userSettings.utilityModel
             })
       });
-      const workerEvents = workerEventsFromJob(job);
+      const workerEvents = workerEventsFromJob(job, Date.now());
       const assistantMessage =
         typeof job.output.assistant_message === "string"
           ? job.output.assistant_message
@@ -3382,6 +3384,24 @@ function ProjectDetail({
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
       setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: message }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelWorkerJob(jobId: string): Promise<void> {
+    if (jobId.startsWith("local-")) return;
+    setBusy(true);
+    setError(null);
+    setAgentWorkerEvents((current) => current.filter((event) => event.job_id !== jobId));
+    try {
+      await api<Job>(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+      await refreshAgentActivity();
+      await refresh();
+      await onProjectChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      await refreshAgentActivity();
     } finally {
       setBusy(false);
     }
@@ -3461,6 +3481,7 @@ function ProjectDetail({
           activity={agentActivity}
           tick={activityTick}
           onWorkerMessage={submitAgentChatWithoutResponse}
+          onCancelWorker={cancelWorkerJob}
         />
       {tab === "Home" && (
         <HomeTab
@@ -4951,7 +4972,8 @@ function AgentActivityRail({
   events,
   activity,
   tick,
-  onWorkerMessage
+  onWorkerMessage,
+  onCancelWorker
 }: {
   text: LocaleMessages;
   jobs: Job[];
@@ -4959,11 +4981,12 @@ function AgentActivityRail({
   activity: AgentActivityResponse | null;
   tick: number;
   onWorkerMessage: (message: string) => Promise<void>;
+  onCancelWorker: (jobId: string) => Promise<void>;
 }) {
   const workerEvents = React.useMemo(() => {
     const now = Date.now() + tick;
     const fromActivity = activity?.workers ?? [];
-    const fromJobs = jobs.flatMap((job) => workerEventsFromJob(job));
+    const fromJobs = jobs.flatMap((job) => workerEventsFromJob(job, now));
     const merged = [...fromJobs, ...events, ...fromActivity];
     const byKey = new Map<string, AgentWorkerEvent>();
     merged.forEach((event) => {
@@ -5000,6 +5023,7 @@ function AgentActivityRail({
               text={text}
               tick={tick}
               onWorkerMessage={onWorkerMessage}
+              onCancelWorker={onCancelWorker}
             />
           ))}
         </div>
@@ -5012,14 +5036,17 @@ function AgentWorkerCard({
   event,
   text,
   tick,
-  onWorkerMessage
+  onWorkerMessage,
+  onCancelWorker
 }: {
   event: AgentWorkerEvent;
   text: LocaleMessages;
   tick: number;
   onWorkerMessage: (message: string) => Promise<void>;
+  onCancelWorker: (jobId: string) => Promise<void>;
 }) {
   const [draft, setDraft] = React.useState("");
+  const [cancelling, setCancelling] = React.useState(false);
   const displaySeries = animatedTokenSeries(event, tick);
   const maxTokens = Math.max(...displaySeries.map((point) => point.tokens), 1);
   const currentTokens = displaySeries[displaySeries.length - 1]?.tokens ?? 0;
@@ -5031,6 +5058,7 @@ function AgentWorkerCard({
   const summary = description?.summary || event.detail;
   const elapsedFrom = event.started_at ?? event.created_at ?? event.updated_at ?? null;
   const elapsed = elapsedFrom ? formatElapsed(Date.parse(elapsedFrom), Date.now() + tick) : "-";
+  const canCancel = canCancelWorkerEvent(event);
 
   async function submit(eventSubmit: React.FormEvent) {
     eventSubmit.preventDefault();
@@ -5040,11 +5068,34 @@ function AgentWorkerCard({
     await onWorkerMessage(`[worker:${event.worker_id}] ${value}`);
   }
 
+  async function cancel() {
+    if (!canCancel || cancelling) return;
+    setCancelling(true);
+    try {
+      await onCancelWorker(event.job_id);
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   return (
     <section className={`agent-worker-card ${event.status} ${isLive ? "active" : ""} ${isWaiting ? "waiting" : ""}`}>
       <div className="agent-worker-topline">
         <strong>{event.display_name}</strong>
-        <span className={isLive ? "live" : isWaiting ? "waiting" : ""}>{workerStatusLabel(event.status, text)}</span>
+        <div className="agent-worker-actions">
+          <span className={isLive ? "live" : isWaiting ? "waiting" : ""}>{workerStatusLabel(event.status, text)}</span>
+          {canCancel ? (
+            <button
+              className="agent-worker-cancel"
+              disabled={cancelling}
+              onClick={() => void cancel()}
+              title={text.workerCancelLabel}
+              type="button"
+            >
+              {cancelling ? <Loader2 className="spin" size={13} /> : <X size={14} />}
+            </button>
+          ) : null}
+        </div>
       </div>
       <p>{title}</p>
       <small>{summary}</small>
@@ -5142,8 +5193,55 @@ function isRunningWorkerStatus(status: string) {
   return isLiveWorkerStatus(status) || isWaitingWorkerStatus(status);
 }
 
-function isActiveWorkerEvent(event: AgentWorkerEvent) {
-  return Boolean(event.active) && isRunningWorkerStatus(event.status);
+const QUEUED_WORKER_ACTIVITY_TTL_MS = 30 * 60 * 1000;
+const TRANSIENT_WORKER_ACTIVITY_TTL_MS = 15 * 1000;
+const FINISHED_WORKER_ACTIVITY_TTL_MS = 9 * 1000;
+
+function isTerminalWorkerStatus(status: string) {
+  return ["succeeded", "failed", "cancelled", "timed_out"].includes(status);
+}
+
+function timestampAgeMs(value: string | null | undefined, now: number): number | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return now - timestamp;
+}
+
+function isRecentTimestamp(value: string | null | undefined, now: number, ttlMs: number) {
+  const ageMs = timestampAgeMs(value, now);
+  return ageMs !== null && ageMs >= 0 && ageMs < ttlMs;
+}
+
+function isActiveWorkerEventAt(event: AgentWorkerEvent, now: number) {
+  if (!event.active || !isRunningWorkerStatus(event.status)) return false;
+  if (event.status === "queued") {
+    return isRecentTimestamp(event.created_at ?? event.updated_at, now, QUEUED_WORKER_ACTIVITY_TTL_MS);
+  }
+  return true;
+}
+
+function jobActiveForActivity(job: Job, now: number = Date.now()) {
+  if (job.status === "running" || job.status === "approval_required") return true;
+  if (job.status === "queued") return isRecentTimestamp(job.created_at, now, QUEUED_WORKER_ACTIVITY_TTL_MS);
+  return false;
+}
+
+function eventActiveForActivity(
+  status: string,
+  explicitActive: boolean | undefined,
+  createdAt: string | undefined,
+  now: number
+) {
+  if (status === "running" || status === "approval_required") return explicitActive !== false;
+  if (status === "queued") {
+    return explicitActive !== false && isRecentTimestamp(createdAt, now, QUEUED_WORKER_ACTIVITY_TTL_MS);
+  }
+  return false;
+}
+
+function canCancelWorkerEvent(event: AgentWorkerEvent) {
+  return !event.job_id.startsWith("local-") && !isTerminalWorkerStatus(event.status);
 }
 
 function hasLiveAgentOrModelActivity(
@@ -5151,19 +5249,25 @@ function hasLiveAgentOrModelActivity(
   events: AgentWorkerEvent[],
   activity: AgentActivityResponse | null
 ) {
+  const now = Date.now();
   const allEvents = [...events, ...(activity?.workers ?? [])];
-  return allEvents.some(isActiveWorkerEvent) || jobs.some((job) => !isTerminalJob(job));
+  return allEvents.some((event) => isActiveWorkerEventAt(event, now)) || jobs.some((job) => jobActiveForActivity(job, now));
 }
 
 function isVisibleWorkerEvent(event: AgentWorkerEvent, now: number) {
   const timestamp = Date.parse(event.updated_at ?? event.created_at ?? "");
-  if (event.job_id.startsWith("local-") && Number.isFinite(timestamp) && now - timestamp > 15000) return false;
-  if (isLiveWorkerStatus(event.status)) return true;
-  if (isWaitingWorkerStatus(event.status)) {
-    if (isActiveWorkerEvent(event)) return true;
-    return Number.isFinite(timestamp) && now - timestamp < 15000;
+  if (event.job_id.startsWith("local-") && Number.isFinite(timestamp) && now - timestamp > TRANSIENT_WORKER_ACTIVITY_TTL_MS) {
+    return false;
   }
-  return Number.isFinite(timestamp) && now - timestamp < 9000;
+  if (isLiveWorkerStatus(event.status)) {
+    if (isActiveWorkerEventAt(event, now)) return true;
+    return Number.isFinite(timestamp) && now - timestamp < TRANSIENT_WORKER_ACTIVITY_TTL_MS;
+  }
+  if (isWaitingWorkerStatus(event.status)) {
+    if (isActiveWorkerEventAt(event, now)) return true;
+    return Number.isFinite(timestamp) && now - timestamp < TRANSIENT_WORKER_ACTIVITY_TTL_MS;
+  }
+  return Number.isFinite(timestamp) && now - timestamp < FINISHED_WORKER_ACTIVITY_TTL_MS;
 }
 
 function compareWorkerEvents(left: AgentWorkerEvent, right: AgentWorkerEvent) {
@@ -5295,11 +5399,11 @@ function defaultJobHumanDescription(job: Job): RequiredHumanDescription | null {
   return null;
 }
 
-function workerEventsFromJob(job: Job): AgentWorkerEvent[] {
+function workerEventsFromJob(job: Job, now: number = Date.now()): AgentWorkerEvent[] {
   const outputEvents = job.output.worker_events;
   if (Array.isArray(outputEvents)) {
     return outputEvents
-      .map((event, index) => coerceWorkerEvent(event, job, index))
+      .map((event, index) => coerceWorkerEvent(event, job, index, now))
       .filter((event): event is AgentWorkerEvent => event !== null);
   }
   if (isTerminalJob(job)) {
@@ -5319,7 +5423,7 @@ function workerEventsFromJob(job: Job): AgentWorkerEvent[] {
       created_at: job.created_at,
       updated_at: job.updated_at,
       started_at: job.started_at,
-      active: isRunningWorkerStatus(job.status),
+      active: jobActiveForActivity(job, now),
       human_description: jobHumanDescription(job),
       token_usage: {
         source: job.status === "queued" ? "estimated_waiting_for_worker" : "estimated_until_runner_telemetry",
@@ -5330,9 +5434,12 @@ function workerEventsFromJob(job: Job): AgentWorkerEvent[] {
   ];
 }
 
-function coerceWorkerEvent(raw: unknown, job: Job, index: number): AgentWorkerEvent | null {
+function coerceWorkerEvent(raw: unknown, job: Job, index: number, now: number = Date.now()): AgentWorkerEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
+  const status = typeof record.status === "string" ? record.status : job.status;
+  const createdAt = typeof record.created_at === "string" ? record.created_at : job.created_at;
+  const explicitActive = typeof record.active === "boolean" ? record.active : undefined;
   const usage = record.token_usage;
   const series =
     usage && typeof usage === "object" && Array.isArray((usage as Record<string, unknown>).series)
@@ -5343,7 +5450,7 @@ function coerceWorkerEvent(raw: unknown, job: Job, index: number): AgentWorkerEv
   return {
     worker_id: typeof record.worker_id === "string" ? record.worker_id : `worker-${index}`,
     display_name: typeof record.display_name === "string" ? record.display_name : workerDisplayName(job.job_type),
-    status: typeof record.status === "string" ? record.status : job.status,
+    status,
     headline: typeof record.headline === "string" ? record.headline : jobHeadline(job),
     detail: typeof record.detail === "string" ? record.detail : jobHumanDescription(job).summary,
     job_id: typeof record.job_id === "string" ? record.job_id : job.id,
@@ -5351,13 +5458,10 @@ function coerceWorkerEvent(raw: unknown, job: Job, index: number): AgentWorkerEv
     project_id: typeof record.project_id === "string" ? record.project_id : job.project_id,
     project_name: typeof record.project_name === "string" ? record.project_name : null,
     target_tab: typeof record.target_tab === "string" ? record.target_tab : targetTabForJob(job.job_type),
-    created_at: typeof record.created_at === "string" ? record.created_at : job.created_at,
+    created_at: createdAt,
     updated_at: typeof record.updated_at === "string" ? record.updated_at : job.updated_at,
     started_at: typeof record.started_at === "string" ? record.started_at : job.started_at,
-    active:
-      typeof record.active === "boolean" && isRunningWorkerStatus(typeof record.status === "string" ? record.status : job.status)
-        ? record.active
-        : isRunningWorkerStatus(job.status),
+    active: eventActiveForActivity(status, explicitActive ?? jobActiveForActivity(job, now), createdAt, now),
     human_description: coerceHumanDescription(record.human_description) ?? jobHumanDescription(job),
     token_usage: {
       source:
