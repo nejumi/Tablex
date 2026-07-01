@@ -501,6 +501,8 @@ def continue_autonomous_session_handler(db: Session, job: Job, store: LocalArtif
         agent_model=payload.get("agent_model") if isinstance(payload.get("agent_model"), str) else None,
         utility_model=payload.get("utility_model") if isinstance(payload.get("utility_model"), str) else None,
     )
+    created_job_ids = output.get("created_job_ids") if isinstance(output.get("created_job_ids"), list) else []
+    next_delay_seconds = 15 if created_job_ids else 300
     next_job = queue_autonomous_session_continuation(
         db,
         project=project,
@@ -509,7 +511,7 @@ def continue_autonomous_session_handler(db: Session, job: Job, store: LocalArtif
         exclude_job_id=job.id,
         runner_mode=runner_mode,
         locale=locale,
-        run_after_seconds=15,
+        run_after_seconds=next_delay_seconds,
     )
     if next_job is not None:
         output["session_continuation_job_id"] = next_job.id
