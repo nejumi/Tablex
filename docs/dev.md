@@ -373,7 +373,7 @@ curl -X POST http://localhost:8000/api/portal/ideas \
 
 Project detail pages include a "Back to Portal" affordance so users are not trapped inside one project workspace.
 
-The top-right User Settings icon stores local workbench preferences in browser `localStorage`. Display theme supports Light and Dark through `document.documentElement.dataset.theme`. Language settings are LocalePack-based rather than a fixed language enum: built-in packs are `en-US` and `ja-JP`, and any missing locale can be added as a local dynamic pack that falls back to English for untranslated keys. App shell, tabs, common actions, create-project controls, settings, and persistent Agent Chat copy are LocalePack-driven. Creating a localization task from settings posts `task_type=generate_locale_pack` to `/api/projects/{project_id}/approach/agent-task-plan`; it produces a harness-owned AgentTaskContract and must not include secrets or connector credentials.
+The top-right User Settings icon stores local workbench preferences in browser `localStorage`. Display theme supports Light and Dark through `document.documentElement.dataset.theme`. Language settings are LocalePack-based rather than a fixed language enum: built-in packs are `en-US` and `ja-JP`, and any missing locale can be added as a local dynamic pack that falls back to English for untranslated keys. App shell, tabs, common actions, create-project controls, settings, and persistent Agent Chat copy are LocalePack-driven. Creating a localization task from settings posts `task_type=generate_locale_pack` to `/api/projects/{project_id}/approach/agent-task-plan`; it produces a harness-owned AgentTaskContract and must not include secrets or connector credentials. User avatar upload is browser-local, while prompt-based avatar candidate generation calls `/api/user/avatar-candidates` through the backend so image API credentials never reach the browser; generated candidates are not stored until the user chooses one.
 
 Locale scope is intentionally tiered:
 
@@ -452,6 +452,9 @@ export APP_DISPLAY_NAME=Tablex
 export HARNESS_DATA_DIR=data
 export HARNESS_DATABASE_URL=sqlite:///data/metadata/app.db
 export HARNESS_ARTIFACT_ROOT=data/artifacts
+export OPENAI_API_KEY=...              # optional, backend-only avatar image generation
+export TABLEX_AVATAR_IMAGE_MODEL=gpt-image-2
+export TABLEX_AVATAR_IMAGE_QUALITY=low
 ```
 
 ## Frontend

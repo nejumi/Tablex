@@ -3725,6 +3725,11 @@ td {
   min-width: 0;
 }
 
+.settings-panel .settings-avatar-row .chat-avatar {
+  width: 48px;
+  height: 48px;
+}
+
 .avatar-upload-button {
   position: relative;
   overflow: hidden;
@@ -3735,6 +3740,47 @@ td {
   inset: 0;
   opacity: 0;
   cursor: pointer;
+}
+
+.avatar-candidate-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.avatar-candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.avatar-candidate-button {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-strong);
+  padding: 8px;
+  text-align: center;
+}
+
+.avatar-candidate-button:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.avatar-candidate-button img {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--surface-muted);
+}
+
+.avatar-candidate-button span {
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .segmented-control {
@@ -3977,8 +4023,8 @@ td {
   display: inline-grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 42px;
+  height: 42px;
   border: 1px solid var(--border);
   border-radius: 50%;
   background: var(--surface-muted);

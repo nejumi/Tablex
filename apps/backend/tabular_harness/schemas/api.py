@@ -138,6 +138,22 @@ class TranslationCreate(BaseModel):
     source_locale: str = Field(default="en-US", min_length=2, max_length=64)
 
 
+class AvatarCandidateCreate(BaseModel):
+    prompt: str = Field(min_length=1, max_length=1200)
+    count: int = Field(default=3, ge=1, le=4)
+
+
+class AvatarCandidateRead(BaseModel):
+    id: str
+    data_url: str
+    model: str
+    revised_prompt: str | None = None
+
+
+class AvatarCandidateResponse(BaseModel):
+    candidates: list[AvatarCandidateRead]
+
+
 class TranslationRead(BaseModel):
     source_type: str
     source_id: str

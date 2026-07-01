@@ -27,6 +27,7 @@ import {
   Search,
   Send,
   Settings as SettingsIcon,
+  Sparkles,
   Sun,
   Upload,
   UserCircle,
@@ -50,6 +51,13 @@ type UserSettings = {
   utilityModel: string;
   chatSubmitShortcut: ChatSubmitShortcutSetting;
   userAvatarDataUrl: string | null;
+};
+
+type AvatarCandidate = {
+  id: string;
+  data_url: string;
+  model: string;
+  revised_prompt: string | null;
 };
 
 const userSettingsStorageKey = "tablex.userSettings.v1";
@@ -188,6 +196,16 @@ const englishMessages = {
   uploadUserAvatar: "Upload avatar",
   clearUserAvatar: "Reset avatar",
   userAvatarHint: "Stored locally in this browser. The default avatar is used when no image is selected.",
+  generateUserAvatar: "Generate avatar candidates",
+  userAvatarPrompt: "Avatar prompt",
+  userAvatarPromptPlaceholder: "e.g. a calm data scientist with teal glasses, friendly and minimal",
+  userAvatarGenerate: "Generate candidates",
+  userAvatarGenerating: "Generating candidates",
+  userAvatarCandidates: "Avatar candidates",
+  userAvatarUseCandidate: "Use this avatar",
+  userAvatarGenerationHint:
+    "Uses the backend image-generation connector when OPENAI_API_KEY is configured. Candidates are not saved until you choose one.",
+  userAvatarNoCandidates: "No generated candidates yet.",
   intervention: "Intervention",
   models: "Models",
   agentModel: "Agent model",
@@ -429,6 +447,16 @@ const japaneseMessages: LocaleMessages = {
   uploadUserAvatar: "アイコンをアップロード",
   clearUserAvatar: "アイコンをリセット",
   userAvatarHint: "このブラウザのlocal設定に保存します。画像がない場合はデフォルトアイコンを使います。",
+  generateUserAvatar: "アイコン候補を生成",
+  userAvatarPrompt: "アイコン生成プロンプト",
+  userAvatarPromptPlaceholder: "例: 落ち着いたデータサイエンティスト、ティール色の眼鏡、親しみやすくミニマル",
+  userAvatarGenerate: "候補を生成",
+  userAvatarGenerating: "候補を生成中",
+  userAvatarCandidates: "アイコン候補",
+  userAvatarUseCandidate: "このアイコンを使う",
+  userAvatarGenerationHint:
+    "バックエンドの画像生成connectorを使います。OPENAI_API_KEYが設定されている場合に候補を生成し、選ぶまで保存しません。",
+  userAvatarNoCandidates: "生成候補はまだありません。",
   intervention: "介入",
   models: "モデル",
   agentModel: "Agent用モデル",
@@ -2057,6 +2085,15 @@ function App() {
     await refreshProjects();
   }
 
+  async function generateAvatarCandidates(prompt: string): Promise<AvatarCandidate[]> {
+    const response = await api<{ candidates: AvatarCandidate[] }>("/api/user/avatar-candidates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, count: 3 })
+    });
+    return response.candidates;
+  }
+
   function ensureDynamicLocale(localeInput: string) {
     const nextPack = createDynamicLocalePack(localeInput);
     setDynamicLocalePacks((current) => {
@@ -2155,6 +2192,7 @@ function App() {
             onEnsureDynamicLocale={ensureDynamicLocale}
             onClose={() => setSettingsOpen(false)}
             onCreateLocalizationTask={createLocalizationTask}
+            onGenerateAvatarCandidates={generateAvatarCandidates}
           />
         ) : null}
         {error ? <div className="banner danger">{error}</div> : null}
@@ -2407,7 +2445,8 @@ function UserSettingsPanel({
   onChange,
   onEnsureDynamicLocale,
   onClose,
-  onCreateLocalizationTask
+  onCreateLocalizationTask,
+  onGenerateAvatarCandidates
 }: {
   settings: UserSettings;
   text: LocaleMessages;
@@ -2417,8 +2456,12 @@ function UserSettingsPanel({
   onEnsureDynamicLocale: (localeInput: string) => void;
   onClose: () => void;
   onCreateLocalizationTask: (settings: UserSettings) => Promise<void>;
+  onGenerateAvatarCandidates: (prompt: string) => Promise<AvatarCandidate[]>;
 }) {
   const [busy, setBusy] = React.useState(false);
+  const [avatarBusy, setAvatarBusy] = React.useState(false);
+  const [avatarPrompt, setAvatarPrompt] = React.useState("");
+  const [avatarCandidates, setAvatarCandidates] = React.useState<AvatarCandidate[]>([]);
   const [status, setStatus] = React.useState<string | null>(null);
 
   function update(patch: Partial<UserSettings>) {
@@ -2472,6 +2515,22 @@ function UserSettingsPanel({
     reader.readAsDataURL(file);
   }
 
+  async function generateAvatars() {
+    const prompt = avatarPrompt.trim();
+    if (!prompt) return;
+    setAvatarBusy(true);
+    setStatus(null);
+    try {
+      const candidates = await onGenerateAvatarCandidates(prompt);
+      setAvatarCandidates(candidates);
+      setStatus(`${text.userAvatarCandidates}: ${candidates.length}`);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
   return (
     <aside className="settings-panel" aria-label={text.settings}>
       <div className="settings-panel-header">
@@ -2511,6 +2570,20 @@ function UserSettingsPanel({
           {text.addDynamicLocale}
         </button>
         <p className="settings-hint">{text.localeFallbackHint}</p>
+        <label>
+          <span>{text.dynamicLanguageRequest}</span>
+          <textarea
+            value={settings.dynamicLanguageRequest}
+            onChange={(event) => update({ dynamicLanguageRequest: event.target.value })}
+            placeholder={text.localizationRequestPlaceholder}
+            rows={4}
+          />
+        </label>
+        <p className="settings-hint">{text.localizationTaskHint}</p>
+        <button className="primary-button" disabled={busy} onClick={() => void createTask()} type="button">
+          {busy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
+          {text.createLocalizationTask}
+        </button>
       </div>
 
       <div className="settings-section">
@@ -2558,6 +2631,52 @@ function UserSettingsPanel({
           </div>
         </div>
         <p className="settings-hint">{text.userAvatarHint}</p>
+        <label>
+          <span>{text.userAvatarPrompt}</span>
+          <textarea
+            value={avatarPrompt}
+            onChange={(event) => setAvatarPrompt(event.target.value)}
+            placeholder={text.userAvatarPromptPlaceholder}
+            rows={3}
+          />
+        </label>
+        <button
+          className="primary-button"
+          disabled={avatarBusy || !avatarPrompt.trim()}
+          onClick={() => void generateAvatars()}
+          type="button"
+        >
+          {avatarBusy ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />}
+          {avatarBusy ? text.userAvatarGenerating : text.userAvatarGenerate}
+        </button>
+        <p className="settings-hint">{text.userAvatarGenerationHint}</p>
+        <div className="avatar-candidate-panel">
+          <div className="settings-label-row">
+            <span>{text.userAvatarCandidates}</span>
+            <strong>{avatarCandidates.length ? `${avatarCandidates.length}` : "-"}</strong>
+          </div>
+          {avatarCandidates.length ? (
+            <div className="avatar-candidate-grid">
+              {avatarCandidates.map((candidate) => (
+                <button
+                  className="avatar-candidate-button"
+                  key={candidate.id}
+                  onClick={() => {
+                    update({ userAvatarDataUrl: candidate.data_url });
+                    setStatus(text.userAvatarUseCandidate);
+                  }}
+                  title={candidate.revised_prompt ?? text.userAvatarUseCandidate}
+                  type="button"
+                >
+                  <img src={candidate.data_url} alt="" aria-hidden="true" />
+                  <span>{text.userAvatarUseCandidate}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="settings-hint">{text.userAvatarNoCandidates}</p>
+          )}
+        </div>
       </div>
 
       <div className="settings-section">
@@ -2640,24 +2759,7 @@ function UserSettingsPanel({
         </label>
         <p className="settings-hint">{text.chatSubmitShortcutHint}</p>
       </div>
-
-      <div className="settings-section">
-        <label>
-          <span>{text.dynamicLanguageRequest}</span>
-          <textarea
-            value={settings.dynamicLanguageRequest}
-            onChange={(event) => update({ dynamicLanguageRequest: event.target.value })}
-            placeholder={text.localizationRequestPlaceholder}
-            rows={4}
-          />
-        </label>
-        <p className="settings-hint">{text.localizationTaskHint}</p>
-        <button className="primary-button" disabled={busy} onClick={() => void createTask()}>
-          {busy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
-          {text.createLocalizationTask}
-        </button>
-        {status ? <div className="settings-status">{status}</div> : null}
-      </div>
+      {status ? <div className="settings-status">{status}</div> : null}
     </aside>
   );
 }

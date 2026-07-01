@@ -57,6 +57,8 @@ from tabular_harness.schemas import (
     AssumptionRead,
     AssumptionReviewQueueRead,
     AutonomyStartCreate,
+    AvatarCandidateCreate,
+    AvatarCandidateResponse,
     BenchmarkDatasetRead,
     BenchmarkFixtureRequest,
     BenchmarkFixtureResponse,
@@ -146,6 +148,10 @@ from tabular_harness.services.asset_library import (
 )
 from tabular_harness.services.assumption_review import build_assumption_review_queue
 from tabular_harness.services.autonomy import run_autonomous_loop_tick
+from tabular_harness.services.avatar_generation import (
+    AvatarGenerationError,
+    generate_user_avatar_candidates,
+)
 from tabular_harness.services.baseline import (
     create_baseline_strategy_plan,
     normalize_model_candidate_name,
@@ -293,6 +299,29 @@ def app_config(request: Request) -> dict[str, str]:
     return {
         "app_display_name": str(settings.app_display_name),
         "architecture_name": "Tabular-first Prediction Meta-Harness",
+    }
+
+
+@router.post("/api/user/avatar-candidates", response_model=AvatarCandidateResponse)
+def generate_avatar_candidates(payload: AvatarCandidateCreate) -> dict[str, Any]:
+    try:
+        candidates = generate_user_avatar_candidates(
+            prompt=payload.prompt,
+            count=payload.count,
+            user="tablex-user-avatar",
+        )
+    except AvatarGenerationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return {
+        "candidates": [
+            {
+                "id": candidate.id,
+                "data_url": candidate.data_url,
+                "model": candidate.model,
+                "revised_prompt": candidate.revised_prompt,
+            }
+            for candidate in candidates
+        ]
     }
 
 
