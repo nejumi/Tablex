@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,10 @@ class CodexCompositionResult:
     prompt_preamble: list[str] | None = None
     command: str | None = None
     timeout_seconds: int | None = None
+    exit_code: int | None = None
+    duration_ms: int | None = None
+    stdout_tail: str | None = None
+    stderr_tail: str | None = None
 
 
 def compose_agent_chat_response(
@@ -69,6 +74,10 @@ def compose_agent_chat_response(
                     "command": codex_response.command,
                     "prompt_preamble": codex_response.prompt_preamble,
                     "timeout_seconds": codex_response.timeout_seconds,
+                    "exit_code": codex_response.exit_code,
+                    "duration_ms": codex_response.duration_ms,
+                    "stdout_tail": codex_response.stdout_tail,
+                    "stderr_tail": codex_response.stderr_tail,
                 },
             )
         brief["composer_warning"] = codex_response.failure_reason or "Codex CLI response composition was unavailable."
@@ -85,6 +94,10 @@ def compose_agent_chat_response(
                     "command": codex_response.command,
                     "prompt_preamble": codex_response.prompt_preamble,
                     "timeout_seconds": codex_response.timeout_seconds,
+                    "exit_code": codex_response.exit_code,
+                    "duration_ms": codex_response.duration_ms,
+                    "stdout_tail": codex_response.stdout_tail,
+                    "stderr_tail": codex_response.stderr_tail,
                 },
             )
 
@@ -193,6 +206,7 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
             "",
         ]
         prompt = "\n".join(prompt_preamble + [json.dumps(brief, ensure_ascii=False, indent=2, sort_keys=True)])
+        command_summary = "codex exec --sandbox read-only --output-last-message response.txt -"
         cmd = [
             "codex",
             "exec",
@@ -205,6 +219,7 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
             "--skip-git-repo-check",
             "-",
         ]
+        started_at = time.perf_counter()
         try:
             completed = subprocess.run(
                 cmd,
@@ -216,32 +231,42 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
                 check=False,
             )
         except subprocess.TimeoutExpired:
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
             return CodexCompositionResult(
                 message=None,
                 status="timeout",
                 failure_reason="Codex CLI response composition timed out.",
                 prompt_preamble=prompt_preamble,
-                command="codex exec --sandbox read-only --output-last-message response.txt -",
+                command=command_summary,
                 timeout_seconds=timeout_seconds,
+                duration_ms=duration_ms,
             )
         except OSError as exc:
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
             return CodexCompositionResult(
                 message=None,
                 status="os_error",
                 failure_reason=str(exc),
                 prompt_preamble=prompt_preamble,
-                command="codex exec --sandbox read-only --output-last-message response.txt -",
+                command=command_summary,
                 timeout_seconds=timeout_seconds,
+                duration_ms=duration_ms,
             )
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        stdout_tail = completed.stdout[-4000:] if completed.stdout else ""
+        stderr_tail = completed.stderr[-4000:] if completed.stderr else ""
         if completed.returncode != 0:
-            stderr_tail = completed.stderr[-1200:] if completed.stderr else ""
             return CodexCompositionResult(
                 message=None,
                 status="failed",
-                failure_reason=stderr_tail or f"Codex CLI exited with {completed.returncode}.",
+                failure_reason=stderr_tail[-1200:] or f"Codex CLI exited with {completed.returncode}.",
                 prompt_preamble=prompt_preamble,
-                command="codex exec --sandbox read-only --output-last-message response.txt -",
+                command=command_summary,
                 timeout_seconds=timeout_seconds,
+                exit_code=completed.returncode,
+                duration_ms=duration_ms,
+                stdout_tail=stdout_tail,
+                stderr_tail=stderr_tail,
             )
         if not response_path.exists():
             return CodexCompositionResult(
@@ -249,8 +274,12 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
                 status="missing_output",
                 failure_reason="Codex CLI did not write a response file.",
                 prompt_preamble=prompt_preamble,
-                command="codex exec --sandbox read-only --output-last-message response.txt -",
+                command=command_summary,
                 timeout_seconds=timeout_seconds,
+                exit_code=completed.returncode,
+                duration_ms=duration_ms,
+                stdout_tail=stdout_tail,
+                stderr_tail=stderr_tail,
             )
         message = response_path.read_text(encoding="utf-8").strip()
         if not message:
@@ -259,15 +288,23 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
                 status="empty_output",
                 failure_reason="Codex CLI returned an empty response.",
                 prompt_preamble=prompt_preamble,
-                command="codex exec --sandbox read-only --output-last-message response.txt -",
+                command=command_summary,
                 timeout_seconds=timeout_seconds,
+                exit_code=completed.returncode,
+                duration_ms=duration_ms,
+                stdout_tail=stdout_tail,
+                stderr_tail=stderr_tail,
             )
         return CodexCompositionResult(
             message=message[:4000],
             status="succeeded",
             prompt_preamble=prompt_preamble,
-            command="codex exec --sandbox read-only --output-last-message response.txt -",
+            command=command_summary,
             timeout_seconds=timeout_seconds,
+            exit_code=completed.returncode,
+            duration_ms=duration_ms,
+            stdout_tail=stdout_tail,
+            stderr_tail=stderr_tail,
         )
 
 

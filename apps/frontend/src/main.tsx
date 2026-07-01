@@ -29,6 +29,7 @@ import {
   Settings as SettingsIcon,
   Sun,
   Upload,
+  UserCircle,
   X
 } from "lucide-react";
 import "./styles.css";
@@ -48,6 +49,7 @@ type UserSettings = {
   agentModel: string;
   utilityModel: string;
   chatSubmitShortcut: ChatSubmitShortcutSetting;
+  userAvatarDataUrl: string | null;
 };
 
 const userSettingsStorageKey = "tablex.userSettings.v1";
@@ -61,7 +63,8 @@ const defaultUserSettings: UserSettings = {
   interventionCountdownSeconds: 15,
   agentModel: "codex-default",
   utilityModel: "utility-default",
-  chatSubmitShortcut: "locale_default"
+  chatSubmitShortcut: "locale_default",
+  userAvatarDataUrl: null
 };
 
 const englishMessages = {
@@ -180,6 +183,11 @@ const englishMessages = {
   appearance: "Appearance",
   lightTheme: "Light",
   darkTheme: "Dark",
+  userProfile: "User profile",
+  userAvatar: "User avatar",
+  uploadUserAvatar: "Upload avatar",
+  clearUserAvatar: "Reset avatar",
+  userAvatarHint: "Stored locally in this browser. The default avatar is used when no image is selected.",
   intervention: "Intervention",
   models: "Models",
   agentModel: "Agent model",
@@ -416,6 +424,11 @@ const japaneseMessages: LocaleMessages = {
   appearance: "表示",
   lightTheme: "Light",
   darkTheme: "Dark",
+  userProfile: "ユーザープロフィール",
+  userAvatar: "ユーザーアイコン",
+  uploadUserAvatar: "アイコンをアップロード",
+  clearUserAvatar: "アイコンをリセット",
+  userAvatarHint: "このブラウザのlocal設定に保存します。画像がない場合はデフォルトアイコンを使います。",
   intervention: "介入",
   models: "モデル",
   agentModel: "Agent用モデル",
@@ -602,7 +615,11 @@ function loadUserSettings(): UserSettings {
           : defaultUserSettings.utilityModel,
       chatSubmitShortcut: isChatSubmitShortcutSetting(parsed.chatSubmitShortcut)
         ? parsed.chatSubmitShortcut
-        : defaultUserSettings.chatSubmitShortcut
+        : defaultUserSettings.chatSubmitShortcut,
+      userAvatarDataUrl:
+        typeof parsed.userAvatarDataUrl === "string" && parsed.userAvatarDataUrl.startsWith("data:image/")
+          ? parsed.userAvatarDataUrl
+          : null
     };
   } catch {
     return defaultUserSettings;
@@ -2427,6 +2444,32 @@ function UserSettingsPanel({
     }
   }
 
+  function updateAvatar(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setStatus("Choose an image file.");
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      setStatus("Choose an image under 1 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (!result.startsWith("data:image/")) {
+        setStatus("Could not read this image.");
+        return;
+      }
+      update({ userAvatarDataUrl: result });
+      setStatus(text.userAvatar);
+    };
+    reader.onerror = () => setStatus("Could not read this image.");
+    reader.readAsDataURL(file);
+  }
+
   return (
     <aside className="settings-panel" aria-label={text.settings}>
       <div className="settings-panel-header">
@@ -2491,6 +2534,28 @@ function UserSettingsPanel({
             {text.darkTheme}
           </button>
         </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-label-row">
+          <span>{text.userProfile}</span>
+          <strong>{text.userAvatar}</strong>
+        </div>
+        <div className="settings-avatar-row">
+          <UserAvatar src={settings.userAvatarDataUrl} />
+          <div className="settings-avatar-actions">
+            <label className="secondary-button avatar-upload-button">
+              <Upload size={15} />
+              {text.uploadUserAvatar}
+              <input accept="image/*" type="file" onChange={updateAvatar} />
+            </label>
+            <button className="secondary-button" type="button" onClick={() => update({ userAvatarDataUrl: null })}>
+              <X size={15} />
+              {text.clearUserAvatar}
+            </button>
+          </div>
+        </div>
+        <p className="settings-hint">{text.userAvatarHint}</p>
       </div>
 
       <div className="settings-section">
@@ -3159,6 +3224,7 @@ function ProjectDetail({
           text={text}
           messages={visibleAgentChatMessages}
           submitShortcut={resolveChatSubmitShortcut(userSettings)}
+          userAvatarSrc={userSettings.userAvatarDataUrl}
           latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
           tableeMotionState={tableeMotionState}
           onSubmitAgentChat={submitAgentChatWithoutResponse}
@@ -3354,6 +3420,7 @@ function HomeTab({
   text,
   messages,
   submitShortcut,
+  userAvatarSrc,
   latestContract,
   tableeMotionState,
   onSubmitAgentChat,
@@ -3385,6 +3452,7 @@ function HomeTab({
   text: LocaleMessages;
   messages: AgentChatMessage[];
   submitShortcut: ChatSubmitShortcut;
+  userAvatarSrc: string | null;
   latestContract: Artifact | null;
   tableeMotionState: TableeMotionState;
   onSubmitAgentChat: (objective: string) => Promise<void>;
@@ -3413,7 +3481,7 @@ function HomeTab({
   const [agentViewMode, setAgentViewMode] = React.useState<"chat" | "raw">("chat");
   const ideaFindingItems = buildIdeaFindingItems(ideas, insights);
   const equippedSkills = equippedSkillItems(projectAssetReferences, libraryAssets);
-  const rawAgentEvents = buildRawAgentEvents(messages, jobs, latestContract);
+  const rawAgentEvents = buildRawAgentEvents(messages);
 
   return (
     <div className="mission-home stack">
@@ -3587,6 +3655,7 @@ function HomeTab({
               text={text}
               messages={messages}
               submitShortcut={submitShortcut}
+              userAvatarSrc={userAvatarSrc}
               latestContract={latestContract}
               tableeMotionState={tableeMotionState}
               onSubmit={onSubmitAgentChat}
@@ -3855,11 +3924,7 @@ function equippedSkillItems(references: AssetReference[], assets: LibraryAsset[]
     .filter((item): item is EquippedSkillItem => item !== null);
 }
 
-function buildRawAgentEvents(
-  messages: AgentChatMessage[],
-  jobs: Job[],
-  latestContract: Artifact | null
-): RawAgentEvent[] {
+function buildRawAgentEvents(messages: AgentChatMessage[]): RawAgentEvent[] {
   const now = new Date().toISOString();
   const turns = buildAgentConversationTurns(messages).slice(-8);
   const chatEvents = turns.flatMap((turn, index) => {
@@ -3881,28 +3946,34 @@ function buildRawAgentEvents(
       const promptPreamble = Array.isArray(turn.assistant.responseComposer?.prompt_preamble)
         ? turn.assistant.responseComposer.prompt_preamble.join("\n")
         : null;
+      const command = textField(turn.assistant.responseComposer?.command);
+      const stdoutTail = textField(turn.assistant.responseComposer?.stdout_tail);
+      const stderrTail = textField(turn.assistant.responseComposer?.stderr_tail);
       const isCodexCli = composerMode === "codex_cli";
       events.push({
         id: `raw-assistant-${index}-${turn.assistant.id ?? turn.assistant.text.slice(0, 18)}`,
         timestamp: turn.assistant.createdAt ?? turn.createdAt ?? now,
-        source: isCodexCli || composerStatus === "pending" ? "Codex" : "Harness support",
+        source: "Codex",
         level: composerStatus,
         title:
           composerStatus === "pending"
             ? "Codex is composing a reply"
             : isCodexCli
-              ? "Raw Codex reply"
-              : "Codex reply was unavailable",
+              ? "Codex exec transcript"
+              : "Codex unavailable",
         body: turn.assistant.text,
         details: [
+          ...(command ? [{ label: "Codex command", value: command }] : []),
           ...(promptPreamble
             ? [{ label: "Codex prompt preamble", value: promptPreamble }]
             : []),
           ...(turn.assistant.responseBrief
-            ? [{ label: "Exact brief passed to Codex", value: turn.assistant.responseBrief }]
+            ? [{ label: "Exact prompt brief passed to Codex", value: turn.assistant.responseBrief }]
             : []),
+          ...(stdoutTail ? [{ label: "Codex stdout", value: stdoutTail }] : []),
+          ...(stderrTail ? [{ label: "Codex stderr", value: stderrTail }] : []),
           ...(turn.assistant.responseComposer
-            ? [{ label: "Composer status", value: turn.assistant.responseComposer }]
+            ? [{ label: "Codex run metadata", value: turn.assistant.responseComposer }]
             : []),
           ...(turn.assistant.actions?.length
             ? [{ label: "Harness sidecar actions", value: turn.assistant.actions }]
@@ -3922,47 +3993,7 @@ function buildRawAgentEvents(
     }
     return events;
   });
-  const jobEvents = jobs.filter((job) => !isTerminalJob(job)).slice(0, 4).map((job) => ({
-    id: `job-${job.id}`,
-    timestamp: job.updated_at,
-    source: "Harness support",
-    level: job.status,
-    title: `Active runner sidecar: ${job.job_type.replace(/_/g, " ")}`,
-    body: job.error_message ?? latestJobHeadline(job),
-    details: [
-      { label: "Job input", value: job.input },
-      { label: "Job output", value: job.output },
-      { label: "Execution policy", value: job.policy }
-    ],
-    payload: {
-      job_id: job.id,
-      status: job.status,
-      input: job.input,
-      output: job.output,
-      error_message: job.error_message,
-      approval_required: job.approval_required
-    }
-  }));
-  const contractEvents = latestContract
-    ? [
-        {
-          id: `contract-${latestContract.id}`,
-          timestamp: latestContract.created_at,
-          source: "Harness support",
-          level: "available",
-          title: "Latest AgentTaskContract packaged for Codex",
-          body: latestContract.name,
-          details: [{ label: "Artifact metadata", value: latestContract.metadata }],
-          payload: {
-            artifact_id: latestContract.id,
-            name: latestContract.name,
-            version: latestContract.version,
-            metadata: latestContract.metadata
-          }
-        }
-      ]
-    : [];
-  return [...chatEvents, ...jobEvents, ...contractEvents].sort(
+  return chatEvents.sort(
     (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
   );
 }
@@ -4176,7 +4207,7 @@ function AgentChatSummaryCard({
         detail: "Open the surface Tablex selected for this response."
       }
     : null;
-  const needsReview = summary.what_needs_review.slice(0, 3);
+  const needsReview = Array.isArray(summary.what_needs_review) ? summary.what_needs_review.slice(0, 3) : [];
   return (
     <div className="agent-chat-summary">
       {summaryAction ? (
@@ -4261,10 +4292,6 @@ function RawAgentStream({
                   <pre>{rawDetailText(detail.value)}</pre>
                 </details>
               ))}
-              <details className="raw-agent-detail compact">
-                <summary>Stored harness record</summary>
-                <pre>{rawDetailText(event.payload)}</pre>
-              </details>
             </div>
           ))
         ) : (
@@ -4298,13 +4325,45 @@ function rawDetailText(value: unknown): string {
   }
 }
 
+function UserAvatar({ src }: { src: string | null }) {
+  if (src) {
+    return <img className="chat-avatar user-avatar" src={src} alt="" aria-hidden="true" />;
+  }
+  return (
+    <span className="chat-avatar user-avatar default" aria-hidden="true">
+      <UserCircle size={23} />
+    </span>
+  );
+}
+
+function TableeAvatar({
+  state,
+  active
+}: {
+  state: TableeMotionState;
+  active: boolean;
+}) {
+  return (
+    <img
+      src="/mascot/tablee-avatar.svg"
+      alt=""
+      aria-hidden="true"
+      className={`chat-avatar tablee-avatar ${active ? "is-working" : state !== "idle" ? `is-${state}` : ""}`}
+    />
+  );
+}
+
 function AgentConversationTurnCard({
   turn,
   text,
+  userAvatarSrc,
+  tableeMotionState,
   onActionOpen
 }: {
   turn: AgentConversationTurn;
   text: LocaleMessages;
+  userAvatarSrc: string | null;
+  tableeMotionState: TableeMotionState;
   onActionOpen: (action: AgentChatAction) => void;
 }) {
   const assistant = turn.assistant;
@@ -4321,51 +4380,67 @@ function AgentConversationTurnCard({
       !["pending", "running", "queued", "in_progress"].includes(composerStatus)
   );
   return (
-    <article className={`agent-turn-card ${isActiveAgentTurn(turn) ? "is-active" : ""}`}>
-      <div className="agent-turn-head">
-        <span className={statusClass}>{outcome.replace(/_/g, " ")}</span>
-        <small>{turn.createdAt ? formatDate(turn.createdAt) : text.chatTurnStatus}</small>
-      </div>
+    <article className={`agent-turn-card ${active ? "is-active" : ""}`}>
       {turn.user ? (
-        <section className="agent-turn-section user">
-          <span>{text.youAsked}</span>
-          <p>{turn.user.text}</p>
+        <section className="chat-message-row user">
+          <div className="chat-message-stack">
+            <div className="chat-message-meta">
+              <span>{text.youAsked}</span>
+              <small>{turn.createdAt ? formatDate(turn.createdAt) : text.chatTurnStatus}</small>
+            </div>
+            <div className="chat-bubble user">
+              <p>{turn.user.text}</p>
+            </div>
+          </div>
+          <UserAvatar src={userAvatarSrc} />
         </section>
       ) : null}
       {assistant ? (
-        <section className="agent-turn-section assistant">
-          <span>{text.tableeAnswered}</span>
-          <div className="agent-turn-response">
-            {assistant.text.split("\n").map((line, index) => (
-              <p key={`${index}-${line}`}>{line}</p>
-            ))}
-          </div>
-          {assistant.actionSummary ? (
-            <AgentChatSummaryCard summary={assistant.actionSummary} text={text} onActionOpen={onActionOpen} />
-          ) : null}
-          {visibleActions.length ? (
-            <div className="agent-turn-actions">
-              {visibleActions.map((action) => (
-                <button
-                  className="agent-chat-action-button"
-                  key={`${action.type}-${action.label}`}
-                  onClick={() => onActionOpen(action)}
-                  type="button"
-                >
-                  <span>{action.status.replace(/_/g, " ")}</span>
-                  <strong>{action.label}</strong>
-                  <small>{agentChatActionLabel(action, text)}</small>
-                </button>
+        <section className="chat-message-row assistant">
+          <TableeAvatar state={tableeMotionState} active={active} />
+          <div className="chat-message-stack">
+            <div className="chat-message-meta">
+              <span>{text.tableeAnswered}</span>
+              <small className={statusClass}>{outcome.replace(/_/g, " ")}</small>
+            </div>
+            <div className="chat-bubble assistant">
+              {assistant.text.split("\n").map((line, index) => (
+                <p key={`${index}-${line}`}>{line}</p>
               ))}
             </div>
-          ) : null}
-          {showComposerProblem ? <small className="agent-turn-brief">{text.chatBriefAvailable}</small> : null}
+            {assistant.actionSummary ? (
+              <AgentChatSummaryCard summary={assistant.actionSummary} text={text} onActionOpen={onActionOpen} />
+            ) : null}
+            {visibleActions.length ? (
+              <div className="agent-turn-actions">
+                {visibleActions.map((action) => (
+                  <button
+                    className="agent-chat-action-button"
+                    key={`${action.type}-${action.label}`}
+                    onClick={() => onActionOpen(action)}
+                    type="button"
+                  >
+                    <span>{action.status.replace(/_/g, " ")}</span>
+                    <strong>{action.label}</strong>
+                    <small>{agentChatActionLabel(action, text)}</small>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {showComposerProblem ? <small className="agent-turn-brief">{text.chatBriefAvailable}</small> : null}
+          </div>
         </section>
       ) : (
-        <section className="agent-turn-section assistant">
-          <span>{text.tableeAnswered}</span>
-          <div className="agent-turn-response">
-            <p>{text.agentReplyPending}</p>
+        <section className="chat-message-row assistant">
+          <TableeAvatar state={tableeMotionState} active />
+          <div className="chat-message-stack">
+            <div className="chat-message-meta">
+              <span>{text.tableeAnswered}</span>
+              <small className="badge">{text.agentReplyPending}</small>
+            </div>
+            <div className="chat-bubble assistant">
+              <p>{text.agentReplyPending}</p>
+            </div>
           </div>
         </section>
       )}
@@ -4378,6 +4453,7 @@ function AgentChatDock({
   text,
   messages,
   submitShortcut,
+  userAvatarSrc,
   latestContract,
   tableeMotionState,
   onSubmit,
@@ -4387,6 +4463,7 @@ function AgentChatDock({
   text: LocaleMessages;
   messages: AgentChatMessage[];
   submitShortcut: ChatSubmitShortcut;
+  userAvatarSrc: string | null;
   latestContract: Artifact | null;
   tableeMotionState: TableeMotionState;
   onSubmit: (objective: string) => Promise<void>;
@@ -4423,12 +4500,6 @@ function AgentChatDock({
     <div className="agent-chat-dock">
       <div className="agent-chat-header">
         <div className="agent-chat-heading">
-          <img
-            src="/mascot/tablee-avatar.svg"
-            alt=""
-            aria-hidden="true"
-            className={`agent-chat-avatar ${tableeMotionState !== "idle" || busy ? `is-${busy ? "working" : tableeMotionState}` : ""}`}
-          />
           <div>
             <div className="agent-chat-title">
               <MessageSquare size={16} />
@@ -4460,13 +4531,27 @@ function AgentChatDock({
               </summary>
               <div className="agent-chat-history-list">
                 {olderTurns.map((turn) => (
-                  <AgentConversationTurnCard key={turn.id} turn={turn} text={text} onActionOpen={onActionOpen} />
+                  <AgentConversationTurnCard
+                    key={turn.id}
+                    turn={turn}
+                    text={text}
+                    userAvatarSrc={userAvatarSrc}
+                    tableeMotionState={tableeMotionState}
+                    onActionOpen={onActionOpen}
+                  />
                 ))}
               </div>
             </details>
           ) : null}
           {recentTurns.map((turn) => (
-            <AgentConversationTurnCard key={turn.id} turn={turn} text={text} onActionOpen={onActionOpen} />
+            <AgentConversationTurnCard
+              key={turn.id}
+              turn={turn}
+              text={text}
+              userAvatarSrc={userAvatarSrc}
+              tableeMotionState={tableeMotionState}
+              onActionOpen={onActionOpen}
+            />
           ))}
         </div>
       ) : null}
@@ -11739,6 +11824,34 @@ function LoadingBlock({ label }: { label: string }) {
   );
 }
 
+class WorkbenchErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { message: string | null }
+> {
+  state = { message: null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { message: error instanceof Error ? error.message : String(error) };
+  }
+
+  render() {
+    if (this.state.message) {
+      return (
+        <div className="fatal-error">
+          <img src="/mascot/tablee-empty.svg" alt="" aria-hidden="true" className="empty-state-mascot" />
+          <h1>Tablex could not render this view.</h1>
+          <p>{this.state.message}</p>
+          <button className="primary-button" type="button" onClick={() => window.location.reload()}>
+            <RefreshCw size={16} />
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function formatBytes(value: number | null) {
   if (value === null) return "-";
   if (value === 0) return "0 B";
@@ -11750,6 +11863,8 @@ function formatBytes(value: number | null) {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <WorkbenchErrorBoundary>
+      <App />
+    </WorkbenchErrorBoundary>
   </React.StrictMode>
 );
