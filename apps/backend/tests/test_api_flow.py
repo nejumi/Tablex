@@ -11,12 +11,15 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 from tabular_harness.core.config import Settings
 from tabular_harness.main import create_app
-from tabular_harness.models.entities import Job, Project, Question, utc_now
+from tabular_harness.models.entities import Artifact, Job, Project, Question, utc_now
 from tabular_harness.schemas import AgentResult
+from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.jobs import acquire_next_job, create_job
 from tabular_harness.worker.jobs import continue_autonomous_session_handler
+from tabular_harness.worker.runner import SyncWorker
 
 
 def make_client(tmp_path: Path) -> TestClient:
@@ -143,10 +146,57 @@ def test_agent_activity_does_not_show_future_autonomous_heartbeat_as_active(tmp_
     assert activity["workers"][0]["run_after"]
 
 
-def test_autonomous_continuation_backs_off_after_recent_codex_failure(tmp_path: Path) -> None:
+def test_agent_activity_does_not_count_heartbeat_waiting_on_active_codex_runner(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
-    project_response = client.post("/api/projects", json={"name": "Runner failure backoff"})
+    project_response = client.post("/api/projects", json={"name": "Heartbeat with active runner"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        runner_job = create_job(
+            db,
+            job_type="run_planned_agent_task_codex",
+            project_id=project_id,
+            context={
+                "human_description": {
+                    "title": "Run Codex on the main objective",
+                    "summary": "Codex is doing the autonomous data-science work.",
+                }
+            },
+        )
+        runner_job.status = "running"
+        runner_job.locked_by = "test-worker"
+        runner_job.started_at = utc_now()
+        create_job(
+            db,
+            job_type="continue_autonomous_session",
+            project_id=project_id,
+            input_payload={"active_child_job_ids_at_schedule_time": [runner_job.id]},
+            context={
+                "human_description": {
+                    "title": "Continue the main Full Auto session",
+                    "summary": "Heartbeat waiting for Codex to return control.",
+                }
+            },
+            run_after=utc_now() - timedelta(seconds=1),
+        )
+        db.commit()
+
+    activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
+    assert activity_response.status_code == 200
+    activity = activity_response.json()
+    assert activity["active_count"] == 1
+    workers_by_type = {worker["job_type"]: worker for worker in activity["workers"]}
+    assert workers_by_type["run_planned_agent_task_codex"]["active"] is True
+    assert workers_by_type["continue_autonomous_session"]["active"] is False
+
+
+def test_autonomous_continuation_does_not_backoff_after_recent_codex_failure(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Runner failure no backoff"})
     assert project_response.status_code == 200
     project_id = project_response.json()["id"]
 
@@ -176,15 +226,11 @@ def test_autonomous_continuation_backs_off_after_recent_codex_failure(tmp_path: 
         db.flush()
 
         output = continue_autonomous_session_handler(db, continuation_job, app.state.artifact_store)
-        assert output["status"] == "runner_backoff"
-        assert output["recent_failed_codex_job_id"] == failed_job.id
+        assert output["status"] in {"advanced", "waiting_for_data"}
+        assert output.get("recent_failed_codex_job_id") is None
+        assert output.get("status") != "runner_backoff"
         assert output["session_continuation_job_id"]
-        created_codex_jobs = [
-            job
-            for job in db.query(Job).filter_by(project_id=project_id, job_type="run_planned_agent_task_codex")
-            if job.id != failed_job.id
-        ]
-        assert created_codex_jobs == []
+        assert failed_job.status == "failed"
 
 
 def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: Path) -> None:
@@ -224,8 +270,10 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
     assert output["next_human_boundary"]
     assert output["interventions"]
     assert output["interventions"][0]["kind"] == "target_definition"
+    target_step = next(step for step in output["steps"] if step["label"] == "target_definition")
+    assert target_step["status"] == "delegated_to_codex"
     evaluation_step = next(step for step in output["steps"] if step["label"] == "evaluation_spec")
-    assert evaluation_step["status"] == "approved"
+    assert evaluation_step["status"] == "deferred"
 
     artifacts = client.get(f"/api/projects/{project_id}/artifacts").json()
     asset_types = {artifact["asset_type"] for artifact in artifacts}
@@ -235,7 +283,7 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
     assert "agent_workspace_manifest" in asset_types
 
     contract_steps = [step for step in output["steps"] if step["label"] == "agent_task_contract"]
-    assert contract_steps[-1]["entity_ids"]["task_type"] == "autonomous_session"
+    assert contract_steps[-1]["entity_ids"]["task_type"] == "target_definition_review"
 
 
 def test_worker_acquire_handles_sqlite_naive_run_after(tmp_path: Path) -> None:
@@ -261,6 +309,64 @@ def test_worker_acquire_handles_sqlite_naive_run_after(tmp_path: Path) -> None:
         acquired = acquire_next_job(db, worker_id="timezone-test-worker", job_types={"continue_autonomous_session"})
         assert acquired is not None
         assert acquired.id == created_id
+
+
+def test_sync_worker_marks_failed_after_handler_transaction_error(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Worker rollback"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    session_factory = app.state.session_factory
+    with session_factory() as db:
+        job = create_job(db, job_type="profile_dataset", project_id=project_id)
+        job_id = job.id
+        db.commit()
+
+    def broken_handler(db: Any, job: Job, store: LocalArtifactStore) -> dict[str, object]:
+        del store
+        duplicate_a = Artifact(
+            id="art_duplicate_a",
+            project_id=job.project_id,
+            asset_type="duplicate_test",
+            name="same",
+            version=1,
+            uri="local://a",
+            content_hash="a",
+        )
+        duplicate_b = Artifact(
+            id="art_duplicate_b",
+            project_id=job.project_id,
+            asset_type="duplicate_test",
+            name="same",
+            version=1,
+            uri="local://b",
+            content_hash="b",
+        )
+        db.add_all([duplicate_a, duplicate_b])
+        try:
+            db.flush()
+        except IntegrityError as exc:
+            raise RuntimeError("simulated handler transaction failure") from exc
+        return {"unexpected": True}
+
+    worker = SyncWorker(
+        handlers={"profile_dataset": broken_handler},
+        store=cast(Any, app).state.artifact_store,
+        worker_id="rollback-test-worker",
+    )
+    with session_factory() as db:
+        job = db.get(Job, job_id)
+        assert job is not None
+        result = worker.run_job(db, job)
+        assert result.status == "failed"
+        assert "simulated handler transaction failure" in (result.error_message or "")
+
+    with session_factory() as db:
+        recovered = db.get(Job, job_id)
+        assert recovered is not None
+        assert recovered.status == "failed"
 
 
 def test_full_auto_start_queues_training_for_large_dataset_boundary(
@@ -396,7 +502,7 @@ def test_full_auto_passes_readiness_constraints_to_main_codex_session(
     assert stub_job["output"]["readiness_status"] == "ready_with_constraints"
 
 
-def test_full_auto_infers_target_from_training_table_not_sample_submission(
+def test_full_auto_delegates_target_definition_to_codex_without_harness_target_heuristics(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -433,18 +539,19 @@ def test_full_auto_infers_target_from_training_table_not_sample_submission(
     assert job_response.status_code == 200
     output = job_response.json()["output"]
     labels = {step["label"]: step for step in output["steps"]}
-    assert labels["target_definition"]["status"] == "adopted_with_assumption"
-    assert labels["target_definition"]["entity_ids"]["target_column"] == "TARGET"
-    assert labels["target_definition"]["entity_ids"]["dataset_snapshot_id"] == train_upload.json()["dataset_snapshot"]["id"]
-    assert output["interventions"][0]["target_column"] == "TARGET"
-    assert output["interventions"][0]["source_ref"] == "application_train.csv"
+    assert train_upload.json()["dataset_snapshot"]["id"]
+    assert labels["target_definition"]["status"] == "delegated_to_codex"
+    assert "target_column" not in labels["target_definition"]["entity_ids"]
+    assert output["interventions"][0]["kind"] == "target_definition"
+    assert output["interventions"][0]["target_column"] is None
+    assert output["interventions"][0]["fallback_policy"] == "infer_and_continue"
     jobs = client.get(f"/api/projects/{project_id}/jobs").json()
     created_job_types = {job["job_type"] for job in jobs if job["id"] in output["created_job_ids"]}
     assert "run_planned_agent_task_codex" in created_job_types
 
     project = client.get(f"/api/projects/{project_id}").json()
-    assert project["target_column"] == "TARGET"
-    assert project["task_type"] == "binary_classification"
+    assert project["target_column"] is None
+    assert project["task_type"] is None
 
 
 def test_full_auto_codex_target_proposal_drives_evaluation_and_runs(tmp_path: Path, monkeypatch: Any) -> None:

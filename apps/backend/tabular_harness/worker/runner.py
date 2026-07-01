@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from tabular_harness.models.entities import Job
@@ -28,6 +28,7 @@ class SyncWorker:
     worker_id: str = "local-worker"
 
     def run_job(self, db: Session, job: Job) -> Job:
+        job_id = job.id
         handler = self.handlers.get(job.job_type)
         if handler is None:
             mark_job_failed(job, f"No handler registered for {job.job_type}")
@@ -45,8 +46,16 @@ class SyncWorker:
         except OperationalError:
             db.rollback()
         except Exception as exc:
-            mark_job_failed(job, str(exc))
-            db.commit()
+            db.rollback()
+            failed_job = db.get(Job, job_id)
+            if failed_job is None:
+                return job
+            mark_job_failed(failed_job, str(exc))
+            try:
+                db.commit()
+            except SQLAlchemyError:
+                db.rollback()
+            return failed_job
         return job
 
     def run_next_job(self, db: Session) -> Job | None:

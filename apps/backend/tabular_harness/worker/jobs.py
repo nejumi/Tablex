@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from datetime import timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.config import get_settings
@@ -35,7 +33,6 @@ from tabular_harness.services.planned_agent_execution import run_planned_agent_t
 from tabular_harness.worker.runner import JobHandler, SyncWorker
 
 INITIAL_JOB_TYPES = tuple(sorted(JOB_TYPES))
-CODEX_RUNNER_FAILURE_BACKOFF_SECONDS = 180
 
 
 def stub_job_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
@@ -393,6 +390,8 @@ def run_planned_agent_task_codex_handler(db: Session, job: Job, store: LocalArti
         "agent_status": result.agent_result.status,
         "agent_final_message": result.agent_result.final_message,
         "agent_failure_reason": result.agent_result.failure_reason,
+        "agent_give_up_reason": result.agent_result.give_up_reason,
+        "required_next_inputs": result.agent_result.required_next_inputs,
         "codex_cli": result.agent_result.outputs.get("codex_cli") if isinstance(result.agent_result.outputs, dict) else None,
         "agent_workspace_manifest_artifact_id": result.workspace_artifact_id,
         "agent_task_readiness_review_artifact_id": result.readiness_artifact_id,
@@ -493,36 +492,6 @@ def continue_autonomous_session_handler(db: Session, job: Job, store: LocalArtif
                 )
             ],
         }
-    failed_codex_job = recent_failed_codex_session_job(db, project.id)
-    if failed_codex_job is not None:
-        next_job = queue_autonomous_session_continuation(
-            db,
-            project=project,
-            reason="codex_runner_failure_backoff",
-            parent_job_id=job.id,
-            exclude_job_id=job.id,
-            runner_mode=runner_mode,
-            locale=locale,
-            run_after_seconds=CODEX_RUNNER_FAILURE_BACKOFF_SECONDS,
-        )
-        return {
-            "schema_version": "autonomous_session_continuation.v1",
-            "status": "runner_backoff",
-            "recent_failed_codex_job_id": failed_codex_job.id,
-            "session_continuation_job_id": next_job.id if next_job is not None else None,
-            "worker_events": [
-                autonomous_session_worker_event(
-                    job,
-                    project,
-                    status="succeeded",
-                    headline="Main session is backing off after a Codex runner failure",
-                    detail=(
-                        "Codex runner returned control with an infrastructure failure. "
-                        "Full Auto will retry the main session after a short backoff instead of tight-looping."
-                    ),
-                )
-            ],
-        }
     output = run_autonomous_loop_tick(
         db,
         store=store,
@@ -535,7 +504,7 @@ def continue_autonomous_session_handler(db: Session, job: Job, store: LocalArtif
         utility_model=payload.get("utility_model") if isinstance(payload.get("utility_model"), str) else None,
     )
     created_job_ids = output.get("created_job_ids") if isinstance(output.get("created_job_ids"), list) else []
-    next_delay_seconds = 15 if created_job_ids else 300
+    next_delay_seconds = 15 if created_job_ids else 60
     next_job = queue_autonomous_session_continuation(
         db,
         project=project,
@@ -550,29 +519,6 @@ def continue_autonomous_session_handler(db: Session, job: Job, store: LocalArtif
         output["session_continuation_job_id"] = next_job.id
     output["schema_version"] = "autonomous_session_continuation.v1"
     return output
-
-
-def recent_failed_codex_session_job(db: Session, project_id: str) -> Job | None:
-    cutoff = utc_now() - timedelta(seconds=CODEX_RUNNER_FAILURE_BACKOFF_SECONDS)
-    jobs = db.scalars(
-        select(Job)
-        .where(
-            Job.project_id == project_id,
-            Job.job_type == "run_planned_agent_task_codex",
-            Job.status == "failed",
-        )
-        .order_by(Job.updated_at.desc())
-        .limit(3)
-    ).all()
-    for failed_job in jobs:
-        updated_at = failed_job.updated_at
-        if updated_at.tzinfo is None:
-            updated_at = updated_at.replace(tzinfo=timezone.utc)
-        if updated_at >= cutoff:
-            return failed_job
-    return None
-
-
 def maybe_queue_autonomous_session_continuation(
     db: Session,
     *,

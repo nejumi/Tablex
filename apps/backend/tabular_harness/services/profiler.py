@@ -687,9 +687,9 @@ def render_understanding(
 ) -> str:
     leakage = profile["leakage_suspects"] or ["None detected by name heuristic"]
     target_line = (
-        f"Target column: `{profile['target_column']}`."
+        f"Supervised objective column: `{profile['target_column']}`."
         if profile["target_column"]
-        else "No target column was specified; profiling was still completed."
+        else "No supervised objective column was specified; profiling was still completed."
     )
     top_missing = sorted(profile["columns"], key=lambda item: item["missing_rate"], reverse=True)[:5]
     missing_lines = [

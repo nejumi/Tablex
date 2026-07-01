@@ -536,7 +536,7 @@ def _analysis_story_from_eda_review(db: Session, project: Project) -> dict[str, 
         "headline": _story_headline(summary.get("headline"), None, fallback="Read the latest Data Review."),
         "deck": (
             f"{int(summary.get('row_count') or 0):,} rows, {int(summary.get('column_count') or 0):,} columns, "
-            f"target {summary.get('target_column') or 'not selected'}."
+            f"objective {summary.get('target_column') or 'not selected'}."
         ),
         "why_this_story": (
             "The Data Review is harness-controlled DuckDB analysis with figures, findings, read order, and Codex prompts. "

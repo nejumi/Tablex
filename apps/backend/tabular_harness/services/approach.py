@@ -1405,7 +1405,7 @@ def build_research_sources(
             "source_type": "project_context",
             "title": "Project metadata",
             "ref": project.id,
-            "summary": "Task type, target column, current phase, and local harness context.",
+            "summary": "Task type, objective context, current phase, and local harness context.",
         },
         {
             "source_type": "skill_placeholder",

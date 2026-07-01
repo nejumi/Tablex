@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 from tabular_harness.agent import (
     CodexCliRunner,
@@ -31,7 +34,7 @@ def test_noop_agent_runner_validates_agent_result_schema(tmp_path: Path) -> None
         "required": ["task_id", "status", "final_message", "outputs", "artifacts", "warnings"],
         "properties": {
             "task_id": {"type": "string"},
-            "status": {"type": "string", "enum": ["succeeded", "failed", "needs_approval"]},
+            "status": {"type": "string", "enum": ["succeeded", "failed", "needs_approval", "gave_up"]},
             "final_message": {"type": "string"},
             "outputs": {"type": "object"},
             "artifacts": {"type": "array"},
@@ -95,7 +98,7 @@ def test_local_stub_agent_runner_emits_notebook_authoring_plan(tmp_path: Path) -
         "required": ["task_id", "status", "final_message", "outputs", "artifacts", "warnings"],
         "properties": {
             "task_id": {"type": "string"},
-            "status": {"type": "string", "enum": ["succeeded", "failed", "needs_approval"]},
+            "status": {"type": "string", "enum": ["succeeded", "failed", "needs_approval", "gave_up"]},
             "final_message": {"type": "string"},
             "outputs": {"type": "object"},
             "artifacts": {"type": "array"},
@@ -138,7 +141,7 @@ def test_codex_cli_runner_missing_binary_fails_schema_safely(tmp_path: Path) -> 
         "required": ["task_id", "status", "final_message", "outputs", "artifacts", "warnings"],
         "properties": {
             "task_id": {"type": "string"},
-            "status": {"type": "string", "enum": ["succeeded", "failed", "needs_approval"]},
+            "status": {"type": "string", "enum": ["succeeded", "failed", "needs_approval", "gave_up"]},
             "final_message": {"type": "string"},
             "outputs": {"type": "object"},
             "artifacts": {"type": "array"},
@@ -160,3 +163,77 @@ def test_codex_cli_runner_missing_binary_fails_schema_safely(tmp_path: Path) -> 
     assert result.status == "failed"
     assert result.outputs["runner"] == "codex_cli"
     assert result.failure_reason == "codex_binary_not_found"
+
+
+def test_codex_cli_runner_retries_without_cli_schema_when_codex_rejects_schema(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    contract = AgentTaskContract(
+        task_id="task_codex_retry",
+        task_type="target_definition_review",
+        project_id="p_001",
+        objective="Reason about the target from Tablex context.",
+        inputs={},
+        required_outputs=[AgentRequiredOutput(path="outputs/result.json", schema="schemas/agent_result.schema.json")],
+        quality_checks=["Return schema-valid AgentResult."],
+        forbidden_actions=["Do not read secrets."],
+    )
+    output_schema = {
+        "type": "object",
+        "required": ["task_id", "status", "final_message", "outputs", "artifacts", "warnings"],
+        "properties": {
+            "task_id": {"type": "string"},
+            "status": {"type": "string", "enum": ["succeeded", "failed", "needs_approval", "gave_up"]},
+            "final_message": {"type": "string"},
+            "outputs": {"type": "object"},
+            "artifacts": {"type": "array"},
+            "warnings": {"type": "array"},
+        },
+    }
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> Any:
+        commands.append(cmd)
+        if len(commands) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout='{"msg":{"type":"error","code":"invalid_json_schema"}}\n',
+                stderr="Invalid schema for response_format 'codex_output_schema'",
+            )
+        result_path = tmp_path / "outputs" / "result.json"
+        result_path.parent.mkdir(exist_ok=True)
+        result_path.write_text(
+            json.dumps(
+                {
+                    "task_id": "task_codex_retry",
+                    "status": "succeeded",
+                    "final_message": "Codex completed after Tablex stopped enforcing CLI output schema.",
+                    "outputs": {},
+                    "artifacts": [],
+                    "warnings": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout='{"msg":{"type":"done"}}\n', stderr="")
+
+    monkeypatch.setattr("tabular_harness.agent.runners.subprocess.run", fake_run)
+
+    result = CodexCliRunner(codex_binary="codex").run_task(
+        WorkspaceRef(project_id="p_001", path=str(tmp_path)),
+        contract,
+        output_schema,
+        ExecutionPolicy(),
+    )
+
+    assert result.status == "succeeded"
+    assert len(commands) == 2
+    assert "--output-schema" in commands[0]
+    assert "--output-schema" not in commands[1]
+    last_message_index = commands[1].index("--output-last-message") + 1
+    assert commands[1][last_message_index].endswith(".harness/codex_last_message.md")
+    assert commands[1][last_message_index] != str(tmp_path / "outputs" / "result.json")
+    assert result.outputs["codex_cli"]["schema_retry_without_output_schema"] is True
+    assert result.outputs["codex_cli"]["result_path"] == "outputs/result.json"
+    assert result.outputs["codex_cli"]["last_message_path"] == ".harness/codex_last_message.md"

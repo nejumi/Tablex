@@ -16,7 +16,7 @@ Reduce first-view cognitive load in the Data and Notebooks tabs while preserving
 
 - Added a Data Evidence focus surface after upload/import controls.
   - Shows dataset readiness, profile mode, quality status, relational evidence, rows, columns, profile count, quality artifact count, and one next action.
-  - Keeps target optional and does not force target selection before data understanding.
+  - Keeps objective definition optional and does not force objective selection before data understanding.
 - Collapsed detailed Data shelves.
   - Benchmark collection plans, benchmark catalog, public workflows, evidence packs, dataset snapshots, profile readiness, and source artifacts are now in a supporting shelf.
   - Benchmark scenarios, workflow results, quality gates, and quality previews are in a second supporting shelf.

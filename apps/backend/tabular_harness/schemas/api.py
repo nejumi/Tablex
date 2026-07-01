@@ -904,12 +904,14 @@ class AgentTaskContract(BaseModel):
 
 class AgentResult(BaseModel):
     task_id: str
-    status: Literal["succeeded", "failed", "needs_approval"]
+    status: Literal["succeeded", "failed", "needs_approval", "gave_up"]
     final_message: str
     outputs: dict[str, Any]
     artifacts: list[dict[str, Any]]
     warnings: list[str]
     failure_reason: str | None = None
+    give_up_reason: str | None = None
+    required_next_inputs: list[str] = Field(default_factory=list)
     patch_summary: str | None = None
     proposed_assumption_updates: list[dict[str, Any]] = Field(default_factory=list)
     proposed_evidence: list[dict[str, Any]] = Field(default_factory=list)

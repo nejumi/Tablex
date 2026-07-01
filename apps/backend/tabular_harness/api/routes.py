@@ -261,6 +261,7 @@ from tabular_harness.services.planned_agent_workspace import (
     prepare_workspace_from_contract_artifact,
 )
 from tabular_harness.services.portal import (
+    active_job_ids_for_activity,
     build_portal_overview,
     create_portal_idea,
     list_portal_ideas,
@@ -5644,7 +5645,12 @@ def get_project_agent_activity(project_id: str, db: Annotated[Session, Depends(g
             select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc()).limit(30)
         ).all()
     )
-    workers = [event for job in jobs for event in worker_events_from_job(job, project_name=project.name)]
+    active_job_ids = active_job_ids_for_activity(jobs)
+    workers = [
+        event
+        for job in jobs
+        for event in worker_events_from_job(job, project_name=project.name, active_job_ids=active_job_ids)
+    ]
     active_workers = [worker for worker in workers if worker.get("active")]
     return {
         "schema_version": "agent_activity.v1",

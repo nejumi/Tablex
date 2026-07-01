@@ -305,7 +305,7 @@ def agent_task_contract_label(task_type: str) -> str:
         "author_analysis_notebook": "Author a source-backed analysis notebook",
         "autonomous_session": "Continue the main autonomous session",
         "notebook_followup_diagnostics": "Materialize notebook diagnostics",
-        "target_definition_review": "Review target definition",
+        "target_definition_review": "Review prediction/task objective",
         "revise_evaluation_design": "Review evaluation design",
         "implement_prediction_approach": "Plan a project-specific approach",
     }
@@ -314,7 +314,7 @@ def agent_task_contract_label(task_type: str) -> str:
 
 def agent_task_contract_next_action(task_type: str) -> str:
     if task_type == "target_definition_review":
-        return "Run Codex against the prepared workspace so the target proposal comes from agent reasoning, not harness heuristics."
+        return "Run Codex against the prepared workspace so the prediction objective comes from agent reasoning, not harness heuristics."
     if task_type == "autonomous_session":
         return "Run Codex as the main long-running session, then ingest its artifacts, findings, code, report, and next recommendations."
     if task_type == "notebook_followup_diagnostics":
@@ -328,7 +328,10 @@ def agent_task_contract_next_action(task_type: str) -> str:
 
 def objective_summary_for_task(task_type: str, objective: str) -> str:
     if task_type == "target_definition_review":
-        return "Ask Codex to inspect the current data evidence and propose a target definition or target-construction plan."
+        return (
+            "Ask Codex to inspect the current data evidence and propose the prediction or analysis objective, "
+            "including supervised targets, constructed targets, unsupervised tasks, anomaly detection, inverse-problem workflows, or optimization-coupled objectives when appropriate."
+        )
     if task_type == "autonomous_session":
         return (
             "Continue the main autonomous data-science session: understand current evidence, choose the next useful "
@@ -408,16 +411,17 @@ def required_outputs_for_task(task_type: str) -> list[dict[str, str]]:
     if task_type == "target_definition_review":
         return [
             {
-                "path": "reports/target_definition_review.md",
+                "path": "reports/objective_definition_review.md",
                 "schema": "markdown_report.v1",
-                "description": "Human-readable review of plausible target definitions, prediction timing, risks, and recommended next move.",
+                "description": "Human-readable review of plausible prediction/task objectives, timing or decision semantics, risks, and recommended next move.",
             },
             {
                 "path": "artifacts/target_definition_proposal.json",
                 "schema": "target_definition_proposal.v1",
                 "description": (
                     "Structured Codex proposal. Expected in AgentResult.outputs.target_definition_proposal as well, "
-                    "with recommended_target, alternatives, evidence, risks, and unresolved questions."
+                    "with a recommended objective or target, alternatives, evidence, risks, and unresolved questions. "
+                    "The objective may be non-column, unsupervised, derived, aggregate, distributional, inverse-problem, or optimization-coupled."
                 ),
             },
             {
@@ -554,9 +558,9 @@ def quality_checks_for_task(task_type: str) -> list[str]:
         ]
     if task_type == "target_definition_review":
         return [
-            "Read the materialized data profile, semantic catalog, questions, assumptions, and EDA evidence before proposing a target.",
-            "Consider existing columns and derived or aggregate targets; do not assume a column name is sufficient evidence.",
-            "Explain prediction-time semantics, leakage risk, rejected alternatives, and what evidence would change the recommendation.",
+            "Read the materialized data profile, semantic catalog, questions, assumptions, and EDA evidence before proposing the objective.",
+            "Consider supervised targets, derived or aggregate objectives, unsupervised learning, anomaly detection, inverse-problem analysis, and optimization-coupled workflows; do not assume a column name is sufficient evidence.",
+            "Explain prediction-time, decision-time, or deployment semantics, leakage risk, rejected alternatives, and what evidence would change the recommendation.",
             "Write AgentResult.outputs.target_definition_proposal with a structured recommendation and alternatives.",
             "Do not train a model or mutate EvaluationSpec/SplitManifest in this task.",
         ]

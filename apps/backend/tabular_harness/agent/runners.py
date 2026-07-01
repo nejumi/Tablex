@@ -271,23 +271,33 @@ class CodexCliRunner(AgentRunner):
         schema_path.write_text(json.dumps(output_schema, indent=2, sort_keys=True), encoding="utf-8")
 
         result_path = workspace / "outputs" / "result.json"
+        last_message_path = harness_dir / "codex_last_message.md"
         (workspace / "outputs").mkdir(exist_ok=True)
-        cmd = [
-            self.codex_binary,
-            "exec",
-            "--cd",
-            str(workspace),
-            "--sandbox",
-            codex_sandbox(execution_policy.sandbox),
-            "--json",
-            "--output-schema",
-            str(schema_path),
-            "--output-last-message",
-            str(result_path),
-            "--skip-git-repo-check",
-            "-",
-        ]
         prompt = render_prompt(task_contract)
+
+        def build_command(*, include_output_schema: bool) -> list[str]:
+            cmd = [
+                self.codex_binary,
+                "exec",
+                "--cd",
+                str(workspace),
+                "--sandbox",
+                codex_sandbox(execution_policy.sandbox),
+                "--json",
+            ]
+            if include_output_schema:
+                cmd.extend(["--output-schema", str(schema_path)])
+            cmd.extend(
+                [
+                    "--output-last-message",
+                    str(last_message_path),
+                    "--skip-git-repo-check",
+                    "-",
+                ]
+            )
+            return cmd
+
+        cmd = build_command(include_output_schema=True)
         command_summary = " ".join(cmd[:-1] + ["-"])
         started_at = time.perf_counter()
         try:
@@ -352,6 +362,63 @@ class CodexCliRunner(AgentRunner):
             stdout=completed.stdout or "",
             stderr=completed.stderr or "",
         )
+        codex_cli_log["result_path"] = str(result_path.relative_to(workspace))
+        codex_cli_log["last_message_path"] = str(last_message_path.relative_to(workspace))
+        if completed.returncode != 0 and codex_cli_rejected_output_schema(completed):
+            first_attempt_log = codex_cli_log
+            retry_cmd = build_command(include_output_schema=False)
+            retry_command_summary = " ".join(retry_cmd[:-1] + ["-"])
+            retry_started_at = time.perf_counter()
+            try:
+                completed = subprocess.run(
+                    retry_cmd,
+                    input=prompt,
+                    text=True,
+                    capture_output=True,
+                    timeout=execution_policy.timeout_seconds,
+                    env=safe_env(workspace),
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                duration_ms = int((time.perf_counter() - retry_started_at) * 1000)
+                retry_log = build_codex_cli_transcript(
+                    status="timeout",
+                    command=retry_command_summary,
+                    timeout_seconds=execution_policy.timeout_seconds,
+                    duration_ms=duration_ms,
+                    stdout=exc.stdout if isinstance(exc.stdout, str) else "",
+                    stderr=exc.stderr if isinstance(exc.stderr, str) else "",
+                )
+                retry_log["result_path"] = str(result_path.relative_to(workspace))
+                retry_log["last_message_path"] = str(last_message_path.relative_to(workspace))
+                retry_log["schema_retry_without_output_schema"] = True
+                retry_log["attempts"] = [first_attempt_log]
+                return AgentResult(
+                    task_id=task_contract.task_id,
+                    status="failed",
+                    final_message="Codex CLI timed out after retrying without CLI output-schema enforcement.",
+                    outputs={
+                        "runner": "codex_cli",
+                        "codex_cli": retry_log,
+                    },
+                    artifacts=[],
+                    warnings=[],
+                    failure_reason=str(exc),
+                )
+            duration_ms = int((time.perf_counter() - retry_started_at) * 1000)
+            codex_cli_log = build_codex_cli_transcript(
+                status="succeeded" if completed.returncode == 0 else "failed",
+                command=retry_command_summary,
+                timeout_seconds=execution_policy.timeout_seconds,
+                exit_code=completed.returncode,
+                duration_ms=duration_ms,
+                stdout=completed.stdout or "",
+                stderr=completed.stderr or "",
+            )
+            codex_cli_log["result_path"] = str(result_path.relative_to(workspace))
+            codex_cli_log["last_message_path"] = str(last_message_path.relative_to(workspace))
+            codex_cli_log["schema_retry_without_output_schema"] = True
+            codex_cli_log["attempts"] = [first_attempt_log]
         (harness_dir / "codex_cli_log.json").write_text(
             json.dumps(codex_cli_log, ensure_ascii=False, indent=2, sort_keys=True),
             encoding="utf-8",
@@ -376,7 +443,18 @@ class CodexCliRunner(AgentRunner):
                 warnings=[],
                 failure_reason="missing_result_json",
             )
-        data = json.loads(result_path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(result_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            return AgentResult(
+                task_id=task_contract.task_id,
+                status="failed",
+                final_message="Codex CLI completed but outputs/result.json was not valid JSON.",
+                outputs={"runner": "codex_cli", "codex_cli": codex_cli_log},
+                artifacts=[],
+                warnings=[],
+                failure_reason=f"invalid_result_json: {exc}",
+            )
         validate_against_schema(data, output_schema)
         result = AgentResult.model_validate(data)
         result.outputs = {**result.outputs, "runner": result.outputs.get("runner") or "codex_cli", "codex_cli": codex_cli_log}
@@ -385,6 +463,11 @@ class CodexCliRunner(AgentRunner):
 
 def validate_against_schema(data: dict[str, Any], schema: dict[str, Any]) -> None:
     Draft202012Validator(schema).validate(data)
+
+
+def codex_cli_rejected_output_schema(completed: subprocess.CompletedProcess[str]) -> bool:
+    combined = f"{completed.stdout or ''}\n{completed.stderr or ''}"
+    return "invalid_json_schema" in combined or "Invalid schema for response_format" in combined
 
 
 def write_stub_workspace_outputs(
@@ -985,6 +1068,10 @@ def render_prompt(contract: AgentTaskContract) -> str:
         "- Do not destructively modify EvaluationSpec or SplitManifest.",
         "- Register every important output in outputs/result.json as an AgentResult artifact descriptor.",
         "- Write the final schema-valid AgentResult to outputs/result.json.",
+        "- The final chat response may summarize what happened, but outputs/result.json is the structured contract Tablex ingests.",
+        "- Treat Give Up as a last resort for any task. If you genuinely cannot continue because required information, "
+        "execution capability, safety policy, or data access is missing, return status `gave_up`, explain "
+        "`give_up_reason`, list `required_next_inputs`, and preserve every useful partial artifact.",
     ]
     if contract.task_type == "author_analysis_notebook":
         lines.extend(
@@ -1018,13 +1105,13 @@ def render_prompt(contract: AgentTaskContract) -> str:
         lines.extend(
             [
                 "",
-                "Target definition review rules:",
+                "Prediction/task objective review rules:",
                 "- Read .harness/task_contract.json first, then inspect materialized profile, semantic catalog, EDA, assumptions, questions, and relational context artifacts.",
-                "- Propose a target definition from data-science reasoning, not from column-name shortcuts.",
-                "- Consider whether the target is an existing column, a derived label, or an aggregate over a different grain.",
-                "- Explain prediction-time semantics, leakage risks, rejected target options, and the evidence that would change your recommendation.",
+                "- Propose the project objective from data-science reasoning, not from column-name shortcuts or a fixed supervised-learning template.",
+                "- Consider supervised prediction, derived labels, aggregate objectives, time-to-event or distributional prediction, clustering, anomaly detection, inverse-problem analysis, and optimization-coupled workflows when the evidence suggests them.",
+                "- Explain prediction-time or decision-time semantics, leakage risks, rejected objective options, and the evidence that would change your recommendation.",
                 "- Do not train a model or mutate EvaluationSpec/SplitManifest in this task.",
-                "- Put the structured proposal in outputs.target_definition_proposal and also write artifacts/target_definition_proposal.json.",
+                "- Put the structured proposal in outputs.target_definition_proposal for backward compatibility and also write artifacts/target_definition_proposal.json. The proposal may describe a non-column or unsupervised objective.",
             ]
         )
     lines.extend(["", "Task contract:", "", contract.model_dump_json(by_alias=True, indent=2)])

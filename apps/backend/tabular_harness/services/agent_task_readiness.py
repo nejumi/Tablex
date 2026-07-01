@@ -230,21 +230,21 @@ def target_context_check(project: Project, constraints: dict[str, Any], *, task_
         if task_type in CONTEXT_GATHERING_TASK_TYPES:
             return check(
                 "target_context",
-                "Target column",
+                "Objective context",
                 "warning",
                 "medium",
-                "Target column is not selected; this task must focus on data understanding and target-definition reasoning.",
-                "Produce target-definition evidence and proposals before target-aware plots, diagnostics, or model claims.",
+                "Project objective is not selected; this task should focus on data understanding and objective-definition reasoning.",
+                "Produce objective-definition evidence and proposals before target-aware plots, diagnostics, or model claims.",
             )
         return check(
             "target_context",
-            "Target column",
+            "Objective context",
             "blocker",
             "high",
-            "Target column is not available in project or contract constraints.",
-            "Set or confirm the target column before execution.",
+            "A supervised objective column is not available in project or contract constraints.",
+            "Run an objective-definition Codex handoff before supervised training or target-aware diagnostics.",
         )
-    return check("target_context", "Target column", "pass", "info", f"Target column is `{target}`.")
+    return check("target_context", "Objective context", "pass", "info", f"Supervised objective column is `{target}`.")
 
 
 def evaluation_check(evaluation_contract: dict[str, Any], *, task_type: str) -> dict[str, Any]:

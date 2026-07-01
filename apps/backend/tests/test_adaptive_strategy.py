@@ -4,7 +4,7 @@ from tabular_harness.models.entities import DatasetSnapshot, EvaluationSpec, Pro
 from tabular_harness.services.adaptive_strategy import build_candidate_lanes, choose_next_action
 
 
-def test_strategy_next_action_allows_target_definition_after_understanding() -> None:
+def test_strategy_next_action_allows_objective_definition_after_understanding() -> None:
     project = Project(
         id="p_strategy",
         name="Strategy fixture",
@@ -38,7 +38,8 @@ def test_strategy_next_action_allows_target_definition_after_understanding() -> 
 
     assert action["action_type"] == "agent_task"
     assert action["target_tab"] == "Understanding"
-    assert "target may be an existing column or an aggregate" in action["prompt"]
+    assert "objective may be an existing supervised target" in action["prompt"]
+    assert "clustering/anomaly detection" in action["prompt"]
 
 
 def test_strategy_lanes_keep_baseline_advisory_and_codex_open_ended() -> None:

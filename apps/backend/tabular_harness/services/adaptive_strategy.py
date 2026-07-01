@@ -276,18 +276,18 @@ def build_candidate_lanes(
             why=(
                 "Profile and semantic artifacts are available."
                 if dataset and latest_artifacts.get("eda_profile")
-                else "Upload data or run profiling before selecting target and approach."
+                else "Upload data or run profiling before selecting a task objective and approach."
             ),
             evidence_artifacts=[latest_artifacts.get("eda_profile"), latest_artifacts.get("semantic_catalog")],
             next_action="Inspect Data and Understanding",
-            agent_role="Summarize task ambiguity, target candidates, and data meaning gaps.",
+            agent_role="Summarize task ambiguity, possible objectives, prediction units, and data meaning gaps.",
         ),
         lane(
             lane_id="assumption_review",
             title="Review assumptions without blocking exploration",
             status="needs_review" if assumptions or questions else "ready",
             why=(
-                "Some assumptions or questions can affect leakage, target definition, or deployment fit."
+                "Some assumptions or questions can affect leakage, objective definition, or deployment fit."
                 if assumptions or questions
                 else "No open assumption or question currently needs attention."
             ),
@@ -337,7 +337,7 @@ def build_candidate_lanes(
             why=(
                 "Baseline strategy exists and can inform, not constrain, Codex."
                 if latest_artifacts.get("baseline_strategy_plan")
-                else "Plan candidate baseline families after target and evaluation are known."
+                else "Plan candidate baseline families after the objective and evaluation are known."
             ),
             evidence_artifacts=[latest_artifacts.get("baseline_strategy_plan"), latest_artifacts.get("baseline_report")],
             next_action="Plan baseline strategy or run baseline",
@@ -395,9 +395,9 @@ def choose_next_action(
     if not project.target_column:
         return action(
             "agent_task",
-            "Explore target candidates",
+            "Explore objective candidates",
             "Understanding",
-            "The target may be chosen after data understanding or derived by aggregation; ask Codex for a target-definition review.",
+            "The objective may be supervised, derived by aggregation, unsupervised, inverse-problem oriented, or otherwise project-specific; ask Codex for an objective-definition review.",
             prompt=target_review_prompt(project),
         )
     if assumptions and blocking_count:
@@ -799,9 +799,10 @@ def profile_summary_from_artifact(artifact: Artifact | None) -> dict[str, Any]:
 
 def target_review_prompt(project: Project) -> str:
     return (
-        f"For project `{project.name}`, review the profiled data and propose target-definition options. "
-        "The target may be an existing column or an aggregate derived under clear prediction-time semantics. "
-        "Return assumptions, required evidence, rejected target options, and a recommended next evaluation design. "
+        f"For project `{project.name}`, review the profiled data and propose task-objective options. "
+        "The objective may be an existing supervised target, a derived aggregate outcome, a distributional or time-to-event target, "
+        "an unsupervised objective such as clustering/anomaly detection, or an inverse-problem/optimization workflow. "
+        "Return assumptions, required evidence, rejected objective options, and a recommended next evaluation design. "
         "Do not read secrets or connector credentials."
     )
 

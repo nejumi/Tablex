@@ -199,12 +199,21 @@ def humanize_identifier(value: str) -> str:
     return " ".join(word.capitalize() for word in words)
 
 
-def worker_events_from_job(job: Job, *, project_name: str | None = None) -> list[dict[str, Any]]:
+def worker_events_from_job(
+    job: Job,
+    *,
+    project_name: str | None = None,
+    active_job_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
     output = loads_json(job.output_json, {})
     context = loads_json(job.context_json, {})
     events = output.get("worker_events")
     if isinstance(events, list):
-        return [normalize_worker_event(event, job, project_name=project_name) for event in events if isinstance(event, dict)]
+        return [
+            normalize_worker_event(event, job, project_name=project_name, active_job_ids=active_job_ids)
+            for event in events
+            if isinstance(event, dict)
+        ]
     if not is_agentish_job(job.job_type):
         return []
     description = human_description_for_job(job, output=output, context=context, project_name=project_name)
@@ -224,14 +233,20 @@ def worker_events_from_job(job: Job, *, project_name: str | None = None) -> list
             "updated_at": job.updated_at.isoformat(),
             "started_at": job.started_at.isoformat() if job.started_at else None,
             "run_after": job.run_after.isoformat() if job.run_after else None,
-            "active": job_active_for_activity(job),
+            "active": job_active_for_activity(job, active_job_ids=active_job_ids),
             "human_description": description,
             "token_usage": output.get("token_usage") if isinstance(output.get("token_usage"), dict) else estimated_tokens(job),
         }
     ]
 
 
-def normalize_worker_event(event: dict[str, Any], job: Job, *, project_name: str | None = None) -> dict[str, Any]:
+def normalize_worker_event(
+    event: dict[str, Any],
+    job: Job,
+    *,
+    project_name: str | None = None,
+    active_job_ids: set[str] | None = None,
+) -> dict[str, Any]:
     token_usage = event.get("token_usage")
     output = loads_json(job.output_json, {})
     context = loads_json(job.context_json, {})
@@ -255,7 +270,7 @@ def normalize_worker_event(event: dict[str, Any], job: Job, *, project_name: str
         "updated_at": job.updated_at.isoformat(),
         "started_at": started_at,
         "run_after": job.run_after.isoformat() if job.run_after else None,
-        "active": job_active_for_activity(job),
+        "active": job_active_for_activity(job, active_job_ids=active_job_ids),
         "human_description": event.get("human_description") if isinstance(event.get("human_description"), dict) else description,
         "token_usage": token_usage if isinstance(token_usage, dict) else estimated_tokens(job),
     }
@@ -274,7 +289,14 @@ def estimated_tokens(job: Job) -> dict[str, Any]:
     }
 
 
-def job_active_for_activity(job: Job) -> bool:
+def active_job_ids_for_activity(jobs: list[Job]) -> set[str]:
+    return {job.id for job in jobs if job_active_for_activity(job)}
+
+
+def job_active_for_activity(job: Job, *, active_job_ids: set[str] | None = None) -> bool:
+    waiting_child_ids = heartbeat_waiting_child_ids(job)
+    if waiting_child_ids and (active_job_ids is None or any(child_id in active_job_ids for child_id in waiting_child_ids)):
+        return False
     if job.status in {"running", "approval_required"}:
         return True
     if job.status == "queued":
@@ -289,6 +311,18 @@ def job_active_for_activity(job: Job) -> bool:
             created_at = created_at.replace(tzinfo=timezone.utc)
         return utc_now() - created_at < timedelta(minutes=30)
     return False
+
+
+def heartbeat_waiting_child_ids(job: Job) -> list[str]:
+    if job.job_type != "continue_autonomous_session":
+        return []
+    payload = loads_json(job.input_json, {})
+    child_ids = payload.get("active_child_job_ids_at_schedule_time")
+    if not isinstance(child_ids, list):
+        child_ids = payload.get("active_child_job_ids")
+    if not isinstance(child_ids, list):
+        return []
+    return [str(child_id) for child_id in child_ids if isinstance(child_id, str) and child_id]
 
 
 def human_description_for_job(

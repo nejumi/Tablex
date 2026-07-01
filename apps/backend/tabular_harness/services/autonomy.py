@@ -42,7 +42,6 @@ from tabular_harness.services.approach import (
     create_research_plan,
     generate_approach_candidates,
     generate_research_brief,
-    store_json_artifact,
     store_text_artifact,
 )
 from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
@@ -60,10 +59,8 @@ from tabular_harness.services.evaluation import (
     create_default_evaluation_candidates,
     create_evaluation_approval_review,
     generate_split_manifest,
-    infer_task_type,
     load_profile_for_dataset,
     promote_candidate_to_spec,
-    target_profile_from_columns,
     write_spec_artifact,
 )
 from tabular_harness.services.experiment_lifecycle import draft_run_report
@@ -111,20 +108,6 @@ class AutonomousStep:
         if self.boundary:
             payload["boundary"] = self.boundary
         return payload
-
-
-@dataclass(frozen=True)
-class ProvisionalTargetCandidate:
-    dataset: DatasetSnapshot
-    column_name: str
-    task_type: str
-    confidence: float
-    risk_level: str
-    score: float
-    rationale: str
-    profile: dict[str, Any]
-    target_profile: dict[str, Any]
-    alternatives: list[dict[str, Any]]
 
 
 @dataclass
@@ -216,40 +199,46 @@ def run_autonomous_loop_tick(
 
     run_data_understanding_stack(db, store=store, project=project, dataset=dataset, state=state)
     if not project.target_column:
-        if runner_mode == RUNNER_MODE_CODEX_CLI:
-            run_runner_handoff(
-                db,
-                store=store,
-                project=project,
-                job=job,
-                state=state,
-                runner_mode=runner_mode,
-                task_type="target_definition_review",
-            )
-        provisional = (
-            None
-            if project.target_column
-            else create_or_adopt_provisional_target(
-                db,
-                store=store,
-                project=project,
-                state=state,
-                autonomy_mode=autonomy_mode,
+        question = get_or_create_target_question(
+            db,
+            project=project,
+            blocks_next_phase=autonomy_mode != "full_auto",
+        )
+        state.add_intervention(
+            target_intervention_payload(
+                question=question,
+                mode=autonomy_mode,
+                continued=autonomy_mode == "full_auto",
             )
         )
-        if provisional is not None:
-            dataset = provisional.dataset
-        elif not project.target_column:
-            run_runner_handoff(
-                db,
-                store=store,
-                project=project,
-                job=job,
-                state=state,
-                runner_mode=runner_mode,
-                task_type="target_definition_review",
-                queue_if_available=False,
+        state.record(
+            "target_definition",
+            "delegated_to_codex" if autonomy_mode == "full_auto" else "needs_approval",
+            (
+                "Full Auto is handing target definition to Codex with the current profile, catalog, "
+                "artifacts, and uncertainty context. The harness will not guess the target from names or statistics."
             )
+            if autonomy_mode == "full_auto"
+            else "Approval Based mode recorded the target-definition question before evaluation-sensitive work.",
+            entity_ids={"question_id": question.id},
+            boundary=(
+                "Codex target-definition proposal is needed before evaluation and model training can become comparable."
+                if autonomy_mode == "full_auto"
+                else "Confirm, revise, or construct the prediction target."
+            ),
+        )
+        run_runner_handoff(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            state=state,
+            runner_mode=runner_mode,
+            task_type="target_definition_review",
+            queue_if_available=True,
+        )
+        if project.target_column:
+            dataset = select_autonomy_dataset(db, project.id, target_column=project.target_column)
     if project.target_column:
         approved_spec, split = run_evaluation_stack(
             db,
@@ -501,261 +490,10 @@ def run_data_understanding_stack(
         state.warn(f"Data Understanding notebook skipped: {exc}")
 
 
-def create_or_adopt_provisional_target(
-    db: Session,
-    *,
-    store: LocalArtifactStore,
-    project: Project,
-    state: AutonomousLoopState,
-    autonomy_mode: str,
-) -> ProvisionalTargetCandidate | None:
-    candidate = infer_provisional_target_candidate(db, project.id)
-    if candidate is None:
-        question = get_or_create_target_question(
-            db,
-            project=project,
-            candidate=None,
-            blocks_next_phase=autonomy_mode != "full_auto",
-        )
-        state.add_intervention(
-            target_intervention_payload(
-                question=question,
-                candidate=None,
-                mode=autonomy_mode,
-                continued=False,
-            )
-        )
-        state.record(
-            "target_definition",
-            "needs_user_input" if autonomy_mode != "full_auto" else "deferred",
-            "No existing-column target candidate was strong enough to adopt. A target may need to be constructed or specified by the user.",
-            entity_ids={"question_id": question.id},
-            boundary="Describe or construct the prediction target before model training.",
-        )
-        return None
-
-    question = get_or_create_target_question(
-        db,
-        project=project,
-        candidate=candidate,
-        blocks_next_phase=autonomy_mode != "full_auto",
-    )
-    if autonomy_mode != "full_auto":
-        state.add_intervention(
-            target_intervention_payload(question=question, candidate=candidate, mode=autonomy_mode, continued=False)
-        )
-        state.record(
-            "target_definition",
-            "needs_approval",
-            "Prepared a provisional target candidate, but Approval Based mode waits for human confirmation before adopting it.",
-            entity_ids={"question_id": question.id, "target_column": candidate.column_name, "dataset_snapshot_id": candidate.dataset.id},
-            boundary="Confirm, revise, or construct the prediction target.",
-        )
-        return None
-
-    evidence = Evidence(
-        id=new_id("ev"),
-        project_id=project.id,
-        evidence_type="provisional_target_hypothesis",
-        summary=candidate.rationale[:500],
-        strength="medium" if candidate.confidence >= 0.6 else "low",
-        source_artifact_id=candidate.dataset.artifact_id,
-        metadata_json=dumps_json(
-            {
-                "schema_version": "provisional_target_hypothesis.v1",
-                "dataset_snapshot_id": candidate.dataset.id,
-                "source_ref": candidate.dataset.source_ref,
-                "recommended_target": {
-                    "kind": "existing_column",
-                    "column_name": candidate.column_name,
-                    "task_type": candidate.task_type,
-                    "confidence": candidate.confidence,
-                    "risk_level": candidate.risk_level,
-                },
-                "alternatives": candidate.alternatives,
-                "profile_basis": candidate.target_profile,
-                "policy": "Full Auto may infer and continue, but this remains a user-reviewable assumption.",
-            }
-        ),
-    )
-    db.add(evidence)
-    assumption = get_or_create_target_assumption(db, project=project, candidate=candidate)
-    db.flush()
-    db.add(
-        AssumptionEvidenceLink(
-            id=new_id("ael"),
-            assumption_id=assumption.id,
-            evidence_id=evidence.id,
-            effect="supports",
-            weight=max(0.2, min(0.95, candidate.confidence)),
-        )
-    )
-    question.related_assumption_id = assumption.id
-    project.target_column = candidate.column_name
-    project.task_type = candidate.task_type
-    project.updated_at = utc_now()
-    artifact = store_json_artifact(
-        db,
-        store,
-        project_id=project.id,
-        asset_type="target_definition_hypothesis",
-        name=f"target_definition_{candidate.column_name}",
-        filename="target_definition_hypothesis.json",
-        payload=loads_json(evidence.metadata_json, {}),
-        metadata={
-            "project_id": project.id,
-            "dataset_snapshot_id": candidate.dataset.id,
-            "target_column": candidate.column_name,
-            "assumption_id": assumption.id,
-            "question_id": question.id,
-            "evidence_id": evidence.id,
-        },
-    )
-    state.add_intervention(
-        target_intervention_payload(question=question, candidate=candidate, mode=autonomy_mode, continued=True)
-    )
-    state.record(
-        "target_definition",
-        "adopted_with_assumption",
-        "Full Auto adopted a provisional existing-column target, recorded the assumption, and continued without blocking.",
-        artifact_ids=[artifact.id],
-        entity_ids={
-            "dataset_snapshot_id": candidate.dataset.id,
-            "target_column": candidate.column_name,
-            "assumption_id": assumption.id,
-            "question_id": question.id,
-            "evidence_id": evidence.id,
-        },
-    )
-    return candidate
-
-
-def infer_provisional_target_candidate(db: Session, project_id: str) -> ProvisionalTargetCandidate | None:
-    datasets = list(
-        db.scalars(
-            select(DatasetSnapshot)
-            .where(DatasetSnapshot.project_id == project_id)
-            .order_by(DatasetSnapshot.created_at.desc())
-        ).all()
-    )
-    scored: list[tuple[float, DatasetSnapshot, dict[str, Any], dict[str, Any], str]] = []
-    for dataset in datasets:
-        profile = load_profile_for_dataset(db, dataset)
-        columns = profile.get("columns")
-        if not isinstance(columns, list):
-            continue
-        dataset_score = dataset_target_score(dataset)
-        row_count = int(profile.get("row_count") or dataset.row_count or 0)
-        for raw_column in columns:
-            if not isinstance(raw_column, dict):
-                continue
-            name = str(raw_column.get("name") or "")
-            if not name:
-                continue
-            score, rationale = column_target_score(raw_column, row_count=row_count)
-            total = score + dataset_score
-            if total <= 0:
-                continue
-            target_profile = target_profile_from_columns(profile, name) or {}
-            scored.append((total, dataset, raw_column, target_profile, rationale))
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    best_score, dataset, column, target_profile, rationale = scored[0]
-    column_name = str(column["name"])
-    alternatives = [
-        {
-            "dataset_snapshot_id": item_dataset.id,
-            "source_ref": item_dataset.source_ref,
-            "column_name": str(item_column.get("name") or ""),
-            "score": round(score, 3),
-            "rationale": item_rationale,
-        }
-        for score, item_dataset, item_column, _, item_rationale in scored[1:6]
-    ]
-    confidence = max(0.35, min(0.88, best_score / 2.4))
-    risk_level = "medium" if confidence >= 0.55 else "high"
-    task_type = infer_task_type(target_profile)
-    return ProvisionalTargetCandidate(
-        dataset=dataset,
-        column_name=column_name,
-        task_type=task_type,
-        confidence=confidence,
-        risk_level=risk_level,
-        score=best_score,
-        rationale=(
-            f"`{column_name}` in `{dataset.source_ref or dataset.id}` is the strongest provisional target candidate. "
-            f"{rationale} Confidence is {confidence:.0%}; Full Auto will treat this as an assumption until confirmed."
-        ),
-        profile=load_profile_for_dataset(db, dataset),
-        target_profile=target_profile,
-        alternatives=alternatives,
-    )
-
-
-def dataset_target_score(dataset: DatasetSnapshot) -> float:
-    source = (dataset.source_ref or "").lower()
-    score = 0.0
-    if dataset.column_count and dataset.column_count > 2:
-        score += 0.25
-    if dataset.column_count and dataset.column_count >= 20:
-        score += 0.15
-    if dataset.row_count and dataset.row_count >= 100:
-        score += 0.1
-    if "train" in source:
-        score += 0.35
-    if "test" in source:
-        score -= 0.25
-    if "submission" in source:
-        score -= 1.15
-    return score
-
-
-def column_target_score(column: dict[str, Any], *, row_count: int) -> tuple[float, str]:
-    name = str(column.get("name") or "")
-    lowered = name.lower()
-    unique_count = int(column.get("unique_count") or 0)
-    missing_count = int(column.get("missing_count") or 0)
-    missing_rate = missing_count / row_count if row_count else 0.0
-    score = 0.0
-    reasons: list[str] = []
-    if unique_count <= 1:
-        return -1.0, "The column is constant or effectively unavailable."
-    if row_count and unique_count >= int(row_count * 0.98):
-        score -= 0.65
-        reasons.append("very high cardinality makes it unlikely to be a target")
-    if lowered in {"target", "label", "y", "class", "outcome", "response"}:
-        score += 0.55
-        reasons.append("the column name is target-like")
-    elif lowered.endswith("_target") or lowered.endswith("_label") or lowered.startswith("target_"):
-        score += 0.28
-        reasons.append("the column name carries target-like semantics")
-    if lowered.endswith("_id") or lowered == "id" or "sk_id" in lowered:
-        score -= 0.5
-        reasons.append("identifier-like columns are penalized")
-    if unique_count == 2:
-        score += 0.38
-        reasons.append("binary cardinality supports a classification target")
-    elif 2 < unique_count <= 20:
-        score += 0.18
-        reasons.append("moderate cardinality supports classification")
-    elif unique_count > 20 and not lowered.endswith("_id"):
-        score += 0.08
-        reasons.append("continuous or high-cardinality targets remain possible")
-    if missing_rate == 0:
-        score += 0.12
-        reasons.append("no missing target values were observed")
-    elif missing_rate > 0.2:
-        score -= 0.25
-        reasons.append("substantial missingness raises target risk")
-    return score, "; ".join(reasons) if reasons else "Profile statistics make it a possible prediction target."
-
-
 def get_or_create_target_question(
     db: Session,
     *,
     project: Project,
-    candidate: ProvisionalTargetCandidate | None,
     blocks_next_phase: bool,
 ) -> Question:
     existing = db.scalar(
@@ -768,23 +506,22 @@ def get_or_create_target_question(
         existing.can_proceed_without_answer = not blocks_next_phase
         existing.fallback_policy = "block_until_answered" if blocks_next_phase else "infer_and_continue"
         return existing
-    target_label = f"`{candidate.column_name}`" if candidate else "a constructed or user-specified target"
     question = Question(
         id=new_id("q"),
         project_id=project.id,
         question_set_id=new_id("qs"),
         topic="target_definition",
-        question=f"Should Tablex use {target_label} as the prediction target for now?",
+        question="What prediction target, target construction, or prediction objective should Codex pursue for this project?",
         why_it_matters=(
             "The target defines row semantics, leakage boundaries, evaluation metrics, and what model performance means."
         ),
         default_assumption=(
-            candidate.rationale
-            if candidate
-            else "No existing column is reliable enough; the target likely needs to be described or constructed."
+            "Full Auto will ask Codex to infer or design the target from the current data understanding, "
+            "semantic catalog, relational context, and user-provided project goal. The harness must not infer "
+            "the target with column-name or profile heuristics."
         ),
         impact_if_wrong="Evaluation and model comparisons may optimize the wrong business question.",
-        choices_json=dumps_json(["confirm", "revise", "construct_target", "continue_with_assumption"]),
+        choices_json=dumps_json(["describe_target", "construct_target", "let_codex_infer", "approval_required"]),
         status="open",
         priority=95,
         risk_level="high",
@@ -797,51 +534,9 @@ def get_or_create_target_question(
     return question
 
 
-def get_or_create_target_assumption(
-    db: Session,
-    *,
-    project: Project,
-    candidate: ProvisionalTargetCandidate,
-) -> Assumption:
-    existing = db.scalar(
-        select(Assumption).where(
-            Assumption.project_id == project.id,
-            Assumption.topic == "target_definition",
-            Assumption.subject_ref == candidate.column_name,
-            Assumption.status.in_(["adopted", "provisional"]),
-        )
-    )
-    if existing is not None:
-        existing.confidence = candidate.confidence
-        existing.risk_level = candidate.risk_level
-        existing.updated_at = utc_now()
-        return existing
-    assumption = Assumption(
-        id=new_id("asm"),
-        project_id=project.id,
-        topic="target_definition",
-        subject_type="column",
-        subject_ref=candidate.column_name,
-        statement=(
-            f"Full Auto is temporarily treating `{candidate.column_name}` from "
-            f"`{candidate.dataset.source_ref or candidate.dataset.id}` as the prediction target."
-        ),
-        status="adopted",
-        confidence=candidate.confidence,
-        risk_level=candidate.risk_level,
-        fallback_policy="infer_and_continue",
-        requires_user_confirmation=True,
-        created_by_type="agent_runner",
-        created_by="tablex_full_auto",
-    )
-    db.add(assumption)
-    return assumption
-
-
 def target_intervention_payload(
     *,
     question: Question,
-    candidate: ProvisionalTargetCandidate | None,
     mode: str,
     continued: bool,
 ) -> dict[str, Any]:
@@ -851,17 +546,58 @@ def target_intervention_payload(
         "mode": mode,
         "continued": continued,
         "question_id": question.id,
-        "title": "Review provisional target",
-        "message": candidate.rationale
-        if candidate
-        else "No reliable existing-column target was found. The prediction target likely needs to be specified or constructed.",
+        "title": "Target definition is being handed to Codex",
+        "message": (
+            "Codex will reason over the current data understanding and propose the prediction target or target-construction plan. "
+            "Tablex records this as an intervention point, but Full Auto keeps moving unless you catch it."
+        ),
         "default_action": "continue_with_assumption" if continued else "wait_for_answer",
-        "target_column": candidate.column_name if candidate else None,
-        "dataset_snapshot_id": candidate.dataset.id if candidate else None,
-        "source_ref": candidate.dataset.source_ref if candidate else None,
-        "risk_level": candidate.risk_level if candidate else "high",
-        "confidence": candidate.confidence if candidate else 0.0,
+        "target_column": None,
+        "dataset_snapshot_id": None,
+        "source_ref": None,
+        "risk_level": "high",
+        "confidence": 0.0,
+        "fallback_policy": "infer_and_continue" if continued else "block_until_answered",
     }
+
+
+def append_assumption_review_intervention(db: Session, state: AutonomousLoopState) -> None:
+    if state.project.autonomy_mode != "full_auto":
+        return
+    if state.interventions:
+        return
+    assumption = db.scalar(
+        select(Assumption)
+        .where(
+            Assumption.project_id == state.project.id,
+            Assumption.status.in_(["adopted", "inferred", "provisional", "open"]),
+            (
+                (Assumption.requires_user_confirmation.is_(True))
+                | (Assumption.risk_level.in_(["high", "blocking", "deployment_blocking"]))
+            ),
+        )
+        .order_by(Assumption.updated_at.desc(), Assumption.created_at.desc())
+    )
+    if assumption is None:
+        return
+    state.add_intervention(
+        {
+            "schema_version": "autonomy_intervention.v1",
+            "kind": "assumption_review",
+            "mode": state.project.autonomy_mode,
+            "continued": True,
+            "assumption_id": assumption.id,
+            "title": "Review the assumption Full Auto is carrying",
+            "message": assumption.statement,
+            "default_action": "continue_with_assumption",
+            "target_column": None,
+            "dataset_snapshot_id": None,
+            "source_ref": assumption.subject_ref,
+            "risk_level": assumption.risk_level,
+            "confidence": assumption.confidence,
+            "fallback_policy": assumption.fallback_policy,
+        }
+    )
 
 
 def latest_project_artifact(db: Session, project_id: str, asset_type: str) -> Artifact | None:
@@ -1597,29 +1333,35 @@ def ingest_codex_target_definition_proposal(
     source_artifact_id: str | None,
 ) -> None:
     if agent_result.status != "succeeded":
+        status = "gave_up" if agent_result.status == "gave_up" else "not_completed"
+        reason = getattr(agent_result, "give_up_reason", None) or getattr(agent_result, "failure_reason", None)
         state.record(
             "target_definition_proposal",
-            "blocked",
-            "Codex did not complete the target-definition review.",
-            boundary="Run Codex target-definition review before adopting EvaluationSpec.",
+            status,
+            reason or "Codex did not complete the objective-definition review.",
+            boundary=(
+                "Codex gave up on objective definition; inspect required_next_inputs and provide missing evidence."
+                if status == "gave_up"
+                else "Rerun Codex objective-definition review before adopting EvaluationSpec."
+            ),
         )
         return
     proposal = agent_result.outputs.get("target_definition_proposal") if isinstance(agent_result.outputs, dict) else None
     if not isinstance(proposal, dict):
         state.record(
             "target_definition_proposal",
-            "blocked",
+            "not_completed",
             "Codex completed, but did not return `outputs.target_definition_proposal`.",
-            boundary="Target-definition review must return the fixed proposal object before harness adoption.",
+            boundary="Objective-definition review must return the proposal object before harness adoption.",
         )
         return
     recommended = proposal.get("recommended_target")
     if not isinstance(recommended, dict):
         state.record(
             "target_definition_proposal",
-            "blocked",
-            "Codex target-definition proposal is missing `recommended_target`.",
-            boundary="Target-definition review must include `recommended_target` before harness adoption.",
+            "not_completed",
+            "Codex objective proposal is missing `recommended_target`.",
+            boundary="Objective-definition review must include a recommended objective before harness adoption.",
         )
         return
     target_kind = str(recommended.get("kind") or "")
@@ -1754,6 +1496,7 @@ def finalize_autonomous_tick(
     agent_model: str | None = None,
     utility_model: str | None = None,
 ) -> dict[str, Any]:
+    append_assumption_review_intervention(db, state)
     reflection_md = render_autonomous_reflection(state, status=status, next_human_boundary=next_human_boundary)
     reflection_artifact = store_text_artifact(
         db,
@@ -2082,11 +1825,8 @@ def select_autonomy_dataset(db: Session, project_id: str, *, target_column: str 
             if isinstance(columns, list) and any(isinstance(column, dict) and column.get("name") == target_column for column in columns):
                 matching_datasets.append(dataset)
         if matching_datasets:
-            return max(matching_datasets, key=dataset_target_score)
-    candidate = infer_provisional_target_candidate(db, project_id)
-    if candidate is not None:
-        return candidate.dataset
-    return max(datasets, key=lambda dataset: dataset_target_score(dataset))
+            return max(matching_datasets, key=lambda item: ((item.column_count or 0), (item.row_count or 0), item.created_at))
+    return datasets[0]
 
 
 def latest_approved_spec(db: Session, project_id: str) -> EvaluationSpec | None:

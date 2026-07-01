@@ -1102,8 +1102,8 @@ def _recommended_focus(project: Project, counts: dict[str, int], state: dict[str
         return _focus(
             focus_key="understand_data",
             target_tab="Understanding",
-            title="Understand the data before choosing a target or evaluation",
-            reason="The next useful decision depends on schema, target candidates, leakage risk, missingness, and semantic assumptions.",
+            title="Understand the data before choosing an objective or evaluation",
+            reason="The next useful decision depends on schema, possible task shapes, leakage risk, missingness, and semantic assumptions.",
             risk_level="high",
             confidence=0.92,
             evidence=[f"{counts['datasets']} DatasetSnapshots", "understanding report missing"],

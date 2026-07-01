@@ -19,7 +19,8 @@
       "enum": [
         "succeeded",
         "failed",
-        "needs_approval"
+        "needs_approval",
+        "gave_up"
       ]
     },
     "final_message": {
@@ -63,6 +64,18 @@
         "string",
         "null"
       ]
+    },
+    "give_up_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "required_next_inputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
     "patch_summary": {
       "type": [

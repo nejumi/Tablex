@@ -246,14 +246,18 @@ def basic_profile_checks(
     columns = profile_columns(profile)
     checks = [
         make_check(
-            "target_defined",
-            "target",
-            "pass" if project.target_column else "fail",
-            "blocking" if not project.target_column else "low",
-            "Target column is defined" if project.target_column else "Target column is missing",
-            "Evaluation and baseline runs require a target column.",
+            "objective_defined",
+            "objective",
+            "pass" if project.target_column else "review",
+            "low" if project.target_column else "medium",
+            "Supervised objective column is defined" if project.target_column else "Project objective is not defined yet",
+            (
+                "Use the configured supervised objective for target-aware evaluation."
+                if project.target_column
+                else "Package the evidence for Codex to propose the task objective, prediction unit, and evaluation shape."
+            ),
             [project.target_column] if project.target_column else [],
-            "block_until_answered" if not project.target_column else "infer_and_continue",
+            "infer_and_continue",
             ["target_definition"] if not project.target_column else [],
         )
     ]
@@ -795,7 +799,7 @@ def split_recommendations(
 def quality_question_text(topic: str) -> str:
     mapping = {
         "prediction_time_availability": "Which flagged columns are available at prediction time?",
-        "target_definition": "Is the configured target column correct for this prediction task?",
+        "target_definition": "Is the task objective, prediction unit, and outcome definition correct for this project?",
         "evaluation_design": "Should the primary evaluation change or scenario-compare this quality risk?",
         "row_semantics": "Do repeated entity rows need grouped validation?",
         "time_features": "What timestamp defines prediction time and permitted historical windows?",
@@ -817,7 +821,7 @@ def quality_question_default(topic: str) -> str:
     if topic == "prediction_time_availability":
         return "Exclude flagged columns until confirmed."
     if topic == "target_definition":
-        return "Block model execution until target is confirmed."
+        return "Ask Codex to propose an objective and continue only after the proposal is registered as an auditable assumption."
     return "Infer conservatively and continue with a tracked assumption."
 
 

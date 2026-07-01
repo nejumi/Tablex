@@ -135,8 +135,9 @@ const englishMessages = {
   atAGlance: "At a glance",
   focusUploadData: "Upload or import a dataset",
   focusUploadDataReason: "The project cannot build understanding, assumptions, evaluation, or agent tasks until a DatasetSnapshot exists.",
-  focusUnderstandData: "Understand the data before choosing a target or evaluation",
-  focusUnderstandDataReason: "The next useful decision depends on schema, target candidates, leakage risk, missingness, and semantic assumptions.",
+  focusUnderstandData: "Understand the data before choosing an objective or evaluation",
+  focusUnderstandDataReason:
+    "The next useful decision depends on schema, possible task shapes, leakage risk, missingness, and semantic assumptions.",
   focusAssumptions: "Resolve risky assumptions",
   focusAssumptionsReason: "High-risk assumptions can silently invalidate evaluation or feature design if they are not reviewed.",
   focusEvaluation: "Lock a reliable evaluation design",
@@ -231,11 +232,14 @@ const englishMessages = {
   submitShortcutShiftEnter: "Shift+Enter sends",
   autonomyInterventionTitle: "Full Auto is about to continue",
   autonomyInterventionBody: "Tablex found a boundary or assumption. Catch it now to switch to Approval Based and review before continuing.",
+  autonomyObjectiveInterventionTitle: "Codex will review the task objective",
+  autonomyObjectiveInterventionBody:
+    "Full Auto will ask Codex to reason from the data and project context instead of letting the harness infer a target with brittle rules. Catch this window to switch to Approval Based and review first.",
   autonomyInterventionContinue: "Let it continue",
   autonomyInterventionCatch: "Catch and review",
   autonomyInterventionDisabled: "Intervention dialog disabled",
   autonomyInterventionAssumed: "Full Auto continued with this assumption.",
-  autonomyInterventionTarget: "Provisional target",
+  autonomyInterventionTarget: "Objective under review",
   autonomyInterventionDataset: "Dataset",
   autonomyInterventionTimeLeft: "Time left",
   fullAutoModeSelected: "Full Auto mode is selected. Press Start when data is ready; I will keep moving with explicit assumptions and boundaries.",
@@ -408,8 +412,9 @@ const japaneseMessages: LocaleMessages = {
   atAGlance: "概況",
   focusUploadData: "データをuploadまたはimportする",
   focusUploadDataReason: "DatasetSnapshotがないと、data understanding、仮定、評価設計、agent taskを進められません。",
-  focusUnderstandData: "targetや評価を決める前にデータを理解する",
-  focusUnderstandDataReason: "schema、target候補、leakage risk、missingness、semantic assumptionsを見てから次の意思決定をします。",
+  focusUnderstandData: "目的や評価を決める前にデータを理解する",
+  focusUnderstandDataReason:
+    "schema、あり得るタスク形状、leakage risk、missingness、semantic assumptionsを見てから次の意思決定をします。",
   focusAssumptions: "リスクの高い仮定を確認する",
   focusAssumptionsReason: "高リスクの仮定を放置すると、評価や特徴量設計が静かに壊れる可能性があります。",
   focusEvaluation: "信頼できる評価設計を固定する",
@@ -504,11 +509,14 @@ const japaneseMessages: LocaleMessages = {
   submitShortcutShiftEnter: "Shift+Enterで送信",
   autonomyInterventionTitle: "Full Autoが続行しようとしています",
   autonomyInterventionBody: "Tablexが仮定またはboundaryを検出しました。ここで捕まえると承認ベースに切り替えて確認できます。",
+  autonomyObjectiveInterventionTitle: "Codexがタスク目的を検討します",
+  autonomyObjectiveInterventionBody:
+    "ハーネスが脆いルールでターゲットを推定するのではなく、Full AutoはデータとProject contextをCodexに渡して目的を検討させます。ここで捕まえると承認ベースに切り替えて先に確認できます。",
   autonomyInterventionContinue: "そのまま続行",
   autonomyInterventionCatch: "捕まえて確認",
   autonomyInterventionDisabled: "介入ダイアログ無効",
   autonomyInterventionAssumed: "Full Autoはこの仮定で続行済みです。",
-  autonomyInterventionTarget: "仮ターゲット",
+  autonomyInterventionTarget: "検討中の目的",
   autonomyInterventionDataset: "Dataset",
   autonomyInterventionTimeLeft: "残り",
   fullAutoModeSelected: "フルオートモードを選択しました。データが準備できたら開始してください。明示的な仮定とboundaryを置きながら前に進みます。",
@@ -1219,6 +1227,7 @@ type AutonomyIntervention = {
   mode?: string;
   continued?: boolean;
   question_id?: string;
+  assumption_id?: string;
   title?: string;
   message?: string;
   default_action?: string;
@@ -1227,6 +1236,7 @@ type AutonomyIntervention = {
   source_ref?: string | null;
   risk_level?: string | null;
   confidence?: number | null;
+  fallback_policy?: string | null;
 };
 
 type PendingAutonomyIntervention = {
@@ -2994,6 +3004,7 @@ function ProjectDetail({
   const [agentActivity, setAgentActivity] = React.useState<AgentActivityResponse | null>(null);
   const [activityTick, setActivityTick] = React.useState(0);
   const [pendingIntervention, setPendingIntervention] = React.useState<PendingAutonomyIntervention | null>(null);
+  const seenInterventionKeysRef = React.useRef<Set<string>>(new Set());
   const [pendingAnchor, setPendingAnchor] = React.useState<string | null>(null);
   const visibleAgentChatMessages = React.useMemo(
     () => mergeAgentChatMessages(agentChatMessages, pendingAgentChatMessages),
@@ -3172,6 +3183,23 @@ function ProjectDetail({
     );
     return () => window.clearInterval(interval);
   }, [busy, refreshAgentActivity]);
+
+  React.useEffect(() => {
+    if (pendingIntervention || userSettings.interventionCountdownSeconds <= 0) return;
+    for (const job of jobs) {
+      const intervention = firstAutonomyIntervention(job.output);
+      if (!intervention) continue;
+      const key = autonomyInterventionKey(intervention, job.id);
+      if (seenInterventionKeysRef.current.has(key)) continue;
+      seenInterventionKeysRef.current.add(key);
+      setPendingIntervention({
+        payload: intervention,
+        startedAt: Date.now(),
+        durationSeconds: userSettings.interventionCountdownSeconds
+      });
+      return;
+    }
+  }, [jobs, pendingIntervention, userSettings.interventionCountdownSeconds]);
 
   function navigateToTarget(targetTab: Tab, targetAnchor?: string | null) {
     if (targetAnchor) setPendingAnchor(targetAnchor);
@@ -3386,6 +3414,7 @@ function ProjectDetail({
       setAgentWorkerEvents((current) => [...workerEvents, ...current].slice(0, 8));
       const intervention = firstAutonomyIntervention(job.output);
       if (!poweredOn && intervention && userSettings.interventionCountdownSeconds > 0) {
+        seenInterventionKeysRef.current.add(autonomyInterventionKey(intervention, job.id));
         setPendingIntervention({
           payload: intervention,
           startedAt: Date.now(),
@@ -4105,14 +4134,22 @@ function AutonomyInterventionDialog({
     if (remainingSeconds <= 0) onContinue();
   }, [remainingSeconds, onContinue]);
 
+  const isObjectiveIntervention = intervention.payload.kind === "target_definition";
+  const dialogTitle = isObjectiveIntervention
+    ? text.autonomyObjectiveInterventionTitle
+    : intervention.payload.title ?? text.autonomyInterventionTitle;
+  const dialogBody = isObjectiveIntervention
+    ? text.autonomyObjectiveInterventionBody
+    : intervention.payload.message ?? text.autonomyInterventionBody;
+
   return (
     <div className="autonomy-intervention-backdrop" role="dialog" aria-modal="true">
       <section className="autonomy-intervention-dialog">
         <div className="agent-worker-topline">
-          <strong>{intervention.payload.title ?? text.autonomyInterventionTitle}</strong>
+          <strong>{dialogTitle}</strong>
           <span className="waiting">{text.workerStatusApproval}</span>
         </div>
-        <p>{intervention.payload.message ?? text.autonomyInterventionBody}</p>
+        <p>{dialogBody}</p>
         <div className="agent-worker-context">
           {intervention.payload.target_column ? (
             <span>
@@ -4132,6 +4169,11 @@ function AutonomyInterventionDialog({
           {intervention.payload.risk_level ? (
             <span>
               risk: <strong>{intervention.payload.risk_level}</strong>
+            </span>
+          ) : null}
+          {intervention.payload.fallback_policy ? (
+            <span>
+              fallback: <strong>{intervention.payload.fallback_policy}</strong>
             </span>
           ) : null}
         </div>
@@ -4641,6 +4683,7 @@ function firstAutonomyIntervention(output: Record<string, unknown>): AutonomyInt
       mode: typeof record.mode === "string" ? record.mode : undefined,
       continued: typeof record.continued === "boolean" ? record.continued : undefined,
       question_id: typeof record.question_id === "string" ? record.question_id : undefined,
+      assumption_id: typeof record.assumption_id === "string" ? record.assumption_id : undefined,
       title: typeof record.title === "string" ? record.title : undefined,
       message: typeof record.message === "string" ? record.message : undefined,
       default_action: typeof record.default_action === "string" ? record.default_action : undefined,
@@ -4648,10 +4691,15 @@ function firstAutonomyIntervention(output: Record<string, unknown>): AutonomyInt
       dataset_snapshot_id: typeof record.dataset_snapshot_id === "string" ? record.dataset_snapshot_id : null,
       source_ref: typeof record.source_ref === "string" ? record.source_ref : null,
       risk_level: typeof record.risk_level === "string" ? record.risk_level : null,
-      confidence: typeof record.confidence === "number" ? record.confidence : null
+      confidence: typeof record.confidence === "number" ? record.confidence : null,
+      fallback_policy: typeof record.fallback_policy === "string" ? record.fallback_policy : null
     };
   }
   return null;
+}
+
+function autonomyInterventionKey(intervention: AutonomyIntervention, jobId: string): string {
+  return intervention.question_id ?? intervention.assumption_id ?? `${jobId}:${intervention.kind}`;
 }
 
 function upsertAgentChatMessages(
@@ -6562,10 +6610,10 @@ function DataTab({
         ? "Profile exists; quality evidence is the next useful read"
         : "Start with a dataset, then let evidence guide the next move";
   const dataEvidenceBody = latestDataset
-    ? "The first useful decision is whether this data is trustworthy enough for evaluation and runner work. Tablex keeps row counts, profile scope, target status, quality risks, and relational evidence visible before any modeling claim."
-    : "A project can exist before target selection. Upload CSV/Parquet or import a benchmark first, then let Data Understanding propose target candidates, assumptions, and evaluation choices.";
+    ? "The first useful decision is whether this data is trustworthy enough for evaluation and runner work. Tablex keeps row counts, profile scope, objective status, quality risks, and relational evidence visible before any modeling claim."
+    : "A project can exist before objective definition. Upload CSV/Parquet or import a benchmark first, then let Codex review possible task shapes, assumptions, and evaluation choices.";
   const dataEvidenceNextDetail = !latestDataset
-    ? "Create a DatasetSnapshot. Target selection can wait until the data has been inspected."
+    ? "Create a DatasetSnapshot. Objective definition can wait until the data has been inspected."
     : !latestQualityArtifact
       ? "Run the quality gate so leakage, missingness, duplicates, identity columns, and evaluation blockers become explicit evidence."
       : "Read the quality evidence first. Then inspect relational evidence only if the row meaning depends on tables or joins.";

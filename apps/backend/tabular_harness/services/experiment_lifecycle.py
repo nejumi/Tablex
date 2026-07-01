@@ -806,10 +806,10 @@ def review_questions_for_plan(
     if project.target_column is None:
         questions.append(
             {
-                "topic": "target",
-                "question": "What target column should this project optimize?",
-                "fallback_policy": "block_until_answered",
-                "risk_level": "blocking",
+                "topic": "objective",
+                "question": "What task objective, prediction unit, and outcome definition should constrain this project?",
+                "fallback_policy": "infer_and_continue",
+                "risk_level": "high",
             }
         )
     if evaluation_spec is None or split_manifest is None:

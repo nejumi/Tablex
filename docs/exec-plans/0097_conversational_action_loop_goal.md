@@ -23,6 +23,6 @@ Make Agent Chat feel like an in-product guide and action loop, not a contract lo
 
 ## Follow-Up
 
-- Expand direct safe intents for target selection, ER diagram upload/rendering, report generation, and notebook capture.
+- Expand direct safe intents for objective-definition review, ER diagram upload/rendering, report generation, and notebook capture.
 - Replace estimated token usage with real runner telemetry when Codex runner execution is wired in.
 - Continue reducing first-viewport noise; keep raw shelves behind explicit detail disclosures.
