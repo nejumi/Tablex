@@ -501,6 +501,69 @@ textarea {
   line-height: 1.35;
 }
 
+.autonomy-intervention-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: start center;
+  background: color-mix(in srgb, var(--bg) 48%, transparent);
+  padding: 84px 20px 20px;
+}
+
+.autonomy-intervention-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(620px, 100%);
+  border: 1px solid color-mix(in srgb, var(--warning) 46%, var(--border-strong));
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px var(--shadow-strong);
+  padding: 16px;
+}
+
+.autonomy-intervention-dialog p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.autonomy-intervention-dialog small {
+  color: var(--muted-strong);
+}
+
+.autonomy-countdown {
+  display: grid;
+  gap: 7px;
+}
+
+.autonomy-countdown div {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.autonomy-countdown div strong {
+  color: var(--text-strong);
+}
+
+.autonomy-countdown > span {
+  display: block;
+  width: 100%;
+  height: 7px;
+  transform-origin: left center;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--warning), var(--accent));
+  transition: transform 220ms linear;
+}
+
+.autonomy-intervention-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .mission-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);

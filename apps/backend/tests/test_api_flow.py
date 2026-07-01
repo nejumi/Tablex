@@ -113,9 +113,11 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
         "reflection",
     }.issubset(labels)
     assert output["artifact_ids"]
-    assert output["next_human_boundary"].startswith("Switch runner mode to codex_cli")
+    assert output["next_human_boundary"]
+    assert output["interventions"]
+    assert output["interventions"][0]["kind"] == "target_definition"
     evaluation_step = next(step for step in output["steps"] if step["label"] == "evaluation_spec")
-    assert evaluation_step["status"] == "deferred"
+    assert evaluation_step["status"] == "approved"
 
     artifacts = client.get(f"/api/projects/{project_id}/artifacts").json()
     asset_types = {artifact["asset_type"] for artifact in artifacts}
@@ -124,8 +126,8 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
     assert "agent_task_contract" in asset_types
     assert "agent_workspace_manifest" in asset_types
 
-    contract_step = next(step for step in output["steps"] if step["label"] == "agent_task_contract")
-    assert contract_step["entity_ids"]["task_type"] == "target_definition_review"
+    contract_steps = [step for step in output["steps"] if step["label"] == "agent_task_contract"]
+    assert contract_steps[-1]["entity_ids"]["task_type"] == "implement_prediction_approach"
 
 
 def test_full_auto_start_queues_training_for_large_dataset_boundary(
@@ -161,14 +163,13 @@ def test_full_auto_start_queues_training_for_large_dataset_boundary(
     assert labels["experiment_loop"]["status"] == "queued"
     assert labels["baseline_run"]["status"] == "queued"
     assert labels["model_candidates"]["status"] == "queued"
-    assert len(output["created_job_ids"]) == 3
+    assert len(output["created_job_ids"]) == 2
 
     jobs = client.get(f"/api/projects/{project_id}/jobs").json()
     queued_training = [job for job in jobs if job["id"] in output["created_job_ids"]]
     assert {job["job_type"] for job in queued_training} == {
         "run_baseline",
         "train_model_candidates",
-        "run_planned_agent_task_codex",
     }
     assert all(job["status"] == "queued" for job in queued_training)
 
@@ -184,6 +185,53 @@ def test_full_auto_start_queues_training_for_large_dataset_boundary(
     assert history
     assert history[-1]["intent"]["type"] == "agent_loop_control"
     assert "Agent Activity" in history[-1]["assistant_message"]
+
+
+def test_full_auto_infers_target_from_training_table_not_sample_submission(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("TABLEX_AUTONOMY_SYNC_TRAINING_ROW_LIMIT", "10")
+    monkeypatch.setattr("tabular_harness.services.autonomy.shutil.which", lambda name: "/usr/bin/codex")
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Home Credit style upload"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    train_rows = ["SK_ID_CURR,feature,TARGET"] + [f"{100000 + index},{index % 7},{1 if index % 5 == 0 else 0}" for index in range(1, 80)]
+    train_upload = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("application_train.csv", "\n".join(train_rows).encode("utf-8"), "text/csv")},
+    )
+    assert train_upload.status_code == 200, train_upload.text
+
+    submission_rows = ["SK_ID_CURR,TARGET"] + [f"{200000 + index},0.0" for index in range(1, 80)]
+    submission_upload = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("sample_submission.csv", "\n".join(submission_rows).encode("utf-8"), "text/csv")},
+    )
+    assert submission_upload.status_code == 200, submission_upload.text
+
+    start_response = client.post(
+        f"/api/projects/{project_id}/autonomy/start",
+        json={"runner_mode": "codex_cli_if_available", "autonomy_mode": "full_auto", "locale": "ja-JP"},
+    )
+    assert start_response.status_code == 200, start_response.text
+    output = start_response.json()["output"]
+    labels = {step["label"]: step for step in output["steps"]}
+    assert labels["target_definition"]["status"] == "adopted_with_assumption"
+    assert labels["target_definition"]["entity_ids"]["target_column"] == "TARGET"
+    assert labels["target_definition"]["entity_ids"]["dataset_snapshot_id"] == train_upload.json()["dataset_snapshot"]["id"]
+    assert output["interventions"][0]["target_column"] == "TARGET"
+    assert output["interventions"][0]["source_ref"] == "application_train.csv"
+    jobs = client.get(f"/api/projects/{project_id}/jobs").json()
+    created_job_types = {job["job_type"] for job in jobs if job["id"] in output["created_job_ids"]}
+    assert "run_planned_agent_task_codex" not in created_job_types
+
+    project = client.get(f"/api/projects/{project_id}").json()
+    assert project["target_column"] == "TARGET"
+    assert project["task_type"] == "binary_classification"
 
 
 def test_full_auto_codex_target_proposal_drives_evaluation_and_runs(tmp_path: Path, monkeypatch: Any) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, select
@@ -222,7 +223,7 @@ def worker_events_from_job(job: Job, *, project_name: str | None = None) -> list
             "created_at": job.created_at.isoformat(),
             "updated_at": job.updated_at.isoformat(),
             "started_at": job.started_at.isoformat() if job.started_at else None,
-            "active": job.status in {"queued", "running", "approval_required"},
+            "active": job_active_for_activity(job),
             "human_description": description,
             "token_usage": output.get("token_usage") if isinstance(output.get("token_usage"), dict) else estimated_tokens(job),
         }
@@ -248,7 +249,7 @@ def normalize_worker_event(event: dict[str, Any], job: Job, *, project_name: str
         "created_at": str(event.get("created_at") or job.created_at.isoformat()),
         "updated_at": job.updated_at.isoformat(),
         "started_at": str(event.get("started_at") or job.started_at.isoformat()) if job.started_at or event.get("started_at") else None,
-        "active": job.status in {"queued", "running", "approval_required"},
+        "active": job_active_for_activity(job),
         "human_description": event.get("human_description") if isinstance(event.get("human_description"), dict) else description,
         "token_usage": token_usage if isinstance(token_usage, dict) else estimated_tokens(job),
     }
@@ -265,6 +266,17 @@ def estimated_tokens(job: Job) -> dict[str, Any]:
             {"step": job.status, "tokens": base * (4 if job.status == "running" else 3)},
         ],
     }
+
+
+def job_active_for_activity(job: Job) -> bool:
+    if job.status in {"running", "approval_required"}:
+        return True
+    if job.status == "queued":
+        created_at = job.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        return utc_now() - created_at < timedelta(minutes=30)
+    return False
 
 
 def human_description_for_job(
@@ -332,6 +344,15 @@ def default_human_description_for_job(job: Job, *, project_label: str) -> dict[s
             ),
             "source": "job_type_default",
         }
+    if job.job_type == "build_split_manifest":
+        return {
+            "title": "Build the SplitManifest",
+            "summary": (
+                f"{waiting}Generate the approved train/validation split for {project_label} outside the Start request "
+                "so model training can use a stable evaluation manifest."
+            ),
+            "source": "job_type_default",
+        }
     return None
 
 
@@ -340,6 +361,7 @@ def is_agentish_job(job_type: str) -> bool:
         "agent" in job_type
         or "notebook" in job_type
         or "research" in job_type
+        or "split" in job_type
         or "train" in job_type
         or "baseline" in job_type
         or "experiment" in job_type
@@ -355,6 +377,8 @@ def worker_display_name(job_type: str) -> str:
         return "Research Worker"
     if "agent" in job_type:
         return "Agent Runner"
+    if "split" in job_type:
+        return "Evaluation Worker"
     return "Harness Worker"
 
 
@@ -365,6 +389,8 @@ def target_tab_for_job(job_type: str) -> str | None:
         return "Notebooks"
     if "agent" in job_type or "research" in job_type:
         return "Approach"
+    if "split" in job_type:
+        return "Evaluation"
     if "baseline" in job_type or "experiment" in job_type:
         return "Experiments"
     return None

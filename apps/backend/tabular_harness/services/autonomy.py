@@ -38,6 +38,7 @@ from tabular_harness.services.approach import (
     create_research_plan,
     generate_approach_candidates,
     generate_research_brief,
+    store_json_artifact,
     store_text_artifact,
 )
 from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
@@ -55,7 +56,10 @@ from tabular_harness.services.evaluation import (
     create_default_evaluation_candidates,
     create_evaluation_approval_review,
     generate_split_manifest,
+    infer_task_type,
+    load_profile_for_dataset,
     promote_candidate_to_spec,
+    target_profile_from_columns,
     write_spec_artifact,
 )
 from tabular_harness.services.experiment_lifecycle import draft_run_report
@@ -72,6 +76,7 @@ RUNNER_MODE_CODEX_CLI = "codex_cli"
 RUNNER_MODE_CODEX_IF_AVAILABLE = "codex_cli_if_available"
 RUNNER_MODES = {RUNNER_MODE_HARNESS_ONLY, RUNNER_MODE_CODEX_CLI, RUNNER_MODE_CODEX_IF_AVAILABLE}
 DEFAULT_SYNC_TRAINING_ROW_LIMIT = 50_000
+DEFAULT_SYNC_SPLIT_ROW_LIMIT = 200_000
 
 
 @dataclass
@@ -96,6 +101,20 @@ class AutonomousStep:
         return payload
 
 
+@dataclass(frozen=True)
+class ProvisionalTargetCandidate:
+    dataset: DatasetSnapshot
+    column_name: str
+    task_type: str
+    confidence: float
+    risk_level: str
+    score: float
+    rationale: str
+    profile: dict[str, Any]
+    target_profile: dict[str, Any]
+    alternatives: list[dict[str, Any]]
+
+
 @dataclass
 class AutonomousLoopState:
     project: Project
@@ -105,6 +124,7 @@ class AutonomousLoopState:
     created_job_ids: list[str] = field(default_factory=list)
     boundaries: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    interventions: list[dict[str, Any]] = field(default_factory=list)
     runner_result: dict[str, Any] | None = None
 
     def record(
@@ -138,6 +158,9 @@ class AutonomousLoopState:
         if message not in self.warnings:
             self.warnings.append(message)
 
+    def add_intervention(self, payload: dict[str, Any]) -> None:
+        self.interventions.append(payload)
+
 
 def run_autonomous_loop_tick(
     db: Session,
@@ -161,7 +184,7 @@ def run_autonomous_loop_tick(
     project.updated_at = utc_now()
 
     state = AutonomousLoopState(project=project, job=job)
-    dataset = latest_dataset(db, project.id)
+    dataset = select_autonomy_dataset(db, project.id, target_column=project.target_column)
     approved_spec = latest_approved_spec(db, project.id)
     split = latest_split_for_spec(db, approved_spec.id) if approved_spec else None
 
@@ -181,15 +204,40 @@ def run_autonomous_loop_tick(
 
     run_data_understanding_stack(db, store=store, project=project, dataset=dataset, state=state)
     if not project.target_column:
-        run_runner_handoff(
-            db,
-            store=store,
-            project=project,
-            job=job,
-            state=state,
-            runner_mode=runner_mode,
-            task_type="target_definition_review",
+        if runner_mode == RUNNER_MODE_CODEX_CLI:
+            run_runner_handoff(
+                db,
+                store=store,
+                project=project,
+                job=job,
+                state=state,
+                runner_mode=runner_mode,
+                task_type="target_definition_review",
+            )
+        provisional = (
+            None
+            if project.target_column
+            else create_or_adopt_provisional_target(
+                db,
+                store=store,
+                project=project,
+                state=state,
+                autonomy_mode=autonomy_mode,
+            )
         )
+        if provisional is not None:
+            dataset = provisional.dataset
+        elif not project.target_column:
+            run_runner_handoff(
+                db,
+                store=store,
+                project=project,
+                job=job,
+                state=state,
+                runner_mode=runner_mode,
+                task_type="target_definition_review",
+                queue_if_available=False,
+            )
     if project.target_column:
         approved_spec, split = run_evaluation_stack(
             db,
@@ -206,8 +254,8 @@ def run_autonomous_loop_tick(
         state.record(
             "evaluation_spec",
             "deferred",
-            "Evaluation design is deferred until Codex produces a target-definition proposal that the harness can validate.",
-            boundary="Target definition proposal is required before EvaluationSpec adoption.",
+            "Evaluation design is deferred because no usable provisional or confirmed target is available yet.",
+            boundary="Target construction or target confirmation is required before EvaluationSpec adoption.",
         )
     run_idea_and_insight_stack(
         db,
@@ -234,6 +282,7 @@ def run_autonomous_loop_tick(
             state=state,
             runner_mode=runner_mode,
             task_type="implement_prediction_approach",
+            queue_if_available=False,
         )
 
     next_boundary = next_boundary_for_state(project, approved_spec, split, state)
@@ -360,6 +409,368 @@ def run_data_understanding_stack(
         state.warn(f"Data Understanding notebook skipped: {exc}")
 
 
+def create_or_adopt_provisional_target(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    state: AutonomousLoopState,
+    autonomy_mode: str,
+) -> ProvisionalTargetCandidate | None:
+    candidate = infer_provisional_target_candidate(db, project.id)
+    if candidate is None:
+        question = get_or_create_target_question(
+            db,
+            project=project,
+            candidate=None,
+            blocks_next_phase=autonomy_mode != "full_auto",
+        )
+        state.add_intervention(
+            target_intervention_payload(
+                question=question,
+                candidate=None,
+                mode=autonomy_mode,
+                continued=False,
+            )
+        )
+        state.record(
+            "target_definition",
+            "needs_user_input" if autonomy_mode != "full_auto" else "deferred",
+            "No existing-column target candidate was strong enough to adopt. A target may need to be constructed or specified by the user.",
+            entity_ids={"question_id": question.id},
+            boundary="Describe or construct the prediction target before model training.",
+        )
+        return None
+
+    question = get_or_create_target_question(
+        db,
+        project=project,
+        candidate=candidate,
+        blocks_next_phase=autonomy_mode != "full_auto",
+    )
+    if autonomy_mode != "full_auto":
+        state.add_intervention(
+            target_intervention_payload(question=question, candidate=candidate, mode=autonomy_mode, continued=False)
+        )
+        state.record(
+            "target_definition",
+            "needs_approval",
+            "Prepared a provisional target candidate, but Approval Based mode waits for human confirmation before adopting it.",
+            entity_ids={"question_id": question.id, "target_column": candidate.column_name, "dataset_snapshot_id": candidate.dataset.id},
+            boundary="Confirm, revise, or construct the prediction target.",
+        )
+        return None
+
+    evidence = Evidence(
+        id=new_id("ev"),
+        project_id=project.id,
+        evidence_type="provisional_target_hypothesis",
+        summary=candidate.rationale[:500],
+        strength="medium" if candidate.confidence >= 0.6 else "low",
+        source_artifact_id=candidate.dataset.artifact_id,
+        metadata_json=dumps_json(
+            {
+                "schema_version": "provisional_target_hypothesis.v1",
+                "dataset_snapshot_id": candidate.dataset.id,
+                "source_ref": candidate.dataset.source_ref,
+                "recommended_target": {
+                    "kind": "existing_column",
+                    "column_name": candidate.column_name,
+                    "task_type": candidate.task_type,
+                    "confidence": candidate.confidence,
+                    "risk_level": candidate.risk_level,
+                },
+                "alternatives": candidate.alternatives,
+                "profile_basis": candidate.target_profile,
+                "policy": "Full Auto may infer and continue, but this remains a user-reviewable assumption.",
+            }
+        ),
+    )
+    db.add(evidence)
+    assumption = get_or_create_target_assumption(db, project=project, candidate=candidate)
+    db.add(
+        AssumptionEvidenceLink(
+            id=new_id("ael"),
+            assumption_id=assumption.id,
+            evidence_id=evidence.id,
+            effect="supports",
+            weight=max(0.2, min(0.95, candidate.confidence)),
+        )
+    )
+    question.related_assumption_id = assumption.id
+    project.target_column = candidate.column_name
+    project.task_type = candidate.task_type
+    project.updated_at = utc_now()
+    artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="target_definition_hypothesis",
+        name=f"target_definition_{candidate.column_name}",
+        filename="target_definition_hypothesis.json",
+        payload=loads_json(evidence.metadata_json, {}),
+        metadata={
+            "project_id": project.id,
+            "dataset_snapshot_id": candidate.dataset.id,
+            "target_column": candidate.column_name,
+            "assumption_id": assumption.id,
+            "question_id": question.id,
+            "evidence_id": evidence.id,
+        },
+    )
+    state.add_intervention(
+        target_intervention_payload(question=question, candidate=candidate, mode=autonomy_mode, continued=True)
+    )
+    state.record(
+        "target_definition",
+        "adopted_with_assumption",
+        "Full Auto adopted a provisional existing-column target, recorded the assumption, and continued without blocking.",
+        artifact_ids=[artifact.id],
+        entity_ids={
+            "dataset_snapshot_id": candidate.dataset.id,
+            "target_column": candidate.column_name,
+            "assumption_id": assumption.id,
+            "question_id": question.id,
+            "evidence_id": evidence.id,
+        },
+    )
+    return candidate
+
+
+def infer_provisional_target_candidate(db: Session, project_id: str) -> ProvisionalTargetCandidate | None:
+    datasets = list(
+        db.scalars(
+            select(DatasetSnapshot)
+            .where(DatasetSnapshot.project_id == project_id)
+            .order_by(DatasetSnapshot.created_at.desc())
+        ).all()
+    )
+    scored: list[tuple[float, DatasetSnapshot, dict[str, Any], dict[str, Any], str]] = []
+    for dataset in datasets:
+        profile = load_profile_for_dataset(db, dataset)
+        columns = profile.get("columns")
+        if not isinstance(columns, list):
+            continue
+        dataset_score = dataset_target_score(dataset)
+        row_count = int(profile.get("row_count") or dataset.row_count or 0)
+        for raw_column in columns:
+            if not isinstance(raw_column, dict):
+                continue
+            name = str(raw_column.get("name") or "")
+            if not name:
+                continue
+            score, rationale = column_target_score(raw_column, row_count=row_count)
+            total = score + dataset_score
+            if total <= 0:
+                continue
+            target_profile = target_profile_from_columns(profile, name) or {}
+            scored.append((total, dataset, raw_column, target_profile, rationale))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best_score, dataset, column, target_profile, rationale = scored[0]
+    column_name = str(column["name"])
+    alternatives = [
+        {
+            "dataset_snapshot_id": item_dataset.id,
+            "source_ref": item_dataset.source_ref,
+            "column_name": str(item_column.get("name") or ""),
+            "score": round(score, 3),
+            "rationale": item_rationale,
+        }
+        for score, item_dataset, item_column, _, item_rationale in scored[1:6]
+    ]
+    confidence = max(0.35, min(0.88, best_score / 2.4))
+    risk_level = "medium" if confidence >= 0.55 else "high"
+    task_type = infer_task_type(target_profile)
+    return ProvisionalTargetCandidate(
+        dataset=dataset,
+        column_name=column_name,
+        task_type=task_type,
+        confidence=confidence,
+        risk_level=risk_level,
+        score=best_score,
+        rationale=(
+            f"`{column_name}` in `{dataset.source_ref or dataset.id}` is the strongest provisional target candidate. "
+            f"{rationale} Confidence is {confidence:.0%}; Full Auto will treat this as an assumption until confirmed."
+        ),
+        profile=load_profile_for_dataset(db, dataset),
+        target_profile=target_profile,
+        alternatives=alternatives,
+    )
+
+
+def dataset_target_score(dataset: DatasetSnapshot) -> float:
+    source = (dataset.source_ref or "").lower()
+    score = 0.0
+    if dataset.column_count and dataset.column_count > 2:
+        score += 0.25
+    if dataset.column_count and dataset.column_count >= 20:
+        score += 0.15
+    if dataset.row_count and dataset.row_count >= 100:
+        score += 0.1
+    if "train" in source:
+        score += 0.35
+    if "test" in source:
+        score -= 0.25
+    if "submission" in source:
+        score -= 1.15
+    return score
+
+
+def column_target_score(column: dict[str, Any], *, row_count: int) -> tuple[float, str]:
+    name = str(column.get("name") or "")
+    lowered = name.lower()
+    unique_count = int(column.get("unique_count") or 0)
+    missing_count = int(column.get("missing_count") or 0)
+    missing_rate = missing_count / row_count if row_count else 0.0
+    score = 0.0
+    reasons: list[str] = []
+    if unique_count <= 1:
+        return -1.0, "The column is constant or effectively unavailable."
+    if row_count and unique_count >= int(row_count * 0.98):
+        score -= 0.65
+        reasons.append("very high cardinality makes it unlikely to be a target")
+    if lowered in {"target", "label", "y", "class", "outcome", "response"}:
+        score += 0.55
+        reasons.append("the column name is target-like")
+    elif lowered.endswith("_target") or lowered.endswith("_label") or lowered.startswith("target_"):
+        score += 0.28
+        reasons.append("the column name carries target-like semantics")
+    if lowered.endswith("_id") or lowered == "id" or "sk_id" in lowered:
+        score -= 0.5
+        reasons.append("identifier-like columns are penalized")
+    if unique_count == 2:
+        score += 0.38
+        reasons.append("binary cardinality supports a classification target")
+    elif 2 < unique_count <= 20:
+        score += 0.18
+        reasons.append("moderate cardinality supports classification")
+    elif unique_count > 20 and not lowered.endswith("_id"):
+        score += 0.08
+        reasons.append("continuous or high-cardinality targets remain possible")
+    if missing_rate == 0:
+        score += 0.12
+        reasons.append("no missing target values were observed")
+    elif missing_rate > 0.2:
+        score -= 0.25
+        reasons.append("substantial missingness raises target risk")
+    return score, "; ".join(reasons) if reasons else "Profile statistics make it a possible prediction target."
+
+
+def get_or_create_target_question(
+    db: Session,
+    *,
+    project: Project,
+    candidate: ProvisionalTargetCandidate | None,
+    blocks_next_phase: bool,
+) -> Question:
+    existing = db.scalar(
+        select(Question)
+        .where(Question.project_id == project.id, Question.topic == "target_definition", Question.status == "open")
+        .order_by(Question.created_at.desc())
+    )
+    if existing is not None:
+        existing.blocks_next_phase = blocks_next_phase
+        existing.can_proceed_without_answer = not blocks_next_phase
+        existing.fallback_policy = "block_until_answered" if blocks_next_phase else "infer_and_continue"
+        return existing
+    target_label = f"`{candidate.column_name}`" if candidate else "a constructed or user-specified target"
+    question = Question(
+        id=new_id("q"),
+        project_id=project.id,
+        question_set_id=new_id("qs"),
+        topic="target_definition",
+        question=f"Should Tablex use {target_label} as the prediction target for now?",
+        why_it_matters=(
+            "The target defines row semantics, leakage boundaries, evaluation metrics, and what model performance means."
+        ),
+        default_assumption=(
+            candidate.rationale
+            if candidate
+            else "No existing column is reliable enough; the target likely needs to be described or constructed."
+        ),
+        impact_if_wrong="Evaluation and model comparisons may optimize the wrong business question.",
+        choices_json=dumps_json(["confirm", "revise", "construct_target", "continue_with_assumption"]),
+        status="open",
+        priority=95,
+        risk_level="high",
+        value_of_answer="high",
+        can_proceed_without_answer=not blocks_next_phase,
+        fallback_policy="block_until_answered" if blocks_next_phase else "infer_and_continue",
+        blocks_next_phase=blocks_next_phase,
+    )
+    db.add(question)
+    return question
+
+
+def get_or_create_target_assumption(
+    db: Session,
+    *,
+    project: Project,
+    candidate: ProvisionalTargetCandidate,
+) -> Assumption:
+    existing = db.scalar(
+        select(Assumption).where(
+            Assumption.project_id == project.id,
+            Assumption.topic == "target_definition",
+            Assumption.subject_ref == candidate.column_name,
+            Assumption.status.in_(["adopted", "provisional"]),
+        )
+    )
+    if existing is not None:
+        existing.confidence = candidate.confidence
+        existing.risk_level = candidate.risk_level
+        existing.updated_at = utc_now()
+        return existing
+    assumption = Assumption(
+        id=new_id("asm"),
+        project_id=project.id,
+        topic="target_definition",
+        subject_type="column",
+        subject_ref=candidate.column_name,
+        statement=(
+            f"Full Auto is temporarily treating `{candidate.column_name}` from "
+            f"`{candidate.dataset.source_ref or candidate.dataset.id}` as the prediction target."
+        ),
+        status="adopted",
+        confidence=candidate.confidence,
+        risk_level=candidate.risk_level,
+        fallback_policy="infer_and_continue",
+        requires_user_confirmation=True,
+        created_by_type="agent_runner",
+        created_by="tablex_full_auto",
+    )
+    db.add(assumption)
+    return assumption
+
+
+def target_intervention_payload(
+    *,
+    question: Question,
+    candidate: ProvisionalTargetCandidate | None,
+    mode: str,
+    continued: bool,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "autonomy_intervention.v1",
+        "kind": "target_definition",
+        "mode": mode,
+        "continued": continued,
+        "question_id": question.id,
+        "title": "Review provisional target",
+        "message": candidate.rationale
+        if candidate
+        else "No reliable existing-column target was found. The prediction target likely needs to be specified or constructed.",
+        "default_action": "continue_with_assumption" if continued else "wait_for_answer",
+        "target_column": candidate.column_name if candidate else None,
+        "dataset_snapshot_id": candidate.dataset.id if candidate else None,
+        "source_ref": candidate.dataset.source_ref if candidate else None,
+        "risk_level": candidate.risk_level if candidate else "high",
+        "confidence": candidate.confidence if candidate else 0.0,
+    }
+
+
 def latest_project_artifact(db: Session, project_id: str, asset_type: str) -> Artifact | None:
     return db.scalar(
         select(Artifact)
@@ -427,6 +838,39 @@ def run_evaluation_stack(
         approved_spec = spec
 
     if approved_spec is not None and split is None:
+        if should_queue_split_generation(dataset):
+            split_job = create_job(
+                db,
+                job_type="build_split_manifest",
+                project_id=project.id,
+                input_payload={"evaluation_spec_id": approved_spec.id},
+                context={
+                    "human_description": {
+                        "source": "autonomous_loop_plan",
+                        "title": "Build the SplitManifest",
+                        "summary": (
+                            "Generate the approved split for a large dataset outside the Start request, then continue "
+                            "model training after the manifest exists."
+                        ),
+                    }
+                },
+                policy={
+                    "network": "disabled",
+                    "secret_access": "forbidden",
+                    "connector_credentials": "not_materialized",
+                    "queued_by": "autonomous_loop",
+                    "evaluation_spec_id": approved_spec.id,
+                },
+                priority=72,
+            )
+            state.created_job_ids.append(split_job.id)
+            state.record(
+                "split_manifest",
+                "queued",
+                "Queued SplitManifest generation instead of blocking the Start request on a large dataset.",
+                entity_ids={"job_id": split_job.id, "evaluation_spec_id": approved_spec.id},
+            )
+            return approved_spec, None
         split = generate_split_manifest(db, store=store, spec=approved_spec)
         state.record(
             "split_manifest",
@@ -646,12 +1090,27 @@ def should_queue_experiment_training(db: Session, project: Project) -> bool:
     return dataset.row_count > limit
 
 
+def should_queue_split_generation(dataset: DatasetSnapshot) -> bool:
+    limit = sync_split_row_limit()
+    if limit < 0:
+        return False
+    return bool(dataset.row_count and dataset.row_count > limit)
+
+
 def sync_training_row_limit() -> int:
     raw = os.getenv("TABLEX_AUTONOMY_SYNC_TRAINING_ROW_LIMIT", str(DEFAULT_SYNC_TRAINING_ROW_LIMIT)).strip()
     try:
         return int(raw)
     except ValueError:
         return DEFAULT_SYNC_TRAINING_ROW_LIMIT
+
+
+def sync_split_row_limit() -> int:
+    raw = os.getenv("TABLEX_AUTONOMY_SYNC_SPLIT_ROW_LIMIT", str(DEFAULT_SYNC_SPLIT_ROW_LIMIT)).strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return DEFAULT_SYNC_SPLIT_ROW_LIMIT
 
 
 def queue_experiment_training_jobs(
@@ -742,6 +1201,7 @@ def run_runner_handoff(
     state: AutonomousLoopState,
     runner_mode: str,
     task_type: str | None = None,
+    queue_if_available: bool = True,
 ) -> None:
     objective = autonomous_agent_objective(project)
     task_type = task_type or ("target_definition_review" if not project.target_column else "implement_prediction_approach")
@@ -831,6 +1291,16 @@ def run_runner_handoff(
             "blocked",
             "Codex CLI was not found on PATH; the workspace remains ready for a later runner.",
             boundary="Install or expose Codex CLI before runner execution.",
+        )
+        return
+
+    if runner_mode == RUNNER_MODE_CODEX_IF_AVAILABLE and not queue_if_available:
+        state.record(
+            "codex_execution",
+            "armed",
+            "Prepared the Codex runner workspace without queuing a long-running worker job during Start.",
+            artifact_ids=[plan.artifact.id],
+            boundary="A later runner cycle can execute this workspace; Full Auto continued with harness-owned assumptions and evidence.",
         )
         return
 
@@ -1159,6 +1629,7 @@ def finalize_autonomous_tick(
         "step_count": len(state.steps),
         "artifact_ids": state.artifact_ids,
         "created_job_ids": state.created_job_ids,
+        "interventions": state.interventions,
         "boundaries": state.boundaries,
         "warnings": state.warnings,
         "runner_result": state.runner_result,
@@ -1363,7 +1834,7 @@ def next_boundary_for_state(
         return "Review the proposed EvaluationSpec candidates because automatic approval was blocked."
     if split is None:
         return "Generate or inspect the SplitManifest before comparing model runs."
-    if codex_step and codex_step.status in {"blocked", "armed"}:
+    if codex_step and codex_step.status == "blocked":
         return codex_step.boundary or "Launch the prepared Codex runner workspace when ready."
     return "Review the leaderboard and autonomous reflection, then let Full Auto continue the next improvement cycle."
 
@@ -1398,6 +1869,28 @@ def latest_dataset(db: Session, project_id: str) -> DatasetSnapshot | None:
         .where(DatasetSnapshot.project_id == project_id)
         .order_by(DatasetSnapshot.created_at.desc())
     )
+
+
+def select_autonomy_dataset(db: Session, project_id: str, *, target_column: str | None) -> DatasetSnapshot | None:
+    datasets = list(
+        db.scalars(
+            select(DatasetSnapshot)
+            .where(DatasetSnapshot.project_id == project_id)
+            .order_by(DatasetSnapshot.created_at.desc())
+        ).all()
+    )
+    if not datasets:
+        return None
+    if target_column:
+        for dataset in datasets:
+            profile = load_profile_for_dataset(db, dataset)
+            columns = profile.get("columns")
+            if isinstance(columns, list) and any(isinstance(column, dict) and column.get("name") == target_column for column in columns):
+                return dataset
+    candidate = infer_provisional_target_candidate(db, project_id)
+    if candidate is not None:
+        return candidate.dataset
+    return max(datasets, key=lambda dataset: dataset_target_score(dataset))
 
 
 def latest_approved_spec(db: Session, project_id: str) -> EvaluationSpec | None:

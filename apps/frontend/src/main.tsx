@@ -234,6 +234,10 @@ const englishMessages = {
   autonomyInterventionContinue: "Let it continue",
   autonomyInterventionCatch: "Catch and review",
   autonomyInterventionDisabled: "Intervention dialog disabled",
+  autonomyInterventionAssumed: "Full Auto continued with this assumption.",
+  autonomyInterventionTarget: "Provisional target",
+  autonomyInterventionDataset: "Dataset",
+  autonomyInterventionTimeLeft: "Time left",
   fullAutoModeSelected: "Full Auto mode is selected. Press Start when data is ready; I will keep moving with explicit assumptions and boundaries.",
   approvalModeSelected: "Approval Based mode is selected. Press Start when data is ready; I will prepare evidence and wait before risky decisions.",
   stopAgentLoopUserMessage: "Stop agent loop",
@@ -499,6 +503,10 @@ const japaneseMessages: LocaleMessages = {
   autonomyInterventionContinue: "そのまま続行",
   autonomyInterventionCatch: "捕まえて確認",
   autonomyInterventionDisabled: "介入ダイアログ無効",
+  autonomyInterventionAssumed: "Full Autoはこの仮定で続行済みです。",
+  autonomyInterventionTarget: "仮ターゲット",
+  autonomyInterventionDataset: "Dataset",
+  autonomyInterventionTimeLeft: "残り",
   fullAutoModeSelected: "フルオートモードを選択しました。データが準備できたら開始してください。明示的な仮定とboundaryを置きながら前に進みます。",
   approvalModeSelected: "承認ベースモードを選択しました。データが準備できたら開始してください。根拠を準備し、リスクのある判断では承認を待ちます。",
   stopAgentLoopUserMessage: "Agent loopを停止",
@@ -1195,6 +1203,28 @@ type Job = {
   started_at: string | null;
   ended_at: string | null;
   output: Record<string, unknown>;
+};
+
+type AutonomyIntervention = {
+  schema_version?: string;
+  kind: string;
+  mode?: string;
+  continued?: boolean;
+  question_id?: string;
+  title?: string;
+  message?: string;
+  default_action?: string;
+  target_column?: string | null;
+  dataset_snapshot_id?: string | null;
+  source_ref?: string | null;
+  risk_level?: string | null;
+  confidence?: number | null;
+};
+
+type PendingAutonomyIntervention = {
+  payload: AutonomyIntervention;
+  startedAt: number;
+  durationSeconds: number;
 };
 
 type JobArtifactsResponse = {
@@ -2952,6 +2982,7 @@ function ProjectDetail({
   const [agentWorkerEvents, setAgentWorkerEvents] = React.useState<AgentWorkerEvent[]>([]);
   const [agentActivity, setAgentActivity] = React.useState<AgentActivityResponse | null>(null);
   const [activityTick, setActivityTick] = React.useState(0);
+  const [pendingIntervention, setPendingIntervention] = React.useState<PendingAutonomyIntervention | null>(null);
   const [pendingAnchor, setPendingAnchor] = React.useState<string | null>(null);
   const visibleAgentChatMessages = React.useMemo(
     () => mergeAgentChatMessages(agentChatMessages, pendingAgentChatMessages),
@@ -3336,6 +3367,14 @@ function ProjectDetail({
             : text.agentLoopStarted;
       setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: assistantMessage }]);
       setAgentWorkerEvents((current) => [...workerEvents, ...current].slice(0, 8));
+      const intervention = firstAutonomyIntervention(job.output);
+      if (!poweredOn && intervention && userSettings.interventionCountdownSeconds > 0) {
+        setPendingIntervention({
+          payload: intervention,
+          startedAt: Date.now(),
+          durationSeconds: userSettings.interventionCountdownSeconds
+        });
+      }
       await refreshAgentActivity();
       await refresh();
       await onProjectChanged();
@@ -3404,17 +3443,25 @@ function ProjectDetail({
     onTabChange(targetTab);
   }
 
+  async function catchPendingIntervention() {
+    if (!pendingIntervention) return;
+    setPendingIntervention(null);
+    await changeAutonomyMode("approval_based");
+    onTabChange("Assumptions");
+  }
+
   return (
-    <section className="detail">
-      {error ? <div className="banner danger">{error}</div> : null}
-      <AgentActivityRail
-        text={text}
-        jobs={jobs}
-        events={agentWorkerEvents}
-        activity={agentActivity}
-        tick={activityTick}
-        onWorkerMessage={submitAgentChatWithoutResponse}
-      />
+    <>
+      <section className="detail">
+        {error ? <div className="banner danger">{error}</div> : null}
+        <AgentActivityRail
+          text={text}
+          jobs={jobs}
+          events={agentWorkerEvents}
+          activity={agentActivity}
+          tick={activityTick}
+          onWorkerMessage={submitAgentChatWithoutResponse}
+        />
       {tab === "Home" && (
         <HomeTab
           project={project}
@@ -3607,8 +3654,18 @@ function ProjectDetail({
         />
       )}
       {tab === "Jobs" && <JobsTab jobs={jobs} busy={busy} runAction={runAction} />}
-      {tab === "Lineage" && <LineageTab lineage={lineage} />}
-    </section>
+        {tab === "Lineage" && <LineageTab lineage={lineage} />}
+      </section>
+      {pendingIntervention ? (
+        <AutonomyInterventionDialog
+          intervention={pendingIntervention}
+          text={text}
+          tick={activityTick}
+          onContinue={() => setPendingIntervention(null)}
+          onCatch={() => void catchPendingIntervention()}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -3961,6 +4018,78 @@ function HomeTab({
   );
 }
 
+function AutonomyInterventionDialog({
+  intervention,
+  text,
+  tick,
+  onContinue,
+  onCatch
+}: {
+  intervention: PendingAutonomyIntervention;
+  text: LocaleMessages;
+  tick: number;
+  onContinue: () => void;
+  onCatch: () => void;
+}) {
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() + tick - intervention.startedAt) / 1000));
+  const remainingSeconds = Math.max(0, intervention.durationSeconds - elapsedSeconds);
+  const progress = intervention.durationSeconds > 0 ? Math.max(0, remainingSeconds / intervention.durationSeconds) : 0;
+
+  React.useEffect(() => {
+    if (remainingSeconds <= 0) onContinue();
+  }, [remainingSeconds, onContinue]);
+
+  return (
+    <div className="autonomy-intervention-backdrop" role="dialog" aria-modal="true">
+      <section className="autonomy-intervention-dialog">
+        <div className="agent-worker-topline">
+          <strong>{intervention.payload.title ?? text.autonomyInterventionTitle}</strong>
+          <span className="waiting">{text.workerStatusApproval}</span>
+        </div>
+        <p>{intervention.payload.message ?? text.autonomyInterventionBody}</p>
+        <div className="agent-worker-context">
+          {intervention.payload.target_column ? (
+            <span>
+              {text.autonomyInterventionTarget}: <strong>{intervention.payload.target_column}</strong>
+            </span>
+          ) : null}
+          {intervention.payload.source_ref ? (
+            <span>
+              {text.autonomyInterventionDataset}: <strong>{intervention.payload.source_ref}</strong>
+            </span>
+          ) : null}
+          {typeof intervention.payload.confidence === "number" ? (
+            <span>
+              confidence: <strong>{Math.round(intervention.payload.confidence * 100)}%</strong>
+            </span>
+          ) : null}
+          {intervention.payload.risk_level ? (
+            <span>
+              risk: <strong>{intervention.payload.risk_level}</strong>
+            </span>
+          ) : null}
+        </div>
+        <small>{intervention.payload.continued ? text.autonomyInterventionAssumed : text.autonomyInterventionBody}</small>
+        <div className="autonomy-countdown">
+          <div>
+            <span>{text.autonomyInterventionTimeLeft}</span>
+            <strong>{remainingSeconds}s</strong>
+          </div>
+          <span style={{ transform: `scaleX(${progress})` }} />
+        </div>
+        <div className="autonomy-intervention-actions">
+          <button className="secondary-button" type="button" onClick={onContinue}>
+            {text.autonomyInterventionContinue}
+          </button>
+          <button className="primary-button" type="button" onClick={onCatch}>
+            {text.autonomyInterventionCatch}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function AutonomyPowerPanel({
   poweredOn,
   canStart,
@@ -4254,6 +4383,34 @@ function mergeAgentChatMessages(persisted: AgentChatMessage[], transient: AgentC
     merged.push(message);
   }
   return merged.slice(-80);
+}
+
+function firstAutonomyIntervention(output: Record<string, unknown>): AutonomyIntervention | null {
+  const interventions = output.interventions;
+  if (!Array.isArray(interventions)) return null;
+  for (const item of interventions) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    if (record.schema_version !== "autonomy_intervention.v1") continue;
+    const kind = typeof record.kind === "string" ? record.kind : "";
+    if (!kind) continue;
+    return {
+      schema_version: "autonomy_intervention.v1",
+      kind,
+      mode: typeof record.mode === "string" ? record.mode : undefined,
+      continued: typeof record.continued === "boolean" ? record.continued : undefined,
+      question_id: typeof record.question_id === "string" ? record.question_id : undefined,
+      title: typeof record.title === "string" ? record.title : undefined,
+      message: typeof record.message === "string" ? record.message : undefined,
+      default_action: typeof record.default_action === "string" ? record.default_action : undefined,
+      target_column: typeof record.target_column === "string" ? record.target_column : null,
+      dataset_snapshot_id: typeof record.dataset_snapshot_id === "string" ? record.dataset_snapshot_id : null,
+      source_ref: typeof record.source_ref === "string" ? record.source_ref : null,
+      risk_level: typeof record.risk_level === "string" ? record.risk_level : null,
+      confidence: typeof record.confidence === "number" ? record.confidence : null
+    };
+  }
+  return null;
 }
 
 function upsertAgentChatMessages(
@@ -5001,7 +5158,11 @@ function hasLiveAgentOrModelActivity(
 function isVisibleWorkerEvent(event: AgentWorkerEvent, now: number) {
   const timestamp = Date.parse(event.updated_at ?? event.created_at ?? "");
   if (event.job_id.startsWith("local-") && Number.isFinite(timestamp) && now - timestamp > 15000) return false;
-  if (isActiveWorkerEvent(event) || isRunningWorkerStatus(event.status)) return true;
+  if (isLiveWorkerStatus(event.status)) return true;
+  if (isWaitingWorkerStatus(event.status)) {
+    if (isActiveWorkerEvent(event)) return true;
+    return Number.isFinite(timestamp) && now - timestamp < 15000;
+  }
   return Number.isFinite(timestamp) && now - timestamp < 9000;
 }
 

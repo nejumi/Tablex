@@ -21,7 +21,8 @@ from tabular_harness.services.baseline import (
     run_baseline,
     run_model_candidate,
 )
-from tabular_harness.services.jobs import JOB_TYPES
+from tabular_harness.services.evaluation import generate_split_manifest
+from tabular_harness.services.jobs import JOB_TYPES, create_job
 from tabular_harness.services.planned_agent_execution import run_planned_agent_task_codex_cli
 from tabular_harness.worker.runner import JobHandler, SyncWorker
 
@@ -89,6 +90,93 @@ def run_baseline_handler(db: Session, job: Job, store: LocalArtifactStore) -> di
                         {"step": "fit baseline", "tokens": 180},
                         {"step": "score", "tokens": 120},
                         {"step": "register artifacts", "tokens": 140},
+                    ],
+                },
+            }
+        ],
+    }
+
+
+def build_split_manifest_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    spec_id = payload.get("evaluation_spec_id")
+    spec = db.get(EvaluationSpec, spec_id) if isinstance(spec_id, str) else None
+    if spec is None:
+        raise ValueError("EvaluationSpec not found")
+    split = generate_split_manifest(db, store=store, spec=spec)
+    queued_training_ids: list[str] = []
+    if job.project_id:
+        common_policy = {
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "evaluation_spec_id": spec.id,
+            "split_manifest_id": split.id,
+            "queued_by": "split_manifest_worker",
+        }
+        baseline_job = create_job(
+            db,
+            job_type="run_baseline",
+            project_id=job.project_id,
+            input_payload={"evaluation_spec_id": spec.id, "split_manifest_id": split.id},
+            context={
+                "human_description": {
+                    "source": "split_manifest_worker",
+                    "title": "Train the adaptive baseline",
+                    "summary": "Train the adaptive baseline after the queued SplitManifest has been materialized.",
+                }
+            },
+            policy=common_policy,
+            priority=70,
+        )
+        candidate_job = create_job(
+            db,
+            job_type="train_model_candidates",
+            project_id=job.project_id,
+            input_payload={
+                "requested_models": ["xgboost", "logistic_regression", "lightgbm"],
+                "normalized_models": ["xgboost", "logistic_regression", "lightgbm"],
+                "unsupported_models": [],
+                "evaluation_spec_id": spec.id,
+                "split_manifest_id": split.id,
+            },
+            context={
+                "human_description": {
+                    "source": "split_manifest_worker",
+                    "title": "Train candidate models",
+                    "summary": "Train XGBoost, LogisticRegression, and LightGBM after the queued SplitManifest has been materialized.",
+                }
+            },
+            policy=common_policy,
+            priority=65,
+        )
+        queued_training_ids = [baseline_job.id, candidate_job.id]
+    return {
+        "schema_version": "split_manifest_generation.v1",
+        "evaluation_spec_id": spec.id,
+        "split_manifest_id": split.id,
+        "artifact_ids": [split.artifact_id],
+        "created_job_ids": queued_training_ids,
+        "worker_events": [
+            {
+                "worker_id": "split-manifest-builder",
+                "display_name": "Evaluation Worker",
+                "status": "succeeded",
+                "headline": "SplitManifest generated",
+                "detail": "Created the stable train/validation split for downstream model runs.",
+                "job_id": job.id,
+                "target_tab": "Evaluation",
+                "target_anchor": "evaluation-spec",
+                "created_at": job.created_at.isoformat(),
+                "updated_at": utc_now().isoformat(),
+                "active": False,
+                "token_usage": {
+                    "source": "split_generation_progress_estimate",
+                    "is_estimate": True,
+                    "series": [
+                        {"step": "load spec", "tokens": 40},
+                        {"step": "split rows", "tokens": 140},
+                        {"step": "write manifest", "tokens": 80},
                     ],
                 },
             }
@@ -320,6 +408,7 @@ def run_planned_agent_task_codex_handler(db: Session, job: Job, store: LocalArti
 def default_handlers() -> dict[str, JobHandler]:
     handlers = {job_type: stub_job_handler for job_type in JOB_TYPES}
     handlers["run_baseline"] = run_baseline_handler
+    handlers["build_split_manifest"] = build_split_manifest_handler
     handlers["train_model_candidates"] = train_model_candidates_handler
     handlers["run_planned_agent_task_codex"] = run_planned_agent_task_codex_handler
     return handlers
