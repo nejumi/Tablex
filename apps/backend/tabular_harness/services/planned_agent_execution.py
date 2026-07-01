@@ -25,6 +25,7 @@ from tabular_harness.services.agent_task_readiness import (
     AgentTaskReadinessResult,
     latest_workspace_manifest_for_contract,
     load_workspace_manifest,
+    readiness_hard_blockers_for_runner,
     review_agent_task_readiness,
 )
 from tabular_harness.services.agent_tasks import (
@@ -145,11 +146,22 @@ def run_planned_agent_task_with_runner(
         contract_artifact=contract_artifact,
         job=job,
     )
-    if readiness.review["blocker_count"] > 0:
-        raise ValueError(
-            "AgentTask readiness has blockers: "
-            + "; ".join(str(action) for action in readiness.review.get("next_actions", []))
+    hard_blockers = readiness_hard_blockers_for_runner(readiness.review, task_type=contract.task_type)
+    if hard_blockers:
+        blocker_label = (
+            "AgentTask readiness has hard safety blockers: "
+            if contract.task_type == "autonomous_session"
+            else "AgentTask readiness has blockers: "
         )
+        raise ValueError(
+            blocker_label
+            + "; ".join(str(item.get("action") or item.get("summary")) for item in hard_blockers)
+        )
+    readiness_status = (
+        "ready_with_constraints"
+        if contract.task_type == "autonomous_session" and readiness.review["blocker_count"] > 0
+        else str(readiness.review["status"])
+    )
 
     output_schema = load_agent_result_schema()
     workspace_path = Path(str(workspace_manifest["workspace_path"]))
@@ -295,7 +307,7 @@ def run_planned_agent_task_with_runner(
         evidence_id=evidence.id,
         workspace_artifact_id=workspace_artifact.id,
         readiness_artifact_id=readiness.review_artifact.id,
-        readiness_status=str(readiness.review["status"]),
+        readiness_status=readiness_status,
         ingested_artifact_ids=[artifact.id for artifact in ingested_artifacts],
         auto_prepared_workspace=auto_prepared,
         experiment_ingestion=experiment_ingestion,

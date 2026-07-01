@@ -203,6 +203,17 @@ def build_readiness_review(
     }
 
 
+def readiness_hard_blockers_for_runner(review: dict[str, Any], *, task_type: str) -> list[dict[str, Any]]:
+    blockers = [
+        item
+        for item in review.get("checks", [])
+        if isinstance(item, dict) and item.get("status") == "blocker"
+    ]
+    if task_type == "autonomous_session":
+        return [item for item in blockers if item.get("check_id") == "safety_constraints"]
+    return blockers
+
+
 def contract_schema_check(contract: AgentTaskContract) -> dict[str, Any]:
     return check(
         "contract_schema",

@@ -338,10 +338,17 @@ def test_full_auto_passes_readiness_constraints_to_main_codex_session(
     labels = {step["label"]: step for step in output["steps"]}
     assert labels["agent_readiness"]["status"] == "ready_with_constraints"
     assert labels["codex_execution"]["status"] == "queued"
+    contract_artifact_id = labels["agent_task_contract"]["artifact_ids"][0]
 
     jobs = client.get(f"/api/projects/{project_id}/jobs").json()
     created_jobs = [job for job in jobs if job["id"] in output["created_job_ids"]]
     assert any(job["job_type"] == "run_planned_agent_task_codex" for job in created_jobs)
+
+    stub_response = client.post(f"/api/agent-task-contracts/{contract_artifact_id}/run-local-stub")
+    assert stub_response.status_code == 200, stub_response.text
+    stub_job = stub_response.json()
+    assert stub_job["status"] == "succeeded"
+    assert stub_job["output"]["readiness_status"] == "ready_with_constraints"
 
 
 def test_full_auto_infers_target_from_training_table_not_sample_submission(
