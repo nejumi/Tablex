@@ -3420,10 +3420,11 @@ def create_agent_chat_turn(
             "utility_model": payload.utility_model,
         },
         policy={
-            "network": "disabled",
+            "network": "codex_response_composer_policy",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
-            "runner_execution": "not_started_by_chat_endpoint",
+            "runner_execution": "codex_response_composer",
+            "response_composer": "codex_cli_if_available",
             "response_locale": payload.locale,
             "agent_model": payload.agent_model,
             "utility_model": payload.utility_model,
@@ -3451,6 +3452,7 @@ def create_agent_chat_turn(
                 "intent_type": result.response["intent"]["type"],
                 "action_count": len(result.response["actions"]),
                 "assistant_message": result.response["assistant_message"],
+                "response_composer": result.response["response_composer"],
                 "worker_events": result.response["worker_events"],
                 "token_usage": result.response["token_usage"],
                 "agent_task_contract_artifact_id": result.planned_agent_task.artifact.id

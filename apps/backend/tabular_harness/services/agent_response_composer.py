@@ -25,6 +25,9 @@ class CodexCompositionResult:
     message: str | None
     status: str
     failure_reason: str | None = None
+    prompt_preamble: list[str] | None = None
+    command: str | None = None
+    timeout_seconds: int | None = None
 
 
 def compose_agent_chat_response(
@@ -62,6 +65,10 @@ def compose_agent_chat_response(
                     "schema_version": "agent_response_composer.v1",
                     "mode": "codex_cli",
                     "status": "succeeded",
+                    "raw_surface": "codex_exec",
+                    "command": codex_response.command,
+                    "prompt_preamble": codex_response.prompt_preamble,
+                    "timeout_seconds": codex_response.timeout_seconds,
                 },
             )
         brief["composer_warning"] = codex_response.failure_reason or "Codex CLI response composition was unavailable."
@@ -74,6 +81,10 @@ def compose_agent_chat_response(
                     "mode": "codex_cli",
                     "status": codex_response.status,
                     "failure_reason": codex_response.failure_reason,
+                    "raw_surface": "codex_exec",
+                    "command": codex_response.command,
+                    "prompt_preamble": codex_response.prompt_preamble,
+                    "timeout_seconds": codex_response.timeout_seconds,
                 },
             )
 
@@ -84,6 +95,7 @@ def compose_agent_chat_response(
             "schema_version": "agent_response_composer.v1",
             "mode": mode or "structured_fallback",
             "status": "codex_unavailable" if mode in {"codex_cli", "codex_cli_if_available"} else "fallback",
+            "failure_reason": brief.get("composer_warning"),
         },
     )
 
@@ -172,16 +184,15 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
     with tempfile.TemporaryDirectory(prefix="tablex-response-composer-") as tmp:
         workspace = Path(tmp)
         response_path = workspace / "response.txt"
-        prompt = "\n".join(
-            [
-                "You are Tablex's human-facing data-science agent interface.",
-                "Write one concise response to the user from the structured brief below.",
-                "Use the requested response_locale. Do not sound like a log. Do not invent completed work.",
-                "If the work only created a plan or contract, say so naturally and state the next useful move.",
-                "",
-                json.dumps(brief, ensure_ascii=False, indent=2, sort_keys=True),
-            ]
-        )
+        timeout_seconds = codex_response_timeout_seconds()
+        prompt_preamble = [
+            "You are Tablex's human-facing data-science agent interface.",
+            "Write one concise response to the user from the structured brief below.",
+            "Use the requested response_locale. Do not sound like a log. Do not invent completed work.",
+            "If the work only created a plan or contract, say so naturally and state the next useful move.",
+            "",
+        ]
+        prompt = "\n".join(prompt_preamble + [json.dumps(brief, ensure_ascii=False, indent=2, sort_keys=True)])
         cmd = [
             "codex",
             "exec",
@@ -200,23 +211,73 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
                 input=prompt,
                 text=True,
                 capture_output=True,
-                timeout=25,
+                timeout=timeout_seconds,
                 env=safe_env(workspace),
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            return CodexCompositionResult(message=None, status="timeout", failure_reason="Codex CLI response composition timed out.")
+            return CodexCompositionResult(
+                message=None,
+                status="timeout",
+                failure_reason="Codex CLI response composition timed out.",
+                prompt_preamble=prompt_preamble,
+                command="codex exec --sandbox read-only --output-last-message response.txt -",
+                timeout_seconds=timeout_seconds,
+            )
         except OSError as exc:
-            return CodexCompositionResult(message=None, status="os_error", failure_reason=str(exc))
+            return CodexCompositionResult(
+                message=None,
+                status="os_error",
+                failure_reason=str(exc),
+                prompt_preamble=prompt_preamble,
+                command="codex exec --sandbox read-only --output-last-message response.txt -",
+                timeout_seconds=timeout_seconds,
+            )
         if completed.returncode != 0:
             stderr_tail = completed.stderr[-1200:] if completed.stderr else ""
-            return CodexCompositionResult(message=None, status="failed", failure_reason=stderr_tail or f"Codex CLI exited with {completed.returncode}.")
+            return CodexCompositionResult(
+                message=None,
+                status="failed",
+                failure_reason=stderr_tail or f"Codex CLI exited with {completed.returncode}.",
+                prompt_preamble=prompt_preamble,
+                command="codex exec --sandbox read-only --output-last-message response.txt -",
+                timeout_seconds=timeout_seconds,
+            )
         if not response_path.exists():
-            return CodexCompositionResult(message=None, status="missing_output", failure_reason="Codex CLI did not write a response file.")
+            return CodexCompositionResult(
+                message=None,
+                status="missing_output",
+                failure_reason="Codex CLI did not write a response file.",
+                prompt_preamble=prompt_preamble,
+                command="codex exec --sandbox read-only --output-last-message response.txt -",
+                timeout_seconds=timeout_seconds,
+            )
         message = response_path.read_text(encoding="utf-8").strip()
         if not message:
-            return CodexCompositionResult(message=None, status="empty_output", failure_reason="Codex CLI returned an empty response.")
-        return CodexCompositionResult(message=message[:4000], status="succeeded")
+            return CodexCompositionResult(
+                message=None,
+                status="empty_output",
+                failure_reason="Codex CLI returned an empty response.",
+                prompt_preamble=prompt_preamble,
+                command="codex exec --sandbox read-only --output-last-message response.txt -",
+                timeout_seconds=timeout_seconds,
+            )
+        return CodexCompositionResult(
+            message=message[:4000],
+            status="succeeded",
+            prompt_preamble=prompt_preamble,
+            command="codex exec --sandbox read-only --output-last-message response.txt -",
+            timeout_seconds=timeout_seconds,
+        )
+
+
+def codex_response_timeout_seconds() -> int:
+    raw_value = os.environ.get("TABLEX_AGENT_RESPONSE_TIMEOUT_SECONDS", "90").strip()
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return 90
+    return min(max(value, 15), 300)
 
 
 def codex_unavailable_message(brief: dict[str, Any]) -> str:

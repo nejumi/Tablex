@@ -36,6 +36,8 @@ import "./styles.css";
 type DisplayTheme = "light" | "dark";
 type LocaleDirection = "ltr" | "rtl";
 type LocaleSource = "built_in" | "dynamic";
+type ChatSubmitShortcutSetting = "locale_default" | "enter" | "shift_enter";
+type ChatSubmitShortcut = "enter" | "shift_enter";
 
 type UserSettings = {
   locale: string;
@@ -45,6 +47,7 @@ type UserSettings = {
   interventionCountdownSeconds: number;
   agentModel: string;
   utilityModel: string;
+  chatSubmitShortcut: ChatSubmitShortcutSetting;
 };
 
 const userSettingsStorageKey = "tablex.userSettings.v1";
@@ -57,7 +60,8 @@ const defaultUserSettings: UserSettings = {
   displayTheme: "light",
   interventionCountdownSeconds: 15,
   agentModel: "codex-default",
-  utilityModel: "utility-default"
+  utilityModel: "utility-default",
+  chatSubmitShortcut: "locale_default"
 };
 
 const englishMessages = {
@@ -187,6 +191,13 @@ const englishMessages = {
   interventionCountdownHint:
     "Seconds to catch a Full Auto assumption or boundary before the agent continues. Set 0 to never show the dialog.",
   seconds: "seconds",
+  chatInput: "Chat input",
+  chatSubmitShortcut: "Send shortcut",
+  chatSubmitShortcutHint:
+    "IME composition is protected. Locale default uses Enter for English-like locales and Shift+Enter for languages where conversion is common.",
+  submitShortcutLocaleDefault: "Locale default",
+  submitShortcutEnter: "Enter sends",
+  submitShortcutShiftEnter: "Shift+Enter sends",
   autonomyInterventionTitle: "Full Auto is about to continue",
   autonomyInterventionBody: "Tablex found a boundary or assumption. Catch it now to switch to Approval Based and review before continuing.",
   autonomyInterventionContinue: "Let it continue",
@@ -214,6 +225,7 @@ const englishMessages = {
   agentReplyFailed: "I could not complete that request. The error is recorded here so it does not disappear.",
   chatTurnStatus: "Status",
   chatBriefAvailable: "Codex response unavailable",
+  earlierConversation: "Earlier conversation",
   nextActionLabel: "Next",
   downloadLatestAgentTaskContract: "Download latest AgentTaskContract",
   agentTaskContractCreated: "Runner handoff saved.",
@@ -263,8 +275,8 @@ const englishMessages = {
   equippedSkillBadge: "E",
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
-  rawAgentTitle: "Raw workspace stream",
-  rawAgentEmpty: "Persistent chat turns, jobs, and artifacts will appear here after work starts.",
+  rawAgentTitle: "Raw Codex transcript",
+  rawAgentEmpty: "Codex prompts, response briefs, and raw replies will appear here after the first agent turn.",
   openSurface: "Open",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "One guided next step without forcing a fixed modeling recipe.",
@@ -415,6 +427,13 @@ const japaneseMessages: LocaleMessages = {
   interventionCountdownHint:
     "Full Autoが仮定やboundaryを置いて進む前に、人間が捕まえられる秒数です。0ならダイアログを一切出しません。",
   seconds: "秒",
+  chatInput: "Chat入力",
+  chatSubmitShortcut: "送信ショートカット",
+  chatSubmitShortcutHint:
+    "IME変換中のEnterでは送信しません。Locale既定では、英語系はEnter送信、日本語など変換操作が多い言語はShift+Enter送信になります。",
+  submitShortcutLocaleDefault: "Locale既定",
+  submitShortcutEnter: "Enterで送信",
+  submitShortcutShiftEnter: "Shift+Enterで送信",
   autonomyInterventionTitle: "Full Autoが続行しようとしています",
   autonomyInterventionBody: "Tablexが仮定またはboundaryを検出しました。ここで捕まえると承認ベースに切り替えて確認できます。",
   autonomyInterventionContinue: "そのまま続行",
@@ -442,6 +461,7 @@ const japaneseMessages: LocaleMessages = {
   agentReplyFailed: "この依頼を完了できませんでした。消えないように、エラーをここに記録します。",
   chatTurnStatus: "状態",
   chatBriefAvailable: "Codex応答未実行",
+  earlierConversation: "以前の会話",
   nextActionLabel: "次に開く",
   downloadLatestAgentTaskContract: "最新のAgentTaskContractをダウンロード",
   agentTaskContractCreated: "Runner handoffを保存しました。",
@@ -490,8 +510,8 @@ const japaneseMessages: LocaleMessages = {
   equippedSkillBadge: "E",
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
-  rawAgentTitle: "Raw workspace stream",
-  rawAgentEmpty: "作業が始まると、永続chat turn、job、artifactがここに低レベル表示されます。",
+  rawAgentTitle: "Raw Codex transcript",
+  rawAgentEmpty: "最初のAgent turn後、Codexへの入力、response brief、Raw replyがここに表示されます。",
   openSurface: "開く",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "固定recipeにせず、次の一手だけをガイドします。",
@@ -579,11 +599,18 @@ function loadUserSettings(): UserSettings {
       utilityModel:
         typeof parsed.utilityModel === "string" && parsed.utilityModel.trim()
           ? parsed.utilityModel
-          : defaultUserSettings.utilityModel
+          : defaultUserSettings.utilityModel,
+      chatSubmitShortcut: isChatSubmitShortcutSetting(parsed.chatSubmitShortcut)
+        ? parsed.chatSubmitShortcut
+        : defaultUserSettings.chatSubmitShortcut
     };
   } catch {
     return defaultUserSettings;
   }
+}
+
+function isChatSubmitShortcutSetting(value: unknown): value is ChatSubmitShortcutSetting {
+  return value === "locale_default" || value === "enter" || value === "shift_enter";
 }
 
 function normalizeLocale(value: string) {
@@ -631,6 +658,34 @@ function mergeLocalePacks(dynamicLocalePacks: LocalePack[]) {
 function copyForLocale(locale: string, localePacks: LocalePack[]): LocaleMessages {
   const pack = localePacks.find((candidate) => candidate.locale === locale);
   return { ...englishMessages, ...(pack?.messages ?? {}) };
+}
+
+function resolveChatSubmitShortcut(settings: UserSettings): ChatSubmitShortcut {
+  if (settings.chatSubmitShortcut === "enter") return "enter";
+  if (settings.chatSubmitShortcut === "shift_enter") return "shift_enter";
+  return localePrefersShiftEnter(settings.locale) ? "shift_enter" : "enter";
+}
+
+function localePrefersShiftEnter(locale: string): boolean {
+  const normalized = locale.trim().toLowerCase();
+  return (
+    normalized.startsWith("ja") ||
+    normalized.startsWith("zh") ||
+    normalized.startsWith("ko") ||
+    normalized.includes("japanese") ||
+    normalized.includes("chinese") ||
+    normalized.includes("korean")
+  );
+}
+
+function shouldSubmitTextarea(
+  event: React.KeyboardEvent<HTMLTextAreaElement>,
+  shortcut: ChatSubmitShortcut
+): boolean {
+  if (event.key !== "Enter") return false;
+  if (event.nativeEvent.isComposing) return false;
+  if (event.altKey || event.ctrlKey || event.metaKey) return false;
+  return shortcut === "enter" ? !event.shiftKey : event.shiftKey;
 }
 
 function resolveLocalePack(locale: string, localePacks: LocalePack[]) {
@@ -1195,6 +1250,8 @@ type RawAgentEvent = {
   source: string;
   level: string;
   title: string;
+  body?: string | null;
+  details?: Array<{ label: string; value: unknown }>;
   payload: Record<string, unknown>;
 };
 
@@ -2489,6 +2546,35 @@ function UserSettingsPanel({
       </div>
 
       <div className="settings-section">
+        <div className="settings-label-row">
+          <span>{text.chatInput}</span>
+          <strong>
+            {resolveChatSubmitShortcut(settings) === "enter"
+              ? text.submitShortcutEnter
+              : text.submitShortcutShiftEnter}
+          </strong>
+        </div>
+        <label>
+          <span>{text.chatSubmitShortcut}</span>
+          <select
+            value={settings.chatSubmitShortcut}
+            onChange={(event) =>
+              update({
+                chatSubmitShortcut: isChatSubmitShortcutSetting(event.target.value)
+                  ? event.target.value
+                  : "locale_default"
+              })
+            }
+          >
+            <option value="locale_default">{text.submitShortcutLocaleDefault}</option>
+            <option value="enter">{text.submitShortcutEnter}</option>
+            <option value="shift_enter">{text.submitShortcutShiftEnter}</option>
+          </select>
+        </label>
+        <p className="settings-hint">{text.chatSubmitShortcutHint}</p>
+      </div>
+
+      <div className="settings-section">
         <label>
           <span>{text.dynamicLanguageRequest}</span>
           <textarea
@@ -2586,10 +2672,15 @@ function ProjectDetail({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [agentChatMessages, setAgentChatMessages] = React.useState<AgentChatMessage[]>([]);
+  const [pendingAgentChatMessages, setPendingAgentChatMessages] = React.useState<AgentChatMessage[]>([]);
   const [agentWorkerEvents, setAgentWorkerEvents] = React.useState<AgentWorkerEvent[]>([]);
   const [agentActivity, setAgentActivity] = React.useState<AgentActivityResponse | null>(null);
   const [activityTick, setActivityTick] = React.useState(0);
   const [pendingAnchor, setPendingAnchor] = React.useState<string | null>(null);
+  const visibleAgentChatMessages = React.useMemo(
+    () => mergeAgentChatMessages(agentChatMessages, pendingAgentChatMessages),
+    [agentChatMessages, pendingAgentChatMessages]
+  );
   const tableeMotionState: TableeMotionState = hasLiveAgentOrModelActivity(jobs, agentWorkerEvents, agentActivity)
     ? "working"
     : project.current_phase === "AUTONOMOUS_LOOP"
@@ -2815,10 +2906,15 @@ function ProjectDetail({
       id: `${localTurnId}:assistant`,
       role: "system",
       text: text.agentReplyPending,
+      responseComposer: {
+        schema_version: "agent_response_composer.v1",
+        mode: "codex_cli_if_available",
+        status: "pending"
+      },
       createdAt
     };
     const pendingWorker = optimisticWorkerEvent(project.id, trimmed);
-    setAgentChatMessages((current) => upsertAgentChatMessages(current, [optimisticUser, pendingAssistant]));
+    setPendingAgentChatMessages([optimisticUser, pendingAssistant]);
     setAgentWorkerEvents((current) => [pendingWorker, ...current].slice(0, 8));
     try {
       const result = await api<AgentChatResponse>(`/api/projects/${project.id}/agent-chat`, {
@@ -2832,29 +2928,26 @@ function ProjectDetail({
         })
       });
       const responseCreatedAt = result.job?.updated_at ?? new Date().toISOString();
+      setPendingAgentChatMessages([]);
       setAgentChatMessages((current) =>
-        upsertAgentChatMessages(
-          current,
-          [
-            {
-              id: `${result.artifact_id}:user`,
-              role: "user",
-              text: result.user_message,
-              createdAt: responseCreatedAt
-            },
-            {
-              id: `${result.artifact_id}:system`,
-              role: "system",
-              text: result.assistant_message,
-              actions: result.actions,
-              actionSummary: result.action_summary,
-              responseBrief: result.response_brief ?? null,
-              responseComposer: result.response_composer ?? null,
-              createdAt: responseCreatedAt
-            }
-          ],
-          [optimisticUser.id, pendingAssistant.id]
-        )
+        upsertAgentChatMessages(current, [
+          {
+            id: `${result.artifact_id}:user`,
+            role: "user",
+            text: result.user_message,
+            createdAt: responseCreatedAt
+          },
+          {
+            id: `${result.artifact_id}:system`,
+            role: "system",
+            text: result.assistant_message,
+            actions: result.actions,
+            actionSummary: result.action_summary,
+            responseBrief: result.response_brief ?? null,
+            responseComposer: result.response_composer ?? null,
+            createdAt: responseCreatedAt
+          }
+        ])
       );
       setAgentWorkerEvents((current) =>
         [...result.worker_events, ...current.filter((event) => event.job_id !== pendingWorker.job_id)].slice(0, 8)
@@ -2868,8 +2961,10 @@ function ProjectDetail({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
+      setPendingAgentChatMessages([]);
       setAgentChatMessages((current) =>
         upsertAgentChatMessages(current, [
+          optimisticUser,
           {
             id: pendingAssistant.id,
             role: "system",
@@ -3062,7 +3157,8 @@ function ProjectDetail({
           projectAssetReferences={projectAssetReferences}
           busy={busy}
           text={text}
-          messages={agentChatMessages}
+          messages={visibleAgentChatMessages}
+          submitShortcut={resolveChatSubmitShortcut(userSettings)}
           latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
           tableeMotionState={tableeMotionState}
           onSubmitAgentChat={submitAgentChatWithoutResponse}
@@ -3257,6 +3353,7 @@ function HomeTab({
   busy,
   text,
   messages,
+  submitShortcut,
   latestContract,
   tableeMotionState,
   onSubmitAgentChat,
@@ -3287,6 +3384,7 @@ function HomeTab({
   busy: boolean;
   text: LocaleMessages;
   messages: AgentChatMessage[];
+  submitShortcut: ChatSubmitShortcut;
   latestContract: Artifact | null;
   tableeMotionState: TableeMotionState;
   onSubmitAgentChat: (objective: string) => Promise<void>;
@@ -3488,6 +3586,7 @@ function HomeTab({
               busy={busy}
               text={text}
               messages={messages}
+              submitShortcut={submitShortcut}
               latestContract={latestContract}
               tableeMotionState={tableeMotionState}
               onSubmit={onSubmitAgentChat}
@@ -3498,6 +3597,7 @@ function HomeTab({
               busy={busy}
               text={text}
               events={rawAgentEvents}
+              submitShortcut={submitShortcut}
               onSubmit={onSubmitAgentChat}
             />
           )}
@@ -3761,33 +3861,79 @@ function buildRawAgentEvents(
   latestContract: Artifact | null
 ): RawAgentEvent[] {
   const now = new Date().toISOString();
-  const chatEvents = messages.slice(-12).map((message, index) => ({
-    id: `chat-${index}-${message.role}-${message.text.slice(0, 18)}`,
-    timestamp: now,
-    source: message.role === "user" ? "user" : "tablex-agent",
-    level: message.actionSummary?.outcome ?? "message",
-    title: message.role === "user" ? "user_message" : message.actionSummary?.headline ?? "assistant_message",
-    payload: {
-      text: message.text,
-      action_summary: message.actionSummary ?? null,
-      actions: message.actions?.map((action) => ({
-        type: action.type,
-        status: action.status,
-        label: action.label,
-        target_tab: action.target_tab,
-        target_anchor: action.target_anchor,
-        job_id: action.job_id,
-        artifact_id: action.artifact_id,
-        artifact_ids: action.artifact_ids
-      })) ?? []
+  const turns = buildAgentConversationTurns(messages).slice(-8);
+  const chatEvents = turns.flatMap((turn, index) => {
+    const events: RawAgentEvent[] = [];
+    if (turn.user) {
+      events.push({
+        id: `raw-user-${index}-${turn.user.id ?? turn.user.text.slice(0, 18)}`,
+        timestamp: turn.user.createdAt ?? turn.createdAt ?? now,
+        source: "User",
+        level: "prompt",
+        title: "Prompt sent to Codex workspace",
+        body: turn.user.text,
+        payload: { text: turn.user.text }
+      });
     }
-  }));
-  const jobEvents = jobs.slice(0, 8).map((job) => ({
+    if (turn.assistant) {
+      const composerMode = textField(turn.assistant.responseComposer?.mode);
+      const composerStatus = textField(turn.assistant.responseComposer?.status) ?? "pending";
+      const promptPreamble = Array.isArray(turn.assistant.responseComposer?.prompt_preamble)
+        ? turn.assistant.responseComposer.prompt_preamble.join("\n")
+        : null;
+      const isCodexCli = composerMode === "codex_cli";
+      events.push({
+        id: `raw-assistant-${index}-${turn.assistant.id ?? turn.assistant.text.slice(0, 18)}`,
+        timestamp: turn.assistant.createdAt ?? turn.createdAt ?? now,
+        source: isCodexCli || composerStatus === "pending" ? "Codex" : "Harness support",
+        level: composerStatus,
+        title:
+          composerStatus === "pending"
+            ? "Codex is composing a reply"
+            : isCodexCli
+              ? "Raw Codex reply"
+              : "Codex reply was unavailable",
+        body: turn.assistant.text,
+        details: [
+          ...(promptPreamble
+            ? [{ label: "Codex prompt preamble", value: promptPreamble }]
+            : []),
+          ...(turn.assistant.responseBrief
+            ? [{ label: "Exact brief passed to Codex", value: turn.assistant.responseBrief }]
+            : []),
+          ...(turn.assistant.responseComposer
+            ? [{ label: "Composer status", value: turn.assistant.responseComposer }]
+            : []),
+          ...(turn.assistant.actions?.length
+            ? [{ label: "Harness sidecar actions", value: turn.assistant.actions }]
+            : []),
+          ...(turn.assistant.actionSummary
+            ? [{ label: "Human-facing summary record", value: turn.assistant.actionSummary }]
+            : [])
+        ],
+        payload: {
+          text: turn.assistant.text,
+          response_brief: turn.assistant.responseBrief ?? null,
+          response_composer: turn.assistant.responseComposer ?? null,
+          action_summary: turn.assistant.actionSummary ?? null,
+          actions: turn.assistant.actions ?? []
+        }
+      });
+    }
+    return events;
+  });
+  const jobEvents = jobs.filter((job) => !isTerminalJob(job)).slice(0, 4).map((job) => ({
     id: `job-${job.id}`,
     timestamp: job.updated_at,
-    source: "job",
+    source: "Harness support",
     level: job.status,
-    title: job.job_type,
+    title: `Active runner sidecar: ${job.job_type.replace(/_/g, " ")}`,
+    body: job.error_message ?? latestJobHeadline(job),
+    details: [
+      { label: "Job input", value: job.input },
+      { label: "Job output", value: job.output },
+      { label: "Execution policy", value: job.policy }
+    ],
     payload: {
       job_id: job.id,
       status: job.status,
@@ -3802,9 +3948,11 @@ function buildRawAgentEvents(
         {
           id: `contract-${latestContract.id}`,
           timestamp: latestContract.created_at,
-          source: "artifact",
+          source: "Harness support",
           level: "available",
-          title: "latest_agent_task_contract",
+          title: "Latest AgentTaskContract packaged for Codex",
+          body: latestContract.name,
+          details: [{ label: "Artifact metadata", value: latestContract.metadata }],
           payload: {
             artifact_id: latestContract.id,
             name: latestContract.name,
@@ -3815,7 +3963,7 @@ function buildRawAgentEvents(
       ]
     : [];
   return [...chatEvents, ...jobEvents, ...contractEvents].sort(
-    (left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime()
+    (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
   );
 }
 
@@ -3995,6 +4143,16 @@ function agentChatOutcomeClass(outcome: string) {
   return "badge";
 }
 
+function isActiveAgentTurn(turn: AgentConversationTurn): boolean {
+  if (!turn.assistant) return Boolean(turn.user);
+  const status = String(turn.assistant.responseComposer?.status ?? "");
+  return ["pending", "running", "queued", "in_progress"].includes(status);
+}
+
+function isActiveRawEvent(event: RawAgentEvent): boolean {
+  return ["pending", "running", "queued", "in_progress"].includes(event.level);
+}
+
 function AgentChatSummaryCard({
   summary,
   text,
@@ -4049,42 +4207,64 @@ function RawAgentStream({
   busy,
   text,
   events,
+  submitShortcut,
   onSubmit
 }: {
   busy: boolean;
   text: LocaleMessages;
   events: RawAgentEvent[];
+  submitShortcut: ChatSubmitShortcut;
   onSubmit: (objective: string) => Promise<void>;
 }) {
   const [draft, setDraft] = React.useState("");
   const latestEvent = events[events.length - 1];
   const rawScroll = useStickyBottomScroll<HTMLDivElement>(`${events.length}:${latestEvent?.id ?? "empty"}`);
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
+  async function submitDraft() {
     const objective = draft.trim();
     if (!objective) return;
     setDraft("");
     await onSubmit(objective);
   }
 
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    await submitDraft();
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (!shouldSubmitTextarea(event, submitShortcut) || busy || !draft.trim()) return;
+    event.preventDefault();
+    void submitDraft();
+  }
+
   return (
     <div className="raw-agent-stream">
       <div className="raw-agent-head">
         <span>{text.rawAgentTitle}</span>
-        <small>{events.length} events</small>
+        <small>{events.length} transcript items</small>
       </div>
       <div className="raw-agent-log" ref={rawScroll.ref} onScroll={rawScroll.onScroll}>
         {events.length ? (
           events.map((event) => (
-            <div className="raw-agent-event" key={event.id}>
+            <div className={`raw-agent-event ${isActiveRawEvent(event) ? "is-active" : ""}`} key={event.id}>
               <div className="raw-agent-line">
                 <span>{formatDate(event.timestamp)}</span>
                 <b>{event.source}</b>
                 <em>{event.level}</em>
                 <strong>{event.title}</strong>
               </div>
-              <pre>{JSON.stringify(event.payload, null, 2)}</pre>
+              {event.body ? <div className="raw-agent-body">{event.body}</div> : null}
+              {event.details?.map((detail) => (
+                <details className="raw-agent-detail" key={detail.label}>
+                  <summary>{detail.label}</summary>
+                  <pre>{rawDetailText(detail.value)}</pre>
+                </details>
+              ))}
+              <details className="raw-agent-detail compact">
+                <summary>Stored harness record</summary>
+                <pre>{rawDetailText(event.payload)}</pre>
+              </details>
             </div>
           ))
         ) : (
@@ -4095,6 +4275,7 @@ function RawAgentStream({
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder={text.agentChatPlaceholder}
           rows={3}
         />
@@ -4107,6 +4288,16 @@ function RawAgentStream({
   );
 }
 
+function rawDetailText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 function AgentConversationTurnCard({
   turn,
   text,
@@ -4117,14 +4308,20 @@ function AgentConversationTurnCard({
   onActionOpen: (action: AgentChatAction) => void;
 }) {
   const assistant = turn.assistant;
-  const outcome = assistant?.actionSummary?.outcome ?? (assistant ? "response" : "waiting");
+  const active = isActiveAgentTurn(turn);
+  const outcome = active ? "pending" : assistant?.actionSummary?.outcome ?? (assistant ? "response" : "waiting");
   const statusClass = agentChatOutcomeClass(outcome);
   const hasPrimaryNext = Boolean(assistant?.actionSummary?.next_step?.target_tab);
   const visibleActions = hasPrimaryNext ? [] : assistant?.actions?.slice(0, 2) ?? [];
   const composerStatus = String(assistant?.responseComposer?.status ?? "");
-  const showComposerProblem = Boolean(assistant?.responseComposer && composerStatus && composerStatus !== "succeeded");
+  const showComposerProblem = Boolean(
+    assistant?.responseComposer &&
+      composerStatus &&
+      composerStatus !== "succeeded" &&
+      !["pending", "running", "queued", "in_progress"].includes(composerStatus)
+  );
   return (
-    <article className="agent-turn-card">
+    <article className={`agent-turn-card ${isActiveAgentTurn(turn) ? "is-active" : ""}`}>
       <div className="agent-turn-head">
         <span className={statusClass}>{outcome.replace(/_/g, " ")}</span>
         <small>{turn.createdAt ? formatDate(turn.createdAt) : text.chatTurnStatus}</small>
@@ -4180,6 +4377,7 @@ function AgentChatDock({
   busy,
   text,
   messages,
+  submitShortcut,
   latestContract,
   tableeMotionState,
   onSubmit,
@@ -4188,6 +4386,7 @@ function AgentChatDock({
   busy: boolean;
   text: LocaleMessages;
   messages: AgentChatMessage[];
+  submitShortcut: ChatSubmitShortcut;
   latestContract: Artifact | null;
   tableeMotionState: TableeMotionState;
   onSubmit: (objective: string) => Promise<void>;
@@ -4195,17 +4394,29 @@ function AgentChatDock({
 }) {
   const [draft, setDraft] = React.useState("");
   const turns = React.useMemo(() => buildAgentConversationTurns(messages), [messages]);
+  const recentTurns = turns.slice(-5);
+  const olderTurns = turns.slice(0, -5);
   const latestTurn = turns[turns.length - 1];
   const chatScroll = useStickyBottomScroll<HTMLDivElement>(
     `${turns.length}:${latestTurn?.id ?? "empty"}:${latestTurn?.user?.text.length ?? 0}:${latestTurn?.assistant?.text.length ?? 0}`
   );
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
+  async function submitDraft() {
     const objective = draft.trim();
     if (!objective) return;
     setDraft("");
     await onSubmit(objective);
+  }
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    await submitDraft();
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (!shouldSubmitTextarea(event, submitShortcut) || busy || !draft.trim()) return;
+    event.preventDefault();
+    void submitDraft();
   }
 
   return (
@@ -4241,7 +4452,20 @@ function AgentChatDock({
       </div>
       {turns.length ? (
         <div className="agent-chat-log" ref={chatScroll.ref} onScroll={chatScroll.onScroll}>
-          {turns.slice(-16).map((turn) => (
+          {olderTurns.length ? (
+            <details className="agent-chat-history">
+              <summary>
+                {text.earlierConversation}
+                <span>{olderTurns.length}</span>
+              </summary>
+              <div className="agent-chat-history-list">
+                {olderTurns.map((turn) => (
+                  <AgentConversationTurnCard key={turn.id} turn={turn} text={text} onActionOpen={onActionOpen} />
+                ))}
+              </div>
+            </details>
+          ) : null}
+          {recentTurns.map((turn) => (
             <AgentConversationTurnCard key={turn.id} turn={turn} text={text} onActionOpen={onActionOpen} />
           ))}
         </div>
@@ -4250,6 +4474,7 @@ function AgentChatDock({
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder={text.agentChatPlaceholder}
           rows={4}
         />

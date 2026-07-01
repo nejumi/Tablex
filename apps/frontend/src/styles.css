@@ -756,8 +756,10 @@ textarea {
 .raw-agent-log {
   display: grid;
   gap: 8px;
-  max-height: 520px;
-  overflow: auto;
+  max-height: min(62vh, 760px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #08111f;
@@ -765,12 +767,19 @@ textarea {
 }
 
 .raw-agent-event {
+  position: relative;
   display: grid;
   gap: 6px;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.035);
   padding: 9px;
+}
+
+.raw-agent-event > * {
+  position: relative;
+  z-index: 1;
 }
 
 .raw-agent-line {
@@ -792,17 +801,44 @@ textarea {
   color: #f8fafc;
 }
 
-.raw-agent-event pre {
-  max-height: 230px;
-  overflow: auto;
+.raw-agent-body {
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+  color: #f8fafc;
+  font-size: 13px;
+  line-height: 1.58;
+  white-space: pre-wrap;
+  padding: 10px;
+}
+
+.raw-agent-detail {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.raw-agent-detail summary {
+  cursor: pointer;
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 820;
+  padding: 7px 8px;
+}
+
+.raw-agent-detail.compact summary {
+  color: #94a3b8;
+}
+
+.raw-agent-detail pre {
   margin: 0;
-  border-radius: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(0, 0, 0, 0.22);
   color: #dbeafe;
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;
   padding: 8px;
+  overflow-wrap: anywhere;
 }
 
 .raw-agent-form {
@@ -3750,19 +3786,110 @@ td {
 .agent-chat-log {
   display: grid;
   gap: 10px;
-  max-height: 430px;
-  overflow: auto;
+  max-height: min(62vh, 760px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 2px;
+}
+
+.agent-chat-history {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-muted) 80%, transparent);
+}
+
+.agent-chat-history summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+  padding: 10px 12px;
+}
+
+.agent-chat-history summary span {
+  display: inline-grid;
+  min-width: 24px;
+  min-height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--accent-strong);
+}
+
+.agent-chat-history-list {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding: 10px;
 }
 
 .agent-turn-card {
+  position: relative;
   display: grid;
   gap: 9px;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 52%),
     var(--surface);
   padding: 11px;
+}
+
+.agent-turn-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.agent-turn-card.is-active,
+.raw-agent-event.is-active {
+  border-color: color-mix(in srgb, var(--accent-2) 52%, var(--border));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent-2) 24%, transparent),
+    0 0 24px color-mix(in srgb, var(--accent-2) 20%, transparent);
+}
+
+.agent-turn-card.is-active::before,
+.raw-agent-event.is-active::before {
+  content: "";
+  position: absolute;
+  inset: -45%;
+  z-index: 0;
+  background: conic-gradient(
+    from 0turn,
+    transparent 0turn,
+    transparent 0.18turn,
+    color-mix(in srgb, var(--accent-2) 78%, white) 0.25turn,
+    transparent 0.34turn,
+    transparent 1turn
+  );
+  opacity: 0.55;
+  animation: active-ring-spin 1.9s linear infinite;
+}
+
+.agent-turn-card.is-active::after,
+.raw-agent-event.is-active::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  z-index: 0;
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.raw-agent-event.is-active::after {
+  background: #08111f;
+}
+
+@keyframes active-ring-spin {
+  to {
+    transform: rotate(1turn);
+  }
 }
 
 .agent-turn-head {
