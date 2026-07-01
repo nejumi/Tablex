@@ -203,8 +203,9 @@ const englishMessages = {
   userAvatarGenerating: "Generating candidates",
   userAvatarCandidates: "Avatar candidates",
   userAvatarUseCandidate: "Use this avatar",
+  userAvatarPromptRequired: "Enter an avatar prompt first.",
   userAvatarGenerationHint:
-    "Uses the backend image-generation connector when OPENAI_API_KEY is configured. Candidates are not saved until you choose one.",
+    "Uses the backend image-generation bridge. Credentials stay backend-only, and candidates are not saved until you choose one.",
   userAvatarNoCandidates: "No generated candidates yet.",
   intervention: "Intervention",
   models: "Models",
@@ -454,8 +455,9 @@ const japaneseMessages: LocaleMessages = {
   userAvatarGenerating: "候補を生成中",
   userAvatarCandidates: "アイコン候補",
   userAvatarUseCandidate: "このアイコンを使う",
+  userAvatarPromptRequired: "先にアイコン生成プロンプトを入力してください。",
   userAvatarGenerationHint:
-    "バックエンドの画像生成connectorを使います。OPENAI_API_KEYが設定されている場合に候補を生成し、選ぶまで保存しません。",
+    "バックエンドの画像生成bridgeを使います。credentialはブラウザへ渡さず、候補は選ぶまで保存しません。",
   userAvatarNoCandidates: "生成候補はまだありません。",
   intervention: "介入",
   models: "モデル",
@@ -1777,9 +1779,24 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, init);
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(detail || response.statusText);
+    throw new Error(apiErrorMessage(detail, response.statusText));
   }
   return response.json() as Promise<T>;
+}
+
+function apiErrorMessage(body: string, fallback: string): string {
+  if (!body) return fallback;
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (parsed && typeof parsed === "object" && "detail" in parsed) {
+      const detail = (parsed as { detail?: unknown }).detail;
+      if (typeof detail === "string") return detail;
+      if (Array.isArray(detail)) return detail.map((item) => String(item)).join("; ");
+    }
+  } catch {
+    return body;
+  }
+  return body;
 }
 
 function uploadFormData<T>(
@@ -2462,10 +2479,12 @@ function UserSettingsPanel({
   const [avatarBusy, setAvatarBusy] = React.useState(false);
   const [avatarPrompt, setAvatarPrompt] = React.useState("");
   const [avatarCandidates, setAvatarCandidates] = React.useState<AvatarCandidate[]>([]);
-  const [status, setStatus] = React.useState<string | null>(null);
+  const [localeStatus, setLocaleStatus] = React.useState<string | null>(null);
+  const [avatarStatus, setAvatarStatus] = React.useState<string | null>(null);
 
   function update(patch: Partial<UserSettings>) {
-    setStatus(null);
+    setLocaleStatus(null);
+    setAvatarStatus(null);
     onChange({ ...settings, ...patch });
   }
 
@@ -2473,17 +2492,17 @@ function UserSettingsPanel({
     const localeInput = settings.requestedLocale.trim();
     if (!localeInput) return;
     onEnsureDynamicLocale(localeInput);
-    setStatus(`${text.activeLocale}: ${localeLabel(localeInput)}`);
+    setLocaleStatus(`${text.activeLocale}: ${localeLabel(localeInput)}`);
   }
 
   async function createTask() {
     setBusy(true);
-    setStatus(null);
+    setLocaleStatus(null);
     try {
       await onCreateLocalizationTask(settings);
-      setStatus(text.localizationTaskCreated);
+      setLocaleStatus(text.localizationTaskCreated);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
+      setLocaleStatus(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -2494,38 +2513,42 @@ function UserSettingsPanel({
     event.target.value = "";
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      setStatus("Choose an image file.");
+      setAvatarStatus("Choose an image file.");
       return;
     }
     if (file.size > 1024 * 1024) {
-      setStatus("Choose an image under 1 MB.");
+      setAvatarStatus("Choose an image under 1 MB.");
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
       const result = typeof reader.result === "string" ? reader.result : "";
       if (!result.startsWith("data:image/")) {
-        setStatus("Could not read this image.");
+        setAvatarStatus("Could not read this image.");
         return;
       }
       update({ userAvatarDataUrl: result });
-      setStatus(text.userAvatar);
+      setAvatarStatus(text.userAvatar);
     };
-    reader.onerror = () => setStatus("Could not read this image.");
+    reader.onerror = () => setAvatarStatus("Could not read this image.");
     reader.readAsDataURL(file);
   }
 
   async function generateAvatars() {
     const prompt = avatarPrompt.trim();
-    if (!prompt) return;
+    if (!prompt) {
+      setAvatarStatus(text.userAvatarPromptRequired);
+      return;
+    }
     setAvatarBusy(true);
-    setStatus(null);
+    setAvatarStatus(text.userAvatarGenerating);
     try {
       const candidates = await onGenerateAvatarCandidates(prompt);
       setAvatarCandidates(candidates);
-      setStatus(`${text.userAvatarCandidates}: ${candidates.length}`);
+      setAvatarStatus(`${text.userAvatarCandidates}: ${candidates.length}`);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
+      setAvatarCandidates([]);
+      setAvatarStatus(err instanceof Error ? err.message : String(err));
     } finally {
       setAvatarBusy(false);
     }
@@ -2584,6 +2607,7 @@ function UserSettingsPanel({
           {busy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
           {text.createLocalizationTask}
         </button>
+        {localeStatus ? <div className="settings-status">{localeStatus}</div> : null}
       </div>
 
       <div className="settings-section">
@@ -2642,13 +2666,14 @@ function UserSettingsPanel({
         </label>
         <button
           className="primary-button"
-          disabled={avatarBusy || !avatarPrompt.trim()}
+          disabled={avatarBusy}
           onClick={() => void generateAvatars()}
           type="button"
         >
           {avatarBusy ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />}
           {avatarBusy ? text.userAvatarGenerating : text.userAvatarGenerate}
         </button>
+        {avatarStatus ? <div className="settings-status">{avatarStatus}</div> : null}
         <p className="settings-hint">{text.userAvatarGenerationHint}</p>
         <div className="avatar-candidate-panel">
           <div className="settings-label-row">
@@ -2663,7 +2688,7 @@ function UserSettingsPanel({
                   key={candidate.id}
                   onClick={() => {
                     update({ userAvatarDataUrl: candidate.data_url });
-                    setStatus(text.userAvatarUseCandidate);
+                    setAvatarStatus(text.userAvatarUseCandidate);
                   }}
                   title={candidate.revised_prompt ?? text.userAvatarUseCandidate}
                   type="button"
@@ -2759,7 +2784,6 @@ function UserSettingsPanel({
         </label>
         <p className="settings-hint">{text.chatSubmitShortcutHint}</p>
       </div>
-      {status ? <div className="settings-status">{status}</div> : null}
     </aside>
   );
 }
