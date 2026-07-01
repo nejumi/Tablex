@@ -27,7 +27,7 @@ from tabular_harness.services.artifacts import (
 from tabular_harness.services.planned_agent_workspace import load_contract_payload
 from tabular_harness.services.reporting import persist_visualization_spec
 
-NOTEBOOK_CONTEXT_TASK_TYPES = {"author_analysis_notebook", "notebook_followup_diagnostics"}
+CONTEXT_GATHERING_TASK_TYPES = {"author_analysis_notebook", "notebook_followup_diagnostics", "target_definition_review"}
 
 
 @dataclass(frozen=True)
@@ -174,7 +174,7 @@ def build_readiness_review(
         evaluation_check(evaluation_contract, task_type=task_type),
         required_outputs_check(contract),
         safety_check(contract, constraints),
-        assumptions_check(assumption_context),
+        assumptions_check(assumption_context, task_type=task_type),
         context_artifacts_check(inputs),
         strategy_context_check(inputs, workspace_manifest),
         relational_context_check(inputs, workspace_manifest),
@@ -216,14 +216,14 @@ def contract_schema_check(contract: AgentTaskContract) -> dict[str, Any]:
 def target_context_check(project: Project, constraints: dict[str, Any], *, task_type: str) -> dict[str, Any]:
     target = constraints.get("target_column") or project.target_column
     if not target:
-        if task_type in NOTEBOOK_CONTEXT_TASK_TYPES:
+        if task_type in CONTEXT_GATHERING_TASK_TYPES:
             return check(
                 "target_context",
                 "Target column",
                 "warning",
                 "medium",
-                "Target column is not selected; notebook work must focus on data understanding and target-definition blockers.",
-                "Ask the user to confirm the target before target-aware plots, diagnostics, or model claims.",
+                "Target column is not selected; this task must focus on data understanding and target-definition reasoning.",
+                "Produce target-definition evidence and proposals before target-aware plots, diagnostics, or model claims.",
             )
         return check(
             "target_context",
@@ -241,7 +241,7 @@ def evaluation_check(evaluation_contract: dict[str, Any], *, task_type: str) -> 
     split_manifest = evaluation_contract.get("split_manifest")
     split_id = split_manifest.get("split_manifest_id") if isinstance(split_manifest, dict) else None
     if not spec_id or not split_id:
-        if task_type in NOTEBOOK_CONTEXT_TASK_TYPES:
+        if task_type in CONTEXT_GATHERING_TASK_TYPES:
             return check(
                 "evaluation_contract",
                 "EvaluationSpec and SplitManifest",
@@ -269,6 +269,30 @@ def evaluation_check(evaluation_contract: dict[str, Any], *, task_type: str) -> 
 
 def required_outputs_check(contract: AgentTaskContract) -> dict[str, Any]:
     paths = [item.path for item in contract.required_outputs]
+    if contract.task_type == "target_definition_review":
+        missing_categories = []
+        if not any("target_definition" in path for path in paths):
+            missing_categories.append("target definition proposal")
+        if not any("report" in path for path in paths):
+            missing_categories.append("reader report")
+        if not any("evidence" in path for path in paths):
+            missing_categories.append("evidence")
+        if missing_categories:
+            return check(
+                "required_outputs",
+                "Required outputs",
+                "warning",
+                "medium",
+                f"Target definition review outputs are missing expected categories: {', '.join(missing_categories)}.",
+                "Regenerate the target_definition_review contract with proposal, report, and evidence outputs.",
+            )
+        return check(
+            "required_outputs",
+            "Required outputs",
+            "pass",
+            "info",
+            f"{len(contract.required_outputs)} target definition review output(s) are declared.",
+        )
     if contract.task_type == "author_analysis_notebook":
         missing_categories = []
         if not any("notebook" in path for path in paths):
@@ -376,10 +400,19 @@ def safety_check(contract: AgentTaskContract, constraints: dict[str, Any]) -> di
     )
 
 
-def assumptions_check(assumption_context: dict[str, Any]) -> dict[str, Any]:
+def assumptions_check(assumption_context: dict[str, Any], *, task_type: str) -> dict[str, Any]:
     high_risk = list_value(assumption_context.get("high_risk_assumptions"))
     blocking_count = int_value(assumption_context.get("blocking_question_count"))
     if blocking_count > 0:
+        if task_type in CONTEXT_GATHERING_TASK_TYPES:
+            return check(
+                "assumptions_questions",
+                "Assumptions and questions",
+                "warning",
+                "medium",
+                f"{blocking_count} blocking question(s) are present; this context-gathering task may still run to resolve them.",
+                "Use the runner output to propose answers, evidence, or a human intervention point.",
+            )
         return check(
             "assumptions_questions",
             "Assumptions and questions",

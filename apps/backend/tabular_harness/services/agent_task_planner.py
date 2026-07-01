@@ -297,6 +297,7 @@ def agent_task_contract_label(task_type: str) -> str:
     labels = {
         "author_analysis_notebook": "Author a source-backed analysis notebook",
         "notebook_followup_diagnostics": "Materialize notebook diagnostics",
+        "target_definition_review": "Review target definition",
         "revise_evaluation_design": "Review evaluation design",
         "implement_prediction_approach": "Plan a project-specific approach",
     }
@@ -304,6 +305,8 @@ def agent_task_contract_label(task_type: str) -> str:
 
 
 def agent_task_contract_next_action(task_type: str) -> str:
+    if task_type == "target_definition_review":
+        return "Run Codex against the prepared workspace so the target proposal comes from agent reasoning, not harness heuristics."
     if task_type == "notebook_followup_diagnostics":
         return "Review readiness, then run the controlled runner only if model, prediction, or split evidence exists."
     if task_type == "author_analysis_notebook":
@@ -314,6 +317,8 @@ def agent_task_contract_next_action(task_type: str) -> str:
 
 
 def objective_summary_for_task(task_type: str, objective: str) -> str:
+    if task_type == "target_definition_review":
+        return "Ask Codex to inspect the current data evidence and propose a target definition or target-construction plan."
     if task_type == "notebook_followup_diagnostics":
         focus = objective_followup_focus(objective)
         focus_text = f" for {focus}" if focus else ""
@@ -351,6 +356,27 @@ def safe_int(value: object) -> int:
 
 
 def required_outputs_for_task(task_type: str) -> list[dict[str, str]]:
+    if task_type == "target_definition_review":
+        return [
+            {
+                "path": "reports/target_definition_review.md",
+                "schema": "markdown_report.v1",
+                "description": "Human-readable review of plausible target definitions, prediction timing, risks, and recommended next move.",
+            },
+            {
+                "path": "artifacts/target_definition_proposal.json",
+                "schema": "target_definition_proposal.v1",
+                "description": (
+                    "Structured Codex proposal. Expected in AgentResult.outputs.target_definition_proposal as well, "
+                    "with recommended_target, alternatives, evidence, risks, and unresolved questions."
+                ),
+            },
+            {
+                "path": "artifacts/evidence.json",
+                "schema": "evidence_set.v1",
+                "description": "Artifact-backed evidence supporting and challenging the recommended target definition.",
+            },
+        ]
     if task_type == "author_analysis_notebook":
         return [
             {
@@ -467,6 +493,14 @@ def required_outputs_for_task(task_type: str) -> list[dict[str, str]]:
 
 
 def quality_checks_for_task(task_type: str) -> list[str]:
+    if task_type == "target_definition_review":
+        return [
+            "Read the materialized data profile, semantic catalog, questions, assumptions, and EDA evidence before proposing a target.",
+            "Consider existing columns and derived or aggregate targets; do not assume a column name is sufficient evidence.",
+            "Explain prediction-time semantics, leakage risk, rejected alternatives, and what evidence would change the recommendation.",
+            "Write AgentResult.outputs.target_definition_proposal with a structured recommendation and alternatives.",
+            "Do not train a model or mutate EvaluationSpec/SplitManifest in this task.",
+        ]
     if task_type == "author_analysis_notebook":
         return [
             "Read notebook_authoring_brief first when present.",

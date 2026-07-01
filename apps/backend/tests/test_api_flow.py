@@ -6,11 +6,13 @@ import zipfile
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi.testclient import TestClient
 from tabular_harness.core.config import Settings
 from tabular_harness.main import create_app
+from tabular_harness.schemas import AgentResult
 
 
 def make_client(tmp_path: Path) -> TestClient:
@@ -103,15 +105,17 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
     assert {
         "data_quality",
         "eda_review",
-        "evaluation_candidates",
         "research_brief",
         "approach_ideas",
         "agent_task_contract",
         "agent_workspace",
+        "evaluation_spec",
         "reflection",
     }.issubset(labels)
     assert output["artifact_ids"]
-    assert output["next_human_boundary"].startswith("Confirm or derive the prediction target")
+    assert output["next_human_boundary"].startswith("Switch runner mode to codex_cli")
+    evaluation_step = next(step for step in output["steps"] if step["label"] == "evaluation_spec")
+    assert evaluation_step["status"] == "deferred"
 
     artifacts = client.get(f"/api/projects/{project_id}/artifacts").json()
     asset_types = {artifact["asset_type"] for artifact in artifacts}
@@ -119,6 +123,84 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
     assert "eda_review_bundle" in asset_types
     assert "agent_task_contract" in asset_types
     assert "agent_workspace_manifest" in asset_types
+
+    contract_step = next(step for step in output["steps"] if step["label"] == "agent_task_contract")
+    assert contract_step["entity_ids"]["task_type"] == "target_definition_review"
+
+
+def test_full_auto_codex_target_proposal_drives_evaluation_and_runs(tmp_path: Path, monkeypatch: Any) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Codex target proposal"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    rows = ["feature,segment,label"] + [
+        f"{index},{'a' if index % 2 else 'b'},{1 if index % 3 == 0 else 0}" for index in range(1, 80)
+    ]
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("codex_target.csv", "\n".join(rows).encode("utf-8"), "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    def fake_codex_runner(*args: Any, **kwargs: Any) -> Any:
+        agent_result = AgentResult(
+            task_id="agt_fake",
+            status="succeeded",
+            final_message="Codex reviewed the data context and proposed a target.",
+            outputs={
+                "target_definition_proposal": {
+                    "recommended_target": {
+                        "kind": "existing_column",
+                        "column_name": "label",
+                        "task_type": "binary_classification",
+                        "confidence": 0.82,
+                        "risk_level": "medium",
+                        "rationale": "The proposal is based on the profiled project context supplied to Codex.",
+                    },
+                    "alternatives": [],
+                    "risks": ["Confirm prediction-time availability before deployment."],
+                },
+                "report_md": "Target definition review complete.",
+            },
+            artifacts=[],
+            warnings=[],
+        )
+        return SimpleNamespace(
+            agent_result=agent_result,
+            artifact_ids=[],
+            report_id="rpt_fake",
+            evidence_id="ev_fake",
+            workspace_artifact_id="art_workspace_fake",
+            readiness_artifact_id="art_readiness_fake",
+            readiness_status="ready_with_warnings",
+            ingested_artifact_ids=[],
+            auto_prepared_workspace=False,
+            experiment_ingestion=SimpleNamespace(run=None),
+            relational_context_summary={},
+            relational_context_summary_artifact_id=None,
+            approach_decision_trace_artifact_id=None,
+        )
+
+    monkeypatch.setattr("tabular_harness.services.autonomy.run_planned_agent_task_codex_cli", fake_codex_runner)
+
+    start_response = client.post(
+        f"/api/projects/{project_id}/autonomy/start",
+        json={"runner_mode": "codex_cli", "autonomy_mode": "full_auto", "locale": "ja-JP"},
+    )
+    assert start_response.status_code == 200, start_response.text
+    output = start_response.json()["output"]
+    labels = {step["label"]: step for step in output["steps"]}
+    assert labels["target_definition_proposal"]["status"] == "adopted"
+    assert labels["evaluation_spec"]["status"] == "approved"
+    assert labels["split_manifest"]["status"] == "created"
+    assert labels["baseline_run"]["status"] == "succeeded"
+
+    project_read_response = client.get(f"/api/projects/{project_id}")
+    assert project_read_response.status_code == 200
+    project = project_read_response.json()
+    assert project["target_column"] == "label"
+    assert project["task_type"] == "binary_classification"
 
 
 def test_approval_based_start_runs_but_does_not_auto_adopt_evaluation(tmp_path: Path) -> None:
@@ -271,7 +353,8 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
 
 
 
-def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path: Path) -> None:
+def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")
     client = make_client(tmp_path)
 
     project_response = client.post(
@@ -304,7 +387,7 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     assert chat["actions"] == []
     assert chat["worker_events"] == []
     assert chat["action_summary"]["outcome"] == "answered"
-    assert "keyword" in chat["action_summary"]["boundaries"][0]
+    assert "schema-validated agent proposals" in chat["action_summary"]["boundaries"][0]
     assert chat["response_brief"]["response_locale"] == "ja-JP"
     assert chat["response_brief"]["conversation_context"]["schema_version"] == "agent_conversation_context.v1"
     assert chat["token_usage"]["is_estimate"] is True
@@ -576,7 +659,8 @@ def test_upload_data_bundle_profiles_primary_supporting_tables_and_er_hint(tmp_p
 
 
 
-def test_portal_overview_ideas_and_agent_activity(tmp_path: Path) -> None:
+def test_portal_overview_ideas_and_agent_activity(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")
     client = make_client(tmp_path)
 
     project_response = client.post("/api/projects", json={"name": "Portal Ops", "target_column": "target"})

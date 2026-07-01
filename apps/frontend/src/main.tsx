@@ -213,7 +213,7 @@ const englishMessages = {
   agentReplyPending: "Thinking and preparing the next useful response.",
   agentReplyFailed: "I could not complete that request. The error is recorded here so it does not disappear.",
   chatTurnStatus: "Status",
-  chatBriefAvailable: "Response brief saved",
+  chatBriefAvailable: "Codex response unavailable",
   nextActionLabel: "Next",
   downloadLatestAgentTaskContract: "Download latest AgentTaskContract",
   agentTaskContractCreated: "Runner handoff saved.",
@@ -441,7 +441,7 @@ const japaneseMessages: LocaleMessages = {
   agentReplyPending: "状況を確認し、次に役立つ返答を準備しています。",
   agentReplyFailed: "この依頼を完了できませんでした。消えないように、エラーをここに記録します。",
   chatTurnStatus: "状態",
-  chatBriefAvailable: "応答brief保存済み",
+  chatBriefAvailable: "Codex応答未実行",
   nextActionLabel: "次に開く",
   downloadLatestAgentTaskContract: "最新のAgentTaskContractをダウンロード",
   agentTaskContractCreated: "Runner handoffを保存しました。",
@@ -3920,6 +3920,31 @@ function buildAgentConversationTurns(messages: AgentChatMessage[]): AgentConvers
   return turns;
 }
 
+function useStickyBottomScroll<T extends HTMLElement>(dependencyKey: string) {
+  const ref = React.useRef<T | null>(null);
+  const shouldStickRef = React.useRef(true);
+  const mountedRef = React.useRef(false);
+
+  const onScroll = React.useCallback(() => {
+    const element = ref.current;
+    if (!element) return;
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    shouldStickRef.current = distanceFromBottom <= 48;
+  }, []);
+
+  React.useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    if (!mountedRef.current || shouldStickRef.current) {
+      element.scrollTop = element.scrollHeight;
+      shouldStickRef.current = true;
+    }
+    mountedRef.current = true;
+  }, [dependencyKey]);
+
+  return { ref, onScroll };
+}
+
 function latestJobHeadline(job: Job) {
   const headline = textField(job.output.headline) ?? textField(job.context.headline) ?? textField(job.input.objective);
   return headline ?? `${job.status.replace(/_/g, " ")} since ${formatDate(job.created_at)}`;
@@ -4032,6 +4057,8 @@ function RawAgentStream({
   onSubmit: (objective: string) => Promise<void>;
 }) {
   const [draft, setDraft] = React.useState("");
+  const latestEvent = events[events.length - 1];
+  const rawScroll = useStickyBottomScroll<HTMLDivElement>(`${events.length}:${latestEvent?.id ?? "empty"}`);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -4047,7 +4074,7 @@ function RawAgentStream({
         <span>{text.rawAgentTitle}</span>
         <small>{events.length} events</small>
       </div>
-      <div className="raw-agent-log">
+      <div className="raw-agent-log" ref={rawScroll.ref} onScroll={rawScroll.onScroll}>
         {events.length ? (
           events.map((event) => (
             <div className="raw-agent-event" key={event.id}>
@@ -4094,6 +4121,8 @@ function AgentConversationTurnCard({
   const statusClass = agentChatOutcomeClass(outcome);
   const hasPrimaryNext = Boolean(assistant?.actionSummary?.next_step?.target_tab);
   const visibleActions = hasPrimaryNext ? [] : assistant?.actions?.slice(0, 2) ?? [];
+  const composerStatus = String(assistant?.responseComposer?.status ?? "");
+  const showComposerProblem = Boolean(assistant?.responseComposer && composerStatus && composerStatus !== "succeeded");
   return (
     <article className="agent-turn-card">
       <div className="agent-turn-head">
@@ -4133,7 +4162,7 @@ function AgentConversationTurnCard({
               ))}
             </div>
           ) : null}
-          {assistant.responseBrief ? <small className="agent-turn-brief">{text.chatBriefAvailable}</small> : null}
+          {showComposerProblem ? <small className="agent-turn-brief">{text.chatBriefAvailable}</small> : null}
         </section>
       ) : (
         <section className="agent-turn-section assistant">
@@ -4166,6 +4195,10 @@ function AgentChatDock({
 }) {
   const [draft, setDraft] = React.useState("");
   const turns = React.useMemo(() => buildAgentConversationTurns(messages), [messages]);
+  const latestTurn = turns[turns.length - 1];
+  const chatScroll = useStickyBottomScroll<HTMLDivElement>(
+    `${turns.length}:${latestTurn?.id ?? "empty"}:${latestTurn?.user?.text.length ?? 0}:${latestTurn?.assistant?.text.length ?? 0}`
+  );
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -4207,7 +4240,7 @@ function AgentChatDock({
         </div>
       </div>
       {turns.length ? (
-        <div className="agent-chat-log">
+        <div className="agent-chat-log" ref={chatScroll.ref} onScroll={chatScroll.onScroll}>
           {turns.slice(-16).map((turn) => (
             <AgentConversationTurnCard key={turn.id} turn={turn} text={text} onActionOpen={onActionOpen} />
           ))}

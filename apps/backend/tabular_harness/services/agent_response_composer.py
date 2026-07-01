@@ -20,6 +20,13 @@ class AgentResponseComposition:
     composer: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class CodexCompositionResult:
+    message: str | None
+    status: str
+    failure_reason: str | None = None
+
+
 def compose_agent_chat_response(
     *,
     project: Project,
@@ -44,12 +51,12 @@ def compose_agent_chat_response(
         agent_model=agent_model,
         utility_model=utility_model,
     )
-    mode = os.environ.get("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback").strip().lower()
+    mode = os.environ.get("TABLEX_AGENT_RESPONSE_COMPOSER", "codex_cli_if_available").strip().lower()
     if mode in {"codex_cli", "codex_cli_if_available"}:
         codex_response = compose_with_codex_cli(brief)
-        if codex_response:
+        if codex_response.message:
             return AgentResponseComposition(
-                message=codex_response,
+                message=codex_response.message,
                 brief=brief,
                 composer={
                     "schema_version": "agent_response_composer.v1",
@@ -57,16 +64,26 @@ def compose_agent_chat_response(
                     "status": "succeeded",
                 },
             )
+        brief["composer_warning"] = codex_response.failure_reason or "Codex CLI response composition was unavailable."
         if mode == "codex_cli":
-            brief["composer_warning"] = "Codex CLI response composition was requested but unavailable or failed."
+            return AgentResponseComposition(
+                message=codex_unavailable_message(brief),
+                brief=brief,
+                composer={
+                    "schema_version": "agent_response_composer.v1",
+                    "mode": "codex_cli",
+                    "status": codex_response.status,
+                    "failure_reason": codex_response.failure_reason,
+                },
+            )
 
     return AgentResponseComposition(
-        message=fallback_human_message(brief, fallback_message=fallback_message),
+        message=codex_unavailable_message(brief) if mode in {"codex_cli", "codex_cli_if_available"} else fallback_message,
         brief=brief,
         composer={
             "schema_version": "agent_response_composer.v1",
             "mode": mode or "structured_fallback",
-            "status": "fallback",
+            "status": "codex_unavailable" if mode in {"codex_cli", "codex_cli_if_available"} else "fallback",
         },
     )
 
@@ -149,9 +166,9 @@ def build_human_response_brief(
     }
 
 
-def compose_with_codex_cli(brief: dict[str, Any]) -> str | None:
+def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
     if shutil.which("codex") is None:
-        return None
+        return CodexCompositionResult(message=None, status="codex_not_found", failure_reason="Codex CLI binary was not found on PATH.")
     with tempfile.TemporaryDirectory(prefix="tablex-response-composer-") as tmp:
         workspace = Path(tmp)
         response_path = workspace / "response.txt"
@@ -187,36 +204,35 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> str | None:
                 env=safe_env(workspace),
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-        if completed.returncode != 0 or not response_path.exists():
-            return None
+        except subprocess.TimeoutExpired:
+            return CodexCompositionResult(message=None, status="timeout", failure_reason="Codex CLI response composition timed out.")
+        except OSError as exc:
+            return CodexCompositionResult(message=None, status="os_error", failure_reason=str(exc))
+        if completed.returncode != 0:
+            stderr_tail = completed.stderr[-1200:] if completed.stderr else ""
+            return CodexCompositionResult(message=None, status="failed", failure_reason=stderr_tail or f"Codex CLI exited with {completed.returncode}.")
+        if not response_path.exists():
+            return CodexCompositionResult(message=None, status="missing_output", failure_reason="Codex CLI did not write a response file.")
         message = response_path.read_text(encoding="utf-8").strip()
-        return message[:4000] if message else None
+        if not message:
+            return CodexCompositionResult(message=None, status="empty_output", failure_reason="Codex CLI returned an empty response.")
+        return CodexCompositionResult(message=message[:4000], status="succeeded")
 
 
-def fallback_human_message(brief: dict[str, Any], *, fallback_message: str) -> str:
+def codex_unavailable_message(brief: dict[str, Any]) -> str:
     locale = str(brief.get("response_locale") or "")
-    if not locale.lower().startswith("ja"):
-        return fallback_message
-
-    changed = [str(item) for item in list_value(brief.get("what_changed")) if item][:3]
-    needs_review = [str(item) for item in list_value(brief.get("what_needs_review")) if item][:2]
-    next_step = dict_value(brief.get("next_step"))
-
-    lines = ["状況を確認して、次の一手を整理しました。"]
-    if changed:
-        lines.append("実際に進めたこと: " + "、".join(changed) + "。")
-    if needs_review:
-        lines.append("確認が必要なこと: " + "、".join(needs_review) + "。")
-    next_label = next_step.get("label")
-    target_tab = next_step.get("target_tab")
-    if next_label or target_tab:
-        if target_tab:
-            lines.append(f"次は {target_tab} で「{next_label or '現在の根拠'}」を見てください。")
-        else:
-            lines.append(f"次は「{next_label}」を見てください。")
-    return "\n".join(lines)
+    warning = str(brief.get("composer_warning") or "Codex response composition is unavailable.")
+    if locale.lower().startswith("ja"):
+        return (
+            "この返答はCodexで生成できませんでした。"
+            f"理由: {warning}\n"
+            "チャット内容とプロジェクト文脈は保存済みですが、自然な状況説明や判断はまだ実行されていません。"
+        )
+    return (
+        "I could not generate this reply with Codex. "
+        f"Reason: {warning}\n"
+        "The chat turn and project context were saved, but no natural-language reasoning response was executed."
+    )
 
 
 def list_value(value: object) -> list[Any]:

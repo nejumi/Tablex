@@ -60,7 +60,7 @@ def create_default_evaluation_candidates(
 
     profile = load_profile_for_dataset(db, dataset)
     target_column = project.target_column
-    target_profile = profile.get("target_profile") or {}
+    target_profile = profile.get("target_profile") or target_profile_from_columns(profile, target_column) or {}
     task_type = project.task_type or infer_task_type(target_profile)
     primary_metric = recommend_primary_metric(task_type, target_profile)
     secondary_metrics = recommend_secondary_metrics(task_type)
@@ -1260,6 +1260,31 @@ def infer_task_type(target_profile: dict[str, Any]) -> str:
     if 2 < unique_count <= 20:
         return "multiclass_classification"
     return "regression"
+
+
+def target_profile_from_columns(profile: dict[str, Any], target_column: str | None) -> dict[str, Any] | None:
+    if not target_column:
+        return None
+    raw_columns = profile.get("columns")
+    if not isinstance(raw_columns, list):
+        return None
+    for raw_column in raw_columns:
+        if not isinstance(raw_column, dict) or raw_column.get("name") != target_column:
+            continue
+        payload: dict[str, Any] = {
+            "physical_type": raw_column.get("physical_type"),
+            "non_null_count": None,
+            "missing_count": raw_column.get("missing_count"),
+            "unique_count": raw_column.get("unique_count"),
+            "top_values": [],
+            "source": "column_profile_fallback",
+        }
+        row_count = int(profile.get("row_count") or 0)
+        missing_count = int(raw_column.get("missing_count") or 0)
+        if row_count:
+            payload["non_null_count"] = max(0, row_count - missing_count)
+        return payload
+    return None
 
 
 def recommend_primary_metric(task_type: str, target_profile: dict[str, Any]) -> str:

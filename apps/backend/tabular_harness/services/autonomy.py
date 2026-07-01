@@ -8,16 +8,22 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.ids import new_id
-from tabular_harness.core.json import dumps_json
+from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
+    Answer,
+    Assumption,
+    AssumptionEvidenceLink,
     DatasetSnapshot,
     EvaluationCandidate,
     EvaluationSpec,
+    Evidence,
     ExperimentRun,
     Insight,
     Job,
     Project,
+    Question,
     ResearchBrief,
+    SemanticCatalog,
     SplitManifest,
     utc_now,
 )
@@ -170,16 +176,35 @@ def run_autonomous_loop_tick(
         )
 
     run_data_understanding_stack(db, store=store, project=project, dataset=dataset, state=state)
-    approved_spec, split = run_evaluation_stack(
-        db,
-        store=store,
-        project=project,
-        dataset=dataset,
-        state=state,
-        approved_spec=approved_spec,
-        split=split,
-        auto_approve=autonomy_mode == "full_auto",
-    )
+    if not project.target_column:
+        run_runner_handoff(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            state=state,
+            runner_mode=runner_mode,
+            task_type="target_definition_review",
+        )
+    if project.target_column:
+        approved_spec, split = run_evaluation_stack(
+            db,
+            store=store,
+            project=project,
+            dataset=dataset,
+            state=state,
+            approved_spec=approved_spec,
+            split=split,
+            auto_approve=autonomy_mode == "full_auto",
+        )
+    else:
+        approved_spec, split = None, None
+        state.record(
+            "evaluation_spec",
+            "deferred",
+            "Evaluation design is deferred until Codex produces a target-definition proposal that the harness can validate.",
+            boundary="Target definition proposal is required before EvaluationSpec adoption.",
+        )
     run_idea_and_insight_stack(
         db,
         store=store,
@@ -196,14 +221,16 @@ def run_autonomous_loop_tick(
         spec=approved_spec,
         split=split,
     )
-    run_runner_handoff(
-        db,
-        store=store,
-        project=project,
-        job=job,
-        state=state,
-        runner_mode=runner_mode,
-    )
+    if project.target_column:
+        run_runner_handoff(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            state=state,
+            runner_mode=runner_mode,
+            task_type="implement_prediction_approach",
+        )
 
     next_boundary = next_boundary_for_state(project, approved_spec, split, state)
     return finalize_autonomous_tick(
@@ -342,13 +369,12 @@ def run_evaluation_stack(
             return None, None
         if review.blocked:
             state.record(
-                "evaluation_spec",
-                "blocked",
-                "EvaluationSpec adoption is blocked by required questions or deployment-facing assumptions.",
+                "evaluation_blockers",
+                "preserved",
+                "Full Auto preserved EvaluationSpec blockers as review evidence and continued with explicit assumptions.",
+                artifact_ids=[review.artifact.id],
                 entity_ids={"evaluation_spec_id": spec.id},
-                boundary="Evaluation adoption needs human review before training.",
             )
-            return None, None
         approve_spec(spec)
         approved_artifact = write_spec_artifact(db, store, spec)
         state.record(
@@ -568,22 +594,24 @@ def run_runner_handoff(
     job: Job,
     state: AutonomousLoopState,
     runner_mode: str,
+    task_type: str | None = None,
 ) -> None:
     objective = autonomous_agent_objective(project)
+    task_type = task_type or ("target_definition_review" if not project.target_column else "implement_prediction_approach")
     plan = plan_project_agent_task(
         db,
         store=store,
         project=project,
         job=job,
         objective=objective,
-        task_type="implement_prediction_approach",
+        task_type=task_type,
     )
     state.record(
         "agent_task_contract",
         "created",
-        "Created an open-ended AgentTaskContract. Codex may accept, reject, revise, or replace suggested approaches.",
+        "Created an AgentTaskContract for Codex to reason from the current project evidence.",
         artifact_ids=[plan.artifact.id],
-        entity_ids={"task_id": plan.contract["task_id"]},
+        entity_ids={"task_id": plan.contract["task_id"], "task_type": task_type},
     )
 
     try:
@@ -685,6 +713,14 @@ def run_runner_handoff(
         "readiness_status": result.readiness_status,
         "experiment_run_id": result.experiment_ingestion.run.id if result.experiment_ingestion.run else None,
     }
+    if task_type == "target_definition_review":
+        ingest_codex_target_definition_proposal(
+            db,
+            project=project,
+            state=state,
+            agent_result=result.agent_result,
+            source_artifact_id=result.artifact_ids[0] if result.artifact_ids else None,
+        )
     state.record(
         "codex_execution",
         result.agent_result.status,
@@ -696,6 +732,160 @@ def run_runner_handoff(
             "experiment_run_id": result.experiment_ingestion.run.id if result.experiment_ingestion.run else "",
         },
     )
+
+
+def ingest_codex_target_definition_proposal(
+    db: Session,
+    *,
+    project: Project,
+    state: AutonomousLoopState,
+    agent_result: Any,
+    source_artifact_id: str | None,
+) -> None:
+    if agent_result.status != "succeeded":
+        state.record(
+            "target_definition_proposal",
+            "blocked",
+            "Codex did not complete the target-definition review.",
+            boundary="Run Codex target-definition review before adopting EvaluationSpec.",
+        )
+        return
+    proposal = agent_result.outputs.get("target_definition_proposal") if isinstance(agent_result.outputs, dict) else None
+    if not isinstance(proposal, dict):
+        state.record(
+            "target_definition_proposal",
+            "blocked",
+            "Codex completed, but did not return `outputs.target_definition_proposal`.",
+            boundary="Target-definition review must return the fixed proposal object before harness adoption.",
+        )
+        return
+    recommended = proposal.get("recommended_target")
+    if not isinstance(recommended, dict):
+        state.record(
+            "target_definition_proposal",
+            "blocked",
+            "Codex target-definition proposal is missing `recommended_target`.",
+            boundary="Target-definition review must include `recommended_target` before harness adoption.",
+        )
+        return
+    target_kind = str(recommended.get("kind") or "")
+    column_name = recommended.get("column_name")
+    rationale = str(recommended.get("rationale") or proposal.get("rationale") or "Codex proposed this target from project evidence.")
+    evidence = Evidence(
+        id=new_id("ev"),
+        project_id=project.id,
+        evidence_type="codex_target_definition_proposal",
+        summary=rationale[:500],
+        strength=str(recommended.get("evidence_strength") or "medium"),
+        source_artifact_id=source_artifact_id,
+        metadata_json=dumps_json(proposal),
+    )
+    db.add(evidence)
+
+    if target_kind != "existing_column" or not isinstance(column_name, str) or not column_name:
+        state.record(
+            "target_definition_proposal",
+            "proposed",
+            "Codex proposed a target that requires target construction before EvaluationSpec adoption.",
+            artifact_ids=[source_artifact_id] if source_artifact_id else [],
+            entity_ids={"evidence_id": evidence.id, "target_kind": target_kind or "unspecified"},
+            boundary="Materialize or approve the Codex target-construction proposal before evaluation.",
+        )
+        return
+
+    if column_name not in latest_semantic_column_names(db, project.id):
+        state.record(
+            "target_definition_proposal",
+            "blocked",
+            "Codex proposed an existing-column target, but the column was not found in the current SemanticCatalog.",
+            artifact_ids=[source_artifact_id] if source_artifact_id else [],
+            entity_ids={"evidence_id": evidence.id, "proposed_column": column_name},
+            boundary="Regenerate semantic catalog or ask Codex to revise the target proposal.",
+        )
+        return
+
+    project.target_column = column_name
+    task_type = recommended.get("task_type") or proposal.get("task_type")
+    if isinstance(task_type, str) and task_type:
+        project.task_type = task_type
+    project.updated_at = utc_now()
+    assumption = Assumption(
+        id=new_id("asm"),
+        project_id=project.id,
+        topic="target_definition",
+        subject_type="column",
+        subject_ref=column_name,
+        statement=str(recommended.get("statement") or f"`{column_name}` is the Codex-proposed prediction target."),
+        status="adopted",
+        confidence=clamp_confidence(recommended.get("confidence")),
+        risk_level=normalize_risk_level(recommended.get("risk_level")),
+        fallback_policy="infer_and_continue",
+        requires_user_confirmation=True,
+        created_by_type="agent_runner",
+        created_by="codex",
+    )
+    db.add(assumption)
+    db.add(
+        AssumptionEvidenceLink(
+            id=new_id("ael"),
+            assumption_id=assumption.id,
+            evidence_id=evidence.id,
+            effect="supports",
+            weight=0.9,
+        )
+    )
+    for question in db.scalars(
+        select(Question)
+        .where(Question.project_id == project.id, Question.topic == "target_definition", Question.status == "open")
+        .order_by(Question.priority.desc(), Question.created_at)
+    ).all():
+        question.status = "answered"
+        db.add(
+            Answer(
+                id=new_id("ans"),
+                question_id=question.id,
+                answered_by="codex_agent",
+                answer_value=column_name,
+                answer_text=rationale,
+            )
+        )
+    state.record(
+        "target_definition_proposal",
+        "adopted",
+        "Accepted Codex's structured target-definition proposal and recorded it as an auditable assumption.",
+        artifact_ids=[source_artifact_id] if source_artifact_id else [],
+        entity_ids={"evidence_id": evidence.id, "assumption_id": assumption.id, "target_column": column_name},
+    )
+
+
+def latest_semantic_column_names(db: Session, project_id: str) -> set[str]:
+    catalog = db.scalar(
+        select(SemanticCatalog)
+        .where(SemanticCatalog.project_id == project_id)
+        .order_by(SemanticCatalog.created_at.desc())
+    )
+    if catalog is None:
+        return set()
+    columns = loads_json(catalog.columns_json, [])
+    names: set[str] = set()
+    for column in columns:
+        if not isinstance(column, dict):
+            continue
+        raw_name = column.get("name") or column.get("column_name")
+        if isinstance(raw_name, str):
+            names.add(raw_name)
+    return names
+
+
+def clamp_confidence(value: object) -> float:
+    if isinstance(value, (int, float)):
+        return max(0.0, min(1.0, float(value)))
+    return 0.5
+
+
+def normalize_risk_level(value: object) -> str:
+    risk = str(value or "medium")
+    return risk if risk in {"low", "medium", "high", "blocking", "deployment_blocking"} else "medium"
 
 
 def finalize_autonomous_tick(
@@ -795,7 +985,7 @@ def autonomous_reflection_summary(
     status: str,
     next_human_boundary: str,
 ) -> str:
-    completed_steps = [step for step in state.steps if step.status in {"created", "completed", "succeeded"}]
+    completed_steps = [step for step in state.steps if step.status in {"adopted", "created", "completed", "approved", "succeeded"}]
     if completed_steps:
         labels = ", ".join(step.label.replace("_", " ") for step in completed_steps[:3])
         return (
@@ -860,35 +1050,69 @@ def render_assistant_message(
     next_human_boundary: str,
     locale: str | None = None,
 ) -> str:
-    completed = [step for step in state.steps if step.status in {"created", "approved", "succeeded"}]
     blocked = [step for step in state.steps if step.status in {"blocked", "deferred", "dependency_required", "armed"}]
     mode_label = "Full Auto" if state.project.autonomy_mode == "full_auto" else "Approval Based"
+    run_steps = [step for step in state.steps if step.label in {"baseline_run", "model_candidate_xgboost", "model_candidate_logistic_regression", "model_candidate_lightgbm"} and step.status == "succeeded"]
+    evaluation_ready = any(step.label == "evaluation_spec" and step.status == "approved" for step in state.steps)
+    split_ready = any(step.label == "split_manifest" and step.status == "created" for step in state.steps)
+    codex_step = next((step for step in reversed(state.steps) if step.label == "codex_execution"), None)
     if locale and locale.lower().startswith("ja"):
-        lines = [
-            f"{mode_label}のAgent loopを開始し、今できる範囲まで進めました。完了した具体ステップは{len(completed)}件、保持したboundaryは{len(state.boundaries)}件です。reflection artifactも残しました。",
-        ]
-        if completed:
-            lines.append("完了: " + "、".join(step.label for step in completed[:8]) + ("..." if len(completed) > 8 else ""))
-        if blocked:
-            lines.append("後で確認が必要: " + "、".join(f"{step.label} ({step.status})" for step in blocked[:5]))
+        if status == "waiting_for_data":
+            return (
+                f"{mode_label}を起動しました。まだデータがないので、モデルや評価は走らせず、"
+                "データが届いたらすぐ進めるための戦略・調査コンテキストだけを用意しました。"
+                "CSV/Parquetをアップロードすると、データ理解から自律的に続けます。"
+            )
+        if state.project.target_column:
+            lines = [f"{mode_label}を起動しました。データ理解、ターゲット定義、評価設計、実験の順に進めています。"]
+            lines.append(f"現在のプロジェクト設定では `{state.project.target_column}` をターゲットとして扱っています。")
+        else:
+            lines = [f"{mode_label}を起動しました。データ理解を進め、ターゲット判断はCodex runnerに渡しました。"]
+            lines.append("ハーネス側では列名ルールで代替せず、Codexの構造化提案を受け取ってから評価設計に進みます。")
+        if evaluation_ready and split_ready:
+            lines.append("評価設計とSplitManifestは準備済みです。以後のrunは同じ評価条件で比較できます。")
+        elif evaluation_ready:
+            lines.append("評価設計は採用済みです。SplitManifestの確認が次の実行境界です。")
+        if run_steps:
+            lines.append(f"モデル実験は {len(run_steps)} 件走りました。結果はLeaderboardで同じ指標・同じsplitの順位として見られます。")
+        if codex_step and codex_step.status == "armed":
+            lines.append("Codex runner用のworkspaceは準備しました。runner modeの都合で実行は保留していますが、ハーネス側の成果物は残っています。")
+        elif codex_step and codex_step.status == "blocked":
+            lines.append("Codex runner実行だけはreadinessまたはCLI環境で止まっています。データ理解・評価・ローカル実験は別に進めています。")
         if state.runner_result:
             lines.append(f"Runner結果: {state.runner_result.get('status')} - {state.runner_result.get('final_message')}")
-        lines.append(f"次の人間の確認点: {next_human_boundary}")
-        if status == "waiting_for_data":
-            lines.append("黙って止まったわけではありません。データ投入前に作れる戦略・調査コンテキストを作成しました。")
+        if blocked and not run_steps and not state.project.target_column:
+            lines.append(f"必要な介入: {next_human_boundary}")
+        else:
+            lines.append(f"次に見るなら: {next_human_boundary}")
         return "\n".join(lines)
-    lines = [
-        f"{mode_label} started and advanced the agent loop. I completed {len(completed)} concrete step(s), preserved {len(state.boundaries)} boundary item(s), and wrote a reflection artifact.",
-    ]
-    if completed:
-        lines.append("Done: " + ", ".join(step.label for step in completed[:8]) + ("..." if len(completed) > 8 else ""))
-    if blocked:
-        lines.append("Needs attention later: " + ", ".join(f"{step.label} ({step.status})" for step in blocked[:5]))
+    if status == "waiting_for_data":
+        return (
+            f"{mode_label} started. There is no dataset yet, so I prepared the strategy and research context "
+            "that can safely exist before data. Upload CSV/Parquet and I will continue from data understanding."
+        )
+    if state.project.target_column:
+        lines = [f"{mode_label} started. I moved through data understanding, target definition, evaluation design, and experiment setup."]
+        lines.append(f"The project is currently configured to use `{state.project.target_column}` as the target.")
+    else:
+        lines = [f"{mode_label} started. I advanced data understanding and handed target definition to the Codex runner."]
+        lines.append("The harness did not substitute column-name rules; evaluation waits for a structured Codex proposal that the harness can validate and record.")
+    if evaluation_ready and split_ready:
+        lines.append("EvaluationSpec and SplitManifest are ready, so future runs are comparable.")
+    elif evaluation_ready:
+        lines.append("EvaluationSpec is adopted; SplitManifest is the next execution boundary.")
+    if run_steps:
+        lines.append(f"I ran {len(run_steps)} model experiment(s). Check Leaderboard for the comparable ranking.")
+    if codex_step and codex_step.status == "armed":
+        lines.append("The Codex runner workspace is prepared; execution is armed but not launched in the current runner mode.")
+    elif codex_step and codex_step.status == "blocked":
+        lines.append("Only Codex runner execution is blocked by readiness or CLI availability; harness-side analysis and local experiments still advanced.")
     if state.runner_result:
         lines.append(f"Runner result: {state.runner_result.get('status')} - {state.runner_result.get('final_message')}")
-    lines.append(f"Next human boundary: {next_human_boundary}")
-    if status == "waiting_for_data":
-        lines.append("I did not stop silently; I created the strategy/research context that is possible before data exists.")
+    if blocked and not run_steps and not state.project.target_column:
+        lines.append(f"Human intervention needed: {next_human_boundary}")
+    else:
+        lines.append(f"Next useful surface: {next_human_boundary}")
     return "\n".join(lines)
 
 
@@ -898,7 +1122,7 @@ def worker_event_for_state(
     status: str,
     next_human_boundary: str,
 ) -> dict[str, Any]:
-    succeeded = sum(1 for step in state.steps if step.status in {"created", "approved", "succeeded"})
+    succeeded = sum(1 for step in state.steps if step.status in {"adopted", "created", "approved", "succeeded"})
     blocked = sum(1 for step in state.steps if step.status in {"blocked", "deferred", "dependency_required", "armed"})
     display_status = "succeeded" if status in {"advanced", "waiting_for_data"} else status
     return {
@@ -938,13 +1162,15 @@ def next_boundary_for_state(
     split: SplitManifest | None,
     state: AutonomousLoopState,
 ) -> str:
+    codex_step = next((step for step in reversed(state.steps) if step.label == "codex_execution"), None)
     if not project.target_column:
-        return "Confirm or derive the prediction target; until then model training remains blocked."
+        if codex_step and codex_step.status in {"blocked", "armed"}:
+            return codex_step.boundary or "Run the prepared Codex target-definition review workspace."
+        return "Review the Codex target-definition proposal, or let Full Auto continue with the next target review pass."
     if spec is None:
         return "Review the proposed EvaluationSpec candidates because automatic approval was blocked."
     if split is None:
         return "Generate or inspect the SplitManifest before comparing model runs."
-    codex_step = next((step for step in reversed(state.steps) if step.label == "codex_execution"), None)
     if codex_step and codex_step.status in {"blocked", "armed"}:
         return codex_step.boundary or "Launch the prepared Codex runner workspace when ready."
     return "Review the leaderboard and autonomous reflection, then let Full Auto continue the next improvement cycle."

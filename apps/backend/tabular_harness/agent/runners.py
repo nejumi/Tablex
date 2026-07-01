@@ -972,6 +972,19 @@ def render_prompt(contract: AgentTaskContract) -> str:
                 "- Produce a concise report, visualization spec, evidence bundle, figure manifest, and marimo follow-up notebook suitable for Tablex UI.",
             ]
         )
+    if contract.task_type == "target_definition_review":
+        lines.extend(
+            [
+                "",
+                "Target definition review rules:",
+                "- Read .harness/task_contract.json first, then inspect materialized profile, semantic catalog, EDA, assumptions, questions, and relational context artifacts.",
+                "- Propose a target definition from data-science reasoning, not from column-name shortcuts.",
+                "- Consider whether the target is an existing column, a derived label, or an aggregate over a different grain.",
+                "- Explain prediction-time semantics, leakage risks, rejected target options, and the evidence that would change your recommendation.",
+                "- Do not train a model or mutate EvaluationSpec/SplitManifest in this task.",
+                "- Put the structured proposal in outputs.target_definition_proposal and also write artifacts/target_definition_proposal.json.",
+            ]
+        )
     lines.extend(["", "Task contract:", "", contract.model_dump_json(by_alias=True, indent=2)])
     return "\n".join(lines)
 
@@ -1083,5 +1096,13 @@ def safe_env(workspace: Path) -> dict[str, str]:
     isolated_home = workspace / ".harness" / "home"
     isolated_home.mkdir(parents=True, exist_ok=True)
     env["HOME"] = str(isolated_home)
-    env.setdefault("CODEX_HOME", str(workspace / ".harness" / "codex_home"))
+    if "CODEX_HOME" not in env:
+        host_home = os.environ.get("HOME")
+        host_codex_home = Path(host_home) / ".codex" if host_home else None
+        if host_codex_home is not None and host_codex_home.exists():
+            env["CODEX_HOME"] = str(host_codex_home)
+        else:
+            codex_home = workspace / ".harness" / "codex_home"
+            codex_home.mkdir(parents=True, exist_ok=True)
+            env["CODEX_HOME"] = str(codex_home)
     return env

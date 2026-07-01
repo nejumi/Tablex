@@ -20,6 +20,7 @@ This repository is building Tablex, a tabular-first prediction meta-harness. Tab
 - If a natural-language request is ambiguous, let the agent reason from current project state and explain assumptions or proposed actions instead of adding brittle string matching rules.
 - This prohibition is not limited to Chat. Avoid ad hoc rules, fake state transitions, placeholder UX, brittle keyword classification, and fixed menu recipes in every product area when they would block Codex/agent reasoning or misrepresent real work.
 - Harness code may validate and execute schema-checked agent proposals, explicit UI/API commands, artifact IDs, file formats, metrics, and safety policies. It must not pretend those validators are language understanding.
+- Do not infer prediction targets, target-construction semantics, evaluation intent, or modeling intent in harness code through column-name heuristics, keyword matching, or statistical shortcuts. Ask Codex/AgentRunner to reason over the current artifacts and accept only schema-validated proposals back into the harness.
 - Prefer evaluation-first changes: data understanding, assumptions, reliable evaluation, and baseline sanity before model optimization.
 - Treat baselines as sanity floors and reusable references, not as the product's fixed modeling strategy.
 - When proposing modeling approaches, create evidence-backed Ideas and AgentTaskContracts that can use project artifacts, Skill library context, and controlled web/literature research.

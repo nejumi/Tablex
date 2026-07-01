@@ -242,8 +242,8 @@ def build_conversation_action_summary(conversation_context: dict[str, Any]) -> d
     return {
         "schema_version": "agent_action_summary.v1",
         "outcome": "answered",
-        "headline": "Agent conversation recorded",
-        "what_changed": ["Saved the chat turn as a project artifact."],
+        "headline": "Agent response composed from project context",
+        "what_changed": [],
         "what_needs_review": [],
         "next_step": {
             "label": focus.get("label"),
@@ -252,9 +252,8 @@ def build_conversation_action_summary(conversation_context: dict[str, Any]) -> d
             "status": focus.get("status"),
         },
         "boundaries": [
-            "Natural-language chat is not routed through keyword or phrase-specific harness rules.",
+            "Natural-language chat is answered by the response composer; harness state changes still require explicit UI/API actions or schema-validated agent proposals.",
             "No EvaluationSpec, SplitManifest, leaderboard metric, model training job, or artifact-producing workflow was changed by chat text alone.",
-            "Future state changes must come from explicit UI/API actions or schema-validated agent proposals.",
         ],
         "actions": [],
         "conversation_context": conversation_context,
