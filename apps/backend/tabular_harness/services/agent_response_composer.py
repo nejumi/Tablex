@@ -12,6 +12,7 @@ from typing import Any
 
 from tabular_harness.agent.runners import safe_env
 from tabular_harness.models.entities import Project
+from tabular_harness.services.codex_transcript import build_codex_cli_transcript
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,9 @@ class CodexCompositionResult:
     duration_ms: int | None = None
     stdout_tail: str | None = None
     stderr_tail: str | None = None
+    events: list[dict[str, Any]] | None = None
+    event_count: int | None = None
+    jsonl_tail: str | None = None
 
 
 def compose_agent_chat_response(
@@ -78,6 +82,9 @@ def compose_agent_chat_response(
                     "duration_ms": codex_response.duration_ms,
                     "stdout_tail": codex_response.stdout_tail,
                     "stderr_tail": codex_response.stderr_tail,
+                    "events": codex_response.events,
+                    "event_count": codex_response.event_count,
+                    "jsonl_tail": codex_response.jsonl_tail,
                 },
             )
         brief["composer_warning"] = codex_response.failure_reason or "Codex CLI response composition was unavailable."
@@ -98,6 +105,9 @@ def compose_agent_chat_response(
                     "duration_ms": codex_response.duration_ms,
                     "stdout_tail": codex_response.stdout_tail,
                     "stderr_tail": codex_response.stderr_tail,
+                    "events": codex_response.events,
+                    "event_count": codex_response.event_count,
+                    "jsonl_tail": codex_response.jsonl_tail,
                 },
             )
 
@@ -206,7 +216,7 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
             "",
         ]
         prompt = "\n".join(prompt_preamble + [json.dumps(brief, ensure_ascii=False, indent=2, sort_keys=True)])
-        command_summary = "codex exec --sandbox read-only --output-last-message response.txt -"
+        command_summary = "codex exec --json --sandbox read-only --output-last-message response.txt -"
         cmd = [
             "codex",
             "exec",
@@ -214,6 +224,7 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
             str(workspace),
             "--sandbox",
             "read-only",
+            "--json",
             "--output-last-message",
             str(response_path),
             "--skip-git-repo-check",
@@ -230,8 +241,16 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
                 env=safe_env(workspace),
                 check=False,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             duration_ms = int((time.perf_counter() - started_at) * 1000)
+            transcript = build_codex_cli_transcript(
+                status="timeout",
+                command=command_summary,
+                timeout_seconds=timeout_seconds,
+                duration_ms=duration_ms,
+                stdout=exc.stdout if isinstance(exc.stdout, str) else "",
+                stderr=exc.stderr if isinstance(exc.stderr, str) else "",
+            )
             return CodexCompositionResult(
                 message=None,
                 status="timeout",
@@ -240,6 +259,11 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
                 command=command_summary,
                 timeout_seconds=timeout_seconds,
                 duration_ms=duration_ms,
+                stdout_tail=transcript["stdout_tail"],
+                stderr_tail=transcript["stderr_tail"],
+                events=transcript["events"],
+                event_count=transcript["event_count"],
+                jsonl_tail=transcript["jsonl_tail"],
             )
         except OSError as exc:
             duration_ms = int((time.perf_counter() - started_at) * 1000)
@@ -253,8 +277,17 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
                 duration_ms=duration_ms,
             )
         duration_ms = int((time.perf_counter() - started_at) * 1000)
-        stdout_tail = completed.stdout[-4000:] if completed.stdout else ""
-        stderr_tail = completed.stderr[-4000:] if completed.stderr else ""
+        transcript = build_codex_cli_transcript(
+            status="succeeded" if completed.returncode == 0 else "failed",
+            command=command_summary,
+            timeout_seconds=timeout_seconds,
+            exit_code=completed.returncode,
+            duration_ms=duration_ms,
+            stdout=completed.stdout or "",
+            stderr=completed.stderr or "",
+        )
+        stdout_tail = str(transcript["stdout_tail"])
+        stderr_tail = str(transcript["stderr_tail"])
         if completed.returncode != 0:
             return CodexCompositionResult(
                 message=None,
@@ -267,6 +300,9 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
                 duration_ms=duration_ms,
                 stdout_tail=stdout_tail,
                 stderr_tail=stderr_tail,
+                events=transcript["events"],
+                event_count=transcript["event_count"],
+                jsonl_tail=transcript["jsonl_tail"],
             )
         if not response_path.exists():
             return CodexCompositionResult(
@@ -280,6 +316,9 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
                 duration_ms=duration_ms,
                 stdout_tail=stdout_tail,
                 stderr_tail=stderr_tail,
+                events=transcript["events"],
+                event_count=transcript["event_count"],
+                jsonl_tail=transcript["jsonl_tail"],
             )
         message = response_path.read_text(encoding="utf-8").strip()
         if not message:
@@ -294,6 +333,9 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
                 duration_ms=duration_ms,
                 stdout_tail=stdout_tail,
                 stderr_tail=stderr_tail,
+                events=transcript["events"],
+                event_count=transcript["event_count"],
+                jsonl_tail=transcript["jsonl_tail"],
             )
         return CodexCompositionResult(
             message=message[:4000],
@@ -305,6 +347,9 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
             duration_ms=duration_ms,
             stdout_tail=stdout_tail,
             stderr_tail=stderr_tail,
+            events=transcript["events"],
+            event_count=transcript["event_count"],
+            jsonl_tail=transcript["jsonl_tail"],
         )
 
 

@@ -4348,6 +4348,19 @@ function buildRawAgentEvents(messages: AgentChatMessage[], jobs: Job[]): RawAgen
     const command = textField(turn.assistant.responseComposer?.command);
     const stdoutTail = textField(turn.assistant.responseComposer?.stdout_tail);
     const stderrTail = textField(turn.assistant.responseComposer?.stderr_tail);
+    const codexEvents = arrayRecords(turn.assistant.responseComposer?.events);
+    if (codexEvents.length) {
+      events.push(
+        ...codexTranscriptEvents(codexEvents, {
+          idPrefix: `raw-assistant-event-${index}-${turn.assistant.id ?? "turn"}`,
+          timestamp: turn.assistant.createdAt ?? turn.createdAt ?? now,
+          active,
+          command,
+          metadata: turn.assistant.responseComposer ?? null
+        })
+      );
+      return events;
+    }
     events.push({
       id: `raw-assistant-${index}-${turn.assistant.id ?? turn.assistant.text.slice(0, 18)}`,
       timestamp: turn.assistant.createdAt ?? turn.createdAt ?? now,
@@ -4389,22 +4402,35 @@ function buildRawJobEvents(jobs: Job[]): RawAgentEvent[] {
     const codexCli = output.codex_cli;
     if (codexCli && typeof codexCli === "object") {
       const codexRecord = codexCli as Record<string, unknown>;
-      events.push({
-        id: `raw-job-codex-${job.id}`,
-        timestamp: job.updated_at,
-        source: "Codex",
-        level: textField(codexRecord.status) ?? job.status,
-        title: "Codex CLI runner transcript",
-        active: jobActiveForActivity(job),
-        body: textField(output.agent_final_message),
-        details: [
-          { label: "Codex command", value: codexRecord.command ?? null },
-          { label: "Codex stdout", value: codexRecord.stdout_tail ?? "" },
-          { label: "Codex stderr", value: codexRecord.stderr_tail ?? "" },
-          { label: "Codex run metadata", value: codexRecord }
-        ],
-        payload: { job_id: job.id, job_type: job.job_type, codex_cli: codexRecord }
-      });
+      const codexEvents = arrayRecords(codexRecord.events);
+      if (codexEvents.length) {
+        events.push(
+          ...codexTranscriptEvents(codexEvents, {
+            idPrefix: `raw-job-codex-${job.id}`,
+            timestamp: job.updated_at,
+            active: jobActiveForActivity(job),
+            command: textField(codexRecord.command),
+            metadata: codexRecord
+          })
+        );
+      } else {
+        events.push({
+          id: `raw-job-codex-${job.id}`,
+          timestamp: job.updated_at,
+          source: "Codex",
+          level: textField(codexRecord.status) ?? job.status,
+          title: "Codex CLI runner transcript",
+          active: jobActiveForActivity(job),
+          body: textField(output.agent_final_message),
+          details: [
+            { label: "Codex command", value: codexRecord.command ?? null },
+            { label: "Codex stdout", value: codexRecord.stdout_tail ?? "" },
+            { label: "Codex stderr", value: codexRecord.stderr_tail ?? "" },
+            { label: "Codex run metadata", value: codexRecord }
+          ],
+          payload: { job_id: job.id, job_type: job.job_type, codex_cli: codexRecord }
+        });
+      }
     } else if (job.job_type === "run_planned_agent_task_codex" && jobActiveForActivity(job)) {
       events.push({
         id: `raw-job-state-${job.id}`,
@@ -4420,6 +4446,86 @@ function buildRawJobEvents(jobs: Job[]): RawAgentEvent[] {
     }
     return events;
   });
+}
+
+function codexTranscriptEvents(
+  rawEvents: Record<string, unknown>[],
+  options: {
+    idPrefix: string;
+    timestamp: string;
+    active?: boolean;
+    command?: string | null;
+    metadata?: unknown;
+  }
+): RawAgentEvent[] {
+  return rawEvents.map((event, index) => ({
+    id: `${options.idPrefix}-${index}`,
+    timestamp: textField(event.timestamp) ?? options.timestamp,
+    source: "Codex",
+    level: textField(event.type) ?? "event",
+    title: codexEventTitle(event),
+    active: options.active,
+    body: codexEventBody(event),
+    details: [
+      ...(index === 0 && options.command ? [{ label: "Codex command", value: options.command }] : []),
+      { label: "Raw Codex event", value: event },
+      ...(index === rawEvents.length - 1 && options.metadata ? [{ label: "Codex run metadata", value: options.metadata }] : [])
+    ],
+    payload: event
+  }));
+}
+
+function codexEventTitle(event: Record<string, unknown>) {
+  const type = textField(event.type) ?? "Codex event";
+  const item = objectRecord(event.item);
+  const itemType = textField(item?.type);
+  const toolName = textField(item?.name) ?? textField(item?.tool_name) ?? textField(item?.command);
+  if (type === "thread.started") return "Thread started";
+  if (type === "turn.started") return "Turn started";
+  if (type === "turn.completed") return "Turn completed";
+  if (type === "item.completed" && itemType === "agent_message") return "Codex message";
+  if (type === "item.completed" && itemType && itemType.includes("tool")) {
+    return toolName ? `Tool use: ${toolName}` : "Tool use";
+  }
+  if (type === "item.completed" && itemType && (itemType.includes("command") || itemType.includes("exec"))) {
+    return toolName ? `Command: ${toolName}` : "Command execution";
+  }
+  if (type === "item.completed" && itemType && (itemType.includes("patch") || itemType.includes("edit"))) {
+    return "Code edit";
+  }
+  if (type === "item.completed" && itemType) return humanizeLabel(itemType);
+  return humanizeLabel(type);
+}
+
+function codexEventBody(event: Record<string, unknown>) {
+  const item = objectRecord(event.item);
+  const itemType = textField(item?.type);
+  if (itemType === "agent_message") return textField(item?.text);
+  const usage = objectRecord(event.usage);
+  if (usage) {
+    const input = usage.input_tokens;
+    const output = usage.output_tokens;
+    const reasoning = usage.reasoning_output_tokens;
+    return `usage: input=${String(input ?? "-")}, output=${String(output ?? "-")}, reasoning=${String(reasoning ?? "-")}`;
+  }
+  return (
+    textField(item?.text) ??
+    textField(item?.output) ??
+    textField(item?.summary) ??
+    textField(item?.command) ??
+    textField(event.message) ??
+    null
+  );
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function arrayRecords(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
 }
 
 function isRawRelevantJob(job: Job) {

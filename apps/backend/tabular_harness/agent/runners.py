@@ -12,6 +12,7 @@ from jsonschema import Draft202012Validator
 from pydantic import BaseModel
 
 from tabular_harness.schemas import AgentResult, AgentTaskContract
+from tabular_harness.services.codex_transcript import build_codex_cli_transcript
 
 
 class WorkspaceRef(BaseModel):
@@ -278,6 +279,7 @@ class CodexCliRunner(AgentRunner):
             str(workspace),
             "--sandbox",
             codex_sandbox(execution_policy.sandbox),
+            "--json",
             "--output-schema",
             str(schema_path),
             "--output-last-message",
@@ -300,18 +302,19 @@ class CodexCliRunner(AgentRunner):
             )
         except FileNotFoundError:
             duration_ms = int((time.perf_counter() - started_at) * 1000)
+            transcript = build_codex_cli_transcript(
+                status="codex_binary_not_found",
+                codex_binary=self.codex_binary,
+                command=command_summary,
+                duration_ms=duration_ms,
+            )
             return AgentResult(
                 task_id=task_contract.task_id,
                 status="failed",
                 final_message="Codex CLI binary was not found.",
                 outputs={
                     "runner": "codex_cli",
-                    "codex_cli": {
-                        "status": "codex_binary_not_found",
-                        "codex_binary": self.codex_binary,
-                        "command": command_summary,
-                        "duration_ms": duration_ms,
-                    },
+                    "codex_cli": transcript,
                 },
                 artifacts=[],
                 warnings=[],
@@ -319,35 +322,36 @@ class CodexCliRunner(AgentRunner):
             )
         except subprocess.TimeoutExpired as exc:
             duration_ms = int((time.perf_counter() - started_at) * 1000)
+            transcript = build_codex_cli_transcript(
+                status="timeout",
+                command=command_summary,
+                timeout_seconds=execution_policy.timeout_seconds,
+                duration_ms=duration_ms,
+                stdout=exc.stdout if isinstance(exc.stdout, str) else "",
+                stderr=exc.stderr if isinstance(exc.stderr, str) else "",
+            )
             return AgentResult(
                 task_id=task_contract.task_id,
                 status="failed",
                 final_message="Codex CLI timed out.",
                 outputs={
                     "runner": "codex_cli",
-                    "codex_cli": {
-                        "status": "timeout",
-                        "command": command_summary,
-                        "timeout_seconds": execution_policy.timeout_seconds,
-                        "duration_ms": duration_ms,
-                        "stdout_tail": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
-                        "stderr_tail": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
-                    },
+                    "codex_cli": transcript,
                 },
                 artifacts=[],
                 warnings=[],
                 failure_reason=str(exc),
             )
         duration_ms = int((time.perf_counter() - started_at) * 1000)
-        codex_cli_log = {
-            "status": "succeeded" if completed.returncode == 0 else "failed",
-            "command": command_summary,
-            "timeout_seconds": execution_policy.timeout_seconds,
-            "exit_code": completed.returncode,
-            "duration_ms": duration_ms,
-            "stdout_tail": completed.stdout[-4000:] if completed.stdout else "",
-            "stderr_tail": completed.stderr[-4000:] if completed.stderr else "",
-        }
+        codex_cli_log = build_codex_cli_transcript(
+            status="succeeded" if completed.returncode == 0 else "failed",
+            command=command_summary,
+            timeout_seconds=execution_policy.timeout_seconds,
+            exit_code=completed.returncode,
+            duration_ms=duration_ms,
+            stdout=completed.stdout or "",
+            stderr=completed.stderr or "",
+        )
         (harness_dir / "codex_cli_log.json").write_text(
             json.dumps(codex_cli_log, ensure_ascii=False, indent=2, sort_keys=True),
             encoding="utf-8",
