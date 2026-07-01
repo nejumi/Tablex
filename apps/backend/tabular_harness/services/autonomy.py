@@ -488,6 +488,7 @@ def create_or_adopt_provisional_target(
     )
     db.add(evidence)
     assumption = get_or_create_target_assumption(db, project=project, candidate=candidate)
+    db.flush()
     db.add(
         AssumptionEvidenceLink(
             id=new_id("ael"),
@@ -1087,7 +1088,7 @@ def should_queue_experiment_training(db: Session, project: Project) -> bool:
     dataset = latest_dataset(db, project.id)
     if dataset is None:
         return False
-    return dataset.row_count > limit
+    return bool(dataset.row_count and dataset.row_count > limit)
 
 
 def should_queue_split_generation(dataset: DatasetSnapshot) -> bool:
@@ -1487,6 +1488,7 @@ def ingest_codex_target_definition_proposal(
         created_by="codex",
     )
     db.add(assumption)
+    db.flush()
     db.add(
         AssumptionEvidenceLink(
             id=new_id("ael"),

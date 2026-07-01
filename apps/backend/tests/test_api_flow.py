@@ -27,6 +27,22 @@ def make_client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(settings))
 
 
+def test_sqlite_engine_uses_wal_and_busy_timeout(tmp_path: Path) -> None:
+    settings = Settings(
+        app_display_name="Tablex",
+        data_dir=tmp_path / "data",
+        database_url=f"sqlite:///{tmp_path / 'data' / 'metadata' / 'app.db'}",
+        artifact_root=tmp_path / "data" / "artifacts",
+        max_upload_bytes=100 * 1024 * 1024,
+        cors_origins=("http://localhost:5173",),
+    )
+    app = create_app(settings)
+
+    with app.state.engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one().lower() == "wal"
+        assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 30_000
+
+
 def test_project_autonomy_mode_persists(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
@@ -53,8 +69,14 @@ def test_full_auto_start_advances_autonomous_loop_without_dataset(tmp_path: Path
 
     start_response = client.post(f"/api/projects/{project_id}/autonomy/start", json={"runner_mode": "harness_only"})
     assert start_response.status_code == 200, start_response.text
-    job = start_response.json()
-    assert job["job_type"] == "start_autonomous_loop"
+    queued_job = start_response.json()
+    assert queued_job["job_type"] == "start_autonomous_loop"
+    assert queued_job["status"] == "queued"
+    assert queued_job["output"]["schema_version"] == "autonomous_loop_start_queued.v1"
+
+    job_response = client.get(f"/api/jobs/{queued_job['id']}")
+    assert job_response.status_code == 200
+    job = job_response.json()
     assert job["status"] == "succeeded"
     assert job["output"]["schema_version"] == "autonomous_loop_tick.v1"
     assert job["output"]["status"] == "waiting_for_data"
@@ -99,7 +121,12 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
 
     start_response = client.post(f"/api/projects/{project_id}/autonomy/start", json={"runner_mode": "harness_only"})
     assert start_response.status_code == 200, start_response.text
-    output = start_response.json()["output"]
+    queued_job = start_response.json()
+    assert queued_job["status"] == "queued"
+    assert queued_job["output"]["schema_version"] == "autonomous_loop_start_queued.v1"
+    job_response = client.get(f"/api/jobs/{queued_job['id']}")
+    assert job_response.status_code == 200
+    output = job_response.json()["output"]
     assert output["status"] == "advanced"
     labels = {step["label"] for step in output["steps"]}
     assert {

@@ -4,10 +4,20 @@ import json
 from pathlib import Path
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session, sessionmaker
 
 from tabular_harness.api.deps import get_artifact_store, get_session
 from tabular_harness.core.ids import new_id
@@ -286,6 +296,22 @@ from tabular_harness.services.translation import translate_artifact as translate
 from tabular_harness.worker.jobs import create_default_worker
 
 router = APIRouter()
+
+
+def sqlite_database_is_locked(exc: OperationalError) -> bool:
+    return "database is locked" in str(getattr(exc, "orig", exc)).lower()
+
+
+def raise_metadata_db_busy(exc: OperationalError) -> None:
+    if sqlite_database_is_locked(exc):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Metadata database is busy. Tablex is finishing another local write; "
+                "retry in a moment or restart the local backend if this persists."
+            ),
+        ) from exc
+    raise exc
 
 
 @router.get("/healthz")
@@ -823,7 +849,8 @@ def record_autonomy_control_chat_turn(
     locale: str | None,
 ) -> Artifact:
     worker_events = output.get("worker_events") if isinstance(output.get("worker_events"), list) else []
-    token_usage = output.get("token_usage") if isinstance(output.get("token_usage"), dict) else {}
+    token_usage_value = output.get("token_usage")
+    token_usage = token_usage_value if isinstance(token_usage_value, dict) else {}
     created_job_ids = output.get("created_job_ids") if isinstance(output.get("created_job_ids"), list) else []
     response_locale = locale or "en-US"
     payload = {
@@ -884,66 +911,174 @@ def record_autonomy_control_chat_turn(
     )
 
 
+def queued_autonomy_start_output(project: Project, job: Job, *, locale: str | None) -> dict[str, Any]:
+    japanese = bool(locale and locale.lower().startswith("ja"))
+    assistant_message = (
+        "Full Autoを起動しました。データ理解、評価設計、実験準備をバックグラウンドで進めます。"
+        "進行はAgent ActivityとこのWorkspaceに表示します。"
+        if japanese
+        else "Full Auto is starting. Data understanding, evaluation design, and experiment preparation will continue in the background. Progress will appear in Agent Activity and this workspace."
+    )
+    return {
+        "schema_version": "autonomous_loop_start_queued.v1",
+        "project_id": project.id,
+        "status": "queued",
+        "assistant_message": assistant_message,
+        "created_job_ids": [job.id],
+        "worker_events": [
+            {
+                "worker_id": "full-auto-loop",
+                "display_name": "Full Auto Agent",
+                "status": "queued",
+                "headline": "Full Auto is starting",
+                "detail": "The local backend accepted the Agent loop and will run it outside the Start request.",
+                "job_id": job.id,
+                "project_id": project.id,
+                "target_tab": "Home",
+                "target_anchor": "agent-workspace",
+                "created_at": job.created_at.isoformat(),
+                "updated_at": utc_now().isoformat(),
+                "active": True,
+                "token_usage": {
+                    "source": "autonomous_start_event",
+                    "is_estimate": True,
+                    "series": [
+                        {"step": "accepted", "tokens": 24},
+                        {"step": "queued", "tokens": 32},
+                    ],
+                },
+            }
+        ],
+        "token_usage": {
+            "source": "autonomous_start_event",
+            "is_estimate": True,
+            "series": [
+                {"step": "accepted", "tokens": 24},
+                {"step": "queued", "tokens": 32},
+            ],
+        },
+    }
+
+
+def run_autonomy_start_job_background(
+    session_factory: sessionmaker[Session],
+    store: LocalArtifactStore,
+    *,
+    project_id: str,
+    job_id: str,
+    payload: dict[str, Any],
+) -> None:
+    with session_factory() as db:
+        job = db.get(Job, job_id)
+        project = db.get(Project, project_id)
+        if job is None or project is None:
+            return
+        try:
+            mark_job_running(job)
+            db.commit()
+            runner_mode = str(payload.get("runner_mode") or "harness_only")
+            autonomy_mode = str(payload.get("autonomy_mode") or project.autonomy_mode or "full_auto")
+            locale = payload.get("locale") if isinstance(payload.get("locale"), str) else None
+            agent_model = payload.get("agent_model") if isinstance(payload.get("agent_model"), str) else None
+            utility_model = payload.get("utility_model") if isinstance(payload.get("utility_model"), str) else None
+            output = run_autonomous_loop_tick(
+                db,
+                store=store,
+                project=project,
+                job=job,
+                runner_mode=runner_mode,
+                autonomy_mode=autonomy_mode,
+                locale=locale,
+                agent_model=agent_model,
+                utility_model=utility_model,
+            )
+            assistant_message = str(output.get("assistant_message") or "Agent loop started.")
+            created_job_ids = output.get("created_job_ids") if isinstance(output.get("created_job_ids"), list) else []
+            if created_job_ids:
+                if locale and locale.lower().startswith("ja"):
+                    assistant_message = (
+                        f"{assistant_message}\n\n"
+                        "右側の Agent Activity に、次に進むための待機中ジョブを表示します。"
+                        "Waiting のカードはまだ実行中ではなく、local worker が拾った時点で Running に変わります。"
+                    )
+                else:
+                    assistant_message = (
+                        f"{assistant_message}\n\n"
+                        "Agent Activity now shows the queued follow-up work. Cards marked Waiting are not running yet; "
+                        "they switch to Running when the local worker picks them up."
+                )
+                output["assistant_message"] = assistant_message
+            db.refresh(job)
+            if job.status == "cancelled":
+                db.commit()
+                return
+            artifact = record_autonomy_control_chat_turn(
+                db,
+                store,
+                project=project,
+                job=job,
+                user_message="Agent loopを開始" if locale and locale.lower().startswith("ja") else "Start agent loop",
+                assistant_message=assistant_message,
+                output=output,
+                locale=locale,
+            )
+            output["agent_chat_turn_artifact_id"] = artifact.id
+            db.refresh(job)
+            if job.status == "cancelled":
+                db.commit()
+                return
+            mark_job_succeeded(job, output)
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            job = db.get(Job, job_id)
+            if job is not None:
+                mark_job_failed(job, str(exc))
+                db.commit()
+
+
 @router.post("/api/projects/{project_id}/autonomy/start", response_model=JobRead)
 def start_project_autonomy(
     project_id: str,
     payload: AutonomyStartCreate,
+    background_tasks: BackgroundTasks,
+    request: Request,
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
-    job = create_job(
-        db,
-        job_type="start_autonomous_loop",
-        project_id=project_id,
-        input_payload={
-            "runner_mode": payload.runner_mode,
-            "autonomy_mode": payload.autonomy_mode,
-            "locale": payload.locale,
-            "agent_model": payload.agent_model,
-            "utility_model": payload.utility_model,
-        },
-        policy={
-            "secret_access": "forbidden",
-            "connector_credentials": "not_materialized",
-            "production_write": "forbidden",
-            "evaluation_spec_mutation": "non_destructive_initial_adoption_only",
-            "runner_mode": payload.runner_mode,
-            "autonomy_mode": payload.autonomy_mode,
-            "response_locale": payload.locale,
-            "agent_model": payload.agent_model,
-            "utility_model": payload.utility_model,
-        },
-    )
+    job: Job | None = None
     try:
-        mark_job_running(job)
-        output = run_autonomous_loop_tick(
+        project = require_project(db, project_id)
+        job = create_job(
             db,
-            store=store,
-            project=project,
-            job=job,
-            runner_mode=payload.runner_mode,
-            autonomy_mode=payload.autonomy_mode,
-            locale=payload.locale,
-            agent_model=payload.agent_model,
-            utility_model=payload.utility_model,
+            job_type="start_autonomous_loop",
+            project_id=project_id,
+            input_payload={
+                "runner_mode": payload.runner_mode,
+                "autonomy_mode": payload.autonomy_mode,
+                "locale": payload.locale,
+                "agent_model": payload.agent_model,
+                "utility_model": payload.utility_model,
+            },
+            policy={
+                "secret_access": "forbidden",
+                "connector_credentials": "not_materialized",
+                "production_write": "forbidden",
+                "evaluation_spec_mutation": "non_destructive_initial_adoption_only",
+                "runner_mode": payload.runner_mode,
+                "autonomy_mode": payload.autonomy_mode,
+                "response_locale": payload.locale,
+                "agent_model": payload.agent_model,
+                "utility_model": payload.utility_model,
+            },
         )
-        assistant_message = str(output.get("assistant_message") or "Agent loop started.")
-        created_job_ids = output.get("created_job_ids") if isinstance(output.get("created_job_ids"), list) else []
-        if created_job_ids:
-            if payload.locale and payload.locale.lower().startswith("ja"):
-                assistant_message = (
-                    f"{assistant_message}\n\n"
-                    "右側の Agent Activity に、次に進むための待機中ジョブを表示します。"
-                    "Waiting のカードはまだ実行中ではなく、local worker が拾った時点で Running に変わります。"
-                )
-            else:
-                assistant_message = (
-                    f"{assistant_message}\n\n"
-                    "Agent Activity now shows the queued follow-up work. Cards marked Waiting are not running yet; "
-                    "they switch to Running when the local worker picks them up."
-                )
-            output["assistant_message"] = assistant_message
+        project.autonomy_mode = payload.autonomy_mode
+        project.current_phase = "AUTONOMOUS_LOOP"
+        project.updated_at = utc_now()
+        output = queued_autonomy_start_output(project, job, locale=payload.locale)
+        assistant_message = str(output["assistant_message"])
+        job.output_json = dumps_json(output)
+        job.updated_at = utc_now()
         artifact = record_autonomy_control_chat_turn(
             db,
             store,
@@ -955,10 +1090,24 @@ def start_project_autonomy(
             locale=payload.locale,
         )
         output["agent_chat_turn_artifact_id"] = artifact.id
-        mark_job_succeeded(job, output)
+        job.output_json = dumps_json(output)
+        db.commit()
+        background_tasks.add_task(
+            run_autonomy_start_job_background,
+            request.app.state.session_factory,
+            store,
+            project_id=project_id,
+            job_id=job.id,
+            payload=payload.model_dump(),
+        )
     except ValueError as exc:
-        mark_job_failed(job, str(exc))
+        if job is not None:
+            mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OperationalError as exc:
+        db.rollback()
+        raise_metadata_db_busy(exc)
+    assert job is not None
     return job_to_dict(job)
 
 
@@ -967,77 +1116,83 @@ def stop_project_autonomy(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
-    job = create_job(
-        db,
-        job_type="stop_autonomous_loop",
-        project_id=project_id,
-        input_payload={"requested_state": "off"},
-        policy={
-            "secret_access": "forbidden",
-            "connector_credentials": "not_materialized",
-            "production_write": "forbidden",
-            "action": "stop_autonomous_activity",
-        },
-    )
-    mark_job_running(job)
-    cancellable_job_types = {
-        "start_autonomous_loop",
-        "run_agent_task",
-        "run_planned_agent_task_codex",
-        "run_planned_agent_task_stub",
-        "train_model_candidates",
-        "run_baseline",
-        "plan_agent_task",
-    }
-    active_statuses = {"queued", "running", "approval_required"}
-    active_jobs = db.scalars(
-        select(Job).where(
-            Job.project_id == project_id,
-            Job.id != job.id,
-            Job.status.in_(active_statuses),
-            Job.job_type.in_(cancellable_job_types),
+    job: Job | None = None
+    try:
+        project = require_project(db, project_id)
+        job = create_job(
+            db,
+            job_type="stop_autonomous_loop",
+            project_id=project_id,
+            input_payload={"requested_state": "off"},
+            policy={
+                "secret_access": "forbidden",
+                "connector_credentials": "not_materialized",
+                "production_write": "forbidden",
+                "action": "stop_autonomous_activity",
+            },
         )
-    ).all()
-    cancelled_ids: list[str] = []
-    for active_job in active_jobs:
-        cancel_job_service(active_job, cancelled_by="tablex-autonomy-power")
-        cancelled_ids.append(active_job.id)
-    project.current_phase = "IDLE"
-    project.updated_at = utc_now()
-    mark_job_succeeded(
-        job,
-        {
-            "schema_version": "autonomous_loop_stop.v1",
-            "project_id": project_id,
-            "assistant_message": "Autonomous activity is stopped. The selected autonomy mode is preserved; press Start to resume.",
-            "cancelled_job_ids": cancelled_ids,
-            "worker_events": [
-                {
-                    "worker_id": "full-auto-loop",
-                    "display_name": "Full Auto Agent",
-                    "status": "cancelled",
-                    "headline": "Autonomous activity stopped.",
-                    "detail": f"Stopped {len(cancelled_ids)} active or queued runner/model job(s).",
-                    "job_id": job.id,
-                    "project_id": project_id,
-                    "target_tab": "Home",
-                    "target_anchor": "agent-workspace",
-                    "created_at": job.created_at.isoformat(),
-                    "updated_at": utc_now().isoformat(),
-                    "active": False,
-                    "token_usage": {
-                        "source": "autonomous_stop_event",
-                        "is_estimate": True,
-                        "series": [
-                            {"step": "stop", "tokens": 24},
-                            {"step": "cancel", "tokens": 24 + len(cancelled_ids) * 8},
-                        ],
-                    },
-                }
-            ],
-        },
-    )
+        mark_job_running(job)
+        cancellable_job_types = {
+            "start_autonomous_loop",
+            "run_agent_task",
+            "run_planned_agent_task_codex",
+            "run_planned_agent_task_stub",
+            "train_model_candidates",
+            "run_baseline",
+            "plan_agent_task",
+        }
+        active_statuses = {"queued", "running", "approval_required"}
+        active_jobs = db.scalars(
+            select(Job).where(
+                Job.project_id == project_id,
+                Job.id != job.id,
+                Job.status.in_(active_statuses),
+                Job.job_type.in_(cancellable_job_types),
+            )
+        ).all()
+        cancelled_ids: list[str] = []
+        for active_job in active_jobs:
+            cancel_job_service(active_job, cancelled_by="tablex-autonomy-power")
+            cancelled_ids.append(active_job.id)
+        project.current_phase = "IDLE"
+        project.updated_at = utc_now()
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": "autonomous_loop_stop.v1",
+                "project_id": project_id,
+                "assistant_message": "Autonomous activity is stopped. The selected autonomy mode is preserved; press Start to resume.",
+                "cancelled_job_ids": cancelled_ids,
+                "worker_events": [
+                    {
+                        "worker_id": "full-auto-loop",
+                        "display_name": "Full Auto Agent",
+                        "status": "cancelled",
+                        "headline": "Autonomous activity stopped.",
+                        "detail": f"Stopped {len(cancelled_ids)} active or queued runner/model job(s).",
+                        "job_id": job.id,
+                        "project_id": project_id,
+                        "target_tab": "Home",
+                        "target_anchor": "agent-workspace",
+                        "created_at": job.created_at.isoformat(),
+                        "updated_at": utc_now().isoformat(),
+                        "active": False,
+                        "token_usage": {
+                            "source": "autonomous_stop_event",
+                            "is_estimate": True,
+                            "series": [
+                                {"step": "stop", "tokens": 24},
+                                {"step": "cancel", "tokens": 24 + len(cancelled_ids) * 8},
+                            ],
+                        },
+                    }
+                ],
+            },
+        )
+    except OperationalError as exc:
+        db.rollback()
+        raise_metadata_db_busy(exc)
+    assert job is not None
     return job_to_dict(job)
 
 

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from typing import Any
 
-from sqlalchemy import Engine, create_engine, inspect, text
+from sqlalchemy import Engine, create_engine, event, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from tabular_harness.core.config import Settings, ensure_data_dirs
@@ -11,8 +12,25 @@ from tabular_harness.models.entities import Base
 
 def create_engine_for_settings(settings: Settings) -> Engine:
     ensure_data_dirs(settings)
-    connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-    return create_engine(settings.database_url, connect_args=connect_args)
+    sqlite_url = settings.database_url.startswith("sqlite")
+    connect_args = {"check_same_thread": False, "timeout": 30} if sqlite_url else {}
+    engine = create_engine(settings.database_url, connect_args=connect_args)
+    if sqlite_url:
+        configure_sqlite_pragmas(engine)
+    return engine
+
+
+def configure_sqlite_pragmas(engine: Engine) -> None:
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:

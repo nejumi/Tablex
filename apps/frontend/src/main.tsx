@@ -3319,7 +3319,7 @@ function ProjectDetail({
     setBusy(true);
     setError(null);
     const userText = nextMode === "full_auto" ? text.fullAutoMode : text.approvalBasedMode;
-    setAgentChatMessages((current) => [...current.slice(-23), { role: "user", text: userText }]);
+    setAgentChatMessages((current) => [...current.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT), { role: "user", text: userText }]);
     try {
       await api<Project>(`/api/projects/${project.id}`, {
         method: "PATCH",
@@ -3327,7 +3327,7 @@ function ProjectDetail({
         body: JSON.stringify({ autonomy_mode: nextMode })
       });
       setAgentChatMessages((current) => [
-        ...current.slice(-23),
+        ...current.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT),
         {
           role: "system",
           text:
@@ -3342,7 +3342,10 @@ function ProjectDetail({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
-      setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: message }]);
+      setAgentChatMessages((current) => [
+        ...current.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT),
+        { role: "system", text: message }
+      ]);
     } finally {
       setBusy(false);
     }
@@ -3353,7 +3356,7 @@ function ProjectDetail({
     setBusy(true);
     setError(null);
     const userText = poweredOn ? text.stopAgentLoopUserMessage : text.startAgentLoopUserMessage;
-    setAgentChatMessages((current) => [...current.slice(-23), { role: "user", text: userText }]);
+    setAgentChatMessages((current) => [...current.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT), { role: "user", text: userText }]);
     try {
       const job = await api<Job>(`/api/projects/${project.id}/autonomy/${poweredOn ? "stop" : "start"}`, {
         method: "POST",
@@ -3375,7 +3378,10 @@ function ProjectDetail({
           : poweredOn
             ? text.agentLoopStopped
             : text.agentLoopStarted;
-      setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: assistantMessage }]);
+      setAgentChatMessages((current) => [
+        ...current.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT),
+        { role: "system", text: assistantMessage }
+      ]);
       setAgentWorkerEvents((current) => [...workerEvents, ...current].slice(0, 8));
       const intervention = firstAutonomyIntervention(job.output);
       if (!poweredOn && intervention && userSettings.interventionCountdownSeconds > 0) {
@@ -3391,7 +3397,10 @@ function ProjectDetail({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
-      setAgentChatMessages((current) => [...current.slice(-23), { role: "system", text: message }]);
+      setAgentChatMessages((current) => [
+        ...current.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT),
+        { role: "system", text: message }
+      ]);
     } finally {
       setBusy(false);
     }
