@@ -199,8 +199,15 @@ def build_agent_task_contract_payload(
         "project_id": project.id,
         "objective": objective
         or (
-            "Plan and implement a project-specific tabular prediction approach inside the controlled "
-            "workspace, using current evidence, Skill assets, and approved evaluation constraints."
+            "Continue the main autonomous Tablex data-science session inside the controlled workspace. "
+            "Read the current project state, evidence, Skills, assumptions, evaluation constraints, ideas, "
+            "leaderboard, notebooks, and prior reflections; then decide and execute the next valuable work "
+            "without reducing the session to a fixed recipe or a single micro-task."
+            if task_type == "autonomous_session"
+            else (
+                "Plan and implement a project-specific tabular prediction approach inside the controlled "
+                "workspace, using current evidence, Skill assets, and approved evaluation constraints."
+            )
         ),
         "inputs": {
             "schema_version": "agent_task_planning.v1",
@@ -296,6 +303,7 @@ def agent_task_contract_summary(contract: dict[str, Any]) -> dict[str, Any]:
 def agent_task_contract_label(task_type: str) -> str:
     labels = {
         "author_analysis_notebook": "Author a source-backed analysis notebook",
+        "autonomous_session": "Continue the main autonomous session",
         "notebook_followup_diagnostics": "Materialize notebook diagnostics",
         "target_definition_review": "Review target definition",
         "revise_evaluation_design": "Review evaluation design",
@@ -307,6 +315,8 @@ def agent_task_contract_label(task_type: str) -> str:
 def agent_task_contract_next_action(task_type: str) -> str:
     if task_type == "target_definition_review":
         return "Run Codex against the prepared workspace so the target proposal comes from agent reasoning, not harness heuristics."
+    if task_type == "autonomous_session":
+        return "Run Codex as the main long-running session, then ingest its artifacts, findings, code, report, and next recommendations."
     if task_type == "notebook_followup_diagnostics":
         return "Review readiness, then run the controlled runner only if model, prediction, or split evidence exists."
     if task_type == "author_analysis_notebook":
@@ -319,6 +329,11 @@ def agent_task_contract_next_action(task_type: str) -> str:
 def objective_summary_for_task(task_type: str, objective: str) -> str:
     if task_type == "target_definition_review":
         return "Ask Codex to inspect the current data evidence and propose a target definition or target-construction plan."
+    if task_type == "autonomous_session":
+        return (
+            "Continue the main autonomous data-science session: understand current evidence, choose the next useful "
+            "work, execute it in the controlled workspace, and return artifact-backed results plus the next plan."
+        )
     if task_type == "notebook_followup_diagnostics":
         focus = objective_followup_focus(objective)
         focus_text = f" for {focus}" if focus else ""
@@ -356,6 +371,40 @@ def safe_int(value: object) -> int:
 
 
 def required_outputs_for_task(task_type: str) -> list[dict[str, str]]:
+    if task_type == "autonomous_session":
+        return [
+            {
+                "path": "reports/session_journal.md",
+                "schema": "markdown_report.v1",
+                "description": (
+                    "Human-readable session journal explaining what Codex inspected, decided, changed, learned, "
+                    "and recommends next. This should read like the main agent thread, not a ticket result."
+                ),
+            },
+            {
+                "path": "artifacts/session_state_delta.json",
+                "schema": "autonomous_session_delta.v1",
+                "description": (
+                    "Structured delta containing new assumptions, findings, ideas, questions, code/artifact outputs, "
+                    "leaderboard changes, notebook/report references, and next-session recommendations."
+                ),
+            },
+            {
+                "path": "artifacts/approach_decision_trace.json",
+                "schema": "approach_decision_trace.v1",
+                "description": "Open-ended reasoning trace of considered, rejected, revised, or newly invented approaches.",
+            },
+            {
+                "path": "artifacts/evidence.json",
+                "schema": "evidence_set.v1",
+                "description": "Artifact-backed evidence and source summaries for every material claim.",
+            },
+            {
+                "path": "artifacts/next_session_plan.json",
+                "schema": "research_plan.v1",
+                "description": "Next autonomous steps, including which work can proceed without human input and which needs intervention.",
+            },
+        ]
     if task_type == "target_definition_review":
         return [
             {
@@ -493,6 +542,16 @@ def required_outputs_for_task(task_type: str) -> list[dict[str, str]]:
 
 
 def quality_checks_for_task(task_type: str) -> list[str]:
+    if task_type == "autonomous_session":
+        return [
+            "Treat this as the main continuing agent thread, not a small delegated ticket.",
+            "Do not stop after planning if there is useful safe work you can execute in the controlled workspace.",
+            "Use harness assets as context and memory; do not let them constrain the approach to fixed recipes.",
+            "Respect EvaluationSpec and SplitManifest before metric, leaderboard, or model-comparison claims.",
+            "If a turn naturally ends, leave a concrete next_session_plan so the harness can resume without losing context.",
+            "Record new findings, hypotheses, assumptions, rejected ideas, code outputs, notebooks, reports, and evidence as artifacts.",
+            "Ask humans only for genuinely valuable clarification; in Full Auto, proceed with explicit assumptions when safe.",
+        ]
     if task_type == "target_definition_review":
         return [
             "Read the materialized data profile, semantic catalog, questions, assumptions, and EDA evidence before proposing a target.",

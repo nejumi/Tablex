@@ -4341,14 +4341,15 @@ function buildRawAgentEvents(messages: AgentChatMessage[], jobs: Job[]): RawAgen
     const composerStatus = textField(turn.assistant.responseComposer?.status) ?? "pending";
     const active = isActiveAgentTurn(turn);
     const isCodexCli = composerMode === "codex_cli";
-    if (!isCodexCli && !active) return events;
+    const isHarnessSidecar = composerMode === "autonomy_control_event" || composerMode === "autonomy_control_backfill";
+    if (!isCodexCli && !active && !isHarnessSidecar) return events;
     if (turn.user) {
       events.push({
         id: `raw-user-${index}-${turn.user.id ?? turn.user.text.slice(0, 18)}`,
         timestamp: turn.user.createdAt ?? turn.createdAt ?? now,
         source: "User",
         level: "prompt",
-        title: "Prompt sent to Codex",
+        title: isHarnessSidecar ? "User control request" : "Prompt sent to Codex",
         body: turn.user.text,
         payload: { text: turn.user.text }
       });
@@ -4375,9 +4376,13 @@ function buildRawAgentEvents(messages: AgentChatMessage[], jobs: Job[]): RawAgen
     events.push({
       id: `raw-assistant-${index}-${turn.assistant.id ?? turn.assistant.text.slice(0, 18)}`,
       timestamp: turn.assistant.createdAt ?? turn.createdAt ?? now,
-      source: "Codex",
+      source: isHarnessSidecar ? "Harness sidecar" : "Codex",
       level: composerStatus,
-      title: active ? "Codex composer request is in flight" : "Codex exec transcript",
+      title: isHarnessSidecar
+        ? "Harness sidecar event"
+        : active
+          ? "Codex composer request is in flight"
+          : "Codex exec transcript",
       active,
       body: active ? null : turn.assistant.text,
       details: [
@@ -4389,7 +4394,7 @@ function buildRawAgentEvents(messages: AgentChatMessage[], jobs: Job[]): RawAgen
         ...(stdoutTail ? [{ label: "Codex stdout", value: stdoutTail }] : []),
         ...(stderrTail ? [{ label: "Codex stderr", value: stderrTail }] : []),
         ...(turn.assistant.responseComposer
-          ? [{ label: "Codex run metadata", value: turn.assistant.responseComposer }]
+          ? [{ label: isHarnessSidecar ? "Harness sidecar metadata" : "Codex run metadata", value: turn.assistant.responseComposer }]
           : [])
       ],
       payload: {
@@ -4453,6 +4458,30 @@ function buildRawJobEvents(jobs: Job[]): RawAgentEvent[] {
         body: latestJobHeadline(job),
         details: [{ label: "Job record", value: job }],
         payload: { job_id: job.id, job_type: job.job_type, status: job.status }
+      });
+    } else if (
+      job.job_type === "start_autonomous_loop" ||
+      job.job_type === "stop_autonomous_loop" ||
+      job.job_type === "continue_autonomous_session"
+    ) {
+      events.push({
+        id: `raw-job-sidecar-${job.id}`,
+        timestamp: job.updated_at,
+        source: "Harness sidecar",
+        level: job.status,
+        title:
+          job.job_type === "start_autonomous_loop"
+            ? "Full Auto control job"
+            : job.job_type === "continue_autonomous_session"
+              ? "Autonomous session heartbeat"
+              : "Autonomy stop control job",
+        active: jobActiveForActivity(job),
+        body: latestJobHeadline(job),
+        details: [
+          { label: "Harness job output", value: output },
+          { label: "Job record", value: job }
+        ],
+        payload: { job_id: job.id, job_type: job.job_type, status: job.status, output }
       });
     }
     return events;
@@ -4540,7 +4569,13 @@ function arrayRecords(value: unknown): Record<string, unknown>[] {
 }
 
 function isRawRelevantJob(job: Job) {
-  return Boolean(job.output?.codex_cli) || (job.job_type === "run_planned_agent_task_codex" && jobActiveForActivity(job));
+  return (
+    Boolean(job.output?.codex_cli) ||
+    job.job_type === "start_autonomous_loop" ||
+    job.job_type === "continue_autonomous_session" ||
+    job.job_type === "stop_autonomous_loop" ||
+    (job.job_type === "run_planned_agent_task_codex" && jobActiveForActivity(job))
+  );
 }
 
 function dedupeRawAgentEvents(events: RawAgentEvent[]) {
@@ -5580,6 +5615,13 @@ function defaultJobHumanDescription(job: Job): RequiredHumanDescription | null {
       source: "job_type_default"
     };
   }
+  if (job.job_type === "continue_autonomous_session") {
+    return {
+      title: "Continue the main Full Auto session",
+      summary: `${waiting}Keep the autonomous data-science thread moving after child workers or Codex return control to the harness.`,
+      source: "job_type_default"
+    };
+  }
   return null;
 }
 
@@ -5621,7 +5663,10 @@ function workerEventsFromJob(job: Job, now: number = Date.now()): AgentWorkerEve
 function coerceWorkerEvent(raw: unknown, job: Job, index: number, now: number = Date.now()): AgentWorkerEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
-  const status = typeof record.status === "string" ? record.status : job.status;
+  const eventStatus = typeof record.status === "string" ? record.status : job.status;
+  const status = ["running", "succeeded", "failed", "cancelled", "approval_required"].includes(job.status)
+    ? job.status
+    : eventStatus;
   const createdAt = typeof record.created_at === "string" ? record.created_at : job.created_at;
   const explicitActive = typeof record.active === "boolean" ? record.active : undefined;
   const usage = record.token_usage;
@@ -5679,6 +5724,7 @@ function estimatedJobTokens(job: Job): TokenSeriesPoint[] {
 }
 
 function workerDisplayName(jobType: string) {
+  if (jobType === "continue_autonomous_session") return "Autonomous Session";
   if (jobType.includes("train") || jobType.includes("baseline")) return "Training Worker";
   if (jobType.includes("notebook")) return "Notebook Worker";
   if (jobType.includes("research")) return "Research Worker";

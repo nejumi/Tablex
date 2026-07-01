@@ -157,7 +157,10 @@ from tabular_harness.services.asset_library import (
     seed_default_assets,
 )
 from tabular_harness.services.assumption_review import build_assumption_review_queue
-from tabular_harness.services.autonomy import run_autonomous_loop_tick
+from tabular_harness.services.autonomy import (
+    queue_autonomous_session_continuation,
+    run_autonomous_loop_tick,
+)
 from tabular_harness.services.avatar_generation import (
     AvatarGenerationError,
     generate_user_avatar_candidates,
@@ -960,6 +963,56 @@ def queued_autonomy_start_output(project: Project, job: Job, *, locale: str | No
     }
 
 
+def mark_autonomy_start_output_running(job: Job, project: Project, *, locale: str | None) -> None:
+    output = loads_json(job.output_json, {})
+    now = utc_now().isoformat()
+    japanese = bool(locale and locale.lower().startswith("ja"))
+    title = "Full Autoが動いています" if japanese else "Full Auto is running"
+    summary = (
+        "現在のプロジェクト状態を読み込み、データ理解、評価設計、実験準備を進めています。"
+        if japanese
+        else "Reading the current project state and advancing data understanding, evaluation design, and experiment preparation."
+    )
+    output["status"] = "running"
+    output["human_description"] = {"title": title, "summary": summary, "source": "autonomy_start_runtime"}
+    token_usage = {
+        "source": "autonomous_start_event",
+        "is_estimate": True,
+        "series": [
+            {"step": "accepted", "tokens": 24},
+            {"step": "queued", "tokens": 32},
+            {"step": "running", "tokens": 48},
+        ],
+    }
+    output["token_usage"] = token_usage
+    events = output.get("worker_events") if isinstance(output.get("worker_events"), list) else []
+    if not events:
+        events = [{"worker_id": "full-auto-loop", "display_name": "Full Auto Agent"}]
+    event = events[0] if isinstance(events[0], dict) else {}
+    event.update(
+        {
+            "worker_id": str(event.get("worker_id") or "full-auto-loop"),
+            "display_name": str(event.get("display_name") or "Full Auto Agent"),
+            "status": "running",
+            "headline": title,
+            "detail": summary,
+            "job_id": job.id,
+            "project_id": project.id,
+            "target_tab": "Home",
+            "target_anchor": "agent-workspace",
+            "created_at": str(event.get("created_at") or job.created_at.isoformat()),
+            "updated_at": now,
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "active": True,
+            "human_description": {"title": title, "summary": summary, "source": "autonomy_start_runtime"},
+            "token_usage": token_usage,
+        }
+    )
+    output["worker_events"] = [event, *[item for item in events[1:] if isinstance(item, dict)]]
+    job.output_json = dumps_json(output)
+    job.updated_at = utc_now()
+
+
 def run_autonomy_start_job_background(
     session_factory: sessionmaker[Session],
     store: LocalArtifactStore,
@@ -975,6 +1028,7 @@ def run_autonomy_start_job_background(
             return
         try:
             mark_job_running(job)
+            mark_autonomy_start_output_running(job, project, locale=payload.get("locale") if isinstance(payload.get("locale"), str) else None)
             db.commit()
             runner_mode = str(payload.get("runner_mode") or "harness_only")
             autonomy_mode = str(payload.get("autonomy_mode") or project.autonomy_mode or "full_auto")
@@ -992,6 +1046,17 @@ def run_autonomy_start_job_background(
                 agent_model=agent_model,
                 utility_model=utility_model,
             )
+            continuation_job = queue_autonomous_session_continuation(
+                db,
+                project=project,
+                reason="start_tick_completed",
+                parent_job_id=job.id,
+                runner_mode=runner_mode,
+                locale=locale,
+                run_after_seconds=10,
+            )
+            if continuation_job is not None:
+                output["session_continuation_job_id"] = continuation_job.id
             assistant_message = str(output.get("assistant_message") or "Agent loop started.")
             created_job_ids = output.get("created_job_ids") if isinstance(output.get("created_job_ids"), list) else []
             if created_job_ids:

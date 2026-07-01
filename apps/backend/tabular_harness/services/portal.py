@@ -235,10 +235,14 @@ def normalize_worker_event(event: dict[str, Any], job: Job, *, project_name: str
     output = loads_json(job.output_json, {})
     context = loads_json(job.context_json, {})
     description = human_description_for_job(job, output=output, context=context, project_name=project_name)
+    event_status = str(event.get("status") or job.status)
+    status = job.status if job.status in {"running", "succeeded", "failed", "cancelled", "approval_required"} else event_status
+    event_started_at = event.get("started_at")
+    started_at = str(event_started_at) if isinstance(event_started_at, str) else job.started_at.isoformat() if job.started_at else None
     return {
         "worker_id": str(event.get("worker_id") or f"job-{job.job_type}"),
         "display_name": str(event.get("display_name") or worker_display_name(job.job_type)),
-        "status": str(event.get("status") or job.status),
+        "status": status,
         "headline": str(event.get("headline") or description["title"]),
         "detail": str(event.get("detail") or job.error_message or description["summary"]),
         "job_id": str(event.get("job_id") or job.id),
@@ -248,7 +252,7 @@ def normalize_worker_event(event: dict[str, Any], job: Job, *, project_name: str
         "target_tab": event.get("target_tab") if isinstance(event.get("target_tab"), str) else target_tab_for_job(job.job_type),
         "created_at": str(event.get("created_at") or job.created_at.isoformat()),
         "updated_at": job.updated_at.isoformat(),
-        "started_at": str(event.get("started_at") or job.started_at.isoformat()) if job.started_at or event.get("started_at") else None,
+        "started_at": started_at,
         "active": job_active_for_activity(job),
         "human_description": event.get("human_description") if isinstance(event.get("human_description"), dict) else description,
         "token_usage": token_usage if isinstance(token_usage, dict) else estimated_tokens(job),
@@ -359,6 +363,7 @@ def default_human_description_for_job(job: Job, *, project_label: str) -> dict[s
 def is_agentish_job(job_type: str) -> bool:
     return (
         "agent" in job_type
+        or "autonomous" in job_type
         or "notebook" in job_type
         or "research" in job_type
         or "split" in job_type
@@ -369,6 +374,8 @@ def is_agentish_job(job_type: str) -> bool:
 
 
 def worker_display_name(job_type: str) -> str:
+    if job_type == "continue_autonomous_session":
+        return "Autonomous Session"
     if "train" in job_type or "baseline" in job_type:
         return "Training Worker"
     if "notebook" in job_type:

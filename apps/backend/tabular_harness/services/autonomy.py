@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -77,6 +78,14 @@ RUNNER_MODE_CODEX_IF_AVAILABLE = "codex_cli_if_available"
 RUNNER_MODES = {RUNNER_MODE_HARNESS_ONLY, RUNNER_MODE_CODEX_CLI, RUNNER_MODE_CODEX_IF_AVAILABLE}
 DEFAULT_SYNC_TRAINING_ROW_LIMIT = 50_000
 DEFAULT_SYNC_SPLIT_ROW_LIMIT = 200_000
+AUTONOMOUS_CONTINUATION_JOB_TYPE = "continue_autonomous_session"
+ACTIVE_AUTONOMOUS_JOB_STATUSES = {"queued", "running", "approval_required"}
+AUTONOMOUS_CHILD_JOB_TYPES = {
+    "build_split_manifest",
+    "run_baseline",
+    "train_model_candidates",
+    "run_planned_agent_task_codex",
+}
 
 
 @dataclass
@@ -272,6 +281,7 @@ def run_autonomous_loop_tick(
         state=state,
         spec=approved_spec,
         split=split,
+        queue_training=True,
     )
     if project.target_column:
         run_runner_handoff(
@@ -281,8 +291,8 @@ def run_autonomous_loop_tick(
             job=job,
             state=state,
             runner_mode=runner_mode,
-            task_type="implement_prediction_approach",
-            queue_if_available=False,
+            task_type="autonomous_session",
+            queue_if_available=True,
         )
 
     next_boundary = next_boundary_for_state(project, approved_spec, split, state)
@@ -296,6 +306,85 @@ def run_autonomous_loop_tick(
         agent_model=agent_model,
         utility_model=utility_model,
     )
+
+
+def queue_autonomous_session_continuation(
+    db: Session,
+    *,
+    project: Project,
+    reason: str,
+    parent_job_id: str | None = None,
+    exclude_job_id: str | None = None,
+    runner_mode: str = RUNNER_MODE_CODEX_IF_AVAILABLE,
+    locale: str | None = None,
+    run_after_seconds: int = 10,
+) -> Job | None:
+    if project.autonomy_mode != "full_auto" or project.current_phase != "AUTONOMOUS_LOOP":
+        return None
+    existing = db.scalar(
+        select(Job)
+        .where(
+            Job.project_id == project.id,
+            Job.job_type == AUTONOMOUS_CONTINUATION_JOB_TYPE,
+            Job.status.in_(ACTIVE_AUTONOMOUS_JOB_STATUSES),
+        )
+        .order_by(Job.created_at.desc())
+    )
+    if existing is not None and existing.id != exclude_job_id:
+        return existing
+    active_child_ids = active_autonomous_child_job_ids(db, project.id)
+    summary = (
+        "Resume the main Full Auto session after the current child work settles. "
+        "This is a heartbeat for the long-running agent thread, not a micro-task replacement for Codex."
+    )
+    if active_child_ids:
+        summary = (
+            f"Wait for {len(active_child_ids)} active child worker(s), then resume the main Full Auto session. "
+            "The child workers may train models, build splits, or run a broad Codex session."
+        )
+    return create_job(
+        db,
+        job_type=AUTONOMOUS_CONTINUATION_JOB_TYPE,
+        project_id=project.id,
+        input_payload={
+            "runner_mode": runner_mode,
+            "autonomy_mode": "full_auto",
+            "locale": locale,
+            "reason": reason,
+            "parent_job_id": parent_job_id,
+            "active_child_job_ids_at_schedule_time": active_child_ids,
+        },
+        context={
+            "human_description": {
+                "source": "autonomous_session_heartbeat",
+                "title": "Continue the main Full Auto session",
+                "summary": summary,
+            }
+        },
+        policy={
+            "network": "harness_only",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "queued_by": "autonomous_session_heartbeat",
+            "parent_job_id": parent_job_id,
+        },
+        priority=45,
+        run_after=utc_now() + timedelta(seconds=max(run_after_seconds, 0)),
+    )
+
+
+def active_autonomous_child_job_ids(db: Session, project_id: str, *, exclude_job_id: str | None = None) -> list[str]:
+    stmt = (
+        select(Job)
+        .where(
+            Job.project_id == project_id,
+            Job.status.in_(ACTIVE_AUTONOMOUS_JOB_STATUSES),
+            Job.job_type.in_(AUTONOMOUS_CHILD_JOB_TYPES),
+        )
+        .order_by(Job.priority.desc(), Job.created_at)
+    )
+    jobs = db.scalars(stmt).all()
+    return [job.id for job in jobs if job.id != exclude_job_id]
 
 
 def run_strategy_and_research(
@@ -953,6 +1042,7 @@ def run_experiment_stack(
     state: AutonomousLoopState,
     spec: EvaluationSpec | None,
     split: SplitManifest | None,
+    queue_training: bool = True,
 ) -> None:
     if spec is None or split is None:
         state.record(
@@ -988,7 +1078,29 @@ def run_experiment_stack(
     except ValueError as exc:
         state.warn(f"Baseline strategy skipped: {exc}")
 
-    if should_queue_experiment_training(db, project):
+    if queue_training or should_queue_experiment_training(db, project):
+        active_training_ids = active_training_job_ids(db, project.id)
+        if active_training_ids:
+            state.record(
+                "experiment_loop",
+                "active",
+                "Training is already active for this project; Full Auto will return to the main session after worker output lands.",
+                entity_ids={"job_ids": active_training_ids, "evaluation_spec_id": spec.id, "split_manifest_id": split.id},
+            )
+            return
+        existing_run_ids = experiment_run_ids_for_split(db, project=project, spec=spec, split=split)
+        if existing_run_ids:
+            state.record(
+                "experiment_loop",
+                "observed",
+                "Comparable experiment runs already exist for the approved EvaluationSpec and SplitManifest.",
+                entity_ids={
+                    "experiment_run_ids": existing_run_ids[:8],
+                    "evaluation_spec_id": spec.id,
+                    "split_manifest_id": split.id,
+                },
+            )
+            return
         queue_experiment_training_jobs(
             db,
             project=project,
@@ -1193,6 +1305,39 @@ def queue_experiment_training_jobs(
     )
 
 
+def active_training_job_ids(db: Session, project_id: str) -> list[str]:
+    jobs = db.scalars(
+        select(Job)
+        .where(
+            Job.project_id == project_id,
+            Job.status.in_(ACTIVE_AUTONOMOUS_JOB_STATUSES),
+            Job.job_type.in_(["run_baseline", "train_model_candidates"]),
+        )
+        .order_by(Job.priority.desc(), Job.created_at)
+    ).all()
+    return [job.id for job in jobs]
+
+
+def experiment_run_ids_for_split(
+    db: Session,
+    *,
+    project: Project,
+    spec: EvaluationSpec,
+    split: SplitManifest,
+) -> list[str]:
+    runs = db.scalars(
+        select(ExperimentRun)
+        .where(
+            ExperimentRun.project_id == project.id,
+            ExperimentRun.evaluation_spec_id == spec.id,
+            ExperimentRun.split_manifest_id == split.id,
+            ExperimentRun.status == "succeeded",
+        )
+        .order_by(ExperimentRun.ended_at.desc())
+    ).all()
+    return [run.id for run in runs]
+
+
 def run_runner_handoff(
     db: Session,
     *,
@@ -1306,6 +1451,25 @@ def run_runner_handoff(
         return
 
     if runner_mode == RUNNER_MODE_CODEX_IF_AVAILABLE:
+        active_codex_job = active_codex_session_job(db, project.id)
+        if active_codex_job is not None:
+            state.record(
+                "codex_execution",
+                "active",
+                "A main Codex session is already queued or running; Full Auto will not fragment the thread with another runner job.",
+                entity_ids={"job_id": active_codex_job.id, "agent_task_contract_artifact_id": plan.artifact.id},
+            )
+            return
+        title = "Continue the main Codex session" if task_type == "autonomous_session" else "Run Codex on the prepared agent task"
+        summary = (
+            "Resume the long-running autonomous data-science thread in the controlled workspace, then return "
+            "artifacts, findings, code/report outputs, and next-session recommendations to the harness."
+            if task_type == "autonomous_session"
+            else (
+                "Execute the prepared AgentTaskContract in the controlled workspace, then return artifacts, "
+                "findings, and next recommendations to the harness."
+            )
+        )
         codex_job = create_job(
             db,
             job_type="run_planned_agent_task_codex",
@@ -1314,11 +1478,8 @@ def run_runner_handoff(
             context={
                 "human_description": {
                     "source": "agent_task_contract",
-                    "title": "Run Codex on the prepared agent task",
-                    "summary": (
-                        "Execute the prepared AgentTaskContract in the controlled workspace, then return artifacts, "
-                        "findings, and next recommendations to the harness."
-                    ),
+                    "title": title,
+                    "summary": summary,
                 },
                 "agent_task_contract_artifact_id": plan.artifact.id,
             },
@@ -1385,6 +1546,18 @@ def run_runner_handoff(
             "evidence_id": result.evidence_id,
             "experiment_run_id": experiment_run_id or "",
         },
+    )
+
+
+def active_codex_session_job(db: Session, project_id: str) -> Job | None:
+    return db.scalar(
+        select(Job)
+        .where(
+            Job.project_id == project_id,
+            Job.job_type == "run_planned_agent_task_codex",
+            Job.status.in_(ACTIVE_AUTONOMOUS_JOB_STATUSES),
+        )
+        .order_by(Job.created_at.desc())
     )
 
 
@@ -1884,11 +2057,14 @@ def select_autonomy_dataset(db: Session, project_id: str, *, target_column: str 
     if not datasets:
         return None
     if target_column:
+        matching_datasets: list[DatasetSnapshot] = []
         for dataset in datasets:
             profile = load_profile_for_dataset(db, dataset)
             columns = profile.get("columns")
             if isinstance(columns, list) and any(isinstance(column, dict) and column.get("name") == target_column for column in columns):
-                return dataset
+                matching_datasets.append(dataset)
+        if matching_datasets:
+            return max(matching_datasets, key=dataset_target_score)
     candidate = infer_provisional_target_candidate(db, project_id)
     if candidate is not None:
         return candidate.dataset

@@ -567,6 +567,7 @@ class JobCreate(BaseModel):
         "build_relational_feature_recipe",
         "diagnose_relational_feature_scenarios",
         "start_autonomous_loop",
+        "continue_autonomous_session",
         "stop_autonomous_loop",
         "run_baseline",
         "train_model_candidates",

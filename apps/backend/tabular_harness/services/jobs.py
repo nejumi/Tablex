@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -34,6 +34,7 @@ JOB_TYPES = {
     "save_autonomous_decision_brief",
     "compare_guided_journey_snapshots",
     "start_autonomous_loop",
+    "continue_autonomous_session",
     "stop_autonomous_loop",
     "run_agent_task",
     "agent_chat_turn",
@@ -194,7 +195,10 @@ def acquire_next_job(
         stmt = stmt.where(Job.job_type.in_(job_types))
     candidates = db.scalars(stmt.limit(50)).all()
     for job in candidates:
-        if job.run_after and job.run_after > now:
+        run_after = job.run_after
+        if run_after is not None and run_after.tzinfo is None:
+            run_after = run_after.replace(tzinfo=timezone.utc)
+        if run_after and run_after > now:
             continue
         if not dependencies_satisfied(db, job):
             continue

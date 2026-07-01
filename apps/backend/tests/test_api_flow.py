@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import zipfile
+from datetime import timedelta
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,7 +13,9 @@ from typing import Any
 from fastapi.testclient import TestClient
 from tabular_harness.core.config import Settings
 from tabular_harness.main import create_app
+from tabular_harness.models.entities import utc_now
 from tabular_harness.schemas import AgentResult
+from tabular_harness.services.jobs import acquire_next_job, create_job
 
 
 def make_client(tmp_path: Path) -> TestClient:
@@ -154,7 +157,31 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
     assert "agent_workspace_manifest" in asset_types
 
     contract_steps = [step for step in output["steps"] if step["label"] == "agent_task_contract"]
-    assert contract_steps[-1]["entity_ids"]["task_type"] == "implement_prediction_approach"
+    assert contract_steps[-1]["entity_ids"]["task_type"] == "autonomous_session"
+
+
+def test_worker_acquire_handles_sqlite_naive_run_after(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Run-after worker check"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    session_factory = client.app.state.session_factory
+    with session_factory() as db:
+        created = create_job(
+            db,
+            job_type="continue_autonomous_session",
+            project_id=project_id,
+            input_payload={"reason": "timezone-regression"},
+            run_after=utc_now() - timedelta(seconds=1),
+        )
+        created_id = created.id
+        db.commit()
+
+    with session_factory() as db:
+        acquired = acquire_next_job(db, worker_id="timezone-test-worker", job_types={"continue_autonomous_session"})
+        assert acquired is not None
+        assert acquired.id == created_id
 
 
 def test_full_auto_start_queues_training_for_large_dataset_boundary(
@@ -185,25 +212,30 @@ def test_full_auto_start_queues_training_for_large_dataset_boundary(
         json={"runner_mode": "codex_cli_if_available", "autonomy_mode": "full_auto"},
     )
     assert start_response.status_code == 200, start_response.text
-    output = start_response.json()["output"]
+    queued_job = start_response.json()
+    assert queued_job["output"]["schema_version"] == "autonomous_loop_start_queued.v1"
+    job_response = client.get(f"/api/jobs/{queued_job['id']}")
+    assert job_response.status_code == 200
+    output = job_response.json()["output"]
     labels = {step["label"]: step for step in output["steps"]}
     assert labels["experiment_loop"]["status"] == "queued"
     assert labels["baseline_run"]["status"] == "queued"
     assert labels["model_candidates"]["status"] == "queued"
-    assert len(output["created_job_ids"]) == 2
 
     jobs = client.get(f"/api/projects/{project_id}/jobs").json()
     queued_training = [job for job in jobs if job["id"] in output["created_job_ids"]]
-    assert {job["job_type"] for job in queued_training} == {
+    training_jobs = [job for job in queued_training if job["job_type"] in {"run_baseline", "train_model_candidates"}]
+    assert {job["job_type"] for job in training_jobs} == {
         "run_baseline",
         "train_model_candidates",
     }
-    assert all(job["status"] == "queued" for job in queued_training)
+    assert all(job["status"] == "queued" for job in training_jobs)
+    assert any(job["job_type"] == "run_planned_agent_task_codex" for job in queued_training)
 
     activity = client.get(f"/api/projects/{project_id}/agent-activity").json()
     active_job_ids = {worker["job_id"] for worker in activity["workers"] if worker["active"]}
-    assert set(output["created_job_ids"]).issubset(active_job_ids)
-    queued_workers = [worker for worker in activity["workers"] if worker["job_id"] in output["created_job_ids"]]
+    assert {job["id"] for job in training_jobs}.issubset(active_job_ids)
+    queued_workers = [worker for worker in activity["workers"] if worker["job_id"] in {job["id"] for job in training_jobs}]
     assert all(worker["project_name"] == "Autonomous queued training" for worker in queued_workers)
     assert all(worker["human_description"]["summary"] for worker in queued_workers)
     assert all(worker["token_usage"]["source"] == "estimated_waiting_for_worker" for worker in queued_workers)
@@ -245,7 +277,11 @@ def test_full_auto_infers_target_from_training_table_not_sample_submission(
         json={"runner_mode": "codex_cli_if_available", "autonomy_mode": "full_auto", "locale": "ja-JP"},
     )
     assert start_response.status_code == 200, start_response.text
-    output = start_response.json()["output"]
+    queued_job = start_response.json()
+    assert queued_job["output"]["schema_version"] == "autonomous_loop_start_queued.v1"
+    job_response = client.get(f"/api/jobs/{queued_job['id']}")
+    assert job_response.status_code == 200
+    output = job_response.json()["output"]
     labels = {step["label"]: step for step in output["steps"]}
     assert labels["target_definition"]["status"] == "adopted_with_assumption"
     assert labels["target_definition"]["entity_ids"]["target_column"] == "TARGET"
@@ -322,12 +358,17 @@ def test_full_auto_codex_target_proposal_drives_evaluation_and_runs(tmp_path: Pa
         json={"runner_mode": "codex_cli", "autonomy_mode": "full_auto", "locale": "ja-JP"},
     )
     assert start_response.status_code == 200, start_response.text
-    output = start_response.json()["output"]
+    queued_job = start_response.json()
+    assert queued_job["output"]["schema_version"] == "autonomous_loop_start_queued.v1"
+    job_response = client.get(f"/api/jobs/{queued_job['id']}")
+    assert job_response.status_code == 200
+    output = job_response.json()["output"]
     labels = {step["label"]: step for step in output["steps"]}
     assert labels["target_definition_proposal"]["status"] == "adopted"
     assert labels["evaluation_spec"]["status"] == "approved"
     assert labels["split_manifest"]["status"] == "created"
-    assert labels["baseline_run"]["status"] == "succeeded"
+    assert labels["baseline_run"]["status"] == "queued"
+    assert labels["model_candidates"]["status"] == "queued"
 
     project_read_response = client.get(f"/api/projects/{project_id}")
     assert project_read_response.status_code == 200
@@ -357,7 +398,11 @@ def test_approval_based_start_runs_but_does_not_auto_adopt_evaluation(tmp_path: 
         json={"runner_mode": "harness_only", "autonomy_mode": "approval_based"},
     )
     assert start_response.status_code == 200, start_response.text
-    output = start_response.json()["output"]
+    queued_job = start_response.json()
+    assert queued_job["output"]["schema_version"] == "autonomous_loop_start_queued.v1"
+    job_response = client.get(f"/api/jobs/{queued_job['id']}")
+    assert job_response.status_code == 200
+    output = job_response.json()["output"]
     assert output["mode"] == "approval_based"
     assert any(step["label"] == "evaluation_review" for step in output["steps"])
     evaluation_step = next(step for step in output["steps"] if step["label"] == "evaluation_spec")
