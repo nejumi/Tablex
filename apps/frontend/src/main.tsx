@@ -1262,6 +1262,7 @@ type AgentWorkerEvent = {
   created_at?: string;
   updated_at?: string;
   started_at?: string | null;
+  run_after?: string | null;
   active?: boolean;
   human_description?: {
     title?: string;
@@ -5432,9 +5433,16 @@ function isRecentTimestamp(value: string | null | undefined, now: number, ttlMs:
   return ageMs !== null && ageMs >= 0 && ageMs < ttlMs;
 }
 
+function isScheduledForFuture(value: string | null | undefined, now: number) {
+  if (!value) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > now;
+}
+
 function isActiveWorkerEventAt(event: AgentWorkerEvent, now: number) {
   if (!event.active || !isRunningWorkerStatus(event.status)) return false;
   if (event.status === "queued") {
+    if (isScheduledForFuture(event.run_after, now)) return false;
     return isRecentTimestamp(event.created_at ?? event.updated_at, now, QUEUED_WORKER_ACTIVITY_TTL_MS);
   }
   return true;
@@ -5442,7 +5450,10 @@ function isActiveWorkerEventAt(event: AgentWorkerEvent, now: number) {
 
 function jobActiveForActivity(job: Job, now: number = Date.now()) {
   if (job.status === "running" || job.status === "approval_required") return true;
-  if (job.status === "queued") return isRecentTimestamp(job.created_at, now, QUEUED_WORKER_ACTIVITY_TTL_MS);
+  if (job.status === "queued") {
+    if (isScheduledForFuture(job.run_after, now)) return false;
+    return isRecentTimestamp(job.created_at, now, QUEUED_WORKER_ACTIVITY_TTL_MS);
+  }
   return false;
 }
 
@@ -5450,10 +5461,12 @@ function eventActiveForActivity(
   status: string,
   explicitActive: boolean | undefined,
   createdAt: string | undefined,
+  runAfter: string | null | undefined,
   now: number
 ) {
   if (status === "running" || status === "approval_required") return explicitActive !== false;
   if (status === "queued") {
+    if (isScheduledForFuture(runAfter, now)) return false;
     return explicitActive !== false && isRecentTimestamp(createdAt, now, QUEUED_WORKER_ACTIVITY_TTL_MS);
   }
   return false;
@@ -5649,6 +5662,7 @@ function workerEventsFromJob(job: Job, now: number = Date.now()): AgentWorkerEve
       created_at: job.created_at,
       updated_at: job.updated_at,
       started_at: job.started_at,
+      run_after: job.run_after,
       active: jobActiveForActivity(job, now),
       human_description: jobHumanDescription(job),
       token_usage: {
@@ -5668,6 +5682,7 @@ function coerceWorkerEvent(raw: unknown, job: Job, index: number, now: number = 
     ? job.status
     : eventStatus;
   const createdAt = typeof record.created_at === "string" ? record.created_at : job.created_at;
+  const runAfter = typeof record.run_after === "string" ? record.run_after : job.run_after;
   const explicitActive = typeof record.active === "boolean" ? record.active : undefined;
   const usage = record.token_usage;
   const series =
@@ -5690,7 +5705,8 @@ function coerceWorkerEvent(raw: unknown, job: Job, index: number, now: number = 
     created_at: createdAt,
     updated_at: typeof record.updated_at === "string" ? record.updated_at : job.updated_at,
     started_at: typeof record.started_at === "string" ? record.started_at : job.started_at,
-    active: eventActiveForActivity(status, explicitActive ?? jobActiveForActivity(job, now), createdAt, now),
+    run_after: runAfter,
+    active: eventActiveForActivity(status, explicitActive ?? jobActiveForActivity(job, now), createdAt, runAfter, now),
     human_description: coerceHumanDescription(record.human_description) ?? jobHumanDescription(job),
     token_usage: {
       source:

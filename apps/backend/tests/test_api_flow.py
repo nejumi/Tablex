@@ -8,7 +8,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from fastapi.testclient import TestClient
 from tabular_harness.core.config import Settings
@@ -109,6 +109,39 @@ def test_full_auto_start_advances_autonomous_loop_without_dataset(tmp_path: Path
     assert any(artifact["asset_type"] == "autonomous_reflection" for artifact in artifacts)
 
 
+def test_agent_activity_does_not_show_future_autonomous_heartbeat_as_active(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Future heartbeat"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        create_job(
+            db,
+            job_type="continue_autonomous_session",
+            project_id=project_id,
+            context={
+                "human_description": {
+                    "title": "Continue the main Full Auto session",
+                    "summary": "Reserved heartbeat for the autonomous session.",
+                }
+            },
+            run_after=utc_now() + timedelta(minutes=5),
+        )
+        db.commit()
+
+    activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
+    assert activity_response.status_code == 200
+    activity = activity_response.json()
+    assert activity["active_count"] == 0
+    assert activity["workers"]
+    assert activity["workers"][0]["job_type"] == "continue_autonomous_session"
+    assert activity["workers"][0]["active"] is False
+    assert activity["workers"][0]["run_after"]
+
+
 def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
@@ -166,7 +199,8 @@ def test_worker_acquire_handles_sqlite_naive_run_after(tmp_path: Path) -> None:
     assert project_response.status_code == 200
     project_id = project_response.json()["id"]
 
-    session_factory = client.app.state.session_factory
+    app = cast(Any, client.app)
+    session_factory = app.state.session_factory
     with session_factory() as db:
         created = create_job(
             db,

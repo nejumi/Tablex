@@ -223,6 +223,7 @@ def worker_events_from_job(job: Job, *, project_name: str | None = None) -> list
             "created_at": job.created_at.isoformat(),
             "updated_at": job.updated_at.isoformat(),
             "started_at": job.started_at.isoformat() if job.started_at else None,
+            "run_after": job.run_after.isoformat() if job.run_after else None,
             "active": job_active_for_activity(job),
             "human_description": description,
             "token_usage": output.get("token_usage") if isinstance(output.get("token_usage"), dict) else estimated_tokens(job),
@@ -253,6 +254,7 @@ def normalize_worker_event(event: dict[str, Any], job: Job, *, project_name: str
         "created_at": str(event.get("created_at") or job.created_at.isoformat()),
         "updated_at": job.updated_at.isoformat(),
         "started_at": started_at,
+        "run_after": job.run_after.isoformat() if job.run_after else None,
         "active": job_active_for_activity(job),
         "human_description": event.get("human_description") if isinstance(event.get("human_description"), dict) else description,
         "token_usage": token_usage if isinstance(token_usage, dict) else estimated_tokens(job),
@@ -276,6 +278,12 @@ def job_active_for_activity(job: Job) -> bool:
     if job.status in {"running", "approval_required"}:
         return True
     if job.status == "queued":
+        run_after = job.run_after
+        if run_after is not None:
+            if run_after.tzinfo is None:
+                run_after = run_after.replace(tzinfo=timezone.utc)
+            if run_after > utc_now():
+                return False
         created_at = job.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
