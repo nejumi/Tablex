@@ -1232,6 +1232,7 @@ type AgentChatMessage = {
   responseBrief?: Record<string, unknown> | null;
   responseComposer?: Record<string, unknown> | null;
   createdAt?: string;
+  transient?: boolean;
 };
 
 type AgentConversationTurn = {
@@ -1267,6 +1268,7 @@ type RawAgentEvent = {
   source: string;
   level: string;
   title: string;
+  active?: boolean;
   body?: string | null;
   details?: Array<{ label: string; value: unknown }>;
   payload: Record<string, unknown>;
@@ -2965,7 +2967,8 @@ function ProjectDetail({
       id: `${localTurnId}:user`,
       role: "user",
       text: trimmed,
-      createdAt
+      createdAt,
+      transient: true
     };
     const pendingAssistant: AgentChatMessage = {
       id: `${localTurnId}:assistant`,
@@ -2976,7 +2979,8 @@ function ProjectDetail({
         mode: "codex_cli_if_available",
         status: "pending"
       },
-      createdAt
+      createdAt,
+      transient: true
     };
     const pendingWorker = optimisticWorkerEvent(project.id, trimmed);
     setPendingAgentChatMessages([optimisticUser, pendingAssistant]);
@@ -3943,6 +3947,7 @@ function buildRawAgentEvents(messages: AgentChatMessage[]): RawAgentEvent[] {
     if (turn.assistant) {
       const composerMode = textField(turn.assistant.responseComposer?.mode);
       const composerStatus = textField(turn.assistant.responseComposer?.status) ?? "pending";
+      const active = isActiveAgentTurn(turn);
       const promptPreamble = Array.isArray(turn.assistant.responseComposer?.prompt_preamble)
         ? turn.assistant.responseComposer.prompt_preamble.join("\n")
         : null;
@@ -3956,11 +3961,14 @@ function buildRawAgentEvents(messages: AgentChatMessage[]): RawAgentEvent[] {
         source: "Codex",
         level: composerStatus,
         title:
-          composerStatus === "pending"
+          active
             ? "Codex is composing a reply"
-            : isCodexCli
-              ? "Codex exec transcript"
-              : "Codex unavailable",
+            : composerStatus === "pending"
+              ? "Stored Codex reply state"
+              : isCodexCli
+                ? "Codex exec transcript"
+                : "Codex unavailable",
+        active,
         body: turn.assistant.text,
         details: [
           ...(command ? [{ label: "Codex command", value: command }] : []),
@@ -4175,13 +4183,13 @@ function agentChatOutcomeClass(outcome: string) {
 }
 
 function isActiveAgentTurn(turn: AgentConversationTurn): boolean {
-  if (!turn.assistant) return Boolean(turn.user);
+  if (!turn.assistant) return Boolean(turn.user?.transient);
   const status = String(turn.assistant.responseComposer?.status ?? "");
-  return ["pending", "running", "queued", "in_progress"].includes(status);
+  return Boolean(turn.assistant.transient) && ["pending", "running", "queued", "in_progress"].includes(status);
 }
 
 function isActiveRawEvent(event: RawAgentEvent): boolean {
-  return ["pending", "running", "queued", "in_progress"].includes(event.level);
+  return event.active === true;
 }
 
 function AgentChatSummaryCard({

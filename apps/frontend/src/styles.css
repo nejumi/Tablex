@@ -3803,7 +3803,8 @@ td {
 }
 
 .agent-chat-log {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   max-height: min(62vh, 760px);
   overflow-y: auto;
@@ -3813,6 +3814,7 @@ td {
 }
 
 .agent-chat-history {
+  flex: 0 0 auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface-muted) 80%, transparent);
@@ -3849,6 +3851,7 @@ td {
 
 .agent-turn-card {
   position: relative;
+  flex: 0 0 auto;
   display: grid;
   gap: 8px;
   overflow: hidden;
