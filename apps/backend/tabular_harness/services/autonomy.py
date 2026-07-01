@@ -32,7 +32,10 @@ from tabular_harness.models.entities import (
 )
 from tabular_harness.services.adaptive_strategy import create_adaptive_strategy_brief
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
-from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
+from tabular_harness.services.agent_task_readiness import (
+    readiness_hard_blockers_for_runner,
+    review_agent_task_readiness,
+)
 from tabular_harness.services.analysis_notebooks import create_data_understanding_notebook
 from tabular_harness.services.approach import (
     create_decision_dashboard,
@@ -1574,17 +1577,6 @@ def active_codex_session_job(db: Session, project_id: str) -> Job | None:
         )
         .order_by(Job.created_at.desc())
     )
-
-
-def readiness_hard_blockers_for_runner(review: dict[str, Any], *, task_type: str) -> list[dict[str, Any]]:
-    blockers = [
-        item
-        for item in review.get("checks", [])
-        if isinstance(item, dict) and item.get("status") == "blocker"
-    ]
-    if task_type == "autonomous_session":
-        return [item for item in blockers if item.get("check_id") == "safety_constraints"]
-    return blockers
 
 
 def experiment_run_id_from_runner_result(experiment_ingestion: Any) -> str | None:

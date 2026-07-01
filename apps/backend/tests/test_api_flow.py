@@ -13,9 +13,10 @@ from typing import Any, cast
 from fastapi.testclient import TestClient
 from tabular_harness.core.config import Settings
 from tabular_harness.main import create_app
-from tabular_harness.models.entities import Question, utc_now
+from tabular_harness.models.entities import Job, Project, Question, utc_now
 from tabular_harness.schemas import AgentResult
 from tabular_harness.services.jobs import acquire_next_job, create_job
+from tabular_harness.worker.jobs import continue_autonomous_session_handler
 
 
 def make_client(tmp_path: Path) -> TestClient:
@@ -140,6 +141,50 @@ def test_agent_activity_does_not_show_future_autonomous_heartbeat_as_active(tmp_
     assert activity["workers"][0]["job_type"] == "continue_autonomous_session"
     assert activity["workers"][0]["active"] is False
     assert activity["workers"][0]["run_after"]
+
+
+def test_autonomous_continuation_backs_off_after_recent_codex_failure(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Runner failure backoff"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.autonomy_mode = "full_auto"
+        project.current_phase = "AUTONOMOUS_LOOP"
+        failed_job = create_job(
+            db,
+            job_type="run_planned_agent_task_codex",
+            project_id=project_id,
+            input_payload={"agent_task_contract_artifact_id": "art_failed_contract"},
+        )
+        failed_job.status = "failed"
+        failed_job.error_message = "Codex CLI failed."
+        failed_job.started_at = utc_now()
+        failed_job.ended_at = utc_now()
+        failed_job.updated_at = utc_now()
+        continuation_job = create_job(
+            db,
+            job_type="continue_autonomous_session",
+            project_id=project_id,
+            input_payload={"runner_mode": "codex_cli_if_available", "locale": "ja-JP"},
+        )
+        db.flush()
+
+        output = continue_autonomous_session_handler(db, continuation_job, app.state.artifact_store)
+        assert output["status"] == "runner_backoff"
+        assert output["recent_failed_codex_job_id"] == failed_job.id
+        assert output["session_continuation_job_id"]
+        created_codex_jobs = [
+            job
+            for job in db.query(Job).filter_by(project_id=project_id, job_type="run_planned_agent_task_codex")
+            if job.id != failed_job.id
+        ]
+        assert created_codex_jobs == []
 
 
 def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: Path) -> None:
