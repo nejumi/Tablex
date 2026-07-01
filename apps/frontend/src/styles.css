@@ -671,6 +671,11 @@ textarea {
   line-height: 1.4;
 }
 
+.mission-task-card.waiting {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--border));
+  background: color-mix(in srgb, var(--warning) 6%, var(--surface-subtle));
+}
+
 .mission-task-pulse {
   width: 12px;
   height: 12px;
@@ -678,6 +683,28 @@ textarea {
   background: var(--accent);
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 44%, transparent);
   animation: mission-pulse 1.3s ease-out infinite;
+}
+
+.mission-task-pulse.idle {
+  background: var(--warning);
+  animation: none;
+  box-shadow: none;
+}
+
+.mission-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.secondary-button.danger {
+  border-color: color-mix(in srgb, var(--danger) 36%, var(--border));
+  color: var(--danger);
+}
+
+.secondary-button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface-hover));
 }
 
 .mission-agent-layout {

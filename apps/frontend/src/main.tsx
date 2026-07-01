@@ -308,6 +308,9 @@ const englishMessages = {
   currentTaskTitle: "Current task",
   currentTaskIdle: "Idle",
   currentTaskEmpty: "No active task. The agent should propose the next useful move instead of making you hunt through tabs.",
+  currentTaskWaiting: "Waiting, not running",
+  currentTaskWaitingBody: "This job is queued but no local worker is currently executing it.",
+  runWorkerOnce: "Run worker once",
   agentWorkspaceTitle: "Agent workspace",
   evidenceSurfacesTitle: "Evidence surfaces",
   supportingSurfacesTitle: "Supporting surfaces",
@@ -321,7 +324,7 @@ const englishMessages = {
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
   rawAgentTitle: "Raw Codex transcript",
-  rawAgentEmpty: "Codex prompts, response briefs, and raw replies will appear here after the first agent turn.",
+  rawAgentEmpty: "Actual Codex commands, stdout, stderr, and runner transcripts will appear here. Harness-only events are shown separately as sidecar records.",
   openSurface: "Open",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "One guided next step without forcing a fixed modeling recipe.",
@@ -577,6 +580,9 @@ const japaneseMessages: LocaleMessages = {
   currentTaskTitle: "現在のタスク",
   currentTaskIdle: "待機中",
   currentTaskEmpty: "実行中のタスクはありません。タブを探し回らなくても、Agentが次の有用な一手を提案するべきです。",
+  currentTaskWaiting: "待機中（未実行）",
+  currentTaskWaitingBody: "このjobはqueuedですが、現時点ではlocal workerが実行していません。",
+  runWorkerOnce: "workerを1回実行",
   agentWorkspaceTitle: "Agent workspace",
   evidenceSurfacesTitle: "根拠面",
   supportingSurfacesTitle: "支援面",
@@ -590,7 +596,7 @@ const japaneseMessages: LocaleMessages = {
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
   rawAgentTitle: "Raw Codex transcript",
-  rawAgentEmpty: "最初のAgent turn後、Codexへの入力、response brief、Raw replyがここに表示されます。",
+  rawAgentEmpty: "Codexの実行コマンド、stdout、stderr、runner transcriptを表示します。Harnessだけのイベントはsidecar recordとして分けて表示します。",
   openSurface: "開く",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "固定recipeにせず、次の一手だけをガイドします。",
@@ -3516,6 +3522,8 @@ function ProjectDetail({
           onStrategyAction={(action) => void runStrategyAction(action)}
           onAutonomyModeChange={(mode) => void changeAutonomyMode(mode)}
           onAutonomyPowerToggle={() => void toggleAutonomyPower()}
+          onCancelJob={(jobId) => void cancelWorkerJob(jobId)}
+          onRunWorkerOnce={() => void runAction(() => api("/api/worker/run-once", { method: "POST" }))}
         />
       )}
       {tab === "Overview" && (
@@ -3721,7 +3729,9 @@ function HomeTab({
   onFocusAction,
   onStrategyAction,
   onAutonomyModeChange,
-  onAutonomyPowerToggle
+  onAutonomyPowerToggle,
+  onCancelJob,
+  onRunWorkerOnce
 }: {
   project: Project;
   overview: Overview | null;
@@ -3754,9 +3764,16 @@ function HomeTab({
   onStrategyAction: (action: StrategyAction) => void;
   onAutonomyModeChange: (mode: AutonomyMode) => void;
   onAutonomyPowerToggle: () => void;
+  onCancelJob: (jobId: string) => void;
+  onRunWorkerOnce: () => void;
 }) {
-  const activeJobs = jobs.filter((job) => !isTerminalJob(job)).slice(0, 3);
+  const now = Date.now();
+  const activeJobs = jobs.filter((job) => jobActiveForActivity(job, now)).slice(0, 3);
   const activeJob = activeJobs[0] ?? null;
+  const waitingJob =
+    jobs.find((job) => !isTerminalJob(job) && !jobActiveForActivity(job, now) && job.status === "queued") ?? null;
+  const taskJob = activeJob ?? waitingJob;
+  const taskIsActive = Boolean(activeJob);
   const highRiskAssumptions = assumptions.filter(isHighRiskAssumption);
   const latestResearchPlan = latestArtifactByType(artifacts, "research_plan");
   const latestBrief = researchBriefs[0] ?? null;
@@ -3772,7 +3789,7 @@ function HomeTab({
   const [agentViewMode, setAgentViewMode] = React.useState<"chat" | "raw">("chat");
   const ideaFindingItems = buildIdeaFindingItems(ideas, insights);
   const equippedSkills = equippedSkillItems(projectAssetReferences, libraryAssets);
-  const rawAgentEvents = buildRawAgentEvents(messages);
+  const rawAgentEvents = buildRawAgentEvents(messages, jobs);
 
   return (
     <div className="mission-home stack">
@@ -3860,17 +3877,33 @@ function HomeTab({
           <div className="mission-panel-head">
             <div>
               <span>{text.currentTaskTitle}</span>
-              <strong>{activeJob ? activeJob.job_type.replace(/_/g, " ") : text.currentTaskIdle}</strong>
+              <strong>
+                {taskJob ? (taskIsActive ? taskJob.job_type.replace(/_/g, " ") : text.currentTaskWaiting) : text.currentTaskIdle}
+              </strong>
             </div>
-            {activeJob ? <span className={navigatorStatusClass(activeJob.status)}>{activeJob.status}</span> : null}
+            {taskJob ? <span className={navigatorStatusClass(taskIsActive ? taskJob.status : "medium")}>{taskJob.status}</span> : null}
           </div>
-          {activeJob ? (
-            <div className={`mission-task-card ${activeJob.status}`}>
-              <div className="mission-task-pulse" />
+          {taskJob ? (
+            <div className={`mission-task-card ${taskJob.status} ${taskIsActive ? "active" : "waiting"}`}>
+              <div className={taskIsActive ? "mission-task-pulse" : "mission-task-pulse idle"} />
               <div>
-                <strong>{activeJob.job_type.replace(/_/g, " ")}</strong>
-                <p>{activeJob.error_message ?? latestJobHeadline(activeJob)}</p>
-                <small>updated {formatDate(activeJob.updated_at)}</small>
+                <strong>{taskJob.job_type.replace(/_/g, " ")}</strong>
+                <p>{taskIsActive ? taskJob.error_message ?? latestJobHeadline(taskJob) : text.currentTaskWaitingBody}</p>
+                <small>
+                  {taskIsActive ? "updated" : "queued"} {formatDate(taskIsActive ? taskJob.updated_at : taskJob.created_at)}
+                </small>
+                {!taskIsActive ? (
+                  <div className="mission-task-actions">
+                    <button className="secondary-button" disabled={busy} onClick={onRunWorkerOnce} type="button">
+                      <Play size={14} />
+                      {text.runWorkerOnce}
+                    </button>
+                    <button className="secondary-button danger" disabled={busy} onClick={() => onCancelJob(taskJob.id)} type="button">
+                      <X size={14} />
+                      {text.workerCancelLabel}
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : (
@@ -4287,7 +4320,7 @@ function equippedSkillItems(references: AssetReference[], assets: LibraryAsset[]
     .filter((item): item is EquippedSkillItem => item !== null);
 }
 
-function buildRawAgentEvents(messages: AgentChatMessage[]): RawAgentEvent[] {
+function buildRawAgentEvents(messages: AgentChatMessage[], jobs: Job[]): RawAgentEvent[] {
   const now = new Date().toISOString();
   const turns = buildAgentConversationTurns(messages).slice(-8);
   const chatEvents = turns.flatMap((turn, index) => {
@@ -4298,7 +4331,7 @@ function buildRawAgentEvents(messages: AgentChatMessage[]): RawAgentEvent[] {
         timestamp: turn.user.createdAt ?? turn.createdAt ?? now,
         source: "User",
         level: "prompt",
-        title: "Prompt sent to Codex workspace",
+        title: "Prompt sent from Tablex UI",
         body: turn.user.text,
         payload: { text: turn.user.text }
       });
@@ -4314,21 +4347,22 @@ function buildRawAgentEvents(messages: AgentChatMessage[]): RawAgentEvent[] {
       const stdoutTail = textField(turn.assistant.responseComposer?.stdout_tail);
       const stderrTail = textField(turn.assistant.responseComposer?.stderr_tail);
       const isCodexCli = composerMode === "codex_cli";
+      const isHarnessOnly = !isCodexCli;
       events.push({
         id: `raw-assistant-${index}-${turn.assistant.id ?? turn.assistant.text.slice(0, 18)}`,
         timestamp: turn.assistant.createdAt ?? turn.createdAt ?? now,
-        source: "Codex",
+        source: isCodexCli || active ? "Codex" : "Harness sidecar",
         level: composerStatus,
         title:
           active
-            ? "Codex is composing a reply"
+            ? "Codex composer request is in flight"
             : composerStatus === "pending"
               ? "Stored Codex reply state"
               : isCodexCli
                 ? "Codex exec transcript"
-                : "Codex unavailable",
+                : "Harness record, not a Codex transcript",
         active,
-        body: turn.assistant.text,
+        body: isHarnessOnly ? null : turn.assistant.text,
         details: [
           ...(command ? [{ label: "Codex command", value: command }] : []),
           ...(promptPreamble
@@ -4340,7 +4374,7 @@ function buildRawAgentEvents(messages: AgentChatMessage[]): RawAgentEvent[] {
           ...(stdoutTail ? [{ label: "Codex stdout", value: stdoutTail }] : []),
           ...(stderrTail ? [{ label: "Codex stderr", value: stderrTail }] : []),
           ...(turn.assistant.responseComposer
-            ? [{ label: "Codex run metadata", value: turn.assistant.responseComposer }]
+            ? [{ label: isCodexCli ? "Codex run metadata" : "Harness sidecar metadata", value: turn.assistant.responseComposer }]
             : []),
           ...(turn.assistant.actions?.length
             ? [{ label: "Harness sidecar actions", value: turn.assistant.actions }]
@@ -4360,9 +4394,91 @@ function buildRawAgentEvents(messages: AgentChatMessage[]): RawAgentEvent[] {
     }
     return events;
   });
-  return chatEvents.sort(
+  return dedupeRawAgentEvents([...chatEvents, ...buildRawJobEvents(jobs)]).sort(
     (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
   );
+}
+
+function buildRawJobEvents(jobs: Job[]): RawAgentEvent[] {
+  return jobs.flatMap((job) => {
+    if (!isRawRelevantJob(job)) return [];
+    const events: RawAgentEvent[] = [];
+    const output = job.output ?? {};
+    const context = job.context ?? {};
+    const composer = output.response_composer;
+    const codexCli = output.codex_cli;
+    const humanDescription = context.human_description;
+    const description =
+      humanDescription && typeof humanDescription === "object" ? (humanDescription as Record<string, unknown>) : {};
+    const title = textField(description.title) ?? textField(output.agent_final_message) ?? latestJobHeadline(job);
+    if (composer && typeof composer === "object") {
+      const composerRecord = composer as Record<string, unknown>;
+      const mode = textField(composerRecord.mode);
+      const status = textField(composerRecord.status) ?? job.status;
+      const command = textField(composerRecord.command);
+      const stdoutTail = textField(composerRecord.stdout_tail);
+      const stderrTail = textField(composerRecord.stderr_tail);
+      const isCodexCli = mode === "codex_cli";
+      events.push({
+        id: `raw-job-composer-${job.id}`,
+        timestamp: job.updated_at,
+        source: isCodexCli ? "Codex" : "Harness sidecar",
+        level: status,
+        title: isCodexCli ? "Codex response composer transcript" : "Harness composer record, not Codex execution",
+        active: jobActiveForActivity(job),
+        body: isCodexCli ? textField(output.assistant_message) : null,
+        details: [
+          ...(command ? [{ label: "Codex command", value: command }] : []),
+          ...(stdoutTail ? [{ label: "Codex stdout", value: stdoutTail }] : []),
+          ...(stderrTail ? [{ label: "Codex stderr", value: stderrTail }] : []),
+          { label: isCodexCli ? "Codex metadata" : "Harness sidecar metadata", value: composerRecord }
+        ],
+        payload: { job_id: job.id, job_type: job.job_type, response_composer: composerRecord }
+      });
+    }
+    if (codexCli && typeof codexCli === "object") {
+      const codexRecord = codexCli as Record<string, unknown>;
+      events.push({
+        id: `raw-job-codex-${job.id}`,
+        timestamp: job.updated_at,
+        source: "Codex",
+        level: textField(codexRecord.status) ?? job.status,
+        title: "Codex CLI runner transcript",
+        active: jobActiveForActivity(job),
+        body: textField(output.agent_final_message),
+        details: [
+          { label: "Codex command", value: codexRecord.command ?? null },
+          { label: "Codex stdout", value: codexRecord.stdout_tail ?? "" },
+          { label: "Codex stderr", value: codexRecord.stderr_tail ?? "" },
+          { label: "Codex run metadata", value: codexRecord }
+        ],
+        payload: { job_id: job.id, job_type: job.job_type, codex_cli: codexRecord }
+      });
+    } else if (job.job_type === "run_planned_agent_task_codex" || job.status === "running" || job.status === "queued") {
+      events.push({
+        id: `raw-job-state-${job.id}`,
+        timestamp: job.updated_at,
+        source: job.job_type === "run_planned_agent_task_codex" ? "Codex runner" : "Harness sidecar",
+        level: job.status,
+        title: job.job_type === "run_planned_agent_task_codex" ? "Codex runner has no transcript yet" : "Job state, not Codex transcript",
+        active: jobActiveForActivity(job),
+        body: textField(description.summary) ?? title,
+        details: [{ label: "Job record", value: job }],
+        payload: { job_id: job.id, job_type: job.job_type, status: job.status }
+      });
+    }
+    return events;
+  });
+}
+
+function isRawRelevantJob(job: Job) {
+  return job.job_type === "agent_chat_turn" || job.job_type === "run_planned_agent_task_codex" || jobActiveForActivity(job);
+}
+
+function dedupeRawAgentEvents(events: RawAgentEvent[]) {
+  const byId = new Map<string, RawAgentEvent>();
+  events.forEach((event) => byId.set(event.id, event));
+  return [...byId.values()];
 }
 
 function agentChatHistoryToMessages(turns: AgentChatHistoryTurn[]): AgentChatMessage[] {

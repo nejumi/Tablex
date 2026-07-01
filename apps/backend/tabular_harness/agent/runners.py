@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Literal
@@ -285,6 +286,8 @@ class CodexCliRunner(AgentRunner):
             "-",
         ]
         prompt = render_prompt(task_contract)
+        command_summary = " ".join(cmd[:-1] + ["-"])
+        started_at = time.perf_counter()
         try:
             completed = subprocess.run(
                 cmd,
@@ -296,49 +299,84 @@ class CodexCliRunner(AgentRunner):
                 check=False,
             )
         except FileNotFoundError:
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
             return AgentResult(
                 task_id=task_contract.task_id,
                 status="failed",
                 final_message="Codex CLI binary was not found.",
-                outputs={"runner": "codex_cli", "codex_binary": self.codex_binary},
+                outputs={
+                    "runner": "codex_cli",
+                    "codex_cli": {
+                        "status": "codex_binary_not_found",
+                        "codex_binary": self.codex_binary,
+                        "command": command_summary,
+                        "duration_ms": duration_ms,
+                    },
+                },
                 artifacts=[],
                 warnings=[],
                 failure_reason="codex_binary_not_found",
             )
         except subprocess.TimeoutExpired as exc:
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
             return AgentResult(
                 task_id=task_contract.task_id,
                 status="failed",
                 final_message="Codex CLI timed out.",
-                outputs={"runner": "codex_cli", "timeout_seconds": execution_policy.timeout_seconds},
+                outputs={
+                    "runner": "codex_cli",
+                    "codex_cli": {
+                        "status": "timeout",
+                        "command": command_summary,
+                        "timeout_seconds": execution_policy.timeout_seconds,
+                        "duration_ms": duration_ms,
+                        "stdout_tail": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
+                        "stderr_tail": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
+                    },
+                },
                 artifacts=[],
                 warnings=[],
                 failure_reason=str(exc),
             )
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        codex_cli_log = {
+            "status": "succeeded" if completed.returncode == 0 else "failed",
+            "command": command_summary,
+            "timeout_seconds": execution_policy.timeout_seconds,
+            "exit_code": completed.returncode,
+            "duration_ms": duration_ms,
+            "stdout_tail": completed.stdout[-4000:] if completed.stdout else "",
+            "stderr_tail": completed.stderr[-4000:] if completed.stderr else "",
+        }
+        (harness_dir / "codex_cli_log.json").write_text(
+            json.dumps(codex_cli_log, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
         if completed.returncode != 0:
             return AgentResult(
                 task_id=task_contract.task_id,
                 status="failed",
                 final_message="Codex CLI failed.",
-                outputs={"returncode": completed.returncode},
+                outputs={"runner": "codex_cli", "codex_cli": codex_cli_log},
                 artifacts=[],
                 warnings=[],
                 failure_reason=completed.stderr[-4000:],
-                raw_log_path=None,  # type: ignore[call-arg]
             )
         if not result_path.exists():
             return AgentResult(
                 task_id=task_contract.task_id,
                 status="failed",
                 final_message="Codex CLI completed but outputs/result.json was not found.",
-                outputs={"stdout_tail": completed.stdout[-4000:]},
+                outputs={"runner": "codex_cli", "codex_cli": codex_cli_log},
                 artifacts=[],
                 warnings=[],
                 failure_reason="missing_result_json",
             )
         data = json.loads(result_path.read_text(encoding="utf-8"))
         validate_against_schema(data, output_schema)
-        return AgentResult.model_validate(data)
+        result = AgentResult.model_validate(data)
+        result.outputs = {**result.outputs, "runner": result.outputs.get("runner") or "codex_cli", "codex_cli": codex_cli_log}
+        return result
 
 
 def validate_against_schema(data: dict[str, Any], schema: dict[str, Any]) -> None:

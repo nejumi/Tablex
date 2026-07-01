@@ -358,6 +358,7 @@ def run_planned_agent_task_codex_handler(db: Session, job: Job, store: LocalArti
         "agent_status": result.agent_result.status,
         "agent_final_message": result.agent_result.final_message,
         "agent_failure_reason": result.agent_result.failure_reason,
+        "codex_cli": result.agent_result.outputs.get("codex_cli") if isinstance(result.agent_result.outputs, dict) else None,
         "agent_workspace_manifest_artifact_id": result.workspace_artifact_id,
         "agent_task_readiness_review_artifact_id": result.readiness_artifact_id,
         "readiness_status": result.readiness_status,
