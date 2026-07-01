@@ -13,7 +13,7 @@ from typing import Any, cast
 from fastapi.testclient import TestClient
 from tabular_harness.core.config import Settings
 from tabular_harness.main import create_app
-from tabular_harness.models.entities import utc_now
+from tabular_harness.models.entities import Question, utc_now
 from tabular_harness.schemas import AgentResult
 from tabular_harness.services.jobs import acquire_next_job, create_job
 
@@ -280,6 +280,70 @@ def test_full_auto_start_queues_training_for_large_dataset_boundary(
     assert "Agent Activity" in history[-1]["assistant_message"]
 
 
+def test_full_auto_passes_readiness_constraints_to_main_codex_session(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr("tabular_harness.services.autonomy.shutil.which", lambda name: "/usr/bin/codex")
+    client = make_client(tmp_path)
+
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "Constrained autonomous session", "target_column": "label", "task_type": "binary_classification"},
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    rows = ["feature,segment,label"] + [
+        f"{index},{'a' if index % 2 else 'b'},{1 if index % 3 == 0 else 0}" for index in range(1, 80)
+    ]
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("constrained.csv", "\n".join(rows).encode("utf-8"), "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        db.add(
+            Question(
+                id="q_block_autonomous",
+                project_id=project_id,
+                question_set_id="qs_block_autonomous",
+                topic="evaluation_boundary",
+                question="Should the current validation boundary be confirmed before interpreting model results?",
+                why_it_matters="This affects whether model comparison evidence can be trusted.",
+                default_assumption="Continue with the current split as a provisional boundary.",
+                impact_if_wrong="The leaderboard may overstate generalization.",
+                choices_json="[]",
+                status="open",
+                priority=95,
+                risk_level="high",
+                value_of_answer="high",
+                can_proceed_without_answer=False,
+                fallback_policy="block_until_answered",
+                blocks_next_phase=True,
+            )
+        )
+        db.commit()
+
+    start_response = client.post(
+        f"/api/projects/{project_id}/autonomy/start",
+        json={"runner_mode": "codex_cli_if_available", "autonomy_mode": "full_auto"},
+    )
+    assert start_response.status_code == 200, start_response.text
+    queued_job = start_response.json()
+    job_response = client.get(f"/api/jobs/{queued_job['id']}")
+    assert job_response.status_code == 200
+    output = job_response.json()["output"]
+    labels = {step["label"]: step for step in output["steps"]}
+    assert labels["agent_readiness"]["status"] == "ready_with_constraints"
+    assert labels["codex_execution"]["status"] == "queued"
+
+    jobs = client.get(f"/api/projects/{project_id}/jobs").json()
+    created_jobs = [job for job in jobs if job["id"] in output["created_job_ids"]]
+    assert any(job["job_type"] == "run_planned_agent_task_codex" for job in created_jobs)
+
+
 def test_full_auto_infers_target_from_training_table_not_sample_submission(
     tmp_path: Path,
     monkeypatch: Any,
@@ -324,7 +388,7 @@ def test_full_auto_infers_target_from_training_table_not_sample_submission(
     assert output["interventions"][0]["source_ref"] == "application_train.csv"
     jobs = client.get(f"/api/projects/{project_id}/jobs").json()
     created_job_types = {job["job_type"] for job in jobs if job["id"] in output["created_job_ids"]}
-    assert "run_planned_agent_task_codex" not in created_job_types
+    assert "run_planned_agent_task_codex" in created_job_types
 
     project = client.get(f"/api/projects/{project_id}").json()
     assert project["target_column"] == "TARGET"

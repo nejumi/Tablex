@@ -1399,18 +1399,33 @@ def run_runner_handoff(
             contract_artifact=plan.artifact,
             job=job,
         )
+        hard_blockers = readiness_hard_blockers_for_runner(readiness.review, task_type=task_type)
+        readiness_status = (
+            "ready_with_constraints"
+            if task_type == "autonomous_session" and readiness.review["blocker_count"] > 0 and not hard_blockers
+            else readiness.review["status"]
+        )
         state.record(
             "agent_readiness",
-            readiness.review["status"],
-            f"Reviewed runner readiness: {readiness.review['blocker_count']} blocker(s), {readiness.review['warning_count']} warning(s).",
+            readiness_status,
+            (
+                f"Reviewed runner readiness: {readiness.review['blocker_count']} blocker(s), "
+                f"{readiness.review['warning_count']} warning(s)."
+                if readiness_status != "ready_with_constraints"
+                else (
+                    f"Reviewed runner readiness: {readiness.review['blocker_count']} unresolved constraint(s), "
+                    f"{readiness.review['warning_count']} warning(s). Full Auto will pass them to Codex instead of stopping."
+                )
+            ),
             artifact_ids=readiness.artifact_ids,
         )
-        if readiness.review["blocker_count"] > 0:
+        if hard_blockers:
             state.record(
                 "codex_execution",
                 "blocked",
-                "Codex execution is blocked by readiness checks; Full Auto still preserved the contract and workspace.",
-                boundary="Resolve runner readiness blockers before executing Codex.",
+                "Codex execution is blocked only by hard safety constraints; Full Auto preserved the contract and workspace.",
+                boundary="Fix runner safety constraints before executing Codex.",
+                entity_ids={"hard_blocker_check_ids": [str(item.get("check_id")) for item in hard_blockers]},
             )
             return
     except ValueError as exc:
@@ -1559,6 +1574,17 @@ def active_codex_session_job(db: Session, project_id: str) -> Job | None:
         )
         .order_by(Job.created_at.desc())
     )
+
+
+def readiness_hard_blockers_for_runner(review: dict[str, Any], *, task_type: str) -> list[dict[str, Any]]:
+    blockers = [
+        item
+        for item in review.get("checks", [])
+        if isinstance(item, dict) and item.get("status") == "blocker"
+    ]
+    if task_type == "autonomous_session":
+        return [item for item in blockers if item.get("check_id") == "safety_constraints"]
+    return blockers
 
 
 def experiment_run_id_from_runner_result(experiment_ingestion: Any) -> str | None:
