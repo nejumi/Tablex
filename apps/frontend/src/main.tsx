@@ -1350,6 +1350,8 @@ type AgentConversationTurn = {
   createdAt?: string;
 };
 
+const AGENT_CHAT_MESSAGE_HISTORY_LIMIT = 240;
+
 type HomeMemoryItem = {
   id: string;
   kind: "idea" | "finding";
@@ -4322,7 +4324,7 @@ function equippedSkillItems(references: AssetReference[], assets: LibraryAsset[]
 
 function buildRawAgentEvents(messages: AgentChatMessage[], jobs: Job[]): RawAgentEvent[] {
   const now = new Date().toISOString();
-  const turns = buildAgentConversationTurns(messages).slice(-8);
+  const turns = buildAgentConversationTurns(messages);
   const chatEvents = turns.flatMap((turn, index) => {
     const events: RawAgentEvent[] = [];
     if (!turn.assistant) return events;
@@ -4389,9 +4391,9 @@ function buildRawAgentEvents(messages: AgentChatMessage[], jobs: Job[]): RawAgen
     });
     return events;
   });
-  return dedupeRawAgentEvents([...chatEvents, ...buildRawJobEvents(jobs)]).sort(
-    (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
-  );
+  return dedupeRawAgentEvents([...chatEvents, ...buildRawJobEvents(jobs)])
+    .sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime())
+    .slice(-200);
 }
 
 function buildRawJobEvents(jobs: Job[]): RawAgentEvent[] {
@@ -4576,7 +4578,7 @@ function mergeAgentChatMessages(persisted: AgentChatMessage[], transient: AgentC
     seen.add(key);
     merged.push(message);
   }
-  return merged.slice(-80);
+  return merged.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT);
 }
 
 function firstAutonomyIntervention(output: Record<string, unknown>): AutonomyIntervention | null {
@@ -4623,7 +4625,7 @@ function upsertAgentChatMessages(
       merged.push(next);
     }
   }
-  return merged.slice(-80);
+  return merged.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT);
 }
 
 function buildAgentConversationTurns(messages: AgentChatMessage[]): AgentConversationTurn[] {
