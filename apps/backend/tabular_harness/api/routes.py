@@ -811,6 +811,79 @@ def update_project(
     return project_to_dict(project)
 
 
+def record_autonomy_control_chat_turn(
+    db: Session,
+    store: LocalArtifactStore,
+    *,
+    project: Project,
+    job: Job,
+    user_message: str,
+    assistant_message: str,
+    output: dict[str, Any],
+    locale: str | None,
+) -> Artifact:
+    worker_events = output.get("worker_events") if isinstance(output.get("worker_events"), list) else []
+    token_usage = output.get("token_usage") if isinstance(output.get("token_usage"), dict) else {}
+    created_job_ids = output.get("created_job_ids") if isinstance(output.get("created_job_ids"), list) else []
+    response_locale = locale or "en-US"
+    payload = {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": project.id,
+        "user_message": user_message,
+        "assistant_message": assistant_message,
+        "intent": {
+            "type": "agent_loop_control",
+            "source": "autonomy_power_button",
+            "routing_policy": "explicit_ui_control_not_natural_language_routing",
+        },
+        "actions": [],
+        "action_summary": {
+            "schema_version": "agent_action_summary.v1",
+            "outcome": "started" if job.job_type == "start_autonomous_loop" else "stopped",
+            "headline": "Agent loop control",
+            "what_changed": [f"Recorded {len(created_job_ids)} queued follow-up job(s)."]
+            if created_job_ids
+            else ["Recorded the agent loop control event."],
+            "what_needs_review": [],
+            "next_step": {"label": "Agent Activity", "target_tab": "Home", "target_anchor": "agent-workspace"},
+            "boundaries": output.get("boundaries") if isinstance(output.get("boundaries"), list) else [],
+            "actions": [],
+        },
+        "response_brief": {
+            "source": "autonomy_control",
+            "response_locale": response_locale,
+            "created_job_ids": created_job_ids,
+            "status": output.get("status"),
+        },
+        "response_composer": {
+            "mode": "autonomy_control_event",
+            "status": "persisted",
+            "note": "The autonomous loop response is persisted as chat history so the UI does not lose it on refresh.",
+        },
+        "worker_events": worker_events,
+        "token_usage": token_usage,
+        "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent Activity"},
+    }
+    return store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="agent_chat_turn",
+        name=f"agent_loop_control_{job.id}",
+        filename="agent_chat_turn.json",
+        payload=payload,
+        metadata={
+            "project_id": project.id,
+            "job_id": job.id,
+            "intent_type": "agent_loop_control",
+            "action_count": 0,
+            "token_usage_source": token_usage.get("source") if isinstance(token_usage.get("source"), str) else None,
+            "response_locale": response_locale,
+            "response_composer_mode": "autonomy_control_event",
+        },
+    )
+
+
 @router.post("/api/projects/{project_id}/autonomy/start", response_model=JobRead)
 def start_project_autonomy(
     project_id: str,
@@ -855,6 +928,33 @@ def start_project_autonomy(
             agent_model=payload.agent_model,
             utility_model=payload.utility_model,
         )
+        assistant_message = str(output.get("assistant_message") or "Agent loop started.")
+        created_job_ids = output.get("created_job_ids") if isinstance(output.get("created_job_ids"), list) else []
+        if created_job_ids:
+            if payload.locale and payload.locale.lower().startswith("ja"):
+                assistant_message = (
+                    f"{assistant_message}\n\n"
+                    "右側の Agent Activity に、次に進むための待機中ジョブを表示します。"
+                    "Waiting のカードはまだ実行中ではなく、local worker が拾った時点で Running に変わります。"
+                )
+            else:
+                assistant_message = (
+                    f"{assistant_message}\n\n"
+                    "Agent Activity now shows the queued follow-up work. Cards marked Waiting are not running yet; "
+                    "they switch to Running when the local worker picks them up."
+                )
+            output["assistant_message"] = assistant_message
+        artifact = record_autonomy_control_chat_turn(
+            db,
+            store,
+            project=project,
+            job=job,
+            user_message="Agent loopを開始" if payload.locale and payload.locale.lower().startswith("ja") else "Start agent loop",
+            assistant_message=assistant_message,
+            output=output,
+            locale=payload.locale,
+        )
+        output["agent_chat_turn_artifact_id"] = artifact.id
         mark_job_succeeded(job, output)
     except ValueError as exc:
         mark_job_failed(job, str(exc))
@@ -3513,6 +3613,7 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
         ).all()
     )
     turns: list[dict[str, Any]] = []
+    seen_job_ids: set[str] = set()
     for artifact in reversed(artifacts):
         path = artifact_primary_path(artifact)
         if not path.exists():
@@ -3524,6 +3625,8 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
         if not isinstance(payload, dict) or payload.get("schema_version") != "agent_chat_turn.v1":
             continue
         metadata = loads_json(artifact.metadata_json, {})
+        if isinstance(metadata.get("job_id"), str):
+            seen_job_ids.add(metadata["job_id"])
         turns.append(
             {
                 "schema_version": "agent_chat_turn.v1",
@@ -3545,7 +3648,71 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
                 "created_at": artifact.created_at.isoformat(),
             }
         )
-    return turns
+    control_jobs = list(
+        db.scalars(
+            select(Job)
+            .where(
+                Job.project_id == project_id,
+                Job.job_type.in_(["start_autonomous_loop", "stop_autonomous_loop"]),
+            )
+            .order_by(Job.created_at.desc())
+            .limit(30)
+        ).all()
+    )
+    for job in reversed(control_jobs):
+        if job.id in seen_job_ids:
+            continue
+        output = loads_json(job.output_json, {})
+        assistant_message = output.get("assistant_message")
+        if not isinstance(assistant_message, str) or not assistant_message.strip():
+            continue
+        response_locale = output.get("response_locale") if isinstance(output.get("response_locale"), str) else "en-US"
+        started = job.job_type == "start_autonomous_loop"
+        user_message = "Agent loopを開始" if response_locale.lower().startswith("ja") and started else "Start agent loop"
+        if not started:
+            user_message = "Agent loopを停止" if response_locale.lower().startswith("ja") else "Stop agent loop"
+        turns.append(
+            {
+                "schema_version": "agent_chat_turn.v1",
+                "project_id": project_id,
+                "user_message": user_message,
+                "assistant_message": assistant_message,
+                "intent": {
+                    "type": "agent_loop_control",
+                    "source": "autonomy_power_button",
+                    "routing_policy": "explicit_ui_control_not_natural_language_routing",
+                },
+                "actions": [],
+                "action_summary": {
+                    "schema_version": "agent_action_summary.v1",
+                    "outcome": "started" if started else "stopped",
+                    "headline": "Agent loop control",
+                    "what_changed": [],
+                    "what_needs_review": [],
+                    "next_step": {"label": "Agent Activity", "target_tab": "Home", "target_anchor": "agent-workspace"},
+                    "boundaries": output.get("boundaries") if isinstance(output.get("boundaries"), list) else [],
+                    "actions": [],
+                },
+                "response_brief": {
+                    "source": "autonomy_control_backfill",
+                    "response_locale": response_locale,
+                    "created_job_ids": output.get("created_job_ids") if isinstance(output.get("created_job_ids"), list) else [],
+                    "status": output.get("status"),
+                },
+                "response_composer": {
+                    "mode": "autonomy_control_backfill",
+                    "status": "reconstructed_from_job_output",
+                },
+                "worker_events": output.get("worker_events") if isinstance(output.get("worker_events"), list) else [],
+                "token_usage": output.get("token_usage") if isinstance(output.get("token_usage"), dict) else {},
+                "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent Activity"},
+                "artifact_id": f"job_history_{job.id}",
+                "job_id": job.id,
+                "created_at": job.created_at.isoformat(),
+            }
+        )
+    turns.sort(key=lambda turn: turn["created_at"])
+    return turns[-60:]
 
 
 @router.post("/api/agent-task-contracts/{artifact_id}/prepare-workspace", response_model=JobRead)
@@ -5251,13 +5418,13 @@ def list_project_jobs(project_id: str, db: Annotated[Session, Depends(get_sessio
 
 @router.get("/api/projects/{project_id}/agent-activity", response_model=AgentActivityRead)
 def get_project_agent_activity(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
-    require_project(db, project_id)
+    project = require_project(db, project_id)
     jobs = list(
         db.scalars(
             select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc()).limit(30)
         ).all()
     )
-    workers = [event for job in jobs for event in worker_events_from_job(job)]
+    workers = [event for job in jobs for event in worker_events_from_job(job, project_name=project.name)]
     active_workers = [worker for worker in workers if worker.get("active")]
     return {
         "schema_version": "agent_activity.v1",

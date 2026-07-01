@@ -4424,10 +4424,15 @@ td {
 
 .agent-worker-card.active,
 .agent-worker-card.running,
-.agent-worker-card.queued,
 .agent-worker-card.approval_required {
   border-left-color: var(--accent-2);
   box-shadow: 0 12px 30px color-mix(in srgb, var(--accent-2) 16%, transparent);
+}
+
+.agent-worker-card.waiting,
+.agent-worker-card.queued {
+  border-left-color: var(--warning);
+  box-shadow: none;
 }
 
 .agent-worker-card.needs_review {
@@ -4460,11 +4465,42 @@ td {
   text-transform: uppercase;
 }
 
+.agent-worker-topline span.live {
+  background: color-mix(in srgb, var(--accent-2) 16%, var(--surface));
+  color: var(--text-strong);
+}
+
+.agent-worker-topline span.waiting {
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  color: var(--text-strong);
+}
+
 .agent-worker-card p {
   margin: 0;
   color: var(--text);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.agent-worker-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.agent-worker-context span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 3px 7px;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.agent-worker-context strong {
+  color: var(--text-strong);
+  font-weight: 800;
 }
 
 .token-sparkline {
@@ -4487,6 +4523,11 @@ td {
 
 .token-sparkline.live span {
   animation: token-pulse 880ms ease-in-out infinite alternate;
+}
+
+.token-sparkline.waiting span {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--warning) 80%, white), var(--warning));
+  opacity: 0.72;
 }
 
 @keyframes activity-pop {

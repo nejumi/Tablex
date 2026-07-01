@@ -21,7 +21,12 @@ def build_portal_overview(db: Session) -> dict[str, Any]:
     recent_artifacts = list(db.scalars(select(Artifact).order_by(Artifact.created_at.desc()).limit(12)).all())
     recent_ideas = list_portal_ideas(db, limit=8)
     active_jobs = [job for job in recent_jobs if job.status in {"queued", "running", "approval_required"}]
-    activity = [event for job in recent_jobs for event in worker_events_from_job(job)][:12]
+    project_names = {project.id: project.name for project in projects}
+    activity = [
+        event
+        for job in recent_jobs
+        for event in worker_events_from_job(job, project_name=project_names.get(job.project_id or ""))
+    ][:12]
     project_rows = [
         {
             "id": project.id,
@@ -193,45 +198,58 @@ def humanize_identifier(value: str) -> str:
     return " ".join(word.capitalize() for word in words)
 
 
-def worker_events_from_job(job: Job) -> list[dict[str, Any]]:
+def worker_events_from_job(job: Job, *, project_name: str | None = None) -> list[dict[str, Any]]:
     output = loads_json(job.output_json, {})
+    context = loads_json(job.context_json, {})
     events = output.get("worker_events")
     if isinstance(events, list):
-        return [normalize_worker_event(event, job) for event in events if isinstance(event, dict)]
+        return [normalize_worker_event(event, job, project_name=project_name) for event in events if isinstance(event, dict)]
     if not is_agentish_job(job.job_type):
         return []
+    description = human_description_for_job(job, output=output, context=context, project_name=project_name)
     return [
         {
             "worker_id": f"job-{job.job_type}",
             "display_name": worker_display_name(job.job_type),
             "status": job.status,
-            "headline": str(output.get("assistant_message") or f"{job.job_type.replace('_', ' ')} is {job.status}"),
-            "detail": job.error_message or f"Job {job.id}",
+            "headline": description["title"],
+            "detail": job.error_message or description["summary"],
             "job_id": job.id,
+            "job_type": job.job_type,
             "project_id": job.project_id,
+            "project_name": project_name,
             "target_tab": target_tab_for_job(job.job_type),
             "created_at": job.created_at.isoformat(),
             "updated_at": job.updated_at.isoformat(),
+            "started_at": job.started_at.isoformat() if job.started_at else None,
             "active": job.status in {"queued", "running", "approval_required"},
+            "human_description": description,
             "token_usage": output.get("token_usage") if isinstance(output.get("token_usage"), dict) else estimated_tokens(job),
         }
     ]
 
 
-def normalize_worker_event(event: dict[str, Any], job: Job) -> dict[str, Any]:
+def normalize_worker_event(event: dict[str, Any], job: Job, *, project_name: str | None = None) -> dict[str, Any]:
     token_usage = event.get("token_usage")
+    output = loads_json(job.output_json, {})
+    context = loads_json(job.context_json, {})
+    description = human_description_for_job(job, output=output, context=context, project_name=project_name)
     return {
         "worker_id": str(event.get("worker_id") or f"job-{job.job_type}"),
         "display_name": str(event.get("display_name") or worker_display_name(job.job_type)),
         "status": str(event.get("status") or job.status),
-        "headline": str(event.get("headline") or job.job_type.replace("_", " ")),
-        "detail": str(event.get("detail") or job.error_message or f"Job {job.id}"),
+        "headline": str(event.get("headline") or description["title"]),
+        "detail": str(event.get("detail") or job.error_message or description["summary"]),
         "job_id": str(event.get("job_id") or job.id),
+        "job_type": job.job_type,
         "project_id": job.project_id,
+        "project_name": project_name,
         "target_tab": event.get("target_tab") if isinstance(event.get("target_tab"), str) else target_tab_for_job(job.job_type),
         "created_at": str(event.get("created_at") or job.created_at.isoformat()),
         "updated_at": job.updated_at.isoformat(),
+        "started_at": str(event.get("started_at") or job.started_at.isoformat()) if job.started_at or event.get("started_at") else None,
         "active": job.status in {"queued", "running", "approval_required"},
+        "human_description": event.get("human_description") if isinstance(event.get("human_description"), dict) else description,
         "token_usage": token_usage if isinstance(token_usage, dict) else estimated_tokens(job),
     }
 
@@ -239,7 +257,7 @@ def normalize_worker_event(event: dict[str, Any], job: Job) -> dict[str, Any]:
 def estimated_tokens(job: Job) -> dict[str, Any]:
     base = max(24, len(job.job_type) * 3)
     return {
-        "source": "estimated_until_runner_telemetry",
+        "source": "estimated_waiting_for_worker" if job.status == "queued" else "estimated_until_runner_telemetry",
         "is_estimate": True,
         "series": [
             {"step": "queued", "tokens": base},
@@ -247,6 +265,74 @@ def estimated_tokens(job: Job) -> dict[str, Any]:
             {"step": job.status, "tokens": base * (4 if job.status == "running" else 3)},
         ],
     }
+
+
+def human_description_for_job(
+    job: Job,
+    *,
+    output: dict[str, Any],
+    context: dict[str, Any],
+    project_name: str | None,
+) -> dict[str, str]:
+    description = output.get("human_description")
+    if not isinstance(description, dict):
+        description = context.get("human_description")
+    if isinstance(description, dict):
+        title = str(description.get("title") or humanize_identifier(job.job_type))
+        summary = str(description.get("summary") or description.get("detail") or title)
+        source = str(description.get("source") or "job_context")
+        return {"title": title, "summary": summary, "source": source}
+
+    project_label = project_name or "this project"
+    default_description = default_human_description_for_job(job, project_label=project_label)
+    if default_description:
+        return default_description
+
+    title = str(output.get("assistant_message") or f"{humanize_identifier(job.job_type)} is {job.status}")
+    if job.status == "queued":
+        summary = (
+            f"Waiting for a local worker to pick up {job.id} for {project_label}. "
+            "No live token telemetry is available until the worker starts running."
+        )
+    elif job.status == "running":
+        summary = f"Running {job.id} for {project_label}."
+    elif job.status == "approval_required":
+        summary = f"Waiting for approval before {job.id} can run for {project_label}."
+    else:
+        summary = job.error_message or f"{job.id} is {job.status} for {project_label}."
+    return {"title": title, "summary": summary, "source": "job_status_fallback"}
+
+
+def default_human_description_for_job(job: Job, *, project_label: str) -> dict[str, str] | None:
+    waiting = "Waiting for a local worker to pick it up. " if job.status == "queued" else ""
+    if job.job_type == "run_baseline":
+        return {
+            "title": "Train the adaptive baseline",
+            "summary": (
+                f"{waiting}Use the approved evaluation design for {project_label}, train the current adaptive "
+                "tabular baseline, and publish comparable run evidence for the Leaderboard."
+            ),
+            "source": "job_type_default",
+        }
+    if job.job_type == "train_model_candidates":
+        return {
+            "title": "Train candidate models",
+            "summary": (
+                f"{waiting}Train the candidate model set for {project_label} on the same split and metric surface "
+                "so the Leaderboard can compare runs fairly."
+            ),
+            "source": "job_type_default",
+        }
+    if job.job_type == "run_planned_agent_task_codex":
+        return {
+            "title": "Run Codex on the prepared agent task",
+            "summary": (
+                f"{waiting}Execute the prepared AgentTaskContract for {project_label}, then return artifacts, "
+                "findings, and next recommendations to the harness."
+            ),
+            "source": "job_type_default",
+        }
+    return None
 
 
 def is_agentish_job(job_type: str) -> bool:

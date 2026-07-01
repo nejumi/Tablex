@@ -675,6 +675,16 @@ def queue_experiment_training_jobs(
         job_type="run_baseline",
         project_id=project.id,
         input_payload={"evaluation_spec_id": spec.id, "split_manifest_id": split.id},
+        context={
+            "human_description": {
+                "source": "autonomous_loop_plan",
+                "title": "Train the adaptive baseline",
+                "summary": (
+                    "Use the approved EvaluationSpec and SplitManifest to train the current adaptive tabular baseline, "
+                    "then publish comparable run evidence for the Leaderboard."
+                ),
+            }
+        },
         policy=common_policy,
         priority=70,
     )
@@ -688,6 +698,16 @@ def queue_experiment_training_jobs(
             "unsupported_models": [],
             "evaluation_spec_id": spec.id,
             "split_manifest_id": split.id,
+        },
+        context={
+            "human_description": {
+                "source": "autonomous_loop_plan",
+                "title": "Train candidate models",
+                "summary": (
+                    "Train the requested candidate family set for the same split and metric surface: "
+                    "XGBoost, LogisticRegression, and LightGBM where dependencies are available."
+                ),
+            }
         },
         policy=common_policy,
         priority=65,
@@ -820,6 +840,17 @@ def run_runner_handoff(
             job_type="run_planned_agent_task_codex",
             project_id=project.id,
             input_payload={"agent_task_contract_artifact_id": plan.artifact.id},
+            context={
+                "human_description": {
+                    "source": "agent_task_contract",
+                    "title": "Run Codex on the prepared agent task",
+                    "summary": (
+                        "Execute the prepared AgentTaskContract in the controlled workspace, then return artifacts, "
+                        "findings, and next recommendations to the harness."
+                    ),
+                },
+                "agent_task_contract_artifact_id": plan.artifact.id,
+            },
             policy={
                 "network": "harness_only",
                 "secret_access": "forbidden_to_task",

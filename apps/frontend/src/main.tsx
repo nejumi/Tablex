@@ -265,12 +265,21 @@ const englishMessages = {
   chatChangedLabel: "Changed",
   chatReviewLabel: "Needs review",
   agentActivityTitle: "Agent Activity",
-  agentActivitySubtitle: "Live workers only; finished work is summarized in Agent Chat.",
-  agentActivityLiveOnly: "Live only",
+  agentActivitySubtitle: "Running and waiting work. Finished work is summarized in Agent Chat.",
+  agentActivityLiveOnly: "Active work",
   estimatedTokens: "Estimated tokens",
   currentTokens: "Current",
   cumulativeTokens: "Task total",
   telemetryEstimate: "estimate until runner telemetry",
+  telemetryWaiting: "waiting for local worker",
+  workerStatusQueued: "Waiting",
+  workerStatusRunning: "Running",
+  workerStatusApproval: "Approval",
+  workerStatusFinished: "Finished",
+  workerProjectLabel: "Project",
+  workerJobLabel: "Job",
+  workerElapsedLabel: "Elapsed",
+  workerIdLabel: "ID",
   workerChatPlaceholder: "Message this worker",
   noAgentActivity: "Agent activity will appear after chat, jobs, or runner work starts.",
   missionControlTitle: "Mission Control",
@@ -521,12 +530,21 @@ const japaneseMessages: LocaleMessages = {
   chatChangedLabel: "変更",
   chatReviewLabel: "要確認",
   agentActivityTitle: "Agent Activity",
-  agentActivitySubtitle: "実行中worker専用のライブ表示です。完了後の要約はAgent Chatに残ります。",
-  agentActivityLiveOnly: "Liveのみ",
+  agentActivitySubtitle: "実行中または待機中のworkを表示します。完了後の要約はAgent Chatに残ります。",
+  agentActivityLiveOnly: "Active work",
   estimatedTokens: "推定tokens",
   currentTokens: "現在",
   cumulativeTokens: "累積",
   telemetryEstimate: "runner telemetryが入るまで推定",
+  telemetryWaiting: "local worker待ち",
+  workerStatusQueued: "Waiting",
+  workerStatusRunning: "Running",
+  workerStatusApproval: "Approval",
+  workerStatusFinished: "Finished",
+  workerProjectLabel: "Project",
+  workerJobLabel: "Job",
+  workerElapsedLabel: "経過",
+  workerIdLabel: "ID",
   workerChatPlaceholder: "このworkerにメッセージ",
   noAgentActivity: "chat、job、runner workが始まるとagent activityが表示されます。",
   missionControlTitle: "Mission Control",
@@ -1199,16 +1217,30 @@ type AgentWorkerEvent = {
   headline: string;
   detail: string;
   job_id: string;
+  job_type?: string;
   project_id?: string | null;
+  project_name?: string | null;
   target_tab: string | null;
   created_at?: string;
   updated_at?: string;
+  started_at?: string | null;
   active?: boolean;
+  human_description?: {
+    title?: string;
+    summary?: string;
+    source?: string;
+  } | null;
   token_usage: {
     source: string;
     is_estimate: boolean;
     series: TokenSeriesPoint[];
   };
+};
+
+type RequiredHumanDescription = {
+  title: string;
+  summary: string;
+  source?: string;
 };
 
 type AgentChatAction = {
@@ -4775,12 +4807,15 @@ function AgentActivityRail({
     const now = Date.now() + tick;
     const fromActivity = activity?.workers ?? [];
     const fromJobs = jobs.flatMap((job) => workerEventsFromJob(job));
-    const merged = [...events, ...fromActivity, ...fromJobs];
+    const merged = [...fromJobs, ...events, ...fromActivity];
     const byKey = new Map<string, AgentWorkerEvent>();
     merged.forEach((event) => {
       byKey.set(`${event.worker_id}-${event.job_id}`, event);
     });
-    return [...byKey.values()].filter((event) => isVisibleWorkerEvent(event, now)).slice(0, 8);
+    return [...byKey.values()]
+      .filter((event) => isVisibleWorkerEvent(event, now))
+      .sort(compareWorkerEvents)
+      .slice(0, 8);
   }, [activity, events, jobs, tick]);
 
   if (!workerEvents.length) {
@@ -4832,6 +4867,13 @@ function AgentWorkerCard({
   const maxTokens = Math.max(...displaySeries.map((point) => point.tokens), 1);
   const currentTokens = displaySeries[displaySeries.length - 1]?.tokens ?? 0;
   const cumulativeTokens = cumulativeTokenTotal(displaySeries);
+  const isLive = isLiveWorkerStatus(event.status);
+  const isWaiting = isWaitingWorkerStatus(event.status);
+  const description = event.human_description;
+  const title = description?.title || event.headline;
+  const summary = description?.summary || event.detail;
+  const elapsedFrom = event.started_at ?? event.created_at ?? event.updated_at ?? null;
+  const elapsed = elapsedFrom ? formatElapsed(Date.parse(elapsedFrom), Date.now() + tick) : "-";
 
   async function submit(eventSubmit: React.FormEvent) {
     eventSubmit.preventDefault();
@@ -4842,17 +4884,32 @@ function AgentWorkerCard({
   }
 
   return (
-    <section className={`agent-worker-card ${event.status} ${isActiveWorkerEvent(event) ? "active" : ""}`}>
+    <section className={`agent-worker-card ${event.status} ${isLive ? "active" : ""} ${isWaiting ? "waiting" : ""}`}>
       <div className="agent-worker-topline">
         <strong>{event.display_name}</strong>
-        <span>{event.status}</span>
+        <span className={isLive ? "live" : isWaiting ? "waiting" : ""}>{workerStatusLabel(event.status, text)}</span>
       </div>
-      <p>{event.headline}</p>
-      <small>{event.detail}</small>
-      <div
-        className={`token-sparkline ${isActiveWorkerEvent(event) || isRunningWorkerStatus(event.status) ? "live" : ""}`}
-        aria-label={text.estimatedTokens}
-      >
+      <p>{title}</p>
+      <small>{summary}</small>
+      <div className="agent-worker-context">
+        {event.project_name ? (
+          <span>
+            {text.workerProjectLabel}: <strong>{event.project_name}</strong>
+          </span>
+        ) : null}
+        {event.job_type ? (
+          <span>
+            {text.workerJobLabel}: <strong>{humanizeLabel(event.job_type)}</strong>
+          </span>
+        ) : null}
+        <span>
+          {text.workerIdLabel}: <strong>{shortId(event.job_id)}</strong>
+        </span>
+        <span>
+          {text.workerElapsedLabel}: <strong>{elapsed}</strong>
+        </span>
+      </div>
+      <div className={`token-sparkline ${isLive ? "live" : isWaiting ? "waiting" : ""}`} aria-label={text.estimatedTokens}>
         {displaySeries.map((point, index) => (
           <span
             key={`${point.step}-${index}`}
@@ -4874,7 +4931,7 @@ function AgentWorkerCard({
           <strong>{formatTokenCount(cumulativeTokens)}</strong>
         </div>
       </div>
-      <small className="agent-worker-estimate">{text.telemetryEstimate}</small>
+      <small className="agent-worker-estimate">{isWaiting ? text.telemetryWaiting : text.telemetryEstimate}</small>
       <form className="agent-worker-chat" onSubmit={(submitEvent) => void submit(submitEvent)}>
         <input
           value={draft}
@@ -4916,12 +4973,20 @@ function optimisticWorkerEvent(projectId: string, message: string): AgentWorkerE
   };
 }
 
+function isLiveWorkerStatus(status: string) {
+  return status === "running";
+}
+
+function isWaitingWorkerStatus(status: string) {
+  return ["queued", "approval_required"].includes(status);
+}
+
 function isRunningWorkerStatus(status: string) {
-  return ["queued", "running", "approval_required"].includes(status);
+  return isLiveWorkerStatus(status) || isWaitingWorkerStatus(status);
 }
 
 function isActiveWorkerEvent(event: AgentWorkerEvent) {
-  return event.active && isRunningWorkerStatus(event.status);
+  return Boolean(event.active) && isRunningWorkerStatus(event.status);
 }
 
 function hasLiveAgentOrModelActivity(
@@ -4940,12 +5005,60 @@ function isVisibleWorkerEvent(event: AgentWorkerEvent, now: number) {
   return Number.isFinite(timestamp) && now - timestamp < 9000;
 }
 
+function compareWorkerEvents(left: AgentWorkerEvent, right: AgentWorkerEvent) {
+  const leftRank = workerStatusRank(left.status);
+  const rightRank = workerStatusRank(right.status);
+  if (leftRank !== rightRank) return leftRank - rightRank;
+  const leftTime = Date.parse(left.updated_at ?? left.created_at ?? "") || 0;
+  const rightTime = Date.parse(right.updated_at ?? right.created_at ?? "") || 0;
+  return rightTime - leftTime;
+}
+
+function workerStatusRank(status: string) {
+  if (status === "running") return 0;
+  if (status === "approval_required") return 1;
+  if (status === "queued") return 2;
+  return 3;
+}
+
 function animatedTokenSeries(event: AgentWorkerEvent, tick: number): TokenSeriesPoint[] {
-  if (!isActiveWorkerEvent(event) && !isRunningWorkerStatus(event.status)) return event.token_usage.series;
+  if (!isLiveWorkerStatus(event.status)) return event.token_usage.series;
   return event.token_usage.series.map((point, index) => ({
     ...point,
     tokens: Math.max(1, Math.round(point.tokens + ((tick + index) % 3) * Math.max(4, Math.round(point.tokens * 0.035))))
   }));
+}
+
+function workerStatusLabel(status: string, text: LocaleMessages) {
+  if (status === "queued") return text.workerStatusQueued;
+  if (status === "running") return text.workerStatusRunning;
+  if (status === "approval_required") return text.workerStatusApproval;
+  if (["succeeded", "failed", "cancelled", "timed_out"].includes(status)) return text.workerStatusFinished;
+  return humanizeLabel(status);
+}
+
+function shortId(value: string) {
+  if (value.length <= 12) return value;
+  return value.slice(0, 12);
+}
+
+function humanizeLabel(value: string) {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatElapsed(startMs: number, nowMs: number) {
+  if (!Number.isFinite(startMs) || !Number.isFinite(nowMs)) return "-";
+  const seconds = Math.max(0, Math.floor((nowMs - startMs) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
 function cumulativeTokenTotal(series: TokenSeriesPoint[]) {
@@ -4957,6 +5070,68 @@ function formatTokenCount(value: number) {
   if (value >= 10_000) return `${Math.round(value / 1000)}k`;
   if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
   return String(Math.round(value));
+}
+
+function coerceHumanDescription(raw: unknown): AgentWorkerEvent["human_description"] {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const title = typeof record.title === "string" ? record.title : undefined;
+  const summary = typeof record.summary === "string" ? record.summary : typeof record.detail === "string" ? record.detail : undefined;
+  const source = typeof record.source === "string" ? record.source : undefined;
+  if (!title && !summary) return null;
+  return { title, summary, source };
+}
+
+function jobHumanDescription(job: Job): RequiredHumanDescription {
+  const fromOutput = coerceHumanDescription(job.output.human_description);
+  if (fromOutput?.title || fromOutput?.summary) {
+    return { title: fromOutput.title ?? jobHeadline(job), summary: fromOutput.summary ?? jobHeadline(job), source: fromOutput.source };
+  }
+  const fromContext = coerceHumanDescription(job.context.human_description);
+  if (fromContext?.title || fromContext?.summary) {
+    return { title: fromContext.title ?? jobHeadline(job), summary: fromContext.summary ?? jobHeadline(job), source: fromContext.source };
+  }
+  const defaultDescription = defaultJobHumanDescription(job);
+  if (defaultDescription) return defaultDescription;
+  const title = jobHeadline(job);
+  if (job.status === "queued") {
+    return {
+      title,
+      summary: `Waiting for a local worker to pick up ${job.id}. No live token telemetry is available yet.`,
+      source: "job_status_fallback"
+    };
+  }
+  return {
+    title,
+    summary: job.error_message ?? `${humanizeLabel(job.job_type)} is ${humanizeLabel(job.status)}.`,
+    source: "job_status_fallback"
+  };
+}
+
+function defaultJobHumanDescription(job: Job): RequiredHumanDescription | null {
+  const waiting = job.status === "queued" ? "Waiting for a local worker to pick it up. " : "";
+  if (job.job_type === "run_baseline") {
+    return {
+      title: "Train the adaptive baseline",
+      summary: `${waiting}Use the approved evaluation design, train the current adaptive tabular baseline, and publish comparable run evidence for the Leaderboard.`,
+      source: "job_type_default"
+    };
+  }
+  if (job.job_type === "train_model_candidates") {
+    return {
+      title: "Train candidate models",
+      summary: `${waiting}Train the candidate model set on the same split and metric surface so the Leaderboard can compare runs fairly.`,
+      source: "job_type_default"
+    };
+  }
+  if (job.job_type === "run_planned_agent_task_codex") {
+    return {
+      title: "Run Codex on the prepared agent task",
+      summary: `${waiting}Execute the prepared AgentTaskContract, then return artifacts, findings, and next recommendations to the harness.`,
+      source: "job_type_default"
+    };
+  }
+  return null;
 }
 
 function workerEventsFromJob(job: Job): AgentWorkerEvent[] {
@@ -4975,15 +5150,18 @@ function workerEventsFromJob(job: Job): AgentWorkerEvent[] {
       display_name: workerDisplayName(job.job_type),
       status: job.status,
       headline: jobHeadline(job),
-      detail: job.error_message ?? `Job ${job.id}`,
+      detail: job.error_message ?? jobHumanDescription(job).summary,
       job_id: job.id,
+      job_type: job.job_type,
       project_id: job.project_id,
       target_tab: targetTabForJob(job.job_type),
       created_at: job.created_at,
       updated_at: job.updated_at,
+      started_at: job.started_at,
       active: isRunningWorkerStatus(job.status),
+      human_description: jobHumanDescription(job),
       token_usage: {
-        source: "estimated_until_runner_telemetry",
+        source: job.status === "queued" ? "estimated_waiting_for_worker" : "estimated_until_runner_telemetry",
         is_estimate: true,
         series: estimatedJobTokens(job)
       }
@@ -5006,16 +5184,20 @@ function coerceWorkerEvent(raw: unknown, job: Job, index: number): AgentWorkerEv
     display_name: typeof record.display_name === "string" ? record.display_name : workerDisplayName(job.job_type),
     status: typeof record.status === "string" ? record.status : job.status,
     headline: typeof record.headline === "string" ? record.headline : jobHeadline(job),
-    detail: typeof record.detail === "string" ? record.detail : `Job ${job.id}`,
+    detail: typeof record.detail === "string" ? record.detail : jobHumanDescription(job).summary,
     job_id: typeof record.job_id === "string" ? record.job_id : job.id,
+    job_type: typeof record.job_type === "string" ? record.job_type : job.job_type,
     project_id: typeof record.project_id === "string" ? record.project_id : job.project_id,
+    project_name: typeof record.project_name === "string" ? record.project_name : null,
     target_tab: typeof record.target_tab === "string" ? record.target_tab : targetTabForJob(job.job_type),
     created_at: typeof record.created_at === "string" ? record.created_at : job.created_at,
     updated_at: typeof record.updated_at === "string" ? record.updated_at : job.updated_at,
+    started_at: typeof record.started_at === "string" ? record.started_at : job.started_at,
     active:
       typeof record.active === "boolean" && isRunningWorkerStatus(typeof record.status === "string" ? record.status : job.status)
         ? record.active
         : isRunningWorkerStatus(job.status),
+    human_description: coerceHumanDescription(record.human_description) ?? jobHumanDescription(job),
     token_usage: {
       source:
         usage && typeof usage === "object" && typeof (usage as Record<string, unknown>).source === "string"

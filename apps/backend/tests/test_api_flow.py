@@ -175,6 +175,15 @@ def test_full_auto_start_queues_training_for_large_dataset_boundary(
     activity = client.get(f"/api/projects/{project_id}/agent-activity").json()
     active_job_ids = {worker["job_id"] for worker in activity["workers"] if worker["active"]}
     assert set(output["created_job_ids"]).issubset(active_job_ids)
+    queued_workers = [worker for worker in activity["workers"] if worker["job_id"] in output["created_job_ids"]]
+    assert all(worker["project_name"] == "Autonomous queued training" for worker in queued_workers)
+    assert all(worker["human_description"]["summary"] for worker in queued_workers)
+    assert all(worker["token_usage"]["source"] == "estimated_waiting_for_worker" for worker in queued_workers)
+
+    history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
+    assert history
+    assert history[-1]["intent"]["type"] == "agent_loop_control"
+    assert "Agent Activity" in history[-1]["assistant_message"]
 
 
 def test_full_auto_codex_target_proposal_drives_evaluation_and_runs(tmp_path: Path, monkeypatch: Any) -> None:
