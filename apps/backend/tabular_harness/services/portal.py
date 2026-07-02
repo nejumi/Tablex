@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
 from datetime import timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
@@ -452,15 +454,27 @@ def running_codex_processes_for_project(project_id: str) -> list[dict[str, Any]]
     processes: list[dict[str, Any]] = []
     for line in completed.stdout.splitlines():
         stripped = line.strip()
-        if "codex exec" not in stripped or marker not in stripped:
+        if marker not in stripped:
             continue
         pid_text, _, command = stripped.partition(" ")
+        if not is_codex_exec_process(command):
+            continue
         try:
             pid = int(pid_text)
         except ValueError:
             continue
         processes.append({"pid": pid, "command": compact_command(command)})
     return processes
+
+
+def is_codex_exec_process(command: str) -> bool:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return False
+    if len(parts) < 2:
+        return False
+    return Path(parts[0]).name == "codex" and parts[1] == "exec"
 
 
 def compact_command(command: str, limit: int = 240) -> str:

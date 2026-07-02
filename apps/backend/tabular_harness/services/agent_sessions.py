@@ -276,6 +276,7 @@ def run_main_agent_session_supervisor(
             session.started_at = session.started_at or utc_now()
             session.updated_at = utc_now()
             session.last_heartbeat_at = utc_now()
+            session.last_error = None
             db.commit()
 
         exit_code = run_codex_cli_turn_streaming(
@@ -580,6 +581,10 @@ def run_codex_cli_turn_streaming(
             cmd = [
                 "codex",
                 "exec",
+                "--cd",
+                str(workspace),
+                "--sandbox",
+                "workspace-write",
                 "resume",
                 session.codex_thread_id,
                 "--json",
@@ -603,7 +608,7 @@ def run_codex_cli_turn_streaming(
                 "-",
             ]
         if agent_model and agent_model not in {"codex-default", "default"}:
-            insert_at = 3 if session.codex_thread_id else 2
+            insert_at = 7 if session.codex_thread_id else 2
             cmd[insert_at:insert_at] = ["--model", agent_model]
         append_session_event(
             db,
@@ -820,6 +825,7 @@ def ingest_session_workspace_outputs(
                 "agent_session_id": session.id,
                 "workspace_relative_path": str(path.relative_to(workspace)),
                 "source": "main_agent_session_workspace",
+                **metadata_for_session_output(path),
             }
             name = f"agent_session_{session.id}_{path.stem}".replace(".", "_")[:180]
             asset_type = asset_type_for_session_output(path)
@@ -871,7 +877,7 @@ def ingest_session_workspace_outputs(
 def asset_type_for_session_output(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".py" and ("notebook" in path.parts or "notebooks" in path.parts):
-        return "marimo_notebook"
+        return "analysis_notebook"
     if suffix in {".md", ".html"}:
         return "agent_session_report"
     if suffix == ".json":
@@ -879,6 +885,22 @@ def asset_type_for_session_output(path: Path) -> str:
     if suffix in {".png", ".jpg", ".jpeg", ".svg", ".webp"}:
         return "agent_session_figure"
     return "agent_session_output"
+
+
+def metadata_for_session_output(path: Path) -> dict[str, Any]:
+    suffix = path.suffix.lower()
+    if suffix == ".py" and ("notebook" in path.parts or "notebooks" in path.parts):
+        return {"notebook_kind": notebook_kind_for_session_output(path)}
+    return {}
+
+
+def notebook_kind_for_session_output(path: Path) -> str:
+    name = path.stem.lower().replace("-", "_")
+    if any(marker in name for marker in ("data_understanding", "grandmaster_eda", "eda", "exploration", "visual_story")):
+        return "data_understanding"
+    if any(marker in name for marker in ("model_diagnostics", "diagnostic", "leaderboard", "model", "experiment", "result")):
+        return "model_diagnostics"
+    return "agent_authored"
 
 
 def stop_main_session(db: Session, project: Project) -> AgentSession | None:

@@ -106,7 +106,7 @@ def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any
     notebook_artifacts = list(
         db.scalars(
             select(Artifact)
-            .where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+            .where(Artifact.project_id == project.id, Artifact.asset_type.in_(["analysis_notebook", "marimo_notebook"]))
             .order_by(Artifact.created_at.desc())
         ).all()
     )
@@ -1672,7 +1672,7 @@ def _notebook_index_item(
     visualizations_by_artifact_id: dict[str, VisualizationSpec],
 ) -> dict[str, Any]:
     metadata = loads_json(notebook_artifact.metadata_json, {})
-    notebook_kind = str(metadata.get("notebook_kind") or "unknown")
+    notebook_kind = str(metadata.get("notebook_kind") or _infer_notebook_kind_from_artifact(notebook_artifact, metadata))
     html_artifact = _latest_artifact_for_metadata(
         db, project.id, "notebook_html", "notebook_artifact_id", notebook_artifact.id
     )
@@ -1794,6 +1794,15 @@ def _linked_notebook_artifacts(
             db, project_id, "visualization_spec", "source_artifact_id", notebook_artifact.id
         ),
     }
+
+
+def _infer_notebook_kind_from_artifact(notebook_artifact: Artifact, metadata: dict[str, Any]) -> str:
+    value = f"{notebook_artifact.name} {metadata.get('workspace_relative_path') or ''}".lower().replace("-", "_")
+    if any(marker in value for marker in ("data_understanding", "grandmaster_eda", "_eda", "eda_", "exploration", "visual_story")):
+        return "data_understanding"
+    if any(marker in value for marker in ("model_diagnostics", "diagnostic", "leaderboard", "model", "experiment", "result")):
+        return "model_diagnostics"
+    return "unknown"
 
 
 def build_notebook_execution_plan_payload(

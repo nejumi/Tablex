@@ -297,6 +297,7 @@ from tabular_harness.services.portal import (
     build_project_turn_state,
     create_portal_idea,
     list_portal_ideas,
+    running_codex_processes_for_project,
     worker_events_from_job,
 )
 from tabular_harness.services.profiler import profile_tabular_file
@@ -1384,8 +1385,11 @@ def ensure_project_full_auto_agent_session(
 ) -> AgentSession | None:
     if project.current_phase != "AUTONOMOUS_LOOP" or project.autonomy_mode != "full_auto":
         return None
-    if active_main_session(db, project.id) is not None:
-        return None
+    existing = active_main_session(db, project.id)
+    if existing is not None:
+        if running_codex_processes_for_project(project.id):
+            return None
+        return existing
     return start_or_resume_main_session(
         db,
         store=store,
@@ -6196,16 +6200,31 @@ def get_project_agent_activity(
     ]
     session = active_main_session(db, project_id) or latest_main_session(db, project_id)
     if session is not None:
-        session_active = session.status in {"starting", "running", "between_turns", "waiting_for_runner"}
+        session_processes = running_codex_processes_for_project(project_id)
+        session_has_process = bool(session_processes)
+        session_display_status = (
+            "running"
+            if session.status == "running" and session_has_process
+            else "between_turns"
+            if session.status == "running"
+            else session.status
+        )
+        session_active = session_has_process or session.status in {"starting", "between_turns", "waiting_for_runner"}
+        session_detail = (
+            "Codex is running in the project workspace now."
+            if session_has_process
+            else "No live Codex process is observed yet. Full Auto is preparing the next turn."
+            if session.status == "running"
+            else session.last_error or "Preparing context, running analysis, or waiting for the next available worker."
+        )
         workers.insert(
             0,
             {
                 "worker_id": "main-agent-session",
-                "display_name": "Main Codex Session",
-                "status": session.status,
-                "headline": "Codex is working" if session.status == "running" else "Full Auto is queued",
-                "detail": session.last_error
-                or "Preparing context, running analysis, or waiting for the next available worker.",
+                "display_name": "Autonomous Analyst",
+                "status": session_display_status,
+                "headline": "Codex is working" if session_has_process else "Full Auto will continue",
+                "detail": session_detail,
                 "job_id": None,
                 "job_type": "agent_session",
                 "project_id": project_id,
@@ -6236,13 +6255,21 @@ def get_project_agent_activity(
     active_workers = [worker for worker in workers if worker.get("active")]
     turn_state = build_project_turn_state(project, jobs, workers, active_job_ids=active_job_ids)
     if session is not None and session.status in {"starting", "running", "between_turns", "waiting_for_runner"}:
+        observed_processes = list(turn_state.get("codex_processes") or [])
+        session_has_process = bool(observed_processes)
+        turn_detail = (
+            "Codex is running in the project workspace now."
+            if session_has_process
+            else "No live Codex process is observed yet. Full Auto is preparing the next turn."
+            if session.status == "running"
+            else session.last_error or "The project is still active. Progress will appear here when the next step starts."
+        )
         turn_state = {
             **turn_state,
-            "state": "agent_running" if session.status == "running" else "agent_scheduled",
+            "state": "agent_running" if session_has_process else "agent_scheduled",
             "owner": "agent",
-            "label": "Codex is working" if session.status == "running" else "Full Auto will continue",
-            "detail": session.last_error
-            or "The project is still active. Progress will appear here when the next step starts.",
+            "label": "Codex is working" if session_has_process else "Full Auto will continue",
+            "detail": turn_detail,
             "input_attention": False,
             "confidence": "observed",
             "agent_session_id": session.id,

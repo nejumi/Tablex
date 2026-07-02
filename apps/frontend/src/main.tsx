@@ -383,6 +383,12 @@ const englishMessages = {
   planBlockPriorResearchDone: "Research or Skill evidence is available.",
   planBlockPriorResearchNoFindings: "Codex researched or reviewed this step and found no additional external findings worth adding.",
   planBlockCodexLane: "Codex planned",
+  planBlockEvaluationPending: "Evaluation design will start after the preceding research step has usable evidence or an explicit no-findings decision.",
+  planBlockEvaluationDone: "EvaluationSpec and SplitManifest evidence are available.",
+  planBlockBaselinePending: "Modeling waits until evaluation is ready enough to compare runs.",
+  planBlockBaselineDone: "Comparable model run evidence is available.",
+  planBlockReportingPending: "Reports and notebooks will be authored from completed analysis evidence.",
+  planBlockReportingDone: "Report or authored notebook evidence is available.",
   planStatusDone: "Done",
   planStatusActive: "Running",
   planStatusPending: "Next",
@@ -738,10 +744,16 @@ const japaneseMessages: LocaleMessages = {
   planBlockPriorResearchDone: "取得済みの調査知見と根拠があります。",
   planBlockPriorResearchNoFindings: "Codexが調査または確認し、追加すべき外部知見はないと判断しました。",
   planBlockCodexLane: "Codex計画",
+  planBlockEvaluationPending: "前段の調査または明示的な追加知見なし判断の後に、評価設計へ進みます。",
+  planBlockEvaluationDone: "EvaluationSpecとSplitManifestの根拠があります。",
+  planBlockBaselinePending: "比較可能な評価設計が整ってからモデリングへ進みます。",
+  planBlockBaselineDone: "比較可能なモデルrunの根拠があります。",
+  planBlockReportingPending: "完了した分析根拠からレポートとNotebookを作成します。",
+  planBlockReportingDone: "レポートまたはauthored Notebookの根拠があります。",
   planStatusDone: "完了",
   planStatusActive: "実行中",
   planStatusPending: "次",
-  planStatusBlocked: "blocked",
+  planStatusBlocked: "要確認",
   planStatusWaiting: "待機",
   planStatusSkipped: "委譲中",
   planSubtaskSingular: "サブタスク",
@@ -4586,12 +4598,13 @@ function HomeTab({
     strategyBrief,
     equippedSkills,
     jobs: planJobs,
+    runs,
     nextStrategyAction,
-      text,
-      onTabChange,
-      onNavigateToTarget,
-      onStrategyAction
-    });
+    text,
+    onTabChange,
+    onNavigateToTarget,
+    onStrategyAction
+  });
 
   return (
     <div className="mission-home stack">
@@ -4716,6 +4729,7 @@ function HomeTab({
               busy={busy}
               text={text}
               messages={messages}
+              transcriptEvents={agentTranscriptEvents}
               submitShortcut={submitShortcut}
               userAvatarSrc={userAvatarSrc}
               latestContract={latestContract}
@@ -5132,7 +5146,8 @@ function ResearchPlanTimeline({
   const timelineRef = React.useRef<HTMLDivElement | null>(null);
   const activeBlockRef = React.useRef<HTMLButtonElement | null>(null);
   const expandedBlock = blocks.find((block) => block.id === expandedBlockId && block.subtasks?.length);
-  const activeBlockKey = blocks.find((block) => block.status === "active" || block.status === "skipped" || block.status === "blocked")?.id ?? "";
+  const activeBlockKey =
+    blocks.find((block) => block.status === "active" || block.status === "pending" || block.status === "blocked")?.id ?? "";
 
   React.useLayoutEffect(() => {
     if (!timelineRef.current || !activeBlockRef.current) return;
@@ -5226,6 +5241,7 @@ function buildResearchPlanBlocks({
   strategyBrief,
   equippedSkills,
   jobs,
+  runs,
   nextStrategyAction,
   text,
   onTabChange,
@@ -5239,6 +5255,7 @@ function buildResearchPlanBlocks({
   strategyBrief: AdaptiveStrategyBrief | null;
   equippedSkills: EquippedSkillItem[];
   jobs: Job[];
+  runs: Run[];
   nextStrategyAction: StrategyAction | null;
   text: LocaleMessages;
   onTabChange: (tab: Tab) => void;
@@ -5246,24 +5263,31 @@ function buildResearchPlanBlocks({
   onStrategyAction: (action: StrategyAction) => void;
 }): ResearchPlanBlock[] {
   const hasObjectiveEvidence = Boolean(project.target_column) || hasAnyArtifactType(artifacts, ["target_definition_proposal"]);
-  const hasUnderstandingEvidence = hasAnyArtifactType(artifacts, [
-    "eda_profile",
-    "understanding_report",
-    "eda_review_report",
-    "data_understanding_notebook_report"
-  ]);
-  const hasDataUnderstandingNotebook = hasAnyArtifactType(artifacts, [
-    "analysis_notebook",
-    "notebook_html",
-    "notebook_evidence_html",
-    "notebook_report"
-  ]);
+  const hasUnderstandingEvidence =
+    hasAnyArtifactType(artifacts, [
+      "eda_review_bundle",
+      "eda_review_report",
+      "data_understanding_notebook_report"
+    ]) ||
+    artifacts.some(isDataUnderstandingNotebookArtifact) ||
+    hasAgentAuthoredDataUnderstandingEvidence(artifacts);
+  const hasDataUnderstandingNotebook = artifacts.some(isDataUnderstandingNotebookArtifact);
   const hasPriorResearchPreparation =
     researchBriefs.length > 0 ||
     equippedSkills.length > 0 ||
     hasAnyArtifactType(artifacts, ["research_plan", "research_source_pack", "research_source_report", "notebook_authoring_brief"]);
   const noFindingsResearchArtifact = researchNoFindingsArtifact(artifacts);
   const hasPriorResearchEvidence = hasAnyResolvedResearchArtifact(artifacts);
+  const evaluationLane = strategyBrief?.candidate_lanes.find((lane) => lane.lane_id === "evaluation_lock") ?? null;
+  const baselineLane = strategyBrief?.candidate_lanes.find((lane) => lane.lane_id === "adaptive_baseline") ?? null;
+  const reportingLane = strategyBrief?.candidate_lanes.find((lane) => lane.lane_id === "reporting_and_visuals") ?? null;
+  const hasEvaluationEvidence = hasAnyArtifactType(artifacts, ["evaluation_spec"]) && hasAnyArtifactType(artifacts, ["split_manifest"]);
+  const hasModelingEvidence = runs.length > 0 || hasAnyArtifactType(artifacts, ["baseline_metrics", "model_package", "experiment_run"]);
+  const hasReportingEvidence = hasAnyArtifactType(artifacts, [
+    "run_report",
+    "decision_report",
+    "report"
+  ]) || artifacts.some(isReportingNotebookArtifact);
 
   const primaryPlanJob = jobs.find((job) => jobActiveForActivity(job)) ?? jobs.find((job) => !isTerminalJob(job)) ?? null;
   const activeInitialBlockId = activeInitialResearchPlanBlockId(primaryPlanJob);
@@ -5298,6 +5322,15 @@ function buildResearchPlanBlocks({
       : hasUnderstandingEvidence
         ? "pending"
         : "waiting";
+  const evaluationStatus: ResearchPlanBlockStatus = hasEvaluationEvidence
+    ? "done"
+    : researchPlanStatusFromStrategyLane(evaluationLane?.status ?? "");
+  const baselineStatus: ResearchPlanBlockStatus = hasModelingEvidence
+    ? "done"
+    : researchPlanStatusFromStrategyLane(baselineLane?.status ?? "");
+  const reportingStatus: ResearchPlanBlockStatus = hasReportingEvidence
+    ? "done"
+    : researchPlanStatusFromStrategyLane(reportingLane?.status ?? "");
 
   const blocks: ResearchPlanBlock[] = [
     {
@@ -5333,6 +5366,8 @@ function buildResearchPlanBlocks({
       status: understandingStatus,
       eyebrow: "03",
       evidence:
+        latestDataUnderstandingNotebookName(artifacts) ??
+        latestAgentAuthoredDataUnderstandingName(artifacts) ??
         latestArtifactName(artifacts, "understanding_report") ??
         latestArtifactName(artifacts, "eda_profile") ??
         latestArtifactName(artifacts, "eda_review_report"),
@@ -5364,20 +5399,42 @@ function buildResearchPlanBlocks({
         (equippedSkills.length ? `${equippedSkills.length} Skill${equippedSkills.length === 1 ? "" : "s"}` : null) ??
         (researchBriefs.length ? `${researchBriefs.length} brief${researchBriefs.length === 1 ? "" : "s"}` : null),
       onClick: () => onNavigateToTarget("Notebooks", "notebook-preview-top")
+    },
+    {
+      id: "evaluation",
+      title: text.planLaneEvaluation,
+      subtitle: hasEvaluationEvidence ? text.planBlockEvaluationDone : text.planBlockEvaluationPending,
+      status: evaluationStatus,
+      eyebrow: "05",
+      evidence: latestArtifactName(artifacts, "evaluation_spec") ?? latestArtifactName(artifacts, "split_manifest"),
+      onClick: () => onTabChange("Evaluation")
+    },
+    {
+      id: "modeling",
+      title: text.planLaneBaseline,
+      subtitle: hasModelingEvidence ? text.planBlockBaselineDone : text.planBlockBaselinePending,
+      status: baselineStatus,
+      eyebrow: "06",
+      evidence:
+        latestArtifactName(artifacts, "baseline_metrics") ??
+        latestArtifactName(artifacts, "model_package") ??
+        (runs.length ? `${runs.length} run${runs.length === 1 ? "" : "s"}` : null),
+      onClick: () => onTabChange("Leaderboard")
+    },
+    {
+      id: "reporting",
+      title: text.planLaneReporting,
+      subtitle: hasReportingEvidence ? text.planBlockReportingDone : text.planBlockReportingPending,
+      status: reportingStatus,
+      eyebrow: "07",
+      evidence:
+        latestArtifactName(artifacts, "analysis_notebook") ??
+        latestArtifactName(artifacts, "decision_report") ??
+        latestArtifactName(artifacts, "run_report") ??
+        latestArtifactName(artifacts, "report"),
+      onClick: () => onTabChange("Insight")
     }
   ];
-
-  strategyBrief?.candidate_lanes.forEach((lane) => {
-    blocks.push({
-      id: `strategy_${lane.lane_id}`,
-      title: localizedStrategyLaneTitle(lane, text),
-      subtitle: lane.why || lane.next_action,
-      status: researchPlanStatusFromStrategyLane(lane.status),
-      eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
-      evidence: lane.evidence_artifact_ids.length ? `${lane.evidence_artifact_ids.length} evidence` : lane.agent_role,
-      onClick: lane.next_action ? () => onTabChange("Home") : undefined
-    });
-  });
 
   if (nextStrategyAction && !strategyBrief?.candidate_lanes.length) {
     blocks.push({
@@ -5391,16 +5448,23 @@ function buildResearchPlanBlocks({
     });
   }
 
-  return attachResearchPlanSubtasks(blocks, jobs, text, onTabChange);
+  return enforceSequentialResearchPlan(attachResearchPlanSubtasks(blocks, jobs, text, onTabChange));
 }
 
-function localizedStrategyLaneTitle(lane: StrategyLane, text: LocaleMessages): string {
-  const haystack = `${lane.lane_id} ${lane.title} ${lane.agent_role}`.toLowerCase();
-  if (haystack.includes("evaluation") || haystack.includes("split")) return text.planLaneEvaluation;
-  if (haystack.includes("baseline") || haystack.includes("model") || haystack.includes("experiment")) return text.planLaneBaseline;
-  if (haystack.includes("notebook") || haystack.includes("eda")) return text.planLaneNotebook;
-  if (haystack.includes("report") || haystack.includes("insight")) return text.planLaneReporting;
-  return lane.title;
+function enforceSequentialResearchPlan(blocks: ResearchPlanBlock[]): ResearchPlanBlock[] {
+  let frontierSeen = false;
+  return blocks.map((block) => {
+    if (!frontierSeen) {
+      if (block.status !== "done" && block.status !== "skipped") {
+        frontierSeen = true;
+      }
+      return block;
+    }
+    return {
+      ...block,
+      status: "waiting"
+    };
+  });
 }
 
 function attachResearchPlanSubtasks(
@@ -5415,7 +5479,7 @@ function attachResearchPlanSubtasks(
   const unassigned: ResearchPlanSubtask[] = [];
   for (const job of jobs) {
     const subtask = researchPlanSubtaskFromJob(job, onTabChange);
-    const blockId = researchPlanBlockIdForJob(job, blocks);
+    const blockId = researchPlanBlockIdForJob(job);
     if (blockId && blockIds.has(blockId)) {
       const existing = byBlock.get(blockId) ?? [];
       existing.push(subtask);
@@ -5484,7 +5548,7 @@ function subtaskEvidenceSummary(subtasks: ResearchPlanSubtask[], text: LocaleMes
   return `${subtasks.length} ${subtasks.length === 1 ? text.planSubtaskSingular : text.planSubtaskPlural}`;
 }
 
-function researchPlanBlockIdForJob(job: Job, blocks: ResearchPlanBlock[]): string | null {
+function researchPlanBlockIdForJob(job: Job): string | null {
   const initialBlockId = activeInitialResearchPlanBlockId(job);
   if (initialBlockId) return initialBlockId;
   const jobType = job.job_type.toLowerCase();
@@ -5498,22 +5562,15 @@ function researchPlanBlockIdForJob(job: Job, blocks: ResearchPlanBlock[]): strin
     return "prior_research";
   }
   if (jobType.includes("evaluation") || jobType.includes("split")) {
-    return bestStrategyBlock(blocks, ["evaluation", "split"]);
+    return "evaluation";
   }
   if (jobType.includes("baseline") || jobType.includes("model") || jobType.includes("experiment") || jobType.includes("leaderboard")) {
-    return bestStrategyBlock(blocks, ["baseline", "model", "experiment", "leaderboard"]);
+    return "modeling";
   }
   if (jobType.includes("notebook") || jobType.includes("report") || jobType.includes("insight")) {
-    return bestStrategyBlock(blocks, ["report", "notebook", "insight"]) ?? "prior_research";
+    return "reporting";
   }
   return null;
-}
-
-function bestStrategyBlock(blocks: ResearchPlanBlock[], needles: string[]): string | null {
-  const lane = blocks.find(
-    (block) => block.id.startsWith("strategy_") && needles.some((needle) => block.id.toLowerCase().includes(needle))
-  );
-  return lane?.id ?? null;
 }
 
 function tabForResearchPlanJob(job: Job): Tab {
@@ -5563,6 +5620,52 @@ function researchPlanStatusLabel(status: ResearchPlanBlockStatus, text: LocaleMe
 function hasAnyArtifactType(artifacts: Artifact[], assetTypes: string[]) {
   const wanted = new Set(assetTypes);
   return artifacts.some((artifact) => wanted.has(artifact.asset_type));
+}
+
+function isDataUnderstandingNotebookArtifact(artifact: Artifact) {
+  if (!["analysis_notebook", "marimo_notebook"].includes(artifact.asset_type)) return false;
+  const notebookKind = String(artifact.metadata.notebook_kind ?? artifact.metadata.kind ?? "");
+  if (notebookKind === "data_understanding") return true;
+  const workspacePath = String(artifact.metadata.workspace_relative_path ?? "");
+  return isDataUnderstandingArtifactName(`${artifact.name} ${workspacePath}`);
+}
+
+function latestDataUnderstandingNotebookName(artifacts: Artifact[]) {
+  return artifacts
+    .filter(isDataUnderstandingNotebookArtifact)
+    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0]?.name ?? null;
+}
+
+function hasAgentAuthoredDataUnderstandingEvidence(artifacts: Artifact[]) {
+  return artifacts.some((artifact) => {
+    if (!["agent_session_artifact", "agent_session_report"].includes(artifact.asset_type)) return false;
+    return isDataUnderstandingArtifactName(artifact.name);
+  });
+}
+
+function latestAgentAuthoredDataUnderstandingName(artifacts: Artifact[]) {
+  return artifacts
+    .filter((artifact) => {
+      if (!["agent_session_artifact", "agent_session_report"].includes(artifact.asset_type)) return false;
+      return isDataUnderstandingArtifactName(artifact.name);
+    })
+    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0]?.name ?? null;
+}
+
+function isDataUnderstandingArtifactName(value: string) {
+  return /(^|[_\-\s])(data[_\-\s]?understanding|eda|exploration|visual[_\-\s]?story|notebook[_\-\s]?evidence|grandmaster[_\-\s]?eda)([_\-\s]|$)/.test(
+    value.toLowerCase()
+  );
+}
+
+function isReportingNotebookArtifact(artifact: Artifact) {
+  if (!["analysis_notebook", "marimo_notebook"].includes(artifact.asset_type)) return false;
+  const notebookKind = String(artifact.metadata.notebook_kind ?? artifact.metadata.kind ?? "");
+  if (["model_diagnostics", "result_report", "decision_report", "experiment_report"].includes(notebookKind)) return true;
+  const workspacePath = String(artifact.metadata.workspace_relative_path ?? "");
+  return /(^|[_\-\s])(diagnostics|model[_\-\s]?diagnostics|report|results?)([_\-\s]|$)/.test(
+    `${artifact.name} ${workspacePath}`.toLowerCase()
+  );
 }
 
 function hasAnyResolvedResearchArtifact(artifacts: Artifact[]) {
@@ -6547,10 +6650,38 @@ function AgentConversationTurnCard({
   );
 }
 
+function agentChatLiveCodexEvents(events: AgentTranscriptEvent[]): AgentTranscriptEvent[] {
+  return events.filter(
+    (event) =>
+      event.source === "codex_cli" &&
+      event.event_type === "item.completed" &&
+      typeof event.content === "string" &&
+      event.content.trim().length > 0
+  );
+}
+
+function AgentLiveTranscriptCard({ event }: { event: AgentTranscriptEvent }) {
+  return (
+    <section className="chat-message-row assistant">
+      <TableeAvatar state="working" active />
+      <div className="chat-message-stack">
+        <div className="chat-message-meta">
+          <span>Codex</span>
+          <time>{formatDate(event.created_at)}</time>
+        </div>
+        <div className="agent-chat-message assistant live-codex">
+          <p>{event.content}</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function AgentChatDock({
   busy,
   text,
   messages,
+  transcriptEvents,
   submitShortcut,
   userAvatarSrc,
   latestContract,
@@ -6562,6 +6693,7 @@ function AgentChatDock({
   busy: boolean;
   text: LocaleMessages;
   messages: AgentChatMessage[];
+  transcriptEvents: AgentTranscriptEvent[];
   submitShortcut: ChatSubmitShortcut;
   userAvatarSrc: string | null;
   latestContract: Artifact | null;
@@ -6572,11 +6704,13 @@ function AgentChatDock({
 }) {
   const [draft, setDraft] = React.useState("");
   const turns = React.useMemo(() => buildAgentConversationTurns(messages), [messages]);
+  const liveCodexEvents = React.useMemo(() => agentChatLiveCodexEvents(transcriptEvents), [transcriptEvents]);
   const recentTurns = turns.slice(-5);
   const olderTurns = turns.slice(0, -5);
   const latestTurn = turns[turns.length - 1];
+  const latestLiveCodexEvent = liveCodexEvents[liveCodexEvents.length - 1];
   const chatScroll = useStickyBottomScroll<HTMLDivElement>(
-    `${turns.length}:${latestTurn?.id ?? "empty"}:${latestTurn?.user?.text.length ?? 0}:${latestTurn?.assistant?.text.length ?? 0}`
+    `${turns.length}:${latestTurn?.id ?? "empty"}:${latestTurn?.user?.text.length ?? 0}:${latestTurn?.assistant?.text.length ?? 0}:${latestLiveCodexEvent?.id ?? "no-live-codex"}`
   );
 
   async function submitDraft() {
@@ -6623,7 +6757,7 @@ function AgentChatDock({
         </div>
       </div>
       <TurnStateBar text={text} turnState={turnState} />
-      {turns.length ? (
+      {turns.length || liveCodexEvents.length ? (
         <div className="agent-chat-log" ref={chatScroll.ref} onScroll={chatScroll.onScroll}>
           {olderTurns.length ? (
             <details className="agent-chat-history">
@@ -6654,6 +6788,9 @@ function AgentChatDock({
               tableeMotionState={tableeMotionState}
               onActionOpen={onActionOpen}
             />
+          ))}
+          {liveCodexEvents.slice(-3).map((event) => (
+            <AgentLiveTranscriptCard event={event} key={event.id} />
           ))}
         </div>
       ) : null}
