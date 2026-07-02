@@ -29,6 +29,10 @@ class AutonomyStartCreate(BaseModel):
     utility_model: str | None = None
 
 
+class AutonomyStopCreate(BaseModel):
+    locale: str | None = None
+
+
 class ProjectRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   BarChart3,
+  BookOpen,
   Check,
   Database,
   Download,
@@ -18,6 +19,7 @@ import {
   ListChecks,
   Loader2,
   MessageSquare,
+  Minus,
   Moon,
   PieChart,
   Play,
@@ -346,6 +348,17 @@ const englishMessages = {
   agentPowerOn: "Agent loop is on",
   agentPowerOff: "Agent loop is off",
   targetCanWait: "Target can be set now, derived by the agent, or confirmed after data understanding.",
+  targetColumnLabel: "Objective / target",
+  targetPlaceholder: "Choose a column, describe a derived target, or leave open",
+  setTarget: "Set target",
+  clearTarget: "Clear target",
+  targetSaved: "Target saved",
+  targetSuggestions: "Column suggestions",
+  targetSuggestionsEmpty: "Upload or select a table to see column suggestions.",
+  primaryTableLabel: "Primary table",
+  primaryTableHelp: "Pick the table that defines one prediction row. Supporting tables stay available for Codex-designed joins and aggregation.",
+  queuedTablesTitle: "Tables to upload",
+  uploadCompleteChatMessage: "Upload completed. Data Understanding artifacts and the marimo notebook are being registered in this workspace.",
   approvalBasedMode: "Approval Based",
   approvalBasedModeHint: "Ask before risky decisions, external execution, evaluation changes, or deployment-facing steps.",
   fullAutoMode: "Full Auto",
@@ -359,6 +372,8 @@ const englishMessages = {
   planBlockObjective: "Objective setting",
   planBlockObjectivePending: "Codex can propose the objective; it may be a column, derived aggregate, unsupervised task, or inverse-problem workflow.",
   planBlockObjectiveDone: "Objective evidence is registered.",
+  planBlockObjectiveSkipped: "Full Auto delegated this to Codex and continued with an explicit assumption boundary.",
+  planBlockObjectiveDelegated: "delegated to Codex",
   planBlockUnderstanding: "Data understanding",
   planBlockUnderstandingPending: "Profile schema, missingness, row semantics, leakage risk, and target-aware evidence when available.",
   planBlockUnderstandingDone: "Data understanding artifacts are available.",
@@ -371,8 +386,13 @@ const englishMessages = {
   planStatusPending: "Next",
   planStatusBlocked: "Blocked",
   planStatusWaiting: "Waiting",
+  planStatusSkipped: "Delegated",
   planSubtaskSingular: "subtask",
   planSubtaskPlural: "subtasks",
+  planLaneEvaluation: "Evaluation design",
+  planLaneBaseline: "Modeling experiments",
+  planLaneReporting: "Reporting",
+  planLaneNotebook: "Notebook analysis",
   openNotebookViewer: "Open notebook",
   notebookCreatedChatMessage: "A marimo notebook was saved as an asset and linked to its source context.",
   notebookLinkedAssetDetail: "Open the notebook viewer from this chat, the related dataset, model, run, or Assets.",
@@ -681,6 +701,17 @@ const japaneseMessages: LocaleMessages = {
   agentPowerOn: "Agent loopはONです",
   agentPowerOff: "Agent loopはOFFです",
   targetCanWait: "ターゲットは今設定しても、Agentに作らせても、Data Understanding後に確定しても構いません。",
+  targetColumnLabel: "目的 / ターゲット",
+  targetPlaceholder: "列を選ぶ、派生ターゲットを書く、または未設定のまま進める",
+  setTarget: "ターゲットを設定",
+  clearTarget: "ターゲットを解除",
+  targetSaved: "ターゲットを保存しました",
+  targetSuggestions: "列候補",
+  targetSuggestionsEmpty: "テーブルを追加または選択すると列候補が表示されます。",
+  primaryTableLabel: "Primary table",
+  primaryTableHelp: "予測1行の粒度を定義するテーブルを選びます。補助テーブルはCodexがjoin/aggregate設計に使えます。",
+  queuedTablesTitle: "アップロード対象テーブル",
+  uploadCompleteChatMessage: "アップロードが完了しました。Data Understanding artifactとmarimo notebookをこのworkspaceに登録しています。",
   approvalBasedMode: "承認ベース",
   approvalBasedModeHint: "重要判断、外部実行、評価変更、deployment関連は人間の承認を待ちます。",
   fullAutoMode: "フルオート",
@@ -694,6 +725,8 @@ const japaneseMessages: LocaleMessages = {
   planBlockObjective: "目的設定",
   planBlockObjectivePending: "目的は列、派生集計、教師なし、逆問題なども含めてCodexが提案できます。",
   planBlockObjectiveDone: "目的設定の根拠が登録されています。",
+  planBlockObjectiveSkipped: "Full AutoはここをCodexに委譲し、明示的な仮定boundaryを残して先に進んでいます。",
+  planBlockObjectiveDelegated: "Codexに委譲",
   planBlockUnderstanding: "データ理解",
   planBlockUnderstandingPending: "schema、欠損、行の意味、leakage risk、必要ならtarget-aware evidenceを確認します。",
   planBlockUnderstandingDone: "Data understanding artifactがあります。",
@@ -706,8 +739,13 @@ const japaneseMessages: LocaleMessages = {
   planStatusPending: "次",
   planStatusBlocked: "blocked",
   planStatusWaiting: "待機",
+  planStatusSkipped: "委譲中",
   planSubtaskSingular: "サブタスク",
   planSubtaskPlural: "サブタスク",
+  planLaneEvaluation: "評価設計",
+  planLaneBaseline: "モデリング実験",
+  planLaneReporting: "レポート作成",
+  planLaneNotebook: "Notebook分析",
   openNotebookViewer: "ノートブックを開く",
   notebookCreatedChatMessage: "marimo notebookをAssetとして保存し、関連するコンテキストに紐づけました。",
   notebookLinkedAssetDetail: "このChat、関連するDataset、Model、Run、Assetsから同じNotebook viewerを開けます。",
@@ -1011,6 +1049,15 @@ type DatasetSnapshot = {
   row_count: number | null;
   column_count: number | null;
   schema_hash: string;
+  created_at: string;
+};
+
+type SemanticCatalog = {
+  id: string;
+  project_id: string;
+  dataset_snapshot_id: string;
+  artifact_id: string | null;
+  columns: Array<Record<string, unknown> | string>;
   created_at: string;
 };
 
@@ -1765,7 +1812,7 @@ type AdaptiveStrategyBrief = {
   generated_at: string;
 };
 
-type ResearchPlanBlockStatus = "done" | "active" | "pending" | "blocked" | "waiting";
+type ResearchPlanBlockStatus = "done" | "active" | "pending" | "blocked" | "waiting" | "skipped";
 
 type ResearchPlanSubtask = {
   id: string;
@@ -3891,7 +3938,7 @@ function ProjectDetail({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: poweredOn
-          ? undefined
+          ? JSON.stringify({ locale: userSettings.locale })
           : JSON.stringify({
               autonomy_mode: project.autonomy_mode,
               runner_mode: project.autonomy_mode === "full_auto" ? "codex_cli_if_available" : "harness_only",
@@ -4153,6 +4200,27 @@ function ProjectDetail({
           busy={busy}
           text={text}
           runAction={runAction}
+          onOpenNotebookArtifact={(artifactId) => {
+            setArtifactPreviewRequest({
+              artifactId,
+              targetTab: "Notebooks",
+              anchor: "notebook-focus",
+              nonce: Date.now()
+            });
+            navigateToTarget("Notebooks", "notebook-focus");
+          }}
+          onStatusMessage={(message) =>
+            setAgentChatMessages((current) =>
+              upsertAgentChatMessages(current, [
+                {
+                  id: `local-status-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  role: "system",
+                  text: message,
+                  createdAt: new Date().toISOString()
+                }
+              ])
+            )
+          }
         />
       )}
       {tab === "Understanding" && (
@@ -4943,13 +5011,26 @@ function ResearchPlanTimeline({
   text: LocaleMessages;
 }) {
   const [expandedBlockId, setExpandedBlockId] = React.useState<string | null>(null);
+  const timelineRef = React.useRef<HTMLDivElement | null>(null);
+  const activeBlockRef = React.useRef<HTMLButtonElement | null>(null);
   const expandedBlock = blocks.find((block) => block.id === expandedBlockId && block.subtasks?.length);
+  const activeBlockKey = blocks.find((block) => block.status === "active" || block.status === "skipped" || block.status === "blocked")?.id ?? "";
+
+  React.useLayoutEffect(() => {
+    if (!timelineRef.current || !activeBlockRef.current) return;
+    const container = timelineRef.current;
+    const active = activeBlockRef.current;
+    const left = active.offsetLeft - container.clientWidth / 2 + active.clientWidth / 2;
+    container.scrollTo({ left: Math.max(0, left), behavior: "smooth" });
+  }, [activeBlockKey, blocks.length]);
+
   return (
     <div className="research-plan-timeline-wrap">
-      <div className="research-plan-timeline" aria-label={text.researchPlanTitle}>
+      <div className="research-plan-timeline" aria-label={text.researchPlanTitle} ref={timelineRef}>
         {blocks.map((block, index) => (
           <React.Fragment key={block.id}>
             <button
+              ref={block.id === activeBlockKey ? activeBlockRef : undefined}
               className={`research-plan-block ${block.status} ${expandedBlockId === block.id ? "expanded" : ""}`}
               disabled={!block.onClick && !block.subtasks?.length}
               onClick={() => {
@@ -5064,9 +5145,16 @@ function buildResearchPlanBlocks({
 
   const primaryPlanJob = jobs.find((job) => jobActiveForActivity(job)) ?? jobs.find((job) => !isTerminalJob(job)) ?? null;
   const activeInitialBlockId = activeInitialResearchPlanBlockId(primaryPlanJob);
+  const objectiveDelegatedToCodex =
+    !hasObjectiveEvidence &&
+    datasetCount > 0 &&
+    project.autonomy_mode === "full_auto" &&
+    project.current_phase === "AUTONOMOUS_LOOP";
   const dataUploadStatus = datasetCount > 0 ? "done" : "active";
   const objectiveStatus = hasObjectiveEvidence
     ? "done"
+    : objectiveDelegatedToCodex
+      ? "skipped"
     : activeInitialBlockId === "objective"
       ? "active"
       : datasetCount > 0
@@ -5100,10 +5188,18 @@ function buildResearchPlanBlocks({
     {
       id: "objective",
       title: text.planBlockObjective,
-      subtitle: hasObjectiveEvidence ? text.planBlockObjectiveDone : text.planBlockObjectivePending,
+      subtitle: hasObjectiveEvidence
+        ? text.planBlockObjectiveDone
+        : objectiveDelegatedToCodex
+          ? text.planBlockObjectiveSkipped
+          : text.planBlockObjectivePending,
       status: objectiveStatus,
       eyebrow: "02",
-      evidence: project.target_column ? `target: ${project.target_column}` : latestArtifactName(artifacts, "target_definition_proposal"),
+      evidence: project.target_column
+        ? `target: ${project.target_column}`
+        : objectiveDelegatedToCodex
+          ? text.planBlockObjectiveDelegated
+          : latestArtifactName(artifacts, "target_definition_proposal"),
       onClick: () => onTabChange("Assumptions")
     },
     {
@@ -5136,7 +5232,7 @@ function buildResearchPlanBlocks({
   strategyBrief?.candidate_lanes.forEach((lane) => {
     blocks.push({
       id: `strategy_${lane.lane_id}`,
-      title: lane.title,
+      title: localizedStrategyLaneTitle(lane, text),
       subtitle: lane.why || lane.next_action,
       status: researchPlanStatusFromStrategyLane(lane.status),
       eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
@@ -5158,6 +5254,15 @@ function buildResearchPlanBlocks({
   }
 
   return attachResearchPlanSubtasks(blocks, jobs, text, onTabChange);
+}
+
+function localizedStrategyLaneTitle(lane: StrategyLane, text: LocaleMessages): string {
+  const haystack = `${lane.lane_id} ${lane.title} ${lane.agent_role}`.toLowerCase();
+  if (haystack.includes("evaluation") || haystack.includes("split")) return text.planLaneEvaluation;
+  if (haystack.includes("baseline") || haystack.includes("model") || haystack.includes("experiment")) return text.planLaneBaseline;
+  if (haystack.includes("notebook") || haystack.includes("eda")) return text.planLaneNotebook;
+  if (haystack.includes("report") || haystack.includes("insight")) return text.planLaneReporting;
+  return lane.title;
 }
 
 function attachResearchPlanSubtasks(
@@ -5232,6 +5337,7 @@ function researchPlanStatusWithSubtasks(
 ): ResearchPlanBlockStatus {
   if (subtasks.some((subtask) => subtask.status === "active")) return "active";
   if (subtasks.some((subtask) => subtask.status === "blocked")) return "blocked";
+  if (currentStatus === "skipped") return "skipped";
   if (subtasks.some((subtask) => subtask.status === "waiting")) return "waiting";
   return currentStatus;
 }
@@ -5306,6 +5412,7 @@ function researchPlanStatusLabel(status: ResearchPlanBlockStatus, text: LocaleMe
   if (status === "active") return text.planStatusActive;
   if (status === "blocked") return text.planStatusBlocked;
   if (status === "waiting") return text.planStatusWaiting;
+  if (status === "skipped") return text.planStatusSkipped;
   return text.planStatusPending;
 }
 
@@ -6367,6 +6474,15 @@ function AgentActivityRail({
   onWorkerMessage: (message: string) => Promise<void>;
   onCancelWorker: (jobId: string) => Promise<void>;
 }) {
+  const [position, setPosition] = React.useState(() => loadAgentActivityPosition());
+  const [minimized, setMinimized] = React.useState(() => loadAgentActivityMinimized());
+  const dragStateRef = React.useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startLeft: number;
+    startTop: number;
+  } | null>(null);
   const workerEvents = React.useMemo(() => {
     const now = Date.now() + tick;
     const fromActivity = activity?.workers ?? [];
@@ -6386,9 +6502,79 @@ function AgentActivityRail({
     return null;
   }
 
+  function persistPosition(nextPosition: AgentActivityPosition) {
+    setPosition(nextPosition);
+    window.localStorage.setItem(agentActivityPositionStorageKey, JSON.stringify(nextPosition));
+  }
+
+  function toggleMinimized() {
+    setMinimized((current) => {
+      const next = !current;
+      window.localStorage.setItem(agentActivityMinimizedStorageKey, next ? "1" : "0");
+      return next;
+    });
+  }
+
+  function handleDragStart(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("button,a,input,textarea,select")) return;
+    const rail = event.currentTarget.closest(".agent-activity-rail") as HTMLElement | null;
+    if (!rail) return;
+    const rect = rail.getBoundingClientRect();
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: rect.left,
+      startTop: rect.top
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleDragMove(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const railWidth = minimized ? 244 : 352;
+    const railHeight = minimized ? 64 : 560;
+    const nextPosition = constrainAgentActivityPosition({
+      left: drag.startLeft + event.clientX - drag.startX,
+      top: drag.startTop + event.clientY - drag.startY
+    }, railWidth, railHeight);
+    setPosition(nextPosition);
+  }
+
+  function handleDragEnd(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dragStateRef.current = null;
+    const railWidth = minimized ? 244 : 352;
+    const railHeight = minimized ? 64 : 560;
+    persistPosition(
+      constrainAgentActivityPosition(
+        {
+          left: drag.startLeft + event.clientX - drag.startX,
+          top: drag.startTop + event.clientY - drag.startY
+        },
+        railWidth,
+        railHeight
+      )
+    );
+  }
+
   return (
-    <aside className="agent-activity-rail" aria-label={text.agentActivityTitle}>
-      <div className="agent-activity-header">
+    <aside
+      className={`agent-activity-rail ${minimized ? "is-minimized" : ""}`}
+      aria-label={text.agentActivityTitle}
+      style={{ left: `${position.left}px`, top: `${position.top}px` }}
+    >
+      <div
+        className="agent-activity-header"
+        onPointerDown={handleDragStart}
+        onPointerMove={handleDragMove}
+        onPointerUp={handleDragEnd}
+        onPointerCancel={handleDragEnd}
+      >
         <div>
           <div className="agent-activity-title">
             <Activity size={16} />
@@ -6396,9 +6582,14 @@ function AgentActivityRail({
           </div>
           <small>{text.agentActivitySubtitle}</small>
         </div>
-        <span className="agent-scope-pill live">{text.agentActivityLiveOnly}</span>
+        <div className="agent-activity-controls">
+          <span className="agent-scope-pill live">{text.agentActivityLiveOnly}</span>
+          <button className="icon-button" onClick={toggleMinimized} title={minimized ? "Expand" : "Minimize"} type="button">
+            {minimized ? <Plus size={14} /> : <Minus size={14} />}
+          </button>
+        </div>
       </div>
-      {workerEvents.length ? (
+      {!minimized && workerEvents.length ? (
         <div className="agent-worker-list">
           {workerEvents.map((event) => (
             <AgentWorkerCard
@@ -6414,6 +6605,44 @@ function AgentActivityRail({
       ) : null}
     </aside>
   );
+}
+
+type AgentActivityPosition = { left: number; top: number };
+const agentActivityPositionStorageKey = "tablex.agentActivity.position";
+const agentActivityMinimizedStorageKey = "tablex.agentActivity.minimized";
+
+function loadAgentActivityPosition(): AgentActivityPosition {
+  const fallback = defaultAgentActivityPosition();
+  try {
+    const raw = window.localStorage.getItem(agentActivityPositionStorageKey);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<AgentActivityPosition>;
+    if (typeof parsed.left !== "number" || typeof parsed.top !== "number") return fallback;
+    return constrainAgentActivityPosition({ left: parsed.left, top: parsed.top }, 352, 560);
+  } catch {
+    return fallback;
+  }
+}
+
+function loadAgentActivityMinimized(): boolean {
+  return window.localStorage.getItem(agentActivityMinimizedStorageKey) === "1";
+}
+
+function defaultAgentActivityPosition(): AgentActivityPosition {
+  if (typeof window === "undefined") return { left: 960, top: 82 };
+  return {
+    left: Math.max(14, window.innerWidth - 370),
+    top: 82
+  };
+}
+
+function constrainAgentActivityPosition(position: AgentActivityPosition, width: number, height: number): AgentActivityPosition {
+  if (typeof window === "undefined") return position;
+  const margin = 10;
+  return {
+    left: Math.max(margin, Math.min(position.left, Math.max(margin, window.innerWidth - Math.min(width, window.innerWidth - margin * 2) - margin))),
+    top: Math.max(margin, Math.min(position.top, Math.max(margin, window.innerHeight - Math.min(height, window.innerHeight - margin * 2) - margin)))
+  };
 }
 
 function AgentWorkerCard({
@@ -7254,7 +7483,9 @@ function DataTab({
   jobs,
   busy,
   text,
-  runAction
+  runAction,
+  onOpenNotebookArtifact,
+  onStatusMessage
 }: {
   project: Project;
   datasets: DatasetSnapshot[];
@@ -7265,12 +7496,17 @@ function DataTab({
   busy: boolean;
   text: LocaleMessages;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
+  onOpenNotebookArtifact: (artifactId: string) => void;
+  onStatusMessage: (message: string) => void;
 }) {
   const [queuedFiles, setQueuedFiles] = React.useState<File[]>([]);
   const [primaryFileName, setPrimaryFileName] = React.useState("");
   const [isDraggingData, setIsDraggingData] = React.useState(false);
   const [uploadProgress, setUploadProgress] = React.useState<UploadBundleProgress | null>(null);
   const [target, setTarget] = React.useState(project.target_column ?? "");
+  const [targetSavedNotice, setTargetSavedNotice] = React.useState<string | null>(null);
+  const [fileColumnHints, setFileColumnHints] = React.useState<Record<string, string[]>>({});
+  const [latestSemanticCatalog, setLatestSemanticCatalog] = React.useState<SemanticCatalog | null>(null);
   const [erHintFile, setErHintFile] = React.useState<File | null>(null);
   const [erHintNote, setErHintNote] = React.useState("");
   const [benchmarkPaths, setBenchmarkPaths] = React.useState<Record<string, string>>({});
@@ -7309,6 +7545,53 @@ function DataTab({
     queuedFiles.length > 0 &&
     queuedFiles.every((item) => uploadProgressByKey.get(uploadFileKey(item))?.progress === 100);
   const canSubmitDataBundle = canUploadDataBundle && !currentUploadComplete;
+  const latestDataset = datasets[0] ?? null;
+  const latestDatasetId = latestDataset?.id ?? null;
+  const semanticColumns = React.useMemo(() => columnNamesFromSemanticCatalog(latestSemanticCatalog), [latestSemanticCatalog]);
+  const queuedPrimaryColumns = React.useMemo(
+    () => (selectedPrimaryFileName ? fileColumnHints[selectedPrimaryFileName] ?? [] : []),
+    [fileColumnHints, selectedPrimaryFileName]
+  );
+  const targetSuggestions = React.useMemo(
+    () => uniqueStrings([...queuedPrimaryColumns, ...semanticColumns]).slice(0, 48),
+    [queuedPrimaryColumns, semanticColumns]
+  );
+  const relatedDataNotebooks = React.useMemo(
+    () =>
+      (notebookIndex?.items ?? [])
+        .filter(
+          (item) =>
+            item.notebook_kind === "data_understanding" &&
+            (!latestDatasetId || item.dataset_snapshot_id === latestDatasetId)
+        )
+        .slice(0, 5),
+    [latestDatasetId, notebookIndex]
+  );
+  const targetDraft = target.trim();
+  const targetChanged = targetDraft !== (project.target_column ?? "");
+  const canSetTarget = targetChanged && !busy;
+
+  React.useEffect(() => {
+    setTarget(project.target_column ?? "");
+  }, [project.target_column]);
+
+  React.useEffect(() => {
+    if (!latestDatasetId) {
+      setLatestSemanticCatalog(null);
+      return;
+    }
+    let active = true;
+    api<SemanticCatalog>(`/api/datasets/${latestDatasetId}/schema`)
+      .then((catalog) => {
+        if (active) setLatestSemanticCatalog(catalog);
+      })
+      .catch(() => {
+        if (active) setLatestSemanticCatalog(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [latestDatasetId]);
 
   React.useEffect(() => {
     setPrimaryFileName((current) => {
@@ -7322,6 +7605,7 @@ function DataTab({
     const incoming = Array.from(files);
     if (!incoming.length) return;
     setUploadProgress(null);
+    void readQueuedFileColumnHints(incoming, setFileColumnHints);
     setQueuedFiles((current) => {
       const seen = new Set(current.map(uploadFileKey));
       const next = [...current];
@@ -7338,7 +7622,32 @@ function DataTab({
   function removeQueuedUploadFile(fileToRemove: File) {
     const key = uploadFileKey(fileToRemove);
     setUploadProgress(null);
+    setFileColumnHints((current) => {
+      const next = { ...current };
+      delete next[fileToRemove.name];
+      return next;
+    });
     setQueuedFiles((current) => current.filter((item) => uploadFileKey(item) !== key));
+  }
+
+  async function setProjectTarget(nextTarget: string | null) {
+    const normalized = nextTarget?.trim() || null;
+    await runAction(async () => {
+      const updated = await api<Project>(`/api/projects/${project.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_column: normalized })
+      });
+      setTarget(updated.target_column ?? "");
+      setTargetSavedNotice(text.targetSaved);
+      onStatusMessage(
+        normalized
+          ? `${text.targetSaved}: ${normalized}`
+          : text.clearTarget
+      );
+      window.setTimeout(() => setTargetSavedNotice(null), 2400);
+      return updated;
+    });
   }
 
   async function uploadDataBundle() {
@@ -7369,6 +7678,7 @@ function DataTab({
       if (relationalArtifactId) {
         await loadRelationalPreview(relationalArtifactId);
       }
+      onStatusMessage(text.uploadCompleteChatMessage);
       return job;
     });
     if (uploaded) {
@@ -7681,7 +7991,6 @@ function DataTab({
     ["data_quality_gate", "data_quality_report"].includes(artifact.asset_type)
   );
   const publicWorkflowJobs = jobs.filter((job) => job.job_type === "run_public_benchmark_workflow");
-  const latestDataset = datasets[0] ?? null;
   const latestProfileArtifact = profileArtifacts[0] ?? null;
   const latestQualityReportArtifact = qualityArtifacts.find((artifact) => artifact.asset_type === "data_quality_report") ?? null;
   const latestQualityGateArtifact = qualityArtifacts.find((artifact) => artifact.asset_type === "data_quality_gate") ?? null;
@@ -7831,12 +8140,41 @@ function DataTab({
             </small>
           </label>
           <div className="data-intake-controls">
-            <div className="field-stack">
-              <label>Target column</label>
-              <input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Optional after understanding" />
+            <div className="field-stack target-field-stack">
+              <label>{text.targetColumnLabel}</label>
+              <div className="target-input-row">
+                <input
+                  list="target-column-suggestions"
+                  value={target}
+                  onChange={(event) => setTarget(event.target.value)}
+                  placeholder={text.targetPlaceholder}
+                />
+                <button className="primary-button" disabled={!canSetTarget} onClick={() => void setProjectTarget(targetDraft)} type="button">
+                  <Check size={16} />
+                  {targetDraft ? text.setTarget : text.clearTarget}
+                </button>
+              </div>
+              <datalist id="target-column-suggestions">
+                {targetSuggestions.map((column) => (
+                  <option key={column} value={column} />
+                ))}
+              </datalist>
+              {targetSavedNotice ? <small className="field-success">{targetSavedNotice}</small> : null}
+              <div className="target-suggestion-strip">
+                <span>{text.targetSuggestions}</span>
+                {targetSuggestions.length ? (
+                  targetSuggestions.slice(0, 10).map((column) => (
+                    <button key={column} className="target-suggestion-chip" onClick={() => setTarget(column)} type="button">
+                      {column}
+                    </button>
+                  ))
+                ) : (
+                  <small>{text.targetSuggestionsEmpty}</small>
+                )}
+              </div>
             </div>
             <div className="field-stack">
-              <label>Primary table</label>
+              <label>{text.primaryTableLabel}</label>
               <select
                 value={selectedPrimaryFileName}
                 disabled={!queuedTableFiles.length}
@@ -7852,6 +8190,7 @@ function DataTab({
                   <option value="">Add a CSV or Parquet file</option>
                 )}
               </select>
+              <small>{text.primaryTableHelp}</small>
             </div>
             <div className="button-row">
               <button className="primary-button" disabled={!canSubmitDataBundle || busy} onClick={() => void uploadDataBundle()}>
@@ -7883,6 +8222,25 @@ function DataTab({
         </div>
         {queuedFiles.length ? (
           <div className="queued-file-list">
+            {queuedTableFiles.length ? (
+              <div className="queued-table-picker">
+                <span>{text.queuedTablesTitle}</span>
+                <div>
+                  {queuedTableFiles.map((queuedFile) => (
+                    <button
+                      className={`queued-table-chip ${selectedPrimaryFileName === queuedFile.name ? "active" : ""}`}
+                      key={uploadFileKey(queuedFile)}
+                      onClick={() => setPrimaryFileName(queuedFile.name)}
+                      type="button"
+                    >
+                      <Database size={14} />
+                      <strong>{queuedFile.name}</strong>
+                      <small>{fileColumnHints[queuedFile.name]?.length ? `${fileColumnHints[queuedFile.name].length} columns` : formatBytes(queuedFile.size)}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {uploadProgress ? (
               <div className={`queued-file-overall ${uploadProgress.active ? "active" : "complete"}`}>
                 <div>
@@ -7974,6 +8332,37 @@ function DataTab({
         previewEmpty="Upload data or run the quality gate to see the first evidence artifact here."
         boundary="No silent row or feature dropping"
       />
+      <Panel title={text.relatedNotebooks} icon={<BookOpen size={18} />}>
+        {relatedDataNotebooks.length ? (
+          <div className="related-notebook-list">
+            {relatedDataNotebooks.map((item) => {
+              const previewArtifactId = notebookPreviewArtifactId(item);
+              return (
+                <button
+                  className="related-notebook-item"
+                  disabled={!previewArtifactId}
+                  key={item.notebook_artifact_id}
+                  onClick={() => {
+                    if (previewArtifactId) onOpenNotebookArtifact(previewArtifactId);
+                  }}
+                  type="button"
+                >
+                  <BookOpen size={17} />
+                  <div>
+                    <strong>{item.title}</strong>
+                    <small>
+                      {item.status.replace(/_/g, " ")} · {formatDate(item.created_at)}
+                    </small>
+                  </div>
+                  <span>{text.openNotebookViewer}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <EmptyInline text={text.noRelatedNotebooks} />
+        )}
+      </Panel>
       <details className="data-supporting-shelves data-supporting-shelves-primary">
         <summary>
           <span>Supporting data shelves</span>
@@ -8820,6 +9209,73 @@ function uploadFileState(progress: UploadFileProgress | undefined, uploadProgres
     return "stopped";
   }
   return progress.progress > 0 ? "uploading" : "waiting";
+}
+
+async function readQueuedFileColumnHints(files: File[], setHints: React.Dispatch<React.SetStateAction<Record<string, string[]>>>) {
+  await Promise.all(
+    files.map(async (file) => {
+      if (!isTableUploadFile(file)) return;
+      const extension = uploadFileExtension(file);
+      if (extension !== ".csv") {
+        setHints((current) => ({ ...current, [file.name]: [] }));
+        return;
+      }
+      const sample = await file.slice(0, 64 * 1024).text();
+      setHints((current) => ({ ...current, [file.name]: parseCsvHeaderColumns(sample) }));
+    })
+  );
+}
+
+function parseCsvHeaderColumns(sample: string): string[] {
+  const firstLine = sample.split(/\r?\n/, 1)[0] ?? "";
+  const columns: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < firstLine.length; index += 1) {
+    const char = firstLine[index];
+    const next = firstLine[index + 1];
+    if (char === '"' && quoted && next === '"') {
+      current += '"';
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (char === "," && !quoted) {
+      columns.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  columns.push(current.trim());
+  return uniqueStrings(columns.filter(Boolean));
+}
+
+function columnNamesFromSemanticCatalog(catalog: SemanticCatalog | null): string[] {
+  if (!catalog) return [];
+  return uniqueStrings(
+    catalog.columns
+      .map((column) => {
+        if (typeof column === "string") return column;
+        return textField(column.name) ?? textField(column.column_name) ?? textField(column.id);
+      })
+      .filter((column): column is string => Boolean(column))
+  );
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    next.push(normalized);
+  }
+  return next;
 }
 
 function numberField(value: unknown): number | null {

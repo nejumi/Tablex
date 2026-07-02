@@ -197,11 +197,14 @@ def acquire_next_job(
     *,
     worker_id: str,
     job_types: set[str] | None = None,
+    project_id: str | None = None,
 ) -> Job | None:
     now = utc_now()
     stmt = select(Job).where(Job.status.in_(RUNNABLE_STATUSES)).order_by(Job.priority.desc(), Job.created_at)
     if job_types:
         stmt = stmt.where(Job.job_type.in_(job_types))
+    if project_id is not None:
+        stmt = stmt.where(Job.project_id == project_id)
     candidates = db.scalars(stmt.limit(50)).all()
     for job in candidates:
         run_after = job.run_after

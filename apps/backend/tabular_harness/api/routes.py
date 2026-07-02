@@ -72,6 +72,7 @@ from tabular_harness.schemas import (
     AuthRegisterCreate,
     AuthStatusRead,
     AutonomyStartCreate,
+    AutonomyStopCreate,
     AvatarCandidateCreate,
     AvatarCandidateResponse,
     BenchmarkDatasetRead,
@@ -161,6 +162,7 @@ from tabular_harness.services.asset_library import (
     asset_version_to_dict,
     create_asset_reference,
     create_library_asset,
+    equip_default_project_skills,
     seed_default_assets,
 )
 from tabular_harness.services.assumption_review import build_assumption_review_queue
@@ -959,6 +961,7 @@ def create_project(
     payload: ProjectCreate,
     request: Request,
     db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = Project(
         id=new_id("p"),
@@ -972,6 +975,7 @@ def create_project(
     )
     db.add(project)
     db.flush()
+    equip_default_project_skills(db, store, project_id=project.id)
     return project_to_dict(project)
 
 
@@ -1258,6 +1262,25 @@ def run_autonomy_start_job_background(
             if job is not None:
                 mark_job_failed(job, str(exc))
                 db.commit()
+    run_project_autonomy_worker_pump_background(session_factory, store, project_id=project_id, max_jobs=6)
+
+
+def run_project_autonomy_worker_pump_background(
+    session_factory: sessionmaker[Session],
+    store: LocalArtifactStore,
+    *,
+    project_id: str,
+    max_jobs: int = 6,
+) -> None:
+    worker = create_default_worker(worker_id="local-autonomy-pump", store=store)
+    for _ in range(max_jobs):
+        with session_factory() as db:
+            project = db.get(Project, project_id)
+            if project is None or project.current_phase != "AUTONOMOUS_LOOP" or project.autonomy_mode != "full_auto":
+                return
+            job = worker.run_next_job(db, project_id=project_id)
+            if job is None:
+                return
 
 
 @router.post("/api/projects/{project_id}/autonomy/start", response_model=JobRead)
@@ -1338,10 +1361,14 @@ def start_project_autonomy(
 def stop_project_autonomy(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+    payload: AutonomyStopCreate | None = None,
 ) -> dict[str, Any]:
     job: Job | None = None
     try:
         project = require_project(db, project_id)
+        locale = payload.locale if payload is not None else None
+        japanese = bool(locale and locale.lower().startswith("ja"))
         job = create_job(
             db,
             job_type="stop_autonomous_loop",
@@ -1379,12 +1406,18 @@ def stop_project_autonomy(
             cancelled_ids.append(active_job.id)
         project.current_phase = "IDLE"
         project.updated_at = utc_now()
+        assistant_message = (
+            "Agent loopを停止しました。実行中または待機中の作業は可能な範囲でキャンセルしました。再開すると、最新のProject状態を読み直して続きから動きます。"
+            if japanese
+            else "Autonomous activity is stopped. Active or queued work was cancelled where possible. When restarted, the loop will reread the latest project state before continuing."
+        )
         mark_job_succeeded(
             job,
             {
                 "schema_version": "autonomous_loop_stop.v1",
                 "project_id": project_id,
-                "assistant_message": "Autonomous activity is stopped. The selected autonomy mode is preserved; press Start to resume.",
+                "response_locale": locale or "en-US",
+                "assistant_message": assistant_message,
                 "cancelled_job_ids": cancelled_ids,
                 "worker_events": [
                     {
@@ -1412,6 +1445,19 @@ def stop_project_autonomy(
                 ],
             },
         )
+        artifact = record_autonomy_control_chat_turn(
+            db,
+            store,
+            project=project,
+            job=job,
+            user_message="Agent loopを停止" if japanese else "Stop agent loop",
+            assistant_message=assistant_message,
+            output=loads_json(job.output_json, {}),
+            locale=locale,
+        )
+        output = loads_json(job.output_json, {})
+        output["agent_chat_turn_artifact_id"] = artifact.id
+        job.output_json = dumps_json(output)
     except OperationalError as exc:
         db.rollback()
         raise_metadata_db_busy(exc)
@@ -1766,6 +1812,8 @@ def ingest_uploaded_data_bundle(
     table_records: list[dict[str, Any]] = []
     dataset: DatasetSnapshot | None = None
     dataset_artifact: Artifact | None = None
+    notebook_artifact_ids: list[str] = []
+    notebook_warning: str | None = None
 
     for index, upload in enumerate(table_uploads):
         is_primary = upload is selected_primary
@@ -1954,6 +2002,26 @@ def ingest_uploaded_data_bundle(
             relation_type="summarized_by",
         )
 
+    if dataset is not None:
+        try:
+            notebook_result = create_data_understanding_notebook(db, store=store, project=project)
+            notebook_artifact_ids = notebook_result.artifact_ids
+            notebook_artifact = notebook_result.notebook_artifact
+            notebook_html_artifact = notebook_result.html_artifact
+            notebook_report_artifact = notebook_result.report_artifact
+            notebook_manifest_artifact = notebook_result.manifest_artifact
+        except ValueError as exc:
+            notebook_warning = str(exc)
+            notebook_artifact = None
+            notebook_html_artifact = None
+            notebook_report_artifact = None
+            notebook_manifest_artifact = None
+    else:
+        notebook_artifact = None
+        notebook_html_artifact = None
+        notebook_report_artifact = None
+        notebook_manifest_artifact = None
+
     project.current_phase = "UNDERSTANDING_REVIEW"
     project.updated_at = utc_now()
     artifact_ids = [
@@ -1962,6 +2030,7 @@ def ingest_uploaded_data_bundle(
             dataset_artifact,
             relational_catalog_artifact,
             manifest_artifact,
+            *[db.get(Artifact, artifact_id) for artifact_id in notebook_artifact_ids],
             *[cast(Artifact, record["artifact"]) for record in table_records if not record["is_primary"]],
             *[result.artifact for result in hint_results],
             *[result.report_artifact for result in hint_results],
@@ -1982,6 +2051,21 @@ def ingest_uploaded_data_bundle(
         "relational_hint_report_artifact_ids": [result.report_artifact.id for result in hint_results],
         "relational_catalog_artifact_id": relational_catalog_artifact.id if relational_catalog_artifact else None,
         "relational_table_bundle_manifest_artifact_id": manifest_artifact.id if manifest_artifact else None,
+        "analysis_notebook_artifact_ids": notebook_artifact_ids,
+        "analysis_notebook_artifact_id": notebook_artifact.id if notebook_artifact else None,
+        "notebook_html_artifact_id": notebook_html_artifact.id if notebook_html_artifact else None,
+        "notebook_report_artifact_id": notebook_report_artifact.id if notebook_report_artifact else None,
+        "notebook_run_manifest_artifact_id": notebook_manifest_artifact.id if notebook_manifest_artifact else None,
+        "notebook_kind": "data_understanding" if notebook_artifact else None,
+        "notebook_warning": notebook_warning,
+        "assistant_message": upload_bundle_assistant_message(
+            project=project,
+            table_count=len(table_uploads),
+            hint_count=len(hint_uploads),
+            target_column=effective_target,
+            notebook_artifact_ids=notebook_artifact_ids,
+            notebook_warning=notebook_warning,
+        ),
         "aggregate_merge_policy": "Codex runner may design, implement, compare, and reject aggregate/merge strategies inside harness guardrails.",
         "runner_context": {
             "fixed_recipe_required": False,
@@ -1991,6 +2075,31 @@ def ingest_uploaded_data_bundle(
             "connector_credentials_materialized": False,
         },
     }
+
+
+def upload_bundle_assistant_message(
+    *,
+    project: Project,
+    table_count: int,
+    hint_count: int,
+    target_column: str | None,
+    notebook_artifact_ids: list[str],
+    notebook_warning: str | None,
+) -> str:
+    target_line = f"Objective/target is currently `{target_column}`." if target_column else (
+        "Objective/target is still open. Full Auto can ask Codex to review possible task shapes from the uploaded data."
+    )
+    notebook_line = (
+        "A Data Understanding marimo notebook was generated and linked as an artifact."
+        if notebook_artifact_ids
+        else f"Data Understanding notebook was not generated yet: {notebook_warning or 'no notebook artifact was returned'}."
+    )
+    return (
+        f"Uploaded {table_count} table file(s)"
+        f"{f' and {hint_count} ER/schema hint file(s)' if hint_count else ''}.\n\n"
+        f"{target_line}\n\n"
+        f"{notebook_line}"
+    )
 
 
 def select_uploaded_primary_table(table_uploads: list[UploadFile], primary_filename: str | None) -> UploadFile | None:

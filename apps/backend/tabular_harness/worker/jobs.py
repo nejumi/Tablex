@@ -17,7 +17,9 @@ from tabular_harness.models.entities import (
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.autonomy import (
     RUNNER_MODE_CODEX_IF_AVAILABLE,
+    AutonomousLoopState,
     active_autonomous_child_job_ids,
+    ingest_codex_target_definition_proposal,
     queue_autonomous_session_continuation,
     run_autonomous_loop_tick,
 )
@@ -30,6 +32,7 @@ from tabular_harness.services.baseline import (
 from tabular_harness.services.evaluation import generate_split_manifest
 from tabular_harness.services.jobs import JOB_TYPES, create_job
 from tabular_harness.services.planned_agent_execution import run_planned_agent_task_codex_cli
+from tabular_harness.services.planned_agent_workspace import load_contract_payload
 from tabular_harness.worker.runner import JobHandler, SyncWorker
 
 INITIAL_JOB_TYPES = tuple(sorted(JOB_TYPES))
@@ -382,6 +385,16 @@ def run_planned_agent_task_codex_handler(db: Session, job: Job, store: LocalArti
         contract_artifact=contract_artifact,
         job=job,
     )
+    contract_payload = load_contract_payload(contract_artifact)
+    target_state = AutonomousLoopState(project=project, job=job)
+    if contract_payload.get("task_type") == "target_definition_review":
+        ingest_codex_target_definition_proposal(
+            db,
+            project=project,
+            state=target_state,
+            agent_result=result.agent_result,
+            source_artifact_id=result.artifact_ids[0] if result.artifact_ids else None,
+        )
     status = "failed" if result.agent_result.status == "failed" else "succeeded"
     output: dict[str, Any] = {
         "schema_version": "planned_agent_task_codex_execution.v1",
@@ -405,6 +418,8 @@ def run_planned_agent_task_codex_handler(db: Session, job: Job, store: LocalArti
         "agent_feature_recipe_artifact_id": result.experiment_ingestion.feature_recipe_artifact_id,
         "approach_decision_trace_artifact_id": result.approach_decision_trace_artifact_id,
         "visualization_ids": result.experiment_ingestion.visualization_ids,
+        "autonomous_state_steps": [step.to_dict() for step in target_state.steps],
+        "project_target_column": project.target_column,
         "worker_events": [
             {
                 "worker_id": "codex-runner",

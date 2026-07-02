@@ -111,7 +111,17 @@ def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -
 
     project_response = client.post("/api/projects", json={"name": "Authed project"})
     assert project_response.status_code == 200, project_response.text
+    project_id = project_response.json()["id"]
     assert project_response.json()["created_by"] == owner_user_id
+
+    project_refs_response = client.get(f"/api/projects/{project_id}/asset-references")
+    assert project_refs_response.status_code == 200
+    equipped_skill_names = {
+        reference["asset"]["name"]
+        for reference in project_refs_response.json()
+        if reference["asset"] and reference["relation_type"] == "equipped_for_agent_context"
+    }
+    assert "tablex_grandmaster_eda" in equipped_skill_names
 
     settings_response = client.patch(
         "/api/auth/me/settings",
@@ -1218,6 +1228,9 @@ def test_upload_data_bundle_profiles_primary_supporting_tables_and_er_hint(tmp_p
     assert len(job["output"]["relational_hint_artifact_ids"]) == 1
     assert job["output"]["relational_catalog_artifact_id"]
     assert job["output"]["relational_table_bundle_manifest_artifact_id"]
+    assert job["output"]["analysis_notebook_artifact_id"]
+    assert job["output"]["notebook_html_artifact_id"]
+    assert job["output"]["notebook_kind"] == "data_understanding"
     assert job["output"]["runner_context"]["fixed_recipe_required"] is False
 
     artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
@@ -1228,6 +1241,8 @@ def test_upload_data_bundle_profiles_primary_supporting_tables_and_er_hint(tmp_p
     assert "relational_schema_hint" in asset_types
     assert "relational_catalog" in asset_types
     assert "relational_table_bundle_manifest" in asset_types
+    assert "analysis_notebook" in asset_types
+    assert "notebook_html" in asset_types
 
     catalog_preview_response = client.get(f"/api/artifacts/{job['output']['relational_catalog_artifact_id']}/preview")
     assert catalog_preview_response.status_code == 200

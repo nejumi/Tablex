@@ -9,7 +9,14 @@ from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import Asset, AssetReference, AssetVersion
 from tabular_harness.services.approach import store_json_artifact
-from tabular_harness.services.artifacts import LocalArtifactStore
+from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
+
+DEFAULT_PROJECT_SKILL_NAMES = {
+    "tablex_grandmaster_eda",
+    "tabular_approach_research",
+    "tabular_gradient_boosting_strategy",
+    "evaluation_diagnostics_interpreter",
+}
 
 DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
     {
@@ -305,6 +312,42 @@ def seed_default_assets(db: Session, store: LocalArtifactStore) -> list[Asset]:
             continue
         created_or_existing.append(create_library_asset(db, store=store, payload=definition))
     return created_or_existing
+
+
+def equip_default_project_skills(db: Session, store: LocalArtifactStore, *, project_id: str) -> list[AssetReference]:
+    assets = seed_default_assets(db, store)
+    references: list[AssetReference] = []
+    for asset in assets:
+        if asset.asset_type != "skill" or asset.name not in DEFAULT_PROJECT_SKILL_NAMES or not asset.latest_version_id:
+            continue
+        existed = db.scalar(
+            select(AssetReference).where(
+                AssetReference.source_type == "project",
+                AssetReference.source_id == project_id,
+                AssetReference.target_asset_id == asset.id,
+                AssetReference.relation_type == "equipped_for_agent_context",
+            )
+        )
+        reference = create_asset_reference(
+            db,
+            source_type="project",
+            source_id=project_id,
+            target_asset_id=asset.id,
+            target_asset_version_id=asset.latest_version_id,
+            relation_type="equipped_for_agent_context",
+        )
+        references.append(reference)
+        if existed is None:
+            create_lineage_edge(
+                db,
+                project_id=project_id,
+                from_asset_type="project",
+                from_asset_id=project_id,
+                to_asset_type="library_asset",
+                to_asset_id=asset.id,
+                relation_type="equipped_for_agent_context",
+            )
+    return references
 
 
 def create_library_asset(db: Session, *, store: LocalArtifactStore, payload: dict[str, Any]) -> Asset:
