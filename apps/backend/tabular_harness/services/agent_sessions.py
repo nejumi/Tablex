@@ -40,6 +40,8 @@ from tabular_harness.services.artifacts import (
 MAIN_AUTONOMOUS_SESSION_TYPE = "main_autonomous"
 ACTIVE_SESSION_STATUSES = {"starting", "running", "between_turns", "waiting_for_runner"}
 TERMINAL_SESSION_STATUSES = {"stopped", "failed", "gave_up", "completed"}
+_SUPERVISOR_LOCK = threading.Lock()
+_ACTIVE_SUPERVISORS: set[str] = set()
 
 
 def active_main_session(db: Session, project_id: str) -> AgentSession | None:
@@ -248,97 +250,128 @@ def run_main_agent_session_supervisor(
     max_turns: int = 100_000,
     turn_timeout_seconds: int = 1800,
 ) -> None:
-    for _ in range(max_turns):
-        with session_factory() as db:
-            project = db.get(Project, project_id)
-            session = db.get(AgentSession, session_id)
-            if project is None or session is None:
-                return
-            if project.current_phase != "AUTONOMOUS_LOOP" or session.status in TERMINAL_SESSION_STATUSES:
-                session.status = "stopped"
-                session.pid = None
-                session.ended_at = utc_now()
-                append_session_event(
-                    db,
-                    session,
-                    source="tablex_sidecar",
-                    event_type="session_stopped",
-                    role="harness",
-                    title="Full Auto stopped",
-                    content="Full Auto is off. The analysis will not continue until the project is started again.",
-                    payload={"project_phase": project.current_phase if project else None},
-                )
+    if not acquire_supervisor_slot(session_id):
+        return
+    try:
+        for _ in range(max_turns):
+            with session_factory() as db:
+                project = db.get(Project, project_id)
+                session = db.get(AgentSession, session_id)
+                if project is None or session is None:
+                    return
+                if session.pid and pid_is_alive(session.pid):
+                    session.status = "running"
+                    session.last_heartbeat_at = utc_now()
+                    db.commit()
+                    return
+                if project.current_phase != "AUTONOMOUS_LOOP" or session.status in TERMINAL_SESSION_STATUSES:
+                    session.status = "stopped"
+                    session.pid = None
+                    session.ended_at = utc_now()
+                    append_session_event(
+                        db,
+                        session,
+                        source="tablex_sidecar",
+                        event_type="session_stopped",
+                        role="harness",
+                        title="Full Auto stopped",
+                        content="Full Auto is off. The analysis will not continue until the project is started again.",
+                        payload={"project_phase": project.current_phase if project else None},
+                    )
+                    db.commit()
+                    return
+                workspace = prepare_session_workspace(db, store=store, project=project, session=session)
+                prompt = build_turn_prompt(db, project=project, session=session)
+                session.status = "running"
+                session.started_at = session.started_at or utc_now()
+                session.updated_at = utc_now()
+                session.last_heartbeat_at = utc_now()
+                session.last_error = None
                 db.commit()
-                return
-            workspace = prepare_session_workspace(db, store=store, project=project, session=session)
-            prompt = build_turn_prompt(db, project=project, session=session)
-            session.status = "running"
-            session.started_at = session.started_at or utc_now()
-            session.updated_at = utc_now()
-            session.last_heartbeat_at = utc_now()
-            session.last_error = None
-            db.commit()
 
-        exit_code = run_codex_cli_turn_streaming(
-            session_factory,
-            project_id=project_id,
-            session_id=session_id,
-            workspace=workspace,
-            prompt=prompt,
-            agent_model=agent_model,
-            timeout_seconds=turn_timeout_seconds,
-        )
-        with session_factory() as db:
-            project = db.get(Project, project_id)
-            session = db.get(AgentSession, session_id)
-            if project is None or session is None:
-                return
-            ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=Path(session.workspace_path or workspace))
-            if project.current_phase != "AUTONOMOUS_LOOP":
-                session.status = "stopped"
-                session.pid = None
-                session.ended_at = utc_now()
-                db.commit()
-                return
-            if exit_code is None:
-                session.status = "waiting_for_runner"
-                session.pid = None
-                session.last_error = "Codex CLI is not available."
-                db.commit()
-                time.sleep(10)
-                continue
-            if exit_code != 0:
+            exit_code = run_codex_cli_turn_streaming(
+                session_factory,
+                project_id=project_id,
+                session_id=session_id,
+                workspace=workspace,
+                prompt=prompt,
+                agent_model=agent_model,
+                timeout_seconds=turn_timeout_seconds,
+            )
+            with session_factory() as db:
+                project = db.get(Project, project_id)
+                session = db.get(AgentSession, session_id)
+                if project is None or session is None:
+                    return
+                ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=Path(session.workspace_path or workspace))
+                if project.current_phase != "AUTONOMOUS_LOOP":
+                    session.status = "stopped"
+                    session.pid = None
+                    session.ended_at = utc_now()
+                    db.commit()
+                    return
+                if exit_code is None:
+                    session.status = "waiting_for_runner"
+                    session.pid = None
+                    session.last_error = "Codex CLI is not available."
+                    db.commit()
+                    time.sleep(10)
+                    continue
+                if exit_code != 0:
+                    session.status = "between_turns"
+                    session.pid = None
+                    session.last_error = f"Codex turn exited with code {exit_code}; supervisor will continue the same AgentSession."
+                    append_session_event(
+                        db,
+                        session,
+                        source="tablex_sidecar",
+                        event_type="turn_recovery_scheduled",
+                        role="harness",
+                        title="Codex turn returned non-zero; continuing session",
+                        content="Full Auto remains on, so Tablex will resume the same AgentSession instead of leaving the project stopped.",
+                        payload={"exit_code": exit_code},
+                    )
+                    db.commit()
+                    time.sleep(5)
+                    continue
                 session.status = "between_turns"
                 session.pid = None
-                session.last_error = f"Codex turn exited with code {exit_code}; supervisor will continue the same AgentSession."
+                session.turn_index += 1
                 append_session_event(
                     db,
                     session,
                     source="tablex_sidecar",
-                    event_type="turn_recovery_scheduled",
+                    event_type="turn_completed_supervisor_continue",
                     role="harness",
-                    title="Codex turn returned non-zero; continuing session",
-                    content="Full Auto remains on, so Tablex will resume the same AgentSession instead of leaving the project stopped.",
-                    payload={"exit_code": exit_code},
+                    title="Codex turn completed; supervisor will continue",
+                    content="Full Auto is still on. Tablex keeps the same AgentSession alive and asks Codex to continue from the transcript and project state.",
+                    payload={"turn_index": session.turn_index},
                 )
                 db.commit()
-                time.sleep(5)
-                continue
-            session.status = "between_turns"
-            session.pid = None
-            session.turn_index += 1
-            append_session_event(
-                db,
-                session,
-                source="tablex_sidecar",
-                event_type="turn_completed_supervisor_continue",
-                role="harness",
-                title="Codex turn completed; supervisor will continue",
-                content="Full Auto is still on. Tablex keeps the same AgentSession alive and asks Codex to continue from the transcript and project state.",
-                payload={"turn_index": session.turn_index},
-            )
-            db.commit()
-        time.sleep(2)
+            time.sleep(2)
+    finally:
+        release_supervisor_slot(session_id)
+
+
+def acquire_supervisor_slot(session_id: str) -> bool:
+    with _SUPERVISOR_LOCK:
+        if session_id in _ACTIVE_SUPERVISORS:
+            return False
+        _ACTIVE_SUPERVISORS.add(session_id)
+        return True
+
+
+def release_supervisor_slot(session_id: str) -> None:
+    with _SUPERVISOR_LOCK:
+        _ACTIVE_SUPERVISORS.discard(session_id)
+
+
+def pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 def prepare_session_workspace(
