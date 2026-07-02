@@ -379,7 +379,9 @@ const englishMessages = {
   planBlockUnderstandingDone: "Data understanding artifacts are available.",
   planBlockPriorResearch: "Prior knowledge research",
   planBlockPriorResearchPending: "Use Kaggle, arXiv, Skills, and Codex-selected sources to add evidence before approach selection.",
+  planBlockPriorResearchPrepared: "Research context is prepared, but retrieved findings and a readable notebook are not registered yet.",
   planBlockPriorResearchDone: "Research or Skill evidence is available.",
+  planBlockPriorResearchNoFindings: "Codex researched or reviewed this step and found no additional external findings worth adding.",
   planBlockCodexLane: "Codex planned",
   planStatusDone: "Done",
   planStatusActive: "Running",
@@ -732,7 +734,9 @@ const japaneseMessages: LocaleMessages = {
   planBlockUnderstandingDone: "Data understanding artifactがあります。",
   planBlockPriorResearch: "従来知見の調査",
   planBlockPriorResearchPending: "Kaggle、arXiv、Skill、Codex裁量の情報源から知見を追加します。",
-  planBlockPriorResearchDone: "調査またはSkillの根拠があります。",
+  planBlockPriorResearchPrepared: "調査コンテキストは準備済みですが、取得済みの知見と読めるNotebookはまだ登録されていません。",
+  planBlockPriorResearchDone: "取得済みの調査知見と根拠があります。",
+  planBlockPriorResearchNoFindings: "Codexが調査または確認し、追加すべき外部知見はないと判断しました。",
   planBlockCodexLane: "Codex計画",
   planStatusDone: "完了",
   planStatusActive: "実行中",
@@ -1851,6 +1855,11 @@ type AdaptiveStrategyBrief = {
 
 type ResearchPlanBlockStatus = "done" | "active" | "pending" | "blocked" | "waiting" | "skipped";
 
+type PendingAnchorNavigation = {
+  anchor: string;
+  nonce: number;
+};
+
 type ResearchPlanSubtask = {
   id: string;
   title: string;
@@ -2119,7 +2128,7 @@ function notebookChatMessageFromJob(result: unknown, text: LocaleMessages): Agen
     status: "ready",
     label: text.openNotebookViewer,
     target_tab: "Notebooks",
-    target_anchor: "notebook-focus",
+    target_anchor: "notebook-preview-top",
     detail: linkedContext || text.notebookLinkedAssetDetail,
     artifact_id: previewArtifactId,
     artifact_ids: [sourceArtifactId, artifactId].filter((value): value is string => Boolean(value))
@@ -2517,9 +2526,11 @@ function App() {
   const [portalOverview, setPortalOverview] = React.useState<PortalOverview | null>(null);
   const [portalIdeas, setPortalIdeas] = React.useState<PortalIdea[]>([]);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [moreTabsOpen, setMoreTabsOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const hydratedUserIdRef = React.useRef<string | null>(null);
+  const moreTabsRef = React.useRef<HTMLDivElement | null>(null);
   const localePacks = React.useMemo(() => mergeLocalePacks(dynamicLocalePacks), [dynamicLocalePacks]);
   const activeLocale = resolveLocalePack(userSettings.locale, localePacks);
   const text = copyForLocale(activeLocale.locale, localePacks);
@@ -2534,6 +2545,24 @@ function App() {
     document.documentElement.dir = activeLocale.direction;
     document.documentElement.dataset.theme = userSettings.displayTheme;
   }, [activeLocale.direction, activeLocale.locale, dynamicLocalePacks, userSettings]);
+
+  React.useEffect(() => {
+    if (!moreTabsOpen) return;
+    function closeOnOutsideInteraction(event: PointerEvent) {
+      if (moreTabsRef.current && !moreTabsRef.current.contains(event.target as Node)) {
+        setMoreTabsOpen(false);
+      }
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setMoreTabsOpen(false);
+    }
+    document.addEventListener("pointerdown", closeOnOutsideInteraction);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideInteraction);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [moreTabsOpen]);
 
   const refreshAuth = React.useCallback(async () => {
     setAuthLoading(true);
@@ -2828,28 +2857,43 @@ function App() {
                 <button
                   key={item.id}
                   className={item.id === tab ? "tab active" : "tab"}
-                  onClick={() => setTab(item.id)}
+                  onClick={() => {
+                    setMoreTabsOpen(false);
+                    setTab(item.id);
+                  }}
                 >
                   {text[item.labelKey]}
                 </button>
               ))}
-              <details className="tab-more" open={supportingTabIdSet.has(tab)}>
-                <summary className={supportingTabIdSet.has(tab) ? "tab active" : "tab"}>
+              <div className="tab-more" ref={moreTabsRef}>
+                <button
+                  className={supportingTabIdSet.has(tab) ? "tab active" : "tab"}
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={moreTabsOpen}
+                  onClick={() => setMoreTabsOpen((current) => !current)}
+                >
                   {text.moreTabs}
-                </summary>
-                <div className="tab-menu">
-                  {supportingTabItems.map((item) => (
-                    <button
-                      key={item.id}
-                      className={item.id === tab ? "tab-menu-item active" : "tab-menu-item"}
-                      onClick={() => setTab(item.id)}
-                      type="button"
-                    >
-                      {text[item.labelKey]}
-                    </button>
-                  ))}
-                </div>
-              </details>
+                </button>
+                {moreTabsOpen ? (
+                  <div className="tab-menu" role="menu">
+                    {supportingTabItems.map((item) => (
+                      <button
+                        key={item.id}
+                        className={item.id === tab ? "tab-menu-item active" : "tab-menu-item"}
+                        onClick={() => {
+                          setMoreTabsOpen(false);
+                          setTab(item.id);
+                        }}
+                        type="button"
+                        role="menuitem"
+                      >
+                        {text[item.labelKey]}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </nav>
             <ProjectDetail
               project={activeProject}
@@ -3585,7 +3629,7 @@ function ProjectDetail({
   const [activityTick, setActivityTick] = React.useState(0);
   const [pendingIntervention, setPendingIntervention] = React.useState<PendingAutonomyIntervention | null>(null);
   const seenInterventionKeysRef = React.useRef<Set<string>>(new Set());
-  const [pendingAnchor, setPendingAnchor] = React.useState<string | null>(null);
+  const [pendingAnchor, setPendingAnchor] = React.useState<PendingAnchorNavigation | null>(null);
   const [artifactPreviewRequest, setArtifactPreviewRequest] = React.useState<ArtifactPreviewRequest | null>(null);
   const visibleAgentChatMessages = React.useMemo(
     () => mergeAgentChatMessages(agentChatMessages, pendingAgentChatMessages),
@@ -3755,16 +3799,25 @@ function ProjectDetail({
 
   React.useEffect(() => {
     if (!pendingAnchor) return;
-    const handle = window.setTimeout(() => {
-      const element = document.getElementById(pendingAnchor);
+    const handles: number[] = [];
+    const tryScroll = (attempt: number) => {
+      const element = document.getElementById(pendingAnchor.anchor) ?? fallbackNavigationAnchor(pendingAnchor.anchor);
       if (element) {
-        element.scrollIntoView({ behavior: "smooth", block: "start" });
+        const top = Math.max(0, element.getBoundingClientRect().top + window.scrollY - 8);
+        window.scrollTo({ top, behavior: attempt === 0 ? "smooth" : "auto" });
         element.classList.add("navigation-highlight");
         window.setTimeout(() => element.classList.remove("navigation-highlight"), 1400);
+        setPendingAnchor(null);
+        return;
       }
-      setPendingAnchor(null);
-    }, 80);
-    return () => window.clearTimeout(handle);
+      if (attempt >= 10) {
+        setPendingAnchor(null);
+        return;
+      }
+      handles.push(window.setTimeout(() => tryScroll(attempt + 1), attempt < 3 ? 90 : 180));
+    };
+    handles.push(window.setTimeout(() => tryScroll(0), 90));
+    return () => handles.forEach((handle) => window.clearTimeout(handle));
   }, [pendingAnchor, tab]);
 
   React.useEffect(() => {
@@ -3796,7 +3849,7 @@ function ProjectDetail({
   }, [jobs, pendingIntervention, userSettings.interventionCountdownSeconds]);
 
   function navigateToTarget(targetTab: Tab, targetAnchor?: string | null) {
-    if (targetAnchor) setPendingAnchor(targetAnchor);
+    if (targetAnchor) setPendingAnchor({ anchor: targetAnchor, nonce: Date.now() });
     onTabChange(targetTab);
   }
 
@@ -4211,6 +4264,7 @@ function ProjectDetail({
           onActionOpen={openAgentChatAction}
           onOpenMemoryItem={openHomeMemoryItem}
           onTabChange={onTabChange}
+          onNavigateToTarget={navigateToTarget}
           onFocusAction={(action) => void runFocusAction(action)}
           onStrategyAction={(action) => void runStrategyAction(action)}
           onEquipSkill={(asset) => runAction(() => equipLibraryAsset(asset))}
@@ -4239,6 +4293,7 @@ function ProjectDetail({
           ideas={ideas}
           insights={insights}
           busy={busy}
+          locale={userSettings.locale}
           runAction={runAction}
         />
       )}
@@ -4252,15 +4307,16 @@ function ProjectDetail({
           jobs={jobs}
           busy={busy}
           text={text}
+          locale={userSettings.locale}
           runAction={runAction}
           onOpenNotebookArtifact={(artifactId) => {
             setArtifactPreviewRequest({
               artifactId,
               targetTab: "Notebooks",
-              anchor: "notebook-focus",
+              anchor: "notebook-preview-top",
               nonce: Date.now()
             });
-            navigateToTarget("Notebooks", "notebook-focus");
+            navigateToTarget("Notebooks", "notebook-preview-top");
           }}
           onStatusMessage={(message) =>
             setAgentChatMessages((current) =>
@@ -4350,6 +4406,7 @@ function ProjectDetail({
           analysisStory={analysisStory}
           previewRequest={artifactPreviewRequest}
           busy={busy}
+          locale={userSettings.locale}
           runAction={runAction}
           onAskAgent={submitAgentChat}
         />
@@ -4379,6 +4436,7 @@ function ProjectDetail({
           ideas={ideas}
           insights={insights}
           busy={busy}
+          locale={userSettings.locale}
           runAction={runAction}
         />
       )}
@@ -4457,6 +4515,7 @@ function HomeTab({
   onActionOpen,
   onOpenMemoryItem,
   onTabChange,
+  onNavigateToTarget,
   onFocusAction,
   onStrategyAction,
   onEquipSkill,
@@ -4494,6 +4553,7 @@ function HomeTab({
   onActionOpen: (action: AgentChatAction) => void;
   onOpenMemoryItem: (item: HomeMemoryItem) => void;
   onTabChange: (tab: Tab) => void;
+  onNavigateToTarget: (tab: Tab, anchor?: string | null) => void;
   onFocusAction: (action: FocusAction | null) => void;
   onStrategyAction: (action: StrategyAction) => void;
   onEquipSkill: (asset: LibraryAsset) => Promise<void>;
@@ -4527,10 +4587,11 @@ function HomeTab({
     equippedSkills,
     jobs: planJobs,
     nextStrategyAction,
-    text,
-    onTabChange,
-    onStrategyAction
-  });
+      text,
+      onTabChange,
+      onNavigateToTarget,
+      onStrategyAction
+    });
 
   return (
     <div className="mission-home stack">
@@ -5168,6 +5229,7 @@ function buildResearchPlanBlocks({
   nextStrategyAction,
   text,
   onTabChange,
+  onNavigateToTarget,
   onStrategyAction
 }: {
   project: Project;
@@ -5180,6 +5242,7 @@ function buildResearchPlanBlocks({
   nextStrategyAction: StrategyAction | null;
   text: LocaleMessages;
   onTabChange: (tab: Tab) => void;
+  onNavigateToTarget: (tab: Tab, anchor?: string | null) => void;
   onStrategyAction: (action: StrategyAction) => void;
 }): ResearchPlanBlock[] {
   const hasObjectiveEvidence = Boolean(project.target_column) || hasAnyArtifactType(artifacts, ["target_definition_proposal"]);
@@ -5189,16 +5252,18 @@ function buildResearchPlanBlocks({
     "eda_review_report",
     "data_understanding_notebook_report"
   ]);
-  const hasPriorResearchEvidence =
+  const hasDataUnderstandingNotebook = hasAnyArtifactType(artifacts, [
+    "analysis_notebook",
+    "notebook_html",
+    "notebook_evidence_html",
+    "notebook_report"
+  ]);
+  const hasPriorResearchPreparation =
     researchBriefs.length > 0 ||
     equippedSkills.length > 0 ||
-    hasAnyArtifactType(artifacts, [
-      "research_plan",
-      "research_source_pack",
-      "research_source_report",
-      "research_finding_synthesis",
-      "research_finding_synthesis_report"
-    ]);
+    hasAnyArtifactType(artifacts, ["research_plan", "research_source_pack", "research_source_report", "notebook_authoring_brief"]);
+  const noFindingsResearchArtifact = researchNoFindingsArtifact(artifacts);
+  const hasPriorResearchEvidence = hasAnyResolvedResearchArtifact(artifacts);
 
   const primaryPlanJob = jobs.find((job) => jobActiveForActivity(job)) ?? jobs.find((job) => !isTerminalJob(job)) ?? null;
   const activeInitialBlockId = activeInitialResearchPlanBlockId(primaryPlanJob);
@@ -5228,6 +5293,8 @@ function buildResearchPlanBlocks({
     ? "done"
     : activeInitialBlockId === "prior_research"
       ? "active"
+      : hasPriorResearchPreparation
+        ? "pending"
       : hasUnderstandingEvidence
         ? "pending"
         : "waiting";
@@ -5269,20 +5336,34 @@ function buildResearchPlanBlocks({
         latestArtifactName(artifacts, "understanding_report") ??
         latestArtifactName(artifacts, "eda_profile") ??
         latestArtifactName(artifacts, "eda_review_report"),
-      onClick: () => onTabChange("Data")
+      onClick: () => {
+        if (hasDataUnderstandingNotebook) {
+          onNavigateToTarget("Notebooks", "notebook-preview-top");
+        } else {
+          onTabChange("Data");
+        }
+      }
     },
     {
       id: "prior_research",
       title: text.planBlockPriorResearch,
-      subtitle: hasPriorResearchEvidence ? text.planBlockPriorResearchDone : text.planBlockPriorResearchPending,
+      subtitle: hasPriorResearchEvidence
+        ? noFindingsResearchArtifact
+          ? text.planBlockPriorResearchNoFindings
+          : text.planBlockPriorResearchDone
+        : hasPriorResearchPreparation
+          ? text.planBlockPriorResearchPrepared
+          : text.planBlockPriorResearchPending,
       status: priorResearchStatus,
       eyebrow: "04",
       evidence:
         latestArtifactName(artifacts, "research_finding_synthesis") ??
+        latestArtifactName(artifacts, "research_findings_report") ??
+        noFindingsResearchArtifact?.name ??
         latestArtifactName(artifacts, "research_source_pack") ??
         (equippedSkills.length ? `${equippedSkills.length} Skill${equippedSkills.length === 1 ? "" : "s"}` : null) ??
         (researchBriefs.length ? `${researchBriefs.length} brief${researchBriefs.length === 1 ? "" : "s"}` : null),
-      onClick: () => onTabChange("Insight")
+      onClick: () => onNavigateToTarget("Notebooks", "notebook-preview-top")
     }
   ];
 
@@ -5476,6 +5557,34 @@ function researchPlanStatusLabel(status: ResearchPlanBlockStatus, text: LocaleMe
 function hasAnyArtifactType(artifacts: Artifact[], assetTypes: string[]) {
   const wanted = new Set(assetTypes);
   return artifacts.some((artifact) => wanted.has(artifact.asset_type));
+}
+
+function hasAnyResolvedResearchArtifact(artifacts: Artifact[]) {
+  return artifacts.some((artifact) => {
+    if (artifact.metadata.no_relevant_findings === true || artifact.metadata.codex_decision === "no_research_needed") {
+      return true;
+    }
+    if (artifact.asset_type === "research_findings_report") {
+      return artifact.metadata.external_network_accessed === true || artifact.metadata.has_only_stub_findings === false;
+    }
+    if (artifact.asset_type === "source_citation_manifest") {
+      return artifact.metadata.external_network_accessed === true;
+    }
+    return ["research_finding_synthesis", "research_finding_synthesis_report", "agent_session_research_notebook"].includes(
+      artifact.asset_type
+    );
+  });
+}
+
+function researchNoFindingsArtifact(artifacts: Artifact[]) {
+  return artifacts.find(
+    (artifact) => artifact.metadata.no_relevant_findings === true || artifact.metadata.codex_decision === "no_research_needed"
+  ) ?? null;
+}
+
+function fallbackNavigationAnchor(anchor: string) {
+  if (anchor === "notebook-preview-top") return document.getElementById("notebook-focus");
+  return null;
 }
 
 function latestArtifactName(artifacts: Artifact[], assetType: string) {
@@ -7586,6 +7695,7 @@ function DataTab({
   jobs,
   busy,
   text,
+  locale,
   runAction,
   onOpenNotebookArtifact,
   onStatusMessage
@@ -7598,6 +7708,7 @@ function DataTab({
   jobs: Job[];
   busy: boolean;
   text: LocaleMessages;
+  locale: string;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
   onOpenNotebookArtifact: (artifactId: string) => void;
   onStatusMessage: (message: string) => void;
@@ -7763,6 +7874,7 @@ function DataTab({
     if (target.trim()) body.append("target_column", target.trim());
     if (selectedPrimaryFileName) body.append("primary_filename", selectedPrimaryFileName);
     if (erHintNote.trim()) body.append("note", erHintNote.trim());
+    body.append("locale", locale);
     let uploaded = false;
     await runAction(async () => {
       const job = await uploadFormData<Job>(`/api/projects/${project.id}/datasets/upload-bundle`, body, (event) => {
@@ -11595,6 +11707,7 @@ function NotebooksTab({
   analysisStory,
   previewRequest,
   busy,
+  locale,
   runAction,
   onAskAgent
 }: {
@@ -11606,6 +11719,7 @@ function NotebooksTab({
   analysisStory: AnalysisStorySurface | null;
   previewRequest: ArtifactPreviewRequest | null;
   busy: boolean;
+  locale: string;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
   onAskAgent: (message: string) => Promise<AgentChatResponse | void>;
 }) {
@@ -11667,7 +11781,9 @@ function NotebooksTab({
 
   async function generateDataNotebook() {
     const job = await api<Job>(`/api/projects/${project.id}/analysis-notebooks/data-understanding`, {
-      method: "POST"
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locale })
     });
     const htmlArtifactId = job.output.notebook_html_artifact_id;
     if (typeof htmlArtifactId === "string") {
@@ -11965,7 +12081,7 @@ function NotebooksTab({
               </div>
             </section>
 
-            <section className="analysis-story-preview">
+            <section id="notebook-preview-top" className="analysis-story-preview">
               <div className="analysis-story-preview-head">
                 <div>
                   <div className="eyebrow">Current story preview</div>
@@ -12336,6 +12452,7 @@ function ReportsTab({
   ideas,
   insights,
   busy,
+  locale,
   runAction
 }: {
   project: Project;
@@ -12347,6 +12464,7 @@ function ReportsTab({
   ideas: Idea[];
   insights: Insight[];
   busy: boolean;
+  locale: string;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const [reportPreview, setReportPreview] = React.useState<ArtifactPreview | null>(null);
@@ -12606,9 +12724,11 @@ function ReportsTab({
           disabled={busy}
           onClick={() =>
             void runAction(async () => {
-              const job = await api<Job>(`/api/projects/${project.id}/analysis-notebooks/data-understanding`, {
-                method: "POST"
-              });
+                const job = await api<Job>(`/api/projects/${project.id}/analysis-notebooks/data-understanding`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ locale })
+                });
               const htmlArtifactId = job.output.notebook_html_artifact_id;
               if (typeof htmlArtifactId === "string") {
                 await loadArtifactPreview(htmlArtifactId);

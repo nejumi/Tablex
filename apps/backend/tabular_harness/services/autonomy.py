@@ -197,7 +197,14 @@ def run_autonomous_loop_tick(
             utility_model=utility_model,
         )
 
-    run_data_understanding_stack(db, store=store, project=project, dataset=dataset, state=state)
+    run_data_understanding_stack(
+        db,
+        store=store,
+        project=project,
+        dataset=dataset,
+        state=state,
+        response_locale=locale,
+    )
     if not project.target_column:
         question = get_or_create_target_question(
             db,
@@ -420,6 +427,7 @@ def run_data_understanding_stack(
     project: Project,
     dataset: DatasetSnapshot,
     state: AutonomousLoopState,
+    response_locale: str | None = None,
 ) -> None:
     existing_quality = latest_project_artifact(db, project.id, "data_quality_gate")
     if existing_quality is not None:
@@ -479,7 +487,12 @@ def run_data_understanding_stack(
         return
 
     try:
-        notebook = create_data_understanding_notebook(db, store=store, project=project)
+        notebook = create_data_understanding_notebook(
+            db,
+            store=store,
+            project=project,
+            response_locale=response_locale,
+        )
         state.record(
             "data_understanding_notebook",
             "created",

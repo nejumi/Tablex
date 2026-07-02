@@ -21,9 +21,13 @@ from tabular_harness.models.entities import (
     AgentSession,
     AgentTranscriptEvent,
     Artifact,
+    Asset,
     AssetReference,
+    AssetVersion,
     DatasetSnapshot,
+    Job,
     Project,
+    User,
     utc_now,
 )
 from tabular_harness.services.artifacts import (
@@ -367,7 +371,7 @@ def build_session_context(db: Session, *, project: Project, session: AgentSessio
             select(Artifact).where(Artifact.project_id == project.id).order_by(Artifact.created_at.desc()).limit(80)
         ).all()
     )
-    skills = list(
+    skill_references = list(
         db.scalars(
             select(AssetReference)
             .where(AssetReference.source_type == "project", AssetReference.source_id == project.id)
@@ -375,6 +379,8 @@ def build_session_context(db: Session, *, project: Project, session: AgentSessio
             .limit(30)
         ).all()
     )
+    response_locale = latest_project_response_locale(db, project)
+    equipped_skills = equipped_skill_context(db, skill_references)
     return {
         "schema_version": "tablex_agent_session_context.v1",
         "project": {
@@ -384,6 +390,14 @@ def build_session_context(db: Session, *, project: Project, session: AgentSessio
             "target_column": project.target_column,
             "current_phase": project.current_phase,
             "autonomy_mode": project.autonomy_mode,
+        },
+        "human_interface": {
+            "response_locale": response_locale,
+            "notebook_language": response_locale,
+            "instruction": (
+                "Write human-facing chat responses, marimo notebook narratives, research summaries, and reports "
+                "in this locale unless the user explicitly asks otherwise."
+            ),
         },
         "session": {"id": session.id, "turn_index": session.turn_index, "codex_thread_id": session.codex_thread_id},
         "datasets": [
@@ -407,21 +421,77 @@ def build_session_context(db: Session, *, project: Project, session: AgentSessio
             }
             for item in artifacts
         ],
-        "equipped_skill_references": [
-            {
-                "id": item.id,
-                "asset_id": item.target_asset_id,
-                "asset_version_id": item.target_asset_version_id,
-                "relation_type": item.relation_type,
-            }
-            for item in skills
-        ],
+        "equipped_skill_references": equipped_skills,
         "output_contract": {
             "registerable_dirs": ["outputs", "reports", "notebooks", "artifacts"],
             "marimo_notebooks": "Place .py marimo notebooks under notebooks/ or outputs/notebooks/.",
             "progress": "Explain progress naturally in Codex messages. Tablex stores the raw transcript and Chat explains it to humans.",
+            "notebook_quality": (
+                "Data understanding and research notebooks are human deliverables, not only model context. "
+                "Use equipped Skills such as tablex-grandmaster-eda and tablex-notebook-quality when present."
+            ),
         },
     }
+
+
+def latest_project_response_locale(db: Session, project: Project) -> str:
+    job = db.scalar(
+        select(Job)
+        .where(Job.project_id == project.id, Job.job_type == "start_autonomous_loop")
+        .order_by(Job.created_at.desc())
+        .limit(1)
+    )
+    if job is not None:
+        payload = loads_json(job.input_json, {})
+        locale = payload.get("locale")
+        if isinstance(locale, str) and locale.strip():
+            return locale.strip()
+    user = db.get(User, project.created_by)
+    if user is not None and user.locale:
+        return user.locale
+    return "en-US"
+
+
+def equipped_skill_context(db: Session, references: list[AssetReference]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for reference in references:
+        asset = db.get(Asset, reference.target_asset_id)
+        if asset is None or asset.asset_type != "skill":
+            continue
+        version = db.get(AssetVersion, reference.target_asset_version_id or asset.latest_version_id or "")
+        artifact = db.get(Artifact, version.artifact_id) if version is not None else None
+        content = read_skill_asset_content(artifact) if artifact is not None else {}
+        items.append(
+            {
+                "reference_id": reference.id,
+                "asset_id": asset.id,
+                "asset_version_id": version.id if version is not None else None,
+                "name": asset.name,
+                "description": asset.description,
+                "relation_type": reference.relation_type,
+                "artifact_id": artifact.id if artifact is not None else None,
+                "artifact_path": str(artifact_primary_path(artifact)) if artifact is not None else None,
+                "skill_path": content.get("skill_path") if isinstance(content.get("skill_path"), str) else None,
+                "reference_paths": content.get("reference_paths") if isinstance(content.get("reference_paths"), list) else [],
+                "runner_guidance": content.get("runner_guidance") if isinstance(content.get("runner_guidance"), list) else [],
+                "content": content,
+            }
+        )
+    return items
+
+
+def read_skill_asset_content(artifact: Artifact | None) -> dict[str, Any]:
+    if artifact is None:
+        return {}
+    path = artifact_primary_path(artifact)
+    try:
+        if path.suffix.lower() == ".json":
+            payload = loads_json(path.read_text(encoding="utf-8"), {})
+            return payload if isinstance(payload, dict) else {}
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    return {"text": text[:12000]}
 
 
 def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -> str:
@@ -457,6 +527,8 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Do not destructively modify EvaluationSpec or SplitManifest.",
         "- Register important outputs by writing files under outputs/, reports/, notebooks/, or artifacts/.",
         "- Prefer marimo notebooks for data understanding, modeling diagnostics, and reports.",
+        "- Read `.tablex/context.json` for `human_interface.response_locale` and write human-facing notebooks/reports/chat in that language.",
+        "- Read equipped Skill paths in `.tablex/context.json` before EDA, prior research, notebook authoring, or modeling strategy work.",
         "- If you need user input in Full Auto, state the question and your provisional assumption, then continue unless impossible.",
         "- Use Give Up only as a last resort; if you give up, explain exactly what is missing and preserve partial work.",
         "",

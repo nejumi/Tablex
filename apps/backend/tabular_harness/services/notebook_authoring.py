@@ -32,6 +32,7 @@ def create_notebook_authoring_brief(
     store: LocalArtifactStore,
     project: Project,
     objective: str | None = None,
+    response_locale: str | None = None,
 ) -> NotebookAuthoringBriefResult:
     dataset = latest_dataset(db, project.id)
     context_artifacts = notebook_authoring_context_artifacts(db, project.id)
@@ -40,6 +41,7 @@ def create_notebook_authoring_brief(
         dataset=dataset,
         context_artifacts=context_artifacts,
         objective=objective,
+        response_locale=response_locale or "en-US",
     )
     suffix = new_id("nab")
     brief_artifact = store_json_artifact(
@@ -56,6 +58,7 @@ def create_notebook_authoring_brief(
             "source_card_count": len(brief["source_inspirations"]),
             "principle_count": len(brief["authoring_principles"]),
             "context_artifact_count": len(brief["context_artifacts"]),
+            "response_locale": brief["response_locale"],
         },
     )
     report_text = render_notebook_authoring_report(brief, brief_artifact.id)
@@ -111,10 +114,12 @@ def build_notebook_authoring_brief(
     dataset: DatasetSnapshot | None,
     context_artifacts: dict[str, Artifact | None],
     objective: str | None,
+    response_locale: str,
 ) -> dict[str, Any]:
     return {
         "schema_version": "notebook_authoring_brief.v1",
         "project_id": project.id,
+        "response_locale": response_locale,
         "objective": objective
         or (
             "Write or revise a human-facing Tablex analysis notebook from current evidence. "
@@ -141,6 +146,7 @@ def build_notebook_authoring_brief(
             "must": [
                 "Open the latest EDA/Data Review evidence bundle first.",
                 "Use current project artifacts as the source of truth.",
+                f"Write human-facing narrative, markdown, captions, and notebook commentary in locale {response_locale}.",
                 "Write an analyst-readable narrative with findings, evidence, uncertainty, and next actions.",
                 "Generate or request real figures/tables where claims need support.",
                 "Return notebook source, rendered HTML, figure manifest, and report artifacts.",

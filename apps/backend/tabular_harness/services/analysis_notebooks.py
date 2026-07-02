@@ -36,6 +36,7 @@ from tabular_harness.services.artifacts import (
     artifact_primary_path,
     create_lineage_edge,
 )
+from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.reporting import persist_visualization_spec
 
 
@@ -47,6 +48,7 @@ class AnalysisNotebookResult:
     html_artifact: Artifact
     manifest_artifact: Artifact
     report_artifact: Artifact
+    authoring_brief_artifact: Artifact | None
     artifact_ids: list[str]
 
 
@@ -94,6 +96,7 @@ def create_data_understanding_notebook(
     *,
     store: LocalArtifactStore,
     project: Project,
+    response_locale: str | None = None,
 ) -> AnalysisNotebookResult:
     dataset = _latest_dataset(db, project.id)
     if dataset is None:
@@ -109,7 +112,34 @@ def create_data_understanding_notebook(
     quality_payload = _read_json_artifact(quality_artifact)
     diagnostics_payload = _read_json_artifact(diagnostics_artifact)
     latest_runs = _latest_runs(db, project.id)
-    summary = _profile_summary(project, dataset, profile_payload, quality_payload, diagnostics_payload, latest_runs)
+    locale = response_locale or "en-US"
+    authoring_brief_artifact: Artifact | None = None
+    try:
+        authoring_brief = create_notebook_authoring_brief(
+            db,
+            store=store,
+            project=project,
+            objective=(
+                "Author a high-quality Data Understanding marimo notebook. Use tablex-grandmaster-eda and "
+                "tablex-notebook-quality as craft context, inspect the actual project artifacts, and write "
+                "interpretations, hypotheses, caveats, and next analysis actions instead of a static profile summary."
+                f" Write the human-facing notebook and report in locale {locale}."
+            ),
+            response_locale=locale,
+        )
+        authoring_brief_artifact = authoring_brief.brief_artifact
+    except ValueError:
+        authoring_brief_artifact = None
+    summary = _profile_summary(
+        project,
+        dataset,
+        profile_payload,
+        quality_payload,
+        diagnostics_payload,
+        latest_runs,
+        authoring_brief_artifact=authoring_brief_artifact,
+        response_locale=locale,
+    )
     notebook = {
         "schema_version": "analysis_notebook.v1",
         "notebook_kind": "data_understanding",
@@ -117,6 +147,7 @@ def create_data_understanding_notebook(
         "project_name": project.name,
         "dataset_snapshot_id": dataset.id,
         "generated_at": utc_now().isoformat(),
+        "response_locale": locale,
         "source_artifacts": {
             "dataset_artifact_id": dataset_artifact.id if dataset_artifact else None,
             "profile_artifact_id": profile_artifact.id if profile_artifact else None,
@@ -124,6 +155,7 @@ def create_data_understanding_notebook(
             "quality_artifact_id": quality_artifact.id if quality_artifact else None,
             "baseline_metrics_artifact_id": baseline_metrics_artifact.id if baseline_metrics_artifact else None,
             "diagnostics_artifact_id": diagnostics_artifact.id if diagnostics_artifact else None,
+            "notebook_authoring_brief_artifact_id": authoring_brief_artifact.id if authoring_brief_artifact else None,
         },
         "summary": summary,
         "execution_policy": _execution_policy(),
@@ -145,6 +177,9 @@ def create_data_understanding_notebook(
             "engine": "marimo",
             "execution_status": "generated_not_executed",
             "source_profile_artifact_id": profile_artifact.id if profile_artifact else None,
+            "response_locale": locale,
+            "authoring_mode": "harness_scaffold_pending_codex_authoring",
+            "notebook_authoring_brief_artifact_id": authoring_brief_artifact.id if authoring_brief_artifact else None,
         },
     )
     html = render_notebook_html_preview(notebook, notebook_artifact.id)
@@ -163,6 +198,9 @@ def create_data_understanding_notebook(
             "notebook_kind": "data_understanding",
             "render_mode": "static_preview",
             "content_type": "text/html",
+            "authoring_mode": "harness_scaffold_pending_codex_authoring",
+            "notebook_authoring_brief_artifact_id": authoring_brief_artifact.id if authoring_brief_artifact else None,
+            "response_locale": locale,
         },
     )
     report_md = render_notebook_report(notebook, notebook_artifact.id, html_artifact.id)
@@ -180,6 +218,9 @@ def create_data_understanding_notebook(
             "notebook_artifact_id": notebook_artifact.id,
             "notebook_html_artifact_id": html_artifact.id,
             "notebook_kind": "data_understanding",
+            "authoring_mode": "harness_scaffold_pending_codex_authoring",
+            "notebook_authoring_brief_artifact_id": authoring_brief_artifact.id if authoring_brief_artifact else None,
+            "response_locale": locale,
         },
     )
     report = Report(
@@ -203,6 +244,7 @@ def create_data_understanding_notebook(
         "engine": "marimo",
         "status": "generated_not_executed",
         "generated_at": notebook["generated_at"],
+        "response_locale": locale,
         "execution_policy": _execution_policy(),
         "libraries_referenced": ["marimo", "pandas", "matplotlib", "plotly"],
         "inputs": notebook["source_artifacts"],
@@ -218,6 +260,7 @@ def create_data_understanding_notebook(
             "guardrail_count": len(summary["evaluation_guardrails"]),
             "storyboard_section_count": len(summary["analysis_storyboard"]),
             "quality_bar": "human_readable_target_aware_scaffold",
+            "codex_authoring_required": True,
         },
         "next_execution_modes": [
             "local marimo edit/run from downloaded artifact",
@@ -247,6 +290,9 @@ def create_data_understanding_notebook(
             "notebook_html_artifact_id": html_artifact.id,
             "report_id": report.id,
             "execution_status": "generated_not_executed",
+            "authoring_mode": "harness_scaffold_pending_codex_authoring",
+            "notebook_authoring_brief_artifact_id": authoring_brief_artifact.id if authoring_brief_artifact else None,
+            "response_locale": locale,
         },
     )
     _record_lineage(
@@ -262,6 +308,7 @@ def create_data_understanding_notebook(
                 quality_artifact,
                 baseline_metrics_artifact,
                 diagnostics_artifact,
+                authoring_brief_artifact,
             ]
             if artifact is not None
         ],
@@ -272,6 +319,8 @@ def create_data_understanding_notebook(
         report_artifact,
     )
     artifact_ids = [notebook_artifact.id, html_artifact.id, manifest_artifact.id, report_artifact.id]
+    if authoring_brief_artifact is not None:
+        artifact_ids.append(authoring_brief_artifact.id)
     return AnalysisNotebookResult(
         notebook=notebook,
         report=report,
@@ -279,6 +328,7 @@ def create_data_understanding_notebook(
         html_artifact=html_artifact,
         manifest_artifact=manifest_artifact,
         report_artifact=report_artifact,
+        authoring_brief_artifact=authoring_brief_artifact,
         artifact_ids=artifact_ids,
     )
 
@@ -1897,18 +1947,22 @@ def _():
 @app.cell
 def _(context, mo):
     summary = context["summary"]
+    locale = context.get("response_locale") or summary.get("response_locale") or "en-US"
+    copy = summary.get("ui_copy", {{}})
     mo.md(
         f"""
-        # Data Understanding Notebook
+        # {{copy.get("title", "Data Understanding Notebook")}}
 
         **Project:** {{context["project_name"]}}  
         **DatasetSnapshot:** `{{context["dataset_snapshot_id"]}}`  
         **Rows:** {{summary["row_count"]}} | **Columns:** {{summary["column_count"]}}  
-        **Target:** {{summary["target_column"] or "not selected"}}
+        **Target:** {{summary["target_column"] or copy.get("target_not_selected", "not selected")}}  
+        **{{copy.get("language", "Language")}}:** {{locale}}
 
-        This notebook is generated as a Tablex artifact. It is intentionally editable:
-        Codex, Skills, or a human analyst can revise the analysis while keeping the
-        harness-owned EvaluationSpec, SplitManifest, artifacts, and lineage intact.
+        {{copy.get("artifact_note", "This notebook is generated as a Tablex artifact. Codex, Skills, or a human analyst can revise it while preserving harness-owned EvaluationSpec, SplitManifest, artifacts, and lineage.")}}
+
+        > {{summary.get("authoring_notice", "")}}
+        > {{copy.get("scaffold_notice", "")}}
         """
     )
     return
@@ -1917,18 +1971,15 @@ def _(context, mo):
 @app.cell
 def _(context, mo):
     summary = context["summary"]
+    copy = summary.get("ui_copy", {{}})
+    questions = copy.get("reader_questions", "")
     mo.md(
         f"""
-        ## Reader brief
+        ## {{copy.get("reader_brief", "Reader brief")}}
 
-        Start with the data story, not the model. This notebook should help a human answer:
+        {{questions}}
 
-        1. What is one row, and what decision will be made from it?
-        2. Which columns look useful, risky, duplicated, unavailable at prediction time, or too sparse?
-        3. Is the target selected, and if so does its distribution make the proposed metric sensible?
-        4. What should EvaluationSpec and SplitManifest protect before Codex writes modeling code?
-
-        **Current read:** {{summary["overview"]}}
+        **{{copy.get("current_read", "Current read")}}:** {{summary["overview"]}}
         """
     )
     return
@@ -1948,32 +1999,35 @@ def _(context, pd):
 @app.cell
 def _(context, mo, quality_rubric):
     score = context["summary"]["eda_quality_score"]
+    copy = context["summary"].get("ui_copy", {{}})
     mo.md(
         f"""
-        ## EDA quality rubric
+        ## {{copy.get("quality_rubric", "EDA quality rubric")}}
 
         **Status:** {{score["status"]}}  
         **Score:** {{score["score"]}}  
         {{score["interpretation"]}}
         """
     )
-    mo.ui.table(quality_rubric) if not quality_rubric.empty else mo.md("No quality rubric available.")
+    mo.ui.table(quality_rubric) if not quality_rubric.empty else mo.md(copy.get("no_quality_rubric", "No quality rubric available."))
     return
 
 
 @app.cell
-def _(mo, storyboard):
-    mo.md("## Analysis storyboard")
-    mo.ui.table(storyboard) if not storyboard.empty else mo.md("No storyboard available.")
+def _(context, mo, storyboard):
+    copy = context["summary"].get("ui_copy", {{}})
+    mo.md(f"## {{copy.get('analysis_storyboard', 'Analysis storyboard')}}")
+    mo.ui.table(storyboard) if not storyboard.empty else mo.md(copy.get("no_storyboard", "No storyboard available."))
     return
 
 
 @app.cell
 def _(context, mo):
     target = context["summary"]["target_readiness"]
+    copy = context["summary"].get("ui_copy", {{}})
     mo.md(
         f"""
-        ## Target readiness
+        ## {{copy.get("target_readiness", "Target readiness")}}
 
         **Status:** {{target["status"]}}  
         {{target["summary"]}}
@@ -1985,40 +2039,44 @@ def _(context, mo):
 
 
 @app.cell
-def _(guardrails, mo):
-    mo.md("## Leakage and evaluation guardrails")
-    mo.ui.table(guardrails) if not guardrails.empty else mo.md("No guardrails generated yet.")
+def _(context, guardrails, mo):
+    copy = context["summary"].get("ui_copy", {{}})
+    mo.md(f"## {{copy.get('guardrails', 'Leakage and evaluation guardrails')}}")
+    mo.ui.table(guardrails) if not guardrails.empty else mo.md(copy.get("no_guardrails", "No guardrails generated yet."))
     return
 
 
 @app.cell
 def _(columns, context, mo):
-    mo.md("## Column Profile")
+    copy = context["summary"].get("ui_copy", {{}})
+    mo.md(f"## {{copy.get('column_profile', 'Column Profile')}}")
     queues = context["summary"]["feature_review_sections"]
     mo.md(
         f"""
-        High-signal queues: {{len(queues["top_missing"])}} missingness, 
-        {{len(queues["high_cardinality"])}} high-cardinality, 
-        {{len(queues["datetime"])}} datetime, 
-        {{len(queues["text"])}} text, 
-        {{len(queues["leakage_suspects"])}} leakage-suspect columns.
+        {{copy.get("feature_queue_intro", "High-signal queues")}}: 
+        {{len(queues["top_missing"])}} {{copy.get("missingness", "missingness")}}, 
+        {{len(queues["high_cardinality"])}} {{copy.get("high_cardinality", "high-cardinality")}}, 
+        {{len(queues["datetime"])}} {{copy.get("datetime", "datetime")}}, 
+        {{len(queues["text"])}} {{copy.get("text", "text")}}, 
+        {{len(queues["leakage_suspects"])}} {{copy.get("leakage_suspect", "leakage-suspect")}}.
         """
     )
-    mo.ui.table(columns) if not columns.empty else mo.md("No profile columns are available yet.")
+    mo.ui.table(columns) if not columns.empty else mo.md(copy.get("no_columns", "No profile columns are available yet."))
     return
 
 
 @app.cell
-def _(columns, plt):
+def _(columns, context, plt):
+    copy = context["summary"].get("ui_copy", {{}})
     top_missing = columns.sort_values("missing_rate", ascending=False).head(15) if not columns.empty else columns
     fig, ax = plt.subplots(figsize=(9, 4))
     if not top_missing.empty:
         ax.barh(top_missing["name"], top_missing["missing_rate"], color="#16b8a6")
-        ax.set_xlabel("Missing rate")
-        ax.set_title("Top missing columns")
+        ax.set_xlabel(copy.get("missing_rate", "Missing rate"))
+        ax.set_title(copy.get("top_missing_columns", "Top missing columns"))
         ax.invert_yaxis()
     else:
-        ax.text(0.5, 0.5, "No column profile", ha="center", va="center")
+        ax.text(0.5, 0.5, copy.get("no_column_profile", "No column profile"), ha="center", va="center")
         ax.axis("off")
     fig.tight_layout()
     fig
@@ -2026,59 +2084,55 @@ def _(columns, plt):
 
 
 @app.cell
-def _(columns, px):
+def _(columns, context, px):
+    copy = context["summary"].get("ui_copy", {{}})
     fig = None
     if not columns.empty and "semantic_type" in columns:
-        fig = px.histogram(columns, x="semantic_type", color="role", title="Semantic type and role mix")
+        fig = px.histogram(columns, x="semantic_type", color="role", title=copy.get("semantic_type_mix", "Semantic type and role mix"))
         fig.update_layout(bargap=0.2)
     fig
     return
 
 
 @app.cell
-def _(findings, mo):
-    mo.md("## Findings and Investigation Queue")
-    mo.ui.table(findings) if not findings.empty else mo.md("No findings have been generated yet.")
+def _(context, findings, mo):
+    copy = context["summary"].get("ui_copy", {{}})
+    mo.md(f"## {{copy.get('findings', 'Findings and Investigation Queue')}}")
+    mo.ui.table(findings) if not findings.empty else mo.md(copy.get("no_findings", "No findings have been generated yet."))
     return
 
 
 @app.cell
 def _(context, mo):
     queue = context["summary"].get("analysis_questions", [])
-    mo.md("## What to inspect next")
+    copy = context["summary"].get("ui_copy", {{}})
+    mo.md(f"## {{copy.get('next', 'What to inspect next')}}")
     if queue:
         mo.md("\\n".join([f"- {{item}}" for item in queue]))
     else:
-        mo.md(
-            "- Confirm row semantics and prediction time.\\n"
-            "- Review high-missing and high-cardinality columns.\\n"
-            "- Decide whether the target is direct, delayed, or derived by aggregation.\\n"
-            "- Lock evaluation only after leakage and grouping/time risks are understood."
-        )
+        mo.md(copy.get("default_next_actions", "- Confirm row semantics and prediction time."))
     return
 
 
 @app.cell
 def _(context, mo):
     target = context["summary"]["target_readiness"]
-    mo.md("## Target value details")
+    copy = context["summary"].get("ui_copy", {{}})
+    mo.md(f"## {{copy.get('target_details', 'Target value details')}}")
     if target.get("top_values"):
         rows = "\\n".join([f"- {{item.get('value')}}: {{item.get('count')}}" for item in target["top_values"]])
         mo.md(rows)
     else:
-        mo.md("No target value counts are available yet.")
+        mo.md(copy.get("no_target_values", "No target value counts are available yet."))
     return
 
 
 @app.cell
-def _(runs, mo):
-    mo.md("## Modeling Diagnostics")
+def _(context, runs, mo):
+    copy = context["summary"].get("ui_copy", {{}})
+    mo.md(f"## {{copy.get('modeling_diagnostics', 'Modeling Diagnostics')}}")
     if runs.empty:
-        mo.md(
-            "No experiment runs are available yet. Once baseline or Codex-run experiments emit metrics, "
-            "this notebook should add feature importance, permutation importance, partial dependence, "
-            "slice diagnostics, and prediction analysis cells."
-        )
+        mo.md(copy.get("no_runs", "No experiment runs are available yet."))
     else:
         mo.ui.table(runs)
     return
@@ -2107,8 +2161,11 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
     story_cards = cast(list[dict[str, Any]], summary.get("visual_story_cards") or [])
     feature_family_summary = cast(list[dict[str, Any]], summary.get("feature_family_summary") or [])
     prompts = cast(list[str], summary.get("codex_navigation_prompts") or [])
+    response_locale = str(summary.get("response_locale") or notebook.get("response_locale") or "en-US")
+    ui_copy = cast(dict[str, str], summary.get("ui_copy") or _notebook_ui_copy(response_locale))
+    authoring_notice = str(summary.get("authoring_notice") or "")
     return f"""<!doctype html>
-<html lang="en">
+<html lang="{escape(response_locale)}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -2174,24 +2231,27 @@ def render_notebook_html_preview(notebook: dict[str, Any], notebook_artifact_id:
     <header>
       <div>
         <div class="eyebrow">Tablex Notebook Review</div>
-        <h1>{escape(str(summary["title"]))}</h1>
+        <h1>{escape(str(ui_copy.get("title") or summary["title"]))}</h1>
         <p>{escape(str(brief.get("headline") or summary["overview"]))}</p>
       </div>
-      <div class="panel hero-note">
-        <strong>{escape(str(brief.get("decision_state") or "review"))}</strong>
-        <p>{escape(str(brief.get("profile_boundary") or "Profile boundary is tracked in artifacts."))}</p>
-        <div class="tiny">Notebook artifact</div>
-        <code>{escape(notebook_artifact_id)}</code>
-      </div>
+        <div class="panel hero-note">
+          <strong>{escape(str(brief.get("decision_state") or "review"))}</strong>
+          <p>{escape(str(brief.get("profile_boundary") or "Profile boundary is tracked in artifacts."))}</p>
+          <p>{escape(authoring_notice)}</p>
+        <div class="tiny">{escape(str(ui_copy.get("language") or "Language"))}</div>
+          <code>{escape(response_locale)}</code>
+          <div class="tiny">Notebook artifact</div>
+          <code>{escape(notebook_artifact_id)}</code>
+        </div>
     </header>
     <section class="grid">
       {_metric_card("Rows", summary["row_count"])}
       {_metric_card("Columns", summary["column_count"])}
       {_metric_card("Missing cells", summary["missing_cell_count"])}
-      {_metric_card("Target", summary["target_column"] or "not selected")}
+      {_metric_card("Target", summary["target_column"] or ui_copy.get("target_not_selected", "not selected"))}
     </section>
     <section class="panel">
-      <h2>Reader brief</h2>
+      <h2>{escape(str(ui_copy.get("reader_brief") or "Reader brief"))}</h2>
       <p>{escape(str(brief.get("why_it_matters") or "Start with the data story before modeling. Inspect row semantics, target meaning, missingness, leakage suspects, prediction-time availability, and evaluation constraints."))}</p>
       <div class="badge-row">
         <span class="badge">narrative EDA</span>
@@ -4656,6 +4716,9 @@ def _profile_summary(
     quality: dict[str, Any],
     diagnostics: dict[str, Any],
     runs: list[ExperimentRun],
+    *,
+    authoring_brief_artifact: Artifact | None = None,
+    response_locale: str = "en-US",
 ) -> dict[str, Any]:
     raw_columns = profile.get("columns")
     columns = [cast(dict[str, Any], item) for item in raw_columns] if isinstance(raw_columns, list) else []
@@ -4721,6 +4784,14 @@ def _profile_summary(
     return {
         "title": "Data Understanding Notebook",
         "overview": overview,
+        "response_locale": response_locale,
+        "ui_copy": _notebook_ui_copy(response_locale),
+        "authoring_mode": "harness_scaffold_pending_codex_authoring",
+        "authoring_brief_artifact_id": authoring_brief_artifact.id if authoring_brief_artifact else None,
+        "authoring_notice": _notebook_authoring_notice(
+            response_locale,
+            authoring_brief_artifact_id=authoring_brief_artifact.id if authoring_brief_artifact else None,
+        ),
         "analysis_brief": analysis_brief,
         "row_count": row_count,
         "column_count": column_count,
@@ -4754,6 +4825,125 @@ def _profile_summary(
         ),
         "recent_runs": [_run_summary(run) for run in runs],
     }
+
+
+def _notebook_ui_copy(locale: str) -> dict[str, str]:
+    if locale.lower().startswith("ja"):
+        return {
+            "title": "データ理解ノートブック",
+            "reader_brief": "最初に読む要点",
+            "quality_rubric": "EDA品質チェック",
+            "analysis_storyboard": "分析ストーリーボード",
+            "target_readiness": "目的変数・予測目的の準備状況",
+            "guardrails": "リーケージと評価設計のガードレール",
+            "column_profile": "カラムプロファイル",
+            "findings": "発見と追加調査キュー",
+            "next": "次に見るべきこと",
+            "target_details": "目的変数の値の詳細",
+            "modeling_diagnostics": "モデリング診断",
+            "language": "言語",
+            "target_not_selected": "未選択",
+            "scaffold_notice": "これはTablexハーネスが生成した足場です。最終的な深いEDAはCodexがSkillと実データを読んで書きます。",
+            "artifact_note": "このノートブックはTablexのアセットです。Codex、Skill、人間の分析者が内容を深めても、EvaluationSpec、SplitManifest、アーティファクト、リネージはハーネス側で保持します。",
+            "reader_questions": (
+                "モデルより先に、データの物語を確認します。\n\n"
+                "1. 1行は何を表し、その予測はどの意思決定に使われるのか。\n"
+                "2. 有用そうな列、危険な列、重複、予測時に使えない列、疎すぎる列はどれか。\n"
+                "3. 予測目的は選ばれているか。分布や粒度は評価指標に合っているか。\n"
+                "4. Codexがモデリングコードを書く前に、EvaluationSpecとSplitManifestは何を守るべきか。"
+            ),
+            "current_read": "現在の読み",
+            "feature_queue_intro": "優先して見る列群",
+            "missingness": "欠損",
+            "high_cardinality": "高カーディナリティ",
+            "datetime": "日時",
+            "text": "テキスト",
+            "leakage_suspect": "リーケージ疑い",
+            "missing_rate": "欠損率",
+            "top_missing_columns": "欠損率が高い列",
+            "no_column_profile": "カラムプロファイルがまだありません。",
+            "semantic_type_mix": "意味タイプとロールの構成",
+            "no_quality_rubric": "EDA品質チェックはまだありません。",
+            "no_storyboard": "分析ストーリーボードはまだありません。",
+            "no_guardrails": "ガードレールはまだ生成されていません。",
+            "no_columns": "カラムプロファイルはまだ利用できません。",
+            "no_findings": "発見はまだ生成されていません。",
+            "default_next_actions": (
+                "- 1行の意味と予測時点を確認する。\n"
+                "- 欠損が多い列と高カーディナリティ列を確認する。\n"
+                "- 目的が直接列なのか、遅延ラベルなのか、集計で作るものなのかを確認する。\n"
+                "- リーケージ、時系列、グループ分割のリスクを見てから評価設計を固定する。"
+            ),
+            "no_target_values": "目的変数の値カウントはまだありません。",
+            "no_runs": "実験Runはまだありません。Runが登録されたら、特徴量重要度、permutation importance、partial dependence、スライス診断、予測例の分析を追加します。",
+        }
+    return {
+        "title": "Data Understanding Notebook",
+        "reader_brief": "Reader brief",
+        "quality_rubric": "EDA quality rubric",
+        "analysis_storyboard": "Analysis storyboard",
+        "target_readiness": "Target readiness",
+        "guardrails": "Leakage and evaluation guardrails",
+        "column_profile": "Column Profile",
+        "findings": "Findings and Investigation Queue",
+        "next": "What to inspect next",
+        "target_details": "Target value details",
+        "modeling_diagnostics": "Modeling Diagnostics",
+        "language": "Language",
+        "target_not_selected": "not selected",
+        "scaffold_notice": "This is a Tablex harness-generated scaffold. The final deep EDA should be authored by Codex from Skills and the actual data.",
+        "artifact_note": "This notebook is generated as a Tablex artifact. Codex, Skills, or a human analyst can revise it while preserving harness-owned EvaluationSpec, SplitManifest, artifacts, and lineage.",
+        "reader_questions": (
+            "Start with the data story, not the model. This notebook should help a human answer:\n\n"
+            "1. What is one row, and what decision will be made from it?\n"
+            "2. Which columns look useful, risky, duplicated, unavailable at prediction time, or too sparse?\n"
+            "3. Is the objective selected, and does its distribution make the proposed metric sensible?\n"
+            "4. What should EvaluationSpec and SplitManifest protect before Codex writes modeling code?"
+        ),
+        "current_read": "Current read",
+        "feature_queue_intro": "High-signal queues",
+        "missingness": "missingness",
+        "high_cardinality": "high-cardinality",
+        "datetime": "datetime",
+        "text": "text",
+        "leakage_suspect": "leakage-suspect",
+        "missing_rate": "Missing rate",
+        "top_missing_columns": "Top missing columns",
+        "no_column_profile": "No column profile",
+        "semantic_type_mix": "Semantic type and role mix",
+        "no_quality_rubric": "No quality rubric available.",
+        "no_storyboard": "No storyboard available.",
+        "no_guardrails": "No guardrails generated yet.",
+        "no_columns": "No profile columns are available yet.",
+        "no_findings": "No findings have been generated yet.",
+        "default_next_actions": (
+            "- Confirm row semantics and prediction time.\n"
+            "- Review high-missing and high-cardinality columns.\n"
+            "- Decide whether the objective is direct, delayed, or derived by aggregation.\n"
+            "- Lock evaluation only after leakage and grouping/time risks are understood."
+        ),
+        "no_target_values": "No target value counts are available yet.",
+        "no_runs": (
+            "No experiment runs are available yet. Once baseline or Codex-run experiments emit metrics, "
+            "this notebook should add feature importance, permutation importance, partial dependence, "
+            "slice diagnostics, and prediction analysis cells."
+        ),
+    }
+
+
+def _notebook_authoring_notice(locale: str, *, authoring_brief_artifact_id: str | None) -> str:
+    brief = authoring_brief_artifact_id or "notebook_authoring_brief"
+    if locale.lower().startswith("ja"):
+        return (
+            "このアーティファクトはハーネス生成の足場であり、最終的なCodex執筆の深いEDAではありません。"
+            f"Codexは `{brief}` と tablex-grandmaster-eda / tablex-notebook-quality Skill、実データを読み、"
+            f"人間向けノートブックを {locale} で書く必要があります。"
+        )
+    return (
+        "This artifact is a harness-generated scaffold. It is not yet the final Codex-authored Grandmaster-style EDA. "
+        f"Codex should read `{brief}` plus tablex-grandmaster-eda/tablex-notebook-quality Skills and actual data, "
+        f"then write the human-facing notebook in locale {locale}."
+    )
 
 
 def _eda_quality_rubric(

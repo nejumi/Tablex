@@ -33,6 +33,10 @@ class AutonomyStopCreate(BaseModel):
     locale: str | None = None
 
 
+class DataUnderstandingNotebookCreate(BaseModel):
+    locale: str | None = None
+
+
 class AgentSessionRead(BaseModel):
     id: str
     project_id: str

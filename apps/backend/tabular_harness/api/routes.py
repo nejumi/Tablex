@@ -90,6 +90,7 @@ from tabular_harness.schemas import (
     BenchmarkSourceCardRead,
     DatasetSnapshotRead,
     DatasetUploadResponse,
+    DataUnderstandingNotebookCreate,
     DecisionReportCurrentRead,
     EvaluationCandidateRead,
     EvaluationSpecRead,
@@ -1901,6 +1902,7 @@ def upload_dataset_bundle(
     target_column: Annotated[str | None, Form()] = None,
     primary_filename: Annotated[str | None, Form()] = None,
     note: Annotated[str | None, Form()] = None,
+    locale: Annotated[str | None, Form()] = None,
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
     if not files:
@@ -1934,6 +1936,7 @@ def upload_dataset_bundle(
             "primary_filename": requested_primary,
             "target_column": target_column,
             "note_present": bool(note and note.strip()),
+            "response_locale": locale,
         },
         policy={
             "network": "disabled",
@@ -1954,6 +1957,7 @@ def upload_dataset_bundle(
             target_column=target_column,
             primary_filename=requested_primary,
             note=note,
+            response_locale=locale,
         )
         mark_job_succeeded(job, output)
     except ValueError as exc:
@@ -1976,6 +1980,7 @@ def ingest_uploaded_data_bundle(
     target_column: str | None,
     primary_filename: str | None,
     note: str | None,
+    response_locale: str | None = None,
 ) -> dict[str, Any]:
     effective_target = target_column or project.target_column
     if target_column and target_column != project.target_column:
@@ -2178,7 +2183,12 @@ def ingest_uploaded_data_bundle(
 
     if dataset is not None:
         try:
-            notebook_result = create_data_understanding_notebook(db, store=store, project=project)
+            notebook_result = create_data_understanding_notebook(
+                db,
+                store=store,
+                project=project,
+                response_locale=response_locale,
+            )
             notebook_artifact_ids = notebook_result.artifact_ids
             notebook_artifact = notebook_result.notebook_artifact
             notebook_html_artifact = notebook_result.html_artifact
@@ -5355,13 +5365,15 @@ def generate_data_understanding_notebook_endpoint(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+    payload: DataUnderstandingNotebookCreate | None = None,
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
+    response_locale = payload.locale if payload else None
     job = create_job(
         db,
         job_type="generate_data_understanding_notebook",
         project_id=project_id,
-        input_payload={"notebook_kind": "data_understanding"},
+        input_payload={"notebook_kind": "data_understanding", "response_locale": response_locale},
         policy={
             "external_network_access": "disabled",
             "connector_credentials_materialized": False,
@@ -5370,14 +5382,18 @@ def generate_data_understanding_notebook_endpoint(
     )
     try:
         mark_job_running(job)
-        result = create_data_understanding_notebook(db, store=store, project=project)
+        result = create_data_understanding_notebook(db, store=store, project=project, response_locale=response_locale)
         mark_job_succeeded(
             job,
             {
                 "schema_version": result.notebook["schema_version"],
                 "notebook_kind": result.notebook["notebook_kind"],
+                "response_locale": result.notebook.get("response_locale"),
                 "analysis_notebook_artifact_id": result.notebook_artifact.id,
                 "notebook_html_artifact_id": result.html_artifact.id,
+                "notebook_authoring_brief_artifact_id": result.authoring_brief_artifact.id
+                if result.authoring_brief_artifact
+                else None,
                 "notebook_run_manifest_artifact_id": result.manifest_artifact.id,
                 "notebook_report_id": result.report.id,
                 "notebook_report_artifact_id": result.report_artifact.id,
