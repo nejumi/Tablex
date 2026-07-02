@@ -480,6 +480,8 @@ export TABLEX_AVATAR_IMAGE_QUALITY=low
 
 Authentication is optional in local development and disabled by default. Set `TABLEX_AUTH_ENABLED=true` to require a password session for product APIs. The first user can be created from the login screen when no users exist, or seeded with `TABLEX_BOOTSTRAP_EMAIL` and `TABLEX_BOOTSTRAP_PASSWORD` at backend startup. Sessions use HTTP-only cookies; the database stores only password hashes and session-token hashes.
 
+Password auth requires at least 10 characters and must include uppercase, lowercase, digit, and symbol characters.
+
 When auth is enabled, User Settings are saved server-side through `/api/auth/me/settings` so language, display theme, intervention countdown, model preferences, and avatar persist across browsers. These settings are harness-owned user preferences and must not be passed to Codex as credentials. Google auth is represented in config/status only for now; the actual OIDC callback flow is deferred.
 
 ## Frontend

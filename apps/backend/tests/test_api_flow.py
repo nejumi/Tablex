@@ -89,11 +89,18 @@ def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -
     protected_response = client.get("/api/projects")
     assert protected_response.status_code == 401
 
+    weak_password_response = client.post(
+        "/api/auth/bootstrap",
+        json={"email": "weak@example.com", "password": "lowercaseonly", "display_name": "Weak"},
+    )
+    assert weak_password_response.status_code == 400
+    assert "uppercase" in weak_password_response.json()["detail"]
+
     bootstrap_response = client.post(
         "/api/auth/bootstrap",
         json={
             "email": "owner@example.com",
-            "password": "correct horse battery staple",
+            "password": "CorrectHorse1!",
             "display_name": "Owner",
         },
     )
@@ -134,7 +141,7 @@ def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -
 
     login_response = client.post(
         "/api/auth/login",
-        json={"email": "owner@example.com", "password": "correct horse battery staple"},
+        json={"email": "owner@example.com", "password": "CorrectHorse1!"},
     )
     assert login_response.status_code == 200, login_response.text
     assert login_response.json()["user"]["settings"]["locale"] == "ja-JP"

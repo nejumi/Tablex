@@ -406,13 +406,16 @@ def bootstrap_auth_user(
     existing_count = int(db.scalar(select(func.count()).select_from(User)) or 0)
     if existing_count > 0:
         raise HTTPException(status_code=409, detail="Bootstrap user already exists.")
-    user = create_user(
-        db,
-        email=payload.email,
-        password=payload.password,
-        display_name=payload.display_name,
-        is_admin=True,
-    )
+    try:
+        user = create_user(
+            db,
+            email=payload.email,
+            password=payload.password,
+            display_name=payload.display_name,
+            is_admin=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     token = create_auth_session(
         db,
         user=user,

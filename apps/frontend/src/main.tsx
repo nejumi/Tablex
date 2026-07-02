@@ -200,6 +200,7 @@ const englishMessages = {
   signInBody: "Keep projects, language, avatar, and model preferences available across browsers.",
   email: "Email",
   password: "Password",
+  passwordRequirement: "At least 10 characters with uppercase, lowercase, digit, and symbol.",
   displayName: "Display name",
   signIn: "Sign in",
   createFirstUser: "Create first user",
@@ -535,6 +536,7 @@ const japaneseMessages: LocaleMessages = {
   signInBody: "プロジェクト、言語、アイコン、モデル設定をブラウザを跨いで保持します。",
   email: "メールアドレス",
   password: "パスワード",
+  passwordRequirement: "10文字以上で、大文字・小文字・数字・記号をすべて含めてください。",
   displayName: "表示名",
   signIn: "ログイン",
   createFirstUser: "最初のユーザーを作成",
@@ -2854,11 +2856,15 @@ function AuthGate({
             <span>{text.password}</span>
             <input
               autoComplete={status.bootstrap_required ? "new-password" : "current-password"}
+              minLength={10}
+              pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{10,}"
+              title={text.passwordRequirement}
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               required
             />
+            <small>{text.passwordRequirement}</small>
           </label>
           <button className="primary-button" disabled={busy || !email.trim() || !password} type="submit">
             {busy ? <Loader2 className="spin" size={16} /> : <KeyRound size={16} />}

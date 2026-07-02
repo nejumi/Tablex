@@ -161,7 +161,7 @@ class AuthLoginCreate(BaseModel):
 
 class AuthRegisterCreate(BaseModel):
     email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=1024)
+    password: str = Field(min_length=10, max_length=1024)
     display_name: str | None = Field(default=None, max_length=120)
 
 

@@ -34,8 +34,9 @@ def create_user(
     normalized_email = normalize_email(email)
     if not normalized_email:
         raise ValueError("Email is required.")
-    if len(password) < 8:
-        raise ValueError("Password must be at least 8 characters.")
+    password_errors = password_policy_errors(password)
+    if password_errors:
+        raise ValueError("Password must " + ", ".join(password_errors) + ".")
     existing = db.scalar(select(User).where(func.lower(User.email) == normalized_email.lower()))
     if existing is not None:
         raise ValueError("User already exists.")
@@ -173,6 +174,21 @@ def normalize_email(email: str) -> str:
 def clean_short_string(value: str, *, fallback: str, max_length: int) -> str:
     cleaned = value.strip()[:max_length]
     return cleaned or fallback
+
+
+def password_policy_errors(password: str) -> list[str]:
+    errors: list[str] = []
+    if len(password) < 10:
+        errors.append("be at least 10 characters")
+    if not any(character.islower() for character in password):
+        errors.append("include a lowercase letter")
+    if not any(character.isupper() for character in password):
+        errors.append("include an uppercase letter")
+    if not any(character.isdigit() for character in password):
+        errors.append("include a digit")
+    if not any(not character.isalnum() for character in password):
+        errors.append("include a symbol")
+    return errors
 
 
 def hash_password(password: str) -> str:
