@@ -262,6 +262,9 @@ def build_agent_task_contract_payload(
             "schemas/agent_result.schema.json",
             "schemas/visualization_spec.schema.json",
             "skills/tablex-notebook-quality/SKILL.md",
+            "skills/tablex-grandmaster-eda/SKILL.md",
+            "skills/tablex-grandmaster-eda/references/grandmaster_eda_patterns.md",
+            "skills/tablex-grandmaster-eda/references/tablex_marimo_outputs.md",
         ],
         "output_schema_path": "schemas/agent_result.schema.json",
         "assumption_context": {
@@ -433,17 +436,27 @@ def required_outputs_for_task(task_type: str) -> list[dict[str, str]]:
     if task_type == "author_analysis_notebook":
         return [
             {
-                "path": "notebooks/tablex_analysis_notebook.py",
+                "path": "notebooks/grandmaster_eda.py",
                 "schema": "marimo_notebook.v1",
                 "description": (
-                    "Human-facing marimo analysis notebook authored from current Tablex evidence and "
-                    "the notebook_authoring_brief, not a fixed template."
+                    "Human-facing marimo analysis notebook authored from current Tablex evidence, "
+                    "grandmaster EDA guidance, and the notebook_authoring_brief, not a fixed template."
                 ),
             },
             {
                 "path": "reports/notebook_authoring_report.md",
                 "schema": "markdown_report.v1",
                 "description": "Short reader guide summarizing the notebook story, findings, caveats, and next actions.",
+            },
+            {
+                "path": "artifacts/eda_hypotheses.json",
+                "schema": "eda_hypotheses.v1",
+                "description": "Evidence-backed hypotheses, confidence, risk, next checks, and suggested actions.",
+            },
+            {
+                "path": "artifacts/visual_story_cards.json",
+                "schema": "visual_story_cards.v1",
+                "description": "UI-ready cards for key findings, ideas, risks, and diagnostics with evidence links.",
             },
             {
                 "path": "artifacts/notebook_figure_manifest.json",
@@ -567,8 +580,10 @@ def quality_checks_for_task(task_type: str) -> list[str]:
     if task_type == "author_analysis_notebook":
         return [
             "Read notebook_authoring_brief first when present.",
+            "Read skills/tablex-grandmaster-eda/SKILL.md and choose a dataset-specific exploration path instead of a fixed template.",
             "Use public Kaggle Grandmaster-style source cards as craft inspiration only; do not copy text, code, or section order.",
             "Inspect current Tablex artifacts before deciding the notebook structure.",
+            "Produce meaningful hypotheses and visual story cards, not only a rendered notebook shell.",
             "Every chart or table must answer a question and include an interpretation or next action.",
             "Separate observed evidence, assumptions, missing evidence, and deferred checks.",
             "Keep EvaluationSpec and SplitManifest visible before model or metric claims.",

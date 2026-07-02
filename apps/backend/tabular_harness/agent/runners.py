@@ -1080,12 +1080,13 @@ def render_prompt(contract: AgentTaskContract) -> str:
                 "Notebook authoring rules:",
                 "- Read .harness/task_contract.json first.",
                 "- Read skills/tablex-notebook-quality/SKILL.md if present.",
+                "- Read skills/tablex-grandmaster-eda/SKILL.md and its references if present.",
                 "- Read the notebook_authoring_brief referenced in contract.inputs.notebook_authoring.artifact_id.",
                 "- Inspect the materialized Tablex context artifacts under .harness/context before choosing the notebook flow.",
                 "- Use public Kaggle Grandmaster-style source cards as craft inspiration only; do not copy public prose, code, or section order.",
-                "- Decide the narrative, sections, figures, and caveats from current evidence instead of using a fixed template.",
+                "- Decide the exploration path, hypotheses, narrative, sections, figures, and caveats from current evidence instead of using a fixed template.",
                 "- If target or evaluation context is missing, write a useful data-understanding notebook and label target-aware/model claims as blocked.",
-                "- Produce the requested marimo source, reader report, figure manifest, evidence bundle, quality review, and citation audit.",
+                "- Produce the requested marimo source, reader report, EDA hypotheses, visual story cards, figure manifest, evidence bundle, quality review, and citation audit.",
             ]
         )
     if contract.task_type == "notebook_followup_diagnostics":

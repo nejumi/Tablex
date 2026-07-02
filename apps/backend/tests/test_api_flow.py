@@ -1743,6 +1743,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     seeded_asset_names = {item["name"] for item in seeded_assets}
     assert {
         "tabular_gradient_boosting_strategy",
+        "tablex_grandmaster_eda",
         "xgboost_mixed_type_baseline",
         "text_tfidf_train_fold_recipe",
         "causal_time_lag_rolling_features",
@@ -1765,10 +1766,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert research_plan_preview_response.status_code == 200
     research_plan_preview = research_plan_preview_response.json()["preview"]
     assert "research_plan.v1" in research_plan_preview
-    assert "controlled_web_search" in research_plan_preview
-    assert "connector_credentials" in research_plan_preview
-    assert "xgboost_mixed_type_baseline" in research_plan_preview
-    assert "causal_time_lag_rolling_features" in research_plan_preview
+    research_plan_download_response = client.get(f"/api/artifacts/{research_plan_artifact_id}/download")
+    assert research_plan_download_response.status_code == 200
+    research_plan_download = research_plan_download_response.text
+    assert "controlled_web_search" in research_plan_download
+    assert "connector_credentials" in research_plan_download
+    assert "xgboost_mixed_type_baseline" in research_plan_download
+    assert "causal_time_lag_rolling_features" in research_plan_download
 
     source_pack_response = client.post(f"/api/projects/{project_id}/approach/research-source-pack")
     assert source_pack_response.status_code == 200, source_pack_response.text
@@ -1873,6 +1877,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "adaptive_strategy_brief_artifact_id"
     ]
     assert agent_task_contract["inputs"]["open_ended_approach_space"]["strategy_brief_available"] is True
+    assert "skills/tablex-grandmaster-eda/SKILL.md" in agent_task_contract["context_files"]
     assert any(
         item["role"] == "adaptive_strategy_brief"
         and item["artifact_id"] == strategy_brief_job["output"]["adaptive_strategy_brief_artifact_id"]

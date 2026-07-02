@@ -163,6 +163,11 @@ def run_planned_agent_task_with_runner(
         else str(readiness.review["status"])
     )
 
+    # External agent execution can run for a long time. Persist the workspace and
+    # readiness artifacts before launching it so SQLite does not hold a writer
+    # transaction while Codex is thinking or using tools.
+    db.commit()
+
     output_schema = load_agent_result_schema()
     workspace_path = Path(str(workspace_manifest["workspace_path"]))
     relational_context_summary = build_relational_runner_context_summary(workspace_manifest, contract.inputs)

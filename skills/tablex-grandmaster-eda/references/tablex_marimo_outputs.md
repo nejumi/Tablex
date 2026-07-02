@@ -1,0 +1,97 @@
+# Tablex Marimo Outputs
+
+Use marimo as the primary medium for Tablex visual analysis and reports when the task involves data understanding, modeling diagnostics, or human-facing analysis.
+
+## Notebook Shape
+
+Create a marimo Python notebook, usually `notebooks/grandmaster_eda.py`.
+
+Recommended sections:
+
+1. Reader brief: the project, current objective belief, what to inspect first, and what changed.
+2. Data map: tables, row/entity/time semantics, relationship diagram or compact relationship table.
+3. Objective review: candidate targets/tasks, assumptions, rejected options, and unresolved questions.
+4. Evidence ladder: high-signal EDA sections chosen for this dataset.
+5. Deep dives: entity/group/trajectory examples or error examples when relevant.
+6. Hypotheses and ideas: what to try next, expected impact, evidence, risk.
+7. Evaluation boundary: known EvaluationSpec/SplitManifest and what claims are or are not allowed.
+8. Appendix: raw profile tables, source artifacts, execution notes, and reproduction commands.
+
+Use Plotly, matplotlib, seaborn, Altair, DuckDB, Polars, pandas, or scikit-learn as appropriate. Prefer libraries already installed in the Tablex environment. If a better library is missing, record the requested dependency and fallback output instead of silently degrading.
+
+## UI-Ready Artifacts
+
+Write compact JSON artifacts alongside the notebook so Tablex can render ideas and findings outside the notebook.
+
+`artifacts/eda_hypotheses.json`:
+
+```json
+{
+  "schema_version": "eda_hypotheses.v1",
+  "hypotheses": [
+    {
+      "id": "hyp_short_slug",
+      "title": "Short human-readable title",
+      "claim": "What may be true",
+      "why_it_matters": "Why this changes modeling, evaluation, or data collection",
+      "confidence": 0.0,
+      "risk_level": "low|medium|high",
+      "evidence": [{"artifact_id": "art_...", "note": "What supports or challenges it"}],
+      "next_check": "Concrete analysis or experiment",
+      "suggested_action": "What Codex or a human should do next"
+    }
+  ]
+}
+```
+
+`artifacts/visual_story_cards.json`:
+
+```json
+{
+  "schema_version": "visual_story_cards.v1",
+  "cards": [
+    {
+      "id": "card_short_slug",
+      "kind": "finding|idea|risk|question|diagnostic",
+      "title": "A title a human can understand in one glance",
+      "summary": "One or two sentences, no system-log phrasing",
+      "confidence": 0.0,
+      "risk_level": "low|medium|high",
+      "notebook_anchor": "section-or-cell-anchor",
+      "evidence_artifact_ids": ["art_..."],
+      "next_action": "The next useful click or agent task"
+    }
+  ]
+}
+```
+
+`artifacts/research_source_notes.json`:
+
+```json
+{
+  "schema_version": "research_source_notes.v1",
+  "sources": [
+    {
+      "title": "Source title",
+      "url": "https://...",
+      "used_for": "What idea or quality bar this source informed",
+      "copied_content": false
+    }
+  ]
+}
+```
+
+## Execution And Export
+
+- Keep notebook code reproducible and executable from the project workspace.
+- Prefer deterministic sample limits for expensive plots.
+- Export HTML when the environment supports it, for example `marimo export html notebooks/grandmaster_eda.py -o reports/grandmaster_eda.html`.
+- If export fails, keep the source notebook, error note, and partial figures as artifacts.
+- Do not mark a notebook as complete if cells were never executed. If execution was impossible, make that the main caveat.
+
+## Writing Style
+
+- Write in the user's configured language for human-facing summaries when that context is available.
+- Use natural analyst prose, not ticket or system-event phrasing.
+- Titles should be meaningful by themselves. Avoid titles like "Full Auto loop advanced" or "artifact summary."
+- Put raw JSON in appendices or downloads, never as the primary report surface.

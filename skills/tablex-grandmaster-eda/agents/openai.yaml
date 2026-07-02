@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tablex Grandmaster EDA"
+  short_description: "Kaggle Grandmaster-inspired EDA and marimo reporting for Tablex."
+  default_prompt: "Use Tablex Grandmaster EDA to explore this dataset deeply, extract hypotheses, and produce marimo-backed insight artifacts."

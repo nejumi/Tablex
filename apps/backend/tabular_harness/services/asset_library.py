@@ -28,6 +28,91 @@ DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
     },
     {
         "asset_type": "skill",
+        "name": "tablex_grandmaster_eda",
+        "description": (
+            "Guides Codex to perform Kaggle Grandmaster-inspired tabular EDA, hypothesis extraction, "
+            "multi-table deep dives, and marimo reporting without constraining approach choice."
+        ),
+        "tags": ["agent", "eda", "marimo", "kaggle", "hypothesis"],
+        "semantic_tags": [
+            "data_understanding",
+            "grandmaster_eda",
+            "hypothesis_extraction",
+            "multi_table_eda",
+            "marimo_notebook",
+            "visual_story",
+            "skill",
+        ],
+        "content": {
+            "skill_path": "skills/tablex-grandmaster-eda/SKILL.md",
+            "reference_paths": [
+                "skills/tablex-grandmaster-eda/references/grandmaster_eda_patterns.md",
+                "skills/tablex-grandmaster-eda/references/tablex_marimo_outputs.md",
+            ],
+            "instructions": [
+                "Use this as craft context for deep data understanding, not as deterministic harness logic.",
+                "Let Codex infer objectives, choose analyses, generate hypotheses, and write marimo notebooks from evidence.",
+                "Register hypotheses, visual story cards, evidence bundles, notebook source, reports, and next-analysis queues as artifacts.",
+                "Ask useful questions, but in Full Auto continue with explicit assumptions and fallback policies when safe.",
+            ],
+            "expected_outputs": [
+                "notebooks/grandmaster_eda.py",
+                "reports/eda_story.md",
+                "artifacts/eda_hypotheses.json",
+                "artifacts/visual_story_cards.json",
+                "artifacts/research_source_notes.json",
+                "artifacts/notebook_figure_manifest.json",
+                "artifacts/notebook_evidence_bundle.json",
+                "artifacts/next_analysis_queue.json",
+            ],
+            "source_inspirations": [
+                {
+                    "title": "Kaggle EDA for tabular data: Advanced Techniques",
+                    "url": "https://www.kaggle.com/code/vbmokin/eda-for-tabular-data-advanced-techniques",
+                    "use": "Index of strong public tabular EDA examples.",
+                },
+                {
+                    "title": "Kaggle Data Science for tabular data: Advanced Techniques",
+                    "url": "https://www.kaggle.com/code/vbmokin/data-science-for-tabular-data-advanced-techniques",
+                    "use": "Index of advanced tabular data-science workflows.",
+                },
+                {
+                    "title": "Home Credit Default Risk - Extensive EDA",
+                    "url": "https://www.kaggle.com/code/rishabhrao/home-credit-default-risk-extensive-eda",
+                    "use": "Multi-table credit-risk EDA inspiration.",
+                },
+                {
+                    "title": "Home Credit Default Risk Extensive EDA",
+                    "url": "https://www.kaggle.com/code/gpreda/home-credit-default-risk-extensive-eda",
+                    "use": "Home Credit table-by-table exploration inspiration.",
+                },
+                {
+                    "title": "The Kaggle Grandmasters Playbook: 7 Battle-Tested Modeling Techniques for Tabular Data",
+                    "url": "https://developer.nvidia.com/blog/the-kaggle-grandmasters-playbook-7-battle-tested-modeling-techniques-for-tabular-data/",
+                    "use": "Grandmaster workflow principles: smarter EDA, validation, baselines, feature generation, fast feedback.",
+                },
+                {
+                    "title": "Kaggle Grandmasters Unveil Winning Strategies for Data Science Superpowers",
+                    "url": "https://developer.nvidia.com/blog/kaggle-grandmasters-unveil-winning-strategies-for-data-science-superpowers/",
+                    "use": "Problem formulation, data storytelling, validation, train/test difference, and iterative intuition.",
+                },
+                {
+                    "title": "marimo static HTML export",
+                    "url": "https://docs.marimo.io/guides/exporting/static_html/",
+                    "use": "In-product notebook HTML rendering and artifact export.",
+                },
+            ],
+            "guardrails": [
+                "Do not read secrets or connector credentials.",
+                "Do not use validation/test targets in feature generation prompts, encoders, joins, or imputers.",
+                "Do not destructively modify EvaluationSpec or SplitManifest.",
+                "Do not copy public notebook prose, code, images, or section order.",
+                "Treat Give Up as a last resort after preserving useful partial artifacts.",
+            ],
+        },
+    },
+    {
+        "asset_type": "skill",
         "name": "tabular_gradient_boosting_strategy",
         "description": "Guides runner-side selection of mixed-type tabular gradient boosting approaches under harness evaluation.",
         "tags": ["agent", "modeling", "tabular", "xgboost"],
