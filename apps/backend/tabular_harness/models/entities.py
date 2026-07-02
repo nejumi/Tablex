@@ -14,6 +14,48 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("email"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    org_id: Mapped[str] = mapped_column(String, default="local-org", nullable=False)
+    email: Mapped[str] = mapped_column(String, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String)
+    password_hash: Mapped[str | None] = mapped_column(Text)
+    auth_provider: Mapped[str] = mapped_column(String, default="password", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    locale: Mapped[str] = mapped_column(String, default="en-US", nullable=False)
+    requested_locale: Mapped[str] = mapped_column(String, default="", nullable=False)
+    dynamic_language_request: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    display_theme: Mapped[str] = mapped_column(String, default="light", nullable=False)
+    intervention_countdown_seconds: Mapped[int] = mapped_column(Integer, default=15, nullable=False)
+    agent_model: Mapped[str] = mapped_column(String, default="codex-default", nullable=False)
+    utility_model: Mapped[str] = mapped_column(String, default="utility-default", nullable=False)
+    chat_submit_shortcut: Mapped[str] = mapped_column(String, default="locale_default", nullable=False)
+    user_avatar_data_url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    __table_args__ = (UniqueConstraint("session_token_hash"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    session_token_hash: Mapped[str] = mapped_column(String, nullable=False)
+    user_agent: Mapped[str | None] = mapped_column(Text)
+    ip_address: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Project(Base):
     __tablename__ = "projects"
 

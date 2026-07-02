@@ -12,6 +12,7 @@ from fastapi import (
     Form,
     HTTPException,
     Request,
+    Response,
     UploadFile,
 )
 from fastapi.responses import FileResponse
@@ -46,6 +47,7 @@ from tabular_harness.models.entities import (
     ResearchBrief,
     SemanticCatalog,
     SplitManifest,
+    User,
     VisualizationSpec,
     utc_now,
 )
@@ -66,6 +68,9 @@ from tabular_harness.schemas import (
     AssetVersionRead,
     AssumptionRead,
     AssumptionReviewQueueRead,
+    AuthLoginCreate,
+    AuthRegisterCreate,
+    AuthStatusRead,
     AutonomyStartCreate,
     AvatarCandidateCreate,
     AvatarCandidateResponse,
@@ -112,6 +117,8 @@ from tabular_harness.schemas import (
     SplitManifestRead,
     TranslationCreate,
     TranslationRead,
+    UserRead,
+    UserSettingsUpdate,
     VisualizationSpecRead,
 )
 from tabular_harness.services.adaptive_strategy import (
@@ -157,6 +164,15 @@ from tabular_harness.services.asset_library import (
     seed_default_assets,
 )
 from tabular_harness.services.assumption_review import build_assumption_review_queue
+from tabular_harness.services.auth import (
+    authenticate_password,
+    create_auth_session,
+    create_user,
+    revoke_session_token,
+    update_user_settings,
+    user_for_session_token,
+    user_to_dict,
+)
 from tabular_harness.services.autonomy import (
     queue_autonomous_session_continuation,
     run_autonomous_loop_tick,
@@ -319,18 +335,145 @@ def raise_metadata_db_busy(exc: OperationalError) -> None:
     raise exc
 
 
+def auth_status_payload(request: Request, db: Session, user: User | None) -> dict[str, Any]:
+    settings = request.app.state.settings
+    user_count = int(db.scalar(select(func.count()).select_from(User)) or 0)
+    return {
+        "auth_enabled": bool(settings.auth_enabled),
+        "authenticated": bool(user) if settings.auth_enabled else True,
+        "password_auth_enabled": True,
+        "google_auth_enabled": bool(settings.google_auth_enabled),
+        "bootstrap_required": bool(settings.auth_enabled and user_count == 0),
+        "user": user_to_dict(user) if user else None,
+    }
+
+
+def require_auth_user(request: Request, db: Session) -> User:
+    settings = request.app.state.settings
+    user = user_for_session_token(db, request.cookies.get(settings.auth_cookie_name))
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    return user
+
+
+def set_auth_cookie(response: Response, request: Request, token: str) -> None:
+    settings = request.app.state.settings
+    response.set_cookie(
+        settings.auth_cookie_name,
+        token,
+        httponly=True,
+        secure=bool(settings.auth_cookie_secure),
+        samesite="lax",
+        max_age=max(1, int(settings.auth_session_days)) * 24 * 60 * 60,
+        path="/",
+    )
+
+
 @router.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @router.get("/api/config")
-def app_config(request: Request) -> dict[str, str]:
+def app_config(request: Request) -> dict[str, Any]:
     settings = request.app.state.settings
     return {
         "app_display_name": str(settings.app_display_name),
         "architecture_name": "Tabular-first Prediction Meta-Harness",
+        "auth_enabled": bool(settings.auth_enabled),
+        "password_auth_enabled": True,
+        "google_auth_enabled": bool(settings.google_auth_enabled),
     }
+
+
+@router.get("/api/auth/status", response_model=AuthStatusRead)
+def auth_status(request: Request, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    settings = request.app.state.settings
+    user = user_for_session_token(db, request.cookies.get(settings.auth_cookie_name))
+    return auth_status_payload(request, db, user)
+
+
+@router.post("/api/auth/bootstrap", response_model=AuthStatusRead)
+def bootstrap_auth_user(
+    payload: AuthRegisterCreate,
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    settings = request.app.state.settings
+    if not settings.auth_enabled:
+        raise HTTPException(status_code=400, detail="Authentication is disabled.")
+    existing_count = int(db.scalar(select(func.count()).select_from(User)) or 0)
+    if existing_count > 0:
+        raise HTTPException(status_code=409, detail="Bootstrap user already exists.")
+    user = create_user(
+        db,
+        email=payload.email,
+        password=payload.password,
+        display_name=payload.display_name,
+        is_admin=True,
+    )
+    token = create_auth_session(
+        db,
+        user=user,
+        session_days=settings.auth_session_days,
+        user_agent=request.headers.get("user-agent"),
+        ip_address=request.client.host if request.client else None,
+    )
+    set_auth_cookie(response, request, token.token)
+    return auth_status_payload(request, db, user)
+
+
+@router.post("/api/auth/login", response_model=AuthStatusRead)
+def login(
+    payload: AuthLoginCreate,
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    settings = request.app.state.settings
+    if not settings.auth_enabled:
+        raise HTTPException(status_code=400, detail="Authentication is disabled.")
+    user = authenticate_password(db, email=payload.email, password=payload.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+    token = create_auth_session(
+        db,
+        user=user,
+        session_days=settings.auth_session_days,
+        user_agent=request.headers.get("user-agent"),
+        ip_address=request.client.host if request.client else None,
+    )
+    set_auth_cookie(response, request, token.token)
+    return auth_status_payload(request, db, user)
+
+
+@router.post("/api/auth/logout", response_model=AuthStatusRead)
+def logout(
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    settings = request.app.state.settings
+    revoke_session_token(db, request.cookies.get(settings.auth_cookie_name))
+    response.delete_cookie(settings.auth_cookie_name, path="/")
+    return auth_status_payload(request, db, None)
+
+
+@router.get("/api/auth/me", response_model=UserRead)
+def current_user(request: Request, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    return user_to_dict(require_auth_user(request, db))
+
+
+@router.patch("/api/auth/me/settings", response_model=UserRead)
+def update_current_user_settings(
+    payload: UserSettingsUpdate,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    user = require_auth_user(request, db)
+    update_user_settings(user, payload.settings)
+    return user_to_dict(user)
 
 
 @router.post("/api/user/avatar-candidates", response_model=AvatarCandidateResponse)

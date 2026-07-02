@@ -6,8 +6,11 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from tabular_harness.core.json import loads_json
 from tabular_harness.models.entities import (
     Artifact,
+    Asset,
+    AssetReference,
     DatasetSnapshot,
     EvaluationCandidate,
     EvaluationSpec,
@@ -136,6 +139,7 @@ def build_agent_conversation_context(db: Session, *, project: Project) -> dict[s
     latest_dataset_snapshot = latest_dataset(db, project.id)
     latest_spec = latest_approved_spec_for_project(db, project.id)
     latest_split = latest_split_for_spec_id(db, latest_spec.id) if latest_spec else None
+    skill_context_payload = skill_context(db, project.id)
     recent_artifacts = list(
         db.scalars(
             select(Artifact)
@@ -173,6 +177,7 @@ def build_agent_conversation_context(db: Session, *, project: Project) -> dict[s
             "status": project.status,
         },
         "counts": counts,
+        "skill_context": skill_context_payload,
         "latest_dataset": dataset_context(latest_dataset_snapshot),
         "evaluation_contract": {
             "approved_evaluation_spec_id": latest_spec.id if latest_spec else None,
@@ -216,12 +221,83 @@ def build_agent_conversation_context(db: Session, *, project: Project) -> dict[s
                 "endpoint": f"/api/projects/{project.id}/autonomy/start",
                 "input_schema": {"autonomy_mode": "approval_based|full_auto", "runner_mode": "harness_only|codex_cli|codex_cli_if_available"},
             },
+            {
+                "action": "equip_existing_skill",
+                "endpoint": f"/api/projects/{project.id}/asset-references",
+                "input_schema": {
+                    "target_asset_id": "existing skill asset id",
+                    "target_asset_version_id": "latest active asset version id",
+                    "relation_type": "equipped_for_agent_context",
+                },
+            },
+            {
+                "action": "create_skill",
+                "endpoint": "/api/assets",
+                "input_schema": {
+                    "asset_type": "skill",
+                    "name": "concise skill name",
+                    "description": "optional human-readable purpose",
+                    "tags": ["short_tag"],
+                    "semantic_tags": ["skill", "short_tag"],
+                    "content": {
+                        "schema_version": "tablex_skill.v1",
+                        "instructions": ["concise non-obvious guidance for Codex"],
+                        "guidance": "Use as Codex context, not deterministic harness routing.",
+                    },
+                },
+            },
         ],
         "agent_boundary": {
             "natural_language_policy": "no keyword or phrase-specific natural-language routing inside the harness",
             "state_change_policy": "state changes require explicit UI/API action or a future schema-validated agent proposal",
             "evaluation_policy": "approved EvaluationSpecs and SplitManifests are not changed by chat text",
         },
+    }
+
+
+def skill_context(db: Session, project_id: str) -> dict[str, Any]:
+    references = list(
+        db.scalars(
+            select(AssetReference).where(
+                AssetReference.source_type == "project",
+                AssetReference.source_id == project_id,
+            )
+        ).all()
+    )
+    referenced_ids = {reference.target_asset_id for reference in references}
+    skill_assets = list(
+        db.scalars(
+            select(Asset)
+            .where(Asset.asset_type == "skill", Asset.status == "active")
+            .order_by(Asset.name)
+            .limit(30)
+        ).all()
+    )
+    reference_by_asset_id = {reference.target_asset_id: reference for reference in references}
+    equipped = [
+        skill_asset_context(asset, reference=reference_by_asset_id.get(asset.id))
+        for asset in skill_assets
+        if asset.id in referenced_ids
+    ]
+    available = [skill_asset_context(asset) for asset in skill_assets if asset.id not in referenced_ids][:12]
+    return {
+        "schema_version": "skill_context.v1",
+        "purpose": "Skills are reusable Codex context/equipment, not fixed harness recipes.",
+        "equipped": equipped,
+        "available": available,
+        "create_and_equip_policy": "Use explicit UI/API action or schema-validated agent proposal; do not keyword-route chat text.",
+    }
+
+
+def skill_asset_context(asset: Asset, *, reference: AssetReference | None = None) -> dict[str, Any]:
+    return {
+        "asset_id": asset.id,
+        "latest_version_id": asset.latest_version_id,
+        "name": asset.name,
+        "description": asset.description,
+        "tags": loads_json(asset.tags_json, []),
+        "semantic_tags": loads_json(asset.semantic_tags_json, []),
+        "relation_type": reference.relation_type if reference else None,
     }
 
 

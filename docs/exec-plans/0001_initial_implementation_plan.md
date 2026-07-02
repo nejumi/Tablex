@@ -95,6 +95,8 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Home-Centered Agent Workflow v1 with mode selection, start action, mandatory Data Understanding and plan creation, current-task display, Ideas & Findings memory, equipped Skill panel, and Agent panel display modes for wrapped Tablex chat vs Raw Codex-style event inspection.
 - Human-Facing Agent Chat v1 with persisted chat history, conversation-turn UI, `agent_human_response_brief.v1` artifacts, response composer metadata, locale-aware response contracts, and separate User Settings preferences for deep Agent model vs lightweight Utility model routing.
 - marimo Notebook Asset Navigation v1 with notebook generation results posted back into Agent Chat, DatasetSnapshot/ExperimentRun/Leaderboard/ModelVersion rows exposing related notebook links, and a shared Notebook viewer target so data, model, run, asset, and chat contexts open the same in-product evidence surface.
+- Skill Equipment UI v1 with Home/Library panels for equipping existing cross-project Skills, creating concise Skill assets on the fly, storing `semantic_tags`, and exposing `skill_context` plus explicit create/equip action schemas to Codex without natural-language keyword routing.
+- Password Auth v0 with optional API protection, first-user bootstrap, HTTP-only session cookies, password/session-token hashes in SQLite, logout, and server-backed User Settings persistence for language, avatar, display, intervention, and model preferences.
 - Job skeleton for:
   - `profile_dataset`
   - `infer_assumptions`
@@ -128,6 +130,7 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 ## Deferred Scope
 
 - Google OIDC and real RBAC.
+- Full Google OIDC login/callback flow; only config/status/provider boundary is present in Password Auth v0.
 - Real secure database connectors and Data Access Broker implementation.
 - General prediction-serving APIs and library-version compatibility policy for model packages.
 - Advanced time/group split validation, including multi-cut backtesting and grouped time splits.
@@ -161,4 +164,6 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - Uploaded multi-table bundles should be treated as raw evidence and available data boundaries. Codex should be free to design, compare, and reject aggregate/merge approaches, but every chosen approach must record FeatureRecipe/code artifacts, lineage, split discipline, prediction-time availability assumptions, and leakage checks.
 - Target selection is intentionally late-bindable. Target may be selected after Data Understanding or created from a user-described derivation, but target construction must become an auditable artifact before EvaluationSpec, SplitManifest, modeling, or leaderboard comparison depend on it.
 - Agent Chat must not become a rule-based ticket generator. Deterministic code should own state changes and audit records; human-facing explanation, next-step narration, translation, and summarization should flow through a response composer that can use Codex or a lightweight utility model when configured. Current local fallback is intentionally conservative and should be replaced by controlled model dispatch.
+- Skill creation from chat still needs schema-validated agent proposal execution before it can mutate state directly from conversation. Until then, the UI path is authoritative and Chat context tells Codex which explicit create/equip APIs are available.
 - Auth is stubbed as local single-user behavior.
+- Password Auth v0 provides a real local session boundary, but project ownership/RBAC is still coarse. User preferences are persisted per user; project-level authorization remains future work.

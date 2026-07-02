@@ -53,6 +53,26 @@ type UserSettings = {
   userAvatarDataUrl: string | null;
 };
 
+type AuthUser = {
+  id: string;
+  email: string;
+  display_name: string | null;
+  auth_provider: string;
+  is_admin: boolean;
+  settings: Partial<UserSettings>;
+  created_at: string;
+  updated_at: string;
+};
+
+type AuthStatus = {
+  auth_enabled: boolean;
+  authenticated: boolean;
+  password_auth_enabled: boolean;
+  google_auth_enabled: boolean;
+  bootstrap_required: boolean;
+  user: AuthUser | null;
+};
+
 type AvatarCandidate = {
   id: string;
   data_url: string;
@@ -176,6 +196,18 @@ const englishMessages = {
   saveDecisionBrief: "Save decision brief",
   settings: "User Settings",
   settingsHint: "Language, locale packs, and display preferences are stored locally for this workbench.",
+  signInTitle: "Sign in to Tablex",
+  signInBody: "Keep projects, language, avatar, and model preferences available across browsers.",
+  email: "Email",
+  password: "Password",
+  displayName: "Display name",
+  signIn: "Sign in",
+  createFirstUser: "Create first user",
+  signOut: "Sign out",
+  signedInAs: "Signed in as",
+  passwordAuth: "Password",
+  googleAuthComingSoon: "Google sign-in is prepared for a later connector-backed phase.",
+  authDisabledHint: "Local auth is disabled for this backend.",
   language: "Language",
   localeCatalog: "Locale catalog",
   localePack: "Locale pack",
@@ -361,6 +393,16 @@ const englishMessages = {
   equippedSkillsTitle: "Equipped Skills",
   equippedSkillsEmpty: "No project skills equipped yet.",
   equippedSkillBadge: "E",
+  skillPanelHint: "Equip reusable context for Codex without turning it into a fixed recipe.",
+  skillSelectPlaceholder: "Choose an existing Skill",
+  skillEquipExisting: "Equip existing",
+  skillCreateTitle: "Create a Skill",
+  skillName: "Skill name",
+  skillDescription: "Description",
+  skillInstructions: "Instructions",
+  skillTags: "Tags",
+  skillCreateAndEquip: "Create & equip",
+  skillNoAvailable: "No unequipped Skills are available. Seed the library or create one here.",
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
   rawAgentTitle: "Raw Codex transcript",
@@ -489,6 +531,18 @@ const japaneseMessages: LocaleMessages = {
   saveDecisionBrief: "Decision briefを保存",
   settings: "ユーザー設定",
   settingsHint: "言語、locale pack、表示設定をこのworkbenchのlocal設定として保存します。",
+  signInTitle: "Tablexにログイン",
+  signInBody: "プロジェクト、言語、アイコン、モデル設定をブラウザを跨いで保持します。",
+  email: "メールアドレス",
+  password: "パスワード",
+  displayName: "表示名",
+  signIn: "ログイン",
+  createFirstUser: "最初のユーザーを作成",
+  signOut: "ログアウト",
+  signedInAs: "ログイン中",
+  passwordAuth: "パスワード",
+  googleAuthComingSoon: "Googleログインは後続のconnector-backed phase用に境界だけ用意しています。",
+  authDisabledHint: "このbackendではlocal authは無効です。",
   language: "言語",
   localeCatalog: "Locale catalog",
   localePack: "Locale pack",
@@ -673,6 +727,16 @@ const japaneseMessages: LocaleMessages = {
   equippedSkillsTitle: "装備中SKILL",
   equippedSkillsEmpty: "このProjectに装備されたSkillはまだありません。",
   equippedSkillBadge: "E",
+  skillPanelHint: "Codexを固定recipeに閉じ込めず、必要な文脈や手順を装備します。",
+  skillSelectPlaceholder: "既存Skillを選択",
+  skillEquipExisting: "既存Skillを装備",
+  skillCreateTitle: "Skillを作成",
+  skillName: "Skill名",
+  skillDescription: "説明",
+  skillInstructions: "指示",
+  skillTags: "タグ",
+  skillCreateAndEquip: "作成して装備",
+  skillNoAvailable: "未装備のSkillはありません。Libraryをseedするか、ここで作成してください。",
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
   rawAgentTitle: "Raw Codex transcript",
@@ -776,6 +840,42 @@ function loadUserSettings(): UserSettings {
   } catch {
     return defaultUserSettings;
   }
+}
+
+function mergeServerUserSettings(current: UserSettings, serverSettings: Partial<UserSettings>): UserSettings {
+  return {
+    ...current,
+    locale: typeof serverSettings.locale === "string" ? serverSettings.locale : current.locale,
+    requestedLocale:
+      typeof serverSettings.requestedLocale === "string" ? serverSettings.requestedLocale : current.requestedLocale,
+    dynamicLanguageRequest:
+      typeof serverSettings.dynamicLanguageRequest === "string"
+        ? serverSettings.dynamicLanguageRequest
+        : current.dynamicLanguageRequest,
+    displayTheme: serverSettings.displayTheme === "dark" || serverSettings.displayTheme === "light" ? serverSettings.displayTheme : current.displayTheme,
+    interventionCountdownSeconds:
+      typeof serverSettings.interventionCountdownSeconds === "number" &&
+      Number.isFinite(serverSettings.interventionCountdownSeconds)
+        ? Math.max(0, Math.min(300, Math.round(serverSettings.interventionCountdownSeconds)))
+        : current.interventionCountdownSeconds,
+    agentModel:
+      typeof serverSettings.agentModel === "string" && serverSettings.agentModel.trim()
+        ? serverSettings.agentModel
+        : current.agentModel,
+    utilityModel:
+      typeof serverSettings.utilityModel === "string" && serverSettings.utilityModel.trim()
+        ? serverSettings.utilityModel
+        : current.utilityModel,
+    chatSubmitShortcut: isChatSubmitShortcutSetting(serverSettings.chatSubmitShortcut)
+      ? serverSettings.chatSubmitShortcut
+      : current.chatSubmitShortcut,
+    userAvatarDataUrl:
+      typeof serverSettings.userAvatarDataUrl === "string" && serverSettings.userAvatarDataUrl.startsWith("data:image/")
+        ? serverSettings.userAvatarDataUrl
+        : serverSettings.userAvatarDataUrl === null
+          ? null
+          : current.userAvatarDataUrl
+  };
 }
 
 function isChatSubmitShortcutSetting(value: unknown): value is ChatSubmitShortcutSetting {
@@ -1462,6 +1562,13 @@ type EquippedSkillItem = {
   relation_type: string;
 };
 
+type SkillDraft = {
+  name: string;
+  description: string;
+  instructions: string;
+  tags: string;
+};
+
 type RawAgentEvent = {
   id: string;
   timestamp: string;
@@ -2047,7 +2154,7 @@ type ProjectGuidance = {
 };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBase}${path}`, init);
+  const response = await fetch(`${apiBase}${path}`, { credentials: "include", ...init });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(apiErrorMessage(detail, response.statusText));
@@ -2317,14 +2424,21 @@ function App() {
   const [tab, setTab] = React.useState<Tab>("Home");
   const [userSettings, setUserSettings] = React.useState<UserSettings>(() => loadUserSettings());
   const [dynamicLocalePacks, setDynamicLocalePacks] = React.useState<LocalePack[]>(() => loadDynamicLocalePacks());
+  const [authStatus, setAuthStatus] = React.useState<AuthStatus | null>(null);
+  const [authLoading, setAuthLoading] = React.useState(true);
+  const [authError, setAuthError] = React.useState<string | null>(null);
   const [portalOverview, setPortalOverview] = React.useState<PortalOverview | null>(null);
   const [portalIdeas, setPortalIdeas] = React.useState<PortalIdea[]>([]);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const hydratedUserIdRef = React.useRef<string | null>(null);
   const localePacks = React.useMemo(() => mergeLocalePacks(dynamicLocalePacks), [dynamicLocalePacks]);
   const activeLocale = resolveLocalePack(userSettings.locale, localePacks);
   const text = copyForLocale(activeLocale.locale, localePacks);
+  const authKnown = authStatus !== null;
+  const authEnabled = Boolean(authStatus?.auth_enabled);
+  const authAuthenticated = Boolean(authStatus?.authenticated);
 
   React.useEffect(() => {
     window.localStorage.setItem(userSettingsStorageKey, JSON.stringify(userSettings));
@@ -2333,6 +2447,26 @@ function App() {
     document.documentElement.dir = activeLocale.direction;
     document.documentElement.dataset.theme = userSettings.displayTheme;
   }, [activeLocale.direction, activeLocale.locale, dynamicLocalePacks, userSettings]);
+
+  const refreshAuth = React.useCallback(async () => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      const status = await api<AuthStatus>("/api/auth/status");
+      setAuthStatus(status);
+      if (status.user?.id && hydratedUserIdRef.current !== status.user.id) {
+        hydratedUserIdRef.current = status.user.id;
+        setUserSettings((current) => mergeServerUserSettings(current, status.user?.settings ?? {}));
+      }
+      if (!status.authenticated) {
+        hydratedUserIdRef.current = null;
+      }
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
 
   const refreshProjects = React.useCallback(async () => {
     setLoading(true);
@@ -2356,11 +2490,63 @@ function App() {
   }, [selectedProjectId]);
 
   React.useEffect(() => {
+    void refreshAuth();
+  }, [refreshAuth]);
+
+  React.useEffect(() => {
+    if (authLoading || !authKnown) return;
+    if (authEnabled && !authAuthenticated) {
+      setLoading(false);
+      return;
+    }
     void refreshProjects();
-  }, [refreshProjects]);
+  }, [authAuthenticated, authEnabled, authKnown, authLoading, refreshProjects]);
+
+  React.useEffect(() => {
+    if (!authEnabled || !authAuthenticated) return undefined;
+    const handle = window.setTimeout(() => {
+      void api<AuthUser>("/api/auth/me/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: userSettings })
+      }).then((user) => {
+        setAuthStatus((current) => (current ? { ...current, user } : current));
+      });
+    }, 600);
+    return () => window.clearTimeout(handle);
+  }, [authAuthenticated, authEnabled, userSettings]);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const activeProject = viewMode === "project" ? selectedProject : null;
+
+  async function loginOrBootstrap(email: string, password: string, displayName: string | null) {
+    const endpoint = authStatus?.bootstrap_required ? "/api/auth/bootstrap" : "/api/auth/login";
+    const status = await api<AuthStatus>(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        authStatus?.bootstrap_required
+          ? { email, password, display_name: displayName }
+          : { email, password }
+      )
+    });
+    setAuthStatus(status);
+    if (status.user?.settings) {
+      hydratedUserIdRef.current = status.user.id;
+      setUserSettings((current) => mergeServerUserSettings(current, status.user?.settings ?? {}));
+    }
+  }
+
+  async function signOut() {
+    await api<AuthStatus>("/api/auth/logout", { method: "POST" });
+    setAuthStatus((current) => (current ? { ...current, authenticated: false, user: null } : current));
+    setProjects([]);
+    setPortalOverview(null);
+    setPortalIdeas([]);
+    setSelectedProjectId(null);
+    setViewMode("portal");
+    hydratedUserIdRef.current = null;
+  }
 
   async function createLocalizationTask(settings: UserSettings) {
     if (!selectedProjectId) {
@@ -2431,6 +2617,19 @@ function App() {
   return (
     <LocaleContext.Provider value={{ text, locale: activeLocale.locale }}>
       <div className="app-shell">
+      {authLoading || !authStatus ? (
+        <main className="auth-shell">
+          <LoadingBlock label={authError ?? text.loadingProjects} />
+        </main>
+      ) : authStatus.auth_enabled && !authStatus.authenticated ? (
+        <AuthGate
+          status={authStatus}
+          text={text}
+          error={authError}
+          onSubmit={loginOrBootstrap}
+        />
+      ) : (
+      <>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">
@@ -2477,12 +2676,26 @@ function App() {
             <p>{activeProject ? activeProject.description || text.projectDescription : text.portalSubtitle}</p>
           </div>
           <div className="topbar-actions">
+            {authStatus.auth_enabled && authStatus.user ? (
+              <div className="auth-user-chip">
+                <UserAvatar src={userSettings.userAvatarDataUrl} />
+                <span>
+                  <small>{text.signedInAs}</small>
+                  <strong>{authStatus.user.display_name ?? authStatus.user.email}</strong>
+                </span>
+              </div>
+            ) : null}
             <button className="icon-button" onClick={() => void refreshProjects()} title={text.refreshProjects}>
               <RefreshCw size={18} />
             </button>
             <button className="icon-button" onClick={() => setSettingsOpen(true)} title={text.settings}>
               <SettingsIcon size={18} />
             </button>
+            {authStatus.auth_enabled ? (
+              <button className="icon-button" onClick={() => void signOut()} title={text.signOut}>
+                <KeyRound size={18} />
+              </button>
+            ) : null}
           </div>
         </header>
         {settingsOpen ? (
@@ -2562,6 +2775,8 @@ function App() {
           </>
         ) : null}
       </main>
+      </>
+      )}
       </div>
     </LocaleContext.Provider>
   );
@@ -2569,6 +2784,98 @@ function App() {
 
 function numberFromSummary(value: unknown, fallback: number | string): number | string {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function AuthGate({
+  status,
+  text,
+  error,
+  onSubmit
+}: {
+  status: AuthStatus;
+  text: LocaleMessages;
+  error: string | null;
+  onSubmit: (email: string, password: string, displayName: string | null) => Promise<void>;
+}) {
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [displayName, setDisplayName] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [localError, setLocalError] = React.useState<string | null>(null);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setLocalError(null);
+    try {
+      await onSubmit(email.trim(), password, displayName.trim() || null);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-card">
+        <div className="auth-brand">
+          <img src="/mascot/tablee-success.svg" alt="" aria-hidden="true" />
+          <div>
+            <span>Tablex</span>
+            <h1>{text.signInTitle}</h1>
+            <p>{text.signInBody}</p>
+          </div>
+        </div>
+        {error || localError ? <div className="banner danger">{localError ?? error}</div> : null}
+        <form className="auth-form" onSubmit={(event) => void submit(event)}>
+          <label>
+            <span>{text.email}</span>
+            <input
+              autoComplete="email"
+              autoFocus
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
+          </label>
+          {status.bootstrap_required ? (
+            <label>
+              <span>{text.displayName}</span>
+              <input
+                autoComplete="name"
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
+              />
+            </label>
+          ) : null}
+          <label>
+            <span>{text.password}</span>
+            <input
+              autoComplete={status.bootstrap_required ? "new-password" : "current-password"}
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+            />
+          </label>
+          <button className="primary-button" disabled={busy || !email.trim() || !password} type="submit">
+            {busy ? <Loader2 className="spin" size={16} /> : <KeyRound size={16} />}
+            {status.bootstrap_required ? text.createFirstUser : text.signIn}
+          </button>
+        </form>
+        <div className="auth-provider-row">
+          <span className="badge">{text.passwordAuth}</span>
+          {status.google_auth_enabled ? (
+            <span className="badge muted">Google</span>
+          ) : (
+            <small>{text.googleAuthComingSoon}</small>
+          )}
+        </div>
+      </section>
+    </main>
+  );
 }
 
 function PortalView({
@@ -3705,6 +4012,48 @@ function ProjectDetail({
     onTabChange(targetTab);
   }
 
+  async function equipLibraryAsset(asset: LibraryAsset) {
+    if (!asset.latest_version_id) throw new Error("Selected asset has no active version.");
+    await api(`/api/projects/${project.id}/asset-references`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_asset_id: asset.id,
+        target_asset_version_id: asset.latest_version_id,
+        relation_type: asset.asset_type === "skill" ? "equipped_for_agent_context" : "uses"
+      })
+    });
+  }
+
+  async function createAndEquipSkill(draft: SkillDraft) {
+    const name = draft.name.trim();
+    if (!name) throw new Error("Skill name is required.");
+    const tags = splitSkillTags(draft.tags);
+    const instructions = draft.instructions
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const asset = await api<LibraryAsset>("/api/assets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        asset_type: "skill",
+        name,
+        description: draft.description.trim() || null,
+        tags,
+        semantic_tags: Array.from(new Set(["skill", ...tags])),
+        content: {
+          schema_version: "tablex_skill.v1",
+          creation_source: "tablex_skill_panel",
+          instructions,
+          guidance: "Use as Codex context and reusable craft knowledge, not as deterministic harness logic."
+        }
+      })
+    });
+    await equipLibraryAsset(asset);
+    return asset;
+  }
+
   async function catchPendingIntervention() {
     if (!pendingIntervention) return;
     setPendingIntervention(null);
@@ -3757,6 +4106,8 @@ function ProjectDetail({
           onTabChange={onTabChange}
           onFocusAction={(action) => void runFocusAction(action)}
           onStrategyAction={(action) => void runStrategyAction(action)}
+          onEquipSkill={(asset) => runAction(() => equipLibraryAsset(asset))}
+          onCreateSkill={(draft) => runAction(() => createAndEquipSkill(draft))}
           onAutonomyModeChange={(mode) => void changeAutonomyMode(mode)}
           onAutonomyPowerToggle={() => void toggleAutonomyPower()}
         />
@@ -3915,6 +4266,8 @@ function ProjectDetail({
           busy={busy}
           text={text}
           runAction={runAction}
+          onEquipSkill={(asset) => runAction(() => equipLibraryAsset(asset))}
+          onCreateSkill={(draft) => runAction(() => createAndEquipSkill(draft))}
         />
       )}
       {tab === "Library" && (
@@ -3923,7 +4276,10 @@ function ProjectDetail({
           assets={libraryAssets}
           references={projectAssetReferences}
           busy={busy}
+          text={text}
           runAction={runAction}
+          onEquipSkill={(asset) => runAction(() => equipLibraryAsset(asset))}
+          onCreateSkill={(draft) => runAction(() => createAndEquipSkill(draft))}
         />
       )}
       {tab === "Jobs" && <JobsTab jobs={jobs} busy={busy} runAction={runAction} />}
@@ -3973,6 +4329,8 @@ function HomeTab({
   onTabChange,
   onFocusAction,
   onStrategyAction,
+  onEquipSkill,
+  onCreateSkill,
   onAutonomyModeChange,
   onAutonomyPowerToggle
 }: {
@@ -4006,6 +4364,8 @@ function HomeTab({
   onTabChange: (tab: Tab) => void;
   onFocusAction: (action: FocusAction | null) => void;
   onStrategyAction: (action: StrategyAction) => void;
+  onEquipSkill: (asset: LibraryAsset) => Promise<void>;
+  onCreateSkill: (draft: SkillDraft) => Promise<void>;
   onAutonomyModeChange: (mode: AutonomyMode) => void;
   onAutonomyPowerToggle: () => void;
 }) {
@@ -4235,24 +4595,16 @@ function HomeTab({
               <small>{latestIdea.hypothesis}</small>
             </div>
           ) : null}
-          <div className="mission-skills-panel">
-            <span>{text.equippedSkillsTitle}</span>
-            {equippedSkills.length ? (
-              <div className="equipped-skill-list">
-                {equippedSkills.slice(0, 6).map((skill) => (
-                  <div className="equipped-skill" key={skill.id} title={skill.description ?? skill.name}>
-                    <b>{text.equippedSkillBadge}</b>
-                    <div>
-                      <strong>{skill.name}</strong>
-                      <small>{skill.tags.slice(0, 2).join(" / ") || skill.relation_type}</small>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <small>{text.equippedSkillsEmpty}</small>
-            )}
-          </div>
+          <SkillManagerPanel
+            assets={libraryAssets}
+            busy={busy}
+            compact
+            equippedSkills={equippedSkills}
+            references={projectAssetReferences}
+            text={text}
+            onCreateSkill={onCreateSkill}
+            onEquipSkill={onEquipSkill}
+          />
         </aside>
       </div>
     </div>
@@ -4421,6 +4773,136 @@ function AutonomyModePanel({
       </div>
       <small>{mode === "full_auto" ? text.fullAutoModeHint : text.approvalBasedModeHint}</small>
     </div>
+  );
+}
+
+function SkillManagerPanel({
+  assets,
+  references,
+  equippedSkills,
+  busy,
+  text,
+  compact = false,
+  onEquipSkill,
+  onCreateSkill
+}: {
+  assets: LibraryAsset[];
+  references: AssetReference[];
+  equippedSkills: EquippedSkillItem[];
+  busy: boolean;
+  text: LocaleMessages;
+  compact?: boolean;
+  onEquipSkill: (asset: LibraryAsset) => Promise<void>;
+  onCreateSkill: (draft: SkillDraft) => Promise<void>;
+}) {
+  const [selectedSkillId, setSelectedSkillId] = React.useState("");
+  const [draft, setDraft] = React.useState<SkillDraft>({ name: "", description: "", instructions: "", tags: "" });
+  const referencedAssetIds = React.useMemo(
+    () => new Set(references.map((reference) => reference.target_asset_id)),
+    [references]
+  );
+  const availableSkills = React.useMemo(
+    () =>
+      assets.filter(
+        (asset) => asset.asset_type === "skill" && asset.latest_version_id && !referencedAssetIds.has(asset.id)
+      ),
+    [assets, referencedAssetIds]
+  );
+  const selectedSkill = availableSkills.find((asset) => asset.id === selectedSkillId) ?? null;
+  const canCreateSkill = Boolean(draft.name.trim()) && Boolean(draft.instructions.trim() || draft.description.trim());
+
+  async function equipSelectedSkill() {
+    if (!selectedSkill) return;
+    await onEquipSkill(selectedSkill);
+    setSelectedSkillId("");
+  }
+
+  async function submitCreatedSkill(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canCreateSkill) return;
+    await onCreateSkill(draft);
+    setDraft({ name: "", description: "", instructions: "", tags: "" });
+  }
+
+  return (
+    <section className={`mission-skills-panel ${compact ? "compact" : "full"}`}>
+      <div className="skill-panel-head">
+        <span>{text.equippedSkillsTitle}</span>
+        <small>{text.skillPanelHint}</small>
+      </div>
+      {equippedSkills.length ? (
+        <div className="equipped-skill-list">
+          {equippedSkills.slice(0, compact ? 6 : 12).map((skill) => (
+            <div className="equipped-skill" key={skill.id} title={skill.description ?? skill.name}>
+              <b>{text.equippedSkillBadge}</b>
+              <div>
+                <strong>{skill.name}</strong>
+                <small>{skill.tags.slice(0, 2).join(" / ") || skill.relation_type}</small>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <small>{text.equippedSkillsEmpty}</small>
+      )}
+      <div className="skill-equip-row">
+        <select value={selectedSkillId} onChange={(event) => setSelectedSkillId(event.target.value)}>
+          <option value="">{text.skillSelectPlaceholder}</option>
+          {availableSkills.map((asset) => (
+            <option key={asset.id} value={asset.id}>
+              {asset.name}
+            </option>
+          ))}
+        </select>
+        <button className="secondary-button" disabled={busy || !selectedSkill} onClick={() => void equipSelectedSkill()} type="button">
+          {busy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+          {text.skillEquipExisting}
+        </button>
+      </div>
+      {availableSkills.length ? null : <small>{text.skillNoAvailable}</small>}
+      <details className="skill-create-details" open={!compact}>
+        <summary>{text.skillCreateTitle}</summary>
+        <form className="skill-create-form" onSubmit={(event) => void submitCreatedSkill(event)}>
+          <label>
+            <span>{text.skillName}</span>
+            <input
+              value={draft.name}
+              onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+              placeholder={text.skillName}
+            />
+          </label>
+          <label>
+            <span>{text.skillDescription}</span>
+            <input
+              value={draft.description}
+              onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
+              placeholder={text.skillDescription}
+            />
+          </label>
+          <label>
+            <span>{text.skillInstructions}</span>
+            <textarea
+              value={draft.instructions}
+              onChange={(event) => setDraft((current) => ({ ...current, instructions: event.target.value }))}
+              placeholder={text.skillInstructions}
+              rows={compact ? 3 : 5}
+            />
+          </label>
+          <label>
+            <span>{text.skillTags}</span>
+            <input
+              value={draft.tags}
+              onChange={(event) => setDraft((current) => ({ ...current, tags: event.target.value }))}
+              placeholder="eda, credit-risk, reporting"
+            />
+          </label>
+          <button className="primary-button" disabled={busy || !canCreateSkill} type="submit">
+            {busy ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />}
+            {text.skillCreateAndEquip}
+          </button>
+        </form>
+      </details>
+    </section>
   );
 }
 
@@ -4903,6 +5385,23 @@ function equippedSkillItems(references: AssetReference[], assets: LibraryAsset[]
       };
     })
     .filter((item): item is EquippedSkillItem => item !== null);
+}
+
+function splitSkillTags(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(/[,\n]/)
+        .map((item) =>
+          item
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]+/g, "_")
+            .replace(/^_+|_+$/g, "")
+        )
+        .filter(Boolean)
+    )
+  );
 }
 
 function buildRawAgentEvents(messages: AgentChatMessage[], jobs: Job[]): RawAgentEvent[] {
@@ -12911,7 +13410,9 @@ function AssetsTab({
   projectAssetReferences,
   busy,
   text,
-  runAction
+  runAction,
+  onEquipSkill,
+  onCreateSkill
 }: {
   project: Project;
   artifacts: Artifact[];
@@ -12923,6 +13424,8 @@ function AssetsTab({
   busy: boolean;
   text: LocaleMessages;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
+  onEquipSkill: (asset: LibraryAsset) => Promise<void>;
+  onCreateSkill: (draft: SkillDraft) => Promise<void>;
 }) {
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
@@ -13042,7 +13545,10 @@ function AssetsTab({
         assets={libraryAssets}
         references={projectAssetReferences}
         busy={busy}
+        text={text}
         runAction={runAction}
+        onEquipSkill={onEquipSkill}
+        onCreateSkill={onCreateSkill}
       />
       <Panel title="Artifact Preview" icon={<FileText size={18} />}>
         {previewError ? <div className="banner danger">{previewError}</div> : null}
@@ -13282,13 +13788,19 @@ function LibraryTab({
   assets,
   references,
   busy,
-  runAction
+  text,
+  runAction,
+  onEquipSkill,
+  onCreateSkill
 }: {
   project: Project;
   assets: LibraryAsset[];
   references: AssetReference[];
   busy: boolean;
+  text: LocaleMessages;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
+  onEquipSkill: (asset: LibraryAsset) => Promise<void>;
+  onCreateSkill: (draft: SkillDraft) => Promise<void>;
 }) {
   const referencedAssetIds = new Set(references.map((reference) => reference.target_asset_id));
   return (
@@ -13303,6 +13815,15 @@ function LibraryTab({
           Seed Library
         </button>
       </div>
+      <SkillManagerPanel
+        assets={assets}
+        busy={busy}
+        equippedSkills={equippedSkillItems(references, assets)}
+        references={references}
+        text={text}
+        onCreateSkill={onCreateSkill}
+        onEquipSkill={onEquipSkill}
+      />
       <Panel title="Cross-project Asset Library" icon={<Library size={18} />}>
         {assets.length ? (
           <Table
@@ -13318,19 +13839,15 @@ function LibraryTab({
                 className="icon-button"
                 disabled={busy || !asset.latest_version_id || referencedAssetIds.has(asset.id)}
                 key={asset.id}
-                onClick={() =>
-                  void runAction(() =>
-                    api(`/api/projects/${project.id}/asset-references`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        target_asset_id: asset.id,
-                        target_asset_version_id: asset.latest_version_id,
-                        relation_type: "uses"
-                      })
-                    })
-                  )
-                }
+                onClick={() => void (asset.asset_type === "skill" ? onEquipSkill(asset) : runAction(() => api(`/api/projects/${project.id}/asset-references`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    target_asset_id: asset.id,
+                    target_asset_version_id: asset.latest_version_id,
+                    relation_type: "uses"
+                  })
+                })))}
                 title="Reference from project"
               >
                 <Plus size={16} />

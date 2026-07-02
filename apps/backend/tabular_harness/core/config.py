@@ -14,6 +14,14 @@ class Settings:
     artifact_root: Path
     max_upload_bytes: int
     cors_origins: tuple[str, ...]
+    auth_enabled: bool = False
+    auth_cookie_name: str = "tablex_session"
+    auth_session_days: int = 14
+    auth_cookie_secure: bool = False
+    bootstrap_user_email: str | None = None
+    bootstrap_user_password: str | None = None
+    google_auth_enabled: bool = False
+    google_client_id: str | None = None
 
 
 @lru_cache(maxsize=1)
@@ -32,7 +40,22 @@ def get_settings() -> Settings:
         artifact_root=artifact_root,
         max_upload_bytes=int(os.getenv("HARNESS_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024))),
         cors_origins=tuple(origin.strip() for origin in cors.split(",") if origin.strip()),
+        auth_enabled=bool_env("TABLEX_AUTH_ENABLED", False),
+        auth_cookie_name=os.getenv("TABLEX_AUTH_COOKIE_NAME", "tablex_session"),
+        auth_session_days=int(os.getenv("TABLEX_AUTH_SESSION_DAYS", "14")),
+        auth_cookie_secure=bool_env("TABLEX_AUTH_COOKIE_SECURE", False),
+        bootstrap_user_email=os.getenv("TABLEX_BOOTSTRAP_EMAIL") or None,
+        bootstrap_user_password=os.getenv("TABLEX_BOOTSTRAP_PASSWORD") or None,
+        google_auth_enabled=bool_env("TABLEX_GOOGLE_AUTH_ENABLED", False),
+        google_client_id=os.getenv("TABLEX_GOOGLE_CLIENT_ID") or None,
     )
+
+
+def bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def ensure_data_dirs(settings: Settings) -> None:

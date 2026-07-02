@@ -67,6 +67,80 @@ def test_project_autonomy_mode_persists(tmp_path: Path) -> None:
     assert read_response.json()["autonomy_mode"] == "full_auto"
 
 
+def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -> None:
+    settings = Settings(
+        app_display_name="Tablex",
+        data_dir=tmp_path / "data",
+        database_url=f"sqlite:///{tmp_path / 'data' / 'metadata' / 'app.db'}",
+        artifact_root=tmp_path / "data" / "artifacts",
+        max_upload_bytes=100 * 1024 * 1024,
+        cors_origins=("http://localhost:5173",),
+        auth_enabled=True,
+    )
+    client = TestClient(create_app(settings))
+
+    status_response = client.get("/api/auth/status")
+    assert status_response.status_code == 200
+    status = status_response.json()
+    assert status["auth_enabled"] is True
+    assert status["authenticated"] is False
+    assert status["bootstrap_required"] is True
+
+    protected_response = client.get("/api/projects")
+    assert protected_response.status_code == 401
+
+    bootstrap_response = client.post(
+        "/api/auth/bootstrap",
+        json={
+            "email": "owner@example.com",
+            "password": "correct horse battery staple",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap_response.status_code == 200, bootstrap_response.text
+    assert bootstrap_response.json()["authenticated"] is True
+    assert bootstrap_response.json()["user"]["is_admin"] is True
+
+    project_response = client.post("/api/projects", json={"name": "Authed project"})
+    assert project_response.status_code == 200, project_response.text
+
+    settings_response = client.patch(
+        "/api/auth/me/settings",
+        json={
+            "settings": {
+                "locale": "ja-JP",
+                "displayTheme": "dark",
+                "userAvatarDataUrl": "data:image/svg+xml;base64,PHN2Zy8+",
+                "agentModel": "gpt-5.5-xhigh",
+                "utilityModel": "gpt-5-mini",
+            }
+        },
+    )
+    assert settings_response.status_code == 200, settings_response.text
+    saved_settings = settings_response.json()["settings"]
+    assert saved_settings["locale"] == "ja-JP"
+    assert saved_settings["displayTheme"] == "dark"
+    assert saved_settings["userAvatarDataUrl"].startswith("data:image/")
+
+    logout_response = client.post("/api/auth/logout")
+    assert logout_response.status_code == 200
+    assert client.get("/api/projects").status_code == 401
+
+    bad_login_response = client.post(
+        "/api/auth/login",
+        json={"email": "owner@example.com", "password": "wrong password"},
+    )
+    assert bad_login_response.status_code == 401
+
+    login_response = client.post(
+        "/api/auth/login",
+        json={"email": "owner@example.com", "password": "correct horse battery staple"},
+    )
+    assert login_response.status_code == 200, login_response.text
+    assert login_response.json()["user"]["settings"]["locale"] == "ja-JP"
+    assert client.get("/api/projects").status_code == 200
+
+
 def test_full_auto_start_advances_autonomous_loop_without_dataset(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
@@ -881,6 +955,11 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     assert "schema-validated agent proposals" in chat["action_summary"]["boundaries"][0]
     assert chat["response_brief"]["response_locale"] == "ja-JP"
     assert chat["response_brief"]["conversation_context"]["schema_version"] == "agent_conversation_context.v1"
+    explicit_actions = {
+        item["action"] for item in chat["response_brief"]["conversation_context"]["available_explicit_actions"]
+    }
+    assert {"create_skill", "equip_existing_skill"} <= explicit_actions
+    assert chat["response_brief"]["conversation_context"]["skill_context"]["purpose"].startswith("Skills are reusable")
     assert chat["token_usage"]["is_estimate"] is True
     assert chat["job"]["status"] == "succeeded"
 
@@ -2116,6 +2195,26 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert versions_response.status_code == 200
     skill_version = versions_response.json()[0]
     assert skill_version["asset_id"] == skill_asset["id"]
+
+    custom_skill_response = client.post(
+        "/api/assets",
+        json={
+            "asset_type": "skill",
+            "name": "custom_credit_review_skill",
+            "description": "Project-specific credit review guidance.",
+            "content": {
+                "schema_version": "tablex_skill.v1",
+                "instructions": ["Review credit-risk evidence without forcing a fixed recipe."],
+            },
+            "tags": ["credit", "eda"],
+            "semantic_tags": ["skill", "credit_risk"],
+        },
+    )
+    assert custom_skill_response.status_code == 200, custom_skill_response.text
+    custom_skill = custom_skill_response.json()
+    assert "credit_risk" in custom_skill["semantic_tags"]
+    custom_skill_versions_response = client.get(f"/api/assets/{custom_skill['id']}/versions")
+    assert custom_skill_versions_response.status_code == 200
 
     project_ref_response = client.post(
         f"/api/projects/{project_id}/asset-references",

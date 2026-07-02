@@ -436,16 +436,21 @@ Cross-project Asset Library endpoints:
 ```bash
 curl -X POST http://localhost:8000/api/assets/seed-defaults
 curl http://localhost:8000/api/assets
+curl -X POST http://localhost:8000/api/assets \
+  -H 'Content-Type: application/json' \
+  -d '{"asset_type":"skill","name":"custom_eda_skill","description":"Project-specific EDA craft note","tags":["eda"],"semantic_tags":["skill","eda"],"content":{"schema_version":"tablex_skill.v1","instructions":["Inspect surprising row-level trajectories before summarizing aggregate statistics."]}}'
 curl http://localhost:8000/api/assets/{asset_id}/versions
 curl -X POST http://localhost:8000/api/projects/{project_id}/asset-references \
   -H 'Content-Type: application/json' \
-  -d '{"target_asset_id":"asset_x","target_asset_version_id":"av_x","relation_type":"uses"}'
+  -d '{"target_asset_id":"asset_x","target_asset_version_id":"av_x","relation_type":"equipped_for_agent_context"}'
 curl -X POST http://localhost:8000/api/ideas/{idea_id}/asset-references \
   -H 'Content-Type: application/json' \
   -d '{"target_asset_id":"asset_x","target_asset_version_id":"av_x","relation_type":"uses_for_agent_task"}'
 ```
 
 Project workspaces keep project-specific outputs. Reusable Skills, FeatureRecipes, EvaluationPatterns, PromptTemplates, and VisualizationTemplates live in the cross-project Asset Library and are attached through locked `AssetReference` records.
+
+The UI exposes the same flow from Home and Assets > Library: seed defaults, equip an existing Skill, or create a concise Skill and immediately equip it. Skill tags are fixed-format metadata; Skill instructions are reusable Codex context, not deterministic harness rules. Agent Chat receives `skill_context` plus explicit `create_skill` and `equip_existing_skill` action schemas so Codex can discuss or propose Skill changes without Tablex keyword-routing natural language.
 
 The default seed pack includes reusable assets for controlled approach research, mixed-type XGBoost-style tabular baselines, train-fold TF-IDF text features, causal time lag/rolling features, relational aggregation, time/entity validation reviews, evaluation diagnostics interpretation, decision reports, and readiness dashboard visualizations. ResearchPlan and AgentTask planning recommend these assets from data signals and available artifacts such as RelationalCatalog, BenchmarkScenarioPack, EvaluationDiagnostics, and DecisionDashboard. AgentTaskContracts carry recommended asset ids plus source policy, while AgentContextPacks and controlled workspaces materialize the corresponding asset version artifacts for runner handoff.
 
@@ -460,10 +465,22 @@ export TABLEX_AVATAR_PROVIDER=auto     # auto, codex, or openai; auto tries Code
 export TABLEX_CODEX_AVATAR_TIMEOUT_SECONDS=480
 export TABLEX_CODEX_AVATAR_MODEL=      # optional Codex model override for avatar generation
 export TABLEX_AUTONOMY_SYNC_TRAINING_ROW_LIMIT=50000
+export TABLEX_AUTH_ENABLED=false       # set true to require login for /api/* except auth/config/health
+export TABLEX_BOOTSTRAP_EMAIL=         # optional first admin user seed when auth is enabled
+export TABLEX_BOOTSTRAP_PASSWORD=      # optional; do not commit this or pass it to runners
+export TABLEX_AUTH_COOKIE_SECURE=false # set true behind HTTPS
+export TABLEX_GOOGLE_AUTH_ENABLED=false
+export TABLEX_GOOGLE_CLIENT_ID=        # reserved for future Google OIDC implementation
 export OPENAI_API_KEY=...              # optional, backend-only when TABLEX_AVATAR_PROVIDER=openai
 export TABLEX_AVATAR_IMAGE_MODEL=gpt-image-2
 export TABLEX_AVATAR_IMAGE_QUALITY=low
 ```
+
+## Authentication
+
+Authentication is optional in local development and disabled by default. Set `TABLEX_AUTH_ENABLED=true` to require a password session for product APIs. The first user can be created from the login screen when no users exist, or seeded with `TABLEX_BOOTSTRAP_EMAIL` and `TABLEX_BOOTSTRAP_PASSWORD` at backend startup. Sessions use HTTP-only cookies; the database stores only password hashes and session-token hashes.
+
+When auth is enabled, User Settings are saved server-side through `/api/auth/me/settings` so language, display theme, intervention countdown, model preferences, and avatar persist across browsers. These settings are harness-owned user preferences and must not be passed to Codex as credentials. Google auth is represented in config/status only for now; the actual OIDC callback flow is deferred.
 
 ## Frontend
 

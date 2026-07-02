@@ -154,6 +154,41 @@ class AvatarCandidateResponse(BaseModel):
     candidates: list[AvatarCandidateRead]
 
 
+class AuthLoginCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class AuthRegisterCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=1024)
+    display_name: str | None = Field(default=None, max_length=120)
+
+
+class UserSettingsUpdate(BaseModel):
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
+class UserRead(BaseModel):
+    id: str
+    email: str
+    display_name: str | None
+    auth_provider: str
+    is_admin: bool
+    settings: dict[str, Any]
+    created_at: str
+    updated_at: str
+
+
+class AuthStatusRead(BaseModel):
+    auth_enabled: bool
+    authenticated: bool
+    password_auth_enabled: bool
+    google_auth_enabled: bool
+    bootstrap_required: bool
+    user: UserRead | None = None
+
+
 class TranslationRead(BaseModel):
     source_type: str
     source_id: str
@@ -174,6 +209,7 @@ class AssetCreate(BaseModel):
     description: str | None = None
     content: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
+    semantic_tags: list[str] = Field(default_factory=list)
     visibility: str = "private"
 
 

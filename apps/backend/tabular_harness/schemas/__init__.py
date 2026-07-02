@@ -18,6 +18,9 @@ from tabular_harness.schemas.api import (
     AssetVersionRead,
     AssumptionRead,
     AssumptionReviewQueueRead,
+    AuthLoginCreate,
+    AuthRegisterCreate,
+    AuthStatusRead,
     AutonomyStartCreate,
     AvatarCandidateCreate,
     AvatarCandidateRead,
@@ -65,6 +68,8 @@ from tabular_harness.schemas.api import (
     SplitManifestRead,
     TranslationCreate,
     TranslationRead,
+    UserRead,
+    UserSettingsUpdate,
     VisualizationSpecRead,
 )
 
@@ -82,6 +87,9 @@ __all__ = [
     "AssetCreate",
     "ArtifactPreviewRead",
     "ArtifactRead",
+    "AuthLoginCreate",
+    "AuthRegisterCreate",
+    "AuthStatusRead",
     "AvatarCandidateCreate",
     "AvatarCandidateRead",
     "AvatarCandidateResponse",
@@ -135,5 +143,7 @@ __all__ = [
     "SplitManifestRead",
     "TranslationCreate",
     "TranslationRead",
+    "UserRead",
+    "UserSettingsUpdate",
     "VisualizationSpecRead",
 ]

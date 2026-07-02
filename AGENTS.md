@@ -6,6 +6,7 @@ This repository is building Tablex, a tabular-first prediction meta-harness. Tab
 
 - Do not read, log, copy, or request secrets.
 - Do not pass connector credentials, OAuth tokens, database passwords, or production write credentials to an agent runner.
+- Do not pass login passwords, password hashes, session cookies, session-token hashes, Google/OIDC tokens, or user-auth credentials to Codex/AgentRunner workspaces, prompts, artifacts, logs, or reports.
 - Kaggle credentials may only be read by harness-owned credential probe/download code in-process; never materialize values into prompts, AgentTaskContracts, runner workspaces, artifacts, or logs.
 - Do not include validation or test targets in feature-generation prompts.
 - Do not destructively change an approved `evaluation_spec`; create a new version or candidate instead.
@@ -34,6 +35,8 @@ This repository is building Tablex, a tabular-first prediction meta-harness. Tab
 - Prefer evaluation-first changes: data understanding, assumptions, reliable evaluation, and baseline sanity before model optimization.
 - Treat baselines as sanity floors and reusable references, not as the product's fixed modeling strategy.
 - When proposing modeling approaches, create evidence-backed Ideas and AgentTaskContracts that can use project artifacts, Skill library context, and controlled web/literature research.
+- Treat Skills as Codex equipment/context, not fixed recipes or harness-side decision logic. Skills should be cross-project `Asset`/`AssetVersion` records, equipped to projects through `AssetReference`, and materialized into runner context only as guidance, examples, scripts, or reusable craft knowledge.
+- Creating or equipping a Skill from chat must go through an explicit UI/API action or a schema-validated agent proposal. Do not implement chat keyword matching such as "if the user says skill then attach X".
 - Prepare and inspect AgentContextPack artifacts before real agent execution; they should carry harness-owned evaluation, split, asset, research, and safety context.
 - External claims from web or literature research must be returned as Evidence or artifact-backed sources; do not leave them only in runner logs.
 - Jobs with external network, production write, or agent execution policy must pass through approval gates before worker execution.

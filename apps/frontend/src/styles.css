@@ -97,6 +97,84 @@ button:disabled {
   min-height: 100vh;
 }
 
+.auth-shell {
+  grid-column: 1 / -1;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 18% 20%, color-mix(in srgb, var(--accent-2) 18%, transparent), transparent 32%),
+    linear-gradient(145deg, var(--surface-muted), var(--bg));
+}
+
+.auth-card {
+  display: grid;
+  gap: 18px;
+  width: min(480px, 100%);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow: 0 22px 70px color-mix(in srgb, var(--shadow) 72%, transparent);
+  padding: 22px;
+}
+
+.auth-brand {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+}
+
+.auth-brand img {
+  width: 88px;
+  height: 88px;
+  object-fit: contain;
+}
+
+.auth-brand span {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 860;
+  text-transform: uppercase;
+}
+
+.auth-brand h1 {
+  margin: 2px 0 0;
+  color: var(--text-strong);
+  font-size: 28px;
+  line-height: 1.08;
+}
+
+.auth-brand p {
+  margin: 8px 0 0;
+  color: var(--muted-strong);
+  line-height: 1.48;
+}
+
+.auth-form {
+  display: grid;
+  gap: 12px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 780;
+  text-transform: uppercase;
+}
+
+.auth-provider-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -274,6 +352,43 @@ textarea {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.auth-user-chip {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  max-width: 260px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 5px 9px 5px 5px;
+}
+
+.auth-user-chip .chat-avatar {
+  width: 30px;
+  height: 30px;
+}
+
+.auth-user-chip span {
+  display: grid;
+  min-width: 0;
+}
+
+.auth-user-chip small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.auth-user-chip strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tabs {
@@ -1194,6 +1309,23 @@ textarea {
   line-height: 1.35;
 }
 
+.skill-panel-head {
+  display: grid;
+  gap: 3px;
+}
+
+.skill-panel-head span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.skill-panel-head small {
+  color: var(--muted-strong);
+  line-height: 1.35;
+}
+
 .equipped-skill-list {
   display: grid;
   gap: 7px;
@@ -1227,6 +1359,61 @@ textarea {
 
 .equipped-skill small {
   color: var(--muted);
+}
+
+.skill-equip-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.skill-equip-row select {
+  min-width: 0;
+}
+
+.skill-create-details {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.skill-create-details summary {
+  cursor: pointer;
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.skill-create-form {
+  display: grid;
+  gap: 9px;
+  margin-top: 8px;
+}
+
+.skill-create-form label {
+  display: grid;
+  gap: 5px;
+}
+
+.skill-create-form label span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.skill-create-form textarea {
+  resize: vertical;
+}
+
+.mission-skills-panel.full {
+  background: var(--surface);
+}
+
+.mission-skills-panel.compact .skill-create-form {
+  gap: 7px;
 }
 
 @keyframes mission-pulse {
