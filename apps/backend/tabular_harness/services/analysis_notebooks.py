@@ -98,6 +98,10 @@ def create_data_understanding_notebook(
     project: Project,
     response_locale: str | None = None,
 ) -> AnalysisNotebookResult:
+    raise ValueError(
+        "Harness-authored Data Understanding notebooks are disabled. "
+        "Create a notebook_authoring_brief and let Codex/AgentRunner author the notebook artifact."
+    )
     dataset = _latest_dataset(db, project.id)
     if dataset is None:
         raise ValueError("A DatasetSnapshot is required before generating an analysis notebook")
@@ -1717,6 +1721,10 @@ def create_model_diagnostics_notebook(
     store: LocalArtifactStore,
     run: ExperimentRun,
 ) -> ModelDiagnosticsNotebookResult:
+    raise ValueError(
+        "Harness-authored Model Diagnostics notebooks are disabled. "
+        "Create a notebook_authoring_brief and let Codex/AgentRunner author the notebook artifact."
+    )
     project = _require_project(db, run.project_id)
     dataset = db.get(DatasetSnapshot, run.dataset_snapshot_id) if run.dataset_snapshot_id else None
     model_version = _model_version_for_run(db, run)

@@ -36,7 +36,6 @@ from tabular_harness.services.agent_task_readiness import (
     readiness_hard_blockers_for_runner,
     review_agent_task_readiness,
 )
-from tabular_harness.services.analysis_notebooks import create_data_understanding_notebook
 from tabular_harness.services.approach import (
     create_decision_dashboard,
     create_research_plan,
@@ -65,6 +64,7 @@ from tabular_harness.services.evaluation import (
 )
 from tabular_harness.services.experiment_lifecycle import draft_run_report
 from tabular_harness.services.jobs import create_job
+from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.planned_agent_execution import run_planned_agent_task_codex_cli
 from tabular_harness.services.planned_agent_workspace import (
     prepare_workspace_from_contract_artifact,
@@ -487,20 +487,24 @@ def run_data_understanding_stack(
         return
 
     try:
-        notebook = create_data_understanding_notebook(
+        brief = create_notebook_authoring_brief(
             db,
             store=store,
             project=project,
+            objective=(
+                "Author the project data-understanding marimo notebook from current artifacts and equipped Skills. "
+                "Do not use harness-authored notebook prose."
+            ),
             response_locale=response_locale,
         )
         state.record(
-            "data_understanding_notebook",
-            "created",
-            "Generated a Data Understanding notebook artifact bundle for the in-product analysis story.",
-            artifact_ids=notebook.artifact_ids,
+            "data_understanding_notebook_authoring",
+            "prepared",
+            "Prepared the context needed for an agent-authored Data Understanding notebook.",
+            artifact_ids=brief.artifact_ids,
         )
     except ValueError as exc:
-        state.warn(f"Data Understanding notebook skipped: {exc}")
+        state.warn(f"Data Understanding notebook authoring context skipped: {exc}")
 
 
 def get_or_create_target_question(

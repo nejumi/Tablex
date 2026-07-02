@@ -115,8 +115,8 @@ def start_or_resume_main_session(
         source="tablex_sidecar",
         event_type="session_created",
         role="harness",
-        title="Main AgentSession created",
-        content="Full Auto now runs through a long-lived AgentSession. Jobs are sidecars, not the main Codex thread.",
+        title="Full Auto started",
+        content="The analysis has started and will continue from the current project state.",
         payload={"project_id": project.id, "runner_kind": runner_kind, "autonomy_mode": autonomy_mode},
     )
     return session
@@ -264,8 +264,8 @@ def run_main_agent_session_supervisor(
                     source="tablex_sidecar",
                     event_type="session_stopped",
                     role="harness",
-                    title="Main AgentSession stopped",
-                    content="The project is no longer in Full Auto, so Tablex stopped supervising the main Codex session.",
+                    title="Full Auto stopped",
+                    content="Full Auto is off. The analysis will not continue until the project is started again.",
                     payload={"project_phase": project.current_phase if project else None},
                 )
                 db.commit()

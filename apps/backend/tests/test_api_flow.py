@@ -1376,9 +1376,11 @@ def test_upload_data_bundle_profiles_primary_supporting_tables_and_er_hint(tmp_p
     assert len(job["output"]["relational_hint_artifact_ids"]) == 1
     assert job["output"]["relational_catalog_artifact_id"]
     assert job["output"]["relational_table_bundle_manifest_artifact_id"]
-    assert job["output"]["analysis_notebook_artifact_id"]
-    assert job["output"]["notebook_html_artifact_id"]
-    assert job["output"]["notebook_kind"] == "data_understanding"
+    assert job["output"]["analysis_notebook_artifact_id"] is None
+    assert job["output"]["notebook_html_artifact_id"] is None
+    assert job["output"]["notebook_kind"] is None
+    assert job["output"]["notebook_warning"] == "awaiting_agent_authored_notebook"
+    assert job["output"]["notebook_authoring_brief_artifact_ids"]
     assert job["output"]["runner_context"]["fixed_recipe_required"] is False
 
     artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
@@ -1389,8 +1391,9 @@ def test_upload_data_bundle_profiles_primary_supporting_tables_and_er_hint(tmp_p
     assert "relational_schema_hint" in asset_types
     assert "relational_catalog" in asset_types
     assert "relational_table_bundle_manifest" in asset_types
-    assert "analysis_notebook" in asset_types
-    assert "notebook_html" in asset_types
+    assert "analysis_notebook" not in asset_types
+    assert "notebook_html" not in asset_types
+    assert "notebook_authoring_brief" in asset_types
 
     catalog_preview_response = client.get(f"/api/artifacts/{job['output']['relational_catalog_artifact_id']}/preview")
     assert catalog_preview_response.status_code == 200
@@ -1431,7 +1434,9 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path, monkeypatch: A
     assert notebook_response.status_code == 200, notebook_response.text
     notebook_job = notebook_response.json()
     assert notebook_job["status"] == "succeeded"
-    assert notebook_job["output"]["analysis_notebook_artifact_id"]
+    assert notebook_job["job_type"] == "prepare_data_understanding_notebook_authoring"
+    assert notebook_job["output"]["analysis_notebook_artifact_id"] is None
+    assert notebook_job["output"]["notebook_authoring_brief_artifact_id"]
 
     eda_response = client.post(f"/api/datasets/{dataset_id}/eda-review")
     assert eda_response.status_code == 200, eda_response.text
@@ -1592,111 +1597,28 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert notebook_response.status_code == 200, notebook_response.text
     notebook_job = notebook_response.json()
     assert notebook_job["status"] == "succeeded"
-    assert notebook_job["job_type"] == "generate_data_understanding_notebook"
-    assert notebook_job["output"]["schema_version"] == "analysis_notebook.v1"
-    assert notebook_job["output"]["analysis_notebook_artifact_id"]
-    assert notebook_job["output"]["notebook_html_artifact_id"]
-    assert notebook_job["output"]["notebook_run_manifest_artifact_id"]
-    assert notebook_job["output"]["notebook_report_id"]
+    assert notebook_job["job_type"] == "prepare_data_understanding_notebook_authoring"
+    assert notebook_job["output"]["schema_version"] == "notebook_authoring_preparation.v1"
+    assert notebook_job["output"]["execution_status"] == "awaiting_agent_authored_notebook"
+    assert notebook_job["output"]["analysis_notebook_artifact_id"] is None
+    assert notebook_job["output"]["notebook_html_artifact_id"] is None
+    assert notebook_job["output"]["notebook_run_manifest_artifact_id"] is None
+    assert notebook_job["output"]["notebook_report_id"] is None
+    assert notebook_job["output"]["notebook_authoring_brief_artifact_id"]
 
-    notebook_source_preview_response = client.get(
-        f"/api/artifacts/{notebook_job['output']['analysis_notebook_artifact_id']}/preview"
+    authoring_preview_response = client.get(
+        f"/api/artifacts/{notebook_job['output']['notebook_authoring_brief_artifact_id']}/preview"
     )
-    assert notebook_source_preview_response.status_code == 200
-    notebook_source_preview = notebook_source_preview_response.json()
-    assert notebook_source_preview["preview_available"] is True
-    assert notebook_source_preview["content_type"] == "py"
-    assert "import marimo as mo" in notebook_source_preview["preview"]
-    assert "plotly.express" in notebook_source_preview["preview"]
-    assert "EDA quality rubric" in notebook_source_preview["preview"]
-    assert "Leakage and evaluation guardrails" in notebook_source_preview["preview"]
-    assert "What to inspect next" in notebook_source_preview["preview"]
+    assert authoring_preview_response.status_code == 200
+    authoring_preview = authoring_preview_response.json()
+    assert authoring_preview["preview_available"] is True
+    assert authoring_preview["content_type"] == "json"
+    assert "notebook_authoring_brief.v1" in authoring_preview["preview"]
 
-    notebook_html_preview_response = client.get(
-        f"/api/artifacts/{notebook_job['output']['notebook_html_artifact_id']}/preview"
-    )
-    assert notebook_html_preview_response.status_code == 200
-    notebook_html_preview = notebook_html_preview_response.json()
-    assert notebook_html_preview["preview_available"] is True
-    assert notebook_html_preview["content_type"] == "text/html"
-    assert "Tablex Analysis Notebook" in notebook_html_preview["preview"]
-    assert "EDA quality rubric" in notebook_html_preview["preview"]
-    assert "Target readiness" in notebook_html_preview["preview"]
-    assert "Read this first" in notebook_html_preview["preview"]
-    assert "Visual story cards" in notebook_html_preview["preview"]
-    assert "EDA playbook" in notebook_html_preview["preview"]
-    assert "Ask Codex next" in notebook_html_preview["preview"]
-    assert "Feature review queues" in notebook_html_preview["preview"]
-    assert "partial dependence" in notebook_html_preview["preview"]
-
-    notebook_manifest_response = client.get(
-        f"/api/artifacts/{notebook_job['output']['notebook_run_manifest_artifact_id']}/download"
-    )
-    assert notebook_manifest_response.status_code == 200
-    notebook_manifest = notebook_manifest_response.json()
-    assert notebook_manifest["status"] == "generated_not_executed"
-    assert notebook_manifest["execution_policy"]["connector_credentials_embedded"] is False
-    assert notebook_manifest["analysis_quality"]["rubric_area_count"] >= 5
-    assert notebook_manifest["analysis_quality"]["guardrail_count"] >= 3
-
-    data_capture_response = client.post(
-        f"/api/analysis-notebooks/{notebook_job['output']['analysis_notebook_artifact_id']}/execution-capture"
-    )
-    assert data_capture_response.status_code == 200, data_capture_response.text
-    data_capture_job = data_capture_response.json()
-    assert data_capture_job["status"] == "succeeded"
-    assert data_capture_job["output"]["notebook_kind"] == "data_understanding"
-    assert data_capture_job["output"]["notebook_evidence_bundle_artifact_id"]
-    assert data_capture_job["output"]["notebook_evidence_html_artifact_id"]
-    assert len(data_capture_job["output"]["notebook_evidence_figure_artifact_ids"]) >= 4
-
-    data_evidence_bundle_response = client.get(
-        f"/api/artifacts/{data_capture_job['output']['notebook_evidence_bundle_artifact_id']}/download"
-    )
-    assert data_evidence_bundle_response.status_code == 200
-    data_evidence_bundle = data_evidence_bundle_response.json()
-    assert data_evidence_bundle["schema_version"] == "notebook_evidence_bundle.v1"
-    assert data_evidence_bundle["notebook_kind"] == "data_understanding"
-    assert data_evidence_bundle["runtime_execution_status"] == "notebook_cells_not_executed"
-    assert data_evidence_bundle["safety_policy"]["marimo_cells_executed"] is False
-    assert {figure["slot"] for figure in data_evidence_bundle["figures"]} >= {
-        "top_missing_columns_bar",
-        "semantic_type_role_mix",
-        "target_profile_summary",
-        "feature_review_queue_counts",
-    }
-
-    data_evidence_html_response = client.get(
-        f"/api/artifacts/{data_capture_job['output']['notebook_evidence_html_artifact_id']}/preview"
-    )
-    assert data_evidence_html_response.status_code == 200
-    data_evidence_html = data_evidence_html_response.json()
-    assert data_evidence_html["content_type"] == "text/html"
-    assert "Notebook Evidence Review" in data_evidence_html["preview"]
-    assert "Read this first" in data_evidence_html["preview"]
-    assert "Visual story cards" in data_evidence_html["preview"]
-    assert "Ask Codex next" in data_evidence_html["preview"]
-    assert "Feature review queues" in data_evidence_html["preview"]
-    assert "No read order generated yet" not in data_evidence_html["preview"]
-
-    data_evidence_svg_response = client.get(
-        f"/api/artifacts/{data_capture_job['output']['notebook_evidence_figure_artifact_ids'][0]}/preview"
-    )
-    assert data_evidence_svg_response.status_code == 200
-    data_evidence_svg = data_evidence_svg_response.json()
-    assert data_evidence_svg["content_type"] == "image/svg+xml"
-    assert "<svg" in data_evidence_svg["preview"]
-
-    notebook_story_response = client.get(f"/api/projects/{project_id}/analysis-story")
-    assert notebook_story_response.status_code == 200, notebook_story_response.text
-    notebook_story = notebook_story_response.json()
-    assert notebook_story["available"] is True
-    assert notebook_story["story"]["source_type"] == "analysis_notebook"
-    assert notebook_story["story"]["selected_source"]["artifact_id"] == notebook_job["output"]["analysis_notebook_artifact_id"]
-    assert notebook_story["story"]["selected_source"]["preview_artifact_id"] == data_capture_job["output"]["notebook_evidence_html_artifact_id"]
-    assert notebook_story["story"]["evidence_cards"]
-    assert notebook_story["story"]["caveats"]
-    assert any("Notebook cells were not executed" in item for item in notebook_story["story"]["caveats"])
+    notebook_index_response = client.get(f"/api/projects/{project_id}/analysis-notebooks")
+    assert notebook_index_response.status_code == 200
+    notebook_index = notebook_index_response.json()
+    assert notebook_index["counts"]["total"] == 0
 
     questions_response = client.get(f"/api/projects/{project_id}/questions")
     assert questions_response.status_code == 200
@@ -1844,30 +1766,20 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert result_notebook_job["job_type"] == "prepare_result_notebook_evidence"
     assert result_notebook_job["output"]["schema_version"] == "result_notebook_evidence.v1"
     assert result_notebook_job["output"]["top_run_id"] == baseline_job["output"]["experiment_run_id"]
-    assert result_notebook_job["output"]["analysis_notebook_artifact_id"]
-    assert result_notebook_job["output"]["notebook_evidence_html_artifact_id"]
-    assert result_notebook_job["output"]["preview_artifact_id"] == result_notebook_job["output"]["notebook_evidence_html_artifact_id"]
-    assert result_notebook_job["output"]["capture_mode"] in {"safe_static_capture", "existing_evidence"}
-
-    result_notebook_preview_response = client.get(
-        f"/api/artifacts/{result_notebook_job['output']['notebook_evidence_html_artifact_id']}/preview"
-    )
-    assert result_notebook_preview_response.status_code == 200
-    result_notebook_preview = result_notebook_preview_response.json()
-    assert "Notebook Evidence Review" in result_notebook_preview["preview"]
-    assert "Result interpretation" in result_notebook_preview["preview"]
-    assert "Sanity floor" in result_notebook_preview["preview"]
-    assert "Readiness verdict" in result_notebook_preview["preview"]
-    assert "Ask Codex next" in result_notebook_preview["preview"]
+    assert result_notebook_job["output"]["analysis_notebook_artifact_id"] is None
+    assert result_notebook_job["output"]["notebook_evidence_html_artifact_id"] is None
+    assert result_notebook_job["output"]["preview_artifact_id"] is None
+    assert result_notebook_job["output"]["capture_mode"] == "not_created_by_harness"
+    assert result_notebook_job["output"]["execution_status"] == "awaiting_agent_authored_notebook"
+    assert result_notebook_job["output"]["notebook_authoring_brief_artifact_id"]
 
     notebook_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
     assert notebook_readout_response.status_code == 200, notebook_readout_response.text
     notebook_readout = notebook_readout_response.json()
-    assert notebook_readout["notebook"]["status"] == "ready"
+    assert notebook_readout["notebook"]["status"] in {"missing", "partial", "attention"}
     assert notebook_readout["notebook"]["action_endpoint"].endswith("/results/notebook-evidence")
-    assert notebook_readout["notebook"]["recommended"]["artifact_ids"]["evidence_html"]
     assert notebook_readout["read_order"][3]["target_tab"] == "Notebooks"
-    assert notebook_readout["read_order"][3]["artifact_id"] == result_notebook_job["output"]["notebook_evidence_html_artifact_id"]
+    assert notebook_readout["read_order"][3]["artifact_id"] is None
 
 
     compare_runs_response = client.post(f"/api/projects/{project_id}/experiments/compare")
@@ -2758,203 +2670,31 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
     assert model_notebook_response.status_code == 200, model_notebook_response.text
     model_notebook_job = model_notebook_response.json()
     assert model_notebook_job["status"] == "succeeded"
-    assert model_notebook_job["job_type"] == "generate_model_diagnostics_notebook"
+    assert model_notebook_job["job_type"] == "prepare_model_diagnostics_notebook_authoring"
     assert model_notebook_job["output"]["notebook_kind"] == "model_diagnostics"
     assert model_notebook_job["output"]["run_id"] == baseline_run["id"]
-    assert model_notebook_job["output"]["analysis_notebook_artifact_id"]
-    assert model_notebook_job["output"]["notebook_html_artifact_id"]
-    assert model_notebook_job["output"]["notebook_report_id"]
-    assert model_notebook_job["output"]["visualization_id"]
-    assert model_notebook_job["output"]["visualization_artifact_id"]
-
-    model_notebook_preview_response = client.get(
-        f"/api/artifacts/{model_notebook_job['output']['analysis_notebook_artifact_id']}/preview"
-    )
-    assert model_notebook_preview_response.status_code == 200
-    model_notebook_preview = model_notebook_preview_response.json()["preview"]
-    assert "Model Diagnostics Notebook" in model_notebook_preview
-    assert "permutation importance" in model_notebook_preview
-
-    model_notebook_html_response = client.get(
-        f"/api/artifacts/{model_notebook_job['output']['notebook_html_artifact_id']}/preview"
-    )
-    assert model_notebook_html_response.status_code == 200
-    model_notebook_html = model_notebook_html_response.json()
-    assert model_notebook_html["content_type"] == "text/html"
-    assert "Tablex Model Diagnostics Notebook" in model_notebook_html["preview"]
-    assert "Feature importance" in model_notebook_html["preview"]
-    assert "Model evidence" in model_notebook_html["preview"]
-
-    model_notebook_manifest_response = client.get(
-        f"/api/artifacts/{model_notebook_job['output']['notebook_run_manifest_artifact_id']}/download"
-    )
-    assert model_notebook_manifest_response.status_code == 200
-    model_notebook_manifest = model_notebook_manifest_response.json()
-    assert model_notebook_manifest["notebook_kind"] == "model_diagnostics"
-    assert model_notebook_manifest["inputs"]["prediction_output"]
-    assert "partial dependence" in " ".join(model_notebook_manifest["diagnostic_extension_points"])
+    assert model_notebook_job["output"]["analysis_notebook_artifact_id"] is None
+    assert model_notebook_job["output"]["notebook_html_artifact_id"] is None
+    assert model_notebook_job["output"]["notebook_report_id"] is None
+    assert model_notebook_job["output"]["visualization_id"] is None
+    assert model_notebook_job["output"]["visualization_artifact_id"] is None
+    assert model_notebook_job["output"]["execution_status"] == "awaiting_agent_authored_notebook"
+    assert model_notebook_job["output"]["notebook_authoring_brief_artifact_id"]
 
     notebook_index_response = client.get(f"/api/projects/{project_id}/analysis-notebooks")
     assert notebook_index_response.status_code == 200, notebook_index_response.text
     notebook_index = notebook_index_response.json()
     assert notebook_index["schema_version"] == "analysis_notebook_index.v1"
-    assert notebook_index["counts"]["total"] >= 2
-    assert notebook_index["counts"]["by_kind"]["data_understanding"] >= 1
-    assert notebook_index["counts"]["by_kind"]["model_diagnostics"] >= 1
-    assert notebook_index["recommended_notebook"]["notebook_kind"] == "model_diagnostics"
-    assert notebook_index["recommended_notebook"]["artifact_ids"]["html_preview"]
-    assert notebook_index["recommended_notebook"]["content"]["readiness"] == "evidence_ready"
-    assert any(group["notebook_kind"] == "model_diagnostics" for group in notebook_index["groups"])
-
-    execution_plan_response = client.post(
-        f"/api/analysis-notebooks/{model_notebook_job['output']['analysis_notebook_artifact_id']}/execution-plan"
-    )
-    assert execution_plan_response.status_code == 200, execution_plan_response.text
-    execution_plan_job = execution_plan_response.json()
-    assert execution_plan_job["status"] == "succeeded"
-    assert execution_plan_job["job_type"] == "plan_notebook_execution"
-    assert execution_plan_job["output"]["task_type"] == "execute_analysis_notebook"
-    assert execution_plan_job["output"]["execution_status"] == "planned_not_executed"
-    assert execution_plan_job["output"]["agent_task_contract_artifact_id"]
-    assert execution_plan_job["output"]["notebook_execution_plan_artifact_id"]
-
-    execution_contract_response = client.get(
-        f"/api/artifacts/{execution_plan_job['output']['agent_task_contract_artifact_id']}/download"
-    )
-    assert execution_contract_response.status_code == 200
-    execution_contract = execution_contract_response.json()
-    assert execution_contract["task_type"] == "execute_analysis_notebook"
-    assert execution_contract["inputs"]["schema_version"] == "notebook_execution_contract.v1"
-    assert (
-        execution_contract["inputs"]["notebook"]["artifact_id"]
-        == model_notebook_job["output"]["analysis_notebook_artifact_id"]
-    )
-    assert any(output["path"] == "artifacts/notebook_export.html" for output in execution_contract["required_outputs"])
-    assert "Do not read secrets or connector credentials." in execution_contract["forbidden_actions"]
-
-    execution_plan_artifact_response = client.get(
-        f"/api/artifacts/{execution_plan_job['output']['notebook_execution_plan_artifact_id']}/download"
-    )
-    assert execution_plan_artifact_response.status_code == 200
-    execution_plan = execution_plan_artifact_response.json()
-    assert execution_plan["schema_version"] == "notebook_execution_plan.v1"
-    assert execution_plan["runner_policy"]["execute_now"] is False
-    assert execution_plan["runner_policy"]["artifact_capture_required"] is True
-    assert (
-        execution_plan["outputs"]["agent_task_contract_artifact_id"]
-        == execution_plan_job["output"]["agent_task_contract_artifact_id"]
-    )
-
-    execution_capture_response = client.post(
-        f"/api/analysis-notebooks/{model_notebook_job['output']['analysis_notebook_artifact_id']}/execution-capture"
-    )
-    assert execution_capture_response.status_code == 200, execution_capture_response.text
-    execution_capture_job = execution_capture_response.json()
-    assert execution_capture_job["status"] == "succeeded"
-    assert execution_capture_job["job_type"] == "capture_notebook_execution"
-    assert execution_capture_job["output"]["capture_mode"] == "safe_static_capture"
-    assert execution_capture_job["output"]["execution_status"] == "static_capture_succeeded"
-    assert execution_capture_job["output"]["notebook_execution_manifest_artifact_id"]
-    assert execution_capture_job["output"]["notebook_execution_html_artifact_id"]
-    assert execution_capture_job["output"]["notebook_figure_manifest_artifact_id"]
-    assert execution_capture_job["output"]["notebook_execution_source_artifact_id"]
-    assert execution_capture_job["output"]["notebook_evidence_bundle_artifact_id"]
-    assert execution_capture_job["output"]["notebook_evidence_html_artifact_id"]
-    assert execution_capture_job["output"]["notebook_evidence_figure_artifact_ids"]
-
-    model_evidence_html_response = client.get(
-        f"/api/artifacts/{execution_capture_job['output']['notebook_evidence_html_artifact_id']}/preview"
-    )
-    assert model_evidence_html_response.status_code == 200
-    model_evidence_html = model_evidence_html_response.json()
-    assert "Notebook Evidence Review" in model_evidence_html["preview"]
-    assert "Result interpretation" in model_evidence_html["preview"]
-    assert "Sanity floor" in model_evidence_html["preview"]
-    assert "Primary metric" in model_evidence_html["preview"]
-    assert "Native Feature Importance" in model_evidence_html["preview"]
-    assert "Permutation Importance" in model_evidence_html["preview"]
-    assert "Readiness verdict" in model_evidence_html["preview"]
-    assert "Prediction coverage" in model_evidence_html["preview"]
-    assert "Diagnostics readiness" in model_evidence_html["preview"]
-    assert "Review playbook" in model_evidence_html["preview"]
-    assert "No read order generated yet" not in model_evidence_html["preview"]
-    assert "No visual story cards generated yet" not in model_evidence_html["preview"]
-    assert "No EDA playbook generated yet" not in model_evidence_html["preview"]
-
-    execution_manifest_response = client.get(
-        f"/api/artifacts/{execution_capture_job['output']['notebook_execution_manifest_artifact_id']}/download"
-    )
-    assert execution_manifest_response.status_code == 200
-    execution_manifest = execution_manifest_response.json()
-    assert execution_manifest["schema_version"] == "notebook_execution_manifest.v1"
-    assert execution_manifest["safety_policy"]["python_compile_only"] is True
-    assert execution_manifest["safety_policy"]["arbitrary_notebook_code_executed"] is False
-    assert execution_manifest["safety_policy"]["secrets_materialized"] is False
-    assert execution_manifest["safety_policy"]["harness_profile_evidence_rendered"] is True
-    assert execution_manifest["safety_policy"]["marimo_cells_executed"] is False
-    assert execution_manifest["static_compile"]["status"] == "succeeded"
-    assert execution_manifest["summary"]["runtime_execution_status"] == "deferred"
-    assert execution_manifest["summary"]["profile_evidence_render_status"] == "rendered"
-    assert execution_manifest["summary"]["profile_evidence_figure_count"] >= 1
-    assert (
-        execution_manifest["outputs"]["notebook_execution_html_artifact_id"]
-        == execution_capture_job["output"]["notebook_execution_html_artifact_id"]
-    )
-    assert (
-        execution_manifest["outputs"]["notebook_evidence_bundle_artifact_id"]
-        == execution_capture_job["output"]["notebook_evidence_bundle_artifact_id"]
-    )
-
-    execution_html_preview_response = client.get(
-        f"/api/artifacts/{execution_capture_job['output']['notebook_execution_html_artifact_id']}/preview"
-    )
-    assert execution_html_preview_response.status_code == 200
-    execution_html_preview = execution_html_preview_response.json()
-    assert execution_html_preview["content_type"] == "text/html"
-    assert "Notebook Execution Capture" in execution_html_preview["preview"]
-    assert "runtime execution is deferred" in execution_html_preview["preview"]
-    assert "Profile evidence capture" in execution_html_preview["preview"]
-
-    figure_manifest_response = client.get(
-        f"/api/artifacts/{execution_capture_job['output']['notebook_figure_manifest_artifact_id']}/download"
-    )
-    assert figure_manifest_response.status_code == 200
-    figure_manifest = figure_manifest_response.json()
-    assert figure_manifest["schema_version"] == "notebook_figure_manifest.v1"
-    assert figure_manifest["runtime_execution_status"] == "deferred"
-    assert figure_manifest["profile_evidence_render_status"] == "rendered"
-    assert figure_manifest["figures"]
-    assert figure_manifest["expected_figure_slots"]
-
-    notebook_index_after_capture_response = client.get(f"/api/projects/{project_id}/analysis-notebooks")
-    assert notebook_index_after_capture_response.status_code == 200
-    notebook_index_after_capture = notebook_index_after_capture_response.json()
-    assert notebook_index_after_capture["counts"]["with_execution_plan"] >= 1
-    assert notebook_index_after_capture["counts"]["with_execution_capture"] >= 1
-    captured_item = next(
-        item
-        for item in notebook_index_after_capture["items"]
-        if item["notebook_artifact_id"] == model_notebook_job["output"]["analysis_notebook_artifact_id"]
-    )
-    assert captured_item["coverage"]["has_execution_capture"] is True
-    assert captured_item["coverage"]["execution_capture_status"] == "static_capture_succeeded"
-    assert captured_item["artifact_ids"]["execution_manifest"] == execution_capture_job["output"]["notebook_execution_manifest_artifact_id"]
-    assert captured_item["artifact_ids"]["execution_html"] == execution_capture_job["output"]["notebook_execution_html_artifact_id"]
-    if any(not item["coverage"]["has_execution_capture"] for item in notebook_index_after_capture["items"]):
-        assert any(
-            action["endpoint"] and "execution-capture" in action["endpoint"]
-            for action in notebook_index_after_capture["next_actions"]
-        )
-    else:
-        assert any(action["label"] == "Open the recommended notebook evidence" for action in notebook_index_after_capture["next_actions"])
+    assert notebook_index["counts"]["total"] == 0
+    assert notebook_index["recommended_notebook"] is None
 
     guidance_after_capture_response = client.get(f"/api/projects/{project_id}/guidance")
     assert guidance_after_capture_response.status_code == 200
     guidance_after_capture = guidance_after_capture_response.json()
     guidance_journey = {stage["id"]: stage for stage in guidance_after_capture["journey_stages"]}
-    assert guidance_journey["notebooks"]["status"] == "done"
-    assert guidance_after_capture["supporting_counts"]["analysis_notebooks"] >= 1
-    assert guidance_after_capture["supporting_counts"]["notebook_execution_captures"] >= 1
+    assert guidance_journey["notebooks"]["status"] in {"todo", "next", "doing"}
+    assert guidance_after_capture["supporting_counts"]["analysis_notebooks"] == 0
+    assert guidance_after_capture["supporting_counts"]["notebook_execution_captures"] == 0
 
     run_report_response = client.post(f"/api/runs/{baseline_run['id']}/report")
     assert run_report_response.status_code == 200, run_report_response.text
@@ -3009,19 +2749,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
         "agent_context_pack",
         "agent_task_report",
         "agent_result",
-        "analysis_notebook",
-        "notebook_html",
-        "notebook_run_manifest",
-        "notebook_report",
-        "notebook_execution_plan",
-        "notebook_execution_manifest",
-        "notebook_execution_report",
-        "notebook_execution_html",
-        "notebook_figure_manifest",
-        "notebook_execution_source",
-        "notebook_evidence_bundle",
-        "notebook_evidence_html",
-        "notebook_evidence_svg",
+        "notebook_authoring_brief",
+        "notebook_authoring_report",
         "eda_review_bundle",
         "eda_review_html",
         "eda_review_svg",

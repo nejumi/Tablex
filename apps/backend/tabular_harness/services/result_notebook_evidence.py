@@ -9,12 +9,10 @@ from sqlalchemy.orm import Session
 from tabular_harness.core.json import loads_json
 from tabular_harness.models.entities import Artifact, ExperimentRun, Project
 from tabular_harness.services.analysis_notebooks import (
-    NotebookExecutionCaptureResult,
     build_project_notebook_index,
-    create_model_diagnostics_notebook,
-    create_notebook_execution_capture,
 )
 from tabular_harness.services.artifacts import LocalArtifactStore
+from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.reporting import leaderboard_sort_key
 
 
@@ -22,19 +20,14 @@ from tabular_harness.services.reporting import leaderboard_sort_key
 class ResultNotebookEvidenceResult:
     status: str
     top_run: ExperimentRun
-    notebook_artifact: Artifact
-    notebook_generated: bool
-    capture_created: bool
-    evidence_html_artifact: Artifact | None
-    evidence_bundle_artifact: Artifact | None
-    evidence_figure_artifacts: list[Artifact]
-    capture: NotebookExecutionCaptureResult | None
+    authoring_brief_artifact: Artifact
+    authoring_report_artifact: Artifact
     notebook_index: dict[str, Any]
     artifact_ids: list[str]
 
     @property
-    def preview_artifact_id(self) -> str:
-        return self.evidence_html_artifact.id if self.evidence_html_artifact else self.notebook_artifact.id
+    def preview_artifact_id(self) -> str | None:
+        return None
 
 
 def prepare_result_notebook_evidence(
@@ -47,56 +40,19 @@ def prepare_result_notebook_evidence(
     if top_run is None:
         raise ValueError("A successful ExperimentRun is required before preparing result notebook evidence")
 
-    notebook_artifact = latest_model_diagnostics_notebook_for_run(db, project.id, top_run.id)
-    notebook_generated = False
-    generated_artifact_ids: list[str] = []
-    if notebook_artifact is None:
-        notebook_result = create_model_diagnostics_notebook(db, store=store, run=top_run)
-        notebook_artifact = notebook_result.notebook_artifact
-        notebook_generated = True
-        generated_artifact_ids = notebook_result.artifact_ids
-
-    evidence_html = latest_notebook_artifact(db, project.id, notebook_artifact.id, "notebook_evidence_html")
-    evidence_bundle = latest_notebook_artifact(db, project.id, notebook_artifact.id, "notebook_evidence_bundle")
-    evidence_figures = notebook_artifacts(db, project.id, notebook_artifact.id, "notebook_evidence_svg")
-    capture: NotebookExecutionCaptureResult | None = None
-    capture_created = False
-    capture_artifact_ids: list[str] = []
-    if evidence_html is None:
-        capture = create_notebook_execution_capture(db, store=store, notebook_artifact=notebook_artifact)
-        capture_created = True
-        evidence_html = capture.evidence_html_artifact
-        evidence_bundle = capture.evidence_bundle_artifact
-        evidence_figures = capture.figure_artifacts
-        capture_artifact_ids = capture.artifact_ids
-
-    notebook_index = build_project_notebook_index(db, project)
-    artifact_ids = unique_ids(
-        [
-            *generated_artifact_ids,
-            *capture_artifact_ids,
-            notebook_artifact.id,
-            evidence_html.id if evidence_html else None,
-            evidence_bundle.id if evidence_bundle else None,
-            *[artifact.id for artifact in evidence_figures],
-        ]
+    authoring = create_notebook_authoring_brief(
+        db,
+        store=store,
+        project=project,
+        objective=f"Author a model-diagnostics marimo notebook for ExperimentRun {top_run.id}.",
     )
-    if evidence_html is not None and capture_created:
-        status = "evidence_captured"
-    elif evidence_html is not None:
-        status = "already_ready"
-    else:
-        status = "notebook_generated_without_evidence"
+    notebook_index = build_project_notebook_index(db, project)
+    artifact_ids = unique_ids(authoring.artifact_ids)
     return ResultNotebookEvidenceResult(
-        status=status,
+        status="awaiting_agent_authored_notebook",
         top_run=top_run,
-        notebook_artifact=notebook_artifact,
-        notebook_generated=notebook_generated,
-        capture_created=capture_created,
-        evidence_html_artifact=evidence_html,
-        evidence_bundle_artifact=evidence_bundle,
-        evidence_figure_artifacts=evidence_figures,
-        capture=capture,
+        authoring_brief_artifact=authoring.brief_artifact,
+        authoring_report_artifact=authoring.report_artifact,
         notebook_index=notebook_index,
         artifact_ids=artifact_ids,
     )
@@ -111,25 +67,23 @@ def result_notebook_evidence_job_output(result: ResultNotebookEvidenceResult) ->
         "top_run_id": result.top_run.id,
         "primary_metric_name": metrics.get("primary_metric_name"),
         "primary_metric_value": metrics.get("primary_metric_value"),
-        "notebook_generated": result.notebook_generated,
-        "capture_created": result.capture_created,
-        "analysis_notebook_artifact_id": result.notebook_artifact.id,
-        "notebook_evidence_html_artifact_id": result.evidence_html_artifact.id
-        if result.evidence_html_artifact
-        else None,
-        "notebook_evidence_bundle_artifact_id": result.evidence_bundle_artifact.id
-        if result.evidence_bundle_artifact
-        else None,
-        "notebook_evidence_figure_artifact_ids": [artifact.id for artifact in result.evidence_figure_artifacts],
-        "notebook_execution_manifest_artifact_id": result.capture.manifest_artifact.id if result.capture else None,
-        "notebook_execution_html_artifact_id": result.capture.html_artifact.id if result.capture else None,
-        "notebook_execution_plan_artifact_id": result.capture.plan_artifact.id if result.capture else None,
-        "agent_task_contract_artifact_id": result.capture.contract_artifact.id if result.capture else None,
+        "notebook_generated": False,
+        "capture_created": False,
+        "analysis_notebook_artifact_id": None,
+        "notebook_evidence_html_artifact_id": None,
+        "notebook_evidence_bundle_artifact_id": None,
+        "notebook_evidence_figure_artifact_ids": [],
+        "notebook_execution_manifest_artifact_id": None,
+        "notebook_execution_html_artifact_id": None,
+        "notebook_execution_plan_artifact_id": None,
+        "agent_task_contract_artifact_id": None,
+        "notebook_authoring_brief_artifact_id": result.authoring_brief_artifact.id,
+        "notebook_authoring_report_artifact_id": result.authoring_report_artifact.id,
         "recommended_notebook": recommended if isinstance(recommended, dict) else None,
         "preview_artifact_id": result.preview_artifact_id,
         "artifact_ids": result.artifact_ids,
-        "execution_status": result.capture.manifest["execution_status"] if result.capture else "already_captured",
-        "capture_mode": result.capture.manifest["capture_mode"] if result.capture else "existing_evidence",
+        "execution_status": "awaiting_agent_authored_notebook",
+        "capture_mode": "not_created_by_harness",
     }
 
 

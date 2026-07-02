@@ -5530,7 +5530,13 @@ function tabForResearchPlanJob(job: Job): Tab {
 
 function activeInitialResearchPlanBlockId(job: Job | null): "data_upload" | "objective" | "understanding" | "prior_research" | null {
   if (!job || !jobActiveForActivity(job, Date.now())) return null;
-  if (["profile_dataset", "infer_assumptions", "create_data_understanding_notebook"].includes(job.job_type)) return "understanding";
+  if (
+    ["profile_dataset", "infer_assumptions", "create_data_understanding_notebook", "prepare_data_understanding_notebook_authoring"].includes(
+      job.job_type
+    )
+  ) {
+    return "understanding";
+  }
   if (["create_research_source_pack", "run_research_source_pack_stub"].includes(job.job_type)) return "prior_research";
   if (job.job_type.includes("target_definition")) return "objective";
   return null;
@@ -12738,7 +12744,7 @@ function ReportsTab({
           }
         >
           {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-          Analysis Notebook
+          Prepare Notebook Context
         </button>
         <button
           className="secondary-button"
@@ -12872,7 +12878,7 @@ function ReportsTab({
             />
           </div>
         ) : (
-          <EmptyInline text="Generate a Data Understanding notebook or a run-level Model Diagnostics notebook to create a guided notebook history here." />
+          <EmptyInline text="No authored notebook is available yet. Prepare notebook context, then let the agent write and register the notebook." />
         )}
       </Panel>
       <Panel id="ideas" title="Ideas" icon={<Lightbulb size={18} />}>

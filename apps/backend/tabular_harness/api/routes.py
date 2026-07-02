@@ -150,8 +150,6 @@ from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
 from tabular_harness.services.analysis_notebooks import (
     build_project_analysis_story,
     build_project_notebook_index,
-    create_data_understanding_notebook,
-    create_model_diagnostics_notebook,
     create_notebook_execution_capture,
     create_notebook_execution_plan,
 )
@@ -1166,10 +1164,10 @@ def queued_agent_session_start_output(
 ) -> dict[str, Any]:
     japanese = bool(locale and locale.lower().startswith("ja"))
     assistant_message = (
-        "Full Autoを起動しました。これ以降の本体は細切れJobではなく、Main AgentSessionとしてCodexが継続します。"
-        "RawにはCodex CLIのJSONL transcriptをそのまま保存し、Chatでは人間向けに説明します。"
+        "フルオートを開始しました。データの確認、目的の整理、評価設計、分析ノートブック作成へ順に進めます。"
+        "進行中の内容はこのチャットとアクティビティに表示します。"
         if japanese
-        else "Full Auto started. The main work now runs through a persistent AgentSession, not fragmented Codex jobs. Raw stores the Codex CLI JSONL transcript directly; Chat explains it for humans."
+        else "Full Auto started. I will work through data review, objective framing, evaluation design, and analysis notebooks. Progress will appear in this chat and Activity."
     )
     return {
         "schema_version": "agent_session_start.v1",
@@ -1181,10 +1179,14 @@ def queued_agent_session_start_output(
         "worker_events": [
             {
                 "worker_id": "main-agent-session",
-                "display_name": "Main Codex Session",
+                "display_name": "Autonomous Analyst",
                 "status": session.status,
-                "headline": "Main AgentSession is starting" if not japanese else "Main AgentSessionを起動中",
-                "detail": "Codex CLI transcript is captured as Raw; Tablex sidecar records assets and progress.",
+                "headline": "Analysis is starting" if not japanese else "分析を開始しています",
+                "detail": (
+                    "Preparing the project context and beginning the next analysis step."
+                    if not japanese
+                    else "プロジェクトの状況を確認し、次の分析ステップを開始しています。"
+                ),
                 "job_id": job.id,
                 "job_type": job.job_type,
                 "project_id": project.id,
@@ -2183,17 +2185,22 @@ def ingest_uploaded_data_bundle(
 
     if dataset is not None:
         try:
-            notebook_result = create_data_understanding_notebook(
+            authoring_result = create_notebook_authoring_brief(
                 db,
                 store=store,
                 project=project,
+                objective=(
+                    "Author the project data-understanding marimo notebook from current artifacts and equipped Skills. "
+                    "Do not use harness-authored notebook prose."
+                ),
                 response_locale=response_locale,
             )
-            notebook_artifact_ids = notebook_result.artifact_ids
-            notebook_artifact = notebook_result.notebook_artifact
-            notebook_html_artifact = notebook_result.html_artifact
-            notebook_report_artifact = notebook_result.report_artifact
-            notebook_manifest_artifact = notebook_result.manifest_artifact
+            notebook_artifact_ids = [authoring_result.brief_artifact.id, authoring_result.report_artifact.id]
+            notebook_warning = "awaiting_agent_authored_notebook"
+            notebook_artifact = None
+            notebook_html_artifact = None
+            notebook_report_artifact = None
+            notebook_manifest_artifact = None
         except ValueError as exc:
             notebook_warning = str(exc)
             notebook_artifact = None
@@ -2235,12 +2242,13 @@ def ingest_uploaded_data_bundle(
         "relational_hint_report_artifact_ids": [result.report_artifact.id for result in hint_results],
         "relational_catalog_artifact_id": relational_catalog_artifact.id if relational_catalog_artifact else None,
         "relational_table_bundle_manifest_artifact_id": manifest_artifact.id if manifest_artifact else None,
-        "analysis_notebook_artifact_ids": notebook_artifact_ids,
+        "analysis_notebook_artifact_ids": [],
         "analysis_notebook_artifact_id": notebook_artifact.id if notebook_artifact else None,
         "notebook_html_artifact_id": notebook_html_artifact.id if notebook_html_artifact else None,
         "notebook_report_artifact_id": notebook_report_artifact.id if notebook_report_artifact else None,
         "notebook_run_manifest_artifact_id": notebook_manifest_artifact.id if notebook_manifest_artifact else None,
         "notebook_kind": "data_understanding" if notebook_artifact else None,
+        "notebook_authoring_brief_artifact_ids": notebook_artifact_ids,
         "notebook_warning": notebook_warning,
         "assistant_message": upload_bundle_assistant_message(
             project=project,
@@ -2273,11 +2281,7 @@ def upload_bundle_assistant_message(
     target_line = f"Objective/target is currently `{target_column}`." if target_column else (
         "Objective/target is still open. Full Auto can ask Codex to review possible task shapes from the uploaded data."
     )
-    notebook_line = (
-        "A Data Understanding marimo notebook was generated and linked as an artifact."
-        if notebook_artifact_ids
-        else f"Data Understanding notebook was not generated yet: {notebook_warning or 'no notebook artifact was returned'}."
-    )
+    notebook_line = "Notebook authoring context is ready. The notebook itself will appear after the agent writes it."
     return (
         f"Uploaded {table_count} table file(s)"
         f"{f' and {hint_count} ER/schema hint file(s)' if hint_count else ''}.\n\n"
@@ -5371,34 +5375,42 @@ def generate_data_understanding_notebook_endpoint(
     response_locale = payload.locale if payload else None
     job = create_job(
         db,
-        job_type="generate_data_understanding_notebook",
+        job_type="prepare_data_understanding_notebook_authoring",
         project_id=project_id,
         input_payload={"notebook_kind": "data_understanding", "response_locale": response_locale},
         policy={
             "external_network_access": "disabled",
             "connector_credentials_materialized": False,
-            "execution_mode": "generate_artifacts_only",
+            "execution_mode": "prepare_authoring_context_only",
         },
     )
     try:
         mark_job_running(job)
-        result = create_data_understanding_notebook(db, store=store, project=project, response_locale=response_locale)
+        result = create_notebook_authoring_brief(
+            db,
+            store=store,
+            project=project,
+            objective=(
+                "Author the project data-understanding marimo notebook from current artifacts and equipped Skills. "
+                "Do not use harness-authored notebook prose."
+            ),
+            response_locale=response_locale,
+        )
         mark_job_succeeded(
             job,
             {
-                "schema_version": result.notebook["schema_version"],
-                "notebook_kind": result.notebook["notebook_kind"],
-                "response_locale": result.notebook.get("response_locale"),
-                "analysis_notebook_artifact_id": result.notebook_artifact.id,
-                "notebook_html_artifact_id": result.html_artifact.id,
-                "notebook_authoring_brief_artifact_id": result.authoring_brief_artifact.id
-                if result.authoring_brief_artifact
-                else None,
-                "notebook_run_manifest_artifact_id": result.manifest_artifact.id,
-                "notebook_report_id": result.report.id,
-                "notebook_report_artifact_id": result.report_artifact.id,
+                "schema_version": "notebook_authoring_preparation.v1",
+                "notebook_kind": "data_understanding",
+                "response_locale": response_locale,
+                "analysis_notebook_artifact_id": None,
+                "notebook_html_artifact_id": None,
+                "notebook_authoring_brief_artifact_id": result.brief_artifact.id,
+                "notebook_authoring_report_artifact_id": result.report_artifact.id,
+                "notebook_run_manifest_artifact_id": None,
+                "notebook_report_id": None,
+                "notebook_report_artifact_id": None,
                 "artifact_ids": result.artifact_ids,
-                "execution_status": "generated_not_executed",
+                "execution_status": "awaiting_agent_authored_notebook",
             },
         )
     except ValueError as exc:
@@ -5858,36 +5870,44 @@ def generate_run_analysis_notebook_endpoint(
     run = db.get(ExperimentRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="ExperimentRun not found")
+    project = require_project(db, run.project_id)
     job = create_job(
         db,
-        job_type="generate_model_diagnostics_notebook",
+        job_type="prepare_model_diagnostics_notebook_authoring",
         project_id=run.project_id,
         input_payload={"run_id": run.id, "notebook_kind": "model_diagnostics"},
         policy={
             "external_network_access": "disabled",
             "connector_credentials_materialized": False,
-            "execution_mode": "generate_artifacts_only",
+            "execution_mode": "prepare_authoring_context_only",
         },
     )
     try:
         mark_job_running(job)
-        result = create_model_diagnostics_notebook(db, store=store, run=run)
+        result = create_notebook_authoring_brief(
+            db,
+            store=store,
+            project=project,
+            objective=f"Author the model-diagnostics marimo notebook for ExperimentRun {run.id}.",
+        )
         mark_job_succeeded(
             job,
             {
-                "schema_version": result.notebook["schema_version"],
-                "notebook_kind": result.notebook["notebook_kind"],
+                "schema_version": "notebook_authoring_preparation.v1",
+                "notebook_kind": "model_diagnostics",
                 "run_id": run.id,
-                "model_version_id": result.notebook.get("model_version_id"),
-                "analysis_notebook_artifact_id": result.notebook_artifact.id,
-                "notebook_html_artifact_id": result.html_artifact.id,
-                "notebook_run_manifest_artifact_id": result.manifest_artifact.id,
-                "notebook_report_id": result.report.id,
-                "notebook_report_artifact_id": result.report_artifact.id,
-                "visualization_id": result.visualization.id,
-                "visualization_artifact_id": result.visualization_artifact.id,
+                "model_version_id": run.model_version_id,
+                "analysis_notebook_artifact_id": None,
+                "notebook_html_artifact_id": None,
+                "notebook_run_manifest_artifact_id": None,
+                "notebook_report_id": None,
+                "notebook_report_artifact_id": None,
+                "visualization_id": None,
+                "visualization_artifact_id": None,
+                "notebook_authoring_brief_artifact_id": result.brief_artifact.id,
+                "notebook_authoring_report_artifact_id": result.report_artifact.id,
                 "artifact_ids": result.artifact_ids,
-                "execution_status": "generated_not_executed",
+                "execution_status": "awaiting_agent_authored_notebook",
             },
         )
     except ValueError as exc:
@@ -6183,11 +6203,9 @@ def get_project_agent_activity(
                 "worker_id": "main-agent-session",
                 "display_name": "Main Codex Session",
                 "status": session.status,
-                "headline": "Codex is running the main AgentSession"
-                if session.status == "running"
-                else "Main AgentSession is supervising Full Auto",
+                "headline": "Codex is working" if session.status == "running" else "Full Auto is queued",
                 "detail": session.last_error
-                or "Raw is backed by the Codex CLI transcript for this session; Jobs are sidecars.",
+                or "Preparing context, running analysis, or waiting for the next available worker.",
                 "job_id": None,
                 "job_type": "agent_session",
                 "project_id": project_id,
@@ -6202,8 +6220,8 @@ def get_project_agent_activity(
                 "active": session_active,
                 "human_description": {
                     "source": "agent_session",
-                    "title": "Main Codex Session",
-                    "summary": "The long-lived autonomous Codex session is the source of truth for Full Auto progress.",
+                    "title": "Autonomous Analyst",
+                    "summary": "Shows whether the analysis is running, waiting, or needs attention.",
                 },
                 "token_usage": {
                     "source": "codex_cli_transcript",
@@ -6222,9 +6240,9 @@ def get_project_agent_activity(
             **turn_state,
             "state": "agent_running" if session.status == "running" else "agent_scheduled",
             "owner": "agent",
-            "label": "Codex is working" if session.status == "running" else "Codex session will continue",
+            "label": "Codex is working" if session.status == "running" else "Full Auto will continue",
             "detail": session.last_error
-            or "Full Auto is owned by the main AgentSession. Raw shows Codex CLI transcript events, not reconstructed job logs.",
+            or "The project is still active. Progress will appear here when the next step starts.",
             "input_attention": False,
             "confidence": "observed",
             "agent_session_id": session.id,
