@@ -1486,10 +1486,11 @@ type AgentWorkerEvent = {
   status: string;
   headline: string;
   detail: string;
-  job_id: string;
+  job_id: string | null;
   job_type?: string;
   project_id?: string | null;
   project_name?: string | null;
+  agent_session_id?: string | null;
   target_tab: string | null;
   created_at?: string;
   updated_at?: string;
@@ -1506,6 +1507,42 @@ type AgentWorkerEvent = {
     is_estimate: boolean;
     series: TokenSeriesPoint[];
   };
+};
+
+type AgentSession = {
+  id: string;
+  project_id: string;
+  session_type: string;
+  status: string;
+  autonomy_mode: string;
+  runner_kind: string;
+  goal_text: string;
+  workspace_path: string | null;
+  codex_thread_id: string | null;
+  pid: number | null;
+  turn_index: number;
+  last_heartbeat_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  ended_at: string | null;
+};
+
+type AgentTranscriptEvent = {
+  id: string;
+  project_id: string;
+  session_id: string;
+  event_index: number;
+  source: string;
+  event_type: string;
+  role: string | null;
+  title: string | null;
+  content: string | null;
+  payload: Record<string, unknown>;
+  artifact_id: string | null;
+  job_id: string | null;
+  created_at: string;
 };
 
 type RequiredHumanDescription = {
@@ -3543,6 +3580,8 @@ function ProjectDetail({
   const [pendingAgentChatMessages, setPendingAgentChatMessages] = React.useState<AgentChatMessage[]>([]);
   const [agentWorkerEvents, setAgentWorkerEvents] = React.useState<AgentWorkerEvent[]>([]);
   const [agentActivity, setAgentActivity] = React.useState<AgentActivityResponse | null>(null);
+  const [agentSession, setAgentSession] = React.useState<AgentSession | null>(null);
+  const [agentTranscriptEvents, setAgentTranscriptEvents] = React.useState<AgentTranscriptEvent[]>([]);
   const [activityTick, setActivityTick] = React.useState(0);
   const [pendingIntervention, setPendingIntervention] = React.useState<PendingAutonomyIntervention | null>(null);
   const seenInterventionKeysRef = React.useRef<Set<string>>(new Set());
@@ -3612,6 +3651,8 @@ function ProjectDetail({
         lineageData,
         agentChatHistoryData,
         agentActivityData,
+        agentSessionData,
+        agentTranscriptData,
         understandingData
       ] = await Promise.all([
         api<Overview>(`/api/projects/${project.id}/overview`),
@@ -3644,6 +3685,8 @@ function ProjectDetail({
         api<LineageEdge[]>(`/api/projects/${project.id}/lineage`),
         api<AgentChatHistoryTurn[]>(`/api/projects/${project.id}/agent-chat/history`).catch(() => []),
         api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`).catch(() => null),
+        api<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`).catch(() => null),
+        api<AgentTranscriptEvent[]>(`/api/projects/${project.id}/agent-session/transcript`).catch(() => []),
         api<{ markdown: string | null }>(`/api/projects/${project.id}/understanding/latest`)
       ]);
       setOverview(overviewData);
@@ -3675,6 +3718,8 @@ function ProjectDetail({
       setProjectAssetReferences(projectAssetReferencesData);
       setAgentChatMessages((current) => mergeAgentChatMessages(agentChatHistoryToMessages(agentChatHistoryData), current));
       setAgentActivity(agentActivityData);
+      setAgentSession(agentSessionData);
+      setAgentTranscriptEvents(agentTranscriptData);
       const validationEntries = await Promise.all(
         modelVersionsData.map(async (modelVersion) => {
           const validations = await api<ModelValidation[]>(`/api/model-versions/${modelVersion.id}/validations`);
@@ -3691,8 +3736,14 @@ function ProjectDetail({
 
   const refreshAgentActivity = React.useCallback(async () => {
     try {
-      const data = await api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`);
+      const [data, sessionData, transcriptData] = await Promise.all([
+        api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`),
+        api<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`).catch(() => null),
+        api<AgentTranscriptEvent[]>(`/api/projects/${project.id}/agent-session/transcript`).catch(() => [])
+      ]);
       setAgentActivity(data);
+      setAgentSession(sessionData);
+      setAgentTranscriptEvents(transcriptData);
     } catch {
       // The activity overlay is opportunistic; project refresh still surfaces hard errors.
     }
@@ -4154,6 +4205,8 @@ function ProjectDetail({
           latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
           tableeMotionState={tableeMotionState}
           turnState={turnState}
+          agentSession={agentSession}
+          agentTranscriptEvents={agentTranscriptEvents}
           onSubmitAgentChat={submitAgentChatWithoutResponse}
           onActionOpen={openAgentChatAction}
           onOpenMemoryItem={openHomeMemoryItem}
@@ -4398,6 +4451,8 @@ function HomeTab({
   latestContract,
   tableeMotionState,
   turnState,
+  agentSession,
+  agentTranscriptEvents,
   onSubmitAgentChat,
   onActionOpen,
   onOpenMemoryItem,
@@ -4433,6 +4488,8 @@ function HomeTab({
   latestContract: Artifact | null;
   tableeMotionState: TableeMotionState;
   turnState: TurnState;
+  agentSession: AgentSession | null;
+  agentTranscriptEvents: AgentTranscriptEvent[];
   onSubmitAgentChat: (objective: string) => Promise<void>;
   onActionOpen: (action: AgentChatAction) => void;
   onOpenMemoryItem: (item: HomeMemoryItem) => void;
@@ -4460,7 +4517,7 @@ function HomeTab({
   const [agentViewMode, setAgentViewMode] = React.useState<"chat" | "raw">("chat");
   const ideaFindingItems = buildIdeaFindingItems(ideas, insights);
   const equippedSkills = equippedSkillItems(projectAssetReferences, libraryAssets);
-  const rawAgentEvents = buildRawAgentEvents(messages, jobs);
+  const rawAgentEvents = buildRawAgentEvents(messages, jobs, agentTranscriptEvents, agentSession);
   const researchPlanBlocks = buildResearchPlanBlocks({
     project,
     datasetCount,
@@ -5518,7 +5575,18 @@ function splitSkillTags(value: string): string[] {
   );
 }
 
-function buildRawAgentEvents(messages: AgentChatMessage[], jobs: Job[]): RawAgentEvent[] {
+function buildRawAgentEvents(
+  messages: AgentChatMessage[],
+  jobs: Job[],
+  transcriptEvents: AgentTranscriptEvent[] = [],
+  agentSession: AgentSession | null = null
+): RawAgentEvent[] {
+  const sessionEvents = buildRawSessionEvents(transcriptEvents, agentSession);
+  if (sessionEvents.length) {
+    return dedupeRawAgentEvents([...sessionEvents, ...buildRawJobSidecarEvents(jobs)])
+      .sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime())
+      .slice(-500);
+  }
   const now = new Date().toISOString();
   const turns = buildAgentConversationTurns(messages);
   const chatEvents = turns.flatMap((turn, index) => {
@@ -5595,6 +5663,39 @@ function buildRawAgentEvents(messages: AgentChatMessage[], jobs: Job[]): RawAgen
   return dedupeRawAgentEvents([...chatEvents, ...buildRawJobEvents(jobs)])
     .sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime())
     .slice(-200);
+}
+
+function buildRawSessionEvents(events: AgentTranscriptEvent[], agentSession: AgentSession | null): RawAgentEvent[] {
+  return events.map((event) => {
+    const payload = event.payload ?? {};
+    const active = Boolean(agentSession && ["starting", "running", "between_turns", "waiting_for_runner"].includes(agentSession.status));
+    const isCodex = event.source === "codex_cli" || event.source === "codex_cli_stderr";
+    return {
+      id: `agent-session-${event.id}`,
+      timestamp: event.created_at,
+      source: isCodex ? "Codex" : event.source === "user" ? "User" : "Harness sidecar",
+      level: event.event_type,
+      title: event.title ?? humanizeLabel(event.event_type),
+      active: active && isCodex && event.event_index === events[events.length - 1]?.event_index,
+      body: event.content,
+      details: [
+        ...(event.source === "codex_cli" ? [{ label: "Raw Codex JSONL event", value: payload }] : []),
+        ...(event.source === "codex_cli_stderr" ? [{ label: "Codex stderr line", value: payload }] : []),
+        ...(!isCodex ? [{ label: "Tablex sidecar event", value: payload }] : []),
+        ...(agentSession && event.event_index === 0 ? [{ label: "AgentSession", value: agentSession }] : [])
+      ],
+      payload: {
+        agent_session_id: event.session_id,
+        event_index: event.event_index,
+        source: event.source,
+        payload
+      }
+    };
+  });
+}
+
+function buildRawJobSidecarEvents(jobs: Job[]): RawAgentEvent[] {
+  return buildRawJobEvents(jobs).filter((event) => event.source !== "Codex" && event.source !== "Codex runner");
 }
 
 function buildRawJobEvents(jobs: Job[]): RawAgentEvent[] {
@@ -6490,7 +6591,7 @@ function AgentActivityRail({
     const merged = [...fromJobs, ...events, ...fromActivity];
     const byKey = new Map<string, AgentWorkerEvent>();
     merged.forEach((event) => {
-      byKey.set(`${event.worker_id}-${event.job_id}`, event);
+      byKey.set(`${event.worker_id}-${event.job_id ?? event.agent_session_id ?? event.updated_at ?? event.created_at ?? "event"}`, event);
     });
     return [...byKey.values()]
       .filter((event) => isVisibleWorkerEvent(event, now))
@@ -6593,7 +6694,7 @@ function AgentActivityRail({
         <div className="agent-worker-list">
           {workerEvents.map((event) => (
             <AgentWorkerCard
-              key={`${event.worker_id}-${event.job_id}`}
+              key={`${event.worker_id}-${event.job_id ?? event.agent_session_id ?? event.updated_at ?? event.created_at}`}
               event={event}
               text={text}
               tick={tick}
@@ -6682,7 +6783,7 @@ function AgentWorkerCard({
   }
 
   async function cancel() {
-    if (!canCancel || cancelling) return;
+    if (!canCancel || cancelling || !event.job_id) return;
     setCancelling(true);
     try {
       await onCancelWorker(event.job_id);
@@ -6724,7 +6825,7 @@ function AgentWorkerCard({
           </span>
         ) : null}
         <span>
-          {text.workerIdLabel}: <strong>{shortId(event.job_id)}</strong>
+          {text.workerIdLabel}: <strong>{shortId(event.job_id ?? event.agent_session_id ?? event.worker_id)}</strong>
         </span>
         <span>
           {text.workerElapsedLabel}: <strong>{elapsed}</strong>
@@ -6866,7 +6967,9 @@ function eventActiveForActivity(
 }
 
 function canCancelWorkerEvent(event: AgentWorkerEvent) {
-  return !event.job_id.startsWith("local-") && !isTerminalWorkerStatus(event.status);
+  const jobId = event.job_id;
+  if (!jobId) return false;
+  return !jobId.startsWith("local-") && !isTerminalWorkerStatus(event.status);
 }
 
 function hasLiveAgentOrModelActivity(
@@ -6881,7 +6984,7 @@ function hasLiveAgentOrModelActivity(
 
 function isVisibleWorkerEvent(event: AgentWorkerEvent, now: number) {
   const timestamp = Date.parse(event.updated_at ?? event.created_at ?? "");
-  if (event.job_id.startsWith("local-") && Number.isFinite(timestamp) && now - timestamp > TRANSIENT_WORKER_ACTIVITY_TTL_MS) {
+  if (event.job_id?.startsWith("local-") && Number.isFinite(timestamp) && now - timestamp > TRANSIENT_WORKER_ACTIVITY_TTL_MS) {
     return false;
   }
   if (isLiveWorkerStatus(event.status)) {

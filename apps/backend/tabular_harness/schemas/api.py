@@ -33,6 +33,42 @@ class AutonomyStopCreate(BaseModel):
     locale: str | None = None
 
 
+class AgentSessionRead(BaseModel):
+    id: str
+    project_id: str
+    session_type: str
+    status: str
+    autonomy_mode: str
+    runner_kind: str
+    goal_text: str
+    workspace_path: str | None
+    codex_thread_id: str | None
+    pid: int | None
+    turn_index: int
+    last_heartbeat_at: str | None
+    last_error: str | None
+    created_at: str
+    updated_at: str
+    started_at: str | None
+    ended_at: str | None
+
+
+class AgentTranscriptEventRead(BaseModel):
+    id: str
+    project_id: str
+    session_id: str
+    event_index: int
+    source: str
+    event_type: str
+    role: str | None
+    title: str | None
+    content: str | None
+    payload: dict[str, Any]
+    artifact_id: str | None
+    job_id: str | None
+    created_at: str
+
+
 class ProjectRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

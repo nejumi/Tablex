@@ -487,6 +487,50 @@ class LineageEdge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class AgentSession(Base):
+    __tablename__ = "agent_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    org_id: Mapped[str] = mapped_column(String, default="local-org", nullable=False)
+    project_id: Mapped[str] = mapped_column(String, ForeignKey("projects.id"), nullable=False)
+    session_type: Mapped[str] = mapped_column(String, default="main_autonomous", nullable=False)
+    status: Mapped[str] = mapped_column(String, default="starting", nullable=False)
+    autonomy_mode: Mapped[str] = mapped_column(String, default="full_auto", nullable=False)
+    runner_kind: Mapped[str] = mapped_column(String, default="codex_cli", nullable=False)
+    goal_text: Mapped[str] = mapped_column(Text, nullable=False)
+    workspace_path: Mapped[str | None] = mapped_column(Text)
+    codex_thread_id: Mapped[str | None] = mapped_column(String)
+    pid: Mapped[int | None] = mapped_column(Integer)
+    turn_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String, default="local-user")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AgentTranscriptEvent(Base):
+    __tablename__ = "agent_transcript_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String, ForeignKey("projects.id"), nullable=False)
+    session_id: Mapped[str] = mapped_column(String, ForeignKey("agent_sessions.id"), nullable=False)
+    event_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str | None] = mapped_column(String)
+    title: Mapped[str | None] = mapped_column(Text)
+    content: Mapped[str | None] = mapped_column(Text)
+    payload_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    artifact_id: Mapped[str | None] = mapped_column(String, ForeignKey("artifacts.id"))
+    job_id: Mapped[str | None] = mapped_column(String, ForeignKey("jobs.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class Job(Base):
     __tablename__ = "jobs"
 

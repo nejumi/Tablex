@@ -16,6 +16,7 @@ from tabular_harness.core.config import Settings
 from tabular_harness.main import create_app
 from tabular_harness.models.entities import Artifact, Job, Project, Question, utc_now
 from tabular_harness.schemas import AgentResult
+from tabular_harness.services.agent_sessions import append_session_event
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.jobs import acquire_next_job, create_job
 from tabular_harness.worker.jobs import continue_autonomous_session_handler
@@ -255,6 +256,70 @@ def test_agent_activity_turn_state_waits_for_user_when_no_agent_work_is_observed
     assert "local_process_table.codex_exec" in turn_state["sources"]
 
 
+def test_agent_activity_watchdog_starts_main_session_when_full_auto_has_no_session(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Watchdog restart"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.autonomy_mode = "full_auto"
+        project.current_phase = "AUTONOMOUS_LOOP"
+        db.commit()
+
+    activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
+    assert activity_response.status_code == 200
+    activity = activity_response.json()
+    assert activity["turn_state"]["state"] in {"agent_running", "agent_scheduled"}
+    session_id = activity["turn_state"]["agent_session_id"]
+
+    session = client.get(f"/api/projects/{project_id}/agent-session/current").json()
+    assert session["id"] == session_id
+    assert session["session_type"] == "main_autonomous"
+
+
+def test_project_update_starts_main_session_after_target_change(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Update restart"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.autonomy_mode = "full_auto"
+        project.current_phase = "AUTONOMOUS_LOOP"
+        db.commit()
+
+    update_response = client.patch(f"/api/projects/{project_id}", json={"target_column": "salary"})
+    assert update_response.status_code == 200, update_response.text
+    assert update_response.json()["target_column"] == "salary"
+
+    session = client.get(f"/api/projects/{project_id}/agent-session/current").json()
+    assert session["session_type"] == "main_autonomous"
+    assert "salary" in session["goal_text"]
+
+
 def test_agent_activity_turn_state_flags_stale_codex_runner_without_local_process(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
@@ -432,6 +497,114 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
     assert contract_steps[-1]["entity_ids"]["task_type"] == "target_definition_review"
 
 
+def test_full_auto_codex_start_creates_main_agent_session_transcript(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    def fake_supervisor(
+        session_factory: Any,
+        store: LocalArtifactStore,
+        *,
+        project_id: str,
+        session_id: str,
+        agent_model: str | None = None,
+        **_: Any,
+    ) -> None:
+        del store, project_id, agent_model
+        with session_factory() as db:
+            from tabular_harness.models.entities import AgentSession
+
+            session = db.get(AgentSession, session_id)
+            assert session is not None
+            session.status = "running"
+            append_session_event(
+                db,
+                session,
+                source="codex_cli",
+                event_type="thread.started",
+                role="runner",
+                title="Thread started",
+                content=None,
+                payload={"type": "thread.started", "thread_id": "thread_test"},
+            )
+            append_session_event(
+                db,
+                session,
+                source="codex_cli",
+                event_type="item.completed",
+                role="runner",
+                title="Codex message",
+                content="I am continuing the main autonomous session.",
+                payload={"type": "item.completed", "item": {"type": "agent_message", "text": "I am continuing."}},
+            )
+            db.commit()
+
+    monkeypatch.setattr("tabular_harness.api.routes.run_main_agent_session_supervisor", fake_supervisor)
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Session Full Auto"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("session.csv", b"x,y\n1,0\n2,1\n", "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    start_response = client.post(
+        f"/api/projects/{project_id}/autonomy/start",
+        json={"runner_mode": "codex_cli_if_available", "autonomy_mode": "full_auto", "locale": "ja-JP"},
+    )
+    assert start_response.status_code == 200, start_response.text
+    start_job = start_response.json()
+    assert start_job["output"]["schema_version"] == "agent_session_start.v1"
+    session_id = start_job["output"]["agent_session_id"]
+
+    session_response = client.get(f"/api/projects/{project_id}/agent-session/current")
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["id"] == session_id
+    assert session["session_type"] == "main_autonomous"
+
+    transcript_response = client.get(f"/api/projects/{project_id}/agent-session/transcript")
+    assert transcript_response.status_code == 200
+    transcript = transcript_response.json()
+    assert [event["event_type"] for event in transcript][-2:] == ["thread.started", "item.completed"]
+    assert transcript[-1]["source"] == "codex_cli"
+    assert transcript[-1]["content"] == "I am continuing the main autonomous session."
+
+
+def test_agent_chat_appends_user_instruction_to_active_main_session(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Session chat"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    start_response = client.post(
+        f"/api/projects/{project_id}/autonomy/start",
+        json={"runner_mode": "codex_cli_if_available", "autonomy_mode": "full_auto", "locale": "ja-JP"},
+    )
+    assert start_response.status_code == 200, start_response.text
+
+    chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "評価指標はROC-AUCで考えてください", "locale": "ja-JP"},
+    )
+    assert chat_response.status_code == 200, chat_response.text
+
+    transcript = client.get(f"/api/projects/{project_id}/agent-session/transcript").json()
+    user_events = [event for event in transcript if event["source"] == "user" and event["event_type"] == "user_instruction"]
+    assert user_events
+    assert user_events[-1]["content"] == "評価指標はROC-AUCで考えてください"
+
+
 def test_worker_acquire_handles_sqlite_naive_run_after(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_response = client.post("/api/projects", json={"name": "Run-after worker check"})
@@ -521,6 +694,10 @@ def test_full_auto_start_queues_training_for_large_dataset_boundary(
 ) -> None:
     monkeypatch.setenv("TABLEX_AUTONOMY_SYNC_TRAINING_ROW_LIMIT", "10")
     monkeypatch.setattr("tabular_harness.services.autonomy.shutil.which", lambda name: "/usr/bin/codex")
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
     client = make_client(tmp_path)
 
     project_response = client.post(
@@ -544,37 +721,21 @@ def test_full_auto_start_queues_training_for_large_dataset_boundary(
     )
     assert start_response.status_code == 200, start_response.text
     queued_job = start_response.json()
-    assert queued_job["output"]["schema_version"] == "autonomous_loop_start_queued.v1"
-    job_response = client.get(f"/api/jobs/{queued_job['id']}")
-    assert job_response.status_code == 200
-    output = job_response.json()["output"]
-    labels = {step["label"]: step for step in output["steps"]}
-    assert labels["experiment_loop"]["status"] == "queued"
-    assert labels["baseline_run"]["status"] == "queued"
-    assert labels["model_candidates"]["status"] == "queued"
-
-    jobs = client.get(f"/api/projects/{project_id}/jobs").json()
-    queued_training = [job for job in jobs if job["id"] in output["created_job_ids"]]
-    training_jobs = [job for job in queued_training if job["job_type"] in {"run_baseline", "train_model_candidates"}]
-    assert {job["job_type"] for job in training_jobs} == {
-        "run_baseline",
-        "train_model_candidates",
-    }
-    assert all(job["status"] == "queued" for job in training_jobs)
-    assert any(job["job_type"] == "run_planned_agent_task_codex" for job in queued_training)
+    assert queued_job["output"]["schema_version"] == "agent_session_start.v1"
+    session_id = queued_job["output"]["agent_session_id"]
+    session = client.get(f"/api/projects/{project_id}/agent-session/current").json()
+    assert session["id"] == session_id
+    assert session["session_type"] == "main_autonomous"
+    assert "fixed recipes" in session["goal_text"].lower()
 
     activity = client.get(f"/api/projects/{project_id}/agent-activity").json()
-    active_job_ids = {worker["job_id"] for worker in activity["workers"] if worker["active"]}
-    assert {job["id"] for job in training_jobs}.issubset(active_job_ids)
-    queued_workers = [worker for worker in activity["workers"] if worker["job_id"] in {job["id"] for job in training_jobs}]
-    assert all(worker["project_name"] == "Autonomous queued training" for worker in queued_workers)
-    assert all(worker["human_description"]["summary"] for worker in queued_workers)
-    assert all(worker["token_usage"]["source"] == "estimated_waiting_for_worker" for worker in queued_workers)
+    assert activity["turn_state"]["agent_session_id"] == session_id
+    assert any(worker.get("agent_session_id") == session_id for worker in activity["workers"])
 
     history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
     assert history
     assert history[-1]["intent"]["type"] == "agent_loop_control"
-    assert "Agent Activity" in history[-1]["assistant_message"]
+    assert "AgentSession" in history[-1]["assistant_message"]
 
 
 def test_full_auto_passes_readiness_constraints_to_main_codex_session(
@@ -582,6 +743,10 @@ def test_full_auto_passes_readiness_constraints_to_main_codex_session(
     monkeypatch: Any,
 ) -> None:
     monkeypatch.setattr("tabular_harness.services.autonomy.shutil.which", lambda name: "/usr/bin/codex")
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
     client = make_client(tmp_path)
 
     project_response = client.post(
@@ -629,23 +794,13 @@ def test_full_auto_passes_readiness_constraints_to_main_codex_session(
     )
     assert start_response.status_code == 200, start_response.text
     queued_job = start_response.json()
-    job_response = client.get(f"/api/jobs/{queued_job['id']}")
-    assert job_response.status_code == 200
-    output = job_response.json()["output"]
-    labels = {step["label"]: step for step in output["steps"]}
-    assert labels["agent_readiness"]["status"] == "ready_with_constraints"
-    assert labels["codex_execution"]["status"] == "queued"
-    contract_artifact_id = labels["agent_task_contract"]["artifact_ids"][0]
-
-    jobs = client.get(f"/api/projects/{project_id}/jobs").json()
-    created_jobs = [job for job in jobs if job["id"] in output["created_job_ids"]]
-    assert any(job["job_type"] == "run_planned_agent_task_codex" for job in created_jobs)
-
-    stub_response = client.post(f"/api/agent-task-contracts/{contract_artifact_id}/run-local-stub")
-    assert stub_response.status_code == 200, stub_response.text
-    stub_job = stub_response.json()
-    assert stub_job["status"] == "succeeded"
-    assert stub_job["output"]["readiness_status"] == "ready_with_constraints"
+    assert queued_job["output"]["schema_version"] == "agent_session_start.v1"
+    session_id = queued_job["output"]["agent_session_id"]
+    session = client.get(f"/api/projects/{project_id}/agent-session/current").json()
+    assert session["id"] == session_id
+    assert "Design reliable evaluation" in session["goal_text"]
+    transcript = client.get(f"/api/projects/{project_id}/agent-session/transcript").json()
+    assert any(event["event_type"] == "session_created" for event in transcript)
 
 
 def test_full_auto_delegates_target_definition_to_codex_without_harness_target_heuristics(
@@ -654,6 +809,10 @@ def test_full_auto_delegates_target_definition_to_codex_without_harness_target_h
 ) -> None:
     monkeypatch.setenv("TABLEX_AUTONOMY_SYNC_TRAINING_ROW_LIMIT", "10")
     monkeypatch.setattr("tabular_harness.services.autonomy.shutil.which", lambda name: "/usr/bin/codex")
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
     client = make_client(tmp_path)
 
     project_response = client.post("/api/projects", json={"name": "Home Credit style upload"})
@@ -680,20 +839,10 @@ def test_full_auto_delegates_target_definition_to_codex_without_harness_target_h
     )
     assert start_response.status_code == 200, start_response.text
     queued_job = start_response.json()
-    assert queued_job["output"]["schema_version"] == "autonomous_loop_start_queued.v1"
-    job_response = client.get(f"/api/jobs/{queued_job['id']}")
-    assert job_response.status_code == 200
-    output = job_response.json()["output"]
-    labels = {step["label"]: step for step in output["steps"]}
+    assert queued_job["output"]["schema_version"] == "agent_session_start.v1"
     assert train_upload.json()["dataset_snapshot"]["id"]
-    assert labels["target_definition"]["status"] == "delegated_to_codex"
-    assert "target_column" not in labels["target_definition"]["entity_ids"]
-    assert output["interventions"][0]["kind"] == "target_definition"
-    assert output["interventions"][0]["target_column"] is None
-    assert output["interventions"][0]["fallback_policy"] == "infer_and_continue"
-    jobs = client.get(f"/api/projects/{project_id}/jobs").json()
-    created_job_types = {job["job_type"] for job in jobs if job["id"] in output["created_job_ids"]}
-    assert "run_planned_agent_task_codex" in created_job_types
+    session = client.get(f"/api/projects/{project_id}/agent-session/current").json()
+    assert "infer or construct the prediction objective from evidence" in session["goal_text"]
 
     project = client.get(f"/api/projects/{project_id}").json()
     assert project["target_column"] is None
@@ -754,7 +903,11 @@ def test_full_auto_codex_target_proposal_drives_evaluation_and_runs(tmp_path: Pa
             approach_decision_trace_artifact_id=None,
         )
 
-    monkeypatch.setattr("tabular_harness.services.autonomy.run_planned_agent_task_codex_cli", fake_codex_runner)
+    del fake_codex_runner
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
 
     start_response = client.post(
         f"/api/projects/{project_id}/autonomy/start",
@@ -762,22 +915,17 @@ def test_full_auto_codex_target_proposal_drives_evaluation_and_runs(tmp_path: Pa
     )
     assert start_response.status_code == 200, start_response.text
     queued_job = start_response.json()
-    assert queued_job["output"]["schema_version"] == "autonomous_loop_start_queued.v1"
-    job_response = client.get(f"/api/jobs/{queued_job['id']}")
-    assert job_response.status_code == 200
-    output = job_response.json()["output"]
-    labels = {step["label"]: step for step in output["steps"]}
-    assert labels["target_definition_proposal"]["status"] == "adopted"
-    assert labels["evaluation_spec"]["status"] == "approved"
-    assert labels["split_manifest"]["status"] == "created"
-    assert labels["baseline_run"]["status"] == "queued"
-    assert labels["model_candidates"]["status"] == "queued"
+    assert queued_job["output"]["schema_version"] == "agent_session_start.v1"
+    session_id = queued_job["output"]["agent_session_id"]
+    session = client.get(f"/api/projects/{project_id}/agent-session/current").json()
+    assert session["id"] == session_id
+    assert "Current target/objective hint" in session["goal_text"]
 
     project_read_response = client.get(f"/api/projects/{project_id}")
     assert project_read_response.status_code == 200
     project = project_read_response.json()
-    assert project["target_column"] == "label"
-    assert project["task_type"] == "binary_classification"
+    assert project["target_column"] is None
+    assert project["task_type"] is None
 
 
 def test_approval_based_start_runs_but_does_not_auto_adopt_evaluation(tmp_path: Path) -> None:

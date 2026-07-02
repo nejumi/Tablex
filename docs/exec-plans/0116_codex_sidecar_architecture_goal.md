@@ -18,6 +18,16 @@ Tablex must not become a brittle AutoML-style gate in front of Codex. Codex shou
 
 ## Current Follow-up
 
-- Replace remaining synchronous agent-control paths with worker-backed execution.
-- Stream or poll runner transcript and job progress into Agent Workspace.
 - Keep Skill, Idea, Insight, Evidence, Report, and Artifact registration as sidecar services available to Codex rather than a pre-run bottleneck.
+- Continue migrating legacy `continue_autonomous_session` and `run_planned_agent_task_codex` surfaces away from being the main Full Auto execution model. They may remain as compatibility or child-worker mechanisms, but not as the primary autonomous thread.
+
+## Implemented In This Pass
+
+- Added `AgentSession` as the first-class record for the main autonomous Codex thread.
+- Added `AgentTranscriptEvent` as the ordered raw transcript store.
+- Changed Full Auto + Codex runner start to create/resume a main `AgentSession`; the `start_autonomous_loop` Job is now only a control/audit record for this path.
+- Added an AgentSession supervisor that writes `.tablex/context.json` and `.tablex/GOAL.md`, launches `codex exec --json`, stores Codex stdout JSONL directly as transcript events, records stderr separately, and registers workspace outputs as artifacts.
+- Added `/api/projects/{project_id}/agent-session/current` and `/api/projects/{project_id}/agent-session/transcript`.
+- Changed Agent Activity recovery so Full Auto ON + no session creates a main AgentSession instead of reviving the legacy continuation-job chain.
+- Changed Agent Chat so user messages are appended as `user_instruction` transcript events for the active main AgentSession.
+- Changed the Home Raw view to prefer AgentSession transcript events; Job-derived records are sidecar fallback, not the primary Raw surface.

@@ -24,6 +24,8 @@ from tabular_harness.api.deps import get_artifact_store, get_session
 from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
+    AgentSession,
+    AgentTranscriptEvent,
     Answer,
     Artifact,
     Asset,
@@ -57,7 +59,9 @@ from tabular_harness.schemas import (
     AgentChatCreate,
     AgentChatHistoryTurnRead,
     AgentChatRead,
+    AgentSessionRead,
     AgentTaskPlanCreate,
+    AgentTranscriptEventRead,
     AnswerRead,
     ArtifactPreviewRead,
     ArtifactRead,
@@ -128,6 +132,16 @@ from tabular_harness.services.adaptive_strategy import (
 )
 from tabular_harness.services.agent_chat import handle_agent_chat_turn
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
+from tabular_harness.services.agent_sessions import (
+    active_main_session,
+    append_session_event,
+    latest_main_session,
+    run_main_agent_session_supervisor,
+    session_to_dict,
+    start_or_resume_main_session,
+    stop_main_session,
+    transcript_event_to_dict,
+)
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
 from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
 from tabular_harness.services.agent_task_results import list_agent_task_result_summaries
@@ -989,7 +1003,10 @@ def get_project(project_id: str, db: Annotated[Session, Depends(get_session)]) -
 def update_project(
     project_id: str,
     payload: ProjectUpdate,
+    background_tasks: BackgroundTasks,
+    request: Request,
     db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
     data = payload.model_dump(exclude_unset=True)
@@ -998,6 +1015,20 @@ def update_project(
             continue
         setattr(project, key, value)
     project.updated_at = utc_now()
+    session = ensure_project_full_auto_agent_session(
+        db,
+        store=store,
+        project=project,
+        created_by=request_actor_id(request),
+    )
+    if session is not None:
+        background_tasks.add_task(
+            run_main_agent_session_supervisor,
+            request.app.state.session_factory,
+            store,
+            project_id=project_id,
+            session_id=session.id,
+        )
     db.flush()
     return project_to_dict(project)
 
@@ -1120,6 +1151,64 @@ def queued_autonomy_start_output(project: Project, job: Job, *, locale: str | No
             "series": [
                 {"step": "accepted", "tokens": 24},
                 {"step": "queued", "tokens": 32},
+            ],
+        },
+    }
+
+
+def queued_agent_session_start_output(
+    project: Project,
+    session: AgentSession,
+    job: Job,
+    *,
+    locale: str | None,
+) -> dict[str, Any]:
+    japanese = bool(locale and locale.lower().startswith("ja"))
+    assistant_message = (
+        "Full Autoを起動しました。これ以降の本体は細切れJobではなく、Main AgentSessionとしてCodexが継続します。"
+        "RawにはCodex CLIのJSONL transcriptをそのまま保存し、Chatでは人間向けに説明します。"
+        if japanese
+        else "Full Auto started. The main work now runs through a persistent AgentSession, not fragmented Codex jobs. Raw stores the Codex CLI JSONL transcript directly; Chat explains it for humans."
+    )
+    return {
+        "schema_version": "agent_session_start.v1",
+        "project_id": project.id,
+        "agent_session_id": session.id,
+        "status": "started",
+        "assistant_message": assistant_message,
+        "created_job_ids": [],
+        "worker_events": [
+            {
+                "worker_id": "main-agent-session",
+                "display_name": "Main Codex Session",
+                "status": session.status,
+                "headline": "Main AgentSession is starting" if not japanese else "Main AgentSessionを起動中",
+                "detail": "Codex CLI transcript is captured as Raw; Tablex sidecar records assets and progress.",
+                "job_id": job.id,
+                "job_type": job.job_type,
+                "project_id": project.id,
+                "agent_session_id": session.id,
+                "target_tab": "Home",
+                "target_anchor": "agent-workspace",
+                "created_at": job.created_at.isoformat(),
+                "updated_at": utc_now().isoformat(),
+                "active": True,
+                "token_usage": {
+                    "source": "agent_session_transcript_pending",
+                    "is_estimate": True,
+                    "series": [
+                        {"step": "session_created", "tokens": 32},
+                        {"step": "codex_starting", "tokens": 48},
+                    ],
+                },
+            }
+        ],
+        "token_usage": {
+            "source": "agent_session_transcript_pending",
+            "is_estimate": True,
+            "series": [
+                {"step": "session_created", "tokens": 32},
+                {"step": "codex_starting", "tokens": 48},
             ],
         },
     }
@@ -1283,6 +1372,28 @@ def run_project_autonomy_worker_pump_background(
                 return
 
 
+def ensure_project_full_auto_agent_session(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    created_by: str | None = None,
+) -> AgentSession | None:
+    if project.current_phase != "AUTONOMOUS_LOOP" or project.autonomy_mode != "full_auto":
+        return None
+    if active_main_session(db, project.id) is not None:
+        return None
+    return start_or_resume_main_session(
+        db,
+        store=store,
+        project=project,
+        goal_text=None,
+        autonomy_mode="full_auto",
+        runner_kind="codex_cli",
+        created_by=created_by or "tablex-session-watchdog",
+    )
+
+
 @router.post("/api/projects/{project_id}/autonomy/start", response_model=JobRead)
 def start_project_autonomy(
     project_id: str,
@@ -1295,6 +1406,67 @@ def start_project_autonomy(
     job: Job | None = None
     try:
         project = require_project(db, project_id)
+        if payload.autonomy_mode == "full_auto" and payload.runner_mode != "harness_only":
+            project.autonomy_mode = "full_auto"
+            project.current_phase = "AUTONOMOUS_LOOP"
+            project.updated_at = utc_now()
+            session = start_or_resume_main_session(
+                db,
+                store=store,
+                project=project,
+                goal_text=None,
+                autonomy_mode="full_auto",
+                runner_kind="codex_cli",
+                created_by=request_actor_id(request),
+            )
+            job = create_job(
+                db,
+                job_type="start_autonomous_loop",
+                project_id=project_id,
+                input_payload={
+                    "runner_mode": payload.runner_mode,
+                    "autonomy_mode": payload.autonomy_mode,
+                    "locale": payload.locale,
+                    "agent_model": payload.agent_model,
+                    "utility_model": payload.utility_model,
+                    "agent_session_id": session.id,
+                },
+                policy={
+                    "secret_access": "forbidden",
+                    "connector_credentials": "not_materialized",
+                    "production_write": "forbidden",
+                    "runner_mode": payload.runner_mode,
+                    "autonomy_mode": payload.autonomy_mode,
+                    "control_record_only": True,
+                    "main_execution_state": "agent_session",
+                },
+            )
+            output = queued_agent_session_start_output(project, session, job, locale=payload.locale)
+            assistant_message = str(output["assistant_message"])
+            job.output_json = dumps_json(output)
+            mark_job_succeeded(job, output)
+            artifact = record_autonomy_control_chat_turn(
+                db,
+                store,
+                project=project,
+                job=job,
+                user_message="Agent loopを開始" if payload.locale and payload.locale.lower().startswith("ja") else "Start agent loop",
+                assistant_message=assistant_message,
+                output=output,
+                locale=payload.locale,
+            )
+            output["agent_chat_turn_artifact_id"] = artifact.id
+            job.output_json = dumps_json(output)
+            db.commit()
+            background_tasks.add_task(
+                run_main_agent_session_supervisor,
+                request.app.state.session_factory,
+                store,
+                project_id=project_id,
+                session_id=session.id,
+                agent_model=payload.agent_model,
+            )
+            return job_to_dict(job)
         job = create_job(
             db,
             job_type="start_autonomous_loop",
@@ -1404,6 +1576,7 @@ def stop_project_autonomy(
         for active_job in active_jobs:
             cancel_job_service(active_job, cancelled_by="tablex-autonomy-power")
             cancelled_ids.append(active_job.id)
+        stopped_session = stop_main_session(db, project)
         project.current_phase = "IDLE"
         project.updated_at = utc_now()
         assistant_message = (
@@ -1419,6 +1592,7 @@ def stop_project_autonomy(
                 "response_locale": locale or "en-US",
                 "assistant_message": assistant_message,
                 "cancelled_job_ids": cancelled_ids,
+                "stopped_agent_session_id": stopped_session.id if stopped_session is not None else None,
                 "worker_events": [
                     {
                         "worker_id": "full-auto-loop",
@@ -4029,6 +4203,23 @@ def create_agent_chat_turn(
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
+    session = active_main_session(db, project_id)
+    if session is not None:
+        append_session_event(
+            db,
+            session,
+            source="user",
+            event_type="user_instruction",
+            role="user",
+            title="User instruction",
+            content=payload.message,
+            payload={
+                "locale": payload.locale,
+                "agent_model": payload.agent_model,
+                "utility_model": payload.utility_model,
+                "delivery": "queued_for_main_agent_session",
+            },
+        )
     job = create_job(
         db,
         job_type="agent_chat_turn",
@@ -4200,6 +4391,35 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
         )
     turns.sort(key=lambda turn: turn["created_at"])
     return turns[-60:]
+
+
+@router.get("/api/projects/{project_id}/agent-session/current", response_model=AgentSessionRead | None)
+def get_current_agent_session(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any] | None:
+    require_project(db, project_id)
+    session = active_main_session(db, project_id) or latest_main_session(db, project_id)
+    return session_to_dict(session) if session is not None else None
+
+
+@router.get("/api/projects/{project_id}/agent-session/transcript", response_model=list[AgentTranscriptEventRead])
+def list_agent_session_transcript(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    limit: int = 300,
+) -> list[dict[str, Any]]:
+    require_project(db, project_id)
+    session = active_main_session(db, project_id) or latest_main_session(db, project_id)
+    if session is None:
+        return []
+    bounded_limit = max(1, min(limit, 1000))
+    events = list(
+        db.scalars(
+            select(AgentTranscriptEvent)
+            .where(AgentTranscriptEvent.session_id == session.id)
+            .order_by(AgentTranscriptEvent.event_index.desc())
+            .limit(bounded_limit)
+        ).all()
+    )
+    return [transcript_event_to_dict(event) for event in reversed(events)]
 
 
 @router.post("/api/agent-task-contracts/{artifact_id}/prepare-workspace", response_model=JobRead)
@@ -5904,8 +6124,29 @@ def list_project_jobs(project_id: str, db: Annotated[Session, Depends(get_sessio
 
 
 @router.get("/api/projects/{project_id}/agent-activity", response_model=AgentActivityRead)
-def get_project_agent_activity(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+def get_project_agent_activity(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
     project = require_project(db, project_id)
+    recovered_session = ensure_project_full_auto_agent_session(
+        db,
+        store=store,
+        project=project,
+        created_by=request_actor_id(request),
+    )
+    if recovered_session is not None:
+        db.flush()
+        background_tasks.add_task(
+            run_main_agent_session_supervisor,
+            request.app.state.session_factory,
+            store,
+            project_id=project_id,
+            session_id=recovered_session.id,
+        )
     jobs = list(
         db.scalars(
             select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc()).limit(30)
@@ -5917,8 +6158,63 @@ def get_project_agent_activity(project_id: str, db: Annotated[Session, Depends(g
         for job in jobs
         for event in worker_events_from_job(job, project_name=project.name, active_job_ids=active_job_ids)
     ]
+    session = active_main_session(db, project_id) or latest_main_session(db, project_id)
+    if session is not None:
+        session_active = session.status in {"starting", "running", "between_turns", "waiting_for_runner"}
+        workers.insert(
+            0,
+            {
+                "worker_id": "main-agent-session",
+                "display_name": "Main Codex Session",
+                "status": session.status,
+                "headline": "Codex is running the main AgentSession"
+                if session.status == "running"
+                else "Main AgentSession is supervising Full Auto",
+                "detail": session.last_error
+                or "Raw is backed by the Codex CLI transcript for this session; Jobs are sidecars.",
+                "job_id": None,
+                "job_type": "agent_session",
+                "project_id": project_id,
+                "project_name": project.name,
+                "agent_session_id": session.id,
+                "target_tab": "Home",
+                "target_anchor": "agent-workspace",
+                "created_at": session.created_at.isoformat(),
+                "updated_at": session.updated_at.isoformat(),
+                "started_at": session.started_at.isoformat() if session.started_at else None,
+                "run_after": None,
+                "active": session_active,
+                "human_description": {
+                    "source": "agent_session",
+                    "title": "Main Codex Session",
+                    "summary": "The long-lived autonomous Codex session is the source of truth for Full Auto progress.",
+                },
+                "token_usage": {
+                    "source": "codex_cli_transcript",
+                    "is_estimate": True,
+                    "series": [
+                        {"step": "session", "tokens": max(32, session.turn_index * 32)},
+                        {"step": session.status, "tokens": max(64, session.turn_index * 64)},
+                    ],
+                },
+            },
+        )
     active_workers = [worker for worker in workers if worker.get("active")]
     turn_state = build_project_turn_state(project, jobs, workers, active_job_ids=active_job_ids)
+    if session is not None and session.status in {"starting", "running", "between_turns", "waiting_for_runner"}:
+        turn_state = {
+            **turn_state,
+            "state": "agent_running" if session.status == "running" else "agent_scheduled",
+            "owner": "agent",
+            "label": "Codex is working" if session.status == "running" else "Codex session will continue",
+            "detail": session.last_error
+            or "Full Auto is owned by the main AgentSession. Raw shows Codex CLI transcript events, not reconstructed job logs.",
+            "input_attention": False,
+            "confidence": "observed",
+            "agent_session_id": session.id,
+            "active_job_id": None,
+            "active_job_type": "agent_session",
+        }
     return {
         "schema_version": "agent_activity.v1",
         "project_id": project_id,
