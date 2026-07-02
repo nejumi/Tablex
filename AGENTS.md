@@ -38,6 +38,7 @@ This repository is building Tablex, a tabular-first prediction meta-harness. Tab
 - External claims from web or literature research must be returned as Evidence or artifact-backed sources; do not leave them only in runner logs.
 - Jobs with external network, production write, or agent execution policy must pass through approval gates before worker execution.
 - Reports and visualization specs are first-class outputs and should be registered as artifacts with lineage.
+- marimo notebooks are first-class assets. Generated notebooks and derived HTML/evidence previews must be linked to their DatasetSnapshot, ExperimentRun, ModelVersion, Insight/Idea/Report, and chat context when applicable, so users can open the same in-product notebook viewer from data, model, run, asset, or chat surfaces.
 - UI work should make complex ML workflow state feel rich, inspectable, and exciting to use; do not collapse product surfaces into plain tracker tables when a focused status gate, preview, or visualization would make the decision clearer.
 - Run backend tests and lint/type checks after code changes. Run frontend build or lint when touching frontend code.
 

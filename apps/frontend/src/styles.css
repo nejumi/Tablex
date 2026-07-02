@@ -572,12 +572,11 @@ textarea {
 
 .mission-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
 }
 
 .mission-plan-panel,
-.mission-task-panel,
 .mission-agent-primary,
 .mission-memory-panel,
 .mission-evidence-stack {
@@ -588,7 +587,6 @@ textarea {
 }
 
 .mission-plan-panel,
-.mission-task-panel,
 .mission-memory-panel {
   display: grid;
   gap: 12px;
@@ -642,7 +640,7 @@ textarea {
 .research-plan-block {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(42px, 1fr) auto;
+  grid-template-rows: auto auto minmax(42px, 1fr) auto auto;
   gap: 5px;
   flex: 0 0 clamp(210px, 28vw, 292px);
   min-height: 144px;
@@ -730,6 +728,22 @@ textarea {
   color: var(--accent-strong);
 }
 
+.research-plan-block.expanded {
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.research-plan-subtask-pill {
+  justify-self: start;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 11%, var(--surface));
+  padding: 2px 7px;
+  color: var(--accent-strong);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 850;
+}
+
 .research-plan-block.pending {
   border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
   background: color-mix(in srgb, var(--surface-hover) 38%, var(--surface));
@@ -757,6 +771,85 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.research-plan-subtasks {
+  display: grid;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-subtle) 74%, var(--surface));
+  padding: 10px;
+}
+
+.research-plan-subtasks-head,
+.research-plan-subtask {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.research-plan-subtasks-head strong {
+  color: var(--text-strong);
+}
+
+.research-plan-subtasks-head span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.research-plan-subtask-list {
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.research-plan-subtask {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 9px;
+  color: inherit;
+  text-align: left;
+}
+
+.research-plan-subtask:not(:disabled) {
+  cursor: pointer;
+}
+
+.research-plan-subtask:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--surface-hover);
+}
+
+.research-plan-subtask > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.research-plan-subtask strong {
+  color: var(--text-strong);
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.research-plan-subtask p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.research-plan-subtask small {
   color: var(--muted);
   font-size: 11px;
 }
@@ -796,50 +889,6 @@ textarea {
   border-radius: 8px;
   background: var(--surface-subtle);
   padding: 9px;
-}
-
-.mission-task-card {
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  gap: 10px;
-  align-items: flex-start;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-subtle);
-  padding: 11px;
-}
-
-.mission-task-card p {
-  margin: 3px 0;
-  color: var(--muted-strong);
-  line-height: 1.4;
-}
-
-.mission-task-card.waiting {
-  border-color: color-mix(in srgb, var(--warning) 42%, var(--border));
-  background: color-mix(in srgb, var(--warning) 6%, var(--surface-subtle));
-}
-
-.mission-task-pulse {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 44%, transparent);
-  animation: mission-pulse 1.3s ease-out infinite;
-}
-
-.mission-task-pulse.idle {
-  background: var(--warning);
-  animation: none;
-  box-shadow: none;
-}
-
-.mission-task-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 9px;
 }
 
 .secondary-button.danger {
@@ -2761,6 +2810,55 @@ td {
 .cell-stack small {
   color: var(--muted);
   font-size: 11px;
+}
+
+.related-notebook-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.related-notebook-links.compact {
+  margin-top: 4px;
+}
+
+.related-notebook-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 190px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  padding: 3px 8px;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.related-notebook-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.related-notebook-link:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--border));
+}
+
+.related-notebook-count,
+.related-notebook-empty {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.related-notebook-count {
+  border-radius: 999px;
+  background: var(--surface-muted);
+  padding: 2px 6px;
+  font-weight: 800;
 }
 
 .focus-card {

@@ -94,6 +94,7 @@ Build the smallest vertical slice that proves the harness owns state, artifacts,
 - User Upload Bundle v1 with drag-and-drop CSV/Parquet multi-table intake, optional target, primary-table selection, ER image/PDF/SVG/JSON hints, `uploaded_supporting_table`, `relational_catalog`, and `relational_table_bundle_manifest` artifacts. The bundle manifest exposes tables and hints to runners while preserving the rule that Aggregate & Merge strategy is Codex/runner-designed under harness evaluation and leakage guardrails, not a fixed UI recipe.
 - Home-Centered Agent Workflow v1 with mode selection, start action, mandatory Data Understanding and plan creation, current-task display, Ideas & Findings memory, equipped Skill panel, and Agent panel display modes for wrapped Tablex chat vs Raw Codex-style event inspection.
 - Human-Facing Agent Chat v1 with persisted chat history, conversation-turn UI, `agent_human_response_brief.v1` artifacts, response composer metadata, locale-aware response contracts, and separate User Settings preferences for deep Agent model vs lightweight Utility model routing.
+- marimo Notebook Asset Navigation v1 with notebook generation results posted back into Agent Chat, DatasetSnapshot/ExperimentRun/Leaderboard/ModelVersion rows exposing related notebook links, and a shared Notebook viewer target so data, model, run, asset, and chat contexts open the same in-product evidence surface.
 - Job skeleton for:
   - `profile_dataset`
   - `infer_assumptions`

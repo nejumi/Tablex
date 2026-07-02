@@ -338,6 +338,13 @@ const englishMessages = {
   planStatusPending: "Next",
   planStatusBlocked: "Blocked",
   planStatusWaiting: "Waiting",
+  planSubtaskSingular: "subtask",
+  planSubtaskPlural: "subtasks",
+  openNotebookViewer: "Open notebook",
+  notebookCreatedChatMessage: "A marimo notebook was saved as an asset and linked to its source context.",
+  notebookLinkedAssetDetail: "Open the notebook viewer from this chat, the related dataset, model, run, or Assets.",
+  relatedNotebooks: "Notebooks",
+  noRelatedNotebooks: "No linked notebook yet",
   currentTaskTitle: "Current task",
   currentTaskIdle: "Idle",
   currentTaskEmpty: "No active task. The agent should propose the next useful move instead of making you hunt through tabs.",
@@ -643,6 +650,13 @@ const japaneseMessages: LocaleMessages = {
   planStatusPending: "次",
   planStatusBlocked: "blocked",
   planStatusWaiting: "待機",
+  planSubtaskSingular: "サブタスク",
+  planSubtaskPlural: "サブタスク",
+  openNotebookViewer: "ノートブックを開く",
+  notebookCreatedChatMessage: "marimo notebookをAssetとして保存し、関連するコンテキストに紐づけました。",
+  notebookLinkedAssetDetail: "このChat、関連するDataset、Model、Run、Assetsから同じNotebook viewerを開けます。",
+  relatedNotebooks: "ノートブック",
+  noRelatedNotebooks: "紐づくノートブックはまだありません",
   currentTaskTitle: "現在のタスク",
   currentTaskIdle: "待機中",
   currentTaskEmpty: "実行中のタスクはありません。タブを探し回らなくても、Agentが次の有用な一手を提案するべきです。",
@@ -1421,6 +1435,13 @@ type AgentConversationTurn = {
 
 const AGENT_CHAT_MESSAGE_HISTORY_LIMIT = 240;
 
+type ArtifactPreviewRequest = {
+  artifactId: string;
+  targetTab: Tab;
+  anchor?: string | null;
+  nonce: number;
+};
+
 type HomeMemoryItem = {
   id: string;
   kind: "idea" | "finding";
@@ -1636,6 +1657,15 @@ type AdaptiveStrategyBrief = {
 
 type ResearchPlanBlockStatus = "done" | "active" | "pending" | "blocked" | "waiting";
 
+type ResearchPlanSubtask = {
+  id: string;
+  title: string;
+  detail: string;
+  status: ResearchPlanBlockStatus;
+  evidence: string | null;
+  onClick?: () => void;
+};
+
 type ResearchPlanBlock = {
   id: string;
   title: string;
@@ -1643,6 +1673,7 @@ type ResearchPlanBlock = {
   status: ResearchPlanBlockStatus;
   eyebrow: string;
   evidence: string | null;
+  subtasks?: ResearchPlanSubtask[];
   onClick?: () => void;
 };
 
@@ -1874,6 +1905,68 @@ function autoStartWorkerJobIds(actions: AgentChatAction[]): string[] {
     .filter((action) => action.auto_start_worker && action.job_id)
     .map((action) => action.job_id)
     .filter((jobId): jobId is string => Boolean(jobId));
+}
+
+function notebookChatMessageFromJob(result: unknown, text: LocaleMessages): AgentChatMessage | null {
+  if (!isJobResult(result)) return null;
+  const sourceArtifactId = textField(result.output.analysis_notebook_artifact_id);
+  const notebookHtmlArtifactId =
+    textField(result.output.notebook_html_artifact_id) ??
+    textField(result.output.notebook_evidence_html_artifact_id) ??
+    textField(result.output.notebook_execution_html_artifact_id);
+  if (!sourceArtifactId && !notebookHtmlArtifactId) return null;
+  const artifactId = notebookPreviewArtifactIdFromJob(result);
+  const notebookKind = textField(result.output.notebook_kind) ?? result.job_type.replace(/_/g, " ");
+  const linkedContext = notebookLinkedContext(result.output);
+  const previewArtifactId = artifactId ?? sourceArtifactId;
+  if (!previewArtifactId) return null;
+  const action: AgentChatAction = {
+    type: "open_artifact",
+    status: "ready",
+    label: text.openNotebookViewer,
+    target_tab: "Notebooks",
+    target_anchor: "notebook-focus",
+    detail: linkedContext || text.notebookLinkedAssetDetail,
+    artifact_id: previewArtifactId,
+    artifact_ids: [sourceArtifactId, artifactId].filter((value): value is string => Boolean(value))
+  };
+  return {
+    id: `notebook-created:${result.id}:${previewArtifactId}`,
+    role: "system",
+    text: `${text.notebookCreatedChatMessage}\n${notebookKind.replace(/_/g, " ")}${linkedContext ? ` · ${linkedContext}` : ""}`,
+    actions: [action],
+    createdAt: result.updated_at ?? new Date().toISOString()
+  };
+}
+
+function isJobResult(value: unknown): value is Job {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.id === "string" && typeof record.job_type === "string" && record.output !== null && typeof record.output === "object";
+}
+
+function notebookPreviewArtifactIdFromJob(job: Job): string | null {
+  return (
+    textField(job.output.preview_artifact_id) ??
+    textField(job.output.notebook_evidence_html_artifact_id) ??
+    textField(job.output.notebook_execution_html_artifact_id) ??
+    textField(job.output.notebook_html_artifact_id) ??
+    textField(job.output.notebook_report_artifact_id) ??
+    textField(job.output.report_artifact_id) ??
+    textField(job.output.analysis_notebook_artifact_id)
+  );
+}
+
+function notebookLinkedContext(output: Record<string, unknown>): string {
+  const datasetId = textField(output.dataset_snapshot_id);
+  const runId = textField(output.run_id);
+  const modelVersionId = textField(output.model_version_id);
+  const links = [
+    datasetId ? `dataset ${datasetId}` : null,
+    runId ? `run ${runId}` : null,
+    modelVersionId ? `model ${modelVersionId}` : null
+  ].filter(Boolean);
+  return links.join(" / ");
 }
 
 type FocusRecommendation = {
@@ -3093,6 +3186,7 @@ function ProjectDetail({
   const [pendingIntervention, setPendingIntervention] = React.useState<PendingAutonomyIntervention | null>(null);
   const seenInterventionKeysRef = React.useRef<Set<string>>(new Set());
   const [pendingAnchor, setPendingAnchor] = React.useState<string | null>(null);
+  const [artifactPreviewRequest, setArtifactPreviewRequest] = React.useState<ArtifactPreviewRequest | null>(null);
   const visibleAgentChatMessages = React.useMemo(
     () => mergeAgentChatMessages(agentChatMessages, pendingAgentChatMessages),
     [agentChatMessages, pendingAgentChatMessages]
@@ -3298,7 +3392,11 @@ function ProjectDetail({
     setBusy(true);
     setError(null);
     try {
-      await action();
+      const result = await action();
+      const notebookMessage = notebookChatMessageFromJob(result, text);
+      if (notebookMessage) {
+        setAgentChatMessages((current) => upsertAgentChatMessages(current, [notebookMessage]));
+      }
       await refresh();
       await onProjectChanged();
     } catch (err) {
@@ -3543,7 +3641,16 @@ function ProjectDetail({
   }
 
   function openAgentChatAction(action: AgentChatAction) {
-    const targetTab = tabFromString(action.target_tab, "Home");
+    const explicitNotebookViewer = action.artifact_id && action.target_tab === "Notebooks";
+    const targetTab = explicitNotebookViewer ? "Notebooks" : tabFromString(action.target_tab, "Home");
+    if (action.artifact_id) {
+      setArtifactPreviewRequest({
+        artifactId: action.artifact_id,
+        targetTab,
+        anchor: action.target_anchor ?? null,
+        nonce: Date.now()
+      });
+    }
     navigateToTarget(targetTab, action.target_anchor ?? null);
   }
 
@@ -3652,8 +3759,6 @@ function ProjectDetail({
           onStrategyAction={(action) => void runStrategyAction(action)}
           onAutonomyModeChange={(mode) => void changeAutonomyMode(mode)}
           onAutonomyPowerToggle={() => void toggleAutonomyPower()}
-          onCancelJob={(jobId) => void cancelWorkerJob(jobId)}
-          onRunWorkerOnce={() => void runAction(() => api("/api/worker/run-once", { method: "POST" }))}
         />
       )}
       {tab === "Overview" && (
@@ -3684,9 +3789,11 @@ function ProjectDetail({
           project={project}
           datasets={datasets}
           artifacts={artifacts}
+          notebookIndex={notebookIndex}
           benchmarks={benchmarks}
           jobs={jobs}
           busy={busy}
+          text={text}
           runAction={runAction}
         />
       )}
@@ -3748,7 +3855,9 @@ function ProjectDetail({
           runs={runs}
           agentTaskResults={agentTaskResults}
           artifacts={artifacts}
+          notebookIndex={notebookIndex}
           busy={busy}
+          text={text}
           runAction={runAction}
         />
       )}
@@ -3760,6 +3869,7 @@ function ProjectDetail({
           artifacts={artifacts}
           notebookIndex={notebookIndex}
           analysisStory={analysisStory}
+          previewRequest={artifactPreviewRequest}
           busy={busy}
           runAction={runAction}
           onAskAgent={submitAgentChat}
@@ -3770,9 +3880,11 @@ function ProjectDetail({
           project={project}
           specs={specs}
           artifacts={artifacts}
+          notebookIndex={notebookIndex}
           leaderboard={leaderboard}
           resultReadout={resultReadout}
           busy={busy}
+          text={text}
           runAction={runAction}
           onAskAgent={submitAgentChat}
         />
@@ -3797,9 +3909,11 @@ function ProjectDetail({
           artifacts={artifacts}
           modelVersions={modelVersions}
           validationsByModelVersion={validationsByModelVersion}
+          notebookIndex={notebookIndex}
           libraryAssets={libraryAssets}
           projectAssetReferences={projectAssetReferences}
           busy={busy}
+          text={text}
           runAction={runAction}
         />
       )}
@@ -3860,9 +3974,7 @@ function HomeTab({
   onFocusAction,
   onStrategyAction,
   onAutonomyModeChange,
-  onAutonomyPowerToggle,
-  onCancelJob,
-  onRunWorkerOnce
+  onAutonomyPowerToggle
 }: {
   project: Project;
   overview: Overview | null;
@@ -3896,16 +4008,8 @@ function HomeTab({
   onStrategyAction: (action: StrategyAction) => void;
   onAutonomyModeChange: (mode: AutonomyMode) => void;
   onAutonomyPowerToggle: () => void;
-  onCancelJob: (jobId: string) => void;
-  onRunWorkerOnce: () => void;
 }) {
-  const now = Date.now();
-  const activeJobs = jobs.filter((job) => jobActiveForActivity(job, now)).slice(0, 3);
-  const activeJob = activeJobs[0] ?? null;
-  const waitingJob =
-    jobs.find((job) => !isTerminalJob(job) && !jobActiveForActivity(job, now) && job.status === "queued") ?? null;
-  const taskJob = activeJob ?? waitingJob;
-  const taskIsActive = Boolean(activeJob);
+  const planJobs = jobs.filter((job) => !isTerminalJob(job)).slice(0, 18);
   const highRiskAssumptions = assumptions.filter(isHighRiskAssumption);
   const latestResearchPlan = latestArtifactByType(artifacts, "research_plan");
   const latestBrief = researchBriefs[0] ?? null;
@@ -3929,8 +4033,7 @@ function HomeTab({
     researchBriefs,
     strategyBrief,
     equippedSkills,
-    taskJob,
-    taskIsActive,
+    jobs: planJobs,
     nextStrategyAction,
     text,
     onTabChange,
@@ -3991,44 +4094,6 @@ function HomeTab({
             </div>
           </div>
           <ResearchPlanTimeline blocks={researchPlanBlocks} latestResearchPlan={latestResearchPlan} text={text} />
-        </section>
-
-        <section className="mission-task-panel">
-          <div className="mission-panel-head">
-            <div>
-              <span>{text.currentTaskTitle}</span>
-              <strong>
-                {taskJob ? (taskIsActive ? taskJob.job_type.replace(/_/g, " ") : text.currentTaskWaiting) : text.currentTaskIdle}
-              </strong>
-            </div>
-            {taskJob ? <span className={navigatorStatusClass(taskIsActive ? taskJob.status : "medium")}>{taskJob.status}</span> : null}
-          </div>
-          {taskJob ? (
-            <div className={`mission-task-card ${taskJob.status} ${taskIsActive ? "active" : "waiting"}`}>
-              <div className={taskIsActive ? "mission-task-pulse" : "mission-task-pulse idle"} />
-              <div>
-                <strong>{taskJob.job_type.replace(/_/g, " ")}</strong>
-                <p>{taskIsActive ? taskJob.error_message ?? latestJobHeadline(taskJob) : text.currentTaskWaitingBody}</p>
-                <small>
-                  {taskIsActive ? "updated" : "queued"} {formatDate(taskIsActive ? taskJob.updated_at : taskJob.created_at)}
-                </small>
-                {!taskIsActive ? (
-                  <div className="mission-task-actions">
-                    <button className="secondary-button" disabled={busy} onClick={onRunWorkerOnce} type="button">
-                      <Play size={14} />
-                      {text.runWorkerOnce}
-                    </button>
-                    <button className="secondary-button danger" disabled={busy} onClick={() => onCancelJob(taskJob.id)} type="button">
-                      <X size={14} />
-                      {text.workerCancelLabel}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          ) : (
-            <EmptyInline text={text.currentTaskEmpty} />
-          )}
           <div className="mission-plan-facts">
             <Metric label="Datasets" value={overview?.counts.datasets ?? 0} />
             <Metric label="Runs" value={runs.length} />
@@ -4388,20 +4453,33 @@ function ResearchPlanTimeline({
   latestResearchPlan: Artifact | null;
   text: LocaleMessages;
 }) {
+  const [expandedBlockId, setExpandedBlockId] = React.useState<string | null>(null);
+  const expandedBlock = blocks.find((block) => block.id === expandedBlockId && block.subtasks?.length);
   return (
     <div className="research-plan-timeline-wrap">
       <div className="research-plan-timeline" aria-label={text.researchPlanTitle}>
         {blocks.map((block, index) => (
           <React.Fragment key={block.id}>
             <button
-              className={`research-plan-block ${block.status}`}
-              disabled={!block.onClick}
-              onClick={block.onClick}
+              className={`research-plan-block ${block.status} ${expandedBlockId === block.id ? "expanded" : ""}`}
+              disabled={!block.onClick && !block.subtasks?.length}
+              onClick={() => {
+                if (block.subtasks?.length) {
+                  setExpandedBlockId((current) => (current === block.id ? null : block.id));
+                  return;
+                }
+                block.onClick?.();
+              }}
               type="button"
             >
               <span>{block.eyebrow}</span>
               <strong>{block.title}</strong>
               <p>{block.subtitle}</p>
+              {block.subtasks?.length ? (
+                <em className="research-plan-subtask-pill">
+                  {block.subtasks.length} {block.subtasks.length === 1 ? text.planSubtaskSingular : text.planSubtaskPlural}
+                </em>
+              ) : null}
               <small>
                 {researchPlanStatusLabel(block.status, text)}
                 {block.evidence ? ` · ${block.evidence}` : ""}
@@ -4411,6 +4489,35 @@ function ResearchPlanTimeline({
           </React.Fragment>
         ))}
       </div>
+      {expandedBlock ? (
+        <div className="research-plan-subtasks">
+          <div className="research-plan-subtasks-head">
+            <strong>{expandedBlock.title}</strong>
+            <span>
+              {expandedBlock.subtasks?.length ?? 0}{" "}
+              {(expandedBlock.subtasks?.length ?? 0) === 1 ? text.planSubtaskSingular : text.planSubtaskPlural}
+            </span>
+          </div>
+          <div className="research-plan-subtask-list">
+            {expandedBlock.subtasks?.map((subtask) => (
+              <button
+                className={`research-plan-subtask ${subtask.status}`}
+                disabled={!subtask.onClick}
+                key={subtask.id}
+                onClick={subtask.onClick}
+                type="button"
+              >
+                <span className={navigatorStatusClass(subtask.status)}>{researchPlanStatusLabel(subtask.status, text)}</span>
+                <div>
+                  <strong>{subtask.title}</strong>
+                  <p>{subtask.detail}</p>
+                  {subtask.evidence ? <small>{subtask.evidence}</small> : null}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="research-plan-footer">
         <span>{text.researchPlanTimelineHint}</span>
         {latestResearchPlan ? (
@@ -4430,8 +4537,7 @@ function buildResearchPlanBlocks({
   researchBriefs,
   strategyBrief,
   equippedSkills,
-  taskJob,
-  taskIsActive,
+  jobs,
   nextStrategyAction,
   text,
   onTabChange,
@@ -4443,8 +4549,7 @@ function buildResearchPlanBlocks({
   researchBriefs: ResearchBrief[];
   strategyBrief: AdaptiveStrategyBrief | null;
   equippedSkills: EquippedSkillItem[];
-  taskJob: Job | null;
-  taskIsActive: boolean;
+  jobs: Job[];
   nextStrategyAction: StrategyAction | null;
   text: LocaleMessages;
   onTabChange: (tab: Tab) => void;
@@ -4468,7 +4573,8 @@ function buildResearchPlanBlocks({
       "research_finding_synthesis_report"
     ]);
 
-  const activeInitialBlockId = activeInitialResearchPlanBlockId(taskJob);
+  const primaryPlanJob = jobs.find((job) => jobActiveForActivity(job)) ?? jobs.find((job) => !isTerminalJob(job)) ?? null;
+  const activeInitialBlockId = activeInitialResearchPlanBlockId(primaryPlanJob);
   const dataUploadStatus = datasetCount > 0 ? "done" : "active";
   const objectiveStatus = hasObjectiveEvidence
     ? "done"
@@ -4562,19 +4668,131 @@ function buildResearchPlanBlocks({
     });
   }
 
-  if (taskJob && !activeInitialBlockId) {
-    blocks.push({
-      id: `job_${taskJob.id}`,
-      title: taskJob.job_type.replace(/_/g, " "),
-      subtitle: latestJobHeadline(taskJob),
-      status: taskIsActive ? "active" : taskJob.status === "approval_required" ? "blocked" : "waiting",
-      eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
-      evidence: taskJob.status,
+  return attachResearchPlanSubtasks(blocks, jobs, text, onTabChange);
+}
+
+function attachResearchPlanSubtasks(
+  blocks: ResearchPlanBlock[],
+  jobs: Job[],
+  text: LocaleMessages,
+  onTabChange: (tab: Tab) => void
+): ResearchPlanBlock[] {
+  if (!jobs.length) return blocks;
+  const blockIds = new Set(blocks.map((block) => block.id));
+  const byBlock = new Map<string, ResearchPlanSubtask[]>();
+  const unassigned: ResearchPlanSubtask[] = [];
+  for (const job of jobs) {
+    const subtask = researchPlanSubtaskFromJob(job, onTabChange);
+    const blockId = researchPlanBlockIdForJob(job, blocks);
+    if (blockId && blockIds.has(blockId)) {
+      const existing = byBlock.get(blockId) ?? [];
+      existing.push(subtask);
+      byBlock.set(blockId, existing);
+    } else {
+      unassigned.push(subtask);
+    }
+  }
+  const nextBlocks = blocks.map((block) => {
+    const subtasks = byBlock.get(block.id) ?? [];
+    if (!subtasks.length) return block;
+    return {
+      ...block,
+      subtasks,
+      status: researchPlanStatusWithSubtasks(block.status, subtasks),
+      evidence: block.evidence ?? subtaskEvidenceSummary(subtasks, text)
+    };
+  });
+  if (unassigned.length) {
+    nextBlocks.push({
+      id: "agent_work",
+      title: text.planBlockCodexLane,
+      subtitle: unassigned[0]?.detail ?? text.researchPlanTimelineHint,
+      status: researchPlanStatusWithSubtasks("pending", unassigned),
+      eyebrow: `${nextBlocks.length + 1}`.padStart(2, "0"),
+      evidence: subtaskEvidenceSummary(unassigned, text),
+      subtasks: unassigned,
       onClick: () => onTabChange("Jobs")
     });
   }
+  return nextBlocks;
+}
 
-  return blocks;
+function researchPlanSubtaskFromJob(job: Job, onTabChange: (tab: Tab) => void): ResearchPlanSubtask {
+  return {
+    id: job.id,
+    title: job.job_type.replace(/_/g, " "),
+    detail: job.error_message ?? latestJobHeadline(job),
+    status: researchPlanStatusFromJob(job),
+    evidence: `${job.status} · ${formatDate(job.updated_at ?? job.created_at)}`,
+    onClick: () => onTabChange(tabForResearchPlanJob(job))
+  };
+}
+
+function researchPlanStatusFromJob(job: Job): ResearchPlanBlockStatus {
+  if (job.status === "running") return "active";
+  if (job.status === "approval_required") return "blocked";
+  if (job.status === "queued") return "waiting";
+  if (job.status === "succeeded") return "done";
+  if (job.status === "failed" || job.status === "timed_out" || job.status === "cancelled") return "blocked";
+  return "pending";
+}
+
+function researchPlanStatusWithSubtasks(
+  currentStatus: ResearchPlanBlockStatus,
+  subtasks: ResearchPlanSubtask[]
+): ResearchPlanBlockStatus {
+  if (subtasks.some((subtask) => subtask.status === "active")) return "active";
+  if (subtasks.some((subtask) => subtask.status === "blocked")) return "blocked";
+  if (subtasks.some((subtask) => subtask.status === "waiting")) return "waiting";
+  return currentStatus;
+}
+
+function subtaskEvidenceSummary(subtasks: ResearchPlanSubtask[], text: LocaleMessages) {
+  return `${subtasks.length} ${subtasks.length === 1 ? text.planSubtaskSingular : text.planSubtaskPlural}`;
+}
+
+function researchPlanBlockIdForJob(job: Job, blocks: ResearchPlanBlock[]): string | null {
+  const initialBlockId = activeInitialResearchPlanBlockId(job);
+  if (initialBlockId) return initialBlockId;
+  const jobType = job.job_type.toLowerCase();
+  if (jobType.includes("profile") || jobType.includes("quality") || jobType.includes("eda") || jobType.includes("understanding")) {
+    return "understanding";
+  }
+  if (jobType.includes("target") || jobType.includes("objective") || jobType.includes("assumption")) {
+    return "objective";
+  }
+  if (jobType.includes("research") || jobType.includes("source_pack") || jobType.includes("skill")) {
+    return "prior_research";
+  }
+  if (jobType.includes("evaluation") || jobType.includes("split")) {
+    return bestStrategyBlock(blocks, ["evaluation", "split"]);
+  }
+  if (jobType.includes("baseline") || jobType.includes("model") || jobType.includes("experiment") || jobType.includes("leaderboard")) {
+    return bestStrategyBlock(blocks, ["baseline", "model", "experiment", "leaderboard"]);
+  }
+  if (jobType.includes("notebook") || jobType.includes("report") || jobType.includes("insight")) {
+    return bestStrategyBlock(blocks, ["report", "notebook", "insight"]) ?? "prior_research";
+  }
+  return null;
+}
+
+function bestStrategyBlock(blocks: ResearchPlanBlock[], needles: string[]): string | null {
+  const lane = blocks.find(
+    (block) => block.id.startsWith("strategy_") && needles.some((needle) => block.id.toLowerCase().includes(needle))
+  );
+  return lane?.id ?? null;
+}
+
+function tabForResearchPlanJob(job: Job): Tab {
+  const jobType = job.job_type.toLowerCase();
+  if (jobType.includes("profile") || jobType.includes("quality") || jobType.includes("eda") || jobType.includes("relational")) return "Data";
+  if (jobType.includes("target") || jobType.includes("objective") || jobType.includes("assumption")) return "Assumptions";
+  if (jobType.includes("evaluation") || jobType.includes("split")) return "Evaluation";
+  if (jobType.includes("baseline") || jobType.includes("model") || jobType.includes("leaderboard")) return "Leaderboard";
+  if (jobType.includes("experiment") || jobType.includes("agent_task")) return "Experiments";
+  if (jobType.includes("notebook")) return "Notebooks";
+  if (jobType.includes("research") || jobType.includes("report") || jobType.includes("insight") || jobType.includes("skill")) return "Insight";
+  return "Jobs";
 }
 
 function activeInitialResearchPlanBlockId(job: Job | null): "data_upload" | "objective" | "understanding" | "prior_research" | null {
@@ -5118,7 +5336,7 @@ function navigatorStatusClass(status: string) {
 }
 
 function agentChatActionLabel(action: AgentChatAction, text: LocaleMessages) {
-  const targetTab = tabFromString(action.target_tab, "Home");
+  const targetTab = action.artifact_id && action.target_tab === "Notebooks" ? "Notebooks" : tabFromString(action.target_tab, "Home");
   const verb = ["needs_review", "created", "recorded", "explained"].includes(action.status)
     ? text.chatActionReview
     : text.chatActionOpen;
@@ -6525,17 +6743,21 @@ function DataTab({
   project,
   datasets,
   artifacts,
+  notebookIndex,
   benchmarks,
   jobs,
   busy,
+  text,
   runAction
 }: {
   project: Project;
   datasets: DatasetSnapshot[];
   artifacts: Artifact[];
+  notebookIndex: NotebookIndex | null;
   benchmarks: BenchmarkDataset[];
   jobs: Job[];
   busy: boolean;
+  text: LocaleMessages;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const [queuedFiles, setQueuedFiles] = React.useState<File[]>([]);
@@ -7651,7 +7873,7 @@ function DataTab({
       <Panel title="Dataset Snapshots" icon={<Database size={18} />} className="data-snapshot-panel">
         {datasets.length ? (
           <Table
-            headers={["Snapshot", "Source", "Rows", "Columns", "Schema Hash"]}
+            headers={["Snapshot", "Source", "Rows", "Columns", "Notebooks", "Schema Hash"]}
             rows={datasets.map((dataset) => [
               dataset.id,
               <div className="cell-stack" key={`${dataset.id}-source`}>
@@ -7660,6 +7882,13 @@ function DataTab({
               </div>,
               dataset.row_count ?? "-",
               dataset.column_count ?? "-",
+              <RelatedNotebookLinks
+                key={`${dataset.id}-notebooks`}
+                notebooks={notebooksForDataset(notebookIndex, dataset.id)}
+                onOpen={(artifactId) => void loadEvidencePreview(artifactId)}
+                previewLoadingId={evidencePreviewLoadingId}
+                text={text}
+              />,
               dataset.schema_hash.slice(0, 12)
             ])}
           />
@@ -9871,7 +10100,9 @@ function ExperimentsTab({
   runs,
   agentTaskResults,
   artifacts,
+  notebookIndex,
   busy,
+  text,
   runAction
 }: {
   project: Project;
@@ -9879,7 +10110,9 @@ function ExperimentsTab({
   runs: Run[];
   agentTaskResults: AgentTaskResult[];
   artifacts: Artifact[];
+  notebookIndex: NotebookIndex | null;
   busy: boolean;
+  text: LocaleMessages;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const experimentJobs = jobs.filter((job) =>
@@ -10001,7 +10234,7 @@ function ExperimentsTab({
       <Panel title="Experiment Runs" icon={<Play size={18} />}>
         {runs.length ? (
           <Table
-            headers={["Run", "Runner", "Status", "Model", "ModelVersion", "Features", "Primary Metric", "Spec", "Split", "Actions"]}
+            headers={["Run", "Runner", "Status", "Model", "ModelVersion", "Features", "Primary Metric", "Spec", "Split", "Notebooks", "Actions"]}
             rows={runs.map((run) => [
               run.id,
               run.runner_type,
@@ -10012,6 +10245,13 @@ function ExperimentsTab({
               formatMetric(run.metrics),
               run.evaluation_spec_id ?? "-",
               run.split_manifest_id ?? "-",
+              <RelatedNotebookLinks
+                key={`${run.id}-notebooks`}
+                notebooks={notebooksForRun(notebookIndex, run.id)}
+                onOpen={(artifactId) => void loadPreview(artifactId)}
+                previewLoadingId={previewLoadingId}
+                text={text}
+              />,
               <div className="row-actions" key={run.id}>
                 <button
                   className="icon-button"
@@ -10288,6 +10528,7 @@ function NotebooksTab({
   artifacts,
   notebookIndex,
   analysisStory,
+  previewRequest,
   busy,
   runAction,
   onAskAgent
@@ -10298,6 +10539,7 @@ function NotebooksTab({
   artifacts: Artifact[];
   notebookIndex: NotebookIndex | null;
   analysisStory: AnalysisStorySurface | null;
+  previewRequest: ArtifactPreviewRequest | null;
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
   onAskAgent: (message: string) => Promise<AgentChatResponse | void>;
@@ -10492,12 +10734,20 @@ function NotebooksTab({
   const storyPrimaryActionType = textField(story?.primary_action?.action_type);
   const storyPrimaryEndpoint = textField(story?.primary_action?.endpoint);
   const autoPreviewedArtifactRef = React.useRef<string | null>(null);
+  const handledPreviewRequestRef = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     if (!storyPreviewArtifactId || autoPreviewedArtifactRef.current === storyPreviewArtifactId) return;
     autoPreviewedArtifactRef.current = storyPreviewArtifactId;
     void loadPreview(storyPreviewArtifactId);
   }, [storyPreviewArtifactId]);
+
+  React.useEffect(() => {
+    if (!previewRequest || previewRequest.targetTab !== "Notebooks") return;
+    if (handledPreviewRequestRef.current === previewRequest.nonce) return;
+    handledPreviewRequestRef.current = previewRequest.nonce;
+    void loadPreview(previewRequest.artifactId);
+  }, [previewRequest]);
 
   async function askNotebookGuide(message: string) {
     const trimmed = message.trim();
@@ -11741,6 +11991,81 @@ function notebookSourceLabel(item: NotebookIndexItem) {
   return "project";
 }
 
+function notebooksForDataset(index: NotebookIndex | null, datasetSnapshotId: string): NotebookIndexItem[] {
+  if (!index) return [];
+  return index.items.filter((item) => item.dataset_snapshot_id === datasetSnapshotId);
+}
+
+function notebooksForRun(index: NotebookIndex | null, runId: string): NotebookIndexItem[] {
+  if (!index) return [];
+  return index.items.filter((item) => item.run_id === runId);
+}
+
+function notebooksForModelVersion(index: NotebookIndex | null, modelVersionId: string): NotebookIndexItem[] {
+  if (!index) return [];
+  return index.items.filter((item) => item.model_version_id === modelVersionId);
+}
+
+function notebooksForLeaderboardEntry(index: NotebookIndex | null, entry: LeaderboardEntry): NotebookIndexItem[] {
+  if (!index) return [];
+  const seen = new Set<string>();
+  const matched = index.items.filter((item) => {
+    const matchesRun = item.run_id === entry.run_id;
+    const matchesModel = Boolean(entry.model_version_id && item.model_version_id === entry.model_version_id);
+    if (!matchesRun && !matchesModel) return false;
+    if (seen.has(item.notebook_artifact_id)) return false;
+    seen.add(item.notebook_artifact_id);
+    return true;
+  });
+  return matched;
+}
+
+function RelatedNotebookLinks({
+  notebooks,
+  onOpen,
+  previewLoadingId,
+  text,
+  compact = false
+}: {
+  notebooks: NotebookIndexItem[];
+  onOpen: (artifactId: string) => void;
+  previewLoadingId: string | null;
+  text: LocaleMessages;
+  compact?: boolean;
+}) {
+  if (!notebooks.length) {
+    return <span className="related-notebook-empty">{text.noRelatedNotebooks}</span>;
+  }
+  const visible = notebooks.slice(0, compact ? 1 : 2);
+  const hiddenCount = Math.max(0, notebooks.length - visible.length);
+  return (
+    <div className={`related-notebook-links ${compact ? "compact" : ""}`}>
+      {visible.map((item) => {
+        const artifactId = notebookPreviewArtifactId(item);
+        return (
+          <button
+            className="related-notebook-link"
+            disabled={previewLoadingId === artifactId}
+            key={item.notebook_artifact_id}
+            onClick={() => onOpen(artifactId)}
+            title={item.title}
+            type="button"
+          >
+            {previewLoadingId === artifactId ? <Loader2 className="spin" size={13} /> : <BarChart3 size={13} />}
+            <span>{compact ? text.relatedNotebooks : conciseNotebookTitle(item.title)}</span>
+          </button>
+        );
+      })}
+      {hiddenCount ? <span className="related-notebook-count">+{hiddenCount}</span> : null}
+    </div>
+  );
+}
+
+function conciseNotebookTitle(title: string) {
+  const normalized = title.replace(/\s+/g, " ").trim();
+  return normalized.length <= 34 ? normalized : `${normalized.slice(0, 33).trim()}...`;
+}
+
 type RelationalCatalogTable = {
   table_name?: string;
   path?: string;
@@ -12177,18 +12502,22 @@ function LeaderboardTab({
   project,
   specs,
   artifacts,
+  notebookIndex,
   leaderboard,
   resultReadout,
   busy,
+  text,
   runAction,
   onAskAgent
 }: {
   project: Project;
   specs: EvaluationSpec[];
   artifacts: Artifact[];
+  notebookIndex: NotebookIndex | null;
   leaderboard: LeaderboardEntry[];
   resultReadout: ResultReadout | null;
   busy: boolean;
+  text: LocaleMessages;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
   onAskAgent: (objective: string) => Promise<AgentChatResponse | void>;
 }) {
@@ -12355,6 +12684,13 @@ function LeaderboardTab({
                 <div className="leaderboard-evidence-badges" key={`${entry.run_id}-evidence`}>
                   <span className={diagnosticsReady ? "badge success" : "badge muted"}>diagnostics</span>
                   <span className={decisionReady ? "badge success" : "badge warning"}>report</span>
+                  <RelatedNotebookLinks
+                    notebooks={notebooksForLeaderboardEntry(notebookIndex, entry)}
+                    onOpen={(artifactId) => void loadPreview(artifactId)}
+                    previewLoadingId={previewLoadingId}
+                    text={text}
+                    compact
+                  />
                 </div>,
                 <div className="row-actions" key={`${entry.run_id}-actions`}>
                   <button
@@ -12570,18 +12906,22 @@ function AssetsTab({
   artifacts,
   modelVersions,
   validationsByModelVersion,
+  notebookIndex,
   libraryAssets,
   projectAssetReferences,
   busy,
+  text,
   runAction
 }: {
   project: Project;
   artifacts: Artifact[];
   modelVersions: ModelVersion[];
   validationsByModelVersion: Record<string, ModelValidation[]>;
+  notebookIndex: NotebookIndex | null;
   libraryAssets: LibraryAsset[];
   projectAssetReferences: AssetReference[];
   busy: boolean;
+  text: LocaleMessages;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
@@ -12611,7 +12951,7 @@ function AssetsTab({
       <Panel title="Model Versions" icon={<Layers size={18} />}>
         {modelVersions.length ? (
           <Table
-            headers={["Name", "Version", "Type", "Metric", "Latest Validation", "Package", "Actions"]}
+            headers={["Name", "Version", "Type", "Metric", "Latest Validation", "Notebooks", "Package", "Actions"]}
             rows={modelVersions.map((modelVersion) => {
               const latestValidation = getLatestValidation(validationsByModelVersion[modelVersion.id] ?? []);
               return [
@@ -12620,6 +12960,13 @@ function AssetsTab({
                 modelVersion.model_type.replace(/_/g, " "),
                 formatModelMetric(modelVersion),
                 formatValidationSummary(latestValidation),
+                <RelatedNotebookLinks
+                  key={`${modelVersion.id}-notebooks`}
+                  notebooks={notebooksForModelVersion(notebookIndex, modelVersion.id)}
+                  onOpen={(artifactId) => void loadPreview(artifactId)}
+                  previewLoadingId={previewLoadingId}
+                  text={text}
+                />,
                 modelVersion.artifact_id,
                 <button
                   className="icon-button"
