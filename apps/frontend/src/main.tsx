@@ -383,12 +383,6 @@ const englishMessages = {
   planBlockPriorResearchDone: "Research or Skill evidence is available.",
   planBlockPriorResearchNoFindings: "Codex researched or reviewed this step and found no additional external findings worth adding.",
   planBlockCodexLane: "Codex planned",
-  planBlockEvaluationPending: "Evaluation design will start after the preceding research step has usable evidence or an explicit no-findings decision.",
-  planBlockEvaluationDone: "EvaluationSpec and SplitManifest evidence are available.",
-  planBlockBaselinePending: "Modeling waits until evaluation is ready enough to compare runs.",
-  planBlockBaselineDone: "Comparable model run evidence is available.",
-  planBlockReportingPending: "Reports and notebooks will be authored from completed analysis evidence.",
-  planBlockReportingDone: "Report or authored notebook evidence is available.",
   planStatusDone: "Done",
   planStatusActive: "Running",
   planStatusPending: "Next",
@@ -744,12 +738,6 @@ const japaneseMessages: LocaleMessages = {
   planBlockPriorResearchDone: "取得済みの調査知見と根拠があります。",
   planBlockPriorResearchNoFindings: "Codexが調査または確認し、追加すべき外部知見はないと判断しました。",
   planBlockCodexLane: "Codex計画",
-  planBlockEvaluationPending: "前段の調査または明示的な追加知見なし判断の後に、評価設計へ進みます。",
-  planBlockEvaluationDone: "EvaluationSpecとSplitManifestの根拠があります。",
-  planBlockBaselinePending: "比較可能な評価設計が整ってからモデリングへ進みます。",
-  planBlockBaselineDone: "比較可能なモデルrunの根拠があります。",
-  planBlockReportingPending: "完了した分析根拠からレポートとNotebookを作成します。",
-  planBlockReportingDone: "レポートまたはauthored Notebookの根拠があります。",
   planStatusDone: "完了",
   planStatusActive: "実行中",
   planStatusPending: "次",
@@ -4595,10 +4583,9 @@ function HomeTab({
     datasetCount,
     artifacts,
     researchBriefs,
-    strategyBrief,
+    notebookIndex,
     equippedSkills,
     jobs: planJobs,
-    runs,
     nextStrategyAction,
     text,
     onTabChange,
@@ -5238,10 +5225,9 @@ function buildResearchPlanBlocks({
   datasetCount,
   artifacts,
   researchBriefs,
-  strategyBrief,
+  notebookIndex,
   equippedSkills,
   jobs,
-  runs,
   nextStrategyAction,
   text,
   onTabChange,
@@ -5252,10 +5238,9 @@ function buildResearchPlanBlocks({
   datasetCount: number;
   artifacts: Artifact[];
   researchBriefs: ResearchBrief[];
-  strategyBrief: AdaptiveStrategyBrief | null;
+  notebookIndex: NotebookIndex | null;
   equippedSkills: EquippedSkillItem[];
   jobs: Job[];
-  runs: Run[];
   nextStrategyAction: StrategyAction | null;
   text: LocaleMessages;
   onTabChange: (tab: Tab) => void;
@@ -5264,13 +5249,8 @@ function buildResearchPlanBlocks({
 }): ResearchPlanBlock[] {
   const hasObjectiveEvidence = Boolean(project.target_column) || hasAnyArtifactType(artifacts, ["target_definition_proposal"]);
   const hasUnderstandingEvidence =
-    hasAnyArtifactType(artifacts, [
-      "eda_review_bundle",
-      "eda_review_report",
-      "data_understanding_notebook_report"
-    ]) ||
-    artifacts.some(isDataUnderstandingNotebookArtifact) ||
-    hasAgentAuthoredDataUnderstandingEvidence(artifacts);
+    hasAnyArtifactType(artifacts, ["data_understanding_complete"]) ||
+    hasReviewableDataUnderstandingNotebook(notebookIndex);
   const hasDataUnderstandingNotebook = artifacts.some(isDataUnderstandingNotebookArtifact);
   const hasPriorResearchPreparation =
     researchBriefs.length > 0 ||
@@ -5278,16 +5258,6 @@ function buildResearchPlanBlocks({
     hasAnyArtifactType(artifacts, ["research_plan", "research_source_pack", "research_source_report", "notebook_authoring_brief"]);
   const noFindingsResearchArtifact = researchNoFindingsArtifact(artifacts);
   const hasPriorResearchEvidence = hasAnyResolvedResearchArtifact(artifacts);
-  const evaluationLane = strategyBrief?.candidate_lanes.find((lane) => lane.lane_id === "evaluation_lock") ?? null;
-  const baselineLane = strategyBrief?.candidate_lanes.find((lane) => lane.lane_id === "adaptive_baseline") ?? null;
-  const reportingLane = strategyBrief?.candidate_lanes.find((lane) => lane.lane_id === "reporting_and_visuals") ?? null;
-  const hasEvaluationEvidence = hasAnyArtifactType(artifacts, ["evaluation_spec"]) && hasAnyArtifactType(artifacts, ["split_manifest"]);
-  const hasModelingEvidence = runs.length > 0 || hasAnyArtifactType(artifacts, ["baseline_metrics", "model_package", "experiment_run"]);
-  const hasReportingEvidence = hasAnyArtifactType(artifacts, [
-    "run_report",
-    "decision_report",
-    "report"
-  ]) || artifacts.some(isReportingNotebookArtifact);
 
   const primaryPlanJob = jobs.find((job) => jobActiveForActivity(job)) ?? jobs.find((job) => !isTerminalJob(job)) ?? null;
   const activeInitialBlockId = activeInitialResearchPlanBlockId(primaryPlanJob);
@@ -5322,15 +5292,6 @@ function buildResearchPlanBlocks({
       : hasUnderstandingEvidence
         ? "pending"
         : "waiting";
-  const evaluationStatus: ResearchPlanBlockStatus = hasEvaluationEvidence
-    ? "done"
-    : researchPlanStatusFromStrategyLane(evaluationLane?.status ?? "");
-  const baselineStatus: ResearchPlanBlockStatus = hasModelingEvidence
-    ? "done"
-    : researchPlanStatusFromStrategyLane(baselineLane?.status ?? "");
-  const reportingStatus: ResearchPlanBlockStatus = hasReportingEvidence
-    ? "done"
-    : researchPlanStatusFromStrategyLane(reportingLane?.status ?? "");
 
   const blocks: ResearchPlanBlock[] = [
     {
@@ -5399,44 +5360,12 @@ function buildResearchPlanBlocks({
         (equippedSkills.length ? `${equippedSkills.length} Skill${equippedSkills.length === 1 ? "" : "s"}` : null) ??
         (researchBriefs.length ? `${researchBriefs.length} brief${researchBriefs.length === 1 ? "" : "s"}` : null),
       onClick: () => onNavigateToTarget("Notebooks", "notebook-preview-top")
-    },
-    {
-      id: "evaluation",
-      title: text.planLaneEvaluation,
-      subtitle: hasEvaluationEvidence ? text.planBlockEvaluationDone : text.planBlockEvaluationPending,
-      status: evaluationStatus,
-      eyebrow: "05",
-      evidence: latestArtifactName(artifacts, "evaluation_spec") ?? latestArtifactName(artifacts, "split_manifest"),
-      onClick: () => onTabChange("Evaluation")
-    },
-    {
-      id: "modeling",
-      title: text.planLaneBaseline,
-      subtitle: hasModelingEvidence ? text.planBlockBaselineDone : text.planBlockBaselinePending,
-      status: baselineStatus,
-      eyebrow: "06",
-      evidence:
-        latestArtifactName(artifacts, "baseline_metrics") ??
-        latestArtifactName(artifacts, "model_package") ??
-        (runs.length ? `${runs.length} run${runs.length === 1 ? "" : "s"}` : null),
-      onClick: () => onTabChange("Leaderboard")
-    },
-    {
-      id: "reporting",
-      title: text.planLaneReporting,
-      subtitle: hasReportingEvidence ? text.planBlockReportingDone : text.planBlockReportingPending,
-      status: reportingStatus,
-      eyebrow: "07",
-      evidence:
-        latestArtifactName(artifacts, "analysis_notebook") ??
-        latestArtifactName(artifacts, "decision_report") ??
-        latestArtifactName(artifacts, "run_report") ??
-        latestArtifactName(artifacts, "report"),
-      onClick: () => onTabChange("Insight")
     }
   ];
 
-  if (nextStrategyAction && !strategyBrief?.candidate_lanes.length) {
+  const initialComplete = initialResearchPlanComplete(blocks);
+
+  if (nextStrategyAction && initialComplete) {
     blocks.push({
       id: "next_strategy_action",
       title: nextStrategyAction.label,
@@ -5448,10 +5377,16 @@ function buildResearchPlanBlocks({
     });
   }
 
-  return enforceSequentialResearchPlan(attachResearchPlanSubtasks(blocks, jobs, text, onTabChange));
+  return enforceInitialResearchPlan(
+    attachResearchPlanSubtasks(blocks, jobs, text, onTabChange, { appendUnassigned: initialComplete })
+  );
 }
 
-function enforceSequentialResearchPlan(blocks: ResearchPlanBlock[]): ResearchPlanBlock[] {
+function initialResearchPlanComplete(blocks: ResearchPlanBlock[]) {
+  return blocks.every((block) => block.status === "done" || block.status === "skipped");
+}
+
+function enforceInitialResearchPlan(blocks: ResearchPlanBlock[]): ResearchPlanBlock[] {
   let frontierSeen = false;
   return blocks.map((block) => {
     if (!frontierSeen) {
@@ -5471,7 +5406,8 @@ function attachResearchPlanSubtasks(
   blocks: ResearchPlanBlock[],
   jobs: Job[],
   text: LocaleMessages,
-  onTabChange: (tab: Tab) => void
+  onTabChange: (tab: Tab) => void,
+  options: { appendUnassigned: boolean } = { appendUnassigned: true }
 ): ResearchPlanBlock[] {
   if (!jobs.length) return blocks;
   const blockIds = new Set(blocks.map((block) => block.id));
@@ -5498,7 +5434,7 @@ function attachResearchPlanSubtasks(
       evidence: block.evidence ?? subtaskEvidenceSummary(subtasks, text)
     };
   });
-  if (unassigned.length) {
+  if (unassigned.length && options.appendUnassigned) {
     nextBlocks.push({
       id: "agent_work",
       title: text.planBlockCodexLane,
@@ -5599,15 +5535,6 @@ function activeInitialResearchPlanBlockId(job: Job | null): "data_upload" | "obj
   return null;
 }
 
-function researchPlanStatusFromStrategyLane(status: string): ResearchPlanBlockStatus {
-  const normalized = status.toLowerCase();
-  if (["done", "complete", "completed", "ready"].some((value) => normalized.includes(value))) return "done";
-  if (["running", "active", "executing"].some((value) => normalized.includes(value))) return "active";
-  if (["block", "risk", "review", "decision"].some((value) => normalized.includes(value))) return "blocked";
-  if (["wait", "queued"].some((value) => normalized.includes(value))) return "waiting";
-  return "pending";
-}
-
 function researchPlanStatusLabel(status: ResearchPlanBlockStatus, text: LocaleMessages) {
   if (status === "done") return text.planStatusDone;
   if (status === "active") return text.planStatusActive;
@@ -5636,11 +5563,15 @@ function latestDataUnderstandingNotebookName(artifacts: Artifact[]) {
     .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0]?.name ?? null;
 }
 
-function hasAgentAuthoredDataUnderstandingEvidence(artifacts: Artifact[]) {
-  return artifacts.some((artifact) => {
-    if (!["agent_session_artifact", "agent_session_report"].includes(artifact.asset_type)) return false;
-    return isDataUnderstandingArtifactName(artifact.name);
-  });
+function hasReviewableDataUnderstandingNotebook(notebookIndex: NotebookIndex | null) {
+  return Boolean(
+    notebookIndex?.items.some((item) => {
+      if (item.notebook_kind !== "data_understanding") return false;
+      const readiness = String(item.content?.readiness ?? item.coverage?.content_readiness ?? "");
+      if (["not_ready", "source_only", "unknown", ""].includes(readiness)) return false;
+      return true;
+    })
+  );
 }
 
 function latestAgentAuthoredDataUnderstandingName(artifacts: Artifact[]) {
@@ -5655,16 +5586,6 @@ function latestAgentAuthoredDataUnderstandingName(artifacts: Artifact[]) {
 function isDataUnderstandingArtifactName(value: string) {
   return /(^|[_\-\s])(data[_\-\s]?understanding|eda|exploration|visual[_\-\s]?story|notebook[_\-\s]?evidence|grandmaster[_\-\s]?eda)([_\-\s]|$)/.test(
     value.toLowerCase()
-  );
-}
-
-function isReportingNotebookArtifact(artifact: Artifact) {
-  if (!["analysis_notebook", "marimo_notebook"].includes(artifact.asset_type)) return false;
-  const notebookKind = String(artifact.metadata.notebook_kind ?? artifact.metadata.kind ?? "");
-  if (["model_diagnostics", "result_report", "decision_report", "experiment_report"].includes(notebookKind)) return true;
-  const workspacePath = String(artifact.metadata.workspace_relative_path ?? "");
-  return /(^|[_\-\s])(diagnostics|model[_\-\s]?diagnostics|report|results?)([_\-\s]|$)/.test(
-    `${artifact.name} ${workspacePath}`.toLowerCase()
   );
 }
 
