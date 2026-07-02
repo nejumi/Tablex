@@ -685,6 +685,7 @@ class AgentActivityRead(BaseModel):
     project_id: str
     generated_at: str
     active_count: int
+    turn_state: dict[str, Any]
     workers: list[dict[str, Any]]
 
 

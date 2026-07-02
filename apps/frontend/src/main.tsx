@@ -275,6 +275,16 @@ const englishMessages = {
   agentActivityTitle: "Agent Activity",
   agentActivitySubtitle: "Running and waiting work. Finished work is summarized in Agent Chat.",
   agentActivityLiveOnly: "Active work",
+  turnStateObserved: "Observed state",
+  turnStateSource: "Observed from Tablex jobs and local Codex process state.",
+  turnStateWaitingForUser: "Your turn",
+  turnStateAgentRunning: "Codex is working",
+  turnStateWorkerPending: "Waiting for worker",
+  turnStateAgentScheduled: "Codex will resume",
+  turnStateStaleRunner: "Runner needs attention",
+  turnStateNeedsAttention: "No live agent turn observed",
+  turnStateUserTurnHint: "Codex is paused. The input field is ready for your next instruction.",
+  turnStateAgentTurnHint: "Codex or a Tablex worker is active. You can still add a message to the workspace.",
   estimatedTokens: "Estimated tokens",
   currentTokens: "Current",
   cumulativeTokens: "Task total",
@@ -552,6 +562,16 @@ const japaneseMessages: LocaleMessages = {
   agentActivityTitle: "Agent Activity",
   agentActivitySubtitle: "実行中または待機中のworkを表示します。完了後の要約はAgent Chatに残ります。",
   agentActivityLiveOnly: "Active work",
+  turnStateObserved: "観測状態",
+  turnStateSource: "Tablexのjob状態とlocal Codex process状態から観測しています。",
+  turnStateWaitingForUser: "あなたの入力待ち",
+  turnStateAgentRunning: "Codexが作業中",
+  turnStateWorkerPending: "worker待ち",
+  turnStateAgentScheduled: "Codexが自動再開予定",
+  turnStateStaleRunner: "runner状態の確認が必要",
+  turnStateNeedsAttention: "実行中のAgent turnが観測されていません",
+  turnStateUserTurnHint: "Codexは停止中です。入力欄が次の指示を受け取れる状態です。",
+  turnStateAgentTurnHint: "CodexまたはTablex workerが動作中です。追加メッセージはworkspaceに残せます。",
   estimatedTokens: "推定tokens",
   currentTokens: "現在",
   cumulativeTokens: "累積",
@@ -1451,7 +1471,24 @@ type AgentActivityResponse = {
   project_id: string;
   generated_at: string;
   active_count: number;
+  turn_state: TurnState;
   workers: AgentWorkerEvent[];
+};
+
+type TurnState = {
+  schema_version?: string;
+  state: string;
+  owner: "agent" | "user" | "system" | string;
+  label: string;
+  detail: string;
+  observed_at?: string;
+  input_attention?: boolean;
+  confidence?: string;
+  active_count?: number;
+  active_job_id?: string | null;
+  active_job_type?: string | null;
+  active_codex_process_count?: number;
+  sources?: string[];
 };
 
 type Run = {
@@ -3015,6 +3052,7 @@ function ProjectDetail({
     : project.current_phase === "AUTONOMOUS_LOOP"
       ? "awake"
       : "idle";
+  const turnState = agentActivity?.turn_state ?? fallbackTurnState(project);
   const focusRecommendation = React.useMemo(
     () => {
       if (guidance) return focusFromGuidance(guidance, text);
@@ -3555,6 +3593,7 @@ function ProjectDetail({
           userAvatarSrc={userSettings.userAvatarDataUrl}
           latestContract={artifacts.find((artifact) => artifact.asset_type === "agent_task_contract") ?? null}
           tableeMotionState={tableeMotionState}
+          turnState={turnState}
           onSubmitAgentChat={submitAgentChatWithoutResponse}
           onActionOpen={openAgentChatAction}
           onOpenMemoryItem={openHomeMemoryItem}
@@ -3763,6 +3802,7 @@ function HomeTab({
   userAvatarSrc,
   latestContract,
   tableeMotionState,
+  turnState,
   onSubmitAgentChat,
   onActionOpen,
   onOpenMemoryItem,
@@ -3797,6 +3837,7 @@ function HomeTab({
   userAvatarSrc: string | null;
   latestContract: Artifact | null;
   tableeMotionState: TableeMotionState;
+  turnState: TurnState;
   onSubmitAgentChat: (objective: string) => Promise<void>;
   onActionOpen: (action: AgentChatAction) => void;
   onOpenMemoryItem: (item: HomeMemoryItem) => void;
@@ -4023,6 +4064,7 @@ function HomeTab({
               userAvatarSrc={userAvatarSrc}
               latestContract={latestContract}
               tableeMotionState={tableeMotionState}
+              turnState={turnState}
               onSubmit={onSubmitAgentChat}
               onActionOpen={onActionOpen}
             />
@@ -4032,6 +4074,7 @@ function HomeTab({
               text={text}
               events={rawAgentEvents}
               submitShortcut={submitShortcut}
+              turnState={turnState}
               onSubmit={onSubmitAgentChat}
             />
           )}
@@ -4897,17 +4940,92 @@ function AgentChatSummaryCard({
   );
 }
 
+function TurnStateBar({ text, turnState }: { text: LocaleMessages; turnState: TurnState }) {
+  const observedAt = turnState.observed_at ? formatDate(turnState.observed_at) : null;
+  const detail = turnState.detail || (turnState.input_attention ? text.turnStateUserTurnHint : text.turnStateAgentTurnHint);
+  return (
+    <div className={turnStateClassName(turnState)} title={text.turnStateSource}>
+      <div className="turn-state-main">
+        <span className="turn-state-dot" />
+        <div>
+          <span>{text.turnStateObserved}</span>
+          <strong>{turnStateLabel(turnState, text)}</strong>
+        </div>
+      </div>
+      <p>{detail}</p>
+      <div className="turn-state-meta">
+        <span>{turnState.input_attention ? text.turnStateUserTurnHint : text.turnStateSource}</span>
+        {observedAt ? <time>{observedAt}</time> : null}
+      </div>
+    </div>
+  );
+}
+
+function agentInputFormClassName(turnState: TurnState, extraClassName = "") {
+  return ["agent-chat-form", turnState.input_attention ? "is-user-turn" : "", extraClassName]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function turnStateClassName(turnState: TurnState) {
+  return `turn-state-bar is-${turnState.state.replace(/_/g, "-").replace(/[^a-z0-9-]/gi, "-")}`;
+}
+
+function turnStateLabel(turnState: TurnState, text: LocaleMessages) {
+  switch (turnState.state) {
+    case "agent_running":
+      return text.turnStateAgentRunning;
+    case "worker_pending":
+      return text.turnStateWorkerPending;
+    case "agent_scheduled":
+      return text.turnStateAgentScheduled;
+    case "stale_runner":
+      return text.turnStateStaleRunner;
+    case "needs_attention":
+      return text.turnStateNeedsAttention;
+    case "waiting_for_user":
+      return text.turnStateWaitingForUser;
+    default:
+      return turnState.label || text.turnStateObserved;
+  }
+}
+
+function fallbackTurnState(project: Project): TurnState {
+  if (project.current_phase === "AUTONOMOUS_LOOP") {
+    return {
+      schema_version: "turn_state.v1",
+      state: "needs_attention",
+      owner: "system",
+      label: "Checking agent state",
+      detail: "",
+      input_attention: false,
+      confidence: "fallback"
+    };
+  }
+  return {
+    schema_version: "turn_state.v1",
+    state: "waiting_for_user",
+    owner: "user",
+    label: "Waiting for you",
+    detail: "",
+    input_attention: true,
+    confidence: "fallback"
+  };
+}
+
 function RawAgentStream({
   busy,
   text,
   events,
   submitShortcut,
+  turnState,
   onSubmit
 }: {
   busy: boolean;
   text: LocaleMessages;
   events: RawAgentEvent[];
   submitShortcut: ChatSubmitShortcut;
+  turnState: TurnState;
   onSubmit: (objective: string) => Promise<void>;
 }) {
   const [draft, setDraft] = React.useState("");
@@ -4938,6 +5056,7 @@ function RawAgentStream({
         <span>{text.rawAgentTitle}</span>
         <small>{events.length} transcript items</small>
       </div>
+      <TurnStateBar text={text} turnState={turnState} />
       <div className="raw-agent-log" ref={rawScroll.ref} onScroll={rawScroll.onScroll}>
         {events.length ? (
           events.map((event) => (
@@ -4961,7 +5080,7 @@ function RawAgentStream({
           <EmptyInline text={text.rawAgentEmpty} />
         )}
       </div>
-      <form className="agent-chat-form raw-agent-form" onSubmit={(event) => void submit(event)}>
+      <form className={agentInputFormClassName(turnState, "raw-agent-form")} onSubmit={(event) => void submit(event)}>
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
@@ -5119,6 +5238,7 @@ function AgentChatDock({
   userAvatarSrc,
   latestContract,
   tableeMotionState,
+  turnState,
   onSubmit,
   onActionOpen
 }: {
@@ -5129,6 +5249,7 @@ function AgentChatDock({
   userAvatarSrc: string | null;
   latestContract: Artifact | null;
   tableeMotionState: TableeMotionState;
+  turnState: TurnState;
   onSubmit: (objective: string) => Promise<void>;
   onActionOpen: (action: AgentChatAction) => void;
 }) {
@@ -5184,6 +5305,7 @@ function AgentChatDock({
           ) : null}
         </div>
       </div>
+      <TurnStateBar text={text} turnState={turnState} />
       {turns.length ? (
         <div className="agent-chat-log" ref={chatScroll.ref} onScroll={chatScroll.onScroll}>
           {olderTurns.length ? (
@@ -5218,7 +5340,7 @@ function AgentChatDock({
           ))}
         </div>
       ) : null}
-      <form className="agent-chat-form" onSubmit={(event) => void submit(event)}>
+      <form className={agentInputFormClassName(turnState)} onSubmit={(event) => void submit(event)}>
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}

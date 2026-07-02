@@ -146,6 +146,59 @@ def test_agent_activity_does_not_show_future_autonomous_heartbeat_as_active(tmp_
     assert activity["workers"][0]["run_after"]
 
 
+def test_agent_activity_turn_state_waits_for_user_when_no_agent_work_is_observed(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Idle turn state"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
+    assert activity_response.status_code == 200
+    turn_state = activity_response.json()["turn_state"]
+    assert turn_state["state"] == "waiting_for_user"
+    assert turn_state["owner"] == "user"
+    assert turn_state["input_attention"] is True
+    assert "local_process_table.codex_exec" in turn_state["sources"]
+
+
+def test_agent_activity_turn_state_flags_stale_codex_runner_without_local_process(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Stale runner turn state"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        job = create_job(
+            db,
+            job_type="run_planned_agent_task_codex",
+            project_id=project_id,
+            context={
+                "human_description": {
+                    "title": "Run Codex",
+                    "summary": "This should be backed by a local codex exec process.",
+                }
+            },
+        )
+        old_timestamp = utc_now() - timedelta(minutes=2)
+        job.status = "running"
+        job.locked_by = "test-worker"
+        job.started_at = old_timestamp
+        job.updated_at = old_timestamp
+        job_id = job.id
+        db.commit()
+
+    activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
+    assert activity_response.status_code == 200
+    turn_state = activity_response.json()["turn_state"]
+    assert turn_state["state"] == "stale_runner"
+    assert turn_state["owner"] == "system"
+    assert turn_state["input_attention"] is False
+    assert turn_state["active_job_id"] == job_id
+
+
 def test_agent_activity_does_not_count_heartbeat_waiting_on_active_codex_runner(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 

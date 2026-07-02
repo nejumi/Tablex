@@ -85,6 +85,12 @@ button:disabled {
   opacity: 0.62;
 }
 
+@property --turn-orbit-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
@@ -4415,16 +4421,176 @@ td {
   color: var(--muted-strong);
 }
 
+.turn-state-bar {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-muted) 88%, transparent);
+  padding: 10px;
+}
+
+.turn-state-main {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.turn-state-main > div {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.turn-state-main span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.turn-state-main strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-state-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--muted);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--muted) 14%, transparent);
+}
+
+.turn-state-bar p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.turn-state-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.turn-state-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-state-meta time {
+  flex: 0 0 auto;
+}
+
+.turn-state-bar.is-agent-running,
+.turn-state-bar.is-agent-scheduled {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--surface-hover) 72%, var(--surface));
+}
+
+.turn-state-bar.is-agent-running .turn-state-dot {
+  background: var(--accent-2);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-2) 20%, transparent);
+  animation: turn-dot-live 1.2s ease-in-out infinite;
+}
+
+.turn-state-bar.is-waiting-for-user {
+  border-color: color-mix(in srgb, var(--accent-2) 52%, var(--border));
+  background: color-mix(in srgb, var(--success-bg) 58%, var(--surface));
+}
+
+.turn-state-bar.is-waiting-for-user .turn-state-dot {
+  background: var(--accent-2);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-2) 22%, transparent);
+}
+
+.turn-state-bar.is-worker-pending,
+.turn-state-bar.is-stale-runner,
+.turn-state-bar.is-needs-attention {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--border));
+  background: color-mix(in srgb, var(--warning-bg) 62%, var(--surface));
+}
+
+.turn-state-bar.is-worker-pending .turn-state-dot,
+.turn-state-bar.is-stale-runner .turn-state-dot,
+.turn-state-bar.is-needs-attention .turn-state-dot {
+  background: var(--warning);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--warning) 18%, transparent);
+}
+
 .agent-chat-form {
+  --turn-orbit-angle: 0deg;
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 40px;
   gap: 8px;
   align-items: end;
+  border-radius: 12px;
+  isolation: isolate;
+  padding: 3px;
+}
+
+.agent-chat-form::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  z-index: 0;
+  border-radius: 15px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent-chat-form.is-user-turn {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent-2) 34%, transparent),
+    0 0 22px color-mix(in srgb, var(--accent-2) 18%, transparent);
+}
+
+.agent-chat-form.is-user-turn::before {
+  padding: 2px;
+  background: conic-gradient(
+    from var(--turn-orbit-angle),
+    transparent 0deg,
+    transparent 42deg,
+    color-mix(in srgb, var(--accent-2) 92%, white) 74deg,
+    color-mix(in srgb, var(--accent) 82%, white) 112deg,
+    transparent 152deg,
+    transparent 360deg
+  );
+  opacity: 1;
+  animation: input-turn-orbit 1.8s linear infinite;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.agent-chat-form > textarea,
+.agent-chat-form > button {
+  position: relative;
+  z-index: 1;
 }
 
 .agent-chat-form textarea {
   min-height: 104px;
   line-height: 1.5;
+}
+
+.raw-agent-form {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .agent-activity-rail {
@@ -4688,10 +4854,28 @@ td {
   }
 }
 
+@keyframes input-turn-orbit {
+  to {
+    --turn-orbit-angle: 360deg;
+  }
+}
+
+@keyframes turn-dot-live {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.24);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat-avatar.tablee-avatar.is-awake,
   .chat-avatar.tablee-avatar.is-working,
-  .token-sparkline.live span {
+  .token-sparkline.live span,
+  .agent-chat-form.is-user-turn::before,
+  .turn-state-bar.is-agent-running .turn-state-dot {
     animation: none;
   }
 }

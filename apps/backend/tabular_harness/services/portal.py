@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from datetime import timedelta, timezone
 from typing import Any
 
@@ -293,6 +294,129 @@ def active_job_ids_for_activity(jobs: list[Job]) -> set[str]:
     return {job.id for job in jobs if job_active_for_activity(job)}
 
 
+def build_project_turn_state(
+    project: Project,
+    jobs: list[Job],
+    workers: list[dict[str, Any]],
+    *,
+    active_job_ids: set[str],
+) -> dict[str, Any]:
+    observed_at = utc_now()
+    active_workers = [worker for worker in workers if worker.get("active")]
+    approval_workers = [worker for worker in workers if worker.get("status") == "approval_required"]
+    running_jobs = [job for job in jobs if job.status == "running"]
+    queued_jobs = [job for job in jobs if job.status == "queued"]
+    active_jobs = [job for job in jobs if job.id in active_job_ids]
+    codex_processes = running_codex_processes_for_project(project.id)
+    running_codex_jobs = [job for job in running_jobs if job.job_type == "run_planned_agent_task_codex"]
+    stale_codex_jobs = [
+        job
+        for job in running_codex_jobs
+        if not codex_processes and seconds_since(job.updated_at, observed_at) >= 45
+    ]
+    future_jobs = [job for job in queued_jobs if job.run_after and normalize_dt(job.run_after) > observed_at]
+    due_queued_jobs = [job for job in queued_jobs if job.run_after is None or normalize_dt(job.run_after) <= observed_at]
+
+    base = {
+        "schema_version": "turn_state.v1",
+        "project_id": project.id,
+        "observed_at": observed_at.isoformat(),
+        "sources": ["metadata_db.jobs", "agent_activity.workers", "local_process_table.codex_exec"],
+        "active_count": len(active_workers),
+        "active_job_ids": [str(worker.get("job_id")) for worker in active_workers if worker.get("job_id")],
+        "active_codex_process_count": len(codex_processes),
+        "codex_processes": codex_processes[:3],
+    }
+
+    if approval_workers:
+        worker = approval_workers[0]
+        return {
+            **base,
+            "state": "waiting_for_user",
+            "owner": "user",
+            "label": "Waiting for your approval",
+            "detail": str(worker.get("detail") or worker.get("headline") or "Codex is paused at an approval boundary."),
+            "input_attention": True,
+            "confidence": "observed",
+            "active_job_id": worker.get("job_id"),
+            "active_job_type": worker.get("job_type"),
+        }
+    if stale_codex_jobs:
+        job = stale_codex_jobs[0]
+        return {
+            **base,
+            "state": "stale_runner",
+            "owner": "system",
+            "label": "Runner state needs attention",
+            "detail": "A Codex job is marked running, but no local codex exec process is observed for this project.",
+            "input_attention": False,
+            "confidence": "observed",
+            "active_job_id": job.id,
+            "active_job_type": job.job_type,
+            "last_job_update_at": job.updated_at.isoformat(),
+        }
+    if codex_processes or active_workers or any(job.status == "running" for job in active_jobs):
+        worker = active_workers[0] if active_workers else None
+        job = active_jobs[0] if active_jobs else (running_jobs[0] if running_jobs else None)
+        return {
+            **base,
+            "state": "agent_running",
+            "owner": "agent",
+            "label": "Codex is working",
+            "detail": str(worker.get("detail") if worker else "A Tablex worker or Codex process is active."),
+            "input_attention": False,
+            "confidence": "observed",
+            "active_job_id": worker.get("job_id") if worker else job.id if job else None,
+            "active_job_type": worker.get("job_type") if worker else job.job_type if job else None,
+        }
+    if due_queued_jobs:
+        job = due_queued_jobs[0]
+        return {
+            **base,
+            "state": "worker_pending",
+            "owner": "system",
+            "label": "Waiting for a local worker",
+            "detail": "A job is queued and due, but no worker has locked it yet.",
+            "input_attention": False,
+            "confidence": "observed",
+            "active_job_id": job.id,
+            "active_job_type": job.job_type,
+        }
+    if project.current_phase == "AUTONOMOUS_LOOP" and future_jobs:
+        job = future_jobs[0]
+        return {
+            **base,
+            "state": "agent_scheduled",
+            "owner": "agent",
+            "label": "Codex will resume automatically",
+            "detail": "Full Auto is between turns; the next heartbeat is scheduled.",
+            "input_attention": False,
+            "confidence": "observed",
+            "active_job_id": job.id,
+            "active_job_type": job.job_type,
+            "next_run_after": job.run_after.isoformat() if job.run_after else None,
+        }
+    if project.current_phase == "AUTONOMOUS_LOOP":
+        return {
+            **base,
+            "state": "needs_attention",
+            "owner": "system",
+            "label": "No live agent turn observed",
+            "detail": "Full Auto is on, but no active Codex process, worker, approval, or scheduled heartbeat is currently observed.",
+            "input_attention": False,
+            "confidence": "observed",
+        }
+    return {
+        **base,
+        "state": "waiting_for_user",
+        "owner": "user",
+        "label": "Waiting for you",
+        "detail": "Codex is not running for this project. Send a message or press Start when ready.",
+        "input_attention": True,
+        "confidence": "observed",
+    }
+
+
 def job_active_for_activity(job: Job, *, active_job_ids: set[str] | None = None) -> bool:
     waiting_child_ids = heartbeat_waiting_child_ids(job)
     if waiting_child_ids and (active_job_ids is None or any(child_id in active_job_ids for child_id in waiting_child_ids)):
@@ -311,6 +435,46 @@ def job_active_for_activity(job: Job, *, active_job_ids: set[str] | None = None)
             created_at = created_at.replace(tzinfo=timezone.utc)
         return utc_now() - created_at < timedelta(minutes=30)
     return False
+
+
+def running_codex_processes_for_project(project_id: str) -> list[dict[str, Any]]:
+    try:
+        completed = subprocess.run(
+            ["ps", "-eo", "pid=,args="],
+            text=True,
+            capture_output=True,
+            timeout=1,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    marker = f"/{project_id}/"
+    processes: list[dict[str, Any]] = []
+    for line in completed.stdout.splitlines():
+        stripped = line.strip()
+        if "codex exec" not in stripped or marker not in stripped:
+            continue
+        pid_text, _, command = stripped.partition(" ")
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        processes.append({"pid": pid, "command": compact_command(command)})
+    return processes
+
+
+def compact_command(command: str, limit: int = 240) -> str:
+    return command if len(command) <= limit else command[: limit - 14] + " ...[truncated]"
+
+
+def normalize_dt(value: Any) -> Any:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def seconds_since(value: Any, now: Any) -> float:
+    return max(0.0, (now - normalize_dt(value)).total_seconds())
 
 
 def heartbeat_waiting_child_ids(job: Job) -> list[str]:
