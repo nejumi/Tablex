@@ -623,6 +623,144 @@ textarea {
   gap: 10px;
 }
 
+.research-plan-timeline-wrap {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.research-plan-timeline {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-gutter: stable;
+  padding: 3px 2px 12px;
+}
+
+.research-plan-block {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto minmax(42px, 1fr) auto;
+  gap: 5px;
+  flex: 0 0 clamp(210px, 28vw, 292px);
+  min-height: 144px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 12px;
+  color: inherit;
+  text-align: left;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease,
+    opacity 160ms ease;
+}
+
+.research-plan-block:not(:disabled) {
+  cursor: pointer;
+}
+
+.research-plan-block:not(:disabled):hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--shadow) 46%, transparent);
+}
+
+.research-plan-block > span {
+  justify-self: start;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  padding: 2px 7px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.research-plan-block strong {
+  color: var(--text-strong);
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.research-plan-block p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.38;
+}
+
+.research-plan-block small {
+  align-self: end;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-plan-block.done {
+  background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface));
+  color: var(--muted);
+  opacity: 0.72;
+}
+
+.research-plan-block.done strong,
+.research-plan-block.done p {
+  color: var(--muted);
+}
+
+.research-plan-block.active {
+  border-color: color-mix(in srgb, var(--accent-2) 68%, var(--border));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 58%),
+    var(--surface);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent-2) 24%, transparent),
+    0 0 24px color-mix(in srgb, var(--accent-2) 20%, transparent);
+  animation: research-plan-active 1.8s ease-in-out infinite;
+}
+
+.research-plan-block.active > span {
+  background: color-mix(in srgb, var(--accent-2) 18%, var(--surface));
+  color: var(--accent-strong);
+}
+
+.research-plan-block.pending {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+  background: color-mix(in srgb, var(--surface-hover) 38%, var(--surface));
+}
+
+.research-plan-block.waiting {
+  opacity: 0.62;
+}
+
+.research-plan-block.blocked {
+  border-color: color-mix(in srgb, var(--warning) 48%, var(--border));
+  background: color-mix(in srgb, var(--warning-bg) 45%, var(--surface));
+}
+
+.research-plan-connector {
+  align-self: center;
+  flex: 0 0 32px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--border-strong), color-mix(in srgb, var(--accent) 36%, var(--border)));
+}
+
+.research-plan-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .mission-next-action {
   display: grid;
   gap: 4px;
@@ -1051,6 +1189,22 @@ textarea {
   }
   100% {
     box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes research-plan-active {
+  0%,
+  100% {
+    transform: translateY(0);
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--accent-2) 24%, transparent),
+      0 0 18px color-mix(in srgb, var(--accent-2) 16%, transparent);
+  }
+  50% {
+    transform: translateY(-1px);
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--accent-2) 36%, transparent),
+      0 0 30px color-mix(in srgb, var(--accent-2) 28%, transparent);
   }
 }
 
@@ -4875,7 +5029,8 @@ td {
   .chat-avatar.tablee-avatar.is-working,
   .token-sparkline.live span,
   .agent-chat-form.is-user-turn::before,
-  .turn-state-bar.is-agent-running .turn-state-dot {
+  .turn-state-bar.is-agent-running .turn-state-dot,
+  .research-plan-block.active {
     animation: none;
   }
 }

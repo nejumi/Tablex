@@ -319,6 +319,25 @@ const englishMessages = {
   fullAutoModeHint: "Ask questions, record assumptions, and keep moving with explicit fallback policies.",
   researchPlanTitle: "Research Plan",
   researchPlanEmpty: "No active ResearchPlan yet. Start the agent or ask in Chat; Tablex will create planning artifacts when they are useful.",
+  researchPlanTimelineHint: "Codex can append project-specific blocks as the work evolves.",
+  planBlockDataUpload: "Data upload",
+  planBlockDataUploadPending: "Drop CSV/Parquet files or import a benchmark before the loop starts.",
+  planBlockDataUploadDone: "DatasetSnapshot exists.",
+  planBlockObjective: "Objective setting",
+  planBlockObjectivePending: "Codex can propose the objective; it may be a column, derived aggregate, unsupervised task, or inverse-problem workflow.",
+  planBlockObjectiveDone: "Objective evidence is registered.",
+  planBlockUnderstanding: "Data understanding",
+  planBlockUnderstandingPending: "Profile schema, missingness, row semantics, leakage risk, and target-aware evidence when available.",
+  planBlockUnderstandingDone: "Data understanding artifacts are available.",
+  planBlockPriorResearch: "Prior knowledge research",
+  planBlockPriorResearchPending: "Use Kaggle, arXiv, Skills, and Codex-selected sources to add evidence before approach selection.",
+  planBlockPriorResearchDone: "Research or Skill evidence is available.",
+  planBlockCodexLane: "Codex planned",
+  planStatusDone: "Done",
+  planStatusActive: "Running",
+  planStatusPending: "Next",
+  planStatusBlocked: "Blocked",
+  planStatusWaiting: "Waiting",
   currentTaskTitle: "Current task",
   currentTaskIdle: "Idle",
   currentTaskEmpty: "No active task. The agent should propose the next useful move instead of making you hunt through tabs.",
@@ -605,6 +624,25 @@ const japaneseMessages: LocaleMessages = {
   fullAutoModeHint: "質問は残しつつ、仮定とfallback policyを明示して前に進みます。",
   researchPlanTitle: "Research Plan",
   researchPlanEmpty: "有効なResearchPlanはまだありません。Agentを開始するかChatで依頼すると、必要な時にTablexが計画artifactを作ります。",
+  researchPlanTimelineHint: "Codexが状況に応じてProject固有のブロックを右へ継ぎ足します。",
+  planBlockDataUpload: "データアップロード",
+  planBlockDataUploadPending: "CSV/Parquetを投入するか、benchmarkをimportするとloopを開始できます。",
+  planBlockDataUploadDone: "DatasetSnapshotがあります。",
+  planBlockObjective: "目的設定",
+  planBlockObjectivePending: "目的は列、派生集計、教師なし、逆問題なども含めてCodexが提案できます。",
+  planBlockObjectiveDone: "目的設定の根拠が登録されています。",
+  planBlockUnderstanding: "データ理解",
+  planBlockUnderstandingPending: "schema、欠損、行の意味、leakage risk、必要ならtarget-aware evidenceを確認します。",
+  planBlockUnderstandingDone: "Data understanding artifactがあります。",
+  planBlockPriorResearch: "従来知見の調査",
+  planBlockPriorResearchPending: "Kaggle、arXiv、Skill、Codex裁量の情報源から知見を追加します。",
+  planBlockPriorResearchDone: "調査またはSkillの根拠があります。",
+  planBlockCodexLane: "Codex計画",
+  planStatusDone: "完了",
+  planStatusActive: "実行中",
+  planStatusPending: "次",
+  planStatusBlocked: "blocked",
+  planStatusWaiting: "待機",
   currentTaskTitle: "現在のタスク",
   currentTaskIdle: "待機中",
   currentTaskEmpty: "実行中のタスクはありません。タブを探し回らなくても、Agentが次の有用な一手を提案するべきです。",
@@ -1594,6 +1632,18 @@ type AdaptiveStrategyBrief = {
   risk_register: Array<Record<string, unknown>>;
   latest_artifact_id: string | null;
   generated_at: string;
+};
+
+type ResearchPlanBlockStatus = "done" | "active" | "pending" | "blocked" | "waiting";
+
+type ResearchPlanBlock = {
+  id: string;
+  title: string;
+  subtitle: string;
+  status: ResearchPlanBlockStatus;
+  eyebrow: string;
+  evidence: string | null;
+  onClick?: () => void;
 };
 
 type Idea = {
@@ -3872,6 +3922,20 @@ function HomeTab({
   const ideaFindingItems = buildIdeaFindingItems(ideas, insights);
   const equippedSkills = equippedSkillItems(projectAssetReferences, libraryAssets);
   const rawAgentEvents = buildRawAgentEvents(messages, jobs);
+  const researchPlanBlocks = buildResearchPlanBlocks({
+    project,
+    datasetCount,
+    artifacts,
+    researchBriefs,
+    strategyBrief,
+    equippedSkills,
+    taskJob,
+    taskIsActive,
+    nextStrategyAction,
+    text,
+    onTabChange,
+    onStrategyAction
+  });
 
   return (
     <div className="mission-home stack">
@@ -3923,36 +3987,10 @@ function HomeTab({
           <div className="mission-panel-head">
             <div>
               <span>{text.researchPlanTitle}</span>
-              <strong>{latestResearchPlan?.name ?? strategyBrief?.recommended_next_action.label ?? text.researchPlanEmpty}</strong>
+              <strong>{latestResearchPlan?.name ?? strategyBrief?.recommended_next_action.label ?? text.researchPlanTimelineHint}</strong>
             </div>
           </div>
-          <div className="mission-plan-body">
-            {nextStrategyAction ? (
-              <button className="mission-next-action" type="button" onClick={() => onStrategyAction(nextStrategyAction)}>
-                <span>{text.strategyRecommendedAction}</span>
-                <strong>{nextStrategyAction.label}</strong>
-                <small>{nextStrategyAction.reason}</small>
-              </button>
-            ) : null}
-            <div className="mission-plan-facts">
-              <Metric label="ResearchPlans" value={artifacts.filter((artifact) => artifact.asset_type === "research_plan").length} />
-              <Metric label="Briefs" value={researchBriefs.length} />
-              <Metric label="Ideas" value={ideas.length} />
-              <Metric label="Contracts" value={artifacts.filter((artifact) => artifact.asset_type === "agent_task_contract").length} />
-            </div>
-            {latestResearchPlan ? (
-              <div className="mission-artifact-line">
-                <span>Latest plan</span>
-                <strong>{latestResearchPlan.id}</strong>
-                <small>{formatDate(latestResearchPlan.created_at)}</small>
-                <a className="icon-link" href={`${apiBase}/api/artifacts/${latestResearchPlan.id}/download`} title="Download ResearchPlan">
-                  <Download size={16} />
-                </a>
-              </div>
-            ) : (
-              <EmptyInline text={text.researchPlanEmpty} />
-            )}
-          </div>
+          <ResearchPlanTimeline blocks={researchPlanBlocks} latestResearchPlan={latestResearchPlan} text={text} />
         </section>
 
         <section className="mission-task-panel">
@@ -4339,6 +4377,238 @@ function MissionSurfaceButton({
       <small>{detail}</small>
     </button>
   );
+}
+
+function ResearchPlanTimeline({
+  blocks,
+  latestResearchPlan,
+  text
+}: {
+  blocks: ResearchPlanBlock[];
+  latestResearchPlan: Artifact | null;
+  text: LocaleMessages;
+}) {
+  return (
+    <div className="research-plan-timeline-wrap">
+      <div className="research-plan-timeline" aria-label={text.researchPlanTitle}>
+        {blocks.map((block, index) => (
+          <React.Fragment key={block.id}>
+            <button
+              className={`research-plan-block ${block.status}`}
+              disabled={!block.onClick}
+              onClick={block.onClick}
+              type="button"
+            >
+              <span>{block.eyebrow}</span>
+              <strong>{block.title}</strong>
+              <p>{block.subtitle}</p>
+              <small>
+                {researchPlanStatusLabel(block.status, text)}
+                {block.evidence ? ` · ${block.evidence}` : ""}
+              </small>
+            </button>
+            {index < blocks.length - 1 ? <div className="research-plan-connector" aria-hidden="true" /> : null}
+          </React.Fragment>
+        ))}
+      </div>
+      <div className="research-plan-footer">
+        <span>{text.researchPlanTimelineHint}</span>
+        {latestResearchPlan ? (
+          <a className="icon-link" href={`${apiBase}/api/artifacts/${latestResearchPlan.id}/download`} title="Download ResearchPlan">
+            <Download size={16} />
+          </a>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function buildResearchPlanBlocks({
+  project,
+  datasetCount,
+  artifacts,
+  researchBriefs,
+  strategyBrief,
+  equippedSkills,
+  taskJob,
+  taskIsActive,
+  nextStrategyAction,
+  text,
+  onTabChange,
+  onStrategyAction
+}: {
+  project: Project;
+  datasetCount: number;
+  artifacts: Artifact[];
+  researchBriefs: ResearchBrief[];
+  strategyBrief: AdaptiveStrategyBrief | null;
+  equippedSkills: EquippedSkillItem[];
+  taskJob: Job | null;
+  taskIsActive: boolean;
+  nextStrategyAction: StrategyAction | null;
+  text: LocaleMessages;
+  onTabChange: (tab: Tab) => void;
+  onStrategyAction: (action: StrategyAction) => void;
+}): ResearchPlanBlock[] {
+  const hasObjectiveEvidence = Boolean(project.target_column) || hasAnyArtifactType(artifacts, ["target_definition_proposal"]);
+  const hasUnderstandingEvidence = hasAnyArtifactType(artifacts, [
+    "eda_profile",
+    "understanding_report",
+    "eda_review_report",
+    "data_understanding_notebook_report"
+  ]);
+  const hasPriorResearchEvidence =
+    researchBriefs.length > 0 ||
+    equippedSkills.length > 0 ||
+    hasAnyArtifactType(artifacts, [
+      "research_plan",
+      "research_source_pack",
+      "research_source_report",
+      "research_finding_synthesis",
+      "research_finding_synthesis_report"
+    ]);
+
+  const activeInitialBlockId = activeInitialResearchPlanBlockId(taskJob);
+  const dataUploadStatus = datasetCount > 0 ? "done" : "active";
+  const objectiveStatus = hasObjectiveEvidence
+    ? "done"
+    : activeInitialBlockId === "objective"
+      ? "active"
+      : datasetCount > 0
+        ? "pending"
+        : "waiting";
+  const understandingStatus = hasUnderstandingEvidence
+    ? "done"
+    : activeInitialBlockId === "understanding"
+      ? "active"
+      : datasetCount > 0
+        ? "pending"
+        : "waiting";
+  const priorResearchStatus = hasPriorResearchEvidence
+    ? "done"
+    : activeInitialBlockId === "prior_research"
+      ? "active"
+      : hasUnderstandingEvidence
+        ? "pending"
+        : "waiting";
+
+  const blocks: ResearchPlanBlock[] = [
+    {
+      id: "data_upload",
+      title: text.planBlockDataUpload,
+      subtitle: datasetCount > 0 ? text.planBlockDataUploadDone : text.planBlockDataUploadPending,
+      status: dataUploadStatus,
+      eyebrow: "01",
+      evidence: datasetCount > 0 ? `${datasetCount} DatasetSnapshot${datasetCount === 1 ? "" : "s"}` : null,
+      onClick: () => onTabChange("Data")
+    },
+    {
+      id: "objective",
+      title: text.planBlockObjective,
+      subtitle: hasObjectiveEvidence ? text.planBlockObjectiveDone : text.planBlockObjectivePending,
+      status: objectiveStatus,
+      eyebrow: "02",
+      evidence: project.target_column ? `target: ${project.target_column}` : latestArtifactName(artifacts, "target_definition_proposal"),
+      onClick: () => onTabChange("Assumptions")
+    },
+    {
+      id: "understanding",
+      title: text.planBlockUnderstanding,
+      subtitle: hasUnderstandingEvidence ? text.planBlockUnderstandingDone : text.planBlockUnderstandingPending,
+      status: understandingStatus,
+      eyebrow: "03",
+      evidence:
+        latestArtifactName(artifacts, "understanding_report") ??
+        latestArtifactName(artifacts, "eda_profile") ??
+        latestArtifactName(artifacts, "eda_review_report"),
+      onClick: () => onTabChange("Data")
+    },
+    {
+      id: "prior_research",
+      title: text.planBlockPriorResearch,
+      subtitle: hasPriorResearchEvidence ? text.planBlockPriorResearchDone : text.planBlockPriorResearchPending,
+      status: priorResearchStatus,
+      eyebrow: "04",
+      evidence:
+        latestArtifactName(artifacts, "research_finding_synthesis") ??
+        latestArtifactName(artifacts, "research_source_pack") ??
+        (equippedSkills.length ? `${equippedSkills.length} Skill${equippedSkills.length === 1 ? "" : "s"}` : null) ??
+        (researchBriefs.length ? `${researchBriefs.length} brief${researchBriefs.length === 1 ? "" : "s"}` : null),
+      onClick: () => onTabChange("Insight")
+    }
+  ];
+
+  strategyBrief?.candidate_lanes.forEach((lane) => {
+    blocks.push({
+      id: `strategy_${lane.lane_id}`,
+      title: lane.title,
+      subtitle: lane.why || lane.next_action,
+      status: researchPlanStatusFromStrategyLane(lane.status),
+      eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
+      evidence: lane.evidence_artifact_ids.length ? `${lane.evidence_artifact_ids.length} evidence` : lane.agent_role,
+      onClick: lane.next_action ? () => onTabChange("Home") : undefined
+    });
+  });
+
+  if (nextStrategyAction && !strategyBrief?.candidate_lanes.length) {
+    blocks.push({
+      id: "next_strategy_action",
+      title: nextStrategyAction.label,
+      subtitle: nextStrategyAction.reason,
+      status: "pending",
+      eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
+      evidence: text.strategyRecommendedAction,
+      onClick: () => onStrategyAction(nextStrategyAction)
+    });
+  }
+
+  if (taskJob && !activeInitialBlockId) {
+    blocks.push({
+      id: `job_${taskJob.id}`,
+      title: taskJob.job_type.replace(/_/g, " "),
+      subtitle: latestJobHeadline(taskJob),
+      status: taskIsActive ? "active" : taskJob.status === "approval_required" ? "blocked" : "waiting",
+      eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
+      evidence: taskJob.status,
+      onClick: () => onTabChange("Jobs")
+    });
+  }
+
+  return blocks;
+}
+
+function activeInitialResearchPlanBlockId(job: Job | null): "data_upload" | "objective" | "understanding" | "prior_research" | null {
+  if (!job || !jobActiveForActivity(job, Date.now())) return null;
+  if (["profile_dataset", "infer_assumptions", "create_data_understanding_notebook"].includes(job.job_type)) return "understanding";
+  if (["create_research_source_pack", "run_research_source_pack_stub"].includes(job.job_type)) return "prior_research";
+  if (job.job_type.includes("target_definition")) return "objective";
+  return null;
+}
+
+function researchPlanStatusFromStrategyLane(status: string): ResearchPlanBlockStatus {
+  const normalized = status.toLowerCase();
+  if (["done", "complete", "completed", "ready"].some((value) => normalized.includes(value))) return "done";
+  if (["running", "active", "executing"].some((value) => normalized.includes(value))) return "active";
+  if (["block", "risk", "review", "decision"].some((value) => normalized.includes(value))) return "blocked";
+  if (["wait", "queued"].some((value) => normalized.includes(value))) return "waiting";
+  return "pending";
+}
+
+function researchPlanStatusLabel(status: ResearchPlanBlockStatus, text: LocaleMessages) {
+  if (status === "done") return text.planStatusDone;
+  if (status === "active") return text.planStatusActive;
+  if (status === "blocked") return text.planStatusBlocked;
+  if (status === "waiting") return text.planStatusWaiting;
+  return text.planStatusPending;
+}
+
+function hasAnyArtifactType(artifacts: Artifact[], assetTypes: string[]) {
+  const wanted = new Set(assetTypes);
+  return artifacts.some((artifact) => wanted.has(artifact.asset_type));
+}
+
+function latestArtifactName(artifacts: Artifact[], assetType: string) {
+  return latestArtifactByType(artifacts, assetType)?.name ?? null;
 }
 
 function latestArtifactByType(artifacts: Artifact[], assetType: string) {
