@@ -107,9 +107,11 @@ def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -
     assert bootstrap_response.status_code == 200, bootstrap_response.text
     assert bootstrap_response.json()["authenticated"] is True
     assert bootstrap_response.json()["user"]["is_admin"] is True
+    owner_user_id = bootstrap_response.json()["user"]["id"]
 
     project_response = client.post("/api/projects", json={"name": "Authed project"})
     assert project_response.status_code == 200, project_response.text
+    assert project_response.json()["created_by"] == owner_user_id
 
     settings_response = client.patch(
         "/api/auth/me/settings",

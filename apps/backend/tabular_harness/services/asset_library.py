@@ -309,6 +309,7 @@ def seed_default_assets(db: Session, store: LocalArtifactStore) -> list[Asset]:
 
 def create_library_asset(db: Session, *, store: LocalArtifactStore, payload: dict[str, Any]) -> Asset:
     asset_id = new_id("asset")
+    owner_user_id = payload.get("owner_user_id")
     artifact = store_json_artifact(
         db,
         store,
@@ -326,6 +327,7 @@ def create_library_asset(db: Session, *, store: LocalArtifactStore, payload: dic
             "semantic_tags": payload.get("semantic_tags") or [],
         },
         metadata={"asset_id": asset_id, "scope": "organization"},
+        created_by=str(owner_user_id) if owner_user_id else "local-user",
     )
     asset = Asset(
         id=asset_id,
@@ -333,6 +335,7 @@ def create_library_asset(db: Session, *, store: LocalArtifactStore, payload: dic
         name=str(payload["name"]),
         description=payload.get("description"),
         scope="organization",
+        owner_user_id=str(owner_user_id) if owner_user_id else None,
         tags_json=dumps_json(payload.get("tags") or []),
         semantic_tags_json=dumps_json(payload.get("semantic_tags") or []),
         visibility=str(payload.get("visibility") or "private"),
@@ -352,6 +355,7 @@ def create_library_asset(db: Session, *, store: LocalArtifactStore, payload: dic
         created_from_project_id=payload.get("created_from_project_id"),
         created_from_run_id=payload.get("created_from_run_id"),
         status="active",
+        created_by=str(owner_user_id) if owner_user_id else "local-user",
     )
     db.add(version)
     db.flush()

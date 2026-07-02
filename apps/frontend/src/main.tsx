@@ -997,6 +997,7 @@ type Project = {
   current_phase: string;
   status: string;
   autonomy_mode: AutonomyMode;
+  created_by: string;
   created_at: string;
   updated_at: string;
 };

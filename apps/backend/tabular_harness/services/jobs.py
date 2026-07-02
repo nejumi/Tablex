@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
-from tabular_harness.models.entities import Job, utc_now
+from tabular_harness.models.entities import Job, Project, utc_now
 
 JOB_TYPES = {
     "profile_dataset",
@@ -97,6 +97,7 @@ def create_job(
     max_attempts: int = 1,
     approval_required: bool = False,
     run_after: datetime | None = None,
+    created_by: str | None = None,
 ) -> Job:
     if job_type not in JOB_TYPES:
         raise ValueError(f"Unsupported job type: {job_type}")
@@ -116,10 +117,18 @@ def create_job(
         dependency_job_ids_json=dumps_json(dependency_job_ids or []),
         approval_required=requires_approval,
         run_after=run_after,
+        created_by=created_by or project_owner_id(db, project_id),
     )
     db.add(job)
     db.flush()
     return job
+
+
+def project_owner_id(db: Session, project_id: str | None) -> str:
+    if not project_id:
+        return "local-user"
+    project = db.get(Project, project_id)
+    return project.created_by if project is not None and project.created_by else "local-user"
 
 
 def mark_job_running(job: Job) -> None:

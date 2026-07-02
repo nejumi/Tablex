@@ -2299,6 +2299,7 @@ def store_json_artifact(
     filename: str,
     payload: Any,
     metadata: dict[str, Any],
+    created_by: str | None = None,
 ) -> Artifact:
     version = next_artifact_version(db, project_id, asset_type, name)
     artifact_dir, stored, content_hash = store.store_json(
@@ -2321,6 +2322,7 @@ def store_json_artifact(
         size_bytes=stored.size_bytes,
         metadata={**metadata, "primary_path": str(stored.path)},
         version=version,
+        created_by=created_by,
     )
 
 

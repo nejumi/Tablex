@@ -356,6 +356,11 @@ def require_auth_user(request: Request, db: Session) -> User:
     return user
 
 
+def request_actor_id(request: Request) -> str:
+    user_id = getattr(request.state, "user_id", None)
+    return str(user_id) if user_id else "local-user"
+
+
 def set_auth_cookie(response: Response, request: Request, token: str) -> None:
     settings = request.app.state.settings
     response.set_cookie(
@@ -950,7 +955,11 @@ def list_projects(db: Annotated[Session, Depends(get_session)]) -> list[dict[str
 
 
 @router.post("/api/projects", response_model=ProjectRead)
-def create_project(payload: ProjectCreate, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+def create_project(
+    payload: ProjectCreate,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
     project = Project(
         id=new_id("p"),
         name=payload.name,
@@ -959,6 +968,7 @@ def create_project(payload: ProjectCreate, db: Annotated[Session, Depends(get_se
         target_column=payload.target_column,
         autonomy_mode=payload.autonomy_mode or "approval_based",
         current_phase="DRAFT",
+        created_by=request_actor_id(request),
     )
     db.add(project)
     db.flush()
@@ -5811,7 +5821,11 @@ def get_project_agent_activity(project_id: str, db: Annotated[Session, Depends(g
 
 
 @router.post("/api/jobs", response_model=JobRead)
-def enqueue_job(payload: JobCreate, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+def enqueue_job(
+    payload: JobCreate,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
     if payload.project_id:
         require_project(db, payload.project_id)
     job = create_job(
@@ -5825,6 +5839,7 @@ def enqueue_job(payload: JobCreate, db: Annotated[Session, Depends(get_session)]
         priority=payload.priority,
         max_attempts=payload.max_attempts,
         approval_required=payload.approval_required,
+        created_by=request_actor_id(request),
     )
     return job_to_dict(job)
 
@@ -5859,20 +5874,28 @@ def get_job_artifacts(job_id: str, db: Annotated[Session, Depends(get_session)])
 
 
 @router.post("/api/jobs/{job_id}/cancel", response_model=JobRead)
-def cancel_job(job_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+def cancel_job(
+    job_id: str,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    cancel_job_service(job)
+    cancel_job_service(job, cancelled_by=request_actor_id(request))
     return job_to_dict(job)
 
 
 @router.post("/api/jobs/{job_id}/approve", response_model=JobRead)
-def approve_job_endpoint(job_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+def approve_job_endpoint(
+    job_id: str,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    approve_job(job)
+    approve_job(job, approved_by=request_actor_id(request))
     return job_to_dict(job)
 
 
@@ -5942,10 +5965,13 @@ def list_assets(
 @router.post("/api/assets", response_model=AssetRead)
 def create_asset_endpoint(
     payload: AssetCreate,
+    request: Request,
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    asset = create_library_asset(db, store=store, payload=payload.model_dump())
+    asset_payload = payload.model_dump()
+    asset_payload["owner_user_id"] = request_actor_id(request)
+    asset = create_library_asset(db, store=store, payload=asset_payload)
     return asset_to_dict(asset)
 
 
@@ -6427,6 +6453,7 @@ def project_to_dict(project: Project) -> dict[str, Any]:
         "current_phase": project.current_phase,
         "status": project.status,
         "autonomy_mode": project.autonomy_mode,
+        "created_by": project.created_by,
         "created_at": project.created_at.isoformat(),
         "updated_at": project.updated_at.isoformat(),
     }

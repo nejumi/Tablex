@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
-from tabular_harness.models.entities import Artifact, LineageEdge
+from tabular_harness.models.entities import Artifact, LineageEdge, Project
 
 
 @dataclass(frozen=True)
@@ -185,6 +185,7 @@ def register_artifact(
     metadata: dict[str, Any],
     version: int | None = None,
     org_id: str = "local-org",
+    created_by: str | None = None,
 ) -> Artifact:
     artifact = Artifact(
         id=new_id("art"),
@@ -197,10 +198,18 @@ def register_artifact(
         content_hash=content_hash,
         size_bytes=size_bytes,
         metadata_json=dumps_json(metadata),
+        created_by=created_by or project_owner_id(db, project_id),
     )
     db.add(artifact)
     db.flush()
     return artifact
+
+
+def project_owner_id(db: Session, project_id: str | None) -> str:
+    if not project_id:
+        return "local-user"
+    project = db.get(Project, project_id)
+    return project.created_by if project is not None and project.created_by else "local-user"
 
 
 def create_lineage_edge(

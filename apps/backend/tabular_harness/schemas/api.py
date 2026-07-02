@@ -41,6 +41,7 @@ class ProjectRead(BaseModel):
     current_phase: str
     status: str
     autonomy_mode: Literal["approval_based", "full_auto"]
+    created_by: str
     created_at: str
     updated_at: str
 
