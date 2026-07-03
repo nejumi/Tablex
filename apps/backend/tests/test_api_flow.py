@@ -308,7 +308,14 @@ def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -
     assert client.get("/api/projects").status_code == 200
 
 
-def test_full_auto_start_advances_autonomous_loop_without_dataset(tmp_path: Path) -> None:
+def test_full_auto_start_creates_main_agent_session_without_dataset_even_with_legacy_runner_mode(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
     client = make_client(tmp_path)
 
     project_response = client.post("/api/projects", json={"name": "Autonomous no data"})
@@ -319,18 +326,25 @@ def test_full_auto_start_advances_autonomous_loop_without_dataset(tmp_path: Path
     assert start_response.status_code == 200, start_response.text
     queued_job = start_response.json()
     assert queued_job["job_type"] == "start_autonomous_loop"
-    assert queued_job["status"] == "queued"
-    assert queued_job["output"]["schema_version"] == "autonomous_loop_start_queued.v1"
+    assert queued_job["status"] == "succeeded"
+    assert queued_job["input"]["runner_mode"] == "codex_cli_if_available"
+    assert queued_job["input"]["requested_runner_mode"] == "harness_only"
+    assert queued_job["output"]["schema_version"] == "agent_session_start.v1"
+    assert queued_job["output"]["agent_session_id"]
 
     job_response = client.get(f"/api/jobs/{queued_job['id']}")
     assert job_response.status_code == 200
     job = job_response.json()
     assert job["status"] == "succeeded"
-    assert job["output"]["schema_version"] == "autonomous_loop_tick.v1"
-    assert job["output"]["status"] == "waiting_for_data"
-    assert "Full Auto started" in job["output"]["assistant_message"]
+    assert job["output"]["schema_version"] == "agent_session_start.v1"
+    assert "Full Auto" in job["output"]["assistant_message"]
     assert job["output"]["worker_events"]
-    assert job["output"]["reflection_artifact_id"]
+
+    session_response = client.get(f"/api/projects/{project_id}/agent-session/current")
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["id"] == queued_job["output"]["agent_session_id"]
+    assert session["session_type"] == "main_autonomous"
 
     project_read_response = client.get(f"/api/projects/{project_id}")
     assert project_read_response.status_code == 200
@@ -349,9 +363,6 @@ def test_full_auto_start_advances_autonomous_loop_without_dataset(tmp_path: Path
     assert stopped_project_response.status_code == 200
     assert stopped_project_response.json()["autonomy_mode"] == "full_auto"
     assert stopped_project_response.json()["current_phase"] == "IDLE"
-
-    artifacts = client.get(f"/api/projects/{project_id}/artifacts").json()
-    assert any(artifact["asset_type"] == "autonomous_reflection" for artifact in artifacts)
 
 
 def test_agent_activity_does_not_show_future_autonomous_heartbeat_as_active(tmp_path: Path) -> None:
@@ -642,7 +653,7 @@ def test_autonomous_continuation_does_not_backoff_after_recent_codex_failure(tmp
         assert failed_job.status == "failed"
 
 
-def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: Path) -> None:
+def test_approval_based_start_creates_real_planning_evidence_with_dataset(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
     project_response = client.post("/api/projects", json={"name": "Autonomous with data"})
@@ -655,7 +666,10 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
     )
     assert upload_response.status_code == 200, upload_response.text
 
-    start_response = client.post(f"/api/projects/{project_id}/autonomy/start", json={"runner_mode": "harness_only"})
+    start_response = client.post(
+        f"/api/projects/{project_id}/autonomy/start",
+        json={"runner_mode": "harness_only", "autonomy_mode": "approval_based"},
+    )
     assert start_response.status_code == 200, start_response.text
     queued_job = start_response.json()
     assert queued_job["status"] == "queued"
@@ -680,7 +694,7 @@ def test_full_auto_start_creates_real_planning_evidence_with_dataset(tmp_path: P
     assert output["interventions"]
     assert output["interventions"][0]["kind"] == "target_definition"
     target_step = next(step for step in output["steps"] if step["label"] == "target_definition")
-    assert target_step["status"] == "delegated_to_codex"
+    assert target_step["status"] == "needs_approval"
     evaluation_step = next(step for step in output["steps"] if step["label"] == "evaluation_spec")
     assert evaluation_step["status"] == "deferred"
 

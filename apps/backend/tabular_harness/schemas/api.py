@@ -23,7 +23,7 @@ class ProjectUpdate(BaseModel):
 
 
 class AutonomyStartCreate(BaseModel):
-    runner_mode: Literal["harness_only", "codex_cli", "codex_cli_if_available"] = "harness_only"
+    runner_mode: Literal["harness_only", "codex_cli", "codex_cli_if_available"] = "codex_cli_if_available"
     autonomy_mode: Literal["approval_based", "full_auto"] = "full_auto"
     locale: str | None = None
     agent_model: str | None = None

@@ -1556,7 +1556,7 @@ def start_project_autonomy(
     job: Job | None = None
     try:
         project = require_project(db, project_id)
-        if payload.autonomy_mode == "full_auto" and payload.runner_mode != "harness_only":
+        if payload.autonomy_mode == "full_auto":
             project.autonomy_mode = "full_auto"
             project.current_phase = "AUTONOMOUS_LOOP"
             project.updated_at = utc_now()
@@ -1574,7 +1574,10 @@ def start_project_autonomy(
                 job_type="start_autonomous_loop",
                 project_id=project_id,
                 input_payload={
-                    "runner_mode": payload.runner_mode,
+                    "runner_mode": "codex_cli_if_available"
+                    if payload.runner_mode == "harness_only"
+                    else payload.runner_mode,
+                    "requested_runner_mode": payload.runner_mode,
                     "autonomy_mode": payload.autonomy_mode,
                     "locale": payload.locale,
                     "agent_model": payload.agent_model,
@@ -1585,7 +1588,10 @@ def start_project_autonomy(
                     "secret_access": "forbidden",
                     "connector_credentials": "not_materialized",
                     "production_write": "forbidden",
-                    "runner_mode": payload.runner_mode,
+                    "runner_mode": "codex_cli_if_available"
+                    if payload.runner_mode == "harness_only"
+                    else payload.runner_mode,
+                    "requested_runner_mode": payload.runner_mode,
                     "autonomy_mode": payload.autonomy_mode,
                     "control_record_only": True,
                     "main_execution_state": "agent_session",
