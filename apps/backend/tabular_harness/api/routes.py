@@ -4464,11 +4464,16 @@ def create_agent_chat_turn(
         },
         priority=80,
     )
+    wait_state = agent_chat_wait_state(
+        job,
+        delivered_to_running_codex=False,
+        locale=payload.locale,
+    )
     return {
         "schema_version": "agent_chat_turn.v1",
         "project_id": project.id,
         "user_message": payload.message,
-        "assistant_message": "",
+        "assistant_message": wait_state["assistant_message"],
         "intent": {
             "type": "agent_conversation",
             "confidence": None,
@@ -4480,6 +4485,7 @@ def create_agent_chat_turn(
             "schema_version": "agent_chat_queued.v1",
             "response_locale": payload.locale,
             "job_id": job.id,
+            "wait_state": wait_state["brief"],
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",
@@ -4491,8 +4497,8 @@ def create_agent_chat_turn(
                 "worker_id": "agent-chat",
                 "display_name": "Agent Chat",
                 "status": "queued",
-                "headline": "Queued for response",
-                "detail": "The local worker will compose the response and save it to the workspace history.",
+                "headline": wait_state["headline"],
+                "detail": wait_state["detail"],
                 "job_id": job.id,
                 "project_id": project.id,
                 "target_tab": "Home",
@@ -4524,12 +4530,13 @@ def queued_main_session_chat_response(
     locale: str | None,
     progress_event: AgentTranscriptEvent | None = None,
 ) -> dict[str, Any]:
-    japanese = (locale or "").lower().startswith("ja")
-    assistant_message = (
-        "受け取りました。進行中の分析エージェントに渡しています。返答が届き次第、このチャットに残します。"
-        if japanese
-        else "Received. I am passing this to the running analysis agent and will keep the reply in this chat when it lands."
+    wait_state = agent_chat_wait_state(
+        job,
+        delivered_to_running_codex=True,
+        locale=locale,
+        response_worker_status=job.status,
     )
+    assistant_message = wait_state["assistant_message"]
     return {
         "schema_version": "agent_chat_turn.v1",
         "project_id": project.id,
@@ -4552,6 +4559,7 @@ def queued_main_session_chat_response(
             "progress_update_requested_event_id": progress_event.id if progress_event is not None else None,
             "job_id": job.id,
             "status": job.status,
+            "wait_state": wait_state["brief"],
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",
@@ -4563,12 +4571,8 @@ def queued_main_session_chat_response(
                 "worker_id": "agent-chat",
                 "display_name": "Agent Chat",
                 "status": job.status,
-                "headline": "応答を生成中" if japanese else "Composing response",
-                "detail": (
-                    "入力は進行中の分析エージェントに届いています。返答が届くとこのチャットに残ります。"
-                    if japanese
-                    else "The message reached the running analysis agent. The reply will stay in this chat when it lands."
-                ),
+                "headline": wait_state["headline"],
+                "detail": wait_state["detail"],
                 "job_id": job.id,
                 "project_id": project.id,
                 "target_tab": "Home",
@@ -4583,6 +4587,111 @@ def queued_main_session_chat_response(
         "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent Chat"},
         "artifact_id": f"pending_{job.id}",
         "job": job_to_dict(job),
+}
+
+
+def format_elapsed_for_agent_chat(seconds: int, *, japanese: bool) -> str:
+    if seconds < 60:
+        return f"{seconds}秒" if japanese else f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}分" if japanese else f"{minutes}m"
+    hours = minutes // 60
+    remainder = minutes % 60
+    if japanese:
+        return f"{hours}時間{remainder}分" if remainder else f"{hours}時間"
+    return f"{hours}h {remainder}m" if remainder else f"{hours}h"
+
+
+def agent_chat_wait_state(
+    job: Job,
+    *,
+    delivered_to_running_codex: bool,
+    locale: str | None,
+    response_worker_status: str | None = None,
+) -> dict[str, Any]:
+    japanese = (locale or "").lower().startswith("ja")
+    now = utc_now()
+    job_age_seconds = seconds_since_timestamp(job.created_at, now=now) or 0
+    updated_age_seconds = seconds_since_timestamp(job.updated_at, now=now) or 0
+    age_label = format_elapsed_for_agent_chat(job_age_seconds, japanese=japanese)
+    update_label = format_elapsed_for_agent_chat(updated_age_seconds, japanese=japanese)
+    status = response_worker_status or job.status
+    if status == "queued":
+        worker_state = "waiting_for_local_worker"
+        stale = job_age_seconds >= 60
+        if delivered_to_running_codex:
+            assistant_message = (
+                f"受け取りました。入力は進行中の分析エージェントに届いています。チャットへの返信保存はworker待ちです（待機 {age_label}）。"
+                if japanese
+                else f"Received. The running analysis agent has the message; the reply-saving job is waiting for the local worker ({age_label})."
+            )
+        else:
+            assistant_message = (
+                f"受け取りました。返信を作成するworker待ちです（待機 {age_label}）。"
+                if japanese
+                else f"Received. The reply job is waiting for the local worker ({age_label})."
+            )
+        if stale:
+            assistant_message += (
+                " workerが拾えていない可能性があります。ActivityまたはJobsでworker状態を確認できます。"
+                if japanese
+                else " The worker may not have picked it up yet; Activity or Jobs shows the worker state."
+            )
+        headline = "worker待ち" if japanese else "Waiting for local worker"
+        detail = (
+            f"返信処理はまだ開始していません。待機 {age_label}。"
+            if japanese
+            else f"This reply job has not started yet. Waiting {age_label}."
+        )
+    elif status == "running":
+        worker_state = "worker_processing"
+        stale = updated_age_seconds >= 300
+        assistant_message = (
+            f"受け取りました。返信を整理してチャットに保存中です（開始から {age_label}、最終更新 {update_label}前）。"
+            if japanese
+            else f"Received. The reply is being processed (started {age_label} ago, last update {update_label} ago)."
+        )
+        if delivered_to_running_codex:
+            assistant_message = (
+                f"受け取りました。入力は進行中の分析エージェントに届いており、返信をチャットに保存中です（開始から {age_label}、最終更新 {update_label}前）。"
+                if japanese
+                else f"Received. The running analysis agent has the message, and the reply is being saved (started {age_label} ago, last update {update_label} ago)."
+            )
+        if stale:
+            assistant_message += (
+                " 更新がしばらくありません。完了しなければworker再起動またはretry対象です。"
+                if japanese
+                else " There has been no recent update; if it does not complete, the worker should be restarted or retried."
+            )
+        headline = "返答を処理中" if japanese else "Processing reply"
+        detail = (
+            f"workerが返信処理を実行中です。最終更新 {update_label}前。"
+            if japanese
+            else f"The worker is running this reply job. Last update {update_label} ago."
+        )
+    else:
+        worker_state = f"job_{status}"
+        stale = False
+        assistant_message = (
+            f"返答ジョブの状態は {status} です。"
+            if japanese
+            else f"The reply job status is {status}."
+        )
+        headline = status.replace("_", " ").title()
+        detail = assistant_message
+    return {
+        "assistant_message": assistant_message,
+        "headline": headline,
+        "detail": detail,
+        "brief": {
+            "schema_version": "agent_chat_wait_state.v1",
+            "worker_state": worker_state,
+            "status": status,
+            "job_age_seconds": job_age_seconds,
+            "updated_age_seconds": updated_age_seconds,
+            "possibly_stale": stale,
+        },
     }
 
 
@@ -4716,23 +4825,18 @@ def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[st
     japanese = locale.lower().startswith("ja")
     delivered_session_id = payload.get("delivered_agent_session_id")
     delivered_to_running_codex = isinstance(delivered_session_id, str) and bool(delivered_session_id.strip())
+    wait_state = agent_chat_wait_state(
+        job,
+        delivered_to_running_codex=delivered_to_running_codex,
+        locale=locale,
+    )
     if job.status in {"failed", "cancelled", "timed_out"}:
         error_message = job.error_message or str(output.get("error_message") or "")
         assistant_message = (
             f"応答生成が完了しませんでした: {error_message}" if japanese else f"Response did not complete: {error_message}"
         )
-    elif delivered_to_running_codex:
-        assistant_message = (
-            "受け取りました。進行中の分析エージェントに渡しています。返答が届き次第、このチャットに残します。"
-            if japanese
-            else "Received. I am passing this to the running analysis agent and will keep the reply in this chat when it lands."
-        )
     else:
-        assistant_message = (
-            "受け取りました。分析エージェントが返答を作成しています。完了するとこのチャットに残ります。"
-            if japanese
-            else "Received. The analysis agent is composing a reply, and it will stay in this chat when complete."
-        )
+        assistant_message = wait_state["assistant_message"]
     return {
         "schema_version": "agent_chat_turn.v1",
         "project_id": project_id,
@@ -4760,6 +4864,7 @@ def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[st
             "progress_update_requested_event_id": payload.get("progress_update_requested_event_id")
             if isinstance(payload.get("progress_update_requested_event_id"), str)
             else None,
+            "wait_state": wait_state["brief"],
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",
