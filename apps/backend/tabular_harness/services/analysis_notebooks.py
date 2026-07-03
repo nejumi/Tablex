@@ -33,12 +33,12 @@ from tabular_harness.services.approach import (
     store_json_artifact,
     store_text_artifact,
 )
-from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
     artifact_primary_path,
     create_lineage_edge,
 )
+from tabular_harness.services.locales import locale_is_japanese
 
 NOTEBOOK_INDEX_FIGURE_ID_LIMIT = 12
 

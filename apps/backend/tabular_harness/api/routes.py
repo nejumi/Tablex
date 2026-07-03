@@ -4,7 +4,7 @@ import base64
 import json
 import mimetypes
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -353,7 +353,7 @@ from tabular_harness.worker.jobs import create_default_worker
 
 router = APIRouter()
 INTERACTIVE_WORKER_JOB_TYPES = {"agent_chat_turn"}
-MAIN_SESSION_CHAT_DELIVERY_RUN_AFTER = timedelta(days=3650)
+MAIN_SESSION_CHAT_WAITING_STATUS = "waiting_for_agent"
 
 
 def sqlite_database_is_locked(exc: OperationalError) -> bool:
@@ -4457,8 +4457,9 @@ def create_agent_chat_turn(
                 "response_completion_source": "main_codex_session_chat_update",
             },
             priority=90,
-            run_after=utc_now() + MAIN_SESSION_CHAT_DELIVERY_RUN_AFTER,
         )
+        job.status = MAIN_SESSION_CHAT_WAITING_STATUS
+        job.updated_at = utc_now()
         response = queued_main_session_chat_response(
             project=project,
             session=session,
@@ -4592,7 +4593,7 @@ def queued_main_session_chat_response(
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",
-            "mode": "queued_worker",
+            "mode": "main_codex_session",
             "status": job.status,
         },
         "worker_events": [
@@ -4888,7 +4889,7 @@ def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[st
         "assistant_message": assistant_message,
         "intent": {
             "type": "agent_conversation",
-            "source": "agent_chat_turn_job",
+            "source": "main_agent_session_inbox" if delivered_to_running_codex else "agent_chat_turn_job",
         },
         "actions": [],
         "action_summary": {},
@@ -4912,7 +4913,7 @@ def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[st
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",
-            "mode": "queued_worker",
+            "mode": "main_codex_session" if delivered_to_running_codex else "queued_worker",
             "status": job.status,
         },
         "worker_events": output.get("worker_events") if isinstance(output.get("worker_events"), list) else [],

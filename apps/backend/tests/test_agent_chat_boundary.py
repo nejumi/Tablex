@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import inspect
 
-from tabular_harness.api.routes import is_sidecar_chat_request
 import tabular_harness.services.agent_chat as agent_chat
+from tabular_harness.api.routes import is_sidecar_chat_request
 from tabular_harness.models.entities import AgentSession
 from tabular_harness.services.agent_chat import (
     conversation_next_focus,

@@ -24,7 +24,15 @@ from tabular_harness.api.routes import (
 from tabular_harness.core.config import Settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
-from tabular_harness.models.entities import AgentSession, AgentTranscriptEvent, Artifact, Job, Project, Question, utc_now
+from tabular_harness.models.entities import (
+    AgentSession,
+    AgentTranscriptEvent,
+    Artifact,
+    Job,
+    Project,
+    Question,
+    utc_now,
+)
 from tabular_harness.schemas import AgentResult
 from tabular_harness.services.agent_sessions import (
     append_runner_stream_to_workspace,
@@ -1795,11 +1803,11 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert chat_response.status_code == 200, chat_response.text
     chat = chat_response.json()
     assert chat["job"]["job_type"] == "agent_chat_turn"
-    assert chat["job"]["status"] == "queued"
+    assert chat["job"]["status"] == "waiting_for_agent"
     assert chat["job"]["priority"] == 90
-    assert chat["job"]["run_after"] is not None
-    assert chat["response_composer"]["mode"] == "queued_worker"
-    assert chat["response_composer"]["status"] == "queued"
+    assert chat["job"]["run_after"] is None
+    assert chat["response_composer"]["mode"] == "main_codex_session"
+    assert chat["response_composer"]["status"] == "waiting_for_agent"
     assert "入力は進行中の分析エージェントに届いています" in chat["assistant_message"]
     assert "worker待ち" not in chat["assistant_message"]
     assert chat["response_brief"]["wait_state"]["worker_state"] == "waiting_for_main_agent_reply"
@@ -1819,11 +1827,12 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert payload["message"] == "この条件で特徴量を見直してください"
     assert "この条件で特徴量を見直してください" in latest.read_text(encoding="utf-8")
     jobs = client.get(f"/api/projects/{project_id}/jobs").json()
-    assert any(job["job_type"] == "agent_chat_turn" and job["status"] == "queued" for job in jobs)
+    assert any(job["job_type"] == "agent_chat_turn" and job["status"] == "waiting_for_agent" for job in jobs)
     history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
     assert history[-1]["job_id"] == chat["job"]["id"]
     assert history[-1]["user_message"] == "この条件で特徴量を見直してください"
-    assert history[-1]["response_composer"]["status"] == "queued"
+    assert history[-1]["response_composer"]["mode"] == "main_codex_session"
+    assert history[-1]["response_composer"]["status"] == "waiting_for_agent"
     assert "Codexの返答が届き次第" in history[-1]["assistant_message"]
     assert history[-1]["response_brief"]["delivered_agent_session_id"] == "ags_inbox_delivery"
     assert history[-1]["response_brief"]["wait_state"]["worker_state"] == "waiting_for_main_agent_reply"
@@ -1831,9 +1840,9 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     worker = SyncWorker(handlers={"agent_chat_turn": agent_chat_turn_handler}, store=app.state.artifact_store)
     with app.state.session_factory() as db:
         assert worker.run_next_job(db, project_id=project_id, job_types={"agent_chat_turn"}) is None
-        parked_job = db.get(Job, chat["job"]["id"])
-        assert parked_job is not None
-        assert parked_job.status == "queued"
+        waiting_job = db.get(Job, chat["job"]["id"])
+        assert waiting_job is not None
+        assert waiting_job.status == "waiting_for_agent"
 
     report_path = workspace / "reports" / "chat_update.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2056,7 +2065,8 @@ def test_agent_chat_history_pairs_each_main_session_update_once(tmp_path: Path, 
     assert first_turn["response_brief"]["progress_artifact_id"] == progress_artifact.id
     assert "最初の質問に対応する進捗" in first_turn["assistant_message"]
     assert second_turn["user_message"] == "二つ目の質問です。"
-    assert second_turn["response_composer"]["status"] == "queued"
+    assert second_turn["response_composer"]["mode"] == "main_codex_session"
+    assert second_turn["response_composer"]["status"] == "waiting_for_agent"
     assert "Codexの返答が届き次第" in second_turn["assistant_message"]
     assert second_turn["artifact_id"].startswith("job_pending_")
 
