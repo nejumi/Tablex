@@ -1632,7 +1632,7 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     assert pending_history[0]["job_id"] == chat["job"]["id"]
     assert pending_history[0]["artifact_id"] == f"job_pending_{chat['job']['id']}"
     assert pending_history[0]["response_composer"]["status"] == "queued"
-    assert pending_history[0]["assistant_message"] == "応答を準備しています。"
+    assert pending_history[0]["assistant_message"] == "受け取りました。分析エージェントが返答を作成しています。完了するとこのチャットに残ります。"
 
     output = run_queued_agent_chat_turn(client, chat["job"]["id"])
     assert output["schema_version"] == "agent_chat_turn.v1"
@@ -1741,7 +1741,7 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert chat["job"]["priority"] == 90
     assert chat["response_composer"]["mode"] == "queued_worker"
     assert chat["response_composer"]["status"] == "queued"
-    assert chat["assistant_message"] == "入力は届いています。説明を準備しています。"
+    assert chat["assistant_message"] == "受け取りました。進行中の分析エージェントに渡しています。返答が届き次第、このチャットに残します。"
     assert chat["response_brief"]["progress_update_requested_event_id"]
 
     inbox = user_instructions_inbox_path(workspace)
@@ -1763,7 +1763,7 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert history[-1]["job_id"] == chat["job"]["id"]
     assert history[-1]["user_message"] == "この条件で特徴量を見直してください"
     assert history[-1]["response_composer"]["status"] == "queued"
-    assert history[-1]["assistant_message"] == "入力は届いています。説明を準備しています。"
+    assert history[-1]["assistant_message"] == "受け取りました。進行中の分析エージェントに渡しています。返答が届き次第、このチャットに残します。"
     assert history[-1]["response_brief"]["delivered_agent_session_id"] == "ags_inbox_delivery"
 
     output = run_queued_agent_chat_turn(client, chat["job"]["id"])

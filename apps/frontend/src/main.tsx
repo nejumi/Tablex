@@ -677,7 +677,7 @@ const japaneseMessages: LocaleMessages = {
   createAgentTaskContract: "送信",
   youAsked: "あなたの依頼",
   tableeAnswered: "Tableeからの返答",
-  agentReplyPending: "状況を確認し、次に役立つ返答を準備しています。",
+  agentReplyPending: "受け取りました。分析エージェントの返答が届き次第、このチャットに残します。",
   agentReplyFailed: "この依頼を完了できませんでした。消えないように、エラーをここに記録します。",
   chatTurnStatus: "状態",
   earlierConversation: "以前の会話",

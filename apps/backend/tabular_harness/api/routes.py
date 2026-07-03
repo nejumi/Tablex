@@ -4526,9 +4526,9 @@ def queued_main_session_chat_response(
 ) -> dict[str, Any]:
     japanese = (locale or "").lower().startswith("ja")
     assistant_message = (
-        "入力は届いています。説明を準備しています。"
+        "受け取りました。進行中の分析エージェントに渡しています。返答が届き次第、このチャットに残します。"
         if japanese
-        else "Your message was received. Preparing an explanation."
+        else "Received. I am passing this to the running analysis agent and will keep the reply in this chat when it lands."
     )
     return {
         "schema_version": "agent_chat_turn.v1",
@@ -4565,9 +4565,9 @@ def queued_main_session_chat_response(
                 "status": job.status,
                 "headline": "応答を生成中" if japanese else "Composing response",
                 "detail": (
-                    "入力は進行中の分析に渡っています。Chat用の説明を生成しています。"
+                    "入力は進行中の分析エージェントに届いています。返答が届くとこのチャットに残ります。"
                     if japanese
-                    else "The message was delivered to the running analysis. The Chat explanation is being composed."
+                    else "The message reached the running analysis agent. The reply will stay in this chat when it lands."
                 ),
                 "job_id": job.id,
                 "project_id": project.id,
@@ -4723,12 +4723,16 @@ def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[st
         )
     elif delivered_to_running_codex:
         assistant_message = (
-            "入力は届いています。説明を準備しています。"
+            "受け取りました。進行中の分析エージェントに渡しています。返答が届き次第、このチャットに残します。"
             if japanese
-            else "Your message was received. Preparing an explanation."
+            else "Received. I am passing this to the running analysis agent and will keep the reply in this chat when it lands."
         )
     else:
-        assistant_message = "応答を準備しています。" if japanese else "Preparing a response."
+        assistant_message = (
+            "受け取りました。分析エージェントが返答を作成しています。完了するとこのチャットに残ります。"
+            if japanese
+            else "Received. The analysis agent is composing a reply, and it will stay in this chat when complete."
+        )
     return {
         "schema_version": "agent_chat_turn.v1",
         "project_id": project_id,
