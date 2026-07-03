@@ -43,6 +43,8 @@ from tabular_harness.services.artifacts import (
     next_artifact_version,
     register_artifact,
 )
+from tabular_harness.services.jobs import TERMINAL_STATUSES as TERMINAL_JOB_STATUSES
+from tabular_harness.services.jobs import mark_job_succeeded
 from tabular_harness.services.research_plan_timeline import research_plan_localization_summary
 
 MAIN_AUTONOMOUS_SESSION_TYPE = "main_autonomous"
@@ -2382,6 +2384,52 @@ def maybe_register_chat_update_from_workspace_output(
         payload={"chat_artifact_id": chat_artifact.id, "source_artifact_id": artifact.id},
         artifact_id=chat_artifact.id,
     )
+    complete_pending_chat_job_from_main_session_update(
+        db,
+        project=project,
+        session=session,
+        chat_artifact=chat_artifact,
+        message=message,
+    )
+
+
+def complete_pending_chat_job_from_main_session_update(
+    db: Session,
+    *,
+    project: Project,
+    session: AgentSession,
+    chat_artifact: Artifact,
+    message: str,
+) -> Job | None:
+    jobs = list(
+        db.scalars(
+            select(Job)
+            .where(
+                Job.project_id == project.id,
+                Job.job_type == "agent_chat_turn",
+                ~Job.status.in_(TERMINAL_JOB_STATUSES),
+            )
+            .order_by(Job.created_at.asc())
+            .limit(100)
+        ).all()
+    )
+    for job in jobs:
+        payload = loads_json(job.input_json, {})
+        if payload.get("delivered_agent_session_id") != session.id:
+            continue
+        mark_job_succeeded(
+            job,
+            {
+                "schema_version": "agent_chat_turn_completion.v1",
+                "status": "answered_by_main_codex_session",
+                "agent_session_id": session.id,
+                "progress_artifact_id": chat_artifact.id,
+                "response_locale": payload.get("locale") if isinstance(payload.get("locale"), str) else None,
+                "message_preview": message[:280],
+            },
+        )
+        return job
+    return None
 
 
 def chat_update_message_from_text(text: str, limit: int = 900) -> str:

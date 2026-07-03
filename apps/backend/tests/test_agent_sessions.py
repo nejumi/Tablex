@@ -39,6 +39,7 @@ from tabular_harness.services.agent_sessions import (
     latest_codex_transcript_output_at,
     latest_project_response_locale,
     mark_user_instructions_delivered,
+    maybe_register_chat_update_from_workspace_output,
     maybe_request_codex_progress_update,
     metadata_for_session_output,
     progress_request_path,
@@ -57,6 +58,8 @@ from tabular_harness.services.agent_sessions import (
     supervisor_slot_active,
 )
 from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
+from tabular_harness.services.approach import store_text_artifact
+from tabular_harness.services.jobs import create_job
 
 
 def test_agent_session_marimo_notebook_outputs_are_analysis_notebooks() -> None:
@@ -736,6 +739,103 @@ def test_turn_prompt_delivers_all_undelivered_user_instructions_beyond_recent_ra
         )
         prompt_after_delivery = build_turn_prompt(db, project=project, session=session)
         assert "評価指標はROC-AUCにしてください。" not in prompt_after_delivery.text
+
+
+def test_chat_update_marks_delivered_agent_chat_job_succeeded(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    report_path = workspace / "reports" / "chat_update.md"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text(
+        "給与データの粒度を確認しています。\n\n次に会社テーブルとのjoin coverageを見ます。",
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(
+            id="p_chat_complete",
+            name="Chat Complete",
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+        )
+        session = AgentSession(
+            id="as_chat_complete",
+            project_id=project.id,
+            session_type="main_autonomous",
+            status="running",
+            goal_text="Keep the user informed.",
+            workspace_path=str(workspace),
+        )
+        other_session = AgentSession(
+            id="as_other_chat",
+            project_id=project.id,
+            session_type="main_autonomous",
+            status="running",
+            goal_text="Other session.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session, other_session])
+        db.flush()
+        chat_job = create_job(
+            db,
+            job_type="agent_chat_turn",
+            project_id=project.id,
+            input_payload={
+                "message": "状況を説明してください",
+                "locale": "ja-JP",
+                "delivered_agent_session_id": session.id,
+            },
+            priority=90,
+        )
+        unrelated_job = create_job(
+            db,
+            job_type="agent_chat_turn",
+            project_id=project.id,
+            input_payload={
+                "message": "別セッションです",
+                "locale": "ja-JP",
+                "delivered_agent_session_id": other_session.id,
+            },
+            priority=90,
+        )
+        source_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="agent_session_report",
+            name="agent_session_reports_chat_update_md",
+            filename="chat_update.md",
+            text=report_path.read_text(encoding="utf-8"),
+            metadata={"project_id": project.id, "agent_session_id": session.id},
+        )
+
+        maybe_register_chat_update_from_workspace_output(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            path=report_path,
+            artifact=source_artifact,
+        )
+        db.commit()
+
+        db.refresh(chat_job)
+        db.refresh(unrelated_job)
+        assert chat_job.status == "succeeded"
+        assert unrelated_job.status == "queued"
+        output = loads_json(chat_job.output_json, {})
+        assert output["status"] == "answered_by_main_codex_session"
+        assert output["agent_session_id"] == session.id
+        assert output["response_locale"] == "ja-JP"
+        assert isinstance(output.get("progress_artifact_id"), str)
+        chat_artifacts = list(
+            db.scalars(select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn"))
+        )
+        assert len(chat_artifacts) == 1
+        metadata = loads_json(chat_artifacts[0].metadata_json, {})
+        assert metadata["source"] == "main_codex_session_chat_update"
 
 
 def test_turn_prompt_includes_living_research_plan_contract(tmp_path: Path) -> None:
