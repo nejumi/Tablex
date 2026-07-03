@@ -58,9 +58,20 @@ class SyncWorker:
             return failed_job
         return job
 
-    def run_next_job(self, db: Session, *, project_id: str | None = None) -> Job | None:
+    def run_next_job(
+        self,
+        db: Session,
+        *,
+        project_id: str | None = None,
+        job_types: set[str] | None = None,
+    ) -> Job | None:
+        eligible_job_types = set(self.handlers)
+        if job_types is not None:
+            eligible_job_types &= job_types
+        if not eligible_job_types:
+            return None
         try:
-            job = acquire_next_job(db, worker_id=self.worker_id, job_types=set(self.handlers), project_id=project_id)
+            job = acquire_next_job(db, worker_id=self.worker_id, job_types=eligible_job_types, project_id=project_id)
         except OperationalError:
             db.rollback()
             return None

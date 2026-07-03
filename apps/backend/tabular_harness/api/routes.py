@@ -15,6 +15,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     Response,
     UploadFile,
@@ -349,6 +350,7 @@ from tabular_harness.services.translation import translate_artifact as translate
 from tabular_harness.worker.jobs import create_default_worker
 
 router = APIRouter()
+INTERACTIVE_WORKER_JOB_TYPES = {"agent_chat_turn"}
 
 
 def sqlite_database_is_locked(exc: OperationalError) -> bool:
@@ -7333,9 +7335,18 @@ def retry_job_endpoint(job_id: str, db: Annotated[Session, Depends(get_session)]
 def run_worker_once(
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+    include_long_running: Annotated[
+        bool,
+        Query(
+            description=(
+                "When false, the interactive endpoint only runs lightweight jobs that are safe to execute inside "
+                "the request. Long-running worker jobs should be picked up by the daemon or an explicit test harness."
+            )
+        ),
+    ] = False,
 ) -> dict[str, Any] | None:
     worker = create_default_worker(store=store, include_stub_handlers=False)
-    job = worker.run_next_job(db)
+    job = worker.run_next_job(db, job_types=None if include_long_running else INTERACTIVE_WORKER_JOB_TYPES)
     if job is None:
         return None
     return job_to_dict(job)

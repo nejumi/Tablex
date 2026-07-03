@@ -2130,7 +2130,17 @@ def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_
     assert nudged_job["status"] == "queued"
     assert nudged_job["priority"] >= 90
 
-    worker_response = client.post("/api/worker/run-once")
+    interactive_worker_response = client.post("/api/worker/run-once")
+    assert interactive_worker_response.status_code == 200, interactive_worker_response.text
+    assert interactive_worker_response.json() is None
+    queued_after_interactive_response = client.get(f"/api/projects/{project_id}/jobs")
+    assert queued_after_interactive_response.status_code == 200
+    queued_after_interactive = next(
+        item for item in queued_after_interactive_response.json() if item["id"] == queued_training_job["id"]
+    )
+    assert queued_after_interactive["status"] == "queued"
+
+    worker_response = client.post("/api/worker/run-once?include_long_running=true")
     assert worker_response.status_code == 200, worker_response.text
     training_job = worker_response.json()
     assert training_job["id"] == queued_training_job["id"]
