@@ -1188,6 +1188,7 @@ function hasUnlocalizedLatinPhrase(value: string): boolean {
 function localeSafeDisplayText(value: string | null | undefined, locale: string | null | undefined, fallback: string): string {
   const text = (value ?? "").trim();
   if (displayTextMatchesLocale(text, locale)) return text;
+  if (text) return text;
   return fallback;
 }
 

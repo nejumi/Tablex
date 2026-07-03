@@ -253,8 +253,8 @@ def _research_plan_display_string(
     if isinstance(value, str) and value.strip():
         return value.strip()
     raw_value = raw_block.get(key)
-    if placeholder and _research_plan_has_visible_value(raw_value):
-        return placeholder
+    if isinstance(raw_value, str) and raw_value.strip():
+        return raw_value.strip()
     return None
 
 

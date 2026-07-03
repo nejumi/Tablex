@@ -2271,8 +2271,8 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized["blocks"][0]["localization_status"] == "localized"
     assert localized["blocks"][0]["subtasks"][0]["title"] == "高salary裾の確認"
     assert localized["blocks"][0]["subtasks"][0]["detail"] == "裾ラベルに別の判断経路が必要か確認します。"
-    assert localized["blocks"][1]["title"] == "表示言語を更新中の計画ブロック"
-    assert localized["blocks"][1]["subtitle"] == ""
+    assert localized["blocks"][1]["title"] == "approval response contract v19"
+    assert localized["blocks"][1]["subtitle"] == "Prepare the data owner reply shape."
     assert localized["blocks"][1]["localization_status"] == "needs_locale_refresh"
     assert localized["blocks"][1]["missing_localization_fields"] == ["title", "why_it_matters", "blockers"]
     assert localized["blocks"][1]["evidence"] is None
@@ -2285,15 +2285,17 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized["blocks"][3]["status"] == "pending"
     assert localized["blocks"][3]["localization_status"] == "needs_locale_refresh"
     assert localized["blocks"][3]["evidence"] is None
-    assert localized["blocks"][4]["title"] == "表示言語を更新中の計画ブロック"
-    assert localized["blocks"][4]["subtitle"] == ""
+    assert localized["blocks"][3]["title"] == "Invalid status becomes pending"
+    assert localized["blocks"][3]["subtitle"] == ""
     assert localized["blocks"][4]["localization_status"] == "needs_locale_refresh"
-    assert localized["blocks"][5]["title"] == "表示言語を更新中の計画ブロック"
-    assert localized["blocks"][5]["subtitle"] == ""
+    assert localized["blocks"][4]["title"] == "Codexが update model diagnostics and feature importance"
+    assert localized["blocks"][4]["subtitle"] == "Notebookで inspect error slices, PDP, and residual segments."
     assert localized["blocks"][5]["localization_status"] == "needs_locale_refresh"
-    assert localized["blocks"][6]["title"] == "表示言語を更新中の計画ブロック"
-    assert localized["blocks"][6]["subtitle"] == ""
+    assert localized["blocks"][5]["title"] == "approved target rebuild と evaluation"
+    assert localized["blocks"][5]["subtitle"] == "承認後はresolved target candidate、evaluation rerun、case queue reviewが必要。"
     assert localized["blocks"][6]["localization_status"] == "needs_locale_refresh"
+    assert localized["blocks"][6]["title"] == "データアップロード / project context"
+    assert localized["blocks"][6]["subtitle"] == "Dataset identity、target hint、locale、output contractが確定している。"
 
     japanese_alias_response = client.get(
         f"/api/projects/{project_id}/research-plan/timeline",
@@ -2303,8 +2305,8 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     japanese_alias = japanese_alias_response.json()
     assert japanese_alias["response_locale"] == "Japanese"
     assert japanese_alias["blocks"][0]["title"] == "深いEDA"
-    assert japanese_alias["blocks"][1]["title"] == "表示言語を更新中の計画ブロック"
-    assert japanese_alias["blocks"][1]["subtitle"] == ""
+    assert japanese_alias["blocks"][1]["title"] == "approval response contract v19"
+    assert japanese_alias["blocks"][1]["subtitle"] == "Prepare the data owner reply shape."
     assert japanese_alias["blocks"][1]["localization_status"] == "needs_locale_refresh"
 
 
@@ -2360,7 +2362,7 @@ def test_research_plan_timeline_requests_locale_refresh_for_active_session(tmp_p
     assert response.status_code == 200
     timeline = response.json()
     assert timeline["localization"]["missing_block_count"] == 1
-    assert timeline["blocks"][0]["title"] == "表示言語を更新中の計画ブロック"
+    assert timeline["blocks"][0]["title"] == "approved target rebuild and evaluation"
 
     request_path = research_plan_locale_request_path(workspace)
     assert request_path.exists()
@@ -2534,7 +2536,10 @@ def test_research_plan_timeline_refresh_uses_artifact_locale_when_query_locale_a
     timeline = response.json()
     assert timeline["requested_locale"] is None
     assert timeline["response_locale"] == "ja-JP"
-    assert timeline["blocks"][0]["title"] == "表示言語を更新中の計画ブロック"
+    assert timeline["blocks"][0]["title"] == "model review and deployment readiness"
+    assert timeline["blocks"][0]["subtitle"] == "Explain the next validation work."
+    assert timeline["blocks"][0]["localization_status"] == "needs_locale_refresh"
+    assert "title" in timeline["blocks"][0]["missing_localization_fields"]
     request_path = research_plan_locale_request_path(workspace)
     assert request_path.exists()
     assert "locale: ja-JP" in request_path.read_text(encoding="utf-8")
