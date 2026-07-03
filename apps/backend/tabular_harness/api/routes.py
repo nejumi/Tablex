@@ -149,6 +149,7 @@ from tabular_harness.services.agent_sessions import (
     latest_main_session,
     latest_project_response_locale,
     maybe_request_codex_progress_update,
+    maybe_request_research_plan_locale_refresh,
     raw_codex_stderr_path,
     raw_codex_transcript_path,
     run_main_agent_session_supervisor,
@@ -4941,7 +4942,21 @@ def get_research_plan_timeline(
     locale: str | None = None,
 ) -> dict[str, Any]:
     require_project(db, project_id)
-    return build_research_plan_timeline_response(db, project_id=project_id, locale=locale)
+    response = build_research_plan_timeline_response(db, project_id=project_id, locale=locale)
+    localization = response.get("localization") if isinstance(response, dict) else None
+    missing_count = 0
+    if isinstance(localization, dict):
+        missing_count = int(localization.get("missing_block_count") or 0) + int(
+            localization.get("missing_subtask_count") or 0
+        )
+    if missing_count:
+        session = active_main_session(db, project_id)
+        artifact_id = response.get("source_artifact_id") if isinstance(response, dict) else None
+        artifact = db.get(Artifact, artifact_id) if isinstance(artifact_id, str) else None
+        if session is not None and artifact is not None:
+            maybe_request_research_plan_locale_refresh(db, session=session, artifact=artifact, locale=locale)
+            db.commit()
+    return response
 
 
 @router.get("/api/projects/{project_id}/agent-session/current", response_model=AgentSessionRead | None)

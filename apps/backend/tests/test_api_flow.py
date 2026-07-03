@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from tabular_harness.api.routes import (
     compact_agent_chat_history_turns,
@@ -22,13 +23,14 @@ from tabular_harness.api.routes import (
 from tabular_harness.core.config import Settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
-from tabular_harness.models.entities import AgentSession, Artifact, Job, Project, Question, utc_now
+from tabular_harness.models.entities import AgentSession, AgentTranscriptEvent, Artifact, Job, Project, Question, utc_now
 from tabular_harness.schemas import AgentResult
 from tabular_harness.services.agent_sessions import (
     append_runner_stream_to_workspace,
     append_session_event,
     latest_user_instruction_path,
     progress_request_path,
+    research_plan_locale_request_path,
     user_instructions_inbox_path,
 )
 from tabular_harness.services.approach import store_json_artifact
@@ -2196,6 +2198,97 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert japanese_alias["blocks"][1]["title"] == "表示言語を更新中の計画ブロック"
     assert japanese_alias["blocks"][1]["subtitle"] == ""
     assert japanese_alias["blocks"][1]["localization_status"] == "needs_locale_refresh"
+
+
+def test_research_plan_timeline_requests_locale_refresh_for_active_session(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Plan locale refresh"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    workspace = app.state.artifact_store.root / "agent_sessions" / project_id / "ags_plan_locale_refresh"
+
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "AUTONOMOUS_LOOP"
+        project.autonomy_mode = "full_auto"
+        session = AgentSession(
+            id="ags_plan_locale_refresh",
+            project_id=project_id,
+            org_id=project.org_id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Keep the plan display aligned with the user locale.",
+            workspace_path=str(workspace),
+            created_by="test",
+        )
+        db.add(session)
+        store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="research_plan",
+            name="codex_plan",
+            filename="research_plan.json",
+            payload={
+                "schema_version": "research_plan.v1",
+                "timeline_blocks": [
+                    {
+                        "id": "codex_added_plan",
+                        "title": "approved target rebuild and evaluation",
+                        "why_it_matters": "Resolve target policy, rerun evaluation, and update model diagnostics.",
+                        "status": "active",
+                    }
+                ],
+            },
+            metadata={"source": "test"},
+        )
+        db.commit()
+
+    response = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
+    assert response.status_code == 200
+    timeline = response.json()
+    assert timeline["localization"]["missing_block_count"] == 1
+    assert timeline["blocks"][0]["title"] == "表示言語を更新中の計画ブロック"
+
+    request_path = research_plan_locale_request_path(workspace)
+    assert request_path.exists()
+    request_text = request_path.read_text(encoding="utf-8")
+    assert "schema_version: tablex_research_plan_locale_request.v1" in request_text
+    assert "locale: ja-JP" in request_text
+    assert "missing_block_count: 1" in request_text
+
+    with app.state.session_factory() as db:
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(
+                    AgentTranscriptEvent.session_id == "ags_plan_locale_refresh",
+                    AgentTranscriptEvent.event_type == "research_plan_locale_refresh_requested",
+                )
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            ).all()
+        )
+        assert len(events) == 1
+        payload = loads_json(events[0].payload_json, {})
+        assert payload["locale"] == "ja-JP"
+        assert payload["missing_block_count"] == 1
+
+    repeated = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
+    assert repeated.status_code == 200
+    with app.state.session_factory() as db:
+        event_count = db.scalar(
+            select(func.count())
+            .select_from(AgentTranscriptEvent)
+            .where(
+                AgentTranscriptEvent.session_id == "ags_plan_locale_refresh",
+                AgentTranscriptEvent.event_type == "research_plan_locale_refresh_requested",
+            )
+        )
+        assert event_count == 1
 
 
 def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_path: Path) -> None:
