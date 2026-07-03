@@ -1109,7 +1109,6 @@ def record_autonomy_control_chat_turn(
         "response_composer": {
             "mode": "autonomy_control_event",
             "status": "persisted",
-            "note": "The autonomous loop response is persisted as chat history so the UI does not lose it on refresh.",
         },
         "worker_events": worker_events,
         "token_usage": token_usage,
