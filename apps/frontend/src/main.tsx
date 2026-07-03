@@ -4975,6 +4975,7 @@ function ProjectDetail({
         {error ? <div className="banner danger">{error}</div> : null}
         <AgentActivityRail
           text={text}
+          projectName={project.name}
           jobs={jobs}
           events={agentWorkerEvents}
           activity={agentActivity}
@@ -8223,6 +8224,7 @@ function AgentChatDock({
 
 function AgentActivityRail({
   text,
+  projectName,
   jobs,
   events,
   activity,
@@ -8231,6 +8233,7 @@ function AgentActivityRail({
   onCancelWorker
 }: {
   text: LocaleMessages;
+  projectName: string;
   jobs: Job[];
   events: AgentWorkerEvent[];
   activity: AgentActivityResponse | null;
@@ -8251,16 +8254,12 @@ function AgentActivityRail({
     const now = Date.now() + tick;
     const fromActivity = activity?.workers ?? [];
     const fromJobs = jobs.flatMap((job) => workerEventsFromJob(job, now, text));
-    const merged = [...fromJobs, ...events, ...fromActivity];
-    const byKey = new Map<string, AgentWorkerEvent>();
-    merged.forEach((event) => {
-      byKey.set(`${event.worker_id}-${event.job_id ?? event.agent_session_id ?? event.updated_at ?? event.created_at ?? "event"}`, event);
-    });
-    return [...byKey.values()]
+    const merged = mergeAgentWorkerEvents([...fromJobs, ...events, ...fromActivity], projectName);
+    return merged
       .filter((event) => isVisibleWorkerEvent(event, now))
       .sort(compareWorkerEvents)
       .slice(0, 8);
-  }, [activity, events, jobs, text, tick]);
+  }, [activity, events, jobs, projectName, text, tick]);
 
   if (!workerEvents.length) {
     return null;
@@ -8347,7 +8346,9 @@ function AgentActivityRail({
           <small>{text.agentActivitySubtitle}</small>
         </div>
         <div className="agent-activity-controls">
-          <span className="agent-scope-pill live">{text.agentActivityLiveOnly}</span>
+          <span className="agent-scope-pill live">
+            {text.agentActivityLiveOnly} {workerEvents.length}
+          </span>
           <button
             className="icon-button"
             onClick={toggleMinimized}
@@ -8563,12 +8564,60 @@ function optimisticWorkerEvent(projectId: string, message: string, text: LocaleM
   };
 }
 
+function mergeAgentWorkerEvents(events: AgentWorkerEvent[], fallbackProjectName: string): AgentWorkerEvent[] {
+  const byIdentity = new Map<string, AgentWorkerEvent>();
+  for (const rawEvent of events) {
+    const event = rawEvent.project_name ? rawEvent : { ...rawEvent, project_name: fallbackProjectName };
+    const identity = agentWorkerEventIdentity(event);
+    const existing = byIdentity.get(identity);
+    byIdentity.set(identity, existing ? mergeAgentWorkerEvent(existing, event) : event);
+  }
+  return [...byIdentity.values()];
+}
+
+function agentWorkerEventIdentity(event: AgentWorkerEvent): string {
+  if (event.job_id && !event.job_id.startsWith("local-")) return `job:${event.job_id}`;
+  if (event.agent_session_id) return `session:${event.agent_session_id}`;
+  return `worker:${event.worker_id}:${event.job_id ?? event.created_at ?? event.updated_at ?? "event"}`;
+}
+
+function mergeAgentWorkerEvent(left: AgentWorkerEvent, right: AgentWorkerEvent): AgentWorkerEvent {
+  const primary = preferredAgentWorkerEvent(left, right);
+  const secondary = primary === left ? right : left;
+  const primaryTelemetryIsWeaker = primary.token_usage.is_estimate && !secondary.token_usage.is_estimate;
+  return {
+    ...secondary,
+    ...primary,
+    project_name: primary.project_name ?? secondary.project_name,
+    human_description: primary.human_description ?? secondary.human_description,
+    started_at: primary.started_at ?? secondary.started_at,
+    run_after: primary.run_after ?? secondary.run_after,
+    retry_state: primary.retry_state ?? secondary.retry_state,
+    token_usage: primaryTelemetryIsWeaker ? secondary.token_usage : primary.token_usage
+  };
+}
+
+function preferredAgentWorkerEvent(left: AgentWorkerEvent, right: AgentWorkerEvent): AgentWorkerEvent {
+  const leftRank = workerStatusRank(left.status);
+  const rightRank = workerStatusRank(right.status);
+  if (leftRank !== rightRank) return leftRank < rightRank ? left : right;
+  if (left.token_usage.is_estimate !== right.token_usage.is_estimate) {
+    return left.token_usage.is_estimate ? right : left;
+  }
+  const leftDescriptionScore = Number(Boolean(left.human_description?.title || left.human_description?.summary));
+  const rightDescriptionScore = Number(Boolean(right.human_description?.title || right.human_description?.summary));
+  if (leftDescriptionScore !== rightDescriptionScore) return leftDescriptionScore > rightDescriptionScore ? left : right;
+  const leftTime = Date.parse(left.updated_at ?? left.created_at ?? "") || 0;
+  const rightTime = Date.parse(right.updated_at ?? right.created_at ?? "") || 0;
+  return rightTime >= leftTime ? right : left;
+}
+
 function isLiveWorkerStatus(status: string) {
   return status === "running";
 }
 
 function isWaitingWorkerStatus(status: string) {
-  return ["queued", "approval_required", "starting", "between_turns", "waiting_for_runner"].includes(status);
+  return ["queued", "approval_required", "starting", "between_turns", "waiting_for_runner", "waiting_for_agent"].includes(status);
 }
 
 function isRunningWorkerStatus(status: string) {
@@ -8612,6 +8661,7 @@ function isActiveWorkerEventAt(event: AgentWorkerEvent, now: number) {
 
 function jobActiveForActivity(job: Job, now: number = Date.now()) {
   if (job.status === "running" || job.status === "approval_required") return true;
+  if (job.status === "waiting_for_agent") return true;
   if (job.status === "queued") {
     if (isScheduledForFuture(job.run_after, now)) return false;
     return isRecentTimestamp(job.created_at, now, QUEUED_WORKER_ACTIVITY_TTL_MS);
@@ -8627,6 +8677,7 @@ function eventActiveForActivity(
   now: number
 ) {
   if (status === "running" || status === "approval_required") return explicitActive !== false;
+  if (status === "waiting_for_agent") return explicitActive !== false;
   if (status === "queued") {
     if (isScheduledForFuture(runAfter, now)) return false;
     return explicitActive !== false && isRecentTimestamp(createdAt, now, QUEUED_WORKER_ACTIVITY_TTL_MS);
@@ -8678,7 +8729,7 @@ function compareWorkerEvents(left: AgentWorkerEvent, right: AgentWorkerEvent) {
 function workerStatusRank(status: string) {
   if (status === "running") return 0;
   if (status === "approval_required") return 1;
-  if (["starting", "between_turns", "waiting_for_runner"].includes(status)) return 2;
+  if (["starting", "between_turns", "waiting_for_runner", "waiting_for_agent"].includes(status)) return 2;
   if (status === "queued") return 3;
   return 3;
 }
