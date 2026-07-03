@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 from typing import Any, cast
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from tabular_harness.core.config import Settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
-from tabular_harness.models.entities import Job
+from tabular_harness.models.entities import Base, Job
+from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.jobs import create_job
+from tabular_harness.worker.daemon import LocalWorkerDaemon
 
 
 def test_local_worker_daemon_processes_concrete_chat_jobs_from_lifespan(tmp_path: Path, monkeypatch: Any) -> None:
@@ -100,3 +105,35 @@ def test_local_worker_daemon_does_not_succeed_stub_only_jobs(tmp_path: Path) -> 
             assert current is not None
             assert current.status == "queued"
             assert current.locked_by is None
+
+
+def test_local_worker_daemon_periodically_retries_agent_session_supervisor_recovery(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    calls: list[str] = []
+
+    def fake_supervisor_recovery(*args: object, **kwargs: object) -> list[threading.Thread]:
+        del args
+        calls.append(str(kwargs.get("lease_owner_id")))
+        return []
+
+    daemon = LocalWorkerDaemon(
+        session_factory,
+        store,
+        worker_id="recovery-daemon",
+        interval_seconds=0.02,
+        max_jobs_per_wake=1,
+        agent_session_supervisor_interval_seconds=0.05,
+        agent_session_supervisor_runner=fake_supervisor_recovery,
+    )
+    daemon.start()
+    try:
+        deadline = time.monotonic() + 1.0
+        while len(calls) < 2 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert len(calls) >= 2
+        assert all(call.startswith("worker-daemon:recovery-daemon:thread:") for call in calls)
+    finally:
+        daemon.stop()

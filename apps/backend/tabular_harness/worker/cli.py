@@ -29,14 +29,28 @@ def main() -> None:
     session_factory = create_session_factory(engine)
     worker = create_default_worker(worker_id=args.worker_id, include_stub_handlers=False)
     artifact_store = LocalArtifactStore(settings.artifact_root)
+    supervisor_recovery_interval_seconds = 15.0
+    next_supervisor_recovery_at = 0.0
     if not args.once and not args.no_agent_session_supervisor:
         start_active_main_session_supervisors(
             session_factory,
             artifact_store,
             lease_owner_id=f"worker:{args.worker_id}:pid:{os.getpid()}",
         )
+        next_supervisor_recovery_at = time.monotonic() + supervisor_recovery_interval_seconds
 
     while True:
+        if (
+            not args.once
+            and not args.no_agent_session_supervisor
+            and time.monotonic() >= next_supervisor_recovery_at
+        ):
+            start_active_main_session_supervisors(
+                session_factory,
+                artifact_store,
+                lease_owner_id=f"worker:{args.worker_id}:pid:{os.getpid()}",
+            )
+            next_supervisor_recovery_at = time.monotonic() + supervisor_recovery_interval_seconds
         with session_factory() as session:
             job = worker.run_next_job(session)
             session.commit()

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from tabular_harness.services.agent_sessions import start_active_main_session_supervisors
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.worker.jobs import create_default_worker
+
+AgentSessionSupervisorRunner = Callable[..., list[threading.Thread]]
 
 
 @dataclass
@@ -16,10 +21,14 @@ class LocalWorkerDaemon:
     worker_id: str = "local-worker-daemon"
     interval_seconds: float = 1.0
     max_jobs_per_wake: int = 3
+    agent_session_supervisor_enabled: bool = True
+    agent_session_supervisor_interval_seconds: float = 15.0
+    agent_session_supervisor_runner: AgentSessionSupervisorRunner = start_active_main_session_supervisors
 
     def __post_init__(self) -> None:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._next_agent_session_supervisor_check_at = 0.0
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -40,6 +49,7 @@ class LocalWorkerDaemon:
     def _run(self) -> None:
         worker = create_default_worker(worker_id=self.worker_id, store=self.store, include_stub_handlers=False)
         while not self._stop_event.is_set():
+            self._maybe_recover_agent_session_supervisors()
             ran_job = False
             for _ in range(max(1, self.max_jobs_per_wake)):
                 if self._stop_event.is_set():
@@ -51,3 +61,20 @@ class LocalWorkerDaemon:
                     ran_job = True
             if not ran_job:
                 self._stop_event.wait(max(0.1, self.interval_seconds))
+
+    def _maybe_recover_agent_session_supervisors(self) -> None:
+        if not self.agent_session_supervisor_enabled:
+            return
+        now = time.monotonic()
+        if now < self._next_agent_session_supervisor_check_at:
+            return
+        interval = max(0.1, self.agent_session_supervisor_interval_seconds)
+        self._next_agent_session_supervisor_check_at = now + interval
+        try:
+            self.agent_session_supervisor_runner(
+                self.session_factory,
+                self.store,
+                lease_owner_id=f"worker-daemon:{self.worker_id}:thread:{threading.get_ident()}",
+            )
+        except Exception:
+            self._next_agent_session_supervisor_check_at = now + interval
