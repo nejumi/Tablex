@@ -25,6 +25,7 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
             "source_artifact_id": None,
             "response_locale": locale,
             "generated_at": utc_now().isoformat(),
+            "localization": research_plan_localization_summary([], locale=locale),
             "blocks": [],
         }
     try:
@@ -38,6 +39,7 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
         "source_artifact_id": artifact.id,
         "response_locale": locale,
         "generated_at": artifact.created_at.isoformat(),
+        "localization": research_plan_localization_summary(raw_blocks, locale=locale),
         "blocks": clean_research_plan_timeline_blocks(raw_blocks, locale=locale),
     }
 
@@ -58,6 +60,11 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None =
         block_id = raw_block.get("id")
         evidence = _research_plan_block_evidence(raw_block, locale=locale)
         subtitle = _research_plan_block_subtitle(raw_block, locale=locale)
+        missing_localization_fields = _research_plan_missing_localization_fields(
+            raw_block,
+            locale=locale,
+            fields=("title", "subtitle", "why_it_matters", "next_action", "done_criteria", "notes", "blockers"),
+        )
         blocks.append(
             {
                 "id": block_id if isinstance(block_id, str) and block_id.strip() else f"plan_block_{index}",
@@ -76,6 +83,8 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None =
                     _research_plan_localized_value(raw_block, "blockers", locale=locale), limit=6
                 ),
                 "supporting_artifacts": _research_plan_supporting_artifacts(raw_block.get("supporting_artifacts"), limit=8),
+                "localization_status": "needs_locale_refresh" if missing_localization_fields else "localized",
+                "missing_localization_fields": missing_localization_fields,
             }
         )
     return blocks
@@ -96,6 +105,11 @@ def clean_research_plan_timeline_subtasks(raw_subtasks: Any, *, locale: str | No
         status = raw_status if isinstance(raw_status, str) and raw_status in statuses else "pending"
         subtask_id = raw_subtask.get("id")
         evidence = _research_plan_localized_value(raw_subtask, "evidence", locale=locale)
+        missing_localization_fields = _research_plan_missing_localization_fields(
+            raw_subtask,
+            locale=locale,
+            fields=("title", "detail", "subtitle", "evidence"),
+        )
         subtasks.append(
             {
                 "id": subtask_id if isinstance(subtask_id, str) and subtask_id.strip() else f"subtask_{index}",
@@ -109,9 +123,54 @@ def clean_research_plan_timeline_subtasks(raw_subtasks: Any, *, locale: str | No
                 "evidence": str(evidence).strip()[:240] if evidence is not None else None,
                 "target_tab": raw_subtask.get("target_tab") if isinstance(raw_subtask.get("target_tab"), str) else None,
                 "target_anchor": raw_subtask.get("target_anchor") if isinstance(raw_subtask.get("target_anchor"), str) else None,
+                "localization_status": "needs_locale_refresh" if missing_localization_fields else "localized",
+                "missing_localization_fields": missing_localization_fields,
             }
         )
     return subtasks
+
+
+def research_plan_localization_summary(raw_blocks: Any, *, locale: str | None = None) -> dict[str, Any]:
+    if not isinstance(raw_blocks, list):
+        raw_blocks = []
+    block_issues: list[dict[str, Any]] = []
+    subtask_issue_count = 0
+    for index, raw_block in enumerate(raw_blocks[:40], start=1):
+        if not isinstance(raw_block, dict):
+            continue
+        block_id = raw_block.get("id")
+        missing_fields = _research_plan_missing_localization_fields(
+            raw_block,
+            locale=locale,
+            fields=("title", "subtitle", "why_it_matters", "next_action", "done_criteria", "notes", "blockers"),
+        )
+        raw_subtasks = raw_block.get("subtasks")
+        if isinstance(raw_subtasks, list):
+            for raw_subtask in raw_subtasks[:80]:
+                if not isinstance(raw_subtask, dict):
+                    continue
+                subtask_missing = _research_plan_missing_localization_fields(
+                    raw_subtask,
+                    locale=locale,
+                    fields=("title", "detail", "subtitle", "evidence"),
+                )
+                if subtask_missing:
+                    subtask_issue_count += 1
+        if missing_fields:
+            block_issues.append(
+                {
+                    "id": block_id if isinstance(block_id, str) and block_id.strip() else f"plan_block_{index}",
+                    "title": str(raw_block.get("title") or "")[:160],
+                    "missing_fields": missing_fields,
+                }
+            )
+    return {
+        "requested_locale": locale,
+        "requires_explicit_locale": _research_plan_requires_explicit_locale(locale),
+        "missing_block_count": len(block_issues),
+        "missing_subtask_count": subtask_issue_count,
+        "blocks": block_issues[:20],
+    }
 
 
 def _research_plan_block_subtitle(raw_block: dict[str, Any], *, locale: str | None = None) -> str:
@@ -159,7 +218,7 @@ def _research_plan_localized_value(raw_block: dict[str, Any], key: str, *, local
             field_key = f"{key}_{locale_key.replace('-', '_')}"
             if field_key in raw_block:
                 return raw_block[field_key]
-    return _research_plan_locale_fallback(raw_block.get(key), key=key, locale=locale)
+    return raw_block.get(key)
 
 
 def _research_plan_locale_keys(locale: str | None) -> list[str]:
@@ -204,14 +263,69 @@ def _research_plan_supporting_artifacts(value: Any, *, limit: int) -> list[dict[
     return output
 
 
-def _research_plan_locale_fallback(value: Any, *, key: str, locale: str | None) -> Any:
-    if not _research_plan_locale_is_japanese(locale):
-        return value
+def _research_plan_missing_localization_fields(
+    raw_block: dict[str, Any], *, locale: str | None, fields: tuple[str, ...]
+) -> list[str]:
+    if not _research_plan_requires_explicit_locale(locale):
+        return []
+    missing: list[str] = []
+    for key in fields:
+        if key not in raw_block:
+            continue
+        value = raw_block.get(key)
+        if not _research_plan_has_visible_value(value):
+            continue
+        if _research_plan_has_explicit_locale_value(raw_block, key, locale=locale):
+            continue
+        if _research_plan_value_matches_locale(value, locale=locale):
+            continue
+        missing.append(key)
+    return missing
+
+
+def _research_plan_has_explicit_locale_value(raw_block: dict[str, Any], key: str, *, locale: str | None) -> bool:
+    for locale_key in _research_plan_locale_keys(locale):
+        for container_key in ("localizations", "localized"):
+            container = raw_block.get(container_key)
+            localized = container.get(locale_key) if isinstance(container, dict) else None
+            if isinstance(localized, dict) and _research_plan_has_visible_value(localized.get(key)):
+                return True
+        field_key = f"{key}_{locale_key.replace('-', '_')}"
+        if _research_plan_has_visible_value(raw_block.get(field_key)):
+            return True
+    return False
+
+
+def _research_plan_has_visible_value(value: Any) -> bool:
     if isinstance(value, str):
-        return _research_plan_japanese_structured_text(value, key=key)
+        return bool(value.strip())
     if isinstance(value, list):
-        return [_research_plan_japanese_structured_text(item, key=key) if isinstance(item, str) else item for item in value]
-    return value
+        return any(_research_plan_has_visible_value(item) for item in value)
+    return value is not None
+
+
+def _research_plan_value_matches_locale(value: Any, *, locale: str | None) -> bool:
+    if isinstance(value, str):
+        return _research_plan_text_matches_locale(value, locale=locale)
+    if isinstance(value, list):
+        visible_items = [item for item in value if _research_plan_has_visible_value(item)]
+        if not visible_items:
+            return True
+        return all(_research_plan_value_matches_locale(item, locale=locale) for item in visible_items)
+    return True
+
+
+def _research_plan_text_matches_locale(value: str, *, locale: str | None) -> bool:
+    if not _research_plan_locale_is_japanese(locale):
+        return False
+    return bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", value))
+
+
+def _research_plan_requires_explicit_locale(locale: str | None) -> bool:
+    if not isinstance(locale, str) or not locale.strip():
+        return False
+    language = locale.strip().replace("_", "-").split("-", 1)[0].lower()
+    return language not in {"", "en"}
 
 
 def _research_plan_locale_is_japanese(locale: str | None) -> bool:
@@ -227,61 +341,3 @@ def _research_plan_count_label(count: int, noun: str, *, locale: str | None) -> 
     if noun == "blocker":
         return f"{count} blocker{'s' if count != 1 else ''}"
     return f"{count} evidence"
-
-
-_RESEARCH_PLAN_JA_TITLE_FALLBACKS = {
-    "approval blocker handoff": "承認ブロッカー引き継ぎ",
-    "approval decision brief": "承認判断ブリーフ",
-    "approval response contract": "承認回答の契約",
-    "approval response intake guard": "承認回答の取り込みガード",
-    "approval review evidence pack": "承認レビュー用の根拠パック",
-    "baseline and diagnostics": "ベースラインと診断",
-    "baseline, diagnostics, release candidate evidence": "ベースライン・診断・リリース候補の根拠",
-    "baseline、diagnostics、release candidate evidence": "ベースライン・診断・リリース候補の根拠",
-    "contextual money mention triage": "文脈別の金額表現トリアージ",
-    "data owner approval request": "データオーナーへの承認依頼",
-    "data owner faq": "データオーナーFAQ",
-    "data owner response kit": "データオーナー回答キット",
-    "feature availability and leakage surface audit": "特徴量利用可否と漏洩面の監査",
-    "inbox delivery acknowledgement": "受信箱反映の確認",
-    "post-response execution runbook": "回答後の実行手順",
-    "prior-knowledge research anchors": "従来知見の調査アンカー",
-    "target policy human resolution": "ターゲット方針の人間確認",
-    "target policy response dry-run harness": "ターゲット方針回答のドライランハーネス",
-    "target policy risk register": "ターゲット方針リスク台帳",
-    "target-free input schema guard": "ターゲット非依存の入力スキーマガード",
-    "text compensation leakage audit": "テキスト内報酬表現の漏洩監査",
-    "text scrub blast radius": "テキストマスク影響範囲",
-    "text scrub policy contract": "テキストマスク方針契約",
-    "text scrub policy simulator": "テキストマスク方針シミュレーター",
-}
-
-_RESEARCH_PLAN_JA_TITLE_PHRASE_FALLBACKS = {
-    "project context": "プロジェクト文脈",
-}
-
-
-def _research_plan_japanese_structured_text(value: str, *, key: str) -> str:
-    text = value.strip()
-    if not text:
-        return value
-    if key == "evidence":
-        count_match = re.fullmatch(r"(\d+)\s+(evidence|blockers?)", text, flags=re.IGNORECASE)
-        if count_match:
-            noun = "blocker" if count_match.group(2).lower().startswith("blocker") else "evidence"
-            return _research_plan_count_label(int(count_match.group(1)), noun, locale="ja-JP")
-    if key != "title":
-        return value
-    version_match = re.search(r"\s+(v\d+)$", text, flags=re.IGNORECASE)
-    version = f" {version_match.group(1)}" if version_match else ""
-    base = text[: version_match.start()].strip() if version_match else text
-    normalized = re.sub(r"[_\s]+", " ", base.replace("/", " ").strip()).lower()
-    translated = _RESEARCH_PLAN_JA_TITLE_FALLBACKS.get(normalized)
-    if translated:
-        return f"{translated}{version}"
-    display = text
-    for source, target in sorted(_RESEARCH_PLAN_JA_TITLE_PHRASE_FALLBACKS.items(), key=lambda item: len(item[0]), reverse=True):
-        display = re.sub(re.escape(source), target, display, flags=re.IGNORECASE)
-    if display != text:
-        return display
-    return value

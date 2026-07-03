@@ -1906,16 +1906,23 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized_response.status_code == 200
     localized = localized_response.json()
     assert localized["response_locale"] == "ja-JP"
+    assert localized["localization"]["requires_explicit_locale"] is True
+    assert localized["localization"]["missing_block_count"] == 2
+    assert localized["localization"]["missing_subtask_count"] == 0
     assert localized["blocks"][0]["title"] == "深いEDA"
     assert localized["blocks"][0]["subtitle"] == "salaryの裾とリレーショナルなカバレッジを確認します。"
     assert localized["blocks"][0]["next_action"] == "EDAノートブックを開き、裾の見立てを確認します。"
     assert localized["blocks"][0]["done_criteria"] == "裾のリスクが読めるartifactで記録されていること。"
     assert localized["blocks"][0]["blockers"] == ["データオーナー確認が未完了です。"]
+    assert localized["blocks"][0]["localization_status"] == "localized"
     assert localized["blocks"][0]["subtasks"][0]["title"] == "高salary裾の確認"
     assert localized["blocks"][0]["subtasks"][0]["detail"] == "裾ラベルに別の判断経路が必要か確認します。"
-    assert localized["blocks"][1]["title"] == "承認回答の契約 v19"
+    assert localized["blocks"][1]["title"] == "approval response contract v19"
+    assert localized["blocks"][1]["localization_status"] == "needs_locale_refresh"
+    assert localized["blocks"][1]["missing_localization_fields"] == ["title", "why_it_matters", "blockers"]
     assert localized["blocks"][1]["evidence"] == "ブロッカー 2件"
     assert localized["blocks"][2]["status"] == "pending"
+    assert localized["blocks"][2]["localization_status"] == "needs_locale_refresh"
 
 
 def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_path: Path) -> None:

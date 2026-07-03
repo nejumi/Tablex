@@ -43,6 +43,7 @@ from tabular_harness.services.artifacts import (
     next_artifact_version,
     register_artifact,
 )
+from tabular_harness.services.research_plan_timeline import research_plan_localization_summary
 
 MAIN_AUTONOMOUS_SESSION_TYPE = "main_autonomous"
 ACTIVE_SESSION_STATUSES = {"starting", "running", "between_turns", "waiting_for_runner"}
@@ -1091,6 +1092,7 @@ def build_session_context(db: Session, *, project: Project, session: AgentSessio
     )
     response_locale = latest_project_response_locale(db, project)
     equipped_skills = equipped_skill_context(db, skill_references)
+    latest_research_plan_artifact = next((item for item in artifacts if item.asset_type == "research_plan"), None)
     return {
         "schema_version": "tablex_agent_session_context.v1",
         "project": {
@@ -1132,6 +1134,10 @@ def build_session_context(db: Session, *, project: Project, session: AgentSessio
             for item in artifacts
         ],
         "equipped_skill_references": equipped_skills,
+        "research_plan_display": research_plan_display_context(
+            latest_research_plan_artifact,
+            response_locale=response_locale,
+        ),
         "output_contract": {
             "registerable_dirs": ["outputs", "reports", "notebooks", "artifacts"],
             "marimo_notebooks": "Place .py marimo notebooks under notebooks/ or outputs/notebooks/.",
@@ -1172,6 +1178,31 @@ def latest_project_response_locale(db: Session, project: Project) -> str:
     if user is not None and user.locale:
         return user.locale
     return "en-US"
+
+
+def research_plan_display_context(artifact: Artifact | None, *, response_locale: str) -> dict[str, Any]:
+    if artifact is None:
+        return {
+            "artifact_id": None,
+            "response_locale": response_locale,
+            "localization": research_plan_localization_summary([], locale=response_locale),
+        }
+    try:
+        payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+    except OSError:
+        payload = {}
+    raw_blocks = payload.get("timeline_blocks") if isinstance(payload, dict) else None
+    localization = research_plan_localization_summary(raw_blocks, locale=response_locale)
+    return {
+        "artifact_id": artifact.id,
+        "path": str(artifact_primary_path(artifact)),
+        "response_locale": response_locale,
+        "localization": localization,
+        "instruction": (
+            "If missing_block_count or missing_subtask_count is nonzero, update outputs/research_plan.json "
+            "so every human-visible timeline string is in response_locale or has an explicit localization entry."
+        ),
+    }
 
 
 def equipped_skill_context(db: Session, references: list[AssetReference]) -> list[dict[str, Any]]:
@@ -1239,6 +1270,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Register important outputs by writing files under outputs/, reports/, notebooks/, or artifacts/.",
         "- Keep a living plan when it helps the user follow the work: write `outputs/research_plan.json` with `schema_version: \"research_plan.v1\"` and optional `timeline_blocks`. Use `timeline_blocks` only as a display contract: after data upload, objective/task framing, data understanding, and prior-knowledge research anchors, freely add, remove, reorder, branch, or revise project-specific blocks. Mark a block done only when the supporting artifact exists or you explicitly record that no useful output is needed.",
         "- For `outputs/research_plan.json` timeline_blocks, write every human-visible string in `.tablex/context.json` `human_interface.response_locale`. If you need a canonical English copy, put localized display fields under `localizations` and keep the active locale complete.",
+        "- If `.tablex/context.json` `research_plan_display.localization` reports missing locale fields, repair the ResearchPlan display fields or add `localizations` for the active locale before extending the plan. Do not leave mixed-language plan titles or subtitles in the user-facing timeline.",
         "- Keep human-facing accountability continuous: when you make meaningful progress, hit uncertainty, start or finish a long-running step, recover from an error, change the plan, or need the user to know what changed, overwrite `reports/chat_update.md` with only the latest concise update in the user's locale. Keep it under 1200 characters. Use separate report files for long history. Do not wait for Tablex to infer this from logs.",
         "- Treat `reports/chat_update.md` as a user-facing explanation, not an internal changelog: say what you are doing now, why it matters, what changed, what uncertainty remains, and where the user should look next. Avoid raw artifact IDs, hashes, filenames, internal schema names, and implementation vocabulary unless they are necessary for a user decision.",
         "- In Full Auto progress reports, do not make approval-waiting the dominant status. If an unconfirmed decision exists, pair it with the concrete reversible work that is continuing now, and make that active work the headline.",

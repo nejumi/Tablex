@@ -397,6 +397,8 @@ const englishMessages = {
   researchPlanDetailDoneCriteria: "Done criteria",
   researchPlanDetailBlockers: "Blockers",
   researchPlanDetailEvidence: "Evidence",
+  researchPlanDetailLocaleRefresh: "Display language",
+  researchPlanLocaleRefreshDetail: "Codex needs to refresh this plan block in the selected locale.",
   researchPlanSummaryBlock: "block",
   researchPlanSummaryBlocks: "blocks",
   planBlockDataUpload: "Data upload",
@@ -475,6 +477,10 @@ const englishMessages = {
   agentModeRaw: "Raw",
   rawAgentTitle: "Raw Codex transcript",
   rawAgentEmpty: "No Codex execution transcript is available yet. Start the agent or send a message to begin.",
+  rawAgentTail: "tail",
+  rawAgentStdout: "stdout",
+  rawAgentStderr: "stderr",
+  rawAgentUpdated: "updated",
   openSurface: "Open",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "One guided next step from the current project evidence.",
@@ -797,6 +803,8 @@ const japaneseMessages: LocaleMessages = {
   researchPlanDetailDoneCriteria: "完了条件",
   researchPlanDetailBlockers: "止めているもの",
   researchPlanDetailEvidence: "根拠",
+  researchPlanDetailLocaleRefresh: "表示言語",
+  researchPlanLocaleRefreshDetail: "Codexがこの計画ブロックを選択中の言語で更新する必要があります。",
   researchPlanSummaryBlock: "ブロック",
   researchPlanSummaryBlocks: "ブロック",
   planBlockDataUpload: "データアップロード",
@@ -875,6 +883,10 @@ const japaneseMessages: LocaleMessages = {
   agentModeRaw: "Raw",
   rawAgentTitle: "Raw Codex transcript",
   rawAgentEmpty: "Codexの実行transcriptはまだありません。Agentを開始するか、メッセージを送るとここに表示されます。",
+  rawAgentTail: "tail",
+  rawAgentStdout: "stdout",
+  rawAgentStderr: "stderr",
+  rawAgentUpdated: "更新",
   openSurface: "開く",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "現在の根拠に基づく次の一手を表示します。",
@@ -2018,6 +2030,8 @@ type ResearchPlanTimelineBlock = {
     path: string;
     exists: boolean | null;
   }>;
+  localization_status?: "localized" | "needs_locale_refresh";
+  missing_localization_fields?: string[];
   subtasks: Array<{
     id: string;
     title: string;
@@ -2026,6 +2040,8 @@ type ResearchPlanTimelineBlock = {
     evidence: string | null;
     target_tab: string | null;
     target_anchor: string | null;
+    localization_status?: "localized" | "needs_locale_refresh";
+    missing_localization_fields?: string[];
   }>;
 };
 
@@ -2035,6 +2051,13 @@ type ResearchPlanTimelineResponse = {
   source_artifact_id: string | null;
   response_locale?: string | null;
   generated_at: string;
+  localization?: {
+    requested_locale?: string | null;
+    requires_explicit_locale?: boolean;
+    missing_block_count?: number;
+    missing_subtask_count?: number;
+    blocks?: Array<{ id: string; title: string; missing_fields: string[] }>;
+  };
   blocks: ResearchPlanTimelineBlock[];
 };
 
@@ -5796,6 +5819,15 @@ function researchPlanBlocksFromTimeline(
 
 function derivedResearchPlanSubtasks(block: ResearchPlanTimelineBlock, text: LocaleMessages): ResearchPlanSubtask[] {
   const derived: ResearchPlanSubtask[] = [];
+  if (block.localization_status === "needs_locale_refresh") {
+    derived.push({
+      id: `${block.id}:locale_refresh`,
+      title: text.researchPlanDetailLocaleRefresh,
+      detail: text.researchPlanLocaleRefreshDetail,
+      status: block.status === "done" ? "pending" : block.status,
+      evidence: block.missing_localization_fields?.length ? `${block.missing_localization_fields.length}` : null
+    });
+  }
   if (block.next_action) {
     derived.push({
       id: `${block.id}:next_action`,
@@ -6947,10 +6979,11 @@ function RawAgentStream({
   const latestEvent = events[events.length - 1];
   const rawLines = React.useMemo<AgentRawTranscriptViewLine[]>(() => {
     if (!rawTranscript) return [];
-    return [
+    const lines = [
       ...(rawTranscript.stdout_tail_lines ?? []).map((line) => ({ ...line, stream: "stdout" as const })),
       ...(rawTranscript.stderr_tail_lines ?? []).map((line) => ({ ...line, stream: "stderr" as const }))
     ];
+    return lines.sort(compareRawTranscriptViewLines);
   }, [rawTranscript]);
   const rawKey = rawLines.length
     ? `${rawTranscript?.session_id ?? "raw"}:${rawTranscript?.stdout_line_count ?? 0}:${
@@ -6988,10 +7021,11 @@ function RawAgentStream({
       <div className="raw-agent-head">
         <span>{text.rawAgentTitle}</span>
         <small>
-          {rawLines.length ? `${rawLines.length} JSONL tail lines` : `${events.length} transcript items`}
+          {rawLines.length ? rawTranscriptTailSummary(rawTranscript, rawLines, text) : `${events.length} transcript items`}
           {rawTranscript?.session_id
-            ? ` · JSONL ${rawTranscript.stdout_line_count} lines · stderr ${rawTranscript.stderr_line_count}`
+            ? ` · ${text.rawAgentStdout} ${rawTranscript.stdout_line_count} · ${text.rawAgentStderr} ${rawTranscript.stderr_line_count}`
             : ""}
+          {rawTranscript?.updated_at ? ` · ${text.rawAgentUpdated} ${formatDate(rawTranscript.updated_at)}` : ""}
         </small>
       </div>
       <TurnStateBar text={text} turnState={turnState} />
@@ -7033,6 +7067,51 @@ function RawAgentStream({
       </form>
     </div>
   );
+}
+
+function compareRawTranscriptViewLines(left: AgentRawTranscriptViewLine, right: AgentRawTranscriptViewLine): number {
+  const leftTime = rawTranscriptLineTimeMs(left);
+  const rightTime = rawTranscriptLineTimeMs(right);
+  if (leftTime !== null && rightTime !== null && leftTime !== rightTime) return leftTime - rightTime;
+  return rawTranscriptLineFallbackOrder(left) - rawTranscriptLineFallbackOrder(right);
+}
+
+function rawTranscriptLineTimeMs(line: AgentRawTranscriptViewLine): number | null {
+  const event = line.parsed;
+  const parsedTimestamp =
+    textField(event?.timestamp) ?? textField(event?.time) ?? textField(event?.created_at) ?? textField(event?.createdAt);
+  const timestamp = parsedTimestamp ?? line.text.match(/\d{4}-\d{2}-\d{2}T[^\s]+/)?.[0] ?? null;
+  if (!timestamp) return null;
+  const value = Date.parse(timestamp);
+  return Number.isFinite(value) ? value : null;
+}
+
+function rawTranscriptLineFallbackOrder(line: AgentRawTranscriptViewLine): number {
+  const streamRank = line.stream === "stdout" ? 0 : 1;
+  return streamRank * 1_000_000_000 + line.line_number;
+}
+
+function rawTranscriptTailSummary(
+  rawTranscript: AgentRawTranscript | null,
+  rawLines: AgentRawTranscriptViewLine[],
+  text: LocaleMessages
+): string {
+  const stdoutTailCount = rawTranscript?.stdout_tail_lines?.length ?? 0;
+  const stderrTailCount = rawTranscript?.stderr_tail_lines?.length ?? 0;
+  const stdoutRange = rawTranscriptLineRange(rawTranscript?.stdout_tail_lines ?? []);
+  const stderrRange = rawTranscriptLineRange(rawTranscript?.stderr_tail_lines ?? []);
+  return [
+    `${rawLines.length} ${text.rawAgentTail}`,
+    `${text.rawAgentStdout} ${stdoutTailCount}${stdoutRange}`,
+    `${text.rawAgentStderr} ${stderrTailCount}${stderrRange}`
+  ].join(" · ");
+}
+
+function rawTranscriptLineRange(lines: AgentRawTranscriptLine[]): string {
+  const first = lines[0]?.line_number;
+  const last = lines[lines.length - 1]?.line_number;
+  if (typeof first !== "number" || typeof last !== "number") return "";
+  return first === last ? ` #${first}` : ` #${first}-#${last}`;
 }
 
 function RawTranscriptLineCard({ line, active }: { line: AgentRawTranscriptViewLine; active: boolean }) {
