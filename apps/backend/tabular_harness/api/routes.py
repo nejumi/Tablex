@@ -136,7 +136,6 @@ from tabular_harness.schemas import (
 )
 from tabular_harness.services.adaptive_strategy import (
     build_adaptive_strategy_brief,
-    create_adaptive_strategy_brief,
 )
 from tabular_harness.services.agent_chat_status import agent_chat_wait_state
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
@@ -162,7 +161,6 @@ from tabular_harness.services.agent_sessions import (
     supervisor_slot_active,
     transcript_event_to_dict,
 )
-from tabular_harness.services.agent_task_planner import plan_project_agent_task
 from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
 from tabular_harness.services.agent_task_results import list_agent_task_result_summaries
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
@@ -4279,9 +4277,8 @@ def get_project_strategy_brief(
 def create_project_strategy_brief(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     job = create_job(
         db,
         job_type="create_adaptive_strategy_brief",
@@ -4293,28 +4290,6 @@ def create_project_strategy_brief(
             "connector_credentials": "not_materialized",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_adaptive_strategy_brief(db, store=store, project=project, job=job)
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.brief["schema_version"],
-                "adaptive_strategy_brief_artifact_id": result.artifact.id,
-                "adaptive_strategy_report_id": result.report.id,
-                "adaptive_strategy_report_artifact_id": result.report_artifact.id,
-                "visualization_id": result.visualization.id,
-                "visualization_artifact_id": result.visualization_artifact.id,
-                "artifact_id": result.artifact.id,
-                "artifact_ids": result.artifact_ids,
-                "recommended_action_type": result.brief["recommended_next_action"]["action_type"],
-                "recommended_label": result.brief["recommended_next_action"]["label"],
-                "lane_count": len(result.brief["candidate_lanes"]),
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -4322,9 +4297,8 @@ def create_project_strategy_brief(
 def generate_project_research_plan(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     dataset = latest_dataset(db, project_id)
     spec = latest_approved_spec(db, project_id)
     job = create_job(
@@ -4338,28 +4312,6 @@ def generate_project_research_plan(
             "connector_credentials": "not_materialized",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_research_plan(
-            db,
-            store=store,
-            project=project,
-            dataset=dataset,
-            evaluation_spec=spec,
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.plan["schema_version"],
-                "artifact_id": result.artifact.id,
-                "query_count": len(result.plan.get("query_plan", [])),
-                "recommended_asset_count": len(result.plan.get("skill_plan", {}).get("recommended_references", [])),
-                "network_default": result.plan["source_policy"]["network_default"],
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -4368,9 +4320,8 @@ def plan_project_agent_task_endpoint(
     project_id: str,
     payload: AgentTaskPlanCreate,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     job = create_job(
         db,
         job_type="plan_agent_task",
@@ -4382,37 +4333,6 @@ def plan_project_agent_task_endpoint(
             "connector_credentials": "not_materialized",
         },
     )
-    try:
-        mark_job_running(job)
-        result = plan_project_agent_task(
-            db,
-            store=store,
-            project=project,
-            job=job,
-            objective=payload.objective,
-            task_type=payload.task_type,
-        )
-        inputs = cast(dict[str, Any], result.contract["inputs"])
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": inputs["schema_version"],
-                "task_id": result.contract["task_id"],
-                "agent_task_contract_artifact_id": result.artifact.id,
-                "artifact_id": result.artifact.id,
-                "artifact_ids": [result.artifact.id],
-                "dataset_snapshot_id": result.dataset_snapshot_id,
-                "evaluation_spec_id": result.evaluation_spec_id,
-                "split_manifest_id": result.split_manifest_id,
-                "recommended_approach_count": len(inputs["recommended_approach_candidates"]),
-                "research_query_count": len(inputs["research_queries"]),
-                "recommended_asset_count": len(inputs["library_recommendations"]),
-                "artifact_expectation_count": len(inputs["artifact_expectations"]),
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 

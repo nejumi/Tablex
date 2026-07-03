@@ -50,7 +50,11 @@ from tabular_harness.services.agent_sessions import (
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.jobs import acquire_next_job, create_job, reap_stale_running_jobs
-from tabular_harness.worker.jobs import agent_chat_turn_handler, continue_autonomous_session_handler
+from tabular_harness.worker.jobs import (
+    agent_chat_turn_handler,
+    continue_autonomous_session_handler,
+    create_default_worker,
+)
 from tabular_harness.worker.runner import SyncWorker
 
 
@@ -72,6 +76,17 @@ def run_queued_agent_chat_turn(client: TestClient, job_id: str) -> dict[str, Any
         job = db.get(Job, job_id)
         assert job is not None
         worker = SyncWorker(handlers={"agent_chat_turn": agent_chat_turn_handler}, store=app.state.artifact_store)
+        completed = worker.run_job(db, job)
+        assert completed.status == "succeeded", completed.error_message
+        return loads_json(completed.output_json, {})
+
+
+def run_queued_job(client: TestClient, job_id: str) -> dict[str, Any]:
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        job = db.get(Job, job_id)
+        assert job is not None
+        worker = create_default_worker(store=app.state.artifact_store)
         completed = worker.run_job(db, job)
         assert completed.status == "succeeded", completed.error_message
         return loads_json(completed.output_json, {})
@@ -3553,12 +3568,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     strategy_brief_job_response = client.post(f"/api/projects/{project_id}/approach/strategy-brief")
     assert strategy_brief_job_response.status_code == 200, strategy_brief_job_response.text
     strategy_brief_job = strategy_brief_job_response.json()
-    assert strategy_brief_job["status"] == "succeeded"
-    assert strategy_brief_job["output"]["adaptive_strategy_brief_artifact_id"]
-    assert strategy_brief_job["output"]["adaptive_strategy_report_artifact_id"]
-    assert strategy_brief_job["output"]["visualization_artifact_id"]
+    assert strategy_brief_job["status"] == "queued"
+    strategy_brief_output = run_queued_job(client, strategy_brief_job["id"])
+    assert strategy_brief_output["adaptive_strategy_brief_artifact_id"]
+    assert strategy_brief_output["adaptive_strategy_report_artifact_id"]
+    assert strategy_brief_output["visualization_artifact_id"]
     strategy_brief_preview_response = client.get(
-        f"/api/artifacts/{strategy_brief_job['output']['adaptive_strategy_brief_artifact_id']}/preview"
+        f"/api/artifacts/{strategy_brief_output['adaptive_strategy_brief_artifact_id']}/preview"
     )
     assert strategy_brief_preview_response.status_code == 200
     assert "adaptive_strategy_brief.v1" in strategy_brief_preview_response.json()["preview"]
@@ -3766,12 +3782,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     research_plan_response = client.post(f"/api/projects/{project_id}/approach/research-plan")
     assert research_plan_response.status_code == 200, research_plan_response.text
     research_plan_job = research_plan_response.json()
-    assert research_plan_job["status"] == "succeeded"
-    research_plan_artifact_id = research_plan_job["output"]["artifact_id"]
-    assert research_plan_job["output"]["schema_version"] == "research_plan.v1"
-    assert research_plan_job["output"]["query_count"] >= 2
-    assert research_plan_job["output"]["recommended_asset_count"] >= 4
-    assert research_plan_job["output"]["network_default"] == "disabled_until_runner_policy_allows"
+    assert research_plan_job["status"] == "queued"
+    research_plan_output = run_queued_job(client, research_plan_job["id"])
+    research_plan_artifact_id = research_plan_output["artifact_id"]
+    assert research_plan_output["schema_version"] == "research_plan.v1"
+    assert research_plan_output["query_count"] >= 2
+    assert research_plan_output["recommended_asset_count"] >= 4
+    assert research_plan_output["network_default"] == "disabled_until_runner_policy_allows"
 
     research_plan_preview_response = client.get(f"/api/artifacts/{research_plan_artifact_id}/preview")
     assert research_plan_preview_response.status_code == 200
@@ -3852,20 +3869,21 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     agent_task_plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
     assert agent_task_plan_response.status_code == 200, agent_task_plan_response.text
     agent_task_plan_job = agent_task_plan_response.json()
-    assert agent_task_plan_job["status"] == "succeeded"
-    assert agent_task_plan_job["output"]["schema_version"] == "agent_task_planning.v1"
-    assert agent_task_plan_job["output"]["agent_task_contract_artifact_id"]
-    assert agent_task_plan_job["output"]["recommended_approach_count"] >= 2
-    assert agent_task_plan_job["output"]["research_query_count"] >= 2
-    assert agent_task_plan_job["output"]["recommended_asset_count"] >= 4
+    assert agent_task_plan_job["status"] == "queued"
+    agent_task_plan_output = run_queued_job(client, agent_task_plan_job["id"])
+    assert agent_task_plan_output["schema_version"] == "agent_task_planning.v1"
+    assert agent_task_plan_output["agent_task_contract_artifact_id"]
+    assert agent_task_plan_output["recommended_approach_count"] >= 2
+    assert agent_task_plan_output["research_query_count"] >= 2
+    assert agent_task_plan_output["recommended_asset_count"] >= 4
 
     agent_task_plan_preview_response = client.get(
-        f"/api/artifacts/{agent_task_plan_job['output']['agent_task_contract_artifact_id']}/preview"
+        f"/api/artifacts/{agent_task_plan_output['agent_task_contract_artifact_id']}/preview"
     )
     assert agent_task_plan_preview_response.status_code == 200
     assert agent_task_plan_preview_response.json()["preview_available"] is True
     agent_task_plan_download_response = client.get(
-        f"/api/artifacts/{agent_task_plan_job['output']['agent_task_contract_artifact_id']}/download"
+        f"/api/artifacts/{agent_task_plan_output['agent_task_contract_artifact_id']}/download"
     )
     assert agent_task_plan_download_response.status_code == 200
     agent_task_contract = agent_task_plan_download_response.json()
@@ -3884,14 +3902,14 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert agent_task_contract["inputs"]["research_source_policy"]["network_default"] == (
         "disabled_until_runner_policy_allows"
     )
-    assert agent_task_contract["inputs"]["adaptive_strategy_brief"]["artifact_id"] == strategy_brief_job["output"][
+    assert agent_task_contract["inputs"]["adaptive_strategy_brief"]["artifact_id"] == strategy_brief_output[
         "adaptive_strategy_brief_artifact_id"
     ]
     assert agent_task_contract["inputs"]["open_ended_approach_space"]["strategy_brief_available"] is True
     assert "skills/tablex-grandmaster-eda/SKILL.md" in agent_task_contract["context_files"]
     assert any(
         item["role"] == "adaptive_strategy_brief"
-        and item["artifact_id"] == strategy_brief_job["output"]["adaptive_strategy_brief_artifact_id"]
+        and item["artifact_id"] == strategy_brief_output["adaptive_strategy_brief_artifact_id"]
         for item in agent_task_contract["inputs"]["available_context_artifacts"]
     )
     assert any(
@@ -3902,20 +3920,20 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     agent_task_job_artifacts_response = client.get(f"/api/jobs/{agent_task_plan_job['id']}/artifacts")
     assert agent_task_job_artifacts_response.status_code == 200
     agent_task_job_artifacts = agent_task_job_artifacts_response.json()
-    assert agent_task_job_artifacts["summary"]["task_id"] == agent_task_plan_job["output"]["task_id"]
+    assert agent_task_job_artifacts["summary"]["task_id"] == agent_task_plan_output["task_id"]
     assert agent_task_job_artifacts["summary"]["recommended_approach_count"] >= 2
     assert agent_task_job_artifacts["missing_artifact_ids"] == []
     assert agent_task_job_artifacts["artifacts"][0]["asset_type"] == "agent_task_contract"
 
     planned_workspace_response = client.post(
-        f"/api/agent-task-contracts/{agent_task_plan_job['output']['agent_task_contract_artifact_id']}/prepare-workspace"
+        f"/api/agent-task-contracts/{agent_task_plan_output['agent_task_contract_artifact_id']}/prepare-workspace"
     )
     assert planned_workspace_response.status_code == 200, planned_workspace_response.text
     planned_workspace_job = planned_workspace_response.json()
     assert planned_workspace_job["status"] == "succeeded"
     assert planned_workspace_job["output"]["schema_version"] == "agent_workspace_manifest.v1"
     assert planned_workspace_job["output"]["agent_workspace_manifest_artifact_id"]
-    assert planned_workspace_job["output"]["agent_task_contract_artifact_id"] == agent_task_plan_job["output"][
+    assert planned_workspace_job["output"]["agent_task_contract_artifact_id"] == agent_task_plan_output[
         "agent_task_contract_artifact_id"
     ]
     assert planned_workspace_job["output"]["materialized_context_count"] >= 4
@@ -3926,7 +3944,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     )
     assert planned_workspace_download_response.status_code == 200
     planned_workspace_manifest = planned_workspace_download_response.json()
-    assert planned_workspace_manifest["source_contract_artifact_id"] == agent_task_plan_job["output"][
+    assert planned_workspace_manifest["source_contract_artifact_id"] == agent_task_plan_output[
         "agent_task_contract_artifact_id"
     ]
     assert ".harness/task_contract.json" in planned_workspace_manifest["files"]
@@ -3938,7 +3956,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
         for item in planned_workspace_manifest["materialized_sources"]
     )
     assert any(
-        item["artifact_id"] == strategy_brief_job["output"]["adaptive_strategy_brief_artifact_id"]
+        item["artifact_id"] == strategy_brief_output["adaptive_strategy_brief_artifact_id"]
         and item["source_kind"] == "context_artifact"
         for item in planned_workspace_manifest["materialized_sources"]
     )
@@ -3954,7 +3972,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     )
 
     readiness_response = client.post(
-        f"/api/agent-task-contracts/{agent_task_plan_job['output']['agent_task_contract_artifact_id']}/readiness-review"
+        f"/api/agent-task-contracts/{agent_task_plan_output['agent_task_contract_artifact_id']}/readiness-review"
     )
     assert readiness_response.status_code == 200, readiness_response.text
     readiness_job = readiness_response.json()
@@ -3997,7 +4015,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert "Agent Task Readiness Review" in readiness_report_preview_response.json()["preview"]
 
     planned_stub_response = client.post(
-        f"/api/agent-task-contracts/{agent_task_plan_job['output']['agent_task_contract_artifact_id']}/run-local-stub"
+        f"/api/agent-task-contracts/{agent_task_plan_output['agent_task_contract_artifact_id']}/run-local-stub"
     )
     assert planned_stub_response.status_code == 200, planned_stub_response.text
     planned_stub_job = planned_stub_response.json()
@@ -4026,7 +4044,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     )
     assert planned_trace_download_response.status_code == 200
     planned_trace = planned_trace_download_response.json()
-    assert planned_trace["context_used"]["adaptive_strategy_brief_artifact_id"] == strategy_brief_job["output"][
+    assert planned_trace["context_used"]["adaptive_strategy_brief_artifact_id"] == strategy_brief_output[
         "adaptive_strategy_brief_artifact_id"
     ]
     assert planned_trace["adaptive_strategy_guidance"]["fixed_recipe_policy"] == "advisory_candidates_only"
@@ -4721,7 +4739,10 @@ def test_planned_agent_task_stub_rejects_blocked_readiness(tmp_path: Path) -> No
 
     plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
     assert plan_response.status_code == 200, plan_response.text
-    contract_artifact_id = plan_response.json()["output"]["agent_task_contract_artifact_id"]
+    plan_job = plan_response.json()
+    assert plan_job["status"] == "queued"
+    plan_output = run_queued_job(client, plan_job["id"])
+    contract_artifact_id = plan_output["agent_task_contract_artifact_id"]
 
     run_response = client.post(f"/api/agent-task-contracts/{contract_artifact_id}/run-local-stub")
     assert run_response.status_code == 400
@@ -5616,8 +5637,11 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
 
     agent_task_plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
     assert agent_task_plan_response.status_code == 200, agent_task_plan_response.text
+    agent_task_plan_job = agent_task_plan_response.json()
+    assert agent_task_plan_job["status"] == "queued"
+    agent_task_plan_output = run_queued_job(client, agent_task_plan_job["id"])
     agent_contract_response = client.get(
-        f"/api/artifacts/{agent_task_plan_response.json()['output']['agent_task_contract_artifact_id']}/download"
+        f"/api/artifacts/{agent_task_plan_output['agent_task_contract_artifact_id']}/download"
     )
     assert agent_contract_response.status_code == 200
     assert agent_contract_response.json()["inputs"]["relational_feature_plan"]["artifact_id"] == relational_plan_job[
@@ -5630,7 +5654,7 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
         relational_diagnostics_job["output"]["relational_feature_scenario_diagnostics_artifact_id"]
     )
 
-    contract_artifact_id = agent_task_plan_response.json()["output"]["agent_task_contract_artifact_id"]
+    contract_artifact_id = agent_task_plan_output["agent_task_contract_artifact_id"]
     workspace_response = client.post(f"/api/agent-task-contracts/{contract_artifact_id}/prepare-workspace")
     assert workspace_response.status_code == 200, workspace_response.text
     workspace_job = workspace_response.json()

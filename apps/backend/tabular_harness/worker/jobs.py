@@ -2,19 +2,24 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.config import get_settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.models.entities import (
     Artifact,
+    DatasetSnapshot,
     EvaluationSpec,
     Job,
     Project,
     SplitManifest,
     utc_now,
 )
+from tabular_harness.services.adaptive_strategy import create_adaptive_strategy_brief
 from tabular_harness.services.agent_chat import handle_agent_chat_turn
+from tabular_harness.services.agent_task_planner import plan_project_agent_task
+from tabular_harness.services.approach import create_research_plan
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.autonomy import (
     RUNNER_MODE_CODEX_IF_AVAILABLE,
@@ -90,6 +95,160 @@ def agent_chat_turn_handler(db: Session, job: Job, store: LocalArtifactStore) ->
         "agent_task_contract_artifact_id": result.planned_agent_task.artifact.id
         if result.planned_agent_task
         else None,
+    }
+
+
+def create_adaptive_strategy_brief_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "create_adaptive_strategy_brief")
+    result = create_adaptive_strategy_brief(db, store=store, project=project, job=job)
+    return {
+        "schema_version": result.brief["schema_version"],
+        "adaptive_strategy_brief_artifact_id": result.artifact.id,
+        "adaptive_strategy_report_id": result.report.id,
+        "adaptive_strategy_report_artifact_id": result.report_artifact.id,
+        "visualization_id": result.visualization.id,
+        "visualization_artifact_id": result.visualization_artifact.id,
+        "artifact_id": result.artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "recommended_action_type": result.brief["recommended_next_action"]["action_type"],
+        "recommended_label": result.brief["recommended_next_action"]["label"],
+        "lane_count": len(result.brief["candidate_lanes"]),
+        "worker_events": [
+            approach_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Adaptive strategy brief created",
+                detail="Registered the strategy brief, report, and visualization artifacts.",
+                target_anchor="strategy-brief-focus",
+            )
+        ],
+    }
+
+
+def plan_research_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "plan_research")
+    dataset = latest_dataset(db, project.id)
+    spec = latest_approved_spec(db, project.id)
+    result = create_research_plan(
+        db,
+        store=store,
+        project=project,
+        dataset=dataset,
+        evaluation_spec=spec,
+    )
+    return {
+        "schema_version": result.plan["schema_version"],
+        "artifact_id": result.artifact.id,
+        "artifact_ids": [result.artifact.id],
+        "query_count": len(result.plan.get("query_plan", [])),
+        "recommended_asset_count": len(result.plan.get("skill_plan", {}).get("recommended_references", [])),
+        "network_default": result.plan["source_policy"]["network_default"],
+        "worker_events": [
+            approach_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Research plan created",
+                detail="Registered the controlled research handoff as an artifact.",
+                target_anchor="approach-handoff",
+            )
+        ],
+    }
+
+
+def plan_agent_task_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "plan_agent_task")
+    result = plan_project_agent_task(
+        db,
+        store=store,
+        project=project,
+        job=job,
+        objective=payload.get("objective") if isinstance(payload.get("objective"), str) else None,
+        task_type=str(payload.get("task_type") or "implement_prediction_approach"),
+    )
+    inputs = result.contract["inputs"]
+    return {
+        "schema_version": inputs["schema_version"],
+        "task_id": result.contract["task_id"],
+        "agent_task_contract_artifact_id": result.artifact.id,
+        "artifact_id": result.artifact.id,
+        "artifact_ids": [result.artifact.id],
+        "dataset_snapshot_id": result.dataset_snapshot_id,
+        "evaluation_spec_id": result.evaluation_spec_id,
+        "split_manifest_id": result.split_manifest_id,
+        "recommended_approach_count": len(inputs["recommended_approach_candidates"]),
+        "research_query_count": len(inputs["research_queries"]),
+        "recommended_asset_count": len(inputs["library_recommendations"]),
+        "artifact_expectation_count": len(inputs["artifact_expectations"]),
+        "worker_events": [
+            approach_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Agent task contract planned",
+                detail="Registered the open-ended runner contract and handoff context.",
+                target_anchor="approach-handoff",
+            )
+        ],
+    }
+
+
+def project_for_job(db: Session, job: Job, job_type: str) -> Project:
+    if job.project_id is None:
+        raise ValueError(f"{job_type} requires a project_id")
+    project = db.get(Project, job.project_id)
+    if project is None:
+        raise ValueError("Project not found")
+    return project
+
+
+def latest_dataset(db: Session, project_id: str) -> DatasetSnapshot | None:
+    return db.scalar(
+        select(DatasetSnapshot).where(DatasetSnapshot.project_id == project_id).order_by(DatasetSnapshot.created_at.desc())
+    )
+
+
+def latest_approved_spec(db: Session, project_id: str) -> EvaluationSpec | None:
+    return db.scalar(
+        select(EvaluationSpec)
+        .where(EvaluationSpec.project_id == project_id, EvaluationSpec.status == "approved")
+        .order_by(EvaluationSpec.created_at.desc())
+    )
+
+
+def approach_worker_event(
+    job: Job,
+    project: Project,
+    *,
+    status: str,
+    headline: str,
+    detail: str,
+    target_anchor: str,
+) -> dict[str, Any]:
+    return {
+        "worker_id": "approach-planning",
+        "display_name": "Approach Worker",
+        "status": status,
+        "headline": headline,
+        "detail": detail,
+        "job_id": job.id,
+        "project_id": project.id,
+        "target_tab": "Home",
+        "target_anchor": target_anchor,
+        "created_at": job.created_at.isoformat(),
+        "updated_at": utc_now().isoformat(),
+        "active": status in {"queued", "running"},
+        "token_usage": {
+            "source": "approach_planning_estimate",
+            "is_estimate": True,
+            "series": [
+                {"step": "context", "tokens": 60},
+                {"step": "plan", "tokens": 120},
+                {"step": "register", "tokens": 80},
+            ],
+        },
     }
 
 
@@ -640,6 +799,9 @@ def default_handlers() -> dict[str, JobHandler]:
 
 def concrete_handlers() -> dict[str, JobHandler]:
     handlers: dict[str, JobHandler] = {}
+    handlers["create_adaptive_strategy_brief"] = create_adaptive_strategy_brief_handler
+    handlers["plan_research"] = plan_research_handler
+    handlers["plan_agent_task"] = plan_agent_task_handler
     handlers["run_baseline"] = run_baseline_handler
     handlers["build_split_manifest"] = build_split_manifest_handler
     handlers["train_model_candidates"] = train_model_candidates_handler
