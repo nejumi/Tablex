@@ -1148,9 +1148,9 @@ function displayTextMatchesLocale(value: string | null | undefined, locale: stri
   if (!text) return false;
   if (!localeRequiresLocalizedDisplay(locale)) return true;
   if (localeLooksJapanese(locale)) {
-    const japaneseMatches = text.match(/[\u3040-\u30ff\u3400-\u9fff]/g)?.length ?? 0;
-    const latinWordMatches = text.match(/[A-Za-z][A-Za-z0-9_-]*/g)?.length ?? 0;
-    return japaneseMatches > 0 && latinWordMatches <= Math.max(4, japaneseMatches * 2);
+    const japaneseCharCount = text.match(/[\u3040-\u30ff\u3400-\u9fff]/g)?.length ?? 0;
+    const latinLetterCount = text.match(/[A-Za-z]/g)?.length ?? 0;
+    return japaneseCharCount >= 2 && latinLetterCount <= Math.max(18, Math.floor(japaneseCharCount * 1.5));
   }
   return false;
 }
