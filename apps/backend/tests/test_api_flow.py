@@ -1986,6 +1986,19 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
                         "blockers": ["Owner review is pending.", "Metric choice is pending."],
                         "status": "blocked",
                     },
+                    {
+                        "id": "done_missing_notebook",
+                        "title": "Done missing notebook",
+                        "why_it_matters": "A readable notebook must exist before this can be treated as done.",
+                        "supporting_artifacts": [{"path": "notebooks/missing_eda.py", "exists": False}],
+                        "status": "done",
+                        "localizations": {
+                            "ja-JP": {
+                                "title": "未生成Notebook待ち",
+                                "why_it_matters": "読めるNotebookが存在するまでは完了扱いできません。",
+                            }
+                        },
+                    },
                     {"id": "broken", "status": "done"},
                     {
                         "id": "invalid_status",
@@ -2005,6 +2018,7 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert [block["id"] for block in timeline["blocks"]] == [
         "deep_eda",
         "approval_response_contract_v19",
+        "done_missing_notebook",
         "invalid_status",
     ]
     assert timeline["blocks"][0]["status"] == "active"
@@ -2016,7 +2030,11 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert timeline["blocks"][0]["subtasks"][0]["target_tab"] == "Insight"
     assert timeline["blocks"][1]["status"] == "blocked"
     assert timeline["blocks"][2]["status"] == "pending"
-    assert timeline["blocks"][2]["evidence"] == "modeling"
+    assert timeline["blocks"][2]["status_adjustment_reason"] == "missing_supporting_artifacts"
+    assert timeline["blocks"][2]["missing_supporting_artifact_count"] == 1
+    assert timeline["blocks"][2]["supporting_artifacts"][0]["exists"] is False
+    assert timeline["blocks"][3]["status"] == "pending"
+    assert timeline["blocks"][3]["evidence"] == "modeling"
 
     localized_response = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
     assert localized_response.status_code == 200
@@ -2039,9 +2057,14 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized["blocks"][1]["missing_localization_fields"] == ["title", "why_it_matters", "blockers"]
     assert localized["blocks"][1]["evidence"] is None
     assert localized["blocks"][1]["blockers"] == []
+    assert localized["blocks"][2]["title"] == "未生成Notebook待ち"
     assert localized["blocks"][2]["status"] == "pending"
-    assert localized["blocks"][2]["localization_status"] == "needs_locale_refresh"
-    assert localized["blocks"][2]["evidence"] is None
+    assert localized["blocks"][2]["status_adjustment_reason"] == "missing_supporting_artifacts"
+    assert localized["blocks"][2]["missing_supporting_artifact_count"] == 1
+    assert localized["blocks"][2]["localization_status"] == "localized"
+    assert localized["blocks"][3]["status"] == "pending"
+    assert localized["blocks"][3]["localization_status"] == "needs_locale_refresh"
+    assert localized["blocks"][3]["evidence"] is None
 
 
 def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_path: Path) -> None:

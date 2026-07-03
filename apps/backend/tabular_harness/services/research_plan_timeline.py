@@ -63,6 +63,12 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None =
         raw_status = raw_block.get("status")
         status = raw_status if isinstance(raw_status, str) and raw_status in statuses else "pending"
         block_id = raw_block.get("id")
+        supporting_artifacts = _research_plan_supporting_artifacts(raw_block.get("supporting_artifacts"), limit=8)
+        missing_supporting_artifact_count = sum(1 for item in supporting_artifacts if item.get("exists") is False)
+        status_adjustment_reason = (
+            "missing_supporting_artifacts" if status == "done" and missing_supporting_artifact_count else None
+        )
+        display_status = "pending" if status_adjustment_reason else status
         evidence = _research_plan_block_evidence(raw_block, locale=locale)
         subtitle = _research_plan_block_subtitle(raw_block, locale=locale)
         missing_localization_fields = _research_plan_missing_localization_fields(
@@ -77,7 +83,7 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None =
                 "id": block_id if isinstance(block_id, str) and block_id.strip() else f"plan_block_{index}",
                 "title": title.strip()[:160],
                 "subtitle": subtitle[:600],
-                "status": status,
+                "status": display_status,
                 "evidence": evidence[:240] if evidence else None,
                 "target_tab": raw_block.get("target_tab") if isinstance(raw_block.get("target_tab"), str) else None,
                 "target_anchor": raw_block.get("target_anchor") if isinstance(raw_block.get("target_anchor"), str) else None,
@@ -95,7 +101,9 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None =
                     _research_plan_localized_value(raw_block, "blockers", locale=locale, allow_unlocalized_fallback=False),
                     limit=6,
                 ),
-                "supporting_artifacts": _research_plan_supporting_artifacts(raw_block.get("supporting_artifacts"), limit=8),
+                "supporting_artifacts": supporting_artifacts,
+                "missing_supporting_artifact_count": missing_supporting_artifact_count,
+                "status_adjustment_reason": status_adjustment_reason,
                 "localization_status": "needs_locale_refresh"
                 if missing_localization_fields or subtask_needs_locale
                 else "localized",

@@ -2061,6 +2061,8 @@ type ResearchPlanTimelineBlock = {
     path: string;
     exists: boolean | null;
   }>;
+  missing_supporting_artifact_count?: number;
+  status_adjustment_reason?: string | null;
   localization_status?: "localized" | "needs_locale_refresh";
   missing_localization_fields?: string[];
   subtasks: Array<{
@@ -5896,6 +5898,19 @@ function derivedResearchPlanSubtasks(block: ResearchPlanTimelineBlock, text: Loc
       detail: block.blockers.join(" / "),
       status: "blocked",
       evidence: `${block.blockers.length}`
+    });
+  }
+  const missingArtifacts = block.supporting_artifacts?.filter((artifact) => artifact.exists === false) ?? [];
+  if (missingArtifacts.length) {
+    derived.push({
+      id: `${block.id}:missing_supporting_artifacts`,
+      title: text.researchPlanDetailEvidence,
+      detail: missingArtifacts
+        .slice(0, 4)
+        .map((artifact) => artifact.path)
+        .join(" / "),
+      status: "pending",
+      evidence: `${missingArtifacts.length}`
     });
   }
   const existingArtifacts = block.supporting_artifacts?.filter((artifact) => artifact.exists !== false) ?? [];
