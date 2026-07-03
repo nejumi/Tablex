@@ -1978,6 +1978,25 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert history_observation["latest_codex_message"]["content"] == "現在のデータを確認しています。"
     assert history_observation["raw_transcript"]["stdout_line_count"] == 1
 
+    with app.state.session_factory() as db:
+        session = db.get(AgentSession, "ags_inbox_delivery")
+        assert session is not None
+        append_session_event(
+            db,
+            session,
+            source="codex_cli",
+            event_type="item.completed",
+            role="runner",
+            title="Codex message",
+            content="特徴量候補と評価境界を確認しています。",
+            payload={"type": "item.completed", "item": {"type": "agent_message"}},
+        )
+        db.commit()
+    refreshed_history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
+    refreshed_observation = refreshed_history[-1]["response_brief"]["agent_session_observation"]
+    assert refreshed_observation["latest_codex_message"]["content"] == "特徴量候補と評価境界を確認しています。"
+    assert refreshed_observation["latest_codex_message"]["event_index"] > observation["latest_codex_message"]["event_index"]
+
     worker = SyncWorker(handlers={"agent_chat_turn": agent_chat_turn_handler}, store=app.state.artifact_store)
     with app.state.session_factory() as db:
         assert worker.run_next_job(db, project_id=project_id, job_types={"agent_chat_turn"}) is None
