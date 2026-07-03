@@ -1,0 +1,38 @@
+services:
+  tablex-api:
+    build: .
+    image: tablex:local
+    environment:
+      HARNESS_DATA_DIR: /data
+      FRONTEND_DIST_DIR: /app/frontend_dist
+      TABLEX_API_AGENT_SESSION_SUPERVISOR_ENABLED: "false"
+      TABLEX_LOCAL_WORKER_ENABLED: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - tablex-data:/data
+
+  tablex-worker:
+    image: tablex:local
+    build: .
+    command: ["tablex-worker", "--interval", "2", "--worker-id", "compose-worker", "--no-agent-session-supervisor"]
+    environment:
+      HARNESS_DATA_DIR: /data
+    volumes:
+      - tablex-data:/data
+    depends_on:
+      - tablex-api
+
+  tablex-agent-supervisor:
+    image: tablex:local
+    build: .
+    command: ["tablex-agent-supervisor", "--interval", "15", "--owner-id", "compose-agent-supervisor"]
+    environment:
+      HARNESS_DATA_DIR: /data
+    volumes:
+      - tablex-data:/data
+    depends_on:
+      - tablex-api
+
+volumes:
+  tablex-data:

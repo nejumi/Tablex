@@ -178,6 +178,14 @@ tablex-agent-supervisor --interval 15 --owner-id local-agent-supervisor
 
 This process only recovers and drives active main `AgentSession` records; it does not process ordinary queued jobs. If this process should be the only supervisor owner, start the API with `TABLEX_API_AGENT_SESSION_SUPERVISOR_ENABLED=false` and run `tablex-worker --no-agent-session-supervisor` for sidecar jobs. Database supervisor leases still prevent duplicate ownership if more than one process is present.
 
+The optional Compose stack uses that split by default:
+
+```bash
+docker compose up --build
+```
+
+It starts three processes from the same local image: `tablex-api` for the product UI/API, `tablex-worker` for concrete sidecar jobs, and `tablex-agent-supervisor` for the continuing Full Auto main `AgentSession`. They share the `tablex-data` volume for SQLite metadata and local artifacts. Use the plain `docker run`/Dockerfile path when you want the simplest single-process container; use Compose when you want supervisor behavior isolated from API reloads or worker restarts.
+
 The local worker daemon, `/api/worker/run-once`, `/api/jobs/{job_id}/run`, and the manual `tablex-worker` entrypoint all use concrete handlers only: `agent_chat_turn`, `build_split_manifest`, `run_baseline`, `train_model_candidates`, `run_planned_agent_task_codex`, and `continue_autonomous_session`. Generic MVP stub handlers are not used by product worker paths; a queued job without a concrete handler stays queued instead of receiving fake success. When split/model/Codex child workers finish, they schedule the autonomous-session heartbeat so Full Auto can resume from current state instead of stopping after one turn. Agent Activity should show Training Worker, Codex Runner, and Autonomous Session cards with project names, human descriptions, and estimated telemetry. Queued child jobs are waiting, not live; stale queued jobs should fall out of the right-edge activity overlay while remaining visible in Jobs/history.
 
 ModelVersion validation history is available from:

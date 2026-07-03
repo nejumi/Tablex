@@ -97,3 +97,16 @@ Open `http://localhost:5173`.
 
 See [docs/dev.md](docs/dev.md) for full setup, tests, and Docker commands.
 See [docs/benchmarks.md](docs/benchmarks.md) for benchmark dataset catalog and local import workflow.
+
+Docker:
+
+```bash
+docker build -t tablex:local .
+docker run --rm -p 8080:8080 -v tablex-data:/data tablex:local
+```
+
+For a split local stack with API, sidecar worker, and the dedicated Full Auto AgentSession supervisor:
+
+```bash
+docker compose up --build
+```
