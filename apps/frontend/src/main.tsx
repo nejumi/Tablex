@@ -322,6 +322,9 @@ const englishMessages = {
   turnStateNeedsAttention: "No live agent turn observed",
   turnStateUserTurnHint: "Codex is paused. The input field is ready for your next instruction.",
   turnStateAgentTurnHint: "Codex or a Tablex worker is active. You can still add a message to the workspace.",
+  turnStateWorkerPendingHint: "A Tablex worker is waiting or running. Active work appears in the activity cards.",
+  turnStateAgentScheduledHint: "Codex is not running at this instant, but Full Auto is scheduled to continue.",
+  turnStateNeedsAttentionHint: "No live Codex turn is observed. Use the input field or Start when ready.",
   estimatedTokens: "Estimated tokens",
   currentTokens: "Current",
   cumulativeTokens: "Task total",
@@ -687,7 +690,7 @@ const japaneseMessages: LocaleMessages = {
   chatReviewLabel: "要確認",
   agentActivityTitle: "Agent Activity",
   agentActivitySubtitle: "実行中または待機中のworkを表示します。完了後の要約はAgent Chatに残ります。",
-  agentActivityLiveOnly: "Active work",
+  agentActivityLiveOnly: "稼働中",
   turnStateObserved: "観測状態",
   turnStateSource: "Tablexのjob状態とlocal Codex process状態から観測しています。",
   turnStateWaitingForUser: "あなたの入力待ち",
@@ -698,6 +701,9 @@ const japaneseMessages: LocaleMessages = {
   turnStateNeedsAttention: "実行中のAgent turnが観測されていません",
   turnStateUserTurnHint: "Codexは停止中です。入力欄が次の指示を受け取れる状態です。",
   turnStateAgentTurnHint: "CodexまたはTablex workerが動作中です。追加メッセージはworkspaceに残せます。",
+  turnStateWorkerPendingHint: "Tablex workerが待機または実行中です。進行中の作業はアクティビティカードに表示されます。",
+  turnStateAgentScheduledHint: "この瞬間のCodex processは観測されていませんが、Full Autoは継続予定です。",
+  turnStateNeedsAttentionHint: "実行中のCodex turnは観測されていません。必要なら入力欄または開始ボタンから再開できます。",
   estimatedTokens: "推定tokens",
   currentTokens: "現在",
   cumulativeTokens: "累積",
@@ -6769,7 +6775,7 @@ function AgentChatSummaryCard({
 
 function TurnStateBar({ text, turnState }: { text: LocaleMessages; turnState: TurnState }) {
   const observedAt = turnState.observed_at ? formatDate(turnState.observed_at) : null;
-  const detail = turnState.detail || (turnState.input_attention ? text.turnStateUserTurnHint : text.turnStateAgentTurnHint);
+  const detail = turnStateDisplayDetail(turnState, text);
   return (
     <div className={turnStateClassName(turnState)} title={text.turnStateSource}>
       <div className="turn-state-main">
@@ -6786,6 +6792,16 @@ function TurnStateBar({ text, turnState }: { text: LocaleMessages; turnState: Tu
       </div>
     </div>
   );
+}
+
+function turnStateDisplayDetail(turnState: TurnState, text: LocaleMessages): string {
+  if (turnState.state === "waiting_for_user") return text.turnStateUserTurnHint;
+  if (turnState.state === "worker_pending") return turnState.detail || text.turnStateWorkerPendingHint;
+  if (turnState.state === "agent_scheduled") return turnState.detail || text.turnStateAgentScheduledHint;
+  if (turnState.state === "needs_attention") return turnState.detail || text.turnStateNeedsAttentionHint;
+  if (turnState.state === "agent_running") return turnState.detail || text.turnStateAgentTurnHint;
+  if (turnState.state === "stale_runner") return turnState.detail || text.turnStateNeedsAttentionHint;
+  return turnState.detail || (turnState.input_attention ? text.turnStateUserTurnHint : text.turnStateAgentTurnHint);
 }
 
 function agentInputFormClassName(turnState: TurnState, extraClassName = "") {
