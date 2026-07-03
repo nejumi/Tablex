@@ -2595,10 +2595,34 @@ function buildFocusRecommendation({
   };
 }
 
+type AppRoute = {
+  viewMode: "portal" | "project";
+  projectId: string | null;
+};
+
+function initialAppRoute(): AppRoute {
+  if (typeof window === "undefined") return { viewMode: "portal", projectId: null };
+  return routeFromLocationHash();
+}
+
+function routeFromLocationHash(): AppRoute {
+  const hash = window.location.hash || "";
+  const match = hash.match(/^#\/projects\/([^/?#]+)/);
+  if (!match) return { viewMode: "portal", projectId: null };
+  return { viewMode: "project", projectId: decodeURIComponent(match[1]) };
+}
+
+function writeAppRoute(route: AppRoute) {
+  const nextHash = route.viewMode === "project" && route.projectId ? `#/projects/${encodeURIComponent(route.projectId)}` : "#/";
+  if (window.location.hash === nextHash) return;
+  window.history.pushState(null, "", nextHash);
+}
+
 function App() {
+  const initialRoute = initialAppRoute();
   const [projects, setProjects] = React.useState<Project[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = React.useState<string | null>(null);
-  const [viewMode, setViewMode] = React.useState<"portal" | "project">("portal");
+  const [selectedProjectId, setSelectedProjectId] = React.useState<string | null>(initialRoute.projectId);
+  const [viewMode, setViewMode] = React.useState<"portal" | "project">(initialRoute.viewMode);
   const [tab, setTab] = React.useState<Tab>("Home");
   const [userSettings, setUserSettings] = React.useState<UserSettings>(() => loadUserSettings());
   const [dynamicLocalePacks, setDynamicLocalePacks] = React.useState<LocalePack[]>(() => loadDynamicLocalePacks());
@@ -2645,6 +2669,21 @@ function App() {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [moreTabsOpen]);
+
+  React.useEffect(() => {
+    function syncRouteFromHash() {
+      const route = routeFromLocationHash();
+      setSelectedProjectId(route.projectId);
+      setViewMode(route.viewMode);
+      if (route.viewMode === "project") setTab("Home");
+    }
+    window.addEventListener("hashchange", syncRouteFromHash);
+    window.addEventListener("popstate", syncRouteFromHash);
+    return () => {
+      window.removeEventListener("hashchange", syncRouteFromHash);
+      window.removeEventListener("popstate", syncRouteFromHash);
+    };
+  }, []);
 
   const refreshAuth = React.useCallback(async () => {
     setAuthLoading(true);
@@ -2719,6 +2758,19 @@ function App() {
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const activeProject = viewMode === "project" ? selectedProject : null;
 
+  function openProject(projectId: string) {
+    setSelectedProjectId(projectId);
+    setViewMode("project");
+    setTab("Home");
+    writeAppRoute({ viewMode: "project", projectId });
+  }
+
+  function openPortal() {
+    setViewMode("portal");
+    setTab("Home");
+    writeAppRoute({ viewMode: "portal", projectId: null });
+  }
+
   async function loginOrBootstrap(email: string, password: string, displayName: string | null) {
     const endpoint = authStatus?.bootstrap_required ? "/api/auth/bootstrap" : "/api/auth/login";
     const status = await api<AuthStatus>(endpoint, {
@@ -2745,6 +2797,7 @@ function App() {
     setPortalIdeas([]);
     setSelectedProjectId(null);
     setViewMode("portal");
+    writeAppRoute({ viewMode: "portal", projectId: null });
     hydratedUserIdRef.current = null;
   }
 
@@ -2846,11 +2899,7 @@ function App() {
             <button
               key={project.id}
               className={project.id === selectedProjectId && viewMode === "project" ? "project-item active" : "project-item"}
-              onClick={() => {
-                setSelectedProjectId(project.id);
-                setViewMode("project");
-                setTab("Home");
-              }}
+              onClick={() => openProject(project.id)}
             >
               <span>{project.name}</span>
               <small>{formatWorkflowState(project.current_phase)}</small>
@@ -2860,9 +2909,7 @@ function App() {
         <CreateProjectForm
           text={text}
           onCreated={async (project) => {
-            setSelectedProjectId(project.id);
-            setViewMode("project");
-            setTab("Home");
+            openProject(project.id);
             await refreshProjects(project.id);
           }}
         />
@@ -2872,7 +2919,7 @@ function App() {
           <div>
             <div className="topbar-kicker">
               {activeProject ? (
-                <button className="text-button" onClick={() => setViewMode("portal")} type="button">
+                <button className="text-button" onClick={openPortal} type="button">
                   <ArrowLeft size={15} />
                   {text.backToPortal}
                 </button>
@@ -2934,11 +2981,7 @@ function App() {
             overview={portalOverview}
             ideas={portalIdeas}
             text={text}
-            onOpenProject={(projectId) => {
-              setSelectedProjectId(projectId);
-              setViewMode("project");
-              setTab("Home");
-            }}
+            onOpenProject={openProject}
             onAddIdea={addPortalIdea}
           />
         ) : null}
