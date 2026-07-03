@@ -8280,27 +8280,10 @@ function VisualArtifactPreview({ preview }: { preview: ArtifactPreview }) {
   );
 }
 
-function useInlinePreviewObjectUrl(source: string | null, contentType: string) {
-  const [objectUrl, setObjectUrl] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    setObjectUrl(null);
-    if (!source) return undefined;
-    const blob = new Blob([source], { type: contentType });
-    const nextUrl = URL.createObjectURL(blob);
-    setObjectUrl(nextUrl);
-    return () => URL.revokeObjectURL(nextUrl);
-  }, [contentType, source]);
-
-  return objectUrl;
-}
-
 function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
   const previewType = preview.content_type === "image/svg+xml" || preview.filename.toLowerCase().endsWith(".svg") ? "SVG" : "HTML";
   const url = `${apiBase}/api/artifacts/${preview.id}/download`;
   const inlineSource = typeof preview.preview === "string" && !preview.truncated ? htmlPreviewSrcDoc(preview) : null;
-  const inlineContentType = previewType === "SVG" ? "image/svg+xml" : "text/html; charset=utf-8";
-  const inlinePreviewUrl = useInlinePreviewObjectUrl(inlineSource, inlineContentType);
   const [frameFailed, setFrameFailed] = React.useState(false);
 
   React.useEffect(() => {
@@ -8308,7 +8291,6 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
   }, [preview.id]);
 
   const canRenderInline = Boolean(inlineSource);
-  const frameUrl = canRenderInline ? inlinePreviewUrl : null;
   return (
     <div className="preview-block">
       <div className="preview-toolbar">
@@ -8340,16 +8322,10 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
         </div>
       ) : (
         <div className="html-preview-shell">
-          {frameUrl ? null : (
-            <div className="html-preview-loading">
-              <Loader2 className="spin" size={16} />
-              Preparing preview...
-            </div>
-          )}
           <iframe
             key={preview.id}
             className="html-preview-frame"
-            src={frameUrl ?? "about:blank"}
+            srcDoc={inlineSource ?? undefined}
             sandbox="allow-scripts"
             title={`${preview.name} preview`}
             onError={() => setFrameFailed(true)}
