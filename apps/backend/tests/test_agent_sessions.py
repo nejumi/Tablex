@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from datetime import timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,6 +53,7 @@ from tabular_harness.services.agent_sessions import (
     should_register_session_output,
     start_active_main_session_supervisors,
     start_main_agent_session_supervisor_thread,
+    start_supervisor_lease_heartbeat,
     supervisor_slot_active,
 )
 from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
@@ -200,6 +203,73 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"d
     ]
     process_started = next(event for event in events if event.event_type == "process_started")
     assert loads_json(process_started.payload_json, {})["stdout_mode"] == "workspace_file_tail"
+
+
+def test_codex_cli_turn_streaming_cancels_when_supervisor_lease_is_lost(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_codex = bin_dir / "codex"
+    fake_codex.write_text(
+        """#!/bin/sh
+while IFS= read -r _line; do
+  :
+done
+printf '%s\n' '{"type":"thread.started","thread_id":"thread_cancel"}'
+/bin/sleep 30
+""",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    with session_factory() as db:
+        project = Project(id="p_cancel_tail", name="Cancel Tail")
+        session = AgentSession(
+            id="as_cancel_tail",
+            project_id=project.id,
+            goal_text="Continue.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+    cancel_event = threading.Event()
+    cancel_event.set()
+    return_code = run_codex_cli_turn_streaming(
+        session_factory,
+        store=store,
+        project_id="p_cancel_tail",
+        session_id="as_cancel_tail",
+        workspace=workspace,
+        prompt="hello",
+        delivered_user_event_indexes=(),
+        agent_model=None,
+        timeout_seconds=30,
+        cancel_event=cancel_event,
+    )
+
+    assert return_code not in {0, None}
+    with session_factory() as db:
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(AgentTranscriptEvent.session_id == "as_cancel_tail")
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            ).all()
+        )
+    event_types = [event.event_type for event in events]
+    assert "process_cancelled" in event_types
+    assert "process_exited" in event_types
+    assert raw_codex_transcript_path(workspace).read_text(encoding="utf-8").strip()
 
 
 def test_codex_stream_lines_are_indexed_in_one_batch(tmp_path: Path) -> None:
@@ -359,6 +429,120 @@ def test_agent_supervisor_lease_prevents_duplicate_cross_process_owners(tmp_path
     release_supervisor_lease(session_factory, session_id="as_lease", owner_id="owner-b")
     with session_factory() as db:
         assert db.get(AgentSupervisorLease, "as_lease") is None
+
+
+def test_supervisor_lease_heartbeat_signals_lost_lease(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+
+    with session_factory() as db:
+        project = Project(id="p_lease_heartbeat", name="Lease Heartbeat")
+        session = AgentSession(id="as_lease_heartbeat", project_id=project.id, goal_text="Continue.")
+        db.add_all([project, session])
+        db.commit()
+
+    assert acquire_supervisor_lease(
+        session_factory,
+        session_id="as_lease_heartbeat",
+        owner_id="owner-a",
+        ttl_seconds=30,
+    )
+    stop_event, lease_lost_event, thread = start_supervisor_lease_heartbeat(
+        session_factory,
+        session_id="as_lease_heartbeat",
+        owner_id="owner-a",
+        ttl_seconds=3,
+    )
+    try:
+        with session_factory() as db:
+            lease = db.get(AgentSupervisorLease, "as_lease_heartbeat")
+            assert lease is not None
+            lease.owner_id = "owner-b"
+            db.commit()
+
+        deadline = time.monotonic() + 5
+        while not lease_lost_event.is_set() and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+        assert lease_lost_event.is_set()
+        with session_factory() as db:
+            lease = db.get(AgentSupervisorLease, "as_lease_heartbeat")
+            assert lease is not None
+            assert lease.owner_id == "owner-b"
+    finally:
+        stop_event.set()
+        thread.join(timeout=2)
+
+
+def test_main_supervisor_stops_before_runner_when_lease_is_lost(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+
+    with session_factory() as db:
+        project = Project(
+            id="p_lease_lost_supervisor",
+            name="Lease Lost Supervisor",
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+        )
+        session = AgentSession(
+            id="as_lease_lost_supervisor",
+            project_id=project.id,
+            goal_text="Continue.",
+            status="between_turns",
+        )
+        db.add_all([project, session])
+        db.commit()
+
+    lost_event = threading.Event()
+    lost_event.set()
+    stop_event = threading.Event()
+    dummy_thread = threading.Thread(target=lambda: None)
+    dummy_thread.start()
+    dummy_thread.join(timeout=1)
+
+    monkeypatch.setattr(
+        agent_sessions_module,
+        "start_supervisor_lease_heartbeat",
+        lambda *args, **kwargs: (stop_event, lost_event, dummy_thread),
+    )
+    runner_calls: list[str] = []
+
+    def fail_if_runner_starts(*args: object, **kwargs: object) -> int:
+        del args, kwargs
+        runner_calls.append("started")
+        return 0
+
+    monkeypatch.setattr(agent_sessions_module, "run_codex_cli_turn_streaming", fail_if_runner_starts)
+
+    agent_sessions_module.run_main_agent_session_supervisor(
+        session_factory,
+        store,
+        project_id="p_lease_lost_supervisor",
+        session_id="as_lease_lost_supervisor",
+        max_turns=1,
+        slot_acquired=True,
+        lease_owner_id="owner-a",
+    )
+
+    assert runner_calls == []
+    assert stop_event.is_set()
+    with session_factory() as db:
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(AgentTranscriptEvent.session_id == "as_lease_lost_supervisor")
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            ).all()
+        )
+        assert [event.event_type for event in events] == ["supervisor_lease_lost"]
+        assert db.get(AgentSupervisorLease, "as_lease_lost_supervisor") is None
 
 
 def test_transcript_index_reservation_survives_uncommitted_sidecar_event(tmp_path: Path) -> None:

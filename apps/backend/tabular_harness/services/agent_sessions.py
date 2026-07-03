@@ -743,17 +743,23 @@ def run_main_agent_session_supervisor(
     if not acquire_supervisor_lease(session_factory, session_id=session_id, owner_id=owner_id):
         release_supervisor_slot(session_id)
         return
-    lease_stop_event, lease_thread = start_supervisor_lease_heartbeat(
+    lease_stop_event, lease_lost_event, lease_thread = start_supervisor_lease_heartbeat(
         session_factory,
         session_id=session_id,
         owner_id=owner_id,
     )
     try:
         for _ in range(max_turns):
+            if supervisor_lease_lost_event_is_set(session_factory, session_id=session_id, event=lease_lost_event):
+                return
             with session_factory() as db:
                 project = db.get(Project, project_id)
                 session = db.get(AgentSession, session_id)
                 if project is None or session is None:
+                    return
+                if lease_lost_event.is_set():
+                    append_supervisor_lease_lost_event(db, session=session, owner_id=owner_id)
+                    db.commit()
                     return
                 if session.pid and pid_is_alive(session.pid):
                     previous_pid = session.pid
@@ -776,7 +782,8 @@ def run_main_agent_session_supervisor(
                         payload={"previous_pid": previous_pid, "terminated_process": terminated},
                     )
                     db.commit()
-                    time.sleep(1)
+                    if lease_lost_event.wait(1):
+                        continue
                     continue
                 if project.current_phase != "AUTONOMOUS_LOOP" or session.status in TERMINAL_SESSION_STATUSES:
                     session.status = "stopped"
@@ -796,6 +803,10 @@ def run_main_agent_session_supervisor(
                     return
                 workspace = prepare_session_workspace(db, store=store, project=project, session=session)
                 turn_prompt = build_turn_prompt(db, project=project, session=session)
+                if lease_lost_event.is_set():
+                    append_supervisor_lease_lost_event(db, session=session, owner_id=owner_id)
+                    db.commit()
+                    return
                 session.status = "running"
                 session.started_at = session.started_at or utc_now()
                 session.updated_at = utc_now()
@@ -813,7 +824,10 @@ def run_main_agent_session_supervisor(
                 delivered_user_event_indexes=turn_prompt.delivered_user_event_indexes,
                 agent_model=agent_model,
                 timeout_seconds=turn_timeout_seconds,
+                cancel_event=lease_lost_event,
             )
+            if supervisor_lease_lost_event_is_set(session_factory, session_id=session_id, event=lease_lost_event):
+                return
             with session_factory() as db:
                 project = db.get(Project, project_id)
                 session = db.get(AgentSession, session_id)
@@ -842,7 +856,8 @@ def run_main_agent_session_supervisor(
                         payload={"retry_delay_seconds": retry_delay, "failure_kind": "runner_unavailable"},
                     )
                     db.commit()
-                    time.sleep(retry_delay)
+                    if lease_lost_event.wait(retry_delay):
+                        continue
                     continue
                 if exit_code != 0:
                     session.status = "between_turns"
@@ -862,7 +877,8 @@ def run_main_agent_session_supervisor(
                         payload={"exit_code": exit_code, "retry_delay_seconds": retry_delay},
                     )
                     db.commit()
-                    time.sleep(retry_delay)
+                    if lease_lost_event.wait(retry_delay):
+                        continue
                     continue
                 session.status = "between_turns"
                 session.pid = None
@@ -878,7 +894,8 @@ def run_main_agent_session_supervisor(
                     payload={"turn_index": session.turn_index},
                 )
                 db.commit()
-            time.sleep(2)
+            if lease_lost_event.wait(2):
+                continue
     finally:
         lease_stop_event.set()
         lease_thread.join(timeout=2)
@@ -991,8 +1008,9 @@ def start_supervisor_lease_heartbeat(
     session_id: str,
     owner_id: str,
     ttl_seconds: int = SUPERVISOR_LEASE_TTL_SECONDS,
-) -> tuple[threading.Event, threading.Thread]:
+) -> tuple[threading.Event, threading.Event, threading.Thread]:
     stop_event = threading.Event()
+    lease_lost_event = threading.Event()
 
     def heartbeat() -> None:
         interval = max(1.0, ttl_seconds / 3)
@@ -1003,6 +1021,7 @@ def start_supervisor_lease_heartbeat(
                 owner_id=owner_id,
                 ttl_seconds=ttl_seconds,
             ):
+                lease_lost_event.set()
                 return
 
     thread = threading.Thread(
@@ -1011,7 +1030,42 @@ def start_supervisor_lease_heartbeat(
         daemon=True,
     )
     thread.start()
-    return stop_event, thread
+    return stop_event, lease_lost_event, thread
+
+
+def supervisor_lease_lost_event_is_set(
+    session_factory: sessionmaker[Session],
+    *,
+    session_id: str,
+    event: threading.Event,
+) -> bool:
+    if not event.is_set():
+        return False
+    with session_factory() as db:
+        session = db.get(AgentSession, session_id)
+        if session is not None:
+            append_supervisor_lease_lost_event(db, session=session)
+            db.commit()
+    return True
+
+
+def append_supervisor_lease_lost_event(
+    db: Session,
+    *,
+    session: AgentSession,
+    owner_id: str | None = None,
+) -> None:
+    append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="supervisor_lease_lost",
+        role="harness",
+        title="Supervisor lease lost",
+        content="This supervisor stopped because it no longer owns the AgentSession lease.",
+        payload={"owner_id": owner_id} if owner_id else {},
+        update_heartbeat=False,
+    )
 
 
 def pid_is_alive(pid: int) -> bool:
@@ -1432,6 +1486,7 @@ def run_codex_cli_turn_streaming(
     delivered_user_event_indexes: tuple[int, ...],
     agent_model: str | None,
     timeout_seconds: int,
+    cancel_event: threading.Event | None = None,
 ) -> int | None:
     if shutil.which("codex") is None:
         with session_factory() as db:
@@ -1568,6 +1623,7 @@ def run_codex_cli_turn_streaming(
     last_stream_event_flush = start
     pending_stream_events: list[tuple[str, str]] = []
     timeout_sent = False
+    cancel_sent = False
     terminated_at: float | None = None
 
     try:
@@ -1583,6 +1639,15 @@ def run_codex_cli_turn_streaming(
                     allow_notebook_auto_capture=False,
                 )
                 last_workspace_ingest = now
+            if cancel_event is not None and cancel_event.is_set() and process.poll() is None and not cancel_sent:
+                process.terminate()
+                append_process_cancelled_event(
+                    session_factory,
+                    session_id=session_id,
+                    reason="supervisor_lease_lost",
+                )
+                cancel_sent = True
+                terminated_at = now
             if now - last_output_at > timeout_seconds and process.poll() is None and not timeout_sent:
                 process.terminate()
                 append_process_timeout_event(session_factory, session_id=session_id, timeout_seconds=timeout_seconds)
@@ -1717,6 +1782,30 @@ def append_process_timeout_event(
             title="Codex turn timed out",
             content="The current Codex CLI process produced no output for the idle timeout. The supervisor will continue if Full Auto remains on.",
             payload={"idle_timeout_seconds": timeout_seconds},
+        )
+        db.commit()
+
+
+def append_process_cancelled_event(
+    session_factory: sessionmaker[Session],
+    *,
+    session_id: str,
+    reason: str,
+) -> None:
+    with session_factory() as db:
+        session = db.get(AgentSession, session_id)
+        if session is None:
+            return
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="process_cancelled",
+            role="harness",
+            title="Codex process cancelled",
+            content="The current Codex CLI process was cancelled because this supervisor should no longer drive the session.",
+            payload={"reason": reason},
+            update_heartbeat=False,
         )
         db.commit()
 
