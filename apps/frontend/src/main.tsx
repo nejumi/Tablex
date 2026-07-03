@@ -5635,16 +5635,6 @@ function buildResearchPlanBlocks({
   onNavigateToTarget: (tab: Tab, anchor?: string | null) => void;
 }): ResearchPlanBlock[] {
   const codexAuthoredBlocks = researchPlanBlocksFromTimeline(researchPlanTimeline, text, locale, onNavigateToTarget);
-  if (codexAuthoredBlocks.length) {
-    return appendObservedAgentPlanBlock(
-      attachResearchPlanSubtasks(codexAuthoredBlocks, jobs, text, locale, onTabChange, { appendUnassigned: false }),
-      turnState,
-      text,
-      locale,
-      onTabChange
-    );
-  }
-
   const hasObjectiveEvidence = Boolean(project.target_column) || hasAnyArtifactType(artifacts, ["target_definition_proposal"]);
   const hasUnderstandingEvidence =
     hasAnyArtifactType(artifacts, ["data_understanding_complete"]) ||
@@ -5692,7 +5682,7 @@ function buildResearchPlanBlocks({
       : hasPriorResearchPreparation
         ? "pending"
       : hasUnderstandingEvidence
-        ? "pending"
+        ? "active"
         : "waiting";
 
   const blocks: ResearchPlanBlock[] = [
@@ -5766,10 +5756,11 @@ function buildResearchPlanBlocks({
       onClick: () => onNavigateToTarget("Notebooks", "notebook-preview-top")
     }
   ];
+  const mergedBlocks = mergeInitialAnchorsWithCodexPlanBlocks(blocks, codexAuthoredBlocks);
 
-  if (activeAgentSession) {
+  if (activeAgentSession && !codexAuthoredBlocks.length) {
     const planStatus = activeCodexTurn ? "active" : agentSessionPlanWaitingStatus(activeAgentSession);
-    blocks.push({
+    mergedBlocks.push({
       id: "agent_session",
       title: text.planBlockCodexLane,
       subtitle: latestCodexMessage ?? (activeCodexTurn ? text.planBlockCodexRunning : text.planBlockCodexWaiting),
@@ -5781,12 +5772,39 @@ function buildResearchPlanBlocks({
   }
 
   return appendObservedAgentPlanBlock(
-    attachResearchPlanSubtasks(blocks, jobs, text, locale, onTabChange, { appendUnassigned: false }),
+    attachResearchPlanSubtasks(renumberResearchPlanBlocks(mergedBlocks), jobs, text, locale, onTabChange, { appendUnassigned: false }),
     turnState,
     text,
     locale,
     onTabChange
   );
+}
+
+function mergeInitialAnchorsWithCodexPlanBlocks(
+  initialAnchors: ResearchPlanBlock[],
+  codexBlocks: ResearchPlanBlock[]
+): ResearchPlanBlock[] {
+  if (!codexBlocks.length) return [...initialAnchors];
+  const anchorIds = new Set([
+    "data_upload",
+    "data-upload",
+    "upload_data",
+    "objective",
+    "objective_setting",
+    "task_framing",
+    "target_definition",
+    "understanding",
+    "data_understanding",
+    "prior_research",
+    "prior_knowledge_research",
+    "research",
+  ]);
+  const codexProjectBlocks = codexBlocks.filter((block) => !anchorIds.has(block.id));
+  return [...initialAnchors, ...codexProjectBlocks];
+}
+
+function renumberResearchPlanBlocks(blocks: ResearchPlanBlock[]): ResearchPlanBlock[] {
+  return blocks.map((block, index) => ({ ...block, eyebrow: `${index + 1}`.padStart(2, "0") }));
 }
 
 function selectedResearchPlanBlockKey(blocks: ResearchPlanBlock[]): string {
