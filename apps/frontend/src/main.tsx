@@ -3808,7 +3808,8 @@ function ProjectDetail({
     () => mergeAgentChatMessages(agentChatMessages, pendingAgentChatMessages),
     [agentChatMessages, pendingAgentChatMessages]
   );
-  const tableeMotionState: TableeMotionState = hasLiveAgentOrModelActivity(jobs, agentWorkerEvents, agentActivity)
+  const liveAgentOrModelActivity = hasLiveAgentOrModelActivity(jobs, agentWorkerEvents, agentActivity);
+  const tableeMotionState: TableeMotionState = liveAgentOrModelActivity
     ? "working"
     : project.current_phase === "AUTONOMOUS_LOOP"
       ? "awake"
@@ -4018,15 +4019,16 @@ function ProjectDetail({
   }, [pendingAnchor, tab]);
 
   React.useEffect(() => {
+    const intervalMs = busy || liveAgentOrModelActivity ? 900 : project.current_phase === "AUTONOMOUS_LOOP" ? 2400 : 12000;
     const interval = window.setInterval(
       () => {
         setActivityTick((current) => current + 1);
         void refreshAgentActivity();
       },
-      busy ? 900 : 2400
+      intervalMs
     );
     return () => window.clearInterval(interval);
-  }, [busy, refreshAgentActivity]);
+  }, [busy, liveAgentOrModelActivity, project.current_phase, refreshAgentActivity]);
 
   React.useEffect(() => {
     if (pendingIntervention || userSettings.interventionCountdownSeconds <= 0) return;
