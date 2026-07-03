@@ -63,7 +63,10 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None =
             locale=locale,
         )
         if not title:
-            continue
+            if _research_plan_requires_explicit_locale(locale) and _research_plan_has_visible_value(raw_block.get("title")):
+                title = _research_plan_missing_title_label(locale)
+            else:
+                continue
         raw_status = raw_block.get("status")
         status = raw_status if isinstance(raw_status, str) and raw_status in statuses else "pending"
         block_id = raw_block.get("id")
@@ -131,7 +134,10 @@ def clean_research_plan_timeline_subtasks(raw_subtasks: Any, *, locale: str | No
             locale=locale,
         )
         if not title:
-            continue
+            if _research_plan_requires_explicit_locale(locale) and _research_plan_has_visible_value(raw_subtask.get("title")):
+                title = _research_plan_missing_title_label(locale)
+            else:
+                continue
         raw_status = raw_subtask.get("status")
         status = raw_status if isinstance(raw_status, str) and raw_status in statuses else "pending"
         subtask_id = raw_subtask.get("id")
@@ -250,7 +256,7 @@ def _research_plan_display_string(
     if isinstance(value, str) and value.strip():
         return value.strip()
     raw_value = raw_block.get(key)
-    if isinstance(raw_value, str) and raw_value.strip():
+    if isinstance(raw_value, str) and raw_value.strip() and not _research_plan_requires_explicit_locale(locale):
         return raw_value.strip()
     return None
 
@@ -455,6 +461,12 @@ def _research_plan_requires_explicit_locale(locale: str | None) -> bool:
         return False
     language = locale.strip().replace("_", "-").split("-", 1)[0].lower()
     return language not in {"", "en"}
+
+
+def _research_plan_missing_title_label(locale: str | None) -> str:
+    if _research_plan_locale_is_japanese(locale):
+        return "計画ブロック"
+    return "Plan block"
 
 
 def _research_plan_locale_is_japanese(locale: str | None) -> bool:
