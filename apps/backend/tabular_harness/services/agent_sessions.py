@@ -519,6 +519,7 @@ def write_research_plan_locale_request_to_workspace_inbox(
                     f"locale: {locale}",
                     f"artifact_id: {artifact.id}",
                     f"artifact_path: {artifact_primary_path(artifact)}",
+                    f"issue_signature: {research_plan_locale_issue_signature(summary)}",
                     f"missing_block_count: {summary.get('missing_block_count', 0)}",
                     f"missing_subtask_count: {summary.get('missing_subtask_count', 0)}",
                     "",
@@ -2415,6 +2416,7 @@ def maybe_request_research_plan_locale_refresh(
         return
     if not summary.get("missing_block_count") and not summary.get("missing_subtask_count"):
         return
+    issue_signature = research_plan_locale_issue_signature(summary)
     project = db.get(Project, artifact.project_id)
     if project is not None:
         write_session_context_file(db, project=project, session=session, response_locale=locale)
@@ -2432,7 +2434,11 @@ def maybe_request_research_plan_locale_refresh(
     )
     for event in recent_events:
         event_payload = loads_json(event.payload_json, {})
-        if event_payload.get("artifact_id") == artifact.id and event_payload.get("locale") == locale:
+        if (
+            event_payload.get("artifact_id") == artifact.id
+            and event_payload.get("locale") == locale
+            and event_payload.get("issue_signature") == issue_signature
+        ):
             return
     event = append_session_event(
         db,
@@ -2445,6 +2451,7 @@ def maybe_request_research_plan_locale_refresh(
         payload={
             "artifact_id": artifact.id,
             "locale": locale,
+            "issue_signature": issue_signature,
             "missing_block_count": summary.get("missing_block_count", 0),
             "missing_subtask_count": summary.get("missing_subtask_count", 0),
             "blocks": summary.get("blocks", []),
@@ -2453,6 +2460,23 @@ def maybe_request_research_plan_locale_refresh(
         update_heartbeat=False,
     )
     write_research_plan_locale_request_to_workspace_inbox(session, event=event, artifact=artifact, locale=locale, summary=summary)
+
+
+def research_plan_locale_issue_signature(summary: dict[str, Any]) -> str:
+    issue_payload = {
+        "locale": summary.get("requested_locale"),
+        "missing_block_count": summary.get("missing_block_count", 0),
+        "missing_subtask_count": summary.get("missing_subtask_count", 0),
+        "blocks": [
+            {
+                "id": item.get("id"),
+                "missing_fields": item.get("missing_fields", []),
+            }
+            for item in summary.get("blocks", [])
+            if isinstance(item, dict)
+        ],
+    }
+    return hashlib.sha256(dumps_json(issue_payload).encode("utf-8")).hexdigest()
 
 
 def maybe_register_chat_update_from_workspace_output(

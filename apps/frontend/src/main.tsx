@@ -623,6 +623,94 @@ const englishMessages = {
   notebookTableCreated: "Created",
   notebookTableActions: "Actions",
   notebookEmpty: "No authored notebook is available yet. Prepare notebook context, then let the agent write and register the notebook.",
+  notebookFocusEyebrow: "Notebook focus",
+  notebookStoryReady: "story ready",
+  notebookStoryPending: "story pending",
+  notebookReadableEvidence: "readable evidence",
+  notebookCaptureNeeded: "capture needed",
+  notebookEdaReviewReady: "EDA review ready",
+  notebookEdaReviewNotRun: "EDA review not run",
+  notebookEmptyDiagnosticsSkipped: "empty diagnostics skipped",
+  notebookMetricFigures: "Figures",
+  notebookMetricRuns: "Runs",
+  notebookMetricNext: "Next",
+  notebookOpenStory: "Open Story",
+  notebookRunEdaReview: "Run EDA Review",
+  notebookResultEvidence: "Result Evidence",
+  notebookAnalysisStoryTitle: "Analysis Story",
+  notebookReadThisNow: "Read this now",
+  notebookModelDiagnosticsEmptyWarning:
+    "A model diagnostics notebook exists, but it has no useful metric or prediction evidence yet. Tablex is routing you back to Data Understanding first.",
+  notebookNeedsCapture: "needs capture",
+  notebookCaptureEvidence: "Capture Evidence",
+  notebookCurrentStoryPreview: "Current story preview",
+  notebookDownloadCurrentStory: "Download current story",
+  notebookSelectedStoryEmpty:
+    "The selected story appears here immediately after you open it. If it is not available, run EDA Review or capture notebook evidence.",
+  notebookReadOrderTitle: "Read order",
+  notebookReviewItemFallback: "Review item",
+  notebookReadOrderEmpty: "No read order is available yet. Ask Codex to create one from the current artifacts.",
+  notebookWhatMattersTitle: "What matters",
+  notebookStoryCardFallback: "Story card",
+  notebookStoryCardsEmpty: "Story cards will appear after EDA Review or notebook generation.",
+  notebookCaveatsTitle: "Caveats",
+  notebookNoCaveat: "No caveat has been raised for this story yet.",
+  notebookAskCodexNextTitle: "Ask Codex next",
+  notebookPromptReadFirst: "What should I read first and why?",
+  notebookPromptNextAction: "What is the next narrow analysis action?",
+  notebookPromptWeakEvidence: "Which evidence is still too weak to trust?",
+  notebookGuidePlaceholder: "Ask Tablee about this analysis story...",
+  notebookAskAnalysisGuide: "Ask analysis guide",
+  notebookSupportingSummary: "Supporting notebooks and artifacts",
+  notebookDataReviewTitle: "Data Review",
+  notebookDataReviewDescription: "Harness-controlled EDA with findings, figures, read order, and Codex prompts.",
+  notebookReady: "ready",
+  notebookNotRun: "not run",
+  notebookFiguresUnit: "figures",
+  notebookOpen: "Open",
+  notebookEvidenceTitle: "Notebook evidence",
+  notebookEvidenceDescription: "Static evidence capture keeps the notebook readable without leaving Tablex.",
+  notebookNotCaptured: "not captured",
+  notebookBundleSaved: "bundle saved",
+  notebookCapture: "Capture",
+  notebookResult: "Result",
+  notebookRunnerRecordTitle: "Runner record",
+  notebookRunnerRecordDescription: "Plan, manifest, source, and safety policy for controlled Codex handoff.",
+  notebookInspect: "Inspect",
+  notebookPlan: "Plan",
+  notebookTableState: "State",
+  notebookCurrent: "current",
+  notebookPreviewNotebookTitle: "Preview notebook",
+  notebookCaptureEvidenceTitle: "Capture evidence",
+  notebookArtifactTableArtifact: "Artifact",
+  notebookArtifactTableStatus: "Status",
+  notebookPreviewArtifactTitle: "Preview artifact",
+  notebookDownloadArtifactTitle: "Download artifact",
+  notebookHistoryEmpty: "Notebook history will appear after Data Understanding or run-level diagnostics notebooks are generated.",
+  notebookStartHere: "Start here",
+  notebookCreateStoryFallbackTitle: "Create the first readable analysis story",
+  notebookCreateStoryFallbackBody:
+    "Run EDA Review first. Then let Codex extend a marimo notebook only after the next human question is clear.",
+  notebookDataNotebook: "Data Notebook",
+  notebookModelNotebook: "Model Notebook",
+  notebookCoveragePreview: "preview",
+  notebookCoverageReport: "report",
+  notebookCoverageVisual: "visual",
+  notebookCoverageManifest: "manifest",
+  notebookCoveragePlan: "plan",
+  notebookCoverageCapture: "capture",
+  notebookCoverageSourceOnly: "source only",
+  notebookReadinessEvidenceReady: "evidence ready",
+  notebookReadinessNarrativeReady: "narrative ready",
+  notebookReadinessPartialReview: "partial review",
+  notebookReadinessNotReady: "not ready",
+  notebookReadinessUnknown: "unknown",
+  notebookSourceProject: "project",
+  notebookSourceRun: "run",
+  notebookSourceDataset: "dataset",
+  notebookKindDataUnderstanding: "data understanding",
+  notebookKindModelDiagnostics: "model diagnostics",
+  notebookKindAgentAuthored: "analysis notebook",
   reportShelfIdeasTitle: "Ideas",
   reportShelfIdeasEmpty: "Agent ideas, domain observations, and improvement hypotheses will appear here with rationale and expected artifacts.",
   reportShelfInsightsTitle: "Insights",
@@ -1202,6 +1290,94 @@ const japaneseMessages: LocaleMessages = {
   notebookTableCreated: "作成日時",
   notebookTableActions: "操作",
   notebookEmpty: "作成済みNotebookはまだありません。Notebook文脈を準備し、AgentにNotebookを書かせて登録します。",
+  notebookFocusEyebrow: "Notebookの焦点",
+  notebookStoryReady: "ストーリー準備済み",
+  notebookStoryPending: "ストーリー待ち",
+  notebookReadableEvidence: "読める根拠あり",
+  notebookCaptureNeeded: "キャプチャが必要",
+  notebookEdaReviewReady: "EDAレビュー準備済み",
+  notebookEdaReviewNotRun: "EDAレビュー未実行",
+  notebookEmptyDiagnosticsSkipped: "空の診断はスキップ",
+  notebookMetricFigures: "図表",
+  notebookMetricRuns: "実験",
+  notebookMetricNext: "次",
+  notebookOpenStory: "ストーリーを開く",
+  notebookRunEdaReview: "EDAレビューを実行",
+  notebookResultEvidence: "結果根拠",
+  notebookAnalysisStoryTitle: "分析ストーリー",
+  notebookReadThisNow: "まず読む",
+  notebookModelDiagnosticsEmptyWarning:
+    "モデル診断Notebookはありますが、まだ有用なmetricやprediction evidenceがありません。Tablexは先にData Understandingへ注意を戻します。",
+  notebookNeedsCapture: "キャプチャが必要",
+  notebookCaptureEvidence: "根拠をキャプチャ",
+  notebookCurrentStoryPreview: "現在のストーリープレビュー",
+  notebookDownloadCurrentStory: "現在のストーリーをダウンロード",
+  notebookSelectedStoryEmpty:
+    "選択したストーリーは開くとここに表示されます。利用できない場合は、EDAレビューを実行するかNotebook evidenceをキャプチャしてください。",
+  notebookReadOrderTitle: "読む順番",
+  notebookReviewItemFallback: "確認項目",
+  notebookReadOrderEmpty: "読む順番はまだありません。現在のartifactからCodexに作成させてください。",
+  notebookWhatMattersTitle: "重要な点",
+  notebookStoryCardFallback: "ストーリーカード",
+  notebookStoryCardsEmpty: "EDAレビューまたはNotebook生成後にストーリーカードが表示されます。",
+  notebookCaveatsTitle: "注意点",
+  notebookNoCaveat: "このストーリーに対する注意点はまだありません。",
+  notebookAskCodexNextTitle: "次にCodexへ聞く",
+  notebookPromptReadFirst: "まず何を読むべきで、その理由は何ですか？",
+  notebookPromptNextAction: "次に絞って行う分析は何ですか？",
+  notebookPromptWeakEvidence: "まだ信頼するには弱い根拠はどれですか？",
+  notebookGuidePlaceholder: "この分析ストーリーについてTableeに聞く...",
+  notebookAskAnalysisGuide: "分析ガイドに聞く",
+  notebookSupportingSummary: "関連Notebookとartifact",
+  notebookDataReviewTitle: "データレビュー",
+  notebookDataReviewDescription: "finding、図表、読む順番、Codexへの問いを含むTablex管理のEDAです。",
+  notebookReady: "準備済み",
+  notebookNotRun: "未実行",
+  notebookFiguresUnit: "図表",
+  notebookOpen: "開く",
+  notebookEvidenceTitle: "Notebook根拠",
+  notebookEvidenceDescription: "静的な根拠キャプチャにより、Tablexを離れずにNotebookを読める状態にします。",
+  notebookNotCaptured: "未キャプチャ",
+  notebookBundleSaved: "bundle保存済み",
+  notebookCapture: "キャプチャ",
+  notebookResult: "結果",
+  notebookRunnerRecordTitle: "runner記録",
+  notebookRunnerRecordDescription: "制御されたCodex handoffのplan、manifest、source、安全policyです。",
+  notebookInspect: "確認",
+  notebookPlan: "計画",
+  notebookTableState: "状態",
+  notebookCurrent: "現在",
+  notebookPreviewNotebookTitle: "Notebookをプレビュー",
+  notebookCaptureEvidenceTitle: "根拠をキャプチャ",
+  notebookArtifactTableArtifact: "アーティファクト",
+  notebookArtifactTableStatus: "状態",
+  notebookPreviewArtifactTitle: "artifactをプレビュー",
+  notebookDownloadArtifactTitle: "artifactをダウンロード",
+  notebookHistoryEmpty: "Data Understandingまたはrun-level diagnostics Notebookが生成されると履歴が表示されます。",
+  notebookStartHere: "ここから開始",
+  notebookCreateStoryFallbackTitle: "最初の読める分析ストーリーを作成",
+  notebookCreateStoryFallbackBody:
+    "まずEDAレビューを実行します。その後、次の人間の問いが明確な場合にだけCodexにmarimo Notebookを拡張させます。",
+  notebookDataNotebook: "データNotebook",
+  notebookModelNotebook: "モデルNotebook",
+  notebookCoveragePreview: "プレビュー",
+  notebookCoverageReport: "レポート",
+  notebookCoverageVisual: "可視化",
+  notebookCoverageManifest: "manifest",
+  notebookCoveragePlan: "plan",
+  notebookCoverageCapture: "capture",
+  notebookCoverageSourceOnly: "sourceのみ",
+  notebookReadinessEvidenceReady: "根拠準備済み",
+  notebookReadinessNarrativeReady: "説明準備済み",
+  notebookReadinessPartialReview: "一部レビュー",
+  notebookReadinessNotReady: "未準備",
+  notebookReadinessUnknown: "不明",
+  notebookSourceProject: "プロジェクト",
+  notebookSourceRun: "実験",
+  notebookSourceDataset: "データセット",
+  notebookKindDataUnderstanding: "データ理解",
+  notebookKindModelDiagnostics: "モデル診断",
+  notebookKindAgentAuthored: "分析Notebook",
   reportShelfIdeasTitle: "アイデア",
   reportShelfIdeasEmpty: "Agentのアイデア、ドメイン観察、改善仮説が、根拠と期待artifact付きでここに表示されます。",
   reportShelfInsightsTitle: "発見",
@@ -6395,29 +6571,35 @@ function researchPlanBlocksFromTimeline(
     const targetTab = block.target_tab ? tabFromString(block.target_tab, "Home") : null;
     const subtasks: ResearchPlanSubtask[] = block.subtasks.map((subtask) => {
       const subtaskTab = subtask.target_tab ? tabFromString(subtask.target_tab, targetTab ?? "Home") : targetTab;
+      const subtaskNeedsLocaleRefresh = subtask.localization_status === "needs_locale_refresh";
       return {
         id: subtask.id,
-        title: localeSafeDisplayText(subtask.title, displayLocale, text.researchPlanDetailLocaleRefresh),
-        detail: localeSafeDisplayText(subtask.detail, displayLocale, text.researchPlanLocaleRefreshDetail),
+        title: subtaskNeedsLocaleRefresh
+          ? text.researchPlanDetailLocaleRefresh
+          : localeSafeDisplayText(subtask.title, displayLocale, text.researchPlanDetailLocaleRefresh),
+        detail: subtaskNeedsLocaleRefresh
+          ? text.researchPlanLocaleRefreshDetail
+          : localeSafeDisplayText(subtask.detail, displayLocale, text.researchPlanLocaleRefreshDetail),
         status: subtask.status,
-        evidence: subtask.evidence,
+        evidence: subtaskNeedsLocaleRefresh ? null : subtask.evidence,
         targetTab: subtaskTab,
         targetAnchor: subtask.target_anchor,
         onClick: subtaskTab ? () => onNavigateToTarget(subtaskTab, subtask.target_anchor) : undefined
       };
     });
     subtasks.push(...derivedResearchPlanSubtasks(block, text, displayLocale));
+    const blockNeedsLocaleRefresh = block.localization_status === "needs_locale_refresh";
     return {
       id: block.id,
-      title: localeSafeDisplayText(block.title, displayLocale, text.researchPlanBlockLocaleRefreshTitle),
-      subtitle: localeSafeDisplayText(
-        block.subtitle,
-        displayLocale,
-        block.localization_status === "needs_locale_refresh" ? text.researchPlanLocaleRefreshDetail : ""
-      ),
+      title: blockNeedsLocaleRefresh
+        ? text.researchPlanBlockLocaleRefreshTitle
+        : localeSafeDisplayText(block.title, displayLocale, text.researchPlanBlockLocaleRefreshTitle),
+      subtitle: blockNeedsLocaleRefresh
+        ? text.researchPlanLocaleRefreshDetail
+        : localeSafeDisplayText(block.subtitle, displayLocale, ""),
       status: block.status,
       eyebrow: `${index + 1}`.padStart(2, "0"),
-      evidence: displayTextMatchesLocale(block.evidence, displayLocale) ? block.evidence : null,
+      evidence: blockNeedsLocaleRefresh ? null : displayTextMatchesLocale(block.evidence, displayLocale) ? block.evidence : null,
       subtasks,
       onClick: targetTab ? () => onNavigateToTarget(targetTab, block.target_anchor) : undefined
     };
@@ -13547,6 +13729,7 @@ function NotebooksTab({
   runAction: (action: () => Promise<unknown>) => Promise<void>;
   onAskAgent: (message: string) => Promise<AgentChatResponse | void>;
 }) {
+  const { text } = useLocale();
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
@@ -13683,19 +13866,19 @@ function NotebooksTab({
 
   function notebookArtifactDisplayName(assetType: string) {
     const labels: Record<string, string> = {
-      notebook_evidence_html: "Evidence narrative",
-      notebook_evidence_svg: "Evidence figure",
-      notebook_evidence_bundle: "Evidence bundle",
+      notebook_evidence_html: text.notebookEvidenceTitle,
+      notebook_evidence_svg: `${text.notebookEvidenceTitle} ${text.notebookMetricFigures}`,
+      notebook_evidence_bundle: `${text.notebookEvidenceTitle} bundle`,
       notebook_execution_manifest: "Capture manifest",
       notebook_execution_report: "Capture report",
       notebook_execution_html: "Capture preview",
       notebook_figure_manifest: "Figure manifest",
-      notebook_execution_plan: "Runner plan",
+      notebook_execution_plan: text.notebookRunnerRecordTitle,
       notebook_execution_source: "Captured source",
-      eda_review_html: "Data Review",
-      eda_review_bundle: "Data Review bundle",
-      eda_review_svg: "Data Review figure",
-      eda_review_report: "Data Review report",
+      eda_review_html: text.notebookDataReviewTitle,
+      eda_review_bundle: `${text.notebookDataReviewTitle} bundle`,
+      eda_review_svg: `${text.notebookDataReviewTitle} ${text.notebookMetricFigures}`,
+      eda_review_report: `${text.notebookDataReviewTitle} report`,
       agent_task_contract: "Agent contract"
     };
     return labels[assetType] ?? assetType.replace(/_/g, " ");
@@ -13726,19 +13909,19 @@ function NotebooksTab({
   const hasEdaReviewEvidence = Boolean(latestEdaReviewHtml || storySourceType === "eda_review");
   const notebookFocusHeadline =
     textField(story?.headline) ??
-    (reviewNotebook ? reviewNotebook.title : "Create the first readable analysis story");
+    (reviewNotebook ? reviewNotebook.title : text.notebookCreateStoryFallbackTitle);
   const notebookFocusReason =
     textField(story?.why_this_story) ??
     (divertedFromEmptyDiagnostics
-      ? "The latest diagnostics notebook has no useful model evidence, so Tablex is routing attention back to Data Understanding."
+      ? text.notebookModelDiagnosticsEmptyWarning
       : reviewNotebook
         ? reviewNotebook.recommendation_reason
-        : "Run EDA Review first, then let Codex extend analysis only when the next human question is clear.");
+        : text.notebookCreateStoryFallbackBody);
   const notebookFocusNext = storyPreviewArtifactId
-    ? "Open the current story"
+    ? text.notebookOpenStory
     : latestDataset
-      ? "Run EDA Review"
-      : "Upload data first";
+      ? text.notebookRunEdaReview
+      : text.focusUploadData;
   const storyPrimaryActionType = textField(story?.primary_action?.action_type);
   const storyPrimaryEndpoint = textField(story?.primary_action?.endpoint);
   const autoPreviewedArtifactRef = React.useRef<string | null>(null);
@@ -13781,29 +13964,29 @@ function NotebooksTab({
 
   return (
     <div className="stack notebook-workbench">
-      <section id="notebook-focus" className="notebook-focus-panel" aria-label="Notebook reading focus">
+      <section id="notebook-focus" className="notebook-focus-panel" aria-label={text.focusNotebooks}>
         <div className="notebook-focus-copy">
-          <div className="eyebrow">Notebook focus</div>
+          <div className="eyebrow">{text.notebookFocusEyebrow}</div>
           <h2>{notebookFocusHeadline}</h2>
           <p>{notebookFocusReason}</p>
           <div className="badge-row">
-            <span className={story ? "badge" : "badge muted"}>{story ? "story ready" : "story pending"}</span>
+            <span className={story ? "badge" : "badge muted"}>{story ? text.notebookStoryReady : text.notebookStoryPending}</span>
             <span className={hasReadableStoryEvidence ? "badge" : "badge risk"}>
-              {hasReadableStoryEvidence ? "readable evidence" : "capture needed"}
+              {hasReadableStoryEvidence ? text.notebookReadableEvidence : text.notebookCaptureNeeded}
             </span>
             <span className={hasEdaReviewEvidence ? "badge" : "badge warning"}>
-              {hasEdaReviewEvidence ? "EDA review ready" : "EDA review not run"}
+              {hasEdaReviewEvidence ? text.notebookEdaReviewReady : text.notebookEdaReviewNotRun}
             </span>
-            {divertedFromEmptyDiagnostics ? <span className="badge warning">empty diagnostics skipped</span> : null}
+            {divertedFromEmptyDiagnostics ? <span className="badge warning">{text.notebookEmptyDiagnosticsSkipped}</span> : null}
           </div>
         </div>
         <div className="notebook-focus-aside">
-          <Metric label="Notebooks" value={notebookIndex?.counts.total ?? 0} />
-          <Metric label="Captured" value={notebookIndex?.counts.with_execution_capture ?? 0} />
-          <Metric label="Figures" value={String(story?.figure_refs.length ?? latestEdaReviewFigures.length)} />
-          <Metric label="Runs" value={runs.length} />
+          <Metric label={text.notebookMetricNotebooks} value={notebookIndex?.counts.total ?? 0} />
+          <Metric label={text.notebookMetricCaptured} value={notebookIndex?.counts.with_execution_capture ?? 0} />
+          <Metric label={text.notebookMetricFigures} value={String(story?.figure_refs.length ?? latestEdaReviewFigures.length)} />
+          <Metric label={text.notebookMetricRuns} value={runs.length} />
           <div className="notebook-focus-action">
-            <span>Next</span>
+            <span>{text.notebookMetricNext}</span>
             <strong>{notebookFocusNext}</strong>
             <button
               className="secondary-button"
@@ -13823,7 +14006,7 @@ function NotebooksTab({
               ) : (
                 <BarChart3 size={16} />
               )}
-              {storyPreviewArtifactId ? "Open Story" : "Run EDA Review"}
+              {storyPreviewArtifactId ? text.notebookOpenStory : text.notebookRunEdaReview}
             </button>
             <button
               className="secondary-button"
@@ -13831,34 +14014,34 @@ function NotebooksTab({
               onClick={() => void runAction(prepareResultNotebookEvidence)}
             >
               {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-              Result Evidence
+              {text.notebookResultEvidence}
             </button>
           </div>
         </div>
       </section>
-      <Panel id="analysis-story" title="Analysis Story" icon={<BarChart3 size={18} />}>
+      <Panel id="analysis-story" title={text.notebookAnalysisStoryTitle} icon={<BarChart3 size={18} />}>
         {story ? (
           <div className="analysis-story-surface">
             <section className="analysis-story-hero">
               <div className="analysis-story-copy">
-                <div className="eyebrow">Read this now</div>
+                <div className="eyebrow">{text.notebookReadThisNow}</div>
                 <h3>{story.headline}</h3>
                 <p>{story.why_this_story || story.deck}</p>
                 {divertedFromEmptyDiagnostics ? (
                   <div className="banner warning compact">
-                    A model diagnostics notebook exists, but it has no useful metric or prediction evidence yet. Tablex is routing you back to Data Understanding first.
+                    {text.notebookModelDiagnosticsEmptyWarning}
                   </div>
                 ) : null}
                 <div className="badge-row">
-                  <span className="badge">{story.source_type.replace(/_/g, " ")}</span>
+                  <span className="badge">{notebookKindLabel(story.source_type, text)}</span>
                   <span className="badge muted">{story.selected_source.title}</span>
                   {story.selected_source.status ? (
                     <span className={decisionReportStatusClass(story.selected_source.status)}>
-                      {story.selected_source.status.replace(/_/g, " ")}
+                      {notebookReadinessText(story.selected_source.status, text)}
                     </span>
                   ) : null}
                   <span className={hasEvidenceCapture || story.source_type === "eda_review" ? "badge" : "badge risk"}>
-                    {hasEvidenceCapture || story.source_type === "eda_review" ? "readable evidence" : "needs capture"}
+                    {hasEvidenceCapture || story.source_type === "eda_review" ? text.notebookReadableEvidence : text.notebookNeedsCapture}
                   </span>
                 </div>
               </div>
@@ -13875,7 +14058,7 @@ function NotebooksTab({
                   ) : (
                     <Eye size={16} />
                   )}
-                  Open Story
+                  {text.notebookOpenStory}
                 </button>
                 <button
                   className="secondary-button"
@@ -13885,7 +14068,7 @@ function NotebooksTab({
                   }}
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-                  Run EDA Review
+                  {text.notebookRunEdaReview}
                 </button>
                 {reviewNotebook && storyPrimaryActionType === "api" && storyPrimaryEndpoint?.includes("execution-capture") ? (
                   <button
@@ -13894,7 +14077,7 @@ function NotebooksTab({
                     onClick={() => void runAction(() => captureNotebookExecution(reviewNotebook))}
                   >
                     {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                    Capture Evidence
+                    {text.notebookCaptureEvidence}
                   </button>
                 ) : null}
                 <button
@@ -13903,7 +14086,7 @@ function NotebooksTab({
                   onClick={() => void runAction(prepareResultNotebookEvidence)}
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-                  Result Evidence
+                  {text.notebookResultEvidence}
                 </button>
               </div>
             </section>
@@ -13911,11 +14094,11 @@ function NotebooksTab({
             <section id="notebook-preview-top" className="analysis-story-preview">
               <div className="analysis-story-preview-head">
                 <div>
-                  <div className="eyebrow">Current story preview</div>
+                  <div className="eyebrow">{text.notebookCurrentStoryPreview}</div>
                   <h3>{story.selected_source.title}</h3>
                 </div>
                 {storyPreviewArtifactId ? (
-                  <a className="icon-link" href={`${apiBase}/api/artifacts/${storyPreviewArtifactId}/download`} title="Download current story">
+                  <a className="icon-link" href={`${apiBase}/api/artifacts/${storyPreviewArtifactId}/download`} title={text.notebookDownloadCurrentStory}>
                     <Download size={16} />
                   </a>
                 ) : null}
@@ -13928,20 +14111,20 @@ function NotebooksTab({
                   <TranslatablePreview preview={preview} />
                 )
               ) : (
-                <EmptyInline text="The selected story appears here immediately after you open it. If it is not available, run EDA Review or capture notebook evidence." />
+                <EmptyInline text={text.notebookSelectedStoryEmpty} />
               )}
             </section>
 
             <div className="analysis-story-grid">
               <section className="analysis-story-section">
-                <div className="mini-card-title">Read order</div>
+                <div className="mini-card-title">{text.notebookReadOrderTitle}</div>
                 {story.read_order.length ? (
                   <div className="analysis-read-list">
                     {story.read_order.map((item, index) => (
                       <div className="analysis-read-row" key={`${textField(item.title) ?? "read"}-${index}`}>
                         <span>{index + 1}</span>
                         <div>
-                          <strong>{textField(item.title) ?? "Review item"}</strong>
+                          <strong>{textField(item.title) ?? text.notebookReviewItemFallback}</strong>
                           <p>{textField(item.why) ?? ""}</p>
                           {textField(item.artifact_hint) ? <small>{textField(item.artifact_hint)}</small> : null}
                         </div>
@@ -13949,36 +14132,36 @@ function NotebooksTab({
                     ))}
                   </div>
                 ) : (
-                  <EmptyInline text="No read order is available yet. Ask Codex to create one from the current artifacts." />
+                  <EmptyInline text={text.notebookReadOrderEmpty} />
                 )}
               </section>
 
               <section className="analysis-story-section">
-                <div className="mini-card-title">What matters</div>
+                <div className="mini-card-title">{text.notebookWhatMattersTitle}</div>
                 {story.visual_story_cards.length ? (
                   <div className="analysis-story-card-grid">
                     {story.visual_story_cards.map((card, index) => (
                       <div className="analysis-story-card" key={`${textField(card.title) ?? "card"}-${index}`}>
                         <div className="badge-row">
                           <span className={decisionReportStatusClass(textField(card.status) ?? "review")}>
-                            {(textField(card.status) ?? "review").replace(/_/g, " ")}
+                            {notebookReadinessText(textField(card.status) ?? "review", text)}
                           </span>
                         </div>
-                        <strong>{textField(card.title) ?? "Story card"}</strong>
+                        <strong>{textField(card.title) ?? text.notebookStoryCardFallback}</strong>
                         <p>{textField(card.why_read) ?? ""}</p>
                         {textField(card.signal) ? <small>{textField(card.signal)}</small> : null}
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <EmptyInline text="Story cards will appear after EDA Review or notebook generation." />
+                  <EmptyInline text={text.notebookStoryCardsEmpty} />
                 )}
               </section>
             </div>
 
             <div className="analysis-story-grid compact">
               <section className="analysis-story-section">
-                <div className="mini-card-title">Caveats</div>
+                <div className="mini-card-title">{text.notebookCaveatsTitle}</div>
                 {story.caveats.length ? (
                   <ul className="analysis-plain-list">
                     {story.caveats.slice(0, 5).map((item) => (
@@ -13986,25 +14169,25 @@ function NotebooksTab({
                     ))}
                   </ul>
                 ) : (
-                  <EmptyInline text="No caveat has been raised for this story yet." />
+                  <EmptyInline text={text.notebookNoCaveat} />
                 )}
               </section>
               <section className="analysis-story-section">
-                <div className="mini-card-title">Ask Codex next</div>
+                <div className="mini-card-title">{text.notebookAskCodexNextTitle}</div>
                 <div className="analysis-prompt-list">
                   {(story.codex_prompts.length
                     ? story.codex_prompts
                     : [
-                        "What should I read first and why?",
-                        "What is the next narrow analysis action?",
-                        "Which evidence is still too weak to trust?"
+                        text.notebookPromptReadFirst,
+                        text.notebookPromptNextAction,
+                        text.notebookPromptWeakEvidence
                       ]
                   ).slice(0, 4).map((prompt) => (
                     <button
                       className="secondary-button"
                       disabled={busy || guideBusy}
                       key={prompt}
-                      title="Ask the analysis guide"
+                      title={text.notebookAskAnalysisGuide}
                       onClick={() => void askNotebookGuide(prompt)}
                     >
                       {guideBusy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
@@ -14025,9 +14208,9 @@ function NotebooksTab({
                   <input
                     value={guideDraft}
                     onChange={(event) => setGuideDraft(event.target.value)}
-                    placeholder="Ask Tablee about this analysis story..."
+                    placeholder={text.notebookGuidePlaceholder}
                   />
-                  <button className="icon-button" disabled={busy || guideBusy || !guideDraft.trim()} title="Ask analysis guide">
+                  <button className="icon-button" disabled={busy || guideBusy || !guideDraft.trim()} title={text.notebookAskAnalysisGuide}>
                     {guideBusy ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
                   </button>
                 </form>
@@ -14036,25 +14219,25 @@ function NotebooksTab({
             </div>
 
             <details className="artifact-shelf analysis-supporting-shelf">
-              <summary>Supporting notebooks and artifacts</summary>
+              <summary>{text.notebookSupportingSummary}</summary>
               <div className="analysis-supporting-grid">
                 <div className="metric-grid compact">
-                  <Metric label="Notebooks" value={notebookIndex?.counts.total ?? 0} />
-                  <Metric label="Captured" value={notebookIndex?.counts.with_execution_capture ?? 0} />
-                  <Metric label="Figures" value={String(story.figure_refs.length || reviewEvidenceFigures.length)} />
-                  <Metric label="Data Review" value={latestEdaReviewHtml ? "ready" : "not run"} />
+                  <Metric label={text.notebookMetricNotebooks} value={notebookIndex?.counts.total ?? 0} />
+                  <Metric label={text.notebookMetricCaptured} value={notebookIndex?.counts.with_execution_capture ?? 0} />
+                  <Metric label={text.notebookMetricFigures} value={String(story.figure_refs.length || reviewEvidenceFigures.length)} />
+                  <Metric label={text.notebookDataReviewTitle} value={latestEdaReviewHtml ? text.notebookReady : text.notebookNotRun} />
                 </div>
 
                 {reviewNotebook ? (
                   <div className="card-grid notebook-evidence-grid">
                     <div className="mini-card notebook-evidence-card primary">
-                      <div className="mini-card-title">Data Review</div>
-                      <p>Harness-controlled EDA with findings, figures, read order, and Codex prompts.</p>
+                      <div className="mini-card-title">{text.notebookDataReviewTitle}</div>
+                      <p>{text.notebookDataReviewDescription}</p>
                       <div className="badge-row">
                         <span className={latestEdaReviewHtml ? "badge" : "badge risk"}>
-                          {latestEdaReviewHtml ? "ready" : "not run"}
+                          {latestEdaReviewHtml ? text.notebookReady : text.notebookNotRun}
                         </span>
-                        {latestEdaReviewFigures.length ? <span className="badge muted">{latestEdaReviewFigures.length} figures</span> : null}
+                        {latestEdaReviewFigures.length ? <span className="badge muted">{latestEdaReviewFigures.length} {text.notebookFiguresUnit}</span> : null}
                       </div>
                       <div className="row-actions">
                         <button
@@ -14069,18 +14252,18 @@ function NotebooksTab({
                           ) : (
                             <FileText size={16} />
                           )}
-                          Open
+                          {text.notebookOpen}
                         </button>
                       </div>
                     </div>
                     <div className="mini-card notebook-evidence-card primary">
-                      <div className="mini-card-title">Notebook evidence</div>
-                      <p>Static evidence capture keeps the notebook readable without leaving Tablex.</p>
+                      <div className="mini-card-title">{text.notebookEvidenceTitle}</div>
+                      <p>{text.notebookEvidenceDescription}</p>
                       <div className="badge-row">
                         <span className={reviewEvidenceHtml ? "badge" : "badge risk"}>
-                          {reviewEvidenceHtml ? "ready" : "not captured"}
+                          {reviewEvidenceHtml ? text.notebookReady : text.notebookNotCaptured}
                         </span>
-                        {reviewEvidenceBundle ? <span className="badge muted">bundle saved</span> : null}
+                        {reviewEvidenceBundle ? <span className="badge muted">{text.notebookBundleSaved}</span> : null}
                       </div>
                       <div className="row-actions">
                         <button
@@ -14095,7 +14278,7 @@ function NotebooksTab({
                           ) : (
                             <FileText size={16} />
                           )}
-                          Open
+                          {text.notebookOpen}
                         </button>
                         <button
                           className="secondary-button"
@@ -14103,7 +14286,7 @@ function NotebooksTab({
                           onClick={() => void runAction(() => captureNotebookExecution(reviewNotebook))}
                         >
                           {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                          Capture
+                          {text.notebookCapture}
                         </button>
                         <button
                           className="secondary-button"
@@ -14111,13 +14294,13 @@ function NotebooksTab({
                           onClick={() => void runAction(prepareResultNotebookEvidence)}
                         >
                           {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-                          Result
+                          {text.notebookResult}
                         </button>
                       </div>
                     </div>
                     <div className="mini-card notebook-evidence-card">
-                      <div className="mini-card-title">Runner record</div>
-                      <p>Plan, manifest, source, and safety policy for controlled Codex handoff.</p>
+                      <div className="mini-card-title">{text.notebookRunnerRecordTitle}</div>
+                      <p>{text.notebookRunnerRecordDescription}</p>
                       <div className="row-actions">
                         <button
                           className="secondary-button"
@@ -14131,7 +14314,7 @@ function NotebooksTab({
                           ) : (
                             <ListChecks size={16} />
                           )}
-                          Inspect
+                          {text.notebookInspect}
                         </button>
                         <button
                           className="secondary-button"
@@ -14139,7 +14322,7 @@ function NotebooksTab({
                           onClick={() => void runAction(() => planNotebookExecution(reviewNotebook))}
                         >
                           {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                          Plan
+                          {text.notebookPlan}
                         </button>
                       </div>
                     </div>
@@ -14148,25 +14331,25 @@ function NotebooksTab({
 
                 {notebookItems.length ? (
                   <Table
-                    headers={["Notebook", "State", "Actions"]}
+                    headers={[text.notebookTableNotebook, text.notebookTableState, text.notebookTableActions]}
                     rows={notebookItems.slice(0, 8).map((item) => [
                       <div className="cell-stack" key={`${item.notebook_artifact_id}-title`}>
                         <span>{item.title}</span>
                         <small>
-                          {item.notebook_kind.replace(/_/g, " ")} | {notebookSourceLabel(item)}
+                          {notebookKindLabel(item.notebook_kind, text)} | {notebookSourceLabel(item, text)}
                         </small>
                       </div>,
                       <div className="badge-row" key={`${item.notebook_artifact_id}-state`}>
-                        <span className="badge muted">{notebookCoverageLabel(item)}</span>
-                        <span className={notebookReadinessClass(item)}>{notebookReadinessLabel(item)}</span>
-                        {item.notebook_artifact_id === reviewNotebook?.notebook_artifact_id ? <span className="badge">current</span> : null}
+                        <span className="badge muted">{notebookCoverageLabel(item, text)}</span>
+                        <span className={notebookReadinessClass(item)}>{notebookReadinessLabel(item, text)}</span>
+                        {item.notebook_artifact_id === reviewNotebook?.notebook_artifact_id ? <span className="badge">{text.notebookCurrent}</span> : null}
                       </div>,
                       <div className="row-actions" key={`${item.notebook_artifact_id}-actions`}>
                         <button
                           className="icon-button"
                           disabled={previewLoadingId === notebookPreviewArtifactId(item)}
                           onClick={() => void loadPreview(notebookPreviewArtifactId(item))}
-                          title="Preview notebook"
+                          title={text.notebookPreviewNotebookTitle}
                         >
                           {previewLoadingId === notebookPreviewArtifactId(item) ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
                         </button>
@@ -14174,23 +14357,23 @@ function NotebooksTab({
                           className="icon-button"
                           disabled={busy}
                           onClick={() => void runAction(() => captureNotebookExecution(item))}
-                          title="Capture evidence"
+                          title={text.notebookCaptureEvidenceTitle}
                         >
                           {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
                         </button>
-                        <a className="icon-link" href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`} title="Download marimo source">
+                        <a className="icon-link" href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`} title={text.notebookDownloadMarimoSource}>
                           <Download size={16} />
                         </a>
                       </div>
                     ])}
                   />
                 ) : (
-                  <EmptyInline text="Notebook history will appear after Data Understanding or run-level diagnostics notebooks are generated." />
+                  <EmptyInline text={text.notebookHistoryEmpty} />
                 )}
 
                 {reviewArtifacts.length ? (
                   <Table
-                    headers={["Artifact", "Status", "Created", "Actions"]}
+                    headers={[text.notebookArtifactTableArtifact, text.notebookArtifactTableStatus, text.notebookTableCreated, text.notebookTableActions]}
                     rows={reviewArtifacts.slice(0, 12).map((artifact) => [
                       <div className="cell-stack" key={`${artifact.id}-label`}>
                         <span>{notebookArtifactDisplayName(artifact.asset_type)}</span>
@@ -14203,11 +14386,11 @@ function NotebooksTab({
                           className="icon-button"
                           disabled={previewLoadingId === artifact.id}
                           onClick={() => void loadPreview(artifact.id)}
-                          title="Preview artifact"
+                          title={text.notebookPreviewArtifactTitle}
                         >
                           {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
                         </button>
-                        <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download artifact">
+                        <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title={text.notebookDownloadArtifactTitle}>
                           <Download size={16} />
                         </a>
                       </div>
@@ -14221,11 +14404,11 @@ function NotebooksTab({
           <div className="notebook-start-card">
             <img src="/mascot/tablee-avatar.svg" alt="" aria-hidden="true" className="notebook-start-mascot" />
             <div className="notebook-start-copy">
-              <div className="eyebrow">Start here</div>
-              <h3>{analysisStory?.empty_state?.headline ?? "Create the first readable analysis story"}</h3>
+              <div className="eyebrow">{text.notebookStartHere}</div>
+              <h3>{analysisStory?.empty_state?.headline ?? text.notebookCreateStoryFallbackTitle}</h3>
               <p>
                 {analysisStory?.empty_state?.reason ??
-                  "Run EDA Review first. Then let Codex extend a marimo notebook only after the next human question is clear."}
+                  text.notebookCreateStoryFallbackBody}
               </p>
               <div className="row-actions">
                 <button
@@ -14236,11 +14419,11 @@ function NotebooksTab({
                   }}
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-                  Run EDA Review
+                  {text.notebookRunEdaReview}
                 </button>
                 <button className="secondary-button" disabled={busy} onClick={() => void runAction(generateDataNotebook)}>
                   {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-                  Data Notebook
+                  {text.notebookDataNotebook}
                 </button>
                 <button
                   className="secondary-button"
@@ -14250,7 +14433,7 @@ function NotebooksTab({
                   }}
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
-                  Model Notebook
+                  {text.notebookModelNotebook}
                 </button>
                 <button
                   className="secondary-button"
@@ -14258,7 +14441,7 @@ function NotebooksTab({
                   onClick={() => void runAction(prepareResultNotebookEvidence)}
                 >
                   {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-                  Result Evidence
+                  {text.notebookResultEvidence}
                 </button>
               </div>
             </div>
@@ -14964,16 +15147,17 @@ function notebookPreviewArtifactId(item: NotebookIndexItem) {
   );
 }
 
-function notebookCoverageLabel(item: NotebookIndexItem) {
+function notebookCoverageLabel(item: NotebookIndexItem, text?: LocaleMessages) {
+  const labels = text ?? englishMessages;
   const flags = [
-    item.coverage.has_html_preview ? "preview" : null,
-    item.coverage.has_report ? "report" : null,
-    item.coverage.has_visualization ? "visual" : null,
-    item.coverage.has_manifest ? "manifest" : null,
-    item.coverage.has_execution_plan ? "plan" : null,
-    item.coverage.has_execution_capture ? "capture" : null
+    item.coverage.has_html_preview ? labels.notebookCoveragePreview : null,
+    item.coverage.has_report ? labels.notebookCoverageReport : null,
+    item.coverage.has_visualization ? labels.notebookCoverageVisual : null,
+    item.coverage.has_manifest ? labels.notebookCoverageManifest : null,
+    item.coverage.has_execution_plan ? labels.notebookCoveragePlan : null,
+    item.coverage.has_execution_capture ? labels.notebookCoverageCapture : null
   ].filter(Boolean);
-  return flags.length ? flags.join(" / ") : "source only";
+  return flags.length ? flags.join(" / ") : labels.notebookCoverageSourceOnly;
 }
 
 function isEmptyDiagnosticsNotebook(item: NotebookIndexItem | null) {
@@ -14981,17 +15165,18 @@ function isEmptyDiagnosticsNotebook(item: NotebookIndexItem | null) {
   return String(item.content?.readiness ?? item.coverage.content_readiness ?? "") === "not_ready";
 }
 
-function notebookReadinessLabel(item: NotebookIndexItem) {
+function notebookReadinessLabel(item: NotebookIndexItem, text?: LocaleMessages) {
   const readiness = String(item.content?.readiness ?? item.coverage.content_readiness ?? "unknown");
-  const labels: Record<string, string> = {
-    evidence_ready: "evidence ready",
-    narrative_ready: "narrative ready",
-    partial_review: "partial review",
-    not_ready: "not ready",
-    source_only: "source only",
-    unknown: "unknown"
+  const messages = text ?? englishMessages;
+  const readinessLabels: Record<string, string> = {
+    evidence_ready: messages.notebookReadinessEvidenceReady,
+    narrative_ready: messages.notebookReadinessNarrativeReady,
+    partial_review: messages.notebookReadinessPartialReview,
+    not_ready: messages.notebookReadinessNotReady,
+    source_only: messages.notebookCoverageSourceOnly,
+    unknown: messages.notebookReadinessUnknown
   };
-  return labels[readiness] ?? readiness.replace(/_/g, " ");
+  return readinessLabels[readiness] ?? readiness.replace(/_/g, " ");
 }
 
 function notebookReadinessClass(item: NotebookIndexItem) {
@@ -15001,10 +15186,40 @@ function notebookReadinessClass(item: NotebookIndexItem) {
   return "badge muted";
 }
 
-function notebookSourceLabel(item: NotebookIndexItem) {
-  if (item.run_id) return `run ${item.run_id}`;
-  if (item.dataset_snapshot_id) return `dataset ${item.dataset_snapshot_id}`;
-  return "project";
+function notebookReadinessText(value: string, text: LocaleMessages) {
+  const normalized = value.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    evidence_ready: text.notebookReadinessEvidenceReady,
+    narrative_ready: text.notebookReadinessNarrativeReady,
+    partial_review: text.notebookReadinessPartialReview,
+    not_ready: text.notebookReadinessNotReady,
+    source_only: text.notebookCoverageSourceOnly,
+    unknown: text.notebookReadinessUnknown,
+    ready: text.notebookReady,
+    review: text.notebookReadinessPartialReview,
+    missing: text.statusNeedsAttention,
+    needs_capture: text.notebookNeedsCapture
+  };
+  return labels[normalized] ?? normalized.replace(/_/g, " ");
+}
+
+function notebookSourceLabel(item: NotebookIndexItem, text?: LocaleMessages) {
+  const labels = text ?? englishMessages;
+  if (item.run_id) return `${labels.notebookSourceRun} ${item.run_id}`;
+  if (item.dataset_snapshot_id) return `${labels.notebookSourceDataset} ${item.dataset_snapshot_id}`;
+  return labels.notebookSourceProject;
+}
+
+function notebookKindLabel(kind: string, text: LocaleMessages) {
+  const normalized = kind.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    data_understanding: text.notebookKindDataUnderstanding,
+    model_diagnostics: text.notebookKindModelDiagnostics,
+    agent_authored: text.notebookKindAgentAuthored,
+    analysis_notebook: text.notebookKindAgentAuthored,
+    eda_review: text.notebookDataReviewTitle
+  };
+  return labels[normalized] ?? kind.replace(/_/g, " ");
 }
 
 function notebooksForDataset(index: NotebookIndex | null, datasetSnapshotId: string): NotebookIndexItem[] {

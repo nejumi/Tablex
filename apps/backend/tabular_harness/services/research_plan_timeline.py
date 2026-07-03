@@ -57,12 +57,22 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None =
     for index, raw_block in enumerate(raw_blocks[:40], start=1):
         if not isinstance(raw_block, dict):
             continue
+        missing_localization_fields = _research_plan_missing_localization_fields(
+            raw_block,
+            locale=locale,
+            fields=("title", "subtitle", "why_it_matters", "next_action", "done_criteria", "notes", "blockers"),
+        )
+        subtasks = clean_research_plan_timeline_subtasks(raw_block.get("subtasks"), locale=locale)
+        subtask_needs_locale = any(item.get("localization_status") == "needs_locale_refresh" for item in subtasks)
+        needs_locale_refresh = bool(missing_localization_fields or subtask_needs_locale)
         title = _research_plan_display_string(
             raw_block,
             "title",
             locale=locale,
         )
-        if not title:
+        if needs_locale_refresh and _research_plan_requires_explicit_locale(locale):
+            title = _research_plan_missing_title_label(locale)
+        elif not title:
             if _research_plan_requires_explicit_locale(locale) and _research_plan_has_visible_value(raw_block.get("title")):
                 title = _research_plan_missing_title_label(locale)
             else:
@@ -76,15 +86,8 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None =
             "missing_supporting_artifacts" if status == "done" and missing_supporting_artifact_count else None
         )
         display_status = "pending" if status_adjustment_reason else status
-        evidence = _research_plan_block_evidence(raw_block, locale=locale)
-        subtitle = _research_plan_block_subtitle(raw_block, locale=locale)
-        missing_localization_fields = _research_plan_missing_localization_fields(
-            raw_block,
-            locale=locale,
-            fields=("title", "subtitle", "why_it_matters", "next_action", "done_criteria", "notes", "blockers"),
-        )
-        subtasks = clean_research_plan_timeline_subtasks(raw_block.get("subtasks"), locale=locale)
-        subtask_needs_locale = any(item.get("localization_status") == "needs_locale_refresh" for item in subtasks)
+        evidence = None if needs_locale_refresh else _research_plan_block_evidence(raw_block, locale=locale)
+        subtitle = "" if needs_locale_refresh else _research_plan_block_subtitle(raw_block, locale=locale)
         blocks.append(
             {
                 "id": block_id if isinstance(block_id, str) and block_id.strip() else f"plan_block_{index}",
@@ -97,23 +100,31 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None =
                 "subtasks": subtasks,
                 "phase": str(raw_block.get("phase") or "").strip()[:120] or None,
                 "next_action": (
-                    _research_plan_display_string(raw_block, "next_action", locale=locale) or ""
+                    None
+                    if needs_locale_refresh
+                    else (_research_plan_display_string(raw_block, "next_action", locale=locale) or "")
                 )[:600]
-                or None,
+                if not needs_locale_refresh
+                else None,
                 "done_criteria": (
-                    _research_plan_display_string(raw_block, "done_criteria", locale=locale) or ""
+                    None
+                    if needs_locale_refresh
+                    else (_research_plan_display_string(raw_block, "done_criteria", locale=locale) or "")
                 )[:600]
-                or None,
+                if not needs_locale_refresh
+                else None,
                 "blockers": _research_plan_string_list(
-                    _research_plan_localized_value(raw_block, "blockers", locale=locale, allow_unlocalized_fallback=False),
+                    None
+                    if needs_locale_refresh
+                    else _research_plan_localized_value(
+                        raw_block, "blockers", locale=locale, allow_unlocalized_fallback=False
+                    ),
                     limit=6,
                 ),
                 "supporting_artifacts": supporting_artifacts,
                 "missing_supporting_artifact_count": missing_supporting_artifact_count,
                 "status_adjustment_reason": status_adjustment_reason,
-                "localization_status": "needs_locale_refresh"
-                if missing_localization_fields or subtask_needs_locale
-                else "localized",
+                "localization_status": "needs_locale_refresh" if needs_locale_refresh else "localized",
                 "missing_localization_fields": missing_localization_fields,
             }
         )
@@ -152,20 +163,25 @@ def clean_research_plan_timeline_subtasks(raw_subtasks: Any, *, locale: str | No
             locale=locale,
             fields=("title", "detail", "subtitle", "evidence"),
         )
+        needs_locale_refresh = bool(missing_localization_fields)
+        if needs_locale_refresh and _research_plan_requires_explicit_locale(locale):
+            title = _research_plan_missing_title_label(locale)
         subtasks.append(
             {
                 "id": subtask_id if isinstance(subtask_id, str) and subtask_id.strip() else f"subtask_{index}",
                 "title": title.strip()[:160],
-                "detail": (
+                "detail": ""
+                if needs_locale_refresh
+                else (
                     _research_plan_display_string(raw_subtask, "detail", locale=locale)
                     or _research_plan_display_string(raw_subtask, "subtitle", locale=locale)
                     or ""
                 )[:600],
                 "status": status,
-                "evidence": str(evidence).strip()[:240] if evidence is not None else None,
+                "evidence": None if needs_locale_refresh else str(evidence).strip()[:240] if evidence is not None else None,
                 "target_tab": raw_subtask.get("target_tab") if isinstance(raw_subtask.get("target_tab"), str) else None,
                 "target_anchor": raw_subtask.get("target_anchor") if isinstance(raw_subtask.get("target_anchor"), str) else None,
-                "localization_status": "needs_locale_refresh" if missing_localization_fields else "localized",
+                "localization_status": "needs_locale_refresh" if needs_locale_refresh else "localized",
                 "missing_localization_fields": missing_localization_fields,
             }
         )
