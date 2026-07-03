@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
+from tabular_harness.api.routes import visible_activity_workers
 from tabular_harness.core.config import Settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
@@ -62,6 +63,24 @@ def test_sqlite_engine_uses_wal_and_busy_timeout(tmp_path: Path) -> None:
     with app.state.engine.connect() as connection:
         assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one().lower() == "wal"
         assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 30_000
+
+
+def test_visible_activity_workers_hide_old_terminal_cards() -> None:
+    now = utc_now()
+    old_time = (now - timedelta(seconds=60)).isoformat()
+    recent_time = (now - timedelta(seconds=4)).isoformat()
+
+    workers = visible_activity_workers(
+        [
+            {"worker_id": "old", "status": "succeeded", "updated_at": old_time, "active": False},
+            {"worker_id": "recent", "status": "failed", "updated_at": recent_time, "active": False},
+            {"worker_id": "queued", "status": "queued", "updated_at": old_time, "active": False},
+            {"worker_id": "session", "status": "running", "updated_at": old_time, "active": True},
+        ],
+        now=now,
+    )
+
+    assert [worker["worker_id"] for worker in workers] == ["recent", "queued", "session"]
 
 
 def test_project_autonomy_mode_persists(tmp_path: Path) -> None:

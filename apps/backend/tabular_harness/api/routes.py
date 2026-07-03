@@ -4,6 +4,7 @@ import base64
 import json
 import mimetypes
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -6577,6 +6578,7 @@ def get_project_agent_activity(
         )
     active_workers = [worker for worker in workers if worker.get("active")]
     turn_state = build_project_turn_state(project, jobs, workers, active_job_ids=active_job_ids)
+    visible_workers = visible_activity_workers(workers, now=utc_now())
     if session is not None and session.status in {"starting", "running", "between_turns", "waiting_for_runner"}:
         observed_processes = list(turn_state.get("codex_processes") or [])
         session_has_process = bool(observed_processes)
@@ -6605,8 +6607,36 @@ def get_project_agent_activity(
         "generated_at": utc_now().isoformat(),
         "active_count": len(active_workers),
         "turn_state": turn_state,
-        "workers": workers[:20],
+        "workers": visible_workers[:20],
     }
+
+
+def visible_activity_workers(workers: list[dict[str, Any]], *, now: datetime) -> list[dict[str, Any]]:
+    visible: list[dict[str, Any]] = []
+    for worker in workers:
+        if worker.get("active"):
+            visible.append(worker)
+            continue
+        status = str(worker.get("status") or "")
+        if status in {"starting", "running", "queued", "approval_required", "between_turns", "waiting_for_runner"}:
+            visible.append(worker)
+            continue
+        updated_at = parse_worker_event_time(worker.get("updated_at") or worker.get("created_at"))
+        if updated_at is not None and (now - updated_at).total_seconds() <= 15:
+            visible.append(worker)
+    return visible
+
+
+def parse_worker_event_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 @router.post("/api/jobs", response_model=JobRead)
