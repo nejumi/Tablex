@@ -4555,6 +4555,96 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
     return turns[-60:]
 
 
+@router.get("/api/projects/{project_id}/research-plan/timeline")
+def get_research_plan_timeline(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    require_project(db, project_id)
+    artifact = db.scalar(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.asset_type == "research_plan")
+        .order_by(Artifact.created_at.desc())
+        .limit(1)
+    )
+    if artifact is None:
+        return {
+            "schema_version": "research_plan_timeline.v1",
+            "project_id": project_id,
+            "source_artifact_id": None,
+            "generated_at": utc_now().isoformat(),
+            "blocks": [],
+        }
+    try:
+        payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+    except OSError:
+        payload = {}
+    raw_blocks = payload.get("timeline_blocks") if isinstance(payload, dict) else None
+    return {
+        "schema_version": "research_plan_timeline.v1",
+        "project_id": project_id,
+        "source_artifact_id": artifact.id,
+        "generated_at": artifact.created_at.isoformat(),
+        "blocks": clean_research_plan_timeline_blocks(raw_blocks),
+    }
+
+
+def clean_research_plan_timeline_blocks(raw_blocks: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_blocks, list):
+        return []
+    statuses = {"done", "active", "pending", "blocked", "waiting", "skipped"}
+    blocks: list[dict[str, Any]] = []
+    for index, raw_block in enumerate(raw_blocks[:40], start=1):
+        if not isinstance(raw_block, dict):
+            continue
+        title = raw_block.get("title")
+        if not isinstance(title, str) or not title.strip():
+            continue
+        raw_status = raw_block.get("status")
+        status = raw_status if isinstance(raw_status, str) and raw_status in statuses else "pending"
+        block_id = raw_block.get("id")
+        evidence = raw_block.get("evidence")
+        blocks.append(
+            {
+                "id": block_id if isinstance(block_id, str) and block_id.strip() else f"plan_block_{index}",
+                "title": title.strip()[:160],
+                "subtitle": str(raw_block.get("subtitle") or "").strip()[:600],
+                "status": status,
+                "evidence": str(evidence).strip()[:240] if evidence is not None else None,
+                "target_tab": raw_block.get("target_tab") if isinstance(raw_block.get("target_tab"), str) else None,
+                "target_anchor": raw_block.get("target_anchor") if isinstance(raw_block.get("target_anchor"), str) else None,
+                "subtasks": clean_research_plan_timeline_subtasks(raw_block.get("subtasks")),
+            }
+        )
+    return blocks
+
+
+def clean_research_plan_timeline_subtasks(raw_subtasks: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_subtasks, list):
+        return []
+    statuses = {"done", "active", "pending", "blocked", "waiting", "skipped"}
+    subtasks: list[dict[str, Any]] = []
+    for index, raw_subtask in enumerate(raw_subtasks[:80], start=1):
+        if not isinstance(raw_subtask, dict):
+            continue
+        title = raw_subtask.get("title")
+        if not isinstance(title, str) or not title.strip():
+            continue
+        raw_status = raw_subtask.get("status")
+        status = raw_status if isinstance(raw_status, str) and raw_status in statuses else "pending"
+        subtask_id = raw_subtask.get("id")
+        evidence = raw_subtask.get("evidence")
+        subtasks.append(
+            {
+                "id": subtask_id if isinstance(subtask_id, str) and subtask_id.strip() else f"subtask_{index}",
+                "title": title.strip()[:160],
+                "detail": str(raw_subtask.get("detail") or raw_subtask.get("subtitle") or "").strip()[:600],
+                "status": status,
+                "evidence": str(evidence).strip()[:240] if evidence is not None else None,
+                "target_tab": raw_subtask.get("target_tab") if isinstance(raw_subtask.get("target_tab"), str) else None,
+                "target_anchor": raw_subtask.get("target_anchor") if isinstance(raw_subtask.get("target_anchor"), str) else None,
+            }
+        )
+    return subtasks
+
+
 @router.get("/api/projects/{project_id}/agent-session/current", response_model=AgentSessionRead | None)
 def get_current_agent_session(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any] | None:
     require_project(db, project_id)

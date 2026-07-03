@@ -33,6 +33,11 @@ def test_agent_session_model_notebook_outputs_are_diagnostics_notebooks() -> Non
     assert metadata_for_session_output(path)["notebook_kind"] == "model_diagnostics"
 
 
+def test_agent_session_research_plan_json_outputs_are_research_plans() -> None:
+    assert asset_type_for_session_output(Path("outputs/research_plan.json")) == "research_plan"
+    assert asset_type_for_session_output(Path("artifacts/research_plan_timeline.json")) == "research_plan"
+
+
 def test_session_output_artifact_name_uses_relative_path_to_avoid_stem_collisions() -> None:
     report_name = session_output_artifact_name("as_path", Path("reports/summary.md"))
     output_name = session_output_artifact_name("as_path", Path("outputs/summary.md"))

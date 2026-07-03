@@ -1289,6 +1289,8 @@ def asset_type_for_session_output(path: Path) -> str:
         return "analysis_notebook"
     if suffix in {".md", ".html"}:
         return "agent_session_report"
+    if suffix == ".json" and path.stem.lower() in {"research_plan", "research_plan_timeline"}:
+        return "research_plan"
     if suffix == ".json":
         return "agent_session_artifact"
     if suffix in {".png", ".jpg", ".jpeg", ".svg", ".webp"}:

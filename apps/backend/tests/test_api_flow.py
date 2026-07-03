@@ -18,6 +18,7 @@ from tabular_harness.main import create_app
 from tabular_harness.models.entities import Artifact, Job, Project, Question, utc_now
 from tabular_harness.schemas import AgentResult
 from tabular_harness.services.agent_sessions import append_session_event
+from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.jobs import acquire_next_job, create_job
 from tabular_harness.worker.jobs import agent_chat_turn_handler, continue_autonomous_session_handler
@@ -1214,6 +1215,60 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     metric_response = client.post(f"/api/projects/{project_id}/leaderboard/metric", json={"metric": "ROCーAUC"})
     assert metric_response.status_code == 200, metric_response.text
     assert metric_response.json()["metric"] == "roc_auc"
+
+
+def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Timeline Plan"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        artifact = store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="research_plan",
+            name="codex_research_plan",
+            filename="research_plan.json",
+            metadata={"project_id": project_id, "source": "test"},
+            payload={
+                "schema_version": "research_plan.v1",
+                "timeline_blocks": [
+                    {
+                        "id": "deep_eda",
+                        "title": "Deep EDA",
+                        "subtitle": "Inspect salary tail and relational coverage.",
+                        "status": "active",
+                        "evidence": "notebooks/deep_eda.py",
+                        "target_tab": "Notebooks",
+                        "target_anchor": "notebook-preview-top",
+                        "subtasks": [
+                            {
+                                "id": "tail_review",
+                                "title": "High salary tail review",
+                                "detail": "Check whether tail labels need a separate decision path.",
+                                "status": "pending",
+                                "target_tab": "Insight",
+                            }
+                        ],
+                    },
+                    {"id": "broken", "status": "done"},
+                    {"id": "invalid_status", "title": "Invalid status becomes pending", "status": "surprise"},
+                ],
+            },
+        )
+        db.commit()
+
+    response = client.get(f"/api/projects/{project_id}/research-plan/timeline")
+    assert response.status_code == 200
+    timeline = response.json()
+    assert timeline["source_artifact_id"] == artifact.id
+    assert [block["id"] for block in timeline["blocks"]] == ["deep_eda", "invalid_status"]
+    assert timeline["blocks"][0]["status"] == "active"
+    assert timeline["blocks"][0]["subtasks"][0]["target_tab"] == "Insight"
+    assert timeline["blocks"][1]["status"] == "pending"
 
 
 def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_path: Path) -> None:

@@ -140,6 +140,64 @@
     },
     "agent_handoff": {
       "type": "object"
+    },
+    "timeline_blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "done",
+              "active",
+              "pending",
+              "blocked",
+              "waiting",
+              "skipped"
+            ]
+          },
+          "evidence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_tab": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_anchor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subtasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "additionalProperties": false

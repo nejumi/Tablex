@@ -1894,6 +1894,8 @@ type ResearchPlanSubtask = {
   detail: string;
   status: ResearchPlanBlockStatus;
   evidence: string | null;
+  targetTab?: Tab | null;
+  targetAnchor?: string | null;
   onClick?: () => void;
 };
 
@@ -1906,6 +1908,33 @@ type ResearchPlanBlock = {
   evidence: string | null;
   subtasks?: ResearchPlanSubtask[];
   onClick?: () => void;
+};
+
+type ResearchPlanTimelineBlock = {
+  id: string;
+  title: string;
+  subtitle: string;
+  status: ResearchPlanBlockStatus;
+  evidence: string | null;
+  target_tab: string | null;
+  target_anchor: string | null;
+  subtasks: Array<{
+    id: string;
+    title: string;
+    detail: string;
+    status: ResearchPlanBlockStatus;
+    evidence: string | null;
+    target_tab: string | null;
+    target_anchor: string | null;
+  }>;
+};
+
+type ResearchPlanTimelineResponse = {
+  schema_version: "research_plan_timeline.v1";
+  project_id: string;
+  source_artifact_id: string | null;
+  generated_at: string;
+  blocks: ResearchPlanTimelineBlock[];
 };
 
 type Idea = {
@@ -3646,6 +3675,7 @@ function ProjectDetail({
   const [validationsByModelVersion, setValidationsByModelVersion] = React.useState<Record<string, ModelValidation[]>>({});
   const [strategyBrief, setStrategyBrief] = React.useState<AdaptiveStrategyBrief | null>(null);
   const [researchBriefs, setResearchBriefs] = React.useState<ResearchBrief[]>([]);
+  const [researchPlanTimeline, setResearchPlanTimeline] = React.useState<ResearchPlanTimelineResponse | null>(null);
   const [ideas, setIdeas] = React.useState<Idea[]>([]);
   const [reports, setReports] = React.useState<Report[]>([]);
   const [decisionReport, setDecisionReport] = React.useState<DecisionReportCurrent | null>(null);
@@ -3740,6 +3770,7 @@ function ProjectDetail({
         agentActivityData,
         agentSessionData,
         agentTranscriptData,
+        researchPlanTimelineData,
         understandingData
       ] = await Promise.all([
         api<Overview>(`/api/projects/${project.id}/overview`),
@@ -3774,6 +3805,7 @@ function ProjectDetail({
         api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`).catch(() => null),
         api<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`).catch(() => null),
         api<AgentTranscriptEvent[]>(`/api/projects/${project.id}/agent-session/transcript`).catch(() => []),
+        api<ResearchPlanTimelineResponse>(`/api/projects/${project.id}/research-plan/timeline`).catch(() => null),
         api<{ markdown: string | null }>(`/api/projects/${project.id}/understanding/latest`)
       ]);
       setOverview(overviewData);
@@ -3807,6 +3839,7 @@ function ProjectDetail({
       setAgentActivity(agentActivityData);
       setAgentSession(agentSessionData);
       setAgentTranscriptEvents(agentTranscriptData);
+      setResearchPlanTimeline(researchPlanTimelineData);
       transcriptSessionIdRef.current = agentSessionData?.id ?? null;
       transcriptSinceIndexRef.current = maxTranscriptEventIndex(agentTranscriptData);
       const validationEntries = await Promise.all(
@@ -4334,6 +4367,7 @@ function ProjectDetail({
           recommendation={focusRecommendation}
           strategyBrief={strategyBrief}
           researchBriefs={researchBriefs}
+          researchPlanTimeline={researchPlanTimeline}
           ideas={ideas}
           artifacts={artifacts}
           jobs={jobs}
@@ -4585,6 +4619,7 @@ function HomeTab({
   recommendation,
   strategyBrief,
   researchBriefs,
+  researchPlanTimeline,
   ideas,
   artifacts,
   jobs,
@@ -4623,6 +4658,7 @@ function HomeTab({
   recommendation: FocusRecommendation;
   strategyBrief: AdaptiveStrategyBrief | null;
   researchBriefs: ResearchBrief[];
+  researchPlanTimeline: ResearchPlanTimelineResponse | null;
   ideas: Idea[];
   artifacts: Artifact[];
   jobs: Job[];
@@ -4678,6 +4714,7 @@ function HomeTab({
     datasetCount,
     artifacts,
     researchBriefs,
+    researchPlanTimeline,
     notebookIndex,
     equippedSkills,
     jobs: planJobs,
@@ -5335,6 +5372,7 @@ function buildResearchPlanBlocks({
   datasetCount,
   artifacts,
   researchBriefs,
+  researchPlanTimeline,
   notebookIndex,
   equippedSkills,
   jobs,
@@ -5350,6 +5388,7 @@ function buildResearchPlanBlocks({
   datasetCount: number;
   artifacts: Artifact[];
   researchBriefs: ResearchBrief[];
+  researchPlanTimeline: ResearchPlanTimelineResponse | null;
   notebookIndex: NotebookIndex | null;
   equippedSkills: EquippedSkillItem[];
   jobs: Job[];
@@ -5361,6 +5400,11 @@ function buildResearchPlanBlocks({
   onNavigateToTarget: (tab: Tab, anchor?: string | null) => void;
   onStrategyAction: (action: StrategyAction) => void;
 }): ResearchPlanBlock[] {
+  const codexAuthoredBlocks = researchPlanBlocksFromTimeline(researchPlanTimeline, text, onNavigateToTarget);
+  if (codexAuthoredBlocks.length) {
+    return attachResearchPlanSubtasks(codexAuthoredBlocks, jobs, text, onTabChange, { appendUnassigned: true });
+  }
+
   const hasObjectiveEvidence = Boolean(project.target_column) || hasAnyArtifactType(artifacts, ["target_definition_proposal"]);
   const hasUnderstandingEvidence =
     hasAnyArtifactType(artifacts, ["data_understanding_complete"]) ||
@@ -5514,6 +5558,40 @@ function buildResearchPlanBlocks({
   }
 
   return attachResearchPlanSubtasks(blocks, jobs, text, onTabChange, { appendUnassigned: true });
+}
+
+function researchPlanBlocksFromTimeline(
+  timeline: ResearchPlanTimelineResponse | null,
+  text: LocaleMessages,
+  onNavigateToTarget: (tab: Tab, anchor?: string | null) => void
+): ResearchPlanBlock[] {
+  if (!timeline?.blocks.length) return [];
+  return timeline.blocks.map((block, index) => {
+    const targetTab = block.target_tab ? tabFromString(block.target_tab, "Home") : null;
+    const subtasks = block.subtasks.map((subtask) => {
+      const subtaskTab = subtask.target_tab ? tabFromString(subtask.target_tab, targetTab ?? "Home") : targetTab;
+      return {
+        id: subtask.id,
+        title: subtask.title,
+        detail: subtask.detail,
+        status: subtask.status,
+        evidence: subtask.evidence,
+        targetTab: subtaskTab,
+        targetAnchor: subtask.target_anchor,
+        onClick: subtaskTab ? () => onNavigateToTarget(subtaskTab, subtask.target_anchor) : undefined
+      };
+    });
+    return {
+      id: block.id,
+      title: block.title,
+      subtitle: block.subtitle || text.researchPlanTimelineHint,
+      status: block.status,
+      eyebrow: `${index + 1}`.padStart(2, "0"),
+      evidence: block.evidence,
+      subtasks,
+      onClick: targetTab ? () => onNavigateToTarget(targetTab, block.target_anchor) : undefined
+    };
+  });
 }
 
 function attachResearchPlanSubtasks(
