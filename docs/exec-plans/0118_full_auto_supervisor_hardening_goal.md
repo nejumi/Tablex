@@ -36,6 +36,7 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
 - Added browser-download URLs for the main AgentSession raw stdout JSONL and stderr log so Raw can show a bounded tail while still giving direct access to the complete saved transcript files.
 - Tightened Research Plan locale display so unlocalized Codex-authored block strings do not leak into non-English UI while the active session receives a display-language refresh request.
 - Preserved the main AgentSession observation on paired Chat turns after a Codex-authored `reports/chat_update.md` answers a pending user instruction, so the saved Chat turn remains traceable back to Raw.
+- Added a dedicated `tablex-agent-supervisor` process entrypoint and an API setting (`TABLEX_API_AGENT_SESSION_SUPERVISOR_ENABLED`) so Full Auto session recovery can be moved out of the FastAPI process when desired.
 
 ## 2026-07-04 Fable Feedback Audit
 
@@ -62,11 +63,12 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
 | Long-running Codex turns should still be prompted to explain progress | Implemented with non-blocking nudge | The supervisor now writes `.tablex/inbox/progress_request.md` during active Codex turns when the latest Codex-authored Chat update is stale; tests verify project locale and no browser polling dependency. |
 | Notebook preview state should not look blank or broken while rendering | Implemented in UI | HTML/SVG preview iframes now show localized loading and slow-render states before `onLoad`, with the existing open-original fallback still available. |
 | Notebook preview should not depend on a second iframe fetch for already-prepared HTML | Implemented in UI | Non-truncated HTML previews now render the API-provided inlined/reset HTML through `srcDoc`; empty previews show a visible warning and source/original fallbacks. |
+| A supervisor can run out-of-process instead of depending on the API or generic worker | Implemented as an operator entrypoint | `tablex-agent-supervisor` runs only AgentSession recovery/continuation. API-side supervisor startup can be disabled with `TABLEX_API_AGENT_SESSION_SUPERVISOR_ENABLED=false`, while the DB lease still prevents duplicate ownership. |
 
 ## Deferred Scope
 
 - Do not prune historical duplicate artifacts automatically. Existing projects may still contain large artifact histories from older naming behavior; deletion or compaction needs an explicit maintenance command and user approval.
-- A dedicated out-of-process supervisor/worker remains a future improvement. The current implementation is still in-process, but startup recovery and file-backed Raw transcripts reduce the worst reload failure modes.
+- Turning the dedicated supervisor into a packaged service/process-manager unit remains future work. The CLI entrypoint exists, but Docker Compose/systemd/supervisord wiring is not yet committed.
 - Full browser UX review remains necessary for Chat/Raw rendering, Research Plan centering, end-to-end Notebook rendering, and Activity overlay behavior.
 - Chat quality still depends on Codex honoring `reports/chat_update.md` at a useful cadence. The harness now requests those updates from the supervisor path as well as user/chat/activity paths, but real long-running sessions should be observed to confirm the cadence feels natural.
 - The product still has large frontend/backend files (`main.tsx`, `routes.py`, `analysis_notebooks.py`). Future edits should reduce risk through extraction rather than broad, unrelated edits.

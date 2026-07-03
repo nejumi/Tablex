@@ -137,3 +137,33 @@ def test_local_worker_daemon_periodically_retries_agent_session_supervisor_recov
         assert all(call.startswith("worker-daemon:recovery-daemon:thread:") for call in calls)
     finally:
         daemon.stop()
+
+
+def test_api_lifespan_can_disable_agent_session_supervisor(tmp_path: Path, monkeypatch: Any) -> None:
+    calls: list[str] = []
+
+    def fake_supervisor_recovery(*args: object, **kwargs: object) -> list[threading.Thread]:
+        del args, kwargs
+        calls.append("called")
+        return []
+
+    monkeypatch.setattr(
+        "tabular_harness.main.start_active_main_session_supervisors",
+        fake_supervisor_recovery,
+    )
+    settings = Settings(
+        app_display_name="Tablex",
+        data_dir=tmp_path / "data",
+        database_url=f"sqlite:///{tmp_path / 'data' / 'metadata' / 'app.db'}",
+        artifact_root=tmp_path / "data" / "artifacts",
+        max_upload_bytes=100 * 1024 * 1024,
+        cors_origins=("http://localhost:5173",),
+        api_agent_session_supervisor_enabled=False,
+        local_worker_enabled=False,
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+
+    assert calls == []

@@ -26,6 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
+tablex-agent-supervisor = "tabular_harness.worker.agent_supervisor_cli:main"
 tablex-worker = "tabular_harness.worker.cli:main"
 
 [project.optional-dependencies]

@@ -28,11 +28,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        start_active_main_session_supervisors(
-            session_factory,
-            app.state.artifact_store,
-            lease_owner_id=f"api:pid:{os.getpid()}",
-        )
+        if app_settings.api_agent_session_supervisor_enabled:
+            start_active_main_session_supervisors(
+                session_factory,
+                app.state.artifact_store,
+                lease_owner_id=f"api:pid:{os.getpid()}",
+            )
         worker_daemon: LocalWorkerDaemon | None = None
         if app_settings.local_worker_enabled:
             worker_daemon = LocalWorkerDaemon(

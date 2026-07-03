@@ -170,6 +170,14 @@ tablex-worker --interval 2 --worker-id local-worker
 
 In continuous mode, `tablex-worker` also starts recovery for active Full Auto Codex sessions. Backend and worker processes coordinate through a database-backed supervisor lease, so only one process should own a given main session at a time. Use `--no-agent-session-supervisor` only when another process is intentionally responsible for Full Auto session recovery. `--once` remains a single queued-job runner and does not start a long-running session supervisor.
 
+For a dedicated Full Auto supervisor process, run:
+
+```bash
+tablex-agent-supervisor --interval 15 --owner-id local-agent-supervisor
+```
+
+This process only recovers and drives active main `AgentSession` records; it does not process ordinary queued jobs. If this process should be the only supervisor owner, start the API with `TABLEX_API_AGENT_SESSION_SUPERVISOR_ENABLED=false` and run `tablex-worker --no-agent-session-supervisor` for sidecar jobs. Database supervisor leases still prevent duplicate ownership if more than one process is present.
+
 The local worker daemon, `/api/worker/run-once`, `/api/jobs/{job_id}/run`, and the manual `tablex-worker` entrypoint all use concrete handlers only: `agent_chat_turn`, `build_split_manifest`, `run_baseline`, `train_model_candidates`, `run_planned_agent_task_codex`, and `continue_autonomous_session`. Generic MVP stub handlers are not used by product worker paths; a queued job without a concrete handler stays queued instead of receiving fake success. When split/model/Codex child workers finish, they schedule the autonomous-session heartbeat so Full Auto can resume from current state instead of stopping after one turn. Agent Activity should show Training Worker, Codex Runner, and Autonomous Session cards with project names, human descriptions, and estimated telemetry. Queued child jobs are waiting, not live; stale queued jobs should fall out of the right-edge activity overlay while remaining visible in Jobs/history.
 
 ModelVersion validation history is available from:
