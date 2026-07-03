@@ -1636,7 +1636,7 @@ type AgentChatResponse = {
   token_usage: { source: string; is_estimate: boolean; series: TokenSeriesPoint[] };
   next_focus: Record<string, unknown>;
   artifact_id: string;
-  job: Job;
+  job?: Job | null;
 };
 
 type AgentChatHistoryTurn = Omit<AgentChatResponse, "job"> & {
@@ -4038,7 +4038,7 @@ function ProjectDetail({
       const queuedForWorker =
         result.artifact_id.startsWith("pending_") || ["queued", "running", "pending", "in_progress"].includes(composerStatus);
       if (queuedForWorker) {
-        const turnId = `turn:${result.job.id}`;
+        const turnId = `turn:${result.job?.id ?? result.artifact_id}`;
         setPendingAgentChatMessages([
           { ...optimisticUser, id: `${turnId}:user`, transient: true },
           {
@@ -4058,16 +4058,17 @@ function ProjectDetail({
         return result;
       }
       setPendingAgentChatMessages([]);
+      const turnId = `turn:${result.job?.id ?? result.artifact_id}`;
       setAgentChatMessages((current) =>
         upsertAgentChatMessages(current, [
           {
-            id: `turn:${result.job.id}:user`,
+            id: `${turnId}:user`,
             role: "user",
             text: result.user_message,
             createdAt: responseCreatedAt
           },
           {
-            id: `turn:${result.job.id}:system`,
+            id: `${turnId}:system`,
             role: "system",
             text: result.assistant_message,
             actions: result.actions,

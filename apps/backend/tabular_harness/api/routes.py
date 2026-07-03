@@ -4361,6 +4361,7 @@ def create_agent_chat_turn(
     project_id: str,
     payload: AgentChatCreate,
     db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
     session = active_main_session(db, project_id)
@@ -4387,6 +4388,33 @@ def create_agent_chat_turn(
             message=payload.message,
             locale=payload.locale,
         )
+        response = delivered_to_main_session_chat_turn(
+            project=project,
+            session=session,
+            event=event,
+            message=payload.message,
+            locale=payload.locale,
+        )
+        artifact = store_json_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="agent_chat_turn",
+            name=f"agent_session_user_instruction_{session.id}_{event.id}",
+            filename="agent_chat_turn.json",
+            payload=response,
+            metadata={
+                "project_id": project.id,
+                "agent_session_id": session.id,
+                "agent_transcript_event_id": event.id,
+                "agent_transcript_event_index": event.event_index,
+                "source": "main_agent_session_user_instruction",
+                "response_locale": payload.locale,
+            },
+        )
+        response["artifact_id"] = artifact.id
+        db.commit()
+        return response
     job = create_job(
         db,
         job_type="agent_chat_turn",
@@ -4457,6 +4485,53 @@ def create_agent_chat_turn(
 
 def is_sidecar_chat_request(message: str) -> bool:
     return message.strip().lower() == "/btw"
+
+
+def delivered_to_main_session_chat_turn(
+    *,
+    project: Project,
+    session: AgentSession,
+    event: AgentTranscriptEvent,
+    message: str,
+    locale: str | None,
+) -> dict[str, Any]:
+    japanese = (locale or "").lower().startswith("ja")
+    assistant_message = (
+        "受け取りました。今動いている分析に差し込みました。Codex が次の進捗で反映します。"
+        if japanese
+        else "Received. I added this to the running analysis; Codex will reflect it in the next progress update."
+    )
+    return {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": project.id,
+        "user_message": message,
+        "assistant_message": assistant_message,
+        "intent": {
+            "type": "agent_conversation",
+            "source": "main_agent_session_inbox",
+            "routing_policy": "delivered_to_running_codex_session_without_small_response_job",
+        },
+        "actions": [],
+        "action_summary": {},
+        "response_brief": {
+            "schema_version": "agent_chat_main_session_delivery.v1",
+            "response_locale": locale,
+            "agent_session_id": session.id,
+            "agent_transcript_event_id": event.id,
+            "agent_transcript_event_index": event.event_index,
+            "delivery": "workspace_inbox_and_transcript",
+        },
+        "response_composer": {
+            "schema_version": "agent_response_composer.v1",
+            "mode": "main_agent_session_inbox",
+            "status": "delivered_to_main_session",
+        },
+        "worker_events": [],
+        "token_usage": {"source": "main_agent_session_transcript", "is_estimate": True, "series": []},
+        "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent Chat"},
+        "artifact_id": f"pending_{event.id}",
+        "job": None,
+    }
 
 
 @router.get("/api/projects/{project_id}/agent-chat/history", response_model=list[AgentChatHistoryTurnRead])

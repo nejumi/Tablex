@@ -1459,6 +1459,11 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
         json={"message": "この条件で特徴量を見直してください", "locale": "ja-JP"},
     )
     assert chat_response.status_code == 200, chat_response.text
+    chat = chat_response.json()
+    assert chat["job"] is None
+    assert chat["response_composer"]["mode"] == "main_agent_session_inbox"
+    assert chat["response_composer"]["status"] == "delivered_to_main_session"
+    assert "今動いている分析" in chat["assistant_message"]
 
     inbox = user_instructions_inbox_path(workspace)
     latest = latest_user_instruction_path(workspace)
@@ -1471,6 +1476,12 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert payload["locale"] == "ja-JP"
     assert payload["message"] == "この条件で特徴量を見直してください"
     assert "この条件で特徴量を見直してください" in latest.read_text(encoding="utf-8")
+    jobs = client.get(f"/api/projects/{project_id}/jobs").json()
+    assert all(job["job_type"] != "agent_chat_turn" for job in jobs)
+    history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
+    assert history[-1]["job_id"] is None
+    assert history[-1]["user_message"] == "この条件で特徴量を見直してください"
+    assert history[-1]["response_composer"]["status"] == "delivered_to_main_session"
 
 
 def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -> None:

@@ -823,7 +823,7 @@ class AgentChatRead(BaseModel):
     token_usage: dict[str, Any]
     next_focus: dict[str, Any]
     artifact_id: str
-    job: JobRead
+    job: JobRead | None = None
 
 
 class ModelValidationRead(BaseModel):
