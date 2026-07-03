@@ -597,7 +597,7 @@ def create_notebook_execution_capture(
 
     notebook_source = _read_text_artifact(notebook_artifact)
     source_validation = _validate_tablex_notebook_source(notebook_source)
-    if not source_validation["is_tablex_generated"]:
+    if not source_validation["is_capture_eligible"]:
         raise ValueError("Only valid marimo analysis notebooks can be captured by the local execution path")
     compile_result = run_notebook_static_compile(notebook_source)
     marimo_export_result = (
@@ -1645,6 +1645,7 @@ def _validate_tablex_notebook_source(source: str) -> dict[str, Any]:
     is_marimo_notebook = all(checks[key] for key in ("imports_marimo", "defines_marimo_app"))
     return {
         "schema_version": "notebook_source_validation.v1",
+        "is_valid_marimo_notebook": is_marimo_notebook,
         "is_tablex_generated": is_marimo_notebook,
         "is_capture_eligible": is_marimo_notebook,
         "checks": checks,
@@ -1807,17 +1808,27 @@ def source_notebook_path_for_export(notebook_artifact: Artifact) -> Path | None:
         and isinstance(agent_session_id, str)
         and isinstance(workspace_relative_path, str)
     ):
-        candidate = (
-            Path("data")
-            / "artifacts"
-            / "agent_sessions"
-            / notebook_artifact.project_id
-            / agent_session_id
-            / workspace_relative_path
-        )
-        if candidate.exists():
-            return candidate.resolve()
+        store_root = artifact_store_root_from_primary_path(notebook_artifact, primary)
+        if store_root is not None:
+            session_root = (store_root / "agent_sessions" / notebook_artifact.project_id / agent_session_id).resolve()
+            candidate = (session_root / workspace_relative_path).resolve()
+            try:
+                candidate.relative_to(session_root)
+            except ValueError:
+                candidate = None
+            if candidate is not None and candidate.exists():
+                return candidate
     return primary.resolve() if primary.exists() else None
+
+
+def artifact_store_root_from_primary_path(artifact: Artifact, primary_path: Path) -> Path | None:
+    parts = primary_path.resolve().parts
+    project_part = artifact.project_id or "_cross_project"
+    marker = (artifact.org_id, project_part, artifact.asset_type)
+    for index in range(0, max(len(parts) - len(marker) + 1, 0)):
+        if tuple(parts[index : index + len(marker)]) == marker:
+            return Path(*parts[:index])
+    return None
 
 
 def notebook_export_env(workspace: Path) -> dict[str, str]:

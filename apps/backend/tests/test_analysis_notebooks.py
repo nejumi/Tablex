@@ -11,9 +11,11 @@ from tabular_harness.services.analysis_notebooks import (
     _notebook_content_signal,
     _notebook_recommendation_reason,
     _notebook_recommendation_score,
+    _validate_tablex_notebook_source,
     build_project_notebook_index,
     list_latest_notebook_index_artifacts,
     notebook_execution_status,
+    source_notebook_path_for_export,
 )
 
 
@@ -111,6 +113,55 @@ def test_notebook_execution_status_separates_marimo_failure_from_static_capture(
     assert notebook_execution_status(compile_ok, {"status": "skipped"}) == "static_capture_succeeded"
     assert notebook_execution_status(compile_ok, {"status": "failed"}) == "marimo_export_failed"
     assert notebook_execution_status({"status": "failed"}, {"status": "succeeded"}) == "static_capture_failed"
+
+
+def test_codex_authored_marimo_notebook_does_not_need_tablex_marker() -> None:
+    source = """
+import marimo
+
+app = marimo.App()
+
+@app.cell
+def _():
+    return
+"""
+
+    validation = _validate_tablex_notebook_source(source)
+
+    assert validation["is_valid_marimo_notebook"] is True
+    assert validation["is_capture_eligible"] is True
+
+
+def test_source_notebook_export_prefers_agent_workspace_without_cwd_dependency(tmp_path: Path) -> None:
+    project_id = "p_export"
+    session_id = "ags_export"
+    store_root = tmp_path / "data" / "artifacts"
+    stored_dir = store_root / "local-org" / project_id / "analysis_notebook" / "agent_notebook" / "v1"
+    workspace_notebook = store_root / "agent_sessions" / project_id / session_id / "notebooks" / "report.py"
+    stored_notebook = stored_dir / "report.py"
+    workspace_notebook.parent.mkdir(parents=True)
+    stored_dir.mkdir(parents=True)
+    workspace_notebook.write_text("workspace copy", encoding="utf-8")
+    stored_notebook.write_text("stored copy", encoding="utf-8")
+    notebook = Artifact(
+        id="art_notebook_export",
+        org_id="local-org",
+        project_id=project_id,
+        asset_type="analysis_notebook",
+        name="agent_notebook",
+        version=1,
+        uri=str(stored_dir),
+        content_hash="hash",
+        metadata_json=dumps_json(
+            {
+                "primary_path": str(stored_notebook),
+                "agent_session_id": session_id,
+                "workspace_relative_path": "notebooks/report.py",
+            }
+        ),
+    )
+
+    assert source_notebook_path_for_export(notebook) == workspace_notebook.resolve()
 
 
 def artifact(
