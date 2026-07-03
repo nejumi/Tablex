@@ -4652,10 +4652,13 @@ def queued_main_session_chat_response(
 
 def agent_session_observation_for_chat_wait(db: Session, session: AgentSession) -> dict[str, Any]:
     now = utc_now()
-    last_codex_output_at = latest_codex_transcript_output_at(db, session_id=session.id)
+    raw_observation = raw_transcript_observation_for_session(session)
+    last_codex_output_at = latest_codex_output_timestamp(
+        latest_codex_transcript_output_at(db, session_id=session.id),
+        raw_observation,
+    )
     last_chat_update_at = latest_codex_chat_update_at(db, project_id=session.project_id, session_id=session.id)
     latest_codex_message = latest_codex_message_observation_for_session(db, session=session)
-    raw_observation = raw_transcript_observation_for_session(session)
     return {
         "schema_version": "agent_session_chat_wait_observation.v1",
         "agent_session_id": session.id,
@@ -4672,6 +4675,14 @@ def agent_session_observation_for_chat_wait(db: Session, session: AgentSession) 
         "last_chat_update_seconds_ago": seconds_since_timestamp(last_chat_update_at, now=now),
         "raw_transcript": raw_observation,
     }
+
+
+def latest_codex_output_timestamp(db_output_at: datetime | None, raw_observation: dict[str, Any]) -> datetime | None:
+    raw_output_at = datetime_from_iso_or_none(raw_observation.get("updated_at"))
+    candidates = [item for item in (utc_datetime_or_none(db_output_at), raw_output_at) if item is not None]
+    if not candidates:
+        return None
+    return max(candidates)
 
 
 def latest_codex_message_observation_for_session(
@@ -4769,7 +4780,13 @@ def datetime_from_iso_or_none(value: Any) -> datetime | None:
         parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    return utc_datetime_or_none(parsed)
+
+
+def utc_datetime_or_none(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 @router.get("/api/projects/{project_id}/agent-chat/history", response_model=list[AgentChatHistoryTurnRead])

@@ -2069,6 +2069,18 @@ def test_agent_chat_wait_observation_falls_back_to_raw_codex_transcript(
             created_by="test",
         )
         db.add(session)
+        db.flush()
+        old_event = append_session_event(
+            db,
+            session,
+            source="codex_cli",
+            event_type="item.completed",
+            role="runner",
+            title="Codex message",
+            content="DBにだけある古い進捗です。",
+            payload={"type": "item.completed", "item": {"type": "agent_message"}},
+        )
+        old_event.created_at = utc_now() - timedelta(minutes=10)
         db.commit()
     append_runner_stream_to_workspace(
         workspace,
@@ -2086,6 +2098,8 @@ def test_agent_chat_wait_observation_falls_back_to_raw_codex_transcript(
     assert observation["latest_codex_message"]["source"] == "raw_transcript_file"
     assert observation["latest_codex_message"]["line_number"] == 1
     assert observation["latest_codex_message"]["content"] == "Raw transcriptだけにある進捗です。"
+    assert observation["last_codex_output_at"] == observation["latest_codex_message"]["created_at"]
+    assert observation["last_codex_output_seconds_ago"] is not None
 
     history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
     history_observation = history[-1]["response_brief"]["agent_session_observation"]
