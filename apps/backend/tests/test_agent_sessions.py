@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 from tabular_harness.core.json import dumps_json, loads_json
+from tabular_harness.db.session import ensure_sqlite_mvp_columns
 from tabular_harness.models.entities import (
     AgentSession,
     AgentTranscriptEvent,
@@ -180,6 +181,54 @@ def test_transcript_index_reservation_survives_uncommitted_sidecar_event(tmp_pat
         "thread.started",
         "turn.started",
     ]
+
+
+def test_sqlite_schema_sync_repairs_duplicate_transcript_indexes(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_index_repair", name="Index Repair")
+        session = AgentSession(id="as_index_repair", project_id=project.id, goal_text="Continue.")
+        db.add_all([project, session])
+        db.add_all(
+            [
+                AgentTranscriptEvent(
+                    id="agte_dup_1",
+                    project_id=project.id,
+                    session_id=session.id,
+                    event_index=0,
+                    source="tablex_sidecar",
+                    event_type="first",
+                    payload_json="{}",
+                ),
+                AgentTranscriptEvent(
+                    id="agte_dup_2",
+                    project_id=project.id,
+                    session_id=session.id,
+                    event_index=0,
+                    source="codex_cli",
+                    event_type="second",
+                    payload_json="{}",
+                ),
+            ]
+        )
+        db.commit()
+
+    ensure_sqlite_mvp_columns(engine)
+
+    with engine.connect() as connection:
+        duplicates = list(
+            connection.execute(
+                select(AgentTranscriptEvent.session_id, AgentTranscriptEvent.event_index)
+                .group_by(AgentTranscriptEvent.session_id, AgentTranscriptEvent.event_index)
+                .having(func.count() > 1)
+            )
+        )
+        indexes = [row[1] for row in connection.exec_driver_sql("PRAGMA index_list(agent_transcript_events)")]
+
+    assert duplicates == []
+    assert "ux_agent_transcript_events_session_index" in indexes
 
 
 def test_session_output_artifact_name_uses_relative_path_to_avoid_stem_collisions() -> None:

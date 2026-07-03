@@ -79,6 +79,7 @@ def ensure_sqlite_mvp_columns(engine: Engine) -> None:
                     connection.execute(text(f"ALTER TABLE jobs ADD COLUMN {column_name} {ddl}"))
 
         if "agent_transcript_events" in table_names:
+            repair_agent_transcript_event_indexes(connection)
             connection.execute(
                 text(
                     "CREATE INDEX IF NOT EXISTS ix_agent_transcript_events_session_index "
@@ -90,6 +91,69 @@ def ensure_sqlite_mvp_columns(engine: Engine) -> None:
                     "CREATE INDEX IF NOT EXISTS ix_agent_transcript_events_project_created "
                     "ON agent_transcript_events (project_id, created_at)"
                 )
+            )
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_transcript_events_session_index "
+                    "ON agent_transcript_events (session_id, event_index)"
+                )
+            )
+
+
+def repair_agent_transcript_event_indexes(connection: Any) -> None:
+    duplicate_groups = list(
+        connection.execute(
+            text(
+                """
+                SELECT session_id, event_index, COUNT(*) AS duplicate_count
+                FROM agent_transcript_events
+                GROUP BY session_id, event_index
+                HAVING duplicate_count > 1
+                """
+            )
+        ).mappings()
+    )
+    for group in duplicate_groups:
+        session_id = str(group["session_id"])
+        event_index = int(group["event_index"])
+        rows = list(
+            connection.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM agent_transcript_events
+                    WHERE session_id = :session_id AND event_index = :event_index
+                    ORDER BY created_at ASC, id ASC
+                    """
+                ),
+                {"session_id": session_id, "event_index": event_index},
+            ).mappings()
+        )
+        if len(rows) <= 1:
+            continue
+        max_index = int(
+            connection.execute(
+                text(
+                    """
+                    SELECT COALESCE(MAX(event_index), -1)
+                    FROM agent_transcript_events
+                    WHERE session_id = :session_id
+                    """
+                ),
+                {"session_id": session_id},
+            ).scalar_one()
+        )
+        for row in rows[1:]:
+            max_index += 1
+            connection.execute(
+                text(
+                    """
+                    UPDATE agent_transcript_events
+                    SET event_index = :event_index
+                    WHERE id = :id
+                    """
+                ),
+                {"event_index": max_index, "id": row["id"]},
             )
 
 
