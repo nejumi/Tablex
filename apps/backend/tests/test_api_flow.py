@@ -86,7 +86,8 @@ def test_visible_activity_workers_hide_old_terminal_cards() -> None:
         [
             {"worker_id": "old", "status": "succeeded", "updated_at": old_time, "active": False},
             {"worker_id": "recent", "status": "failed", "updated_at": recent_time, "active": False},
-            {"worker_id": "queued", "status": "queued", "updated_at": old_time, "active": False},
+            {"worker_id": "old-queued", "status": "queued", "updated_at": old_time, "active": False},
+            {"worker_id": "queued", "status": "queued", "updated_at": recent_time, "active": True},
             {"worker_id": "session", "status": "running", "updated_at": old_time, "active": True},
         ],
         now=now,

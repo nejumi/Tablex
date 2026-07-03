@@ -7993,7 +7993,7 @@ function isRunningWorkerStatus(status: string) {
   return isLiveWorkerStatus(status) || isWaitingWorkerStatus(status);
 }
 
-const QUEUED_WORKER_ACTIVITY_TTL_MS = 30 * 60 * 1000;
+const QUEUED_WORKER_ACTIVITY_TTL_MS = 5 * 60 * 1000;
 const TRANSIENT_WORKER_ACTIVITY_TTL_MS = 15 * 1000;
 const FINISHED_WORKER_ACTIVITY_TTL_MS = 9 * 1000;
 

@@ -7241,7 +7241,7 @@ def visible_activity_workers(workers: list[dict[str, Any]], *, now: datetime) ->
             visible.append(worker)
             continue
         status = str(worker.get("status") or "")
-        if status in {"starting", "running", "queued", "approval_required", "between_turns", "waiting_for_runner"}:
+        if status in {"starting", "running", "approval_required", "between_turns", "waiting_for_runner"}:
             visible.append(worker)
             continue
         updated_at = parse_worker_event_time(worker.get("updated_at") or worker.get("created_at"))

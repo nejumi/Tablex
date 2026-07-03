@@ -22,6 +22,7 @@ PORTAL_IN_PROGRESS_PHASES = {
     "AUTONOMOUS_LOOP",
     "UNDERSTANDING_REVIEW",
 }
+QUEUED_WORKER_ACTIVITY_WINDOW = timedelta(minutes=5)
 
 
 def build_portal_overview(db: Session) -> dict[str, Any]:
@@ -457,7 +458,7 @@ def job_active_for_activity(job: Job, *, active_job_ids: set[str] | None = None)
         created_at = job.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
-        return utc_now() - created_at < timedelta(minutes=30)
+        return utc_now() - created_at < QUEUED_WORKER_ACTIVITY_WINDOW
     return False
 
 
