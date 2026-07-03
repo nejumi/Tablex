@@ -1121,6 +1121,13 @@ function localeLanguage(locale: string | null | undefined): string {
   return (locale ?? "").trim().replace("_", "-").split("-", 1)[0].toLowerCase();
 }
 
+function localeLooksJapanese(locale: string | null | undefined): boolean {
+  const normalized = (locale ?? "").trim().toLowerCase().replace("_", "-");
+  if (!normalized) return false;
+  const language = normalized.split("-", 1)[0];
+  return language === "ja" || normalized === "japanese" || normalized === "日本語" || normalized.startsWith("日本語");
+}
+
 function localeRequiresLocalizedDisplay(locale: string | null | undefined): boolean {
   const language = localeLanguage(locale);
   return Boolean(language && language !== "en");
@@ -1130,7 +1137,7 @@ function displayTextMatchesLocale(value: string | null | undefined, locale: stri
   const text = (value ?? "").trim();
   if (!text) return false;
   if (!localeRequiresLocalizedDisplay(locale)) return true;
-  if (localeLanguage(locale) === "ja") {
+  if (localeLooksJapanese(locale)) {
     return /[\u3040-\u30ff\u3400-\u9fff]/.test(text);
   }
   return false;

@@ -302,7 +302,10 @@ def _research_plan_locale_keys(locale: str | None) -> list[str]:
     normalized = locale.strip().replace("_", "-")
     lower = normalized.lower()
     language = lower.split("-", 1)[0]
-    return list(dict.fromkeys([normalized, lower, language]))
+    keys = [normalized, lower, language]
+    if _research_plan_locale_is_japanese(locale):
+        keys.extend(["ja-JP", "ja-jp", "ja"])
+    return list(dict.fromkeys(keys))
 
 
 def _research_plan_string_list(value: Any, *, limit: int) -> list[str]:
@@ -404,7 +407,13 @@ def _research_plan_requires_explicit_locale(locale: str | None) -> bool:
 
 
 def _research_plan_locale_is_japanese(locale: str | None) -> bool:
-    return isinstance(locale, str) and locale.strip().lower().replace("_", "-").startswith("ja")
+    if not isinstance(locale, str):
+        return False
+    normalized = locale.strip().lower().replace("_", "-")
+    if not normalized:
+        return False
+    language = normalized.split("-", 1)[0]
+    return language == "ja" or normalized in {"japanese", "日本語"} or normalized.startswith("日本語")
 
 
 def _research_plan_placeholder(kind: str, *, locale: str | None) -> str:

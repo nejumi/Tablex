@@ -2067,6 +2067,18 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized["blocks"][3]["localization_status"] == "needs_locale_refresh"
     assert localized["blocks"][3]["evidence"] is None
 
+    japanese_alias_response = client.get(
+        f"/api/projects/{project_id}/research-plan/timeline",
+        params={"locale": "Japanese"},
+    )
+    assert japanese_alias_response.status_code == 200
+    japanese_alias = japanese_alias_response.json()
+    assert japanese_alias["response_locale"] == "Japanese"
+    assert japanese_alias["blocks"][0]["title"] == "深いEDA"
+    assert japanese_alias["blocks"][1]["title"] == "表示言語を更新中の計画ブロック"
+    assert japanese_alias["blocks"][1]["subtitle"] == ""
+    assert japanese_alias["blocks"][1]["localization_status"] == "needs_locale_refresh"
+
 
 def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_path: Path) -> None:
     client = make_client(tmp_path)
