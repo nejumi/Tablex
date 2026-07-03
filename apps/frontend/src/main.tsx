@@ -6027,16 +6027,26 @@ function mergeInitialAnchorsWithCodexPlanBlocks(
   const anchorIds = new Set([
     "data_upload",
     "data-upload",
+    "dataset_upload",
+    "data_upload_project_context",
+    "project_context",
     "upload_data",
     "objective",
     "objective_setting",
+    "objective_task_framing",
+    "purpose_setting",
+    "goal_setting",
     "task_framing",
     "target_definition",
     "understanding",
     "data_understanding",
     "prior_research",
     "prior_knowledge_research",
-    "research",
+    "prior_knowledge_research_anchor",
+    "prior_knowledge_research_anchors",
+    "prior_research_anchor",
+    "prior_research_anchors",
+    "research"
   ]);
   const codexProjectBlocks = codexBlocks.filter((block) => !anchorIds.has(block.id));
   return [...initialAnchors, ...codexProjectBlocks];
@@ -6092,14 +6102,15 @@ function researchPlanBlocksFromTimeline(
   onNavigateToTarget: (tab: Tab, anchor?: string | null) => void
 ): ResearchPlanBlock[] {
   if (!timeline?.blocks.length) return [];
+  const displayLocale = timeline.response_locale ?? locale;
   const blocks = timeline.blocks.map((block, index) => {
     const targetTab = block.target_tab ? tabFromString(block.target_tab, "Home") : null;
     const subtasks: ResearchPlanSubtask[] = block.subtasks.map((subtask) => {
       const subtaskTab = subtask.target_tab ? tabFromString(subtask.target_tab, targetTab ?? "Home") : targetTab;
       return {
         id: subtask.id,
-        title: localeSafeDisplayText(subtask.title, locale, text.researchPlanDetailLocaleRefresh),
-        detail: localeSafeDisplayText(subtask.detail, locale, text.researchPlanLocaleRefreshDetail),
+        title: localeSafeDisplayText(subtask.title, displayLocale, text.researchPlanDetailLocaleRefresh),
+        detail: localeSafeDisplayText(subtask.detail, displayLocale, text.researchPlanLocaleRefreshDetail),
         status: subtask.status,
         evidence: subtask.evidence,
         targetTab: subtaskTab,
@@ -6107,14 +6118,18 @@ function researchPlanBlocksFromTimeline(
         onClick: subtaskTab ? () => onNavigateToTarget(subtaskTab, subtask.target_anchor) : undefined
       };
     });
-    subtasks.push(...derivedResearchPlanSubtasks(block, text, locale));
+    subtasks.push(...derivedResearchPlanSubtasks(block, text, displayLocale));
     return {
       id: block.id,
-      title: localeSafeDisplayText(block.title, locale, text.researchPlanBlockLocaleRefreshTitle),
-      subtitle: localeSafeDisplayText(block.subtitle, locale, block.localization_status === "needs_locale_refresh" ? text.researchPlanLocaleRefreshDetail : ""),
+      title: localeSafeDisplayText(block.title, displayLocale, text.researchPlanBlockLocaleRefreshTitle),
+      subtitle: localeSafeDisplayText(
+        block.subtitle,
+        displayLocale,
+        block.localization_status === "needs_locale_refresh" ? text.researchPlanLocaleRefreshDetail : ""
+      ),
       status: block.status,
       eyebrow: `${index + 1}`.padStart(2, "0"),
-      evidence: displayTextMatchesLocale(block.evidence, locale) ? block.evidence : null,
+      evidence: displayTextMatchesLocale(block.evidence, displayLocale) ? block.evidence : null,
       subtasks,
       onClick: targetTab ? () => onNavigateToTarget(targetTab, block.target_anchor) : undefined
     };
