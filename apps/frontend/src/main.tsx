@@ -1796,6 +1796,8 @@ type TurnState = {
   active_job_id?: string | null;
   active_job_type?: string | null;
   active_codex_process_count?: number;
+  last_output_at?: string | null;
+  last_output_seconds_ago?: number | null;
   sources?: string[];
 };
 
@@ -4754,6 +4756,7 @@ function HomeTab({
     equippedSkills,
     jobs: planJobs,
     agentSession,
+    turnState,
     agentTranscriptEvents,
     nextStrategyAction,
     text,
@@ -5413,6 +5416,7 @@ function buildResearchPlanBlocks({
   equippedSkills,
   jobs,
   agentSession,
+  turnState,
   agentTranscriptEvents,
   nextStrategyAction,
   text,
@@ -5429,6 +5433,7 @@ function buildResearchPlanBlocks({
   equippedSkills: EquippedSkillItem[];
   jobs: Job[];
   agentSession: AgentSession | null;
+  turnState: TurnState;
   agentTranscriptEvents: AgentTranscriptEvent[];
   nextStrategyAction: StrategyAction | null;
   text: LocaleMessages;
@@ -5438,7 +5443,12 @@ function buildResearchPlanBlocks({
 }): ResearchPlanBlock[] {
   const codexAuthoredBlocks = researchPlanBlocksFromTimeline(researchPlanTimeline, text, onNavigateToTarget);
   if (codexAuthoredBlocks.length) {
-    return attachResearchPlanSubtasks(codexAuthoredBlocks, jobs, text, onTabChange, { appendUnassigned: true });
+    return appendObservedAgentPlanBlock(
+      attachResearchPlanSubtasks(codexAuthoredBlocks, jobs, text, onTabChange, { appendUnassigned: true }),
+      turnState,
+      text,
+      onTabChange
+    );
   }
 
   const hasObjectiveEvidence = Boolean(project.target_column) || hasAnyArtifactType(artifacts, ["target_definition_proposal"]);
@@ -5590,7 +5600,40 @@ function buildResearchPlanBlocks({
     });
   }
 
-  return attachResearchPlanSubtasks(blocks, jobs, text, onTabChange, { appendUnassigned: true });
+  return appendObservedAgentPlanBlock(
+    attachResearchPlanSubtasks(blocks, jobs, text, onTabChange, { appendUnassigned: true }),
+    turnState,
+    text,
+    onTabChange
+  );
+}
+
+function appendObservedAgentPlanBlock(
+  blocks: ResearchPlanBlock[],
+  turnState: TurnState,
+  text: LocaleMessages,
+  onTabChange: (tab: Tab) => void
+): ResearchPlanBlock[] {
+  const agentOwnsTurn = turnState.owner === "agent" && ["agent_running", "agent_scheduled"].includes(turnState.state);
+  if (!agentOwnsTurn) return blocks;
+  const hasLiveBlock = blocks.some((block) => block.status === "active");
+  if (hasLiveBlock) return blocks;
+  const detail = turnState.detail || turnState.label || text.planBlockCodexRunning;
+  return [
+    ...blocks,
+    {
+      id: "observed_main_agent_session",
+      title: turnStateLabel(turnState, text),
+      subtitle: detail,
+      status: turnState.state === "agent_running" ? "active" : "pending",
+      eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
+      evidence:
+        typeof turnState.last_output_seconds_ago === "number"
+          ? `${text.turnStateObserved} · ${formatElapsedSeconds(turnState.last_output_seconds_ago)}`
+          : text.turnStateObserved,
+      onClick: () => onTabChange("Home")
+    }
+  ];
 }
 
 function researchPlanBlocksFromTimeline(
