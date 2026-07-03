@@ -167,8 +167,6 @@ from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
 from tabular_harness.services.analysis_notebooks import (
     build_project_analysis_story,
     build_project_notebook_index,
-    create_notebook_execution_capture,
-    create_notebook_execution_plan,
 )
 from tabular_harness.services.approach import (
     create_decision_dashboard,
@@ -6422,7 +6420,6 @@ def current_project_analysis_story(
 def plan_analysis_notebook_execution_endpoint(
     artifact_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     notebook_artifact = db.get(Artifact, artifact_id)
     if notebook_artifact is None:
@@ -6443,28 +6440,9 @@ def plan_analysis_notebook_execution_endpoint(
             "secrets_materialized": False,
             "execution_mode": "plan_only",
             "executes_notebook_code": False,
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_notebook_execution_plan(db, store=store, notebook_artifact=notebook_artifact)
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.plan["schema_version"],
-                "task_id": result.contract["task_id"],
-                "task_type": result.contract["task_type"],
-                "notebook_kind": result.plan["notebook_kind"],
-                "analysis_notebook_artifact_id": notebook_artifact.id,
-                "agent_task_contract_artifact_id": result.contract_artifact.id,
-                "notebook_execution_plan_artifact_id": result.plan_artifact.id,
-                "artifact_ids": result.artifact_ids,
-                "execution_status": "planned_not_executed",
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -6472,7 +6450,6 @@ def plan_analysis_notebook_execution_endpoint(
 def capture_analysis_notebook_execution_endpoint(
     artifact_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     notebook_artifact = db.get(Artifact, artifact_id)
     if notebook_artifact is None:
@@ -6494,40 +6471,9 @@ def capture_analysis_notebook_execution_endpoint(
             "execution_mode": "marimo_html_export_with_static_compile_precheck",
             "executes_notebook_code": True,
             "python_compile_only": False,
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_notebook_execution_capture(db, store=store, notebook_artifact=notebook_artifact)
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.manifest["schema_version"],
-                "notebook_kind": result.manifest["notebook_kind"],
-                "analysis_notebook_artifact_id": notebook_artifact.id,
-                "notebook_execution_manifest_artifact_id": result.manifest_artifact.id,
-                "notebook_execution_report_id": result.report.id,
-                "notebook_execution_report_artifact_id": result.report_artifact.id,
-                "notebook_execution_html_artifact_id": result.html_artifact.id,
-                "notebook_figure_manifest_artifact_id": result.figure_manifest_artifact.id,
-                "notebook_execution_source_artifact_id": result.source_artifact.id,
-                "notebook_evidence_bundle_artifact_id": result.evidence_bundle_artifact.id
-                if result.evidence_bundle_artifact
-                else None,
-                "notebook_evidence_html_artifact_id": result.evidence_html_artifact.id
-                if result.evidence_html_artifact
-                else None,
-                "notebook_evidence_figure_artifact_ids": [artifact.id for artifact in result.figure_artifacts],
-                "notebook_execution_plan_artifact_id": result.plan_artifact.id,
-                "agent_task_contract_artifact_id": result.contract_artifact.id,
-                "artifact_ids": result.artifact_ids,
-                "execution_status": result.manifest["execution_status"],
-                "capture_mode": result.manifest["capture_mode"],
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 

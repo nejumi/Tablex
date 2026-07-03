@@ -19,6 +19,10 @@ from tabular_harness.models.entities import (
 from tabular_harness.services.adaptive_strategy import create_adaptive_strategy_brief
 from tabular_harness.services.agent_chat import handle_agent_chat_turn
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
+from tabular_harness.services.analysis_notebooks import (
+    create_notebook_execution_capture,
+    create_notebook_execution_plan,
+)
 from tabular_harness.services.approach import create_research_plan
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.autonomy import (
@@ -195,6 +199,68 @@ def plan_agent_task_handler(db: Session, job: Job, store: LocalArtifactStore) ->
     }
 
 
+def plan_notebook_execution_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    notebook_artifact = notebook_artifact_for_job(db, job, "plan_notebook_execution")
+    result = create_notebook_execution_plan(db, store=store, notebook_artifact=notebook_artifact)
+    return {
+        "schema_version": result.plan["schema_version"],
+        "task_id": result.contract["task_id"],
+        "task_type": result.contract["task_type"],
+        "notebook_kind": result.plan["notebook_kind"],
+        "analysis_notebook_artifact_id": notebook_artifact.id,
+        "agent_task_contract_artifact_id": result.contract_artifact.id,
+        "notebook_execution_plan_artifact_id": result.plan_artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "execution_status": "planned_not_executed",
+        "worker_events": [
+            notebook_worker_event(
+                job,
+                notebook_artifact,
+                status="succeeded",
+                headline="Notebook execution plan created",
+                detail="Registered the execution contract and plan without running notebook code.",
+            )
+        ],
+    }
+
+
+def capture_notebook_execution_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    notebook_artifact = notebook_artifact_for_job(db, job, "capture_notebook_execution")
+    result = create_notebook_execution_capture(db, store=store, notebook_artifact=notebook_artifact)
+    return {
+        "schema_version": result.manifest["schema_version"],
+        "notebook_kind": result.manifest["notebook_kind"],
+        "analysis_notebook_artifact_id": notebook_artifact.id,
+        "notebook_execution_manifest_artifact_id": result.manifest_artifact.id,
+        "notebook_execution_report_id": result.report.id,
+        "notebook_execution_report_artifact_id": result.report_artifact.id,
+        "notebook_execution_html_artifact_id": result.html_artifact.id,
+        "notebook_figure_manifest_artifact_id": result.figure_manifest_artifact.id,
+        "notebook_execution_source_artifact_id": result.source_artifact.id,
+        "notebook_evidence_bundle_artifact_id": result.evidence_bundle_artifact.id
+        if result.evidence_bundle_artifact
+        else None,
+        "notebook_evidence_html_artifact_id": result.evidence_html_artifact.id
+        if result.evidence_html_artifact
+        else None,
+        "notebook_evidence_figure_artifact_ids": [artifact.id for artifact in result.figure_artifacts],
+        "notebook_execution_plan_artifact_id": result.plan_artifact.id,
+        "agent_task_contract_artifact_id": result.contract_artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "execution_status": result.manifest["execution_status"],
+        "capture_mode": result.manifest["capture_mode"],
+        "worker_events": [
+            notebook_worker_event(
+                job,
+                notebook_artifact,
+                status="succeeded",
+                headline="Notebook execution captured",
+                detail="Registered the notebook execution manifest, report, preview HTML, and source snapshot.",
+            )
+        ],
+    }
+
+
 def project_for_job(db: Session, job: Job, job_type: str) -> Project:
     if job.project_id is None:
         raise ValueError(f"{job_type} requires a project_id")
@@ -202,6 +268,21 @@ def project_for_job(db: Session, job: Job, job_type: str) -> Project:
     if project is None:
         raise ValueError("Project not found")
     return project
+
+
+def notebook_artifact_for_job(db: Session, job: Job, job_type: str) -> Artifact:
+    payload = loads_json(job.input_json, {})
+    artifact_id = payload.get("analysis_notebook_artifact_id")
+    artifact = db.get(Artifact, artifact_id) if isinstance(artifact_id, str) else None
+    if artifact is None:
+        raise ValueError("Analysis notebook artifact not found")
+    if artifact.asset_type != "analysis_notebook":
+        raise ValueError(f"{job_type} requires an analysis_notebook artifact")
+    if artifact.project_id is None:
+        raise ValueError(f"{job_type} requires a project-scoped analysis_notebook artifact")
+    if job.project_id is not None and artifact.project_id != job.project_id:
+        raise ValueError(f"{job_type} project does not match the analysis notebook artifact")
+    return artifact
 
 
 def latest_dataset(db: Session, project_id: str) -> DatasetSnapshot | None:
@@ -247,6 +328,39 @@ def approach_worker_event(
                 {"step": "context", "tokens": 60},
                 {"step": "plan", "tokens": 120},
                 {"step": "register", "tokens": 80},
+            ],
+        },
+    }
+
+
+def notebook_worker_event(
+    job: Job,
+    notebook_artifact: Artifact,
+    *,
+    status: str,
+    headline: str,
+    detail: str,
+) -> dict[str, Any]:
+    return {
+        "worker_id": "notebook-execution",
+        "display_name": "Notebook Worker",
+        "status": status,
+        "headline": headline,
+        "detail": detail,
+        "job_id": job.id,
+        "project_id": notebook_artifact.project_id,
+        "target_tab": "Assets",
+        "target_anchor": "notebooks",
+        "created_at": job.created_at.isoformat(),
+        "updated_at": utc_now().isoformat(),
+        "active": status in {"queued", "running"},
+        "token_usage": {
+            "source": "notebook_execution_estimate",
+            "is_estimate": True,
+            "series": [
+                {"step": "validate notebook", "tokens": 40},
+                {"step": "capture preview", "tokens": 120},
+                {"step": "register artifacts", "tokens": 80},
             ],
         },
     }
@@ -802,6 +916,8 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["create_adaptive_strategy_brief"] = create_adaptive_strategy_brief_handler
     handlers["plan_research"] = plan_research_handler
     handlers["plan_agent_task"] = plan_agent_task_handler
+    handlers["plan_notebook_execution"] = plan_notebook_execution_handler
+    handlers["capture_notebook_execution"] = capture_notebook_execution_handler
     handlers["run_baseline"] = run_baseline_handler
     handlers["build_split_manifest"] = build_split_manifest_handler
     handlers["train_model_candidates"] = train_model_candidates_handler

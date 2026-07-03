@@ -47,7 +47,7 @@ from tabular_harness.services.agent_sessions import (
     research_plan_locale_request_path,
     user_instructions_inbox_path,
 )
-from tabular_harness.services.approach import store_json_artifact
+from tabular_harness.services.approach import store_json_artifact, store_text_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.jobs import acquire_next_job, create_job, reap_stale_running_jobs
 from tabular_harness.worker.jobs import (
@@ -3060,6 +3060,61 @@ def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_
     baseline_types = {row["metrics"]["baseline_type"] for row in leaderboard}
     assert baseline_types == {"lightgbm_classifier", "logistic_regression"}
     assert all(row["display_metric_name"] for row in leaderboard)
+
+
+def test_notebook_execution_endpoints_queue_worker_jobs(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Notebook execution queue"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    notebook_source = "import marimo\n\napp = marimo.App()\n\n@app.cell\ndef _():\n    return\n"
+
+    with app.state.session_factory() as db:
+        notebook = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="codex_authored_notebook",
+            filename="notebook.py",
+            text=notebook_source,
+            metadata={"project_id": project_id, "notebook_kind": "data_understanding"},
+        )
+        notebook_id = notebook.id
+        db.commit()
+
+    plan_response = client.post(f"/api/analysis-notebooks/{notebook_id}/execution-plan")
+    assert plan_response.status_code == 200, plan_response.text
+    plan_job = plan_response.json()
+    assert plan_job["status"] == "queued"
+    assert plan_job["job_type"] == "plan_notebook_execution"
+    assert plan_job["policy"]["execution"] == "queued_worker"
+    plan_output = run_queued_job(client, plan_job["id"])
+    assert plan_output["execution_status"] == "planned_not_executed"
+    assert plan_output["analysis_notebook_artifact_id"] == notebook_id
+    assert plan_output["notebook_execution_plan_artifact_id"]
+    assert plan_output["agent_task_contract_artifact_id"]
+
+    capture_response = client.post(f"/api/analysis-notebooks/{notebook_id}/execution-capture")
+    assert capture_response.status_code == 200, capture_response.text
+    capture_job = capture_response.json()
+    assert capture_job["status"] == "queued"
+    assert capture_job["job_type"] == "capture_notebook_execution"
+    assert capture_job["policy"]["execution"] == "queued_worker"
+    capture_output = run_queued_job(client, capture_job["id"])
+    assert capture_output["analysis_notebook_artifact_id"] == notebook_id
+    assert capture_output["notebook_execution_manifest_artifact_id"]
+    assert capture_output["notebook_execution_html_artifact_id"]
+    assert capture_output["notebook_execution_report_artifact_id"]
+    assert capture_output["notebook_execution_source_artifact_id"]
+    assert capture_output["execution_status"] in {
+        "marimo_export_succeeded",
+        "marimo_export_failed",
+        "static_capture_succeeded",
+        "static_capture_failed",
+    }
 
 
 def test_core_harness_actions_use_explicit_endpoints(tmp_path: Path) -> None:
