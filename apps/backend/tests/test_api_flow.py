@@ -1665,7 +1665,7 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     assert chat["job"]["status"] == "queued"
     assert chat["response_composer"]["status"] == "queued"
     assert chat["artifact_id"].startswith("pending_")
-    assert "worker待ち" in chat["assistant_message"]
+    assert "返答を準備しています" in chat["assistant_message"]
     assert chat["response_brief"]["wait_state"]["worker_state"] == "waiting_for_local_worker"
 
     pending_history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
@@ -1675,7 +1675,7 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     assert pending_history[0]["job_id"] == chat["job"]["id"]
     assert pending_history[0]["artifact_id"] == f"job_pending_{chat['job']['id']}"
     assert pending_history[0]["response_composer"]["status"] == "queued"
-    assert "worker待ち" in pending_history[0]["assistant_message"]
+    assert "返答を準備しています" in pending_history[0]["assistant_message"]
     assert pending_history[0]["response_brief"]["wait_state"]["worker_state"] == "waiting_for_local_worker"
     assert pending_history[0]["response_brief"]["wait_state"]["job_age_seconds"] >= 0
 
@@ -1689,7 +1689,7 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
         db.commit()
     stale_history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
     assert stale_history[0]["response_brief"]["wait_state"]["possibly_stale"] is True
-    assert "拾えていない可能性" in stale_history[0]["assistant_message"]
+    assert "まだ返答が戻っていません" in stale_history[0]["assistant_message"]
 
     output = run_queued_agent_chat_turn(client, chat["job"]["id"])
     assert output["schema_version"] == "agent_chat_turn.v1"
@@ -1799,6 +1799,7 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert chat["response_composer"]["mode"] == "queued_worker"
     assert chat["response_composer"]["status"] == "queued"
     assert "入力は進行中の分析エージェントに届いています" in chat["assistant_message"]
+    assert "worker待ち" not in chat["assistant_message"]
     assert chat["response_brief"]["wait_state"]["worker_state"] == "waiting_for_local_worker"
     assert chat["response_brief"]["progress_update_requested_event_id"]
 
@@ -1821,7 +1822,7 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert history[-1]["job_id"] == chat["job"]["id"]
     assert history[-1]["user_message"] == "この条件で特徴量を見直してください"
     assert history[-1]["response_composer"]["status"] == "queued"
-    assert "worker待ち" in history[-1]["assistant_message"]
+    assert "Codexの返答が届き次第" in history[-1]["assistant_message"]
     assert history[-1]["response_brief"]["delivered_agent_session_id"] == "ags_inbox_delivery"
     assert history[-1]["response_brief"]["wait_state"]["worker_state"] == "waiting_for_local_worker"
 
@@ -1869,7 +1870,7 @@ def test_agent_chat_history_pairs_main_session_update_to_delivered_instruction(t
     )
     assert chat_response.status_code == 200, chat_response.text
     chat = chat_response.json()
-    assert "worker待ち" in chat["assistant_message"]
+    assert "入力は進行中の分析エージェントに届いています" in chat["assistant_message"]
 
     with app.state.session_factory() as db:
         progress_artifact = store_json_artifact(
@@ -2020,7 +2021,7 @@ def test_agent_chat_history_pairs_each_main_session_update_once(tmp_path: Path, 
     assert "最初の質問に対応する進捗" in first_turn["assistant_message"]
     assert second_turn["user_message"] == "二つ目の質問です。"
     assert second_turn["response_composer"]["status"] == "queued"
-    assert "worker待ち" in second_turn["assistant_message"]
+    assert "Codexの返答が届き次第" in second_turn["assistant_message"]
     assert second_turn["artifact_id"].startswith("job_pending_")
 
 

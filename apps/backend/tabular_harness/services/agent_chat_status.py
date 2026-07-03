@@ -47,28 +47,36 @@ def agent_chat_wait_state(
         stale = job_age_seconds >= 60
         if delivered_to_running_codex:
             assistant_message = (
-                f"受け取りました。入力は進行中の分析エージェントに届いています。チャットへの返信保存はworker待ちです（待機 {age_label}）。"
+                f"受け取りました。入力は進行中の分析エージェントに届いています。Codexの返答が届き次第、このチャットに残します（待機 {age_label}）。"
                 if japanese
-                else f"Received. The running analysis agent has the message; the reply-saving job is waiting for the local worker ({age_label})."
+                else f"Received. The running analysis agent has the message. The next Codex reply will be saved here when it arrives ({age_label})."
             )
         else:
             assistant_message = (
-                f"受け取りました。返信を作成するworker待ちです（待機 {age_label}）。"
+                f"受け取りました。返答を準備しています（待機 {age_label}）。"
                 if japanese
-                else f"Received. The reply job is waiting for the local worker ({age_label})."
+                else f"Received. The reply is being prepared ({age_label})."
             )
         if stale:
             assistant_message += (
-                " workerが拾えていない可能性があります。ActivityまたはJobsでworker状態を確認できます。"
+                " まだ返答が戻っていません。ActivityまたはJobsで処理状態を確認できます。"
                 if japanese
-                else " The worker may not have picked it up yet; Activity or Jobs shows the worker state."
+                else " No reply has returned yet; Activity or Jobs shows the processing state."
             )
-        headline = "worker待ち" if japanese else "Waiting for local worker"
-        detail = (
-            f"返信処理はまだ開始していません。待機 {age_label}。"
-            if japanese
-            else f"This reply job has not started yet. Waiting {age_label}."
-        )
+        if delivered_to_running_codex:
+            headline = "Agentに伝達済み" if japanese else "Delivered to agent"
+            detail = (
+                f"Codexの返答が届き次第、このチャットに保存します。待機 {age_label}。"
+                if japanese
+                else f"The next Codex reply will be saved here. Waiting {age_label}."
+            )
+        else:
+            headline = "返答準備中" if japanese else "Preparing reply"
+            detail = (
+                f"返答準備はまだ開始していません。待機 {age_label}。"
+                if japanese
+                else f"This reply has not started yet. Waiting {age_label}."
+            )
     elif status == "running":
         worker_state = "worker_processing"
         stale = updated_age_seconds >= 300
