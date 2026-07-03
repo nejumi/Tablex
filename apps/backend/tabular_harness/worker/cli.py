@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import time
 
 from tabular_harness.core.config import get_settings
 from tabular_harness.db.session import create_engine_for_settings, create_session_factory, init_db
+from tabular_harness.services.agent_sessions import start_active_main_session_supervisors
+from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.worker.jobs import create_default_worker
 
 
@@ -13,6 +16,11 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="Process at most one queued job and exit.")
     parser.add_argument("--interval", type=float, default=2.0, help="Polling interval in seconds.")
     parser.add_argument("--worker-id", default="local-worker", help="Worker identifier for job locks.")
+    parser.add_argument(
+        "--no-agent-session-supervisor",
+        action="store_true",
+        help="Disable worker-side recovery for active Full Auto Codex sessions.",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -20,6 +28,13 @@ def main() -> None:
     init_db(engine)
     session_factory = create_session_factory(engine)
     worker = create_default_worker(worker_id=args.worker_id, include_stub_handlers=False)
+    artifact_store = LocalArtifactStore(settings.artifact_root)
+    if not args.once and not args.no_agent_session_supervisor:
+        start_active_main_session_supervisors(
+            session_factory,
+            artifact_store,
+            lease_owner_id=f"worker:{args.worker_id}:pid:{os.getpid()}",
+        )
 
     while True:
         with session_factory() as session:

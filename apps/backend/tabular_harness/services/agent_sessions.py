@@ -11,11 +11,12 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from tabular_harness.agent.runners import safe_env
@@ -23,6 +24,7 @@ from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
     AgentSession,
+    AgentSupervisorLease,
     AgentTranscriptEvent,
     Artifact,
     Asset,
@@ -47,6 +49,7 @@ ACTIVE_SESSION_STATUSES = {"starting", "running", "between_turns", "waiting_for_
 TERMINAL_SESSION_STATUSES = {"stopped", "failed", "gave_up", "completed"}
 RETRY_BACKOFF_SECONDS = (5, 30, 120, 600)
 STALE_PROCESS_TERM_GRACE_SECONDS = 5
+SUPERVISOR_LEASE_TTL_SECONDS = 45
 SESSION_OUTPUT_MIN_VERSION_INTERVAL_SECONDS = 30
 MAIN_AGENT_IDLE_TIMEOUT_SECONDS = 6 * 60 * 60
 STREAM_EVENT_FLUSH_INTERVAL_SECONDS = 0.5
@@ -553,6 +556,7 @@ def start_main_agent_session_supervisor_thread(
     project_id: str,
     session_id: str,
     agent_model: str | None = None,
+    lease_owner_id: str | None = None,
     supervisor_runner: SupervisorRunner | None = None,
 ) -> threading.Thread | None:
     if not acquire_supervisor_slot(session_id):
@@ -580,6 +584,7 @@ def start_main_agent_session_supervisor_thread(
                 project_id=project_id,
                 session_id=session_id,
                 agent_model=agent_model,
+                lease_owner_id=lease_owner_id,
                 slot_acquired=True,
             )
         finally:
@@ -599,6 +604,7 @@ def start_active_main_session_supervisors(
     store: LocalArtifactStore,
     *,
     agent_model: str | None = None,
+    lease_owner_id: str | None = None,
     supervisor_runner: SupervisorRunner | None = None,
 ) -> list[threading.Thread]:
     launch_specs: list[tuple[str, str]] = []
@@ -646,6 +652,7 @@ def start_active_main_session_supervisors(
             project_id=project_id,
             session_id=session_id,
             agent_model=agent_model,
+            lease_owner_id=lease_owner_id,
             supervisor_runner=supervisor_runner,
         )
         if thread is not None:
@@ -660,12 +667,22 @@ def run_main_agent_session_supervisor(
     project_id: str,
     session_id: str,
     agent_model: str | None = None,
+    lease_owner_id: str | None = None,
     max_turns: int = 100_000,
     turn_timeout_seconds: int = MAIN_AGENT_IDLE_TIMEOUT_SECONDS,
     slot_acquired: bool = False,
 ) -> None:
     if not slot_acquired and not acquire_supervisor_slot(session_id):
         return
+    owner_id = lease_owner_id or default_supervisor_lease_owner_id(session_id)
+    if not acquire_supervisor_lease(session_factory, session_id=session_id, owner_id=owner_id):
+        release_supervisor_slot(session_id)
+        return
+    lease_stop_event, lease_thread = start_supervisor_lease_heartbeat(
+        session_factory,
+        session_id=session_id,
+        owner_id=owner_id,
+    )
     try:
         for _ in range(max_turns):
             with session_factory() as db:
@@ -798,6 +815,9 @@ def run_main_agent_session_supervisor(
                 db.commit()
             time.sleep(2)
     finally:
+        lease_stop_event.set()
+        lease_thread.join(timeout=2)
+        release_supervisor_lease(session_factory, session_id=session_id, owner_id=owner_id)
         release_supervisor_slot(session_id)
 
 
@@ -817,6 +837,116 @@ def release_supervisor_slot(session_id: str) -> None:
 def supervisor_slot_active(session_id: str) -> bool:
     with _SUPERVISOR_LOCK:
         return session_id in _ACTIVE_SUPERVISORS
+
+
+def default_supervisor_lease_owner_id(session_id: str) -> str:
+    return f"pid:{os.getpid()}:session:{session_id}"
+
+
+def _lease_expired(expires_at: datetime, now: datetime) -> bool:
+    comparable = expires_at
+    if comparable.tzinfo is None:
+        comparable = comparable.replace(tzinfo=timezone.utc)
+    return comparable <= now
+
+
+def acquire_supervisor_lease(
+    session_factory: sessionmaker[Session],
+    *,
+    session_id: str,
+    owner_id: str,
+    ttl_seconds: int = SUPERVISOR_LEASE_TTL_SECONDS,
+) -> bool:
+    now = utc_now()
+    expires_at = now + timedelta(seconds=ttl_seconds)
+    with session_factory() as db:
+        lease = db.get(AgentSupervisorLease, session_id)
+        if lease is None:
+            db.add(
+                AgentSupervisorLease(
+                    session_id=session_id,
+                    owner_id=owner_id,
+                    acquired_at=now,
+                    heartbeat_at=now,
+                    expires_at=expires_at,
+                )
+            )
+            try:
+                db.commit()
+                return True
+            except IntegrityError:
+                db.rollback()
+                lease = db.get(AgentSupervisorLease, session_id)
+        if lease is None:
+            return False
+        if lease.owner_id == owner_id or _lease_expired(lease.expires_at, now):
+            lease.owner_id = owner_id
+            lease.acquired_at = now
+            lease.heartbeat_at = now
+            lease.expires_at = expires_at
+            db.commit()
+            return True
+        return False
+
+
+def renew_supervisor_lease(
+    session_factory: sessionmaker[Session],
+    *,
+    session_id: str,
+    owner_id: str,
+    ttl_seconds: int = SUPERVISOR_LEASE_TTL_SECONDS,
+) -> bool:
+    now = utc_now()
+    with session_factory() as db:
+        lease = db.get(AgentSupervisorLease, session_id)
+        if lease is None or lease.owner_id != owner_id:
+            return False
+        lease.heartbeat_at = now
+        lease.expires_at = now + timedelta(seconds=ttl_seconds)
+        db.commit()
+        return True
+
+
+def release_supervisor_lease(
+    session_factory: sessionmaker[Session],
+    *,
+    session_id: str,
+    owner_id: str,
+) -> None:
+    with session_factory() as db:
+        lease = db.get(AgentSupervisorLease, session_id)
+        if lease is not None and lease.owner_id == owner_id:
+            db.delete(lease)
+            db.commit()
+
+
+def start_supervisor_lease_heartbeat(
+    session_factory: sessionmaker[Session],
+    *,
+    session_id: str,
+    owner_id: str,
+    ttl_seconds: int = SUPERVISOR_LEASE_TTL_SECONDS,
+) -> tuple[threading.Event, threading.Thread]:
+    stop_event = threading.Event()
+
+    def heartbeat() -> None:
+        interval = max(1.0, ttl_seconds / 3)
+        while not stop_event.wait(interval):
+            if not renew_supervisor_lease(
+                session_factory,
+                session_id=session_id,
+                owner_id=owner_id,
+                ttl_seconds=ttl_seconds,
+            ):
+                return
+
+    thread = threading.Thread(
+        target=heartbeat,
+        name=f"tablex-agent-lease-{session_id}",
+        daemon=True,
+    )
+    thread.start()
+    return stop_event, thread
 
 
 def pid_is_alive(pid: int) -> bool:

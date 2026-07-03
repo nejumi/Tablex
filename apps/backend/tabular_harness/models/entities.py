@@ -527,6 +527,16 @@ class AgentSession(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class AgentSupervisorLease(Base):
+    __tablename__ = "agent_supervisor_leases"
+
+    session_id: Mapped[str] = mapped_column(String, ForeignKey("agent_sessions.id"), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String, nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class AgentTranscriptEvent(Base):
     __tablename__ = "agent_transcript_events"
     __table_args__ = (

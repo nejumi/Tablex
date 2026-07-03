@@ -11,6 +11,7 @@ from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.db.session import ensure_sqlite_mvp_columns
 from tabular_harness.models.entities import (
     AgentSession,
+    AgentSupervisorLease,
     AgentTranscriptEvent,
     Artifact,
     Base,
@@ -21,6 +22,7 @@ from tabular_harness.services.agent_sessions import (
     CODEX_RAW_TRANSCRIPT_FILENAME,
     CODEX_STDERR_LOG_FILENAME,
     StreamFileTailer,
+    acquire_supervisor_lease,
     append_codex_stream_lines,
     append_runner_stream_to_workspace,
     append_session_event,
@@ -36,6 +38,8 @@ from tabular_harness.services.agent_sessions import (
     publish_raw_codex_transcript_snapshot,
     raw_codex_stderr_path,
     raw_codex_transcript_path,
+    release_supervisor_lease,
+    renew_supervisor_lease,
     run_codex_cli_turn_streaming,
     session_output_artifact_name,
     should_register_session_output,
@@ -316,6 +320,39 @@ def test_startup_supervisor_recovers_full_auto_project_without_browser_polling(t
             ).all()
         )
         assert [event.event_type for event in events] == ["session_created"]
+
+
+def test_agent_supervisor_lease_prevents_duplicate_cross_process_owners(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+
+    with session_factory() as db:
+        project = Project(id="p_lease", name="Lease Project")
+        session = AgentSession(id="as_lease", project_id=project.id, goal_text="Continue.")
+        db.add_all([project, session])
+        db.commit()
+
+    assert acquire_supervisor_lease(session_factory, session_id="as_lease", owner_id="owner-a", ttl_seconds=60)
+    assert not acquire_supervisor_lease(session_factory, session_id="as_lease", owner_id="owner-b", ttl_seconds=60)
+    assert renew_supervisor_lease(session_factory, session_id="as_lease", owner_id="owner-a", ttl_seconds=60)
+
+    with session_factory() as db:
+        lease = db.get(AgentSupervisorLease, "as_lease")
+        assert lease is not None
+        lease.expires_at = utc_now() - timedelta(seconds=1)
+        db.commit()
+
+    assert acquire_supervisor_lease(session_factory, session_id="as_lease", owner_id="owner-b", ttl_seconds=60)
+    assert not renew_supervisor_lease(session_factory, session_id="as_lease", owner_id="owner-a", ttl_seconds=60)
+
+    release_supervisor_lease(session_factory, session_id="as_lease", owner_id="owner-a")
+    with session_factory() as db:
+        assert db.get(AgentSupervisorLease, "as_lease") is not None
+
+    release_supervisor_lease(session_factory, session_id="as_lease", owner_id="owner-b")
+    with session_factory() as db:
+        assert db.get(AgentSupervisorLease, "as_lease") is None
 
 
 def test_transcript_index_reservation_survives_uncommitted_sidecar_event(tmp_path: Path) -> None:
