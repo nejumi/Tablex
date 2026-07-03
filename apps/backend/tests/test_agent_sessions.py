@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import tabular_harness.services.agent_sessions as agent_sessions_module
+import tabular_harness.services.analysis_notebooks as analysis_notebooks_module
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 from tabular_harness.core.json import dumps_json, loads_json
@@ -859,6 +861,69 @@ def test_codex_authored_chat_update_is_registered_as_persistent_chat_turn(tmp_pa
             )
         )
         assert len(updated_chat_artifacts) == 2
+
+
+def test_codex_authored_marimo_notebook_is_auto_captured_on_workspace_ingest(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    notebooks_dir = workspace / "notebooks"
+    notebooks_dir.mkdir(parents=True)
+    notebook = notebooks_dir / "grandmaster_eda.py"
+    notebook.write_text(
+        "import marimo\n\napp = marimo.App()\n\n@app.cell\ndef _():\n    return\n",
+        encoding="utf-8",
+    )
+    captured_notebooks: list[str] = []
+
+    def fake_capture(db: Any, *, store: LocalArtifactStore, notebook_artifact: Artifact) -> Any:
+        del db, store
+        captured_notebooks.append(notebook_artifact.id)
+        return SimpleNamespace(
+            html_artifact=SimpleNamespace(id="art_auto_html"),
+            manifest_artifact=SimpleNamespace(id="art_auto_manifest"),
+            evidence_html_artifact=SimpleNamespace(id="art_auto_evidence"),
+        )
+
+    monkeypatch.setattr(analysis_notebooks_module, "create_notebook_execution_capture", fake_capture)
+
+    with session_factory() as db:
+        project = Project(id="p_notebook_capture", name="Notebook Capture")
+        session = AgentSession(
+            id="as_notebook_capture",
+            project_id=project.id,
+            goal_text="Write a readable marimo notebook.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        notebook_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+        )
+        assert notebook_artifact is not None
+        assert captured_notebooks == [notebook_artifact.id]
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(
+                    AgentTranscriptEvent.session_id == session.id,
+                    AgentTranscriptEvent.event_type == "notebook_auto_capture_succeeded",
+                )
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            ).all()
+        )
+        assert len(events) == 1
+        payload = loads_json(events[0].payload_json, {})
+        assert payload["notebook_artifact_id"] == notebook_artifact.id
+        assert payload["notebook_execution_html_artifact_id"] == "art_auto_html"
 
 
 def test_published_raw_codex_transcript_is_ingested_as_session_artifact(tmp_path: Path) -> None:

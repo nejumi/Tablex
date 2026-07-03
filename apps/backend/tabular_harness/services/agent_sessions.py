@@ -1887,6 +1887,12 @@ def ingest_session_workspace_outputs(
                 path=path,
                 artifact=artifact,
             )
+            maybe_capture_agent_session_notebook_output(
+                db,
+                store=store,
+                session=session,
+                artifact=artifact,
+            )
 
 
 def asset_type_for_session_output(path: Path) -> str:
@@ -1944,6 +1950,68 @@ def should_register_session_output(path: Path, existing: Artifact | None) -> boo
 
 def is_chat_update_path(path: Path) -> bool:
     return path.name == "chat_update.md" and path.parent.name == "reports"
+
+
+def maybe_capture_agent_session_notebook_output(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    session: AgentSession,
+    artifact: Artifact,
+) -> None:
+    if artifact.asset_type != "analysis_notebook" or artifact.project_id is None:
+        return
+    metadata = loads_json(artifact.metadata_json, {})
+    if metadata.get("source") != "main_agent_session_workspace":
+        return
+    existing_captures = list(
+        db.scalars(
+            select(Artifact)
+            .where(
+                Artifact.project_id == artifact.project_id,
+                Artifact.asset_type == "notebook_execution_manifest",
+            )
+            .order_by(Artifact.created_at.desc())
+            .limit(50)
+        ).all()
+    )
+    if any(loads_json(item.metadata_json, {}).get("notebook_artifact_id") == artifact.id for item in existing_captures):
+        return
+    try:
+        from tabular_harness.services.analysis_notebooks import create_notebook_execution_capture
+
+        capture = create_notebook_execution_capture(db, store=store, notebook_artifact=artifact)
+    except Exception as exc:
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="notebook_auto_capture_failed",
+            role="harness",
+            title="Notebook preview capture failed",
+            content="A Codex-authored marimo notebook was saved, but Tablex could not render the preview automatically.",
+            payload={"notebook_artifact_id": artifact.id, "error": str(exc)[:1200]},
+            artifact_id=artifact.id,
+        )
+        return
+    append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="notebook_auto_capture_succeeded",
+        role="harness",
+        title="Notebook preview captured",
+        content="A Codex-authored marimo notebook was rendered into in-product notebook evidence.",
+        payload={
+            "notebook_artifact_id": artifact.id,
+            "notebook_execution_html_artifact_id": capture.html_artifact.id,
+            "notebook_execution_manifest_artifact_id": capture.manifest_artifact.id,
+            "notebook_evidence_html_artifact_id": capture.evidence_html_artifact.id
+            if capture.evidence_html_artifact
+            else None,
+        },
+        artifact_id=capture.html_artifact.id,
+    )
 
 
 def maybe_register_chat_update_from_workspace_output(
