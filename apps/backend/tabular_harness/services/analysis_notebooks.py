@@ -12,7 +12,7 @@ from html import escape
 from pathlib import Path
 from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.ids import new_id
@@ -103,6 +103,30 @@ class NotebookArtifactLookup:
     stem_candidates_by_session_id: dict[tuple[str, str], list[Artifact]]
 
 
+NOTEBOOK_INDEX_ASSET_TYPES = {
+    "analysis_notebook",
+    "marimo_notebook",
+    "notebook_html",
+    "notebook_run_manifest",
+    "notebook_report",
+    "notebook_execution_plan",
+    "notebook_execution_manifest",
+    "notebook_execution_report",
+    "notebook_execution_html",
+    "notebook_execution_source",
+    "notebook_figure_manifest",
+    "notebook_evidence_bundle",
+    "notebook_evidence_html",
+    "notebook_evidence_svg",
+    "agent_task_contract",
+    "visualization_spec",
+    "agent_session_report",
+    "agent_session_artifact",
+    "agent_session_output",
+    "agent_session_figure",
+}
+
+
 def create_data_understanding_notebook(
     db: Session,
     *,
@@ -117,9 +141,7 @@ def create_data_understanding_notebook(
 
 
 def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any]:
-    project_artifacts = list(
-        db.scalars(select(Artifact).where(Artifact.project_id == project.id).order_by(Artifact.created_at.desc())).all()
-    )
+    project_artifacts = list_latest_notebook_index_artifacts(db, project.id)
     artifact_lookup = _build_notebook_artifact_lookup(project_artifacts)
     notebook_artifacts = [
         artifact for artifact in project_artifacts if artifact.asset_type in {"analysis_notebook", "marimo_notebook"}
@@ -175,6 +197,37 @@ def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any
         "items": items_by_created,
         "next_actions": _notebook_index_next_actions(project, items_by_created),
     }
+
+
+def list_latest_notebook_index_artifacts(db: Session, project_id: str) -> list[Artifact]:
+    latest_versions = (
+        select(
+            Artifact.asset_type.label("asset_type"),
+            Artifact.name.label("name"),
+            func.max(Artifact.version).label("version"),
+        )
+        .where(
+            Artifact.project_id == project_id,
+            Artifact.asset_type.in_(NOTEBOOK_INDEX_ASSET_TYPES),
+        )
+        .group_by(Artifact.asset_type, Artifact.name)
+        .subquery()
+    )
+    return list(
+        db.scalars(
+            select(Artifact)
+            .join(
+                latest_versions,
+                and_(
+                    Artifact.asset_type == latest_versions.c.asset_type,
+                    Artifact.name == latest_versions.c.name,
+                    Artifact.version == latest_versions.c.version,
+                ),
+            )
+            .where(Artifact.project_id == project_id)
+            .order_by(Artifact.created_at.desc())
+        ).all()
+    )
 
 
 def build_project_analysis_story(db: Session, project: Project) -> dict[str, Any]:
