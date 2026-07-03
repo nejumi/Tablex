@@ -423,7 +423,8 @@ const englishMessages = {
   planBlockObjectiveDelegated: "delegated to Codex",
   planBlockUnderstanding: "Data understanding",
   planBlockUnderstandingPending: "Profile schema, missingness, row semantics, leakage risk, and target-aware evidence when available.",
-  planBlockUnderstandingDone: "Data understanding artifacts are available.",
+  planBlockUnderstandingNeedsNotebook: "Work evidence exists, but a reviewable data-understanding notebook is not registered yet.",
+  planBlockUnderstandingDone: "Reviewable data-understanding evidence is available.",
   planBlockPriorResearch: "Prior knowledge research",
   planBlockPriorResearchPending: "Use Kaggle, arXiv, Skills, and Codex-selected sources to add evidence before approach selection.",
   planBlockPriorResearchActive: "Codex is working on this step; research evidence or a no-findings decision has not been registered yet.",
@@ -841,7 +842,8 @@ const japaneseMessages: LocaleMessages = {
   planBlockObjectiveDelegated: "Codexに委譲",
   planBlockUnderstanding: "データ理解",
   planBlockUnderstandingPending: "schema、欠損、行の意味、leakage risk、必要ならtarget-aware evidenceを確認します。",
-  planBlockUnderstandingDone: "Data understanding artifactがあります。",
+  planBlockUnderstandingNeedsNotebook: "作業証跡はありますが、読めるData Understanding notebookはまだ登録されていません。",
+  planBlockUnderstandingDone: "読めるData Understanding evidenceがあります。",
   planBlockPriorResearch: "従来知見の調査",
   planBlockPriorResearchPending: "Kaggle、arXiv、Skill、Codex裁量の情報源から知見を追加します。",
   planBlockPriorResearchActive: "Codexがこのステップを進めています。調査知見または追加調査不要の判断はまだ登録されていません。",
@@ -1138,7 +1140,9 @@ function displayTextMatchesLocale(value: string | null | undefined, locale: stri
   if (!text) return false;
   if (!localeRequiresLocalizedDisplay(locale)) return true;
   if (localeLooksJapanese(locale)) {
-    return /[\u3040-\u30ff\u3400-\u9fff]/.test(text);
+    const japaneseMatches = text.match(/[\u3040-\u30ff\u3400-\u9fff]/g)?.length ?? 0;
+    const latinWordMatches = text.match(/[A-Za-z][A-Za-z0-9_-]*/g)?.length ?? 0;
+    return japaneseMatches > 0 && latinWordMatches <= Math.max(4, japaneseMatches * 2);
   }
   return false;
 }
@@ -5675,10 +5679,13 @@ function buildResearchPlanBlocks({
 }): ResearchPlanBlock[] {
   const codexAuthoredBlocks = researchPlanBlocksFromTimeline(researchPlanTimeline, text, locale, onNavigateToTarget);
   const hasObjectiveEvidence = Boolean(project.target_column) || hasAnyArtifactType(artifacts, ["target_definition_proposal"]);
-  const hasUnderstandingEvidence =
+  const hasUnderstandingCompletionEvidence =
     hasAnyArtifactType(artifacts, ["data_understanding_complete"]) ||
-    hasReviewableDataUnderstandingNotebook(notebookIndex) ||
-    hasAnyArtifactType(artifacts, ["agent_session_report", "agent_session_research_notebook", "eda_review_report"]);
+    hasReviewableDataUnderstandingNotebook(notebookIndex);
+  const hasUnderstandingWorkEvidence =
+    hasUnderstandingCompletionEvidence ||
+    hasAnyArtifactType(artifacts, ["agent_session_report", "agent_session_research_notebook", "eda_review_report", "understanding_report", "eda_profile"]) ||
+    Boolean(latestAgentAuthoredDataUnderstandingName(artifacts));
   const hasDataUnderstandingNotebook = artifacts.some(isDataUnderstandingNotebookArtifact);
   const hasPriorResearchPreparation =
     researchBriefs.length > 0 ||
@@ -5707,7 +5714,7 @@ function buildResearchPlanBlocks({
       : datasetCount > 0
         ? "pending"
         : "waiting";
-  const understandingStatus = hasUnderstandingEvidence
+  const understandingStatus = hasUnderstandingCompletionEvidence
     ? "done"
     : activeInitialBlockId === "understanding"
       ? "active"
@@ -5720,7 +5727,7 @@ function buildResearchPlanBlocks({
       ? "active"
       : hasPriorResearchPreparation
         ? "pending"
-      : hasUnderstandingEvidence
+      : hasUnderstandingCompletionEvidence
         ? "active"
         : "waiting";
 
@@ -5754,7 +5761,11 @@ function buildResearchPlanBlocks({
     {
       id: "understanding",
       title: text.planBlockUnderstanding,
-      subtitle: hasUnderstandingEvidence ? text.planBlockUnderstandingDone : text.planBlockUnderstandingPending,
+      subtitle: hasUnderstandingCompletionEvidence
+        ? text.planBlockUnderstandingDone
+        : hasUnderstandingWorkEvidence
+          ? text.planBlockUnderstandingNeedsNotebook
+          : text.planBlockUnderstandingPending,
       status: understandingStatus,
       eyebrow: "03",
       evidence:

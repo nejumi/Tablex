@@ -2104,6 +2104,12 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
                         "phase": "modeling",
                         "status": "surprise",
                     },
+                    {
+                        "id": "mixed_language",
+                        "title": "Codexが update model diagnostics and feature importance",
+                        "why_it_matters": "Notebookで inspect error slices, PDP, and residual segments.",
+                        "status": "active",
+                    },
                 ],
             },
         )
@@ -2118,6 +2124,7 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
         "approval_response_contract_v19",
         "done_missing_notebook",
         "invalid_status",
+        "mixed_language",
     ]
     assert timeline["blocks"][0]["status"] == "active"
     assert timeline["blocks"][0]["subtitle"] == "Inspect salary tail and relational coverage."
@@ -2139,7 +2146,7 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     localized = localized_response.json()
     assert localized["response_locale"] == "ja-JP"
     assert localized["localization"]["requires_explicit_locale"] is True
-    assert localized["localization"]["missing_block_count"] == 2
+    assert localized["localization"]["missing_block_count"] == 3
     assert localized["localization"]["missing_subtask_count"] == 0
     assert localized["blocks"][0]["title"] == "深いEDA"
     assert localized["blocks"][0]["subtitle"] == "salaryの裾とリレーショナルなカバレッジを確認します。"
@@ -2164,6 +2171,9 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized["blocks"][3]["status"] == "pending"
     assert localized["blocks"][3]["localization_status"] == "needs_locale_refresh"
     assert localized["blocks"][3]["evidence"] is None
+    assert localized["blocks"][4]["title"] == "表示言語を更新中の計画ブロック"
+    assert localized["blocks"][4]["subtitle"] == ""
+    assert localized["blocks"][4]["localization_status"] == "needs_locale_refresh"
 
     japanese_alias_response = client.get(
         f"/api/projects/{project_id}/research-plan/timeline",

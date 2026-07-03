@@ -396,7 +396,9 @@ def _research_plan_value_matches_locale(value: Any, *, locale: str | None) -> bo
 def _research_plan_text_matches_locale(value: str, *, locale: str | None) -> bool:
     if not _research_plan_locale_is_japanese(locale):
         return False
-    return bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", value))
+    japanese_matches = re.findall(r"[\u3040-\u30ff\u3400-\u9fff]", value)
+    latin_word_matches = re.findall(r"[A-Za-z][A-Za-z0-9_-]*", value)
+    return bool(japanese_matches) and len(latin_word_matches) <= max(4, len(japanese_matches) * 2)
 
 
 def _research_plan_requires_explicit_locale(locale: str | None) -> bool:
