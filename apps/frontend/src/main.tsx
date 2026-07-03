@@ -166,9 +166,9 @@ const englishMessages = {
   focusAssumptions: "Resolve risky assumptions",
   focusAssumptionsReason: "High-risk assumptions can silently invalidate evaluation or feature design if they are not reviewed.",
   focusEvaluation: "Lock a reliable evaluation design",
-  focusEvaluationReason: "Modeling and agent work should stay downstream of EvaluationSpec and SplitManifest constraints.",
+  focusEvaluationReason: "Review evaluation and split constraints before comparing models or agent approaches.",
   focusApproach: "Plan the next flexible agent approach",
-  focusApproachReason: "The harness has enough context to ask Codex for a scoped approach without forcing a fixed recipe.",
+  focusApproachReason: "Use the current evidence to ask Codex for the next scoped approach.",
   focusExperiments: "Run or inspect experiments",
   focusExperimentsReason: "The project needs run evidence, diagnostics, and reports before comparing approaches.",
   focusNotebooks: "Review notebook evidence",
@@ -425,7 +425,7 @@ const englishMessages = {
   noRelatedNotebooks: "No linked notebook yet",
   currentTaskTitle: "Current task",
   currentTaskIdle: "Idle",
-  currentTaskEmpty: "No active task. The agent should propose the next useful move instead of making you hunt through tabs.",
+  currentTaskEmpty: "No active task. Ask Tablee for the next useful move or start the agent.",
   currentTaskWaiting: "Waiting for worker",
   currentTaskWaitingBody: "This queued job will start when a local worker is available.",
   runWorkerOnce: "Run worker once",
@@ -439,7 +439,7 @@ const englishMessages = {
   equippedSkillsTitle: "Equipped Skills",
   equippedSkillsEmpty: "No project skills equipped yet.",
   equippedSkillBadge: "E",
-  skillPanelHint: "Equip reusable context for Codex without turning it into a fixed recipe.",
+  skillPanelHint: "Choose reusable skills that Codex can reference during this project.",
   skillSelectPlaceholder: "Choose an existing Skill",
   skillEquipExisting: "Equip existing",
   skillCreateTitle: "Create a Skill",
@@ -452,10 +452,10 @@ const englishMessages = {
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
   rawAgentTitle: "Raw Codex transcript",
-  rawAgentEmpty: "No Codex execution transcript is available yet. Harness-only events stay in Chat and Jobs, not Raw.",
+  rawAgentEmpty: "No Codex execution transcript is available yet. Start the agent or send a message to begin.",
   openSurface: "Open",
   strategyBriefTitle: "Adaptive Strategy Brief",
-  strategyBriefSubtitle: "One guided next step without forcing a fixed modeling recipe.",
+  strategyBriefSubtitle: "One guided next step from the current project evidence.",
   strategyRecommendedAction: "Recommended action",
   strategyCodexHandoff: "Codex handoff",
   strategyLaneMap: "Strategy lanes",
@@ -545,9 +545,9 @@ const japaneseMessages: LocaleMessages = {
   focusAssumptions: "リスクの高い仮定を確認する",
   focusAssumptionsReason: "高リスクの仮定を放置すると、評価や特徴量設計が静かに壊れる可能性があります。",
   focusEvaluation: "信頼できる評価設計を固定する",
-  focusEvaluationReason: "modelingやagent作業はEvaluationSpecとSplitManifestの制約の下に置くべきです。",
+  focusEvaluationReason: "モデル比較やagent approachの前に、評価設計と分割条件を確認します。",
   focusApproach: "次の柔軟なagent approachを計画する",
-  focusApproachReason: "固定recipeにせず、現時点の証拠を渡してCodexにスコープ付きで考えさせられます。",
+  focusApproachReason: "現時点の根拠を使って、Codexに次のapproachを検討させます。",
   focusExperiments: "実験を実行または確認する",
   focusExperimentsReason: "approachを比較する前に、run evidence、diagnostics、reportが必要です。",
   focusNotebooks: "notebook evidenceを確認する",
@@ -803,7 +803,7 @@ const japaneseMessages: LocaleMessages = {
   noRelatedNotebooks: "紐づくノートブックはまだありません",
   currentTaskTitle: "現在のタスク",
   currentTaskIdle: "待機中",
-  currentTaskEmpty: "実行中のタスクはありません。タブを探し回らなくても、Agentが次の有用な一手を提案するべきです。",
+  currentTaskEmpty: "実行中のタスクはありません。次の一手をTableeに聞くか、Agentを開始してください。",
   currentTaskWaiting: "worker待ち",
   currentTaskWaitingBody: "local workerが利用可能になると、このqueued jobを開始します。",
   runWorkerOnce: "workerを1回実行",
@@ -817,7 +817,7 @@ const japaneseMessages: LocaleMessages = {
   equippedSkillsTitle: "装備中SKILL",
   equippedSkillsEmpty: "このProjectに装備されたSkillはまだありません。",
   equippedSkillBadge: "E",
-  skillPanelHint: "Codexを固定recipeに閉じ込めず、必要な文脈や手順を装備します。",
+  skillPanelHint: "このProjectでCodexが参照するSkillを選択・作成します。",
   skillSelectPlaceholder: "既存Skillを選択",
   skillEquipExisting: "既存Skillを装備",
   skillCreateTitle: "Skillを作成",
@@ -830,10 +830,10 @@ const japaneseMessages: LocaleMessages = {
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
   rawAgentTitle: "Raw Codex transcript",
-  rawAgentEmpty: "Codexの実行transcriptはまだありません。HarnessだけのイベントはRawではなくChatとJobsに残します。",
+  rawAgentEmpty: "Codexの実行transcriptはまだありません。Agentを開始するか、メッセージを送るとここに表示されます。",
   openSurface: "開く",
   strategyBriefTitle: "Adaptive Strategy Brief",
-  strategyBriefSubtitle: "固定recipeにせず、次の一手だけをガイドします。",
+  strategyBriefSubtitle: "現在の根拠に基づく次の一手を表示します。",
   strategyRecommendedAction: "推奨アクション",
   strategyCodexHandoff: "Codexへの引き渡し",
   strategyLaneMap: "Strategy lanes",
@@ -6229,10 +6229,10 @@ function buildRawAgentEvents(
     events.push({
       id: `raw-assistant-${index}-${turn.assistant.id ?? turn.assistant.text.slice(0, 18)}`,
       timestamp: turn.assistant.createdAt ?? turn.createdAt ?? now,
-      source: isHarnessSidecar ? "Harness sidecar" : "Codex",
+      source: isHarnessSidecar ? "Tablex" : "Codex",
       level: composerStatus,
       title: isHarnessSidecar
-        ? "Harness sidecar event"
+        ? "Tablex event"
         : active
           ? "Codex composer request is in flight"
           : "Codex exec transcript",
@@ -6247,7 +6247,7 @@ function buildRawAgentEvents(
         ...(stdoutTail ? [{ label: "Codex stdout", value: stdoutTail }] : []),
         ...(stderrTail ? [{ label: "Codex stderr", value: stderrTail }] : []),
         ...(turn.assistant.responseComposer
-          ? [{ label: isHarnessSidecar ? "Harness sidecar metadata" : "Codex run metadata", value: turn.assistant.responseComposer }]
+          ? [{ label: isHarnessSidecar ? "Tablex event detail" : "Codex run metadata", value: turn.assistant.responseComposer }]
           : [])
       ],
       payload: {
@@ -6271,7 +6271,7 @@ function buildRawSessionEvents(events: AgentTranscriptEvent[], agentSession: Age
     return {
       id: `agent-session-${event.id}`,
       timestamp: event.created_at,
-      source: isCodex ? "Codex" : event.source === "user" ? "User" : "Harness sidecar",
+      source: isCodex ? "Codex" : event.source === "user" ? "User" : "Tablex",
       level: event.event_type,
       title: event.title ?? humanizeLabel(event.event_type),
       active: active && isCodex && event.event_index === events[events.length - 1]?.event_index,
@@ -6279,8 +6279,8 @@ function buildRawSessionEvents(events: AgentTranscriptEvent[], agentSession: Age
       details: [
         ...(event.source === "codex_cli" ? [{ label: "Raw Codex JSONL event", value: payload }] : []),
         ...(event.source === "codex_cli_stderr" ? [{ label: "Codex stderr line", value: payload }] : []),
-        ...(!isCodex ? [{ label: "Tablex sidecar event", value: payload }] : []),
-        ...(agentSession && event.event_index === 0 ? [{ label: "AgentSession", value: agentSession }] : [])
+        ...(!isCodex ? [{ label: "Tablex event detail", value: payload }] : []),
+        ...(agentSession && event.event_index === 0 ? [{ label: "Session detail", value: agentSession }] : [])
       ],
       payload: {
         agent_session_id: event.session_id,
@@ -6353,7 +6353,7 @@ function buildRawJobEvents(jobs: Job[]): RawAgentEvent[] {
       events.push({
         id: `raw-job-sidecar-${job.id}`,
         timestamp: job.updated_at,
-        source: "Harness sidecar",
+        source: "Tablex",
         level: job.status,
         title:
           job.job_type === "start_autonomous_loop"
@@ -6364,7 +6364,7 @@ function buildRawJobEvents(jobs: Job[]): RawAgentEvent[] {
         active: jobActiveForActivity(job),
         body: latestJobHeadline(job),
         details: [
-          { label: "Harness job output", value: output },
+          { label: "Tablex job output", value: output },
           { label: "Job record", value: job }
         ],
         payload: { job_id: job.id, job_type: job.job_type, status: job.status, output }
