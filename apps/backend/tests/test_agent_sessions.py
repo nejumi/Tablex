@@ -893,6 +893,7 @@ def test_turn_prompt_includes_living_research_plan_contract(tmp_path: Path) -> N
         assert "outputs/research_plan.json" in prompt.text
         assert "timeline_blocks" in prompt.text
         assert "freely add, remove, reorder, branch, or revise" in prompt.text
+        assert ".tablex/inbox/research_plan_locale_request.md" in prompt.text
 
 
 def test_runner_failure_backoff_counts_attempts_not_sidecar_events(tmp_path: Path) -> None:
@@ -1502,6 +1503,9 @@ def test_research_plan_ingest_requests_locale_refresh_for_mixed_language_timelin
         request_text = request_path.read_text(encoding="utf-8")
         assert "locale: ja-JP" in request_text
         assert "outputs/research_plan.json" in request_text
+        context = loads_json((workspace / ".tablex" / "context.json").read_text(encoding="utf-8"), {})
+        assert context["human_interface"]["response_locale"] == "ja-JP"
+        assert context["research_plan_display"]["localization"]["missing_block_count"] == 1
 
         events = list(
             db.scalars(

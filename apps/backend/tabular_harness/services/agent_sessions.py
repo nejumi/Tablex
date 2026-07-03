@@ -1235,13 +1235,37 @@ def prepare_session_workspace(
     (workspace / "notebooks").mkdir(parents=True, exist_ok=True)
     (workspace / "artifacts").mkdir(parents=True, exist_ok=True)
     (workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR).mkdir(parents=True, exist_ok=True)
-    context = build_session_context(db, project=project, session=session)
-    (workspace / ".tablex" / "context.json").write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_session_context_file(db, project=project, session=session)
     (workspace / ".tablex" / "GOAL.md").write_text(session.goal_text, encoding="utf-8")
     return workspace
 
 
-def build_session_context(db: Session, *, project: Project, session: AgentSession) -> dict[str, Any]:
+def write_session_context_file(
+    db: Session,
+    *,
+    project: Project,
+    session: AgentSession,
+    response_locale: str | None = None,
+) -> None:
+    if not session.workspace_path:
+        return
+    workspace = Path(session.workspace_path)
+    path = workspace / ".tablex" / "context.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        context = build_session_context(db, project=project, session=session, response_locale=response_locale)
+        path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        return
+
+
+def build_session_context(
+    db: Session,
+    *,
+    project: Project,
+    session: AgentSession,
+    response_locale: str | None = None,
+) -> dict[str, Any]:
     datasets = list(
         db.scalars(
             select(DatasetSnapshot).where(DatasetSnapshot.project_id == project.id).order_by(DatasetSnapshot.created_at.desc()).limit(12)
@@ -1260,7 +1284,7 @@ def build_session_context(db: Session, *, project: Project, session: AgentSessio
             .limit(30)
         ).all()
     )
-    response_locale = latest_project_response_locale(db, project)
+    response_locale = response_locale.strip() if isinstance(response_locale, str) and response_locale.strip() else latest_project_response_locale(db, project)
     equipped_skills = equipped_skill_context(db, skill_references)
     latest_research_plan_artifact = next((item for item in artifacts if item.asset_type == "research_plan"), None)
     return {
@@ -1468,7 +1492,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Prefer marimo notebooks for data understanding, modeling diagnostics, and reports.",
         "- Read `.tablex/context.json` for `human_interface.response_locale` and write human-facing notebooks/reports/chat in that language.",
         "- Read equipped Skill paths in `.tablex/context.json` before EDA, prior research, notebook authoring, or modeling strategy work.",
-        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, and `.tablex/inbox/progress_request.md`; incorporate user messages and publish progress updates without waiting for a new Codex turn when practical.",
+        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, `.tablex/inbox/progress_request.md`, and `.tablex/inbox/research_plan_locale_request.md`; incorporate user messages and publish progress updates without waiting for a new Codex turn when practical.",
         "- If you need user input in Full Auto, state the question and your provisional assumption, then continue unless a true hard safety boundary makes all useful work impossible.",
         "- Treat formal approval, data-owner confirmation, deployment permission, or production-write clearance as future evidence unless the current action would write to production, expose secrets, or violate evaluation integrity. Keep doing reversible local analysis and artifact generation while waiting.",
         "- Do not present Full Auto as stopped on approval unless no useful reversible work remains. If a destructive or deployment-grade action is deferred, say which reversible analysis, modeling, diagnostics, notebook/report work, or research you are continuing now.",
@@ -2390,6 +2414,9 @@ def maybe_request_research_plan_locale_refresh(
         return
     if not summary.get("missing_block_count") and not summary.get("missing_subtask_count"):
         return
+    project = db.get(Project, artifact.project_id)
+    if project is not None:
+        write_session_context_file(db, project=project, session=session, response_locale=locale)
     recent_events = list(
         db.scalars(
             select(AgentTranscriptEvent)

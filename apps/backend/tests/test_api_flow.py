@@ -2513,6 +2513,9 @@ def test_research_plan_timeline_requests_locale_refresh_for_active_session(tmp_p
     assert "schema_version: tablex_research_plan_locale_request.v1" in request_text
     assert "locale: ja-JP" in request_text
     assert "missing_block_count: 1" in request_text
+    context = loads_json((workspace / ".tablex" / "context.json").read_text(encoding="utf-8"), {})
+    assert context["human_interface"]["response_locale"] == "ja-JP"
+    assert context["research_plan_display"]["localization"]["missing_block_count"] == 1
 
     with app.state.session_factory() as db:
         events = list(
