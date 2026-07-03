@@ -50,6 +50,8 @@ RETRY_BACKOFF_SECONDS = (5, 30, 120, 600)
 STALE_PROCESS_TERM_GRACE_SECONDS = 5
 SESSION_OUTPUT_MIN_VERSION_INTERVAL_SECONDS = 30
 MAIN_AGENT_IDLE_TIMEOUT_SECONDS = 6 * 60 * 60
+STREAM_EVENT_FLUSH_INTERVAL_SECONDS = 0.5
+STREAM_EVENT_FLUSH_MAX_LINES = 24
 SESSION_INTERNAL_DIR = ".tablex"
 SESSION_INBOX_DIR = "inbox"
 USER_INSTRUCTIONS_INBOX_FILENAME = "user_instructions.jsonl"
@@ -1096,6 +1098,8 @@ def run_codex_cli_turn_streaming(
     start = time.monotonic()
     last_output_at = start
     last_workspace_ingest = 0.0
+    last_stream_event_flush = start
+    pending_stream_events: list[tuple[str, str]] = []
     timeout_sent = False
     terminated_at: float | None = None
 
@@ -1144,8 +1148,20 @@ def run_codex_cli_turn_streaming(
             continue
         last_output_at = time.monotonic()
         append_runner_stream_to_workspace(workspace, stream_name=stream_name, line=line)
-        append_codex_stream_line(session_factory, project_id=project_id, session_id=session_id, stream_name=stream_name, line=line)
+        pending_stream_events.append((stream_name, line))
         now = time.monotonic()
+        if (
+            len(pending_stream_events) >= STREAM_EVENT_FLUSH_MAX_LINES
+            or now - last_stream_event_flush >= STREAM_EVENT_FLUSH_INTERVAL_SECONDS
+        ):
+            append_codex_stream_lines(
+                session_factory,
+                project_id=project_id,
+                session_id=session_id,
+                lines=pending_stream_events,
+            )
+            pending_stream_events = []
+            last_stream_event_flush = now
         if now - last_workspace_ingest >= 10:
             ingest_session_workspace_outputs_safely(
                 session_factory,
@@ -1155,6 +1171,13 @@ def run_codex_cli_turn_streaming(
                 workspace=workspace,
             )
             last_workspace_ingest = now
+    if pending_stream_events:
+        append_codex_stream_lines(
+            session_factory,
+            project_id=project_id,
+            session_id=session_id,
+            lines=pending_stream_events,
+        )
     try:
         return_code = process.wait(timeout=5)
     except subprocess.TimeoutExpired:
@@ -1261,6 +1284,58 @@ def append_codex_stream_line(
     stream_name: str,
     line: str,
 ) -> None:
+    append_codex_stream_lines(
+        session_factory,
+        project_id=project_id,
+        session_id=session_id,
+        lines=[(stream_name, line)],
+    )
+
+
+def append_codex_stream_lines(
+    session_factory: sessionmaker[Session],
+    *,
+    project_id: str,
+    session_id: str,
+    lines: list[tuple[str, str]],
+) -> None:
+    if not lines:
+        return
+    with session_factory() as db:
+        session = db.get(AgentSession, session_id)
+        if session is None:
+            return
+        current_max = db.scalar(
+            select(func.max(AgentTranscriptEvent.event_index)).where(AgentTranscriptEvent.session_id == session.id)
+        )
+        next_index = int(current_max if current_max is not None else -1) + 1
+        now = utc_now()
+        for stream_name, line in lines:
+            source, event_type, title, content, payload = codex_stream_event_fields(stream_name, line)
+            if event_type == "thread.started" and isinstance(payload.get("thread_id"), str):
+                session.codex_thread_id = str(payload["thread_id"])
+            db.add(
+                AgentTranscriptEvent(
+                    id=new_id("agte"),
+                    project_id=project_id,
+                    session_id=session.id,
+                    event_index=next_index,
+                    source=source,
+                    event_type=event_type,
+                    role="runner",
+                    title=title,
+                    content=content,
+                    payload_json=dumps_json(payload),
+                    created_at=now,
+                )
+            )
+            next_index += 1
+        session.updated_at = utc_now()
+        session.last_heartbeat_at = utc_now()
+        db.commit()
+
+
+def codex_stream_event_fields(stream_name: str, line: str) -> tuple[str, str, str, str | None, dict[str, Any]]:
     stripped = line.strip()
     payload: dict[str, Any] = {"stream": stream_name, "line": stripped}
     event_type = f"codex_{stream_name}"
@@ -1278,23 +1353,8 @@ def append_codex_stream_line(
             content = codex_event_content(parsed)
     elif stream_name == "stderr":
         title = "Codex stderr"
-    with session_factory() as db:
-        session = db.get(AgentSession, session_id)
-        if session is None:
-            return
-        if event_type == "thread.started" and isinstance(payload.get("thread_id"), str):
-            session.codex_thread_id = str(payload["thread_id"])
-        append_session_event(
-            db,
-            session,
-            source="codex_cli" if stream_name == "stdout" else "codex_cli_stderr",
-            event_type=event_type,
-            role="runner",
-            title=title,
-            content=content,
-            payload=payload,
-        )
-        db.commit()
+    source = "codex_cli" if stream_name == "stdout" else "codex_cli_stderr"
+    return source, event_type, title, content, payload
 
 
 def codex_event_title(event: dict[str, Any]) -> str:

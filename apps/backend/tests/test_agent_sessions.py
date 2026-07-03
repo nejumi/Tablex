@@ -6,10 +6,11 @@ from pathlib import Path
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from tabular_harness.core.json import dumps_json, loads_json
-from tabular_harness.models.entities import AgentSession, Artifact, Base, Project, utc_now
+from tabular_harness.models.entities import AgentSession, AgentTranscriptEvent, Artifact, Base, Project, utc_now
 from tabular_harness.services.agent_sessions import (
     CODEX_RAW_TRANSCRIPT_FILENAME,
     CODEX_STDERR_LOG_FILENAME,
+    append_codex_stream_lines,
     append_runner_stream_to_workspace,
     append_session_event,
     asset_type_for_session_output,
@@ -77,6 +78,45 @@ def test_codex_stream_lines_are_persisted_and_published_without_rewriting_stdout
     assert workspace / "artifacts" / CODEX_STDERR_LOG_FILENAME in published
     assert (workspace / "artifacts" / CODEX_RAW_TRANSCRIPT_FILENAME).read_text(encoding="utf-8") == stdout_line
     assert (workspace / "artifacts" / CODEX_STDERR_LOG_FILENAME).read_text(encoding="utf-8") == stderr_line
+
+
+def test_codex_stream_lines_are_indexed_in_one_batch(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+
+    with session_factory() as db:
+        project = Project(id="p_stream_batch", name="Stream Batch")
+        session = AgentSession(id="as_stream_batch", project_id=project.id, goal_text="Continue.")
+        db.add_all([project, session])
+        db.commit()
+
+    append_codex_stream_lines(
+        session_factory,
+        project_id="p_stream_batch",
+        session_id="as_stream_batch",
+        lines=[
+            ("stdout", '{"type":"thread.started","thread_id":"thread_1"}\n'),
+            ("stdout", '{"type":"turn.started"}\n'),
+            ("stderr", "warning line\n"),
+        ],
+    )
+
+    with session_factory() as db:
+        session = db.get(AgentSession, "as_stream_batch")
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(AgentTranscriptEvent.session_id == "as_stream_batch")
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            ).all()
+        )
+
+    assert session is not None
+    assert session.codex_thread_id == "thread_1"
+    assert [event.event_index for event in events] == [0, 1, 2]
+    assert [event.event_type for event in events] == ["thread.started", "turn.started", "codex_stderr"]
+    assert events[-1].source == "codex_cli_stderr"
 
 
 def test_session_output_artifact_name_uses_relative_path_to_avoid_stem_collisions() -> None:
