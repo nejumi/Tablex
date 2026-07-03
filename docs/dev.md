@@ -158,7 +158,7 @@ curl -X POST http://localhost:8000/api/worker/run-once
 
 Jobs can carry `context`, `policy`, `dependency_job_ids`, `priority`, `max_attempts`, and `approval_required`. `run_agent_task` and jobs with restricted/full network or production-write policy require approval before they become runnable.
 
-The FastAPI app starts a lightweight local worker daemon by default in the app lifespan. This is the single-Docker default path: queued sidecar jobs such as chat response composition, split building, notebook capture, and local training should not sit forever waiting for a separate shell. The daemon can be disabled with `TABLEX_LOCAL_WORKER_ENABLED=false`, and its polling can be tuned with `TABLEX_LOCAL_WORKER_INTERVAL_SECONDS` and `TABLEX_LOCAL_WORKER_MAX_JOBS_PER_WAKE`.
+The FastAPI app starts a lightweight local worker daemon by default in the app lifespan. This is the single-Docker default path: queued sidecar jobs such as chat response composition, split building, notebook capture, and local training should not sit forever waiting for a separate shell. The daemon only acquires job types with concrete handlers; it must not mark generic MVP stub jobs as succeeded. It can be disabled with `TABLEX_LOCAL_WORKER_ENABLED=false`, and its polling can be tuned with `TABLEX_LOCAL_WORKER_INTERVAL_SECONDS` and `TABLEX_LOCAL_WORKER_MAX_JOBS_PER_WAKE`.
 
 You can still run an explicit local worker from a shell for debugging or heavier isolated execution:
 
@@ -167,7 +167,7 @@ tablex-worker --once
 tablex-worker --interval 2 --worker-id local-worker
 ```
 
-The worker uses concrete handlers for `agent_chat_turn`, `build_split_manifest`, `run_baseline`, `train_model_candidates`, `run_planned_agent_task_codex`, and `continue_autonomous_session`; generic queued jobs still use MVP stub handlers until the async worker layer is expanded. When split/model/Codex child workers finish, they schedule the autonomous-session heartbeat so Full Auto can resume from current state instead of stopping after one turn. Agent Activity should show Training Worker, Codex Runner, and Autonomous Session cards with project names, human descriptions, and estimated telemetry. Queued child jobs are waiting, not live; stale queued jobs should fall out of the right-edge activity overlay while remaining visible in Jobs/history.
+The worker daemon uses concrete handlers for `agent_chat_turn`, `build_split_manifest`, `run_baseline`, `train_model_candidates`, `run_planned_agent_task_codex`, and `continue_autonomous_session`. The manual `tablex-worker` entrypoint still has MVP stub handlers for explicit developer debugging, but product autoplay must avoid fake-success stub completion. When split/model/Codex child workers finish, they schedule the autonomous-session heartbeat so Full Auto can resume from current state instead of stopping after one turn. Agent Activity should show Training Worker, Codex Runner, and Autonomous Session cards with project names, human descriptions, and estimated telemetry. Queued child jobs are waiting, not live; stale queued jobs should fall out of the right-edge activity overlay while remaining visible in Jobs/history.
 
 ModelVersion validation history is available from:
 

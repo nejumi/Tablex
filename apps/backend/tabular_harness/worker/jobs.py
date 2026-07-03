@@ -634,6 +634,12 @@ def autonomous_session_worker_event(
 
 def default_handlers() -> dict[str, JobHandler]:
     handlers = {job_type: stub_job_handler for job_type in JOB_TYPES}
+    handlers.update(concrete_handlers())
+    return handlers
+
+
+def concrete_handlers() -> dict[str, JobHandler]:
+    handlers: dict[str, JobHandler] = {}
     handlers["run_baseline"] = run_baseline_handler
     handlers["build_split_manifest"] = build_split_manifest_handler
     handlers["train_model_candidates"] = train_model_candidates_handler
@@ -644,7 +650,8 @@ def default_handlers() -> dict[str, JobHandler]:
 
 
 def create_default_worker(
-    worker_id: str = "local-worker", store: LocalArtifactStore | None = None
+    worker_id: str = "local-worker", store: LocalArtifactStore | None = None, include_stub_handlers: bool = True
 ) -> SyncWorker:
     artifact_store = store or LocalArtifactStore(get_settings().artifact_root)
-    return SyncWorker(handlers=default_handlers(), store=artifact_store, worker_id=worker_id)
+    handlers = default_handlers() if include_stub_handlers else concrete_handlers()
+    return SyncWorker(handlers=handlers, store=artifact_store, worker_id=worker_id)

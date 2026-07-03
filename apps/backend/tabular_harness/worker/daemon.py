@@ -39,7 +39,7 @@ class LocalWorkerDaemon:
             self._thread.join(timeout=timeout_seconds)
 
     def _run(self) -> None:
-        worker = create_default_worker(worker_id=self.worker_id, store=self.store)
+        worker = create_default_worker(worker_id=self.worker_id, store=self.store, include_stub_handlers=False)
         while not self._stop_event.is_set():
             ran_job = False
             for _ in range(max(1, self.max_jobs_per_wake)):
