@@ -5379,16 +5379,16 @@ function HomeTab({
     onTabChange,
     onNavigateToTarget
   });
-  const activeResearchPlanBlock = researchPlanBlocks.find((block) => block.status === "active") ?? null;
-  const missionUsesPlanFocus = Boolean(activeResearchPlanBlock);
-  const missionTitle = activeResearchPlanBlock?.title ?? recommendation.title;
-  const missionReason = activeResearchPlanBlock?.subtitle ?? recommendation.reason;
+  const researchPlanFocusBlock = primaryResearchPlanFocusBlock(researchPlanBlocks);
+  const missionUsesPlanFocus = Boolean(researchPlanFocusBlock);
+  const missionTitle = researchPlanFocusBlock?.title ?? recommendation.title;
+  const missionReason = researchPlanFocusBlock?.subtitle ?? recommendation.reason;
   const missionRiskLevel = missionUsesPlanFocus ? "active" : (recommendation.riskLevel ?? "ready");
   const missionFocusLabel = missionUsesPlanFocus ? text.openSurface : (focusAction?.label ?? text.recommendedFocus);
   const missionFocusDisabled = busy || (!missionUsesPlanFocus && (!focusAction || focusAction.disabled));
   const handleMissionFocus = () => {
     if (missionUsesPlanFocus) {
-      activeResearchPlanBlock?.onClick?.();
+      researchPlanFocusBlock?.onClick?.();
       return;
     }
     onFocusAction(focusAction);
@@ -6277,12 +6277,23 @@ function renumberResearchPlanBlocks(blocks: ResearchPlanBlock[]): ResearchPlanBl
 }
 
 function selectedResearchPlanBlockKey(blocks: ResearchPlanBlock[]): string {
+  return primaryResearchPlanFocusBlock(blocks)?.id ?? "";
+}
+
+function primaryResearchPlanFocusBlock(blocks: ResearchPlanBlock[]): ResearchPlanBlock | null {
+  const activeIndex = blocks.findIndex((block) => block.status === "active");
+  if (activeIndex > 0) {
+    const priorAttentionBlock = blocks
+      .slice(0, activeIndex)
+      .find((block) => ["blocked", "pending", "waiting"].includes(block.status));
+    if (priorAttentionBlock) return priorAttentionBlock;
+  }
   return (
-    blocks.find((block) => block.status === "active")?.id ??
-    blocks.find((block) => block.status === "blocked")?.id ??
-    blocks.find((block) => block.status === "pending")?.id ??
-    blocks.find((block) => block.status === "waiting")?.id ??
-    ""
+    blocks[activeIndex] ??
+    blocks.find((block) => block.status === "blocked") ??
+    blocks.find((block) => block.status === "pending") ??
+    blocks.find((block) => block.status === "waiting") ??
+    null
   );
 }
 
