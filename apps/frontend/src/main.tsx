@@ -494,6 +494,10 @@ const englishMessages = {
   rawAgentStdout: "stdout",
   rawAgentStderr: "stderr",
   rawAgentUpdated: "updated",
+  rawAgentIndexedEvents: "Indexed transcript events",
+  rawAgentRawJsonl: "Raw JSONL",
+  rawAgentRawLine: "Raw line",
+  rawAgentParsedEvent: "Parsed event",
   openSurface: "Open",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "One guided next step from the current project evidence.",
@@ -907,12 +911,16 @@ const japaneseMessages: LocaleMessages = {
   skillNoAvailable: "未装備のSkillはありません。Libraryをseedするか、ここで作成してください。",
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
-  rawAgentTitle: "Raw Codex transcript",
+  rawAgentTitle: "Codex生ログ",
   rawAgentEmpty: "Codexの実行transcriptはまだありません。Agentを開始するか、メッセージを送るとここに表示されます。",
   rawAgentTail: "tail",
   rawAgentStdout: "stdout",
   rawAgentStderr: "stderr",
   rawAgentUpdated: "更新",
+  rawAgentIndexedEvents: "整形済みtranscript events",
+  rawAgentRawJsonl: "Raw JSONL",
+  rawAgentRawLine: "Raw line",
+  rawAgentParsedEvent: "Parsed event",
   openSurface: "開く",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "現在の根拠に基づく次の一手を表示します。",
@@ -7203,11 +7211,14 @@ function RawAgentStream({
                 active={turnState.owner === "agent" && `${line.stream}-${line.line_number}` === activeRawLineKey}
                 key={`${line.stream}-${line.line_number}`}
                 line={line}
+                text={text}
               />
             ))}
             {events.length ? (
               <details className="raw-agent-detail raw-agent-index">
-                <summary>Indexed transcript events ({events.length})</summary>
+                <summary>
+                  {text.rawAgentIndexedEvents} ({events.length})
+                </summary>
                 <div className="raw-agent-index-list">{events.map((event) => renderRawAgentEvent(event))}</div>
               </details>
             ) : null}
@@ -7280,7 +7291,15 @@ function rawTranscriptLineRange(lines: AgentRawTranscriptLine[]): string {
   return first === last ? ` #${first}` : ` #${first}-#${last}`;
 }
 
-function RawTranscriptLineCard({ line, active }: { line: AgentRawTranscriptViewLine; active: boolean }) {
+function RawTranscriptLineCard({
+  line,
+  active,
+  text
+}: {
+  line: AgentRawTranscriptViewLine;
+  active: boolean;
+  text: LocaleMessages;
+}) {
   const event = line.parsed;
   const view = rawCodexLineView(line);
   return (
@@ -7296,12 +7315,12 @@ function RawTranscriptLineCard({ line, active }: { line: AgentRawTranscriptViewL
         </div>
         {view.body ? <pre className="raw-cli-body">{view.body}</pre> : null}
         <details className="raw-agent-detail">
-          <summary>{event ? "Raw JSONL" : "Raw line"}</summary>
+          <summary>{event ? text.rawAgentRawJsonl : text.rawAgentRawLine}</summary>
           <pre>{line.text}</pre>
         </details>
         {event ? (
           <details className="raw-agent-detail compact">
-            <summary>Parsed event</summary>
+            <summary>{text.rawAgentParsedEvent}</summary>
             <pre>{rawDetailText(event)}</pre>
           </details>
         ) : null}
