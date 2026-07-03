@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import partial
@@ -73,6 +74,26 @@ def run_queued_agent_chat_turn(client: TestClient, job_id: str) -> dict[str, Any
         completed = worker.run_job(db, job)
         assert completed.status == "succeeded", completed.error_message
         return loads_json(completed.output_json, {})
+
+
+def wait_for_job_status(
+    client: TestClient,
+    job_id: str,
+    *,
+    statuses: set[str],
+    timeout_seconds: float = 5.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    latest: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/jobs/{job_id}")
+        assert response.status_code == 200
+        latest = response.json()
+        if latest["status"] in statuses:
+            return latest
+        time.sleep(0.05)
+    assert latest is not None
+    raise AssertionError(f"Job {job_id} did not reach {sorted(statuses)}; latest status was {latest['status']}")
 
 
 def test_sqlite_engine_uses_wal_and_busy_timeout(tmp_path: Path) -> None:
@@ -902,9 +923,8 @@ def test_approval_based_start_creates_real_planning_evidence_with_dataset(tmp_pa
     queued_job = start_response.json()
     assert queued_job["status"] == "queued"
     assert queued_job["output"]["schema_version"] == "autonomous_loop_start_queued.v1"
-    job_response = client.get(f"/api/jobs/{queued_job['id']}")
-    assert job_response.status_code == 200
-    output = job_response.json()["output"]
+    job = wait_for_job_status(client, queued_job["id"], statuses={"succeeded"})
+    output = job["output"]
     assert output["status"] == "advanced"
     labels = {step["label"] for step in output["steps"]}
     assert {
@@ -1589,9 +1609,8 @@ def test_approval_based_start_runs_but_does_not_auto_adopt_evaluation(tmp_path: 
     assert start_response.status_code == 200, start_response.text
     queued_job = start_response.json()
     assert queued_job["output"]["schema_version"] == "autonomous_loop_start_queued.v1"
-    job_response = client.get(f"/api/jobs/{queued_job['id']}")
-    assert job_response.status_code == 200
-    output = job_response.json()["output"]
+    job = wait_for_job_status(client, queued_job["id"], statuses={"succeeded"})
+    output = job["output"]
     assert output["mode"] == "approval_based"
     assert any(step["label"] == "evaluation_review" for step in output["steps"])
     evaluation_step = next(step for step in output["steps"] if step["label"] == "evaluation_spec")

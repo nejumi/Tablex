@@ -4,13 +4,13 @@ import base64
 import json
 import mimetypes
 import re
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, cast
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -1494,6 +1494,30 @@ def run_autonomy_start_job_background(
     run_project_autonomy_worker_pump_background(session_factory, store, project_id=project_id, max_jobs=6)
 
 
+def start_autonomy_start_job_thread(
+    session_factory: sessionmaker[Session],
+    store: LocalArtifactStore,
+    *,
+    project_id: str,
+    job_id: str,
+    payload: dict[str, Any],
+) -> threading.Thread:
+    thread = threading.Thread(
+        target=run_autonomy_start_job_background,
+        kwargs={
+            "session_factory": session_factory,
+            "store": store,
+            "project_id": project_id,
+            "job_id": job_id,
+            "payload": payload,
+        },
+        name=f"tablex-autonomy-start-{job_id}",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 def run_project_autonomy_worker_pump_background(
     session_factory: sessionmaker[Session],
     store: LocalArtifactStore,
@@ -1580,7 +1604,6 @@ def ensure_project_full_auto_agent_session(
 def start_project_autonomy(
     project_id: str,
     payload: AutonomyStartCreate,
-    background_tasks: BackgroundTasks,
     request: Request,
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
@@ -1698,8 +1721,7 @@ def start_project_autonomy(
         output["agent_chat_turn_artifact_id"] = artifact.id
         job.output_json = dumps_json(output)
         db.commit()
-        background_tasks.add_task(
-            run_autonomy_start_job_background,
+        start_autonomy_start_job_thread(
             request.app.state.session_factory,
             store,
             project_id=project_id,
