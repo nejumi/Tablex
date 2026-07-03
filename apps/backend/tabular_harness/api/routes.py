@@ -4396,12 +4396,20 @@ def create_agent_chat_turn(
             message=payload.message,
             locale=payload.locale,
         )
+        progress_event = maybe_request_codex_progress_update(
+            db,
+            session=session,
+            locale=payload.locale,
+            stale_after_seconds=0,
+            min_interval_seconds=0,
+        )
         response = delivered_to_main_session_chat_turn(
             project=project,
             session=session,
             event=event,
             message=payload.message,
             locale=payload.locale,
+            progress_event=progress_event,
         )
         artifact = store_json_artifact(
             db,
@@ -4502,12 +4510,13 @@ def delivered_to_main_session_chat_turn(
     event: AgentTranscriptEvent,
     message: str,
     locale: str | None,
+    progress_event: AgentTranscriptEvent | None = None,
 ) -> dict[str, Any]:
     japanese = (locale or "").lower().startswith("ja")
     assistant_message = (
-        "受け取りました。今動いている分析に差し込みました。Codex が次の進捗で反映します。"
+        "受け取りました。実行中の分析に届けました。次の進捗更新で、反映した内容がこのChatに戻ります。"
         if japanese
-        else "Received. I added this to the running analysis; Codex will reflect it in the next progress update."
+        else "Received. I delivered this to the running analysis; the next progress update will bring the reflected work back here."
     )
     return {
         "schema_version": "agent_chat_turn.v1",
@@ -4528,6 +4537,7 @@ def delivered_to_main_session_chat_turn(
             "agent_transcript_event_id": event.id,
             "agent_transcript_event_index": event.event_index,
             "delivery": "workspace_inbox_and_transcript",
+            "progress_update_requested_event_id": progress_event.id if progress_event is not None else None,
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",

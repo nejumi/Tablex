@@ -28,6 +28,7 @@ from tabular_harness.services.agent_sessions import (
     append_runner_stream_to_workspace,
     append_session_event,
     latest_user_instruction_path,
+    progress_request_path,
     user_instructions_inbox_path,
 )
 from tabular_harness.services.approach import store_json_artifact
@@ -1605,12 +1606,15 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert chat["job"] is None
     assert chat["response_composer"]["mode"] == "main_agent_session_inbox"
     assert chat["response_composer"]["status"] == "delivered_to_main_session"
-    assert "今動いている分析" in chat["assistant_message"]
+    assert "実行中の分析" in chat["assistant_message"]
+    assert chat["response_brief"]["progress_update_requested_event_id"]
 
     inbox = user_instructions_inbox_path(workspace)
     latest = latest_user_instruction_path(workspace)
+    progress_request = progress_request_path(workspace)
     assert inbox.exists()
     assert latest.exists()
+    assert progress_request.exists()
     inbox_lines = inbox.read_text(encoding="utf-8").strip().splitlines()
     payload = json.loads(inbox_lines[-1])
     assert payload["schema_version"] == "tablex_user_instruction.v1"
