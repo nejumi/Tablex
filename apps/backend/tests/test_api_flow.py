@@ -1802,7 +1802,7 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert chat["response_composer"]["status"] == "queued"
     assert "入力は進行中の分析エージェントに届いています" in chat["assistant_message"]
     assert "worker待ち" not in chat["assistant_message"]
-    assert chat["response_brief"]["wait_state"]["worker_state"] == "waiting_for_local_worker"
+    assert chat["response_brief"]["wait_state"]["worker_state"] == "waiting_for_main_agent_reply"
     assert chat["response_brief"]["progress_update_requested_event_id"]
 
     inbox = user_instructions_inbox_path(workspace)
@@ -1826,7 +1826,7 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert history[-1]["response_composer"]["status"] == "queued"
     assert "Codexの返答が届き次第" in history[-1]["assistant_message"]
     assert history[-1]["response_brief"]["delivered_agent_session_id"] == "ags_inbox_delivery"
-    assert history[-1]["response_brief"]["wait_state"]["worker_state"] == "waiting_for_local_worker"
+    assert history[-1]["response_brief"]["wait_state"]["worker_state"] == "waiting_for_main_agent_reply"
 
     worker = SyncWorker(handlers={"agent_chat_turn": agent_chat_turn_handler}, store=app.state.artifact_store)
     with app.state.session_factory() as db:

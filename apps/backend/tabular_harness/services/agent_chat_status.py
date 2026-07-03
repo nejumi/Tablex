@@ -43,15 +43,16 @@ def agent_chat_wait_state(
     update_label = format_elapsed_for_agent_chat(updated_age_seconds, japanese=japanese)
     status = response_worker_status or job.status
     if status == "queued":
-        worker_state = "waiting_for_local_worker"
         stale = job_age_seconds >= 60
         if delivered_to_running_codex:
+            worker_state = "waiting_for_main_agent_reply"
             assistant_message = (
                 f"受け取りました。入力は進行中の分析エージェントに届いています。Codexの返答が届き次第、このチャットに残します（待機 {age_label}）。"
                 if japanese
                 else f"Received. The running analysis agent has the message. The next Codex reply will be saved here when it arrives ({age_label})."
             )
         else:
+            worker_state = "waiting_for_local_worker"
             assistant_message = (
                 f"受け取りました。返答を準備しています（待機 {age_label}）。"
                 if japanese
