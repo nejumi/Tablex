@@ -1285,6 +1285,83 @@ def test_codex_authored_marimo_notebook_capture_can_defer_until_final_ingest(
         assert success_event is not None
 
 
+def test_failed_notebook_auto_capture_retries_after_cooldown(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    notebooks_dir = workspace / "notebooks"
+    notebooks_dir.mkdir(parents=True)
+    notebook = notebooks_dir / "grandmaster_eda.py"
+    notebook.write_text(
+        "import marimo\n\napp = marimo.App()\n\n@app.cell\ndef _():\n    return\n",
+        encoding="utf-8",
+    )
+    attempts: list[str] = []
+
+    def flaky_capture(db: Any, *, store: LocalArtifactStore, notebook_artifact: Artifact) -> Any:
+        del db, store
+        attempts.append(notebook_artifact.id)
+        if len(attempts) == 1:
+            raise RuntimeError("temporary marimo export failure")
+        return SimpleNamespace(
+            html_artifact=SimpleNamespace(id="art_retry_html"),
+            manifest_artifact=SimpleNamespace(id="art_retry_manifest"),
+            evidence_html_artifact=None,
+        )
+
+    monkeypatch.setattr(analysis_notebooks_module, "create_notebook_execution_capture", flaky_capture)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_retry_notebook", name="Retry Notebook Capture")
+        session = AgentSession(
+            id="as_retry_notebook",
+            project_id=project.id,
+            goal_text="Write a readable marimo notebook.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+        notebook_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+        )
+        assert notebook_artifact is not None
+        assert attempts == [notebook_artifact.id]
+        failed_event = db.scalar(
+            select(AgentTranscriptEvent).where(
+                AgentTranscriptEvent.session_id == session.id,
+                AgentTranscriptEvent.event_type == "notebook_auto_capture_failed",
+            )
+        )
+        assert failed_event is not None
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+        assert attempts == [notebook_artifact.id]
+
+        failed_event.created_at = utc_now() - timedelta(minutes=10)
+        db.commit()
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        assert attempts == [notebook_artifact.id, notebook_artifact.id]
+        success_event = db.scalar(
+            select(AgentTranscriptEvent).where(
+                AgentTranscriptEvent.session_id == session.id,
+                AgentTranscriptEvent.event_type == "notebook_auto_capture_succeeded",
+            )
+        )
+        assert success_event is not None
+        success_payload = loads_json(success_event.payload_json, {})
+        assert success_payload["notebook_artifact_id"] == notebook_artifact.id
+        assert success_payload["notebook_execution_html_artifact_id"] == "art_retry_html"
+
+
 def test_research_plan_ingest_requests_locale_refresh_for_mixed_language_timeline(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)

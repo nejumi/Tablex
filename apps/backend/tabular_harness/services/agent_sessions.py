@@ -67,6 +67,7 @@ CODEX_RAW_TRANSCRIPT_FILENAME = "codex_raw_transcript.jsonl"
 CODEX_STDERR_LOG_FILENAME = "codex_stderr.log"
 PROGRESS_UPDATE_NUDGE_AFTER_SECONDS = 180
 PROGRESS_UPDATE_NUDGE_MIN_INTERVAL_SECONDS = 300
+NOTEBOOK_CAPTURE_RETRY_AFTER_SECONDS = 5 * 60
 _SUPERVISOR_LOCK = threading.Lock()
 _ACTIVE_SUPERVISORS: set[str] = set()
 _TRANSCRIPT_EVENT_LOCK = threading.Lock()
@@ -2123,8 +2124,16 @@ def maybe_capture_agent_session_notebook_output(
         db,
         session=session,
         artifact=artifact,
-        event_types=("notebook_auto_capture_succeeded", "notebook_auto_capture_failed"),
+        event_types=("notebook_auto_capture_succeeded",),
     ):
+        return
+    latest_failure = latest_agent_session_notebook_capture_event(
+        db,
+        session=session,
+        artifact=artifact,
+        event_types=("notebook_auto_capture_failed",),
+    )
+    if latest_failure is not None and not notebook_capture_failure_retry_due(latest_failure):
         return
     existing_captures = list(
         db.scalars(
@@ -2174,6 +2183,17 @@ def maybe_capture_agent_session_notebook_output(
         },
         artifact_id=capture.html_artifact.id,
     )
+
+
+def notebook_capture_failure_retry_due(
+    event: AgentTranscriptEvent,
+    *,
+    retry_after_seconds: int = NOTEBOOK_CAPTURE_RETRY_AFTER_SECONDS,
+) -> bool:
+    created_at = event.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return (utc_now() - created_at).total_seconds() >= retry_after_seconds
 
 
 def maybe_defer_agent_session_notebook_capture(db: Session, *, session: AgentSession, artifact: Artifact) -> None:
@@ -2238,6 +2258,21 @@ def agent_session_notebook_capture_event_exists(
     artifact: Artifact,
     event_types: tuple[str, ...],
 ) -> bool:
+    return latest_agent_session_notebook_capture_event(
+        db,
+        session=session,
+        artifact=artifact,
+        event_types=event_types,
+    ) is not None
+
+
+def latest_agent_session_notebook_capture_event(
+    db: Session,
+    *,
+    session: AgentSession,
+    artifact: Artifact,
+    event_types: tuple[str, ...],
+) -> AgentTranscriptEvent | None:
     recent_events = list(
         db.scalars(
             select(AgentTranscriptEvent)
@@ -2252,8 +2287,8 @@ def agent_session_notebook_capture_event_exists(
     for event in recent_events:
         payload = loads_json(event.payload_json, {})
         if payload.get("notebook_artifact_id") == artifact.id:
-            return True
-    return False
+            return event
+    return None
 
 
 def maybe_request_research_plan_locale_refresh(
