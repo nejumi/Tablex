@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,7 @@ ACTIVE_SESSION_STATUSES = {"starting", "running", "between_turns", "waiting_for_
 TERMINAL_SESSION_STATUSES = {"stopped", "failed", "gave_up", "completed"}
 RETRY_BACKOFF_SECONDS = (5, 30, 120, 600)
 STALE_PROCESS_TERM_GRACE_SECONDS = 5
+SESSION_OUTPUT_MIN_VERSION_INTERVAL_SECONDS = 30
 SESSION_INTERNAL_DIR = ".tablex"
 SESSION_INBOX_DIR = "inbox"
 USER_INSTRUCTIONS_INBOX_FILENAME = "user_instructions.jsonl"
@@ -1446,9 +1448,17 @@ def should_register_session_output(path: Path, existing: Artifact | None) -> boo
         return True
     try:
         existing_path = artifact_primary_path(existing)
-        return hashlib.sha256(path.read_bytes()).hexdigest() != hashlib.sha256(existing_path.read_bytes()).hexdigest()
+        changed = hashlib.sha256(path.read_bytes()).hexdigest() != hashlib.sha256(existing_path.read_bytes()).hexdigest()
     except OSError:
         return True
+    if not changed:
+        return False
+    if is_chat_update_path(path):
+        return True
+    created_at = existing.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return (utc_now() - created_at).total_seconds() >= SESSION_OUTPUT_MIN_VERSION_INTERVAL_SECONDS
 
 
 def is_chat_update_path(path: Path) -> bool:

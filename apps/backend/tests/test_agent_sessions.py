@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
-from tabular_harness.core.json import loads_json
-from tabular_harness.models.entities import AgentSession, Artifact, Base, Project
+from tabular_harness.core.json import dumps_json, loads_json
+from tabular_harness.models.entities import AgentSession, Artifact, Base, Project, utc_now
 from tabular_harness.services.agent_sessions import (
     CODEX_RAW_TRANSCRIPT_FILENAME,
     CODEX_STDERR_LOG_FILENAME,
@@ -21,6 +22,7 @@ from tabular_harness.services.agent_sessions import (
     raw_codex_stderr_path,
     raw_codex_transcript_path,
     session_output_artifact_name,
+    should_register_session_output,
 )
 from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
 
@@ -84,6 +86,31 @@ def test_session_output_artifact_name_uses_relative_path_to_avoid_stem_collision
     assert report_name != output_name
     assert "reports_summary_md" in report_name
     assert "outputs_summary_md" in output_name
+
+
+def test_session_output_registration_throttles_fast_intermediate_versions(tmp_path: Path) -> None:
+    existing_path = tmp_path / "stored" / "report.md"
+    existing_path.parent.mkdir(parents=True)
+    existing_path.write_text("old", encoding="utf-8")
+    workspace_path = tmp_path / "workspace" / "reports" / "report.md"
+    workspace_path.parent.mkdir(parents=True)
+    workspace_path.write_text("new", encoding="utf-8")
+    existing = Artifact(
+        id="art_recent",
+        project_id="p_recent",
+        asset_type="agent_session_report",
+        name="agent_session_report",
+        version=1,
+        uri=str(existing_path.parent),
+        content_hash="old",
+        metadata_json=dumps_json({"primary_path": str(existing_path)}),
+        created_at=utc_now(),
+    )
+
+    assert should_register_session_output(workspace_path, existing) is False
+
+    existing.created_at = utc_now() - timedelta(seconds=45)
+    assert should_register_session_output(workspace_path, existing) is True
 
 
 def test_turn_prompt_delivers_all_undelivered_user_instructions_beyond_recent_raw_window(tmp_path: Path) -> None:
