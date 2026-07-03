@@ -4,7 +4,6 @@ import base64
 import json
 import mimetypes
 import re
-from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -4981,6 +4980,7 @@ def list_agent_session_transcript(
 
 RAW_TRANSCRIPT_LINE_CHAR_LIMIT = 12_000
 RAW_TRANSCRIPT_PARSED_STRING_LIMIT = 4_000
+RAW_TRANSCRIPT_TAIL_CHUNK_SIZE = 64 * 1024
 
 
 def parsed_jsonl_line(text: str) -> dict[str, Any] | None:
@@ -5029,17 +5029,37 @@ def raw_transcript_line_to_dict(line_number: int, line: str) -> dict[str, Any]:
 def tail_text_file(path: Path, *, limit: int) -> tuple[int, list[str], list[dict[str, Any]], str | None]:
     if not path.exists():
         return 0, [], [], None
-    lines: deque[tuple[int, str]] = deque(maxlen=limit)
-    count = 0
     try:
-        with path.open(encoding="utf-8") as handle:
-            for raw_line in handle:
-                count += 1
-                lines.append((count, raw_line.rstrip("\n")))
-        updated_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+        stat = path.stat()
+        updated_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+        if stat.st_size == 0:
+            return 0, [], [], updated_at
+        newline_count = 0
+        tail_buffer = b""
+        with path.open("rb") as handle:
+            handle.seek(stat.st_size - 1)
+            ends_with_newline = handle.read(1) == b"\n"
+            remaining = stat.st_size
+            while remaining > 0:
+                read_size = min(RAW_TRANSCRIPT_TAIL_CHUNK_SIZE, remaining)
+                remaining -= read_size
+                handle.seek(remaining)
+                chunk = handle.read(read_size)
+                newline_count += chunk.count(b"\n")
+                tail_buffer = chunk + tail_buffer
+                if tail_buffer.count(b"\n") > limit:
+                    tail_lines = tail_buffer.splitlines()
+                    tail_buffer = b"\n".join(tail_lines[-limit:])
+        count = newline_count if ends_with_newline else newline_count + 1
     except OSError:
         return 0, [], [], None
-    numbered_lines = [raw_transcript_line_to_dict(line_number, line) for line_number, line in lines]
+    tail_line_bytes = tail_buffer.splitlines()[-limit:]
+    tail_lines = [line.decode("utf-8", errors="replace") for line in tail_line_bytes]
+    start_line_number = max(1, count - len(tail_lines) + 1)
+    numbered_lines = [
+        raw_transcript_line_to_dict(start_line_number + offset, line)
+        for offset, line in enumerate(tail_lines)
+    ]
     text_lines = [line["text"] for line in numbered_lines]
     return count, text_lines, numbered_lines, updated_at
 

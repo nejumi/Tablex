@@ -1000,6 +1000,17 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
     assert large_tail["parsed"]["type"] == "item.completed"
     assert "[truncated" in large_tail["parsed"]["item"]["aggregated_output"]
 
+    raw_path.write_text(
+        "\n".join(f'{{"type":"item.completed","index":{index}}}' for index in range(1, 1501)) + "\n",
+        encoding="utf-8",
+    )
+    raw_transcript_response = client.get(f"/api/projects/{project_id}/agent-session/raw-transcript?limit=3")
+    assert raw_transcript_response.status_code == 200
+    long_raw = raw_transcript_response.json()
+    assert long_raw["stdout_line_count"] == 1500
+    assert [line["line_number"] for line in long_raw["stdout_tail_lines"]] == [1498, 1499, 1500]
+    assert [line["parsed"]["index"] for line in long_raw["stdout_tail_lines"]] == [1498, 1499, 1500]
+
     activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
     assert activity_response.status_code == 200
     activity = activity_response.json()
