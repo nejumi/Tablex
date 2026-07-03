@@ -4953,7 +4953,22 @@ def clean_research_plan_timeline_subtasks(raw_subtasks: Any) -> list[dict[str, A
 def get_current_agent_session(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any] | None:
     require_project(db, project_id)
     session = active_main_session(db, project_id) or latest_main_session(db, project_id)
-    return session_to_dict(session) if session is not None else None
+    if session is None:
+        return None
+    payload = session_to_dict(session)
+    observed_processes = running_codex_processes_for_project(project_id)
+    payload["observed_codex_process_count"] = len(observed_processes)
+    payload["observed_codex_processes"] = observed_processes[:3]
+    payload["pid_is_observed_codex_process"] = bool(
+        session.pid is not None and any(process.get("pid") == session.pid for process in observed_processes)
+    )
+    if observed_processes:
+        payload["observed_runner_state"] = "running"
+    elif session.status in {"starting", "running", "between_turns", "waiting_for_runner"}:
+        payload["observed_runner_state"] = "supervisor_should_continue"
+    else:
+        payload["observed_runner_state"] = session.status
+    return payload
 
 
 @router.get("/api/projects/{project_id}/agent-session/transcript", response_model=list[AgentTranscriptEventRead])

@@ -49,6 +49,10 @@ class AgentSessionRead(BaseModel):
     workspace_path: str | None
     codex_thread_id: str | None
     pid: int | None
+    pid_is_observed_codex_process: bool | None = None
+    observed_runner_state: str | None = None
+    observed_codex_process_count: int = 0
+    observed_codex_processes: list[dict[str, Any]] = Field(default_factory=list)
     turn_index: int
     last_heartbeat_at: str | None
     last_error: str | None

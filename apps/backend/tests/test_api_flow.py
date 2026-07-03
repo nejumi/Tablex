@@ -874,6 +874,9 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
     session = session_response.json()
     assert session["id"] == session_id
     assert session["session_type"] == "main_autonomous"
+    assert session["observed_codex_process_count"] == 0
+    assert session["pid_is_observed_codex_process"] is False
+    assert session["observed_runner_state"] == "supervisor_should_continue"
 
     transcript_response = client.get(f"/api/projects/{project_id}/agent-session/transcript")
     assert transcript_response.status_code == 200
