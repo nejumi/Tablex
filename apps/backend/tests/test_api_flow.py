@@ -17,6 +17,7 @@ from tabular_harness.api.routes import (
     compact_agent_chat_history_turns,
     format_elapsed_seconds,
     heartbeat_phrase_for_locale,
+    matching_main_session_update_for_chat_job,
     seconds_since_timestamp,
     visible_activity_workers,
 )
@@ -2021,6 +2022,36 @@ def test_agent_chat_history_pairs_each_main_session_update_once(tmp_path: Path, 
     assert second_turn["response_composer"]["status"] == "queued"
     assert "worker待ち" in second_turn["assistant_message"]
     assert second_turn["artifact_id"].startswith("job_pending_")
+
+
+def test_main_session_update_pairing_uses_datetime_order_not_string_order() -> None:
+    job = Job(
+        id="job_chat_pair",
+        job_type="agent_chat_turn",
+        project_id="p_pair",
+        input_json="{}",
+        output_json="{}",
+        created_at=datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+    )
+    payload = {"delivered_agent_session_id": "ags_pair"}
+    old_update_with_later_looking_local_time = {
+        "agent_session_id": "ags_pair",
+        "artifact_id": "art_old",
+        "created_at": "2026-01-01T08:59:59+09:00",
+    }
+    new_update = {
+        "agent_session_id": "ags_pair",
+        "artifact_id": "art_new",
+        "created_at": "2026-01-01T00:00:01Z",
+    }
+
+    paired = matching_main_session_update_for_chat_job(
+        job,
+        payload,
+        [old_update_with_later_looking_local_time, new_update],
+    )
+
+    assert paired == new_update
 
 
 def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -> None:

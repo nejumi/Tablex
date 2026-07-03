@@ -4785,12 +4785,23 @@ def matching_main_session_update_for_chat_job(
         update
         for update in updates
         if update.get("agent_session_id") == delivered_session_id
-        and str(update.get("created_at") or "") >= job.created_at.isoformat()
+        and agent_chat_update_is_not_older_than_job(update, job)
         and (not isinstance(update.get("artifact_id"), str) or update["artifact_id"] not in paired)
     ]
     if not candidates:
         return None
-    return sorted(candidates, key=lambda update: str(update.get("created_at") or ""))[0]
+    return sorted(
+        candidates,
+        key=lambda update: parse_api_datetime(update.get("created_at")) or datetime.max.replace(tzinfo=timezone.utc),
+    )[0]
+
+
+def agent_chat_update_is_not_older_than_job(update: dict[str, Any], job: Job) -> bool:
+    update_created_at = parse_api_datetime(update.get("created_at"))
+    job_created_at = parse_api_datetime(job.created_at)
+    if update_created_at is None or job_created_at is None:
+        return False
+    return update_created_at >= job_created_at
 
 
 def agent_chat_turn_from_main_session_update(
@@ -7264,11 +7275,18 @@ def visible_activity_workers(workers: list[dict[str, Any]], *, now: datetime) ->
 
 
 def parse_worker_event_time(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
+    return parse_api_datetime(value)
+
+
+def parse_api_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
