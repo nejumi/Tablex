@@ -7215,7 +7215,6 @@ def run_worker_once(
 def run_job_now(
     job_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     job = db.get(Job, job_id)
     if job is None:
@@ -7224,8 +7223,8 @@ def run_job_now(
         raise HTTPException(status_code=400, detail="Job requires approval before it can run")
     if job.status != "queued":
         return job_to_dict(job)
-    worker = create_default_worker(store=store, include_stub_handlers=False)
-    worker.run_job(db, job)
+    job.priority = max(job.priority, 90)
+    job.updated_at = utc_now()
     return job_to_dict(job)
 
 
