@@ -1694,6 +1694,7 @@ type HomeMemoryItem = {
   target_tab: string;
   target_anchor: string;
   created_at: string;
+  signal_priority: number;
 };
 
 type EquippedSkillItem = {
@@ -6012,7 +6013,8 @@ function buildIdeaFindingItems(ideas: Idea[], insights: Insight[]): HomeMemoryIt
       cta: "Open this exact idea",
       target_tab: "Insight",
       target_anchor: memoryAnchor("idea", idea.id),
-      created_at: idea.created_at
+      created_at: idea.created_at,
+      signal_priority: 82
     })),
     ...insights.map((insight) => ({
       id: insight.id,
@@ -6023,9 +6025,25 @@ function buildIdeaFindingItems(ideas: Idea[], insights: Insight[]): HomeMemoryIt
       cta: insightDeepDiveAnchor(insight) === "notebook-focus" ? "Open notebook evidence" : "Open this exact finding",
       target_tab: "Insight",
       target_anchor: insightDeepDiveAnchor(insight),
-      created_at: insight.created_at
+      created_at: insight.created_at,
+      signal_priority: homeInsightSignalPriority(insight)
     }))
-  ].sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime());
+  ].sort((left, right) => {
+    const priorityDelta = right.signal_priority - left.signal_priority;
+    if (priorityDelta !== 0) return priorityDelta;
+    return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+  });
+}
+
+function homeInsightSignalPriority(insight: Insight): number {
+  const type = insight.insight_type.toLowerCase();
+  const title = insight.title.toLowerCase();
+  if (type.includes("evaluation") || type.includes("assumption") || type.includes("diagnostic")) return 84;
+  if (type.includes("run") || type.includes("experiment") || type.includes("model")) return 76;
+  if (type.includes("idea") || type.includes("finding")) return 70;
+  if (type.includes("approach") || title.includes("approach progress")) return 42;
+  if (type.includes("autonomous") || title.includes("full auto loop")) return 24;
+  return 60;
 }
 
 function equippedSkillItems(references: AssetReference[], assets: LibraryAsset[]): EquippedSkillItem[] {
