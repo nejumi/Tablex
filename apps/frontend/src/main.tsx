@@ -1564,6 +1564,10 @@ type AgentSession = {
   workspace_path: string | null;
   codex_thread_id: string | null;
   pid: number | null;
+  pid_is_observed_codex_process?: boolean | null;
+  observed_runner_state?: string | null;
+  observed_codex_process_count?: number | null;
+  observed_codex_processes?: Record<string, unknown>[];
   turn_index: number;
   last_heartbeat_at: string | null;
   last_error: string | null;
@@ -5522,11 +5526,8 @@ function buildResearchPlanBlocks({
   const noFindingsResearchArtifact = researchNoFindingsArtifact(artifacts);
   const hasPriorResearchEvidence = hasAnyResolvedResearchArtifact(artifacts);
   const latestCodexMessage = latestCodexTranscriptMessage(agentTranscriptEvents);
-  const activeAgentSession =
-    agentSession && ["starting", "running", "between_turns", "waiting_for_runner"].includes(agentSession.status)
-      ? agentSession
-      : null;
-  const activeCodexTurn = Boolean(activeAgentSession && (activeAgentSession.status === "running" || activeAgentSession.pid));
+  const activeAgentSession = agentSessionShouldRemainVisible(agentSession) ? agentSession : null;
+  const activeCodexTurn = agentSessionHasObservedCodexProcess(activeAgentSession);
 
   const primaryPlanJob = jobs.find((job) => jobActiveForActivity(job)) ?? jobs.find((job) => !isTerminalJob(job)) ?? null;
   const activeInitialBlockId = activeInitialResearchPlanBlockId(primaryPlanJob);
@@ -5635,13 +5636,14 @@ function buildResearchPlanBlocks({
   ];
 
   if (activeAgentSession) {
+    const planStatus = activeCodexTurn ? "active" : agentSessionPlanWaitingStatus(activeAgentSession);
     blocks.push({
       id: "agent_session",
       title: text.planBlockCodexLane,
       subtitle: latestCodexMessage ?? (activeCodexTurn ? text.planBlockCodexRunning : text.planBlockCodexWaiting),
-      status: activeAgentSession.status === "running" || activeAgentSession.pid ? "active" : "waiting",
+      status: planStatus,
       eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
-      evidence: activeAgentSession.status,
+      evidence: agentSessionPlanEvidence(activeAgentSession, text),
       onClick: () => onTabChange("Jobs")
     });
   }
@@ -5843,6 +5845,34 @@ function latestCodexTranscriptMessage(events: AgentTranscriptEvent[]): string | 
     if (content) return content;
   }
   return null;
+}
+
+function agentSessionHasObservedCodexProcess(session: AgentSession | null): boolean {
+  if (!session) return false;
+  if (session.observed_runner_state === "running") return true;
+  if (session.pid_is_observed_codex_process === true) return true;
+  return (session.observed_codex_process_count ?? 0) > 0;
+}
+
+function agentSessionShouldRemainVisible(session: AgentSession | null): session is AgentSession {
+  if (!session) return false;
+  if (agentSessionHasObservedCodexProcess(session)) return true;
+  if (session.observed_runner_state === "supervisor_should_continue") return true;
+  return ["starting", "running", "between_turns", "waiting_for_runner"].includes(session.status);
+}
+
+function agentSessionPlanWaitingStatus(session: AgentSession): ResearchPlanBlockStatus {
+  if (session.observed_runner_state === "supervisor_should_continue") return "pending";
+  if (session.status === "waiting_for_runner") return "waiting";
+  if (session.status === "starting" || session.status === "between_turns") return "pending";
+  return "waiting";
+}
+
+function agentSessionPlanEvidence(session: AgentSession, text: LocaleMessages): string {
+  if (agentSessionHasObservedCodexProcess(session)) return text.turnStateAgentRunning;
+  if (session.observed_runner_state === "supervisor_should_continue") return text.turnStateAgentScheduled;
+  if (session.status === "waiting_for_runner") return text.turnStateWorkerPending;
+  return session.status.replace(/_/g, " ");
 }
 
 function researchPlanSubtaskFromJob(job: Job, onTabChange: (tab: Tab) => void): ResearchPlanSubtask {
@@ -6220,7 +6250,7 @@ function buildRawAgentEvents(
 function buildRawSessionEvents(events: AgentTranscriptEvent[], agentSession: AgentSession | null): RawAgentEvent[] {
   return events.map((event) => {
     const payload = event.payload ?? {};
-    const active = Boolean(agentSession && ["starting", "running", "between_turns", "waiting_for_runner"].includes(agentSession.status));
+    const active = agentSessionHasObservedCodexProcess(agentSession);
     const isCodex = event.source === "codex_cli" || event.source === "codex_cli_stderr";
     return {
       id: `agent-session-${event.id}`,
