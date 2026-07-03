@@ -6,7 +6,14 @@ from pathlib import Path
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from tabular_harness.core.json import dumps_json, loads_json
-from tabular_harness.models.entities import AgentSession, AgentTranscriptEvent, Artifact, Base, Project, utc_now
+from tabular_harness.models.entities import (
+    AgentSession,
+    AgentTranscriptEvent,
+    Artifact,
+    Base,
+    Project,
+    utc_now,
+)
 from tabular_harness.services.agent_sessions import (
     CODEX_RAW_TRANSCRIPT_FILENAME,
     CODEX_STDERR_LOG_FILENAME,
@@ -244,6 +251,10 @@ def test_turn_prompt_keeps_chat_update_human_facing_not_internal_changelog(tmp_p
         assert "reports/chat_update.md" in prompt.text
         assert "user-facing explanation, not an internal changelog" in prompt.text
         assert "Avoid raw artifact IDs" in prompt.text
+        assert "do not make approval-waiting the dominant status" in prompt.text
+        assert "make that active work the headline" in prompt.text
+        assert "Do not present Full Auto as stopped on approval" in prompt.text
+        assert "which reversible analysis, modeling, diagnostics, notebook/report work, or research" in prompt.text
 
 
 def test_chat_update_message_uses_latest_concise_tail_for_cumulative_files() -> None:
