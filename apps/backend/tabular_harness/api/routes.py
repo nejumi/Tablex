@@ -4626,6 +4626,7 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
         ).all()
     )
     turns: list[dict[str, Any]] = []
+    main_session_update_turns: list[dict[str, Any]] = []
     seen_job_ids: set[str] = set()
     for artifact in reversed(artifacts):
         path = artifact_primary_path(artifact)
@@ -4644,27 +4645,28 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
             assistant_message = chat_update_message_from_text(assistant_message)
         if isinstance(metadata.get("job_id"), str):
             seen_job_ids.add(metadata["job_id"])
-        turns.append(
-            {
-                "schema_version": "agent_chat_turn.v1",
-                "project_id": project_id,
-                "user_message": str(payload.get("user_message") or ""),
-                "assistant_message": assistant_message,
-                "intent": intent,
-                "actions": payload.get("actions") if isinstance(payload.get("actions"), list) else [],
-                "action_summary": payload.get("action_summary") if isinstance(payload.get("action_summary"), dict) else {},
-                "response_brief": payload.get("response_brief") if isinstance(payload.get("response_brief"), dict) else None,
-                "response_composer": payload.get("response_composer")
-                if isinstance(payload.get("response_composer"), dict)
-                else None,
-                "worker_events": payload.get("worker_events") if isinstance(payload.get("worker_events"), list) else [],
-                "token_usage": payload.get("token_usage") if isinstance(payload.get("token_usage"), dict) else {},
-                "next_focus": payload.get("next_focus") if isinstance(payload.get("next_focus"), dict) else {},
-                "artifact_id": artifact.id,
-                "job_id": metadata.get("job_id") if isinstance(metadata.get("job_id"), str) else None,
-                "created_at": artifact.created_at.isoformat(),
-            }
-        )
+        turn = {
+            "schema_version": "agent_chat_turn.v1",
+            "project_id": project_id,
+            "user_message": str(payload.get("user_message") or ""),
+            "assistant_message": assistant_message,
+            "intent": intent,
+            "actions": payload.get("actions") if isinstance(payload.get("actions"), list) else [],
+            "action_summary": payload.get("action_summary") if isinstance(payload.get("action_summary"), dict) else {},
+            "response_brief": payload.get("response_brief") if isinstance(payload.get("response_brief"), dict) else None,
+            "response_composer": payload.get("response_composer") if isinstance(payload.get("response_composer"), dict) else None,
+            "worker_events": payload.get("worker_events") if isinstance(payload.get("worker_events"), list) else [],
+            "token_usage": payload.get("token_usage") if isinstance(payload.get("token_usage"), dict) else {},
+            "next_focus": payload.get("next_focus") if isinstance(payload.get("next_focus"), dict) else {},
+            "artifact_id": artifact.id,
+            "job_id": metadata.get("job_id") if isinstance(metadata.get("job_id"), str) else None,
+            "created_at": artifact.created_at.isoformat(),
+        }
+        if metadata.get("source") == "main_codex_session_chat_update" and isinstance(metadata.get("agent_session_id"), str):
+            turn["agent_session_id"] = metadata["agent_session_id"]
+            main_session_update_turns.append(turn)
+        else:
+            turns.append(turn)
     control_jobs = list(
         db.scalars(
             select(Job)
@@ -4734,8 +4736,94 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
         message = payload.get("message")
         if not isinstance(message, str) or not message.strip():
             continue
-        turns.append(pending_agent_chat_turn_from_job(project_id, job, payload))
+        paired_update = matching_main_session_update_for_chat_job(job, payload, main_session_update_turns)
+        if paired_update is not None:
+            turns.append(agent_chat_turn_from_main_session_update(project_id, job, payload, paired_update))
+        else:
+            turns.append(pending_agent_chat_turn_from_job(project_id, job, payload))
+    paired_update_ids = {
+        str(turn.get("paired_progress_artifact_id"))
+        for turn in turns
+        if isinstance(turn.get("paired_progress_artifact_id"), str)
+    }
+    turns.extend(
+        turn for turn in main_session_update_turns if isinstance(turn.get("artifact_id"), str) and turn["artifact_id"] not in paired_update_ids
+    )
     return compact_agent_chat_history_turns(turns)
+
+
+def matching_main_session_update_for_chat_job(
+    job: Job,
+    payload: dict[str, Any],
+    updates: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    delivered_session_id = payload.get("delivered_agent_session_id")
+    if not isinstance(delivered_session_id, str) or not delivered_session_id.strip():
+        return None
+    candidates = [
+        update
+        for update in updates
+        if update.get("agent_session_id") == delivered_session_id and str(update.get("created_at") or "") >= job.created_at.isoformat()
+    ]
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda update: str(update.get("created_at") or ""))[-1]
+
+
+def agent_chat_turn_from_main_session_update(
+    project_id: str,
+    job: Job,
+    payload: dict[str, Any],
+    update_turn: dict[str, Any],
+) -> dict[str, Any]:
+    locale = payload.get("locale") if isinstance(payload.get("locale"), str) else "en-US"
+    delivered_session_id = payload.get("delivered_agent_session_id")
+    return {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": project_id,
+        "user_message": str(payload["message"]),
+        "assistant_message": str(update_turn.get("assistant_message") or ""),
+        "intent": {
+            "type": "agent_conversation",
+            "source": "main_codex_session_chat_update",
+            "routing_policy": "codex_authored_human_update_paired_to_user_instruction",
+        },
+        "actions": update_turn.get("actions") if isinstance(update_turn.get("actions"), list) else [],
+        "action_summary": update_turn.get("action_summary") if isinstance(update_turn.get("action_summary"), dict) else {},
+        "response_brief": {
+            "schema_version": "agent_chat_main_session_update_pair.v1",
+            "response_locale": locale,
+            "job_id": job.id,
+            "job_status": job.status,
+            "delivered_agent_session_id": delivered_session_id if isinstance(delivered_session_id, str) else None,
+            "agent_transcript_event_id": payload.get("agent_transcript_event_id")
+            if isinstance(payload.get("agent_transcript_event_id"), str)
+            else None,
+            "agent_transcript_event_index": payload.get("agent_transcript_event_index")
+            if isinstance(payload.get("agent_transcript_event_index"), int)
+            else None,
+            "progress_update_requested_event_id": payload.get("progress_update_requested_event_id")
+            if isinstance(payload.get("progress_update_requested_event_id"), str)
+            else None,
+            "progress_artifact_id": update_turn.get("artifact_id") if isinstance(update_turn.get("artifact_id"), str) else None,
+        },
+        "response_composer": {
+            "schema_version": "agent_response_composer.v1",
+            "mode": "main_codex_session",
+            "status": "codex_authored",
+        },
+        "worker_events": update_turn.get("worker_events") if isinstance(update_turn.get("worker_events"), list) else [],
+        "token_usage": update_turn.get("token_usage")
+        if isinstance(update_turn.get("token_usage"), dict)
+        else {"source": "codex_cli_transcript", "is_estimate": True, "series": []},
+        "next_focus": update_turn.get("next_focus")
+        if isinstance(update_turn.get("next_focus"), dict)
+        else {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent workspace"},
+        "artifact_id": f"job_answered_by_{update_turn.get('artifact_id')}",
+        "job_id": job.id,
+        "paired_progress_artifact_id": update_turn.get("artifact_id") if isinstance(update_turn.get("artifact_id"), str) else None,
+        "created_at": str(update_turn.get("created_at") or job.created_at.isoformat()),
+    }
 
 
 def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[str, Any]) -> dict[str, Any]:
