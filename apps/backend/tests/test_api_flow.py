@@ -216,6 +216,23 @@ def test_autonomy_mode_change_is_persisted_in_agent_chat_history(tmp_path: Path)
     assert "承認ベースに切り替えました" in history[-1]["assistant_message"]
 
 
+def test_health_aliases_are_public_when_auth_is_enabled(tmp_path: Path) -> None:
+    settings = Settings(
+        app_display_name="Tablex",
+        data_dir=tmp_path / "data",
+        database_url=f"sqlite:///{tmp_path / 'data' / 'metadata' / 'app.db'}",
+        artifact_root=tmp_path / "data" / "artifacts",
+        max_upload_bytes=100 * 1024 * 1024,
+        cors_origins=("http://localhost:5173",),
+        auth_enabled=True,
+    )
+    client = TestClient(create_app(settings))
+
+    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/healthz").json() == {"status": "ok"}
+    assert client.get("/api/projects").status_code == 401
+
+
 def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -> None:
     settings = Settings(
         app_display_name="Tablex",
