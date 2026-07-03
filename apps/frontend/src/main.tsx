@@ -4809,9 +4809,9 @@ function HomeTab({
     onStrategyAction
   });
   const activeResearchPlanBlock = researchPlanBlocks.find((block) => block.status === "active") ?? null;
-  const missionUsesPlanFocus = activeResearchPlanBlock?.id === "prior_research";
-  const missionTitle = missionUsesPlanFocus ? text.focusPriorResearch : recommendation.title;
-  const missionReason = missionUsesPlanFocus ? text.focusPriorResearchReason : recommendation.reason;
+  const missionUsesPlanFocus = Boolean(activeResearchPlanBlock);
+  const missionTitle = activeResearchPlanBlock?.title ?? recommendation.title;
+  const missionReason = activeResearchPlanBlock?.subtitle ?? recommendation.reason;
   const missionRiskLevel = missionUsesPlanFocus ? "active" : (recommendation.riskLevel ?? "ready");
   const missionFocusLabel = missionUsesPlanFocus ? text.openSurface : (focusAction?.label ?? text.recommendedFocus);
   const missionFocusDisabled = busy || (!missionUsesPlanFocus && (!focusAction || focusAction.disabled));
