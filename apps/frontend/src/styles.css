@@ -1225,6 +1225,26 @@ textarea {
   padding: 10px;
 }
 
+.raw-jsonl-line {
+  background: rgba(15, 23, 42, 0.82);
+}
+
+.raw-jsonl-line.is-stderr {
+  border-color: rgba(251, 191, 36, 0.28);
+  background: rgba(120, 53, 15, 0.2);
+}
+
+.raw-jsonl-meta span {
+  min-width: 56px;
+  color: #93a4b8;
+  font-family: var(--mono);
+}
+
+.raw-jsonl-body {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 .raw-agent-detail {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 7px;
@@ -1255,6 +1275,19 @@ textarea {
   white-space: pre-wrap;
   padding: 8px;
   overflow-wrap: anywhere;
+}
+
+.raw-agent-index {
+  margin-top: 4px;
+}
+
+.raw-agent-index-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8px;
 }
 
 .agent-chat-message.live-codex {

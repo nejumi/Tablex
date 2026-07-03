@@ -824,6 +824,9 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
     assert raw_transcript["stdout_line_count"] == 2
     assert raw_transcript["stderr_line_count"] == 0
     assert raw_transcript["stdout_tail"][-1].startswith('{"type":"item.completed"')
+    assert raw_transcript["stdout_tail_lines"][-1]["line_number"] == 2
+    assert raw_transcript["stdout_tail_lines"][-1]["parsed"]["type"] == "item.completed"
+    assert raw_transcript["stderr_tail_lines"] == []
 
     activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
     assert activity_response.status_code == 200

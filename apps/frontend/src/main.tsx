@@ -1585,7 +1585,19 @@ type AgentRawTranscript = {
   stderr_line_count: number;
   stdout_tail: string[];
   stderr_tail: string[];
+  stdout_tail_lines: AgentRawTranscriptLine[];
+  stderr_tail_lines: AgentRawTranscriptLine[];
   updated_at: string | null;
+};
+
+type AgentRawTranscriptLine = {
+  line_number: number;
+  text: string;
+  parsed: Record<string, unknown> | null;
+};
+
+type AgentRawTranscriptViewLine = AgentRawTranscriptLine & {
+  stream: "stdout" | "stderr";
 };
 
 type RequiredHumanDescription = {
@@ -6666,7 +6678,19 @@ function RawAgentStream({
 }) {
   const [draft, setDraft] = React.useState("");
   const latestEvent = events[events.length - 1];
-  const rawScroll = useStickyBottomScroll<HTMLDivElement>(`${events.length}:${latestEvent?.id ?? "empty"}`);
+  const rawLines = React.useMemo<AgentRawTranscriptViewLine[]>(() => {
+    if (!rawTranscript) return [];
+    return [
+      ...(rawTranscript.stdout_tail_lines ?? []).map((line) => ({ ...line, stream: "stdout" as const })),
+      ...(rawTranscript.stderr_tail_lines ?? []).map((line) => ({ ...line, stream: "stderr" as const }))
+    ];
+  }, [rawTranscript]);
+  const rawKey = rawLines.length
+    ? `${rawTranscript?.session_id ?? "raw"}:${rawTranscript?.stdout_line_count ?? 0}:${
+        rawTranscript?.stderr_line_count ?? 0
+      }:${rawTranscript?.updated_at ?? ""}`
+    : `${events.length}:${latestEvent?.id ?? "empty"}`;
+  const rawScroll = useStickyBottomScroll<HTMLDivElement>(rawKey);
 
   async function submitDraft() {
     const objective = draft.trim();
@@ -6691,7 +6715,7 @@ function RawAgentStream({
       <div className="raw-agent-head">
         <span>{text.rawAgentTitle}</span>
         <small>
-          {events.length} transcript items
+          {rawLines.length ? `${rawLines.length} JSONL tail lines` : `${events.length} transcript items`}
           {rawTranscript?.session_id
             ? ` · JSONL ${rawTranscript.stdout_line_count} lines · stderr ${rawTranscript.stderr_line_count}`
             : ""}
@@ -6699,24 +6723,24 @@ function RawAgentStream({
       </div>
       <TurnStateBar text={text} turnState={turnState} />
       <div className="raw-agent-log" ref={rawScroll.ref} onScroll={rawScroll.onScroll}>
-        {events.length ? (
-          events.map((event) => (
-            <div className={`raw-agent-event ${isActiveRawEvent(event) ? "is-active" : ""}`} key={event.id}>
-              <div className="raw-agent-line">
-                <span>{formatDate(event.timestamp)}</span>
-                <b>{event.source}</b>
-                <em>{event.level}</em>
-                <strong>{event.title}</strong>
-              </div>
-              {event.body ? <div className="raw-agent-body">{event.body}</div> : null}
-              {event.details?.map((detail) => (
-                <details className="raw-agent-detail" key={detail.label}>
-                  <summary>{detail.label}</summary>
-                  <pre>{rawDetailText(detail.value)}</pre>
-                </details>
-              ))}
-            </div>
-          ))
+        {rawLines.length ? (
+          <>
+            {rawLines.map((line, index) => (
+              <RawTranscriptLineCard
+                active={turnState.owner === "agent" && index === rawLines.length - 1}
+                key={`${line.stream}-${line.line_number}`}
+                line={line}
+              />
+            ))}
+            {events.length ? (
+              <details className="raw-agent-detail raw-agent-index">
+                <summary>Indexed transcript events ({events.length})</summary>
+                <div className="raw-agent-index-list">{events.map((event) => renderRawAgentEvent(event))}</div>
+              </details>
+            ) : null}
+          </>
+        ) : events.length ? (
+          events.map((event) => renderRawAgentEvent(event))
         ) : (
           <EmptyInline text={text.rawAgentEmpty} />
         )}
@@ -6734,6 +6758,54 @@ function RawAgentStream({
           {text.createAgentTaskContract}
         </button>
       </form>
+    </div>
+  );
+}
+
+function RawTranscriptLineCard({ line, active }: { line: AgentRawTranscriptViewLine; active: boolean }) {
+  const event = line.parsed;
+  const title = event ? codexEventTitle(event) : line.stream === "stderr" ? "Codex stderr" : "Raw JSONL line";
+  const level = event ? textField(event.type) ?? "jsonl" : line.stream;
+  const body = event ? codexEventBody(event) ?? line.text : line.text;
+  return (
+    <div className={`raw-agent-event raw-jsonl-line ${line.stream === "stderr" ? "is-stderr" : ""} ${active ? "is-active" : ""}`}>
+      <div className="raw-agent-line raw-jsonl-meta">
+        <span>#{line.line_number}</span>
+        <b>{line.stream}</b>
+        <em>{level}</em>
+        <strong>{title}</strong>
+      </div>
+      {body ? <div className="raw-agent-body raw-jsonl-body">{body}</div> : null}
+      <details className="raw-agent-detail">
+        <summary>{event ? "Raw JSONL" : "Raw line"}</summary>
+        <pre>{line.text}</pre>
+      </details>
+      {event ? (
+        <details className="raw-agent-detail compact">
+          <summary>Parsed event</summary>
+          <pre>{rawDetailText(event)}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function renderRawAgentEvent(event: RawAgentEvent) {
+  return (
+    <div className={`raw-agent-event ${isActiveRawEvent(event) ? "is-active" : ""}`} key={event.id}>
+      <div className="raw-agent-line">
+        <span>{formatDate(event.timestamp)}</span>
+        <b>{event.source}</b>
+        <em>{event.level}</em>
+        <strong>{event.title}</strong>
+      </div>
+      {event.body ? <div className="raw-agent-body">{event.body}</div> : null}
+      {event.details?.map((detail) => (
+        <details className="raw-agent-detail" key={detail.label}>
+          <summary>{detail.label}</summary>
+          <pre>{rawDetailText(detail.value)}</pre>
+        </details>
+      ))}
     </div>
   );
 }

@@ -4858,20 +4858,33 @@ def list_agent_session_transcript(
     return [transcript_event_to_dict(event) for event in reversed(events)]
 
 
-def tail_text_file(path: Path, *, limit: int) -> tuple[int, list[str], str | None]:
+def parsed_jsonl_line(text: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def tail_text_file(path: Path, *, limit: int) -> tuple[int, list[str], list[dict[str, Any]], str | None]:
     if not path.exists():
-        return 0, [], None
-    lines: deque[str] = deque(maxlen=limit)
+        return 0, [], [], None
+    lines: deque[tuple[int, str]] = deque(maxlen=limit)
     count = 0
     try:
         with path.open(encoding="utf-8") as handle:
             for raw_line in handle:
                 count += 1
-                lines.append(raw_line.rstrip("\n"))
+                lines.append((count, raw_line.rstrip("\n")))
         updated_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
     except OSError:
-        return 0, [], None
-    return count, list(lines), updated_at
+        return 0, [], [], None
+    text_lines = [line for _, line in lines]
+    numbered_lines = [
+        {"line_number": line_number, "text": line, "parsed": parsed_jsonl_line(line)}
+        for line_number, line in lines
+    ]
+    return count, text_lines, numbered_lines, updated_at
 
 
 @router.get("/api/projects/{project_id}/agent-session/raw-transcript", response_model=AgentRawTranscriptRead)
@@ -4891,14 +4904,16 @@ def get_agent_session_raw_transcript(
             "stderr_line_count": 0,
             "stdout_tail": [],
             "stderr_tail": [],
+            "stdout_tail_lines": [],
+            "stderr_tail_lines": [],
             "updated_at": None,
         }
     bounded_limit = max(1, min(limit, 500))
     workspace = Path(session.workspace_path)
     stdout_path = raw_codex_transcript_path(workspace)
     stderr_path = raw_codex_stderr_path(workspace)
-    stdout_count, stdout_tail, stdout_updated_at = tail_text_file(stdout_path, limit=bounded_limit)
-    stderr_count, stderr_tail, stderr_updated_at = tail_text_file(stderr_path, limit=bounded_limit)
+    stdout_count, stdout_tail, stdout_tail_lines, stdout_updated_at = tail_text_file(stdout_path, limit=bounded_limit)
+    stderr_count, stderr_tail, stderr_tail_lines, stderr_updated_at = tail_text_file(stderr_path, limit=bounded_limit)
     return {
         "session_id": session.id,
         "stdout_path": str(stdout_path),
@@ -4907,6 +4922,8 @@ def get_agent_session_raw_transcript(
         "stderr_line_count": stderr_count,
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
+        "stdout_tail_lines": stdout_tail_lines,
+        "stderr_tail_lines": stderr_tail_lines,
         "updated_at": max((item for item in (stdout_updated_at, stderr_updated_at) if item), default=None),
     }
 

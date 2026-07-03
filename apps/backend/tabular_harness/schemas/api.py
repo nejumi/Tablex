@@ -74,6 +74,12 @@ class AgentTranscriptEventRead(BaseModel):
     created_at: str
 
 
+class AgentRawTranscriptLineRead(BaseModel):
+    line_number: int
+    text: str
+    parsed: dict[str, Any] | None = None
+
+
 class AgentRawTranscriptRead(BaseModel):
     session_id: str | None
     stdout_path: str | None
@@ -82,6 +88,8 @@ class AgentRawTranscriptRead(BaseModel):
     stderr_line_count: int
     stdout_tail: list[str]
     stderr_tail: list[str]
+    stdout_tail_lines: list[AgentRawTranscriptLineRead]
+    stderr_tail_lines: list[AgentRawTranscriptLineRead]
     updated_at: str | None
 
 
