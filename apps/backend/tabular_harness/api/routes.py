@@ -6424,9 +6424,20 @@ def list_model_version_validations(
 
 
 @router.get("/api/projects/{project_id}/artifacts", response_model=list[ArtifactRead])
-def list_artifacts(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+def list_artifacts(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    limit: int | None = None,
+    asset_type: str | None = None,
+) -> list[dict[str, Any]]:
     require_project(db, project_id)
-    artifacts = db.scalars(select(Artifact).where(Artifact.project_id == project_id).order_by(Artifact.created_at.desc())).all()
+    query = select(Artifact).where(Artifact.project_id == project_id)
+    if asset_type:
+        query = query.where(Artifact.asset_type == asset_type)
+    query = query.order_by(Artifact.created_at.desc())
+    if limit is not None:
+        query = query.limit(max(1, min(limit, 5000)))
+    artifacts = db.scalars(query).all()
     return [artifact_to_dict(item) for item in artifacts]
 
 

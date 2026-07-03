@@ -103,6 +103,36 @@ def test_project_autonomy_mode_persists(tmp_path: Path) -> None:
     assert read_response.json()["autonomy_mode"] == "full_auto"
 
 
+def test_project_artifacts_support_limit_and_asset_type_filters(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Artifact filters"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+
+    with app.state.session_factory() as db:
+        for index in range(5):
+            store_json_artifact(
+                db,
+                app.state.artifact_store,
+                project_id=project_id,
+                asset_type="agent_session_report" if index % 2 else "analysis_notebook",
+                name=f"artifact_filter_{index}",
+                filename="artifact.json",
+                payload={"index": index},
+                metadata={"index": index},
+            )
+        db.commit()
+
+    limited_response = client.get(f"/api/projects/{project_id}/artifacts?limit=2")
+    assert limited_response.status_code == 200
+    assert len(limited_response.json()) == 2
+
+    filtered_response = client.get(f"/api/projects/{project_id}/artifacts?asset_type=analysis_notebook")
+    assert filtered_response.status_code == 200
+    assert {item["asset_type"] for item in filtered_response.json()} == {"analysis_notebook"}
+
+
 def test_autonomy_mode_change_is_persisted_in_agent_chat_history(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 

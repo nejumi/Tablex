@@ -3794,7 +3794,7 @@ function ProjectDetail({
         api<AssumptionReviewQueue>(`/api/projects/${project.id}/assumptions/review-queue`).catch(() => null),
         api<EvaluationCandidate[]>(`/api/projects/${project.id}/evaluation/candidates`),
         api<EvaluationSpec[]>(`/api/projects/${project.id}/evaluation/specs`),
-        api<Artifact[]>(`/api/projects/${project.id}/artifacts`),
+        api<Artifact[]>(`/api/projects/${project.id}/artifacts?limit=1000`),
         api<BenchmarkDataset[]>(`/api/benchmarks`),
         api<Job[]>(`/api/projects/${project.id}/jobs`),
         api<Run[]>(`/api/projects/${project.id}/runs`),
