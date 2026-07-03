@@ -465,8 +465,8 @@ def _research_plan_requires_explicit_locale(locale: str | None) -> bool:
 
 def _research_plan_missing_title_label(locale: str | None) -> str:
     if _research_plan_locale_is_japanese(locale):
-        return "計画ブロック"
-    return "Plan block"
+        return "表示言語の更新待ち"
+    return "Display language refresh pending"
 
 
 def _research_plan_locale_is_japanese(locale: str | None) -> bool:

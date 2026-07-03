@@ -2294,7 +2294,7 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized["blocks"][0]["localization_status"] == "localized"
     assert localized["blocks"][0]["subtasks"][0]["title"] == "高salary裾の確認"
     assert localized["blocks"][0]["subtasks"][0]["detail"] == "裾ラベルに別の判断経路が必要か確認します。"
-    assert localized["blocks"][1]["title"] == "計画ブロック"
+    assert localized["blocks"][1]["title"] == "表示言語の更新待ち"
     assert localized["blocks"][1]["subtitle"] == ""
     assert localized["blocks"][1]["localization_status"] == "needs_locale_refresh"
     assert localized["blocks"][1]["missing_localization_fields"] == ["title", "why_it_matters", "blockers"]
@@ -2308,16 +2308,16 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized["blocks"][3]["status"] == "pending"
     assert localized["blocks"][3]["localization_status"] == "needs_locale_refresh"
     assert localized["blocks"][3]["evidence"] is None
-    assert localized["blocks"][3]["title"] == "計画ブロック"
+    assert localized["blocks"][3]["title"] == "表示言語の更新待ち"
     assert localized["blocks"][3]["subtitle"] == ""
     assert localized["blocks"][4]["localization_status"] == "needs_locale_refresh"
-    assert localized["blocks"][4]["title"] == "計画ブロック"
+    assert localized["blocks"][4]["title"] == "表示言語の更新待ち"
     assert localized["blocks"][4]["subtitle"] == ""
     assert localized["blocks"][5]["localization_status"] == "needs_locale_refresh"
-    assert localized["blocks"][5]["title"] == "計画ブロック"
+    assert localized["blocks"][5]["title"] == "表示言語の更新待ち"
     assert localized["blocks"][5]["subtitle"] == ""
     assert localized["blocks"][6]["localization_status"] == "needs_locale_refresh"
-    assert localized["blocks"][6]["title"] == "計画ブロック"
+    assert localized["blocks"][6]["title"] == "表示言語の更新待ち"
     assert localized["blocks"][6]["subtitle"] == ""
 
     japanese_alias_response = client.get(
@@ -2328,7 +2328,7 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     japanese_alias = japanese_alias_response.json()
     assert japanese_alias["response_locale"] == "Japanese"
     assert japanese_alias["blocks"][0]["title"] == "深いEDA"
-    assert japanese_alias["blocks"][1]["title"] == "計画ブロック"
+    assert japanese_alias["blocks"][1]["title"] == "表示言語の更新待ち"
     assert japanese_alias["blocks"][1]["subtitle"] == ""
     assert japanese_alias["blocks"][1]["localization_status"] == "needs_locale_refresh"
 
@@ -2385,7 +2385,7 @@ def test_research_plan_timeline_requests_locale_refresh_for_active_session(tmp_p
     assert response.status_code == 200
     timeline = response.json()
     assert timeline["localization"]["missing_block_count"] == 1
-    assert timeline["blocks"][0]["title"] == "計画ブロック"
+    assert timeline["blocks"][0]["title"] == "表示言語の更新待ち"
     assert timeline["blocks"][0]["subtitle"] == ""
 
     request_path = research_plan_locale_request_path(workspace)
@@ -2560,7 +2560,7 @@ def test_research_plan_timeline_refresh_uses_artifact_locale_when_query_locale_a
     timeline = response.json()
     assert timeline["requested_locale"] is None
     assert timeline["response_locale"] == "ja-JP"
-    assert timeline["blocks"][0]["title"] == "計画ブロック"
+    assert timeline["blocks"][0]["title"] == "表示言語の更新待ち"
     assert timeline["blocks"][0]["subtitle"] == ""
     assert timeline["blocks"][0]["localization_status"] == "needs_locale_refresh"
     assert "title" in timeline["blocks"][0]["missing_localization_fields"]
