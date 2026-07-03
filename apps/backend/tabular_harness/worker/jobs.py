@@ -650,7 +650,7 @@ def concrete_handlers() -> dict[str, JobHandler]:
 
 
 def create_default_worker(
-    worker_id: str = "local-worker", store: LocalArtifactStore | None = None, include_stub_handlers: bool = True
+    worker_id: str = "local-worker", store: LocalArtifactStore | None = None, include_stub_handlers: bool = False
 ) -> SyncWorker:
     artifact_store = store or LocalArtifactStore(get_settings().artifact_root)
     handlers = default_handlers() if include_stub_handlers else concrete_handlers()

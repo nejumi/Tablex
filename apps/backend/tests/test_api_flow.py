@@ -1930,7 +1930,8 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path, monkeypatch: A
     assert all("agent_chat_turn" not in update["title"] for update in recent_updates)
     assert all("agent_chat_turn" not in update["summary"] for update in recent_updates)
 
-def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
+def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")
     client = make_client(tmp_path)
 
     project_response = client.post(
@@ -2307,22 +2308,28 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path) -> None:
 
     worker_response = client.post("/api/worker/run-once")
     assert worker_response.status_code == 200, worker_response.text
-    assert worker_response.json()["id"] == approval_job["id"]
-    assert worker_response.json()["status"] == "succeeded"
-    assert worker_response.json()["attempt_count"] == 1
+    assert worker_response.json() is None
+    queued_approval_response = client.get(f"/api/projects/{project_id}/jobs")
+    assert queued_approval_response.status_code == 200
+    queued_approval = next(item for item in queued_approval_response.json() if item["id"] == approval_job["id"])
+    assert queued_approval["status"] == "queued"
 
     dependency_a_response = client.post(
         "/api/jobs",
-        json={"job_type": "infer_assumptions", "project_id": project_id, "input": {"name": "dependency-a"}},
+        json={
+            "job_type": "agent_chat_turn",
+            "project_id": project_id,
+            "input": {"message": "dependency-a", "locale": "en-US"},
+        },
     )
     assert dependency_a_response.status_code == 200
     dependency_a = dependency_a_response.json()
     dependency_b_response = client.post(
         "/api/jobs",
         json={
-            "job_type": "draft_project_report",
+            "job_type": "agent_chat_turn",
             "project_id": project_id,
-            "input": {"name": "dependency-b"},
+            "input": {"message": "dependency-b", "locale": "en-US"},
             "dependency_job_ids": [dependency_a["id"]],
             "priority": 100,
         },

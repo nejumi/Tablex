@@ -5,10 +5,9 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastapi.testclient import TestClient
-
 from tabular_harness.core.config import Settings
-from tabular_harness.main import create_app
 from tabular_harness.core.json import loads_json
+from tabular_harness.main import create_app
 from tabular_harness.models.entities import Job
 from tabular_harness.services.jobs import create_job
 
@@ -50,11 +49,23 @@ def test_local_worker_daemon_processes_concrete_chat_jobs_from_lifespan(tmp_path
                     assert current is not None
                     assert current.locked_by is None
                     output = loads_json(current.output_json, {})
-                    assert output["agent_chat_turn_artifact_id"]
-                    return
+                    artifact_id = output["agent_chat_turn_artifact_id"]
+                    assert artifact_id
+                    break
             time.sleep(0.05)
+        else:
+            raise AssertionError(f"local worker daemon did not finish queued chat job; last status={status}")
 
-    raise AssertionError(f"local worker daemon did not finish queued chat job; last status={status}")
+        history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
+        assert history_response.status_code == 200
+        history = history_response.json()
+        assert len(history) == 1
+        answered = history[0]
+        assert answered["job_id"] == job_id
+        assert answered["artifact_id"] == artifact_id
+        assert not answered["artifact_id"].startswith("job_pending_")
+        assert answered["assistant_message"] != "応答を準備しています。"
+        assert answered["response_composer"]["status"] not in {"queued", "running"}
 
 
 def test_local_worker_daemon_does_not_succeed_stub_only_jobs(tmp_path: Path) -> None:

@@ -1469,7 +1469,7 @@ def run_project_autonomy_worker_pump_background(
     project_id: str,
     max_jobs: int = 6,
 ) -> None:
-    worker = create_default_worker(worker_id="local-autonomy-pump", store=store)
+    worker = create_default_worker(worker_id="local-autonomy-pump", store=store, include_stub_handlers=False)
     for _ in range(max_jobs):
         with session_factory() as db:
             project = db.get(Project, project_id)
@@ -7125,7 +7125,7 @@ def run_worker_once(
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any] | None:
-    worker = create_default_worker(store=store)
+    worker = create_default_worker(store=store, include_stub_handlers=False)
     job = worker.run_next_job(db)
     if job is None:
         return None
@@ -7145,7 +7145,7 @@ def run_job_now(
         raise HTTPException(status_code=400, detail="Job requires approval before it can run")
     if job.status != "queued":
         return job_to_dict(job)
-    worker = create_default_worker(store=store)
+    worker = create_default_worker(store=store, include_stub_handlers=False)
     worker.run_job(db, job)
     return job_to_dict(job)
 

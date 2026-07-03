@@ -19,7 +19,7 @@ def main() -> None:
     engine = create_engine_for_settings(settings)
     init_db(engine)
     session_factory = create_session_factory(engine)
-    worker = create_default_worker(worker_id=args.worker_id)
+    worker = create_default_worker(worker_id=args.worker_id, include_stub_handlers=False)
 
     while True:
         with session_factory() as session:

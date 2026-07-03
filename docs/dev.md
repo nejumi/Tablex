@@ -149,7 +149,7 @@ Queued job orchestration endpoints:
 ```bash
 curl -X POST http://localhost:8000/api/jobs \
   -H 'Content-Type: application/json' \
-  -d '{"job_type":"infer_assumptions","project_id":"p_x","input":{"reason":"manual queue test"}}'
+  -d '{"job_type":"agent_chat_turn","project_id":"p_x","input":{"message":"Summarize current project state","locale":"en-US"}}'
 curl -X POST http://localhost:8000/api/jobs/{job_id}/approve
 curl -X POST http://localhost:8000/api/jobs/{job_id}/cancel
 curl -X POST http://localhost:8000/api/jobs/{job_id}/retry
@@ -167,7 +167,7 @@ tablex-worker --once
 tablex-worker --interval 2 --worker-id local-worker
 ```
 
-The worker daemon uses concrete handlers for `agent_chat_turn`, `build_split_manifest`, `run_baseline`, `train_model_candidates`, `run_planned_agent_task_codex`, and `continue_autonomous_session`. The manual `tablex-worker` entrypoint still has MVP stub handlers for explicit developer debugging, but product autoplay must avoid fake-success stub completion. When split/model/Codex child workers finish, they schedule the autonomous-session heartbeat so Full Auto can resume from current state instead of stopping after one turn. Agent Activity should show Training Worker, Codex Runner, and Autonomous Session cards with project names, human descriptions, and estimated telemetry. Queued child jobs are waiting, not live; stale queued jobs should fall out of the right-edge activity overlay while remaining visible in Jobs/history.
+The local worker daemon, `/api/worker/run-once`, `/api/jobs/{job_id}/run`, and the manual `tablex-worker` entrypoint all use concrete handlers only: `agent_chat_turn`, `build_split_manifest`, `run_baseline`, `train_model_candidates`, `run_planned_agent_task_codex`, and `continue_autonomous_session`. Generic MVP stub handlers are not used by product worker paths; a queued job without a concrete handler stays queued instead of receiving fake success. When split/model/Codex child workers finish, they schedule the autonomous-session heartbeat so Full Auto can resume from current state instead of stopping after one turn. Agent Activity should show Training Worker, Codex Runner, and Autonomous Session cards with project names, human descriptions, and estimated telemetry. Queued child jobs are waiting, not live; stale queued jobs should fall out of the right-edge activity overlay while remaining visible in Jobs/history.
 
 ModelVersion validation history is available from:
 
