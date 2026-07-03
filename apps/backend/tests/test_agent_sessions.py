@@ -45,6 +45,7 @@ from tabular_harness.services.agent_sessions import (
     raw_codex_transcript_path,
     release_supervisor_lease,
     renew_supervisor_lease,
+    research_plan_locale_request_path,
     run_codex_cli_turn_streaming,
     session_output_artifact_name,
     should_register_session_output,
@@ -924,6 +925,160 @@ def test_codex_authored_marimo_notebook_is_auto_captured_on_workspace_ingest(
         payload = loads_json(events[0].payload_json, {})
         assert payload["notebook_artifact_id"] == notebook_artifact.id
         assert payload["notebook_execution_html_artifact_id"] == "art_auto_html"
+
+
+def test_codex_authored_marimo_notebook_capture_can_defer_until_final_ingest(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    notebooks_dir = workspace / "notebooks"
+    notebooks_dir.mkdir(parents=True)
+    notebook = notebooks_dir / "grandmaster_eda.py"
+    notebook.write_text(
+        "import marimo\n\napp = marimo.App()\n\n@app.cell\ndef _():\n    return\n",
+        encoding="utf-8",
+    )
+    captured_notebooks: list[str] = []
+
+    def fake_capture(db: Any, *, store: LocalArtifactStore, notebook_artifact: Artifact) -> Any:
+        del db, store
+        captured_notebooks.append(notebook_artifact.id)
+        return SimpleNamespace(
+            html_artifact=SimpleNamespace(id="art_deferred_html"),
+            manifest_artifact=SimpleNamespace(id="art_deferred_manifest"),
+            evidence_html_artifact=None,
+        )
+
+    monkeypatch.setattr(analysis_notebooks_module, "create_notebook_execution_capture", fake_capture)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_deferred_notebook", name="Deferred Notebook Capture")
+        session = AgentSession(
+            id="as_deferred_notebook",
+            project_id=project.id,
+            goal_text="Write a readable marimo notebook.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            workspace=workspace,
+            allow_notebook_auto_capture=False,
+        )
+        db.commit()
+
+        notebook_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+        )
+        assert notebook_artifact is not None
+        assert captured_notebooks == []
+        deferred_event = db.scalar(
+            select(AgentTranscriptEvent).where(
+                AgentTranscriptEvent.session_id == session.id,
+                AgentTranscriptEvent.event_type == "notebook_auto_capture_deferred",
+            )
+        )
+        assert deferred_event is not None
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        assert captured_notebooks == [notebook_artifact.id]
+        success_event = db.scalar(
+            select(AgentTranscriptEvent).where(
+                AgentTranscriptEvent.session_id == session.id,
+                AgentTranscriptEvent.event_type == "notebook_auto_capture_succeeded",
+            )
+        )
+        assert success_event is not None
+
+
+def test_research_plan_ingest_requests_locale_refresh_for_mixed_language_timeline(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    outputs_dir = workspace / "outputs"
+    outputs_dir.mkdir(parents=True)
+    (outputs_dir / "research_plan.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "research_plan.v1",
+                "timeline_blocks": [
+                    {
+                        "id": "modeling_review",
+                        "title": "Modeling review",
+                        "why_it_matters": "Compare candidate models after EDA.",
+                        "status": "active",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        user = User(id="u_plan_locale", email="plan-locale@example.com", locale="ja-JP")
+        project = Project(
+            id="p_plan_locale",
+            name="Plan Locale",
+            created_by=user.id,
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+        )
+        session = AgentSession(
+            id="as_plan_locale",
+            project_id=project.id,
+            goal_text="Keep the plan readable.",
+            workspace_path=str(workspace),
+            status="running",
+        )
+        db.add_all([user, project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        request_path = research_plan_locale_request_path(workspace)
+        assert request_path.exists()
+        request_text = request_path.read_text(encoding="utf-8")
+        assert "locale: ja-JP" in request_text
+        assert "outputs/research_plan.json" in request_text
+
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(
+                    AgentTranscriptEvent.session_id == session.id,
+                    AgentTranscriptEvent.event_type == "research_plan_locale_refresh_requested",
+                )
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            )
+        )
+        assert len(events) == 1
+        payload = loads_json(events[0].payload_json, {})
+        assert payload["locale"] == "ja-JP"
+        assert payload["missing_block_count"] == 1
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+        repeated_events = list(
+            db.scalars(
+                select(AgentTranscriptEvent).where(
+                    AgentTranscriptEvent.session_id == session.id,
+                    AgentTranscriptEvent.event_type == "research_plan_locale_refresh_requested",
+                )
+            )
+        )
+        assert len(repeated_events) == 1
 
 
 def test_published_raw_codex_transcript_is_ingested_as_session_artifact(tmp_path: Path) -> None:

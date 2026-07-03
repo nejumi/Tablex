@@ -60,6 +60,7 @@ SESSION_INBOX_DIR = "inbox"
 USER_INSTRUCTIONS_INBOX_FILENAME = "user_instructions.jsonl"
 USER_INSTRUCTIONS_LATEST_FILENAME = "latest_user_instruction.md"
 PROGRESS_REQUEST_FILENAME = "progress_request.md"
+RESEARCH_PLAN_LOCALE_REQUEST_FILENAME = "research_plan_locale_request.md"
 CODEX_RAW_TRANSCRIPT_FILENAME = "codex_raw_transcript.jsonl"
 CODEX_STDERR_LOG_FILENAME = "codex_stderr.log"
 PROGRESS_UPDATE_NUDGE_AFTER_SECONDS = 180
@@ -199,6 +200,10 @@ def latest_user_instruction_path(workspace: Path) -> Path:
 
 def progress_request_path(workspace: Path) -> Path:
     return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / PROGRESS_REQUEST_FILENAME
+
+
+def research_plan_locale_request_path(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / RESEARCH_PLAN_LOCALE_REQUEST_FILENAME
 
 
 def build_default_goal_text(db: Session, project: Project) -> str:
@@ -445,6 +450,44 @@ def write_progress_request_to_workspace_inbox(
                     f"locale: {locale or 'unspecified'}",
                     "",
                     message,
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+
+
+def write_research_plan_locale_request_to_workspace_inbox(
+    session: AgentSession,
+    *,
+    event: AgentTranscriptEvent,
+    artifact: Artifact,
+    locale: str,
+    summary: dict[str, Any],
+) -> None:
+    if not session.workspace_path:
+        return
+    workspace = Path(session.workspace_path)
+    path = research_plan_locale_request_path(workspace)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "\n".join(
+                [
+                    "schema_version: tablex_research_plan_locale_request.v1",
+                    f"event_index: {event.event_index}",
+                    f"created_at: {event.created_at.isoformat()}",
+                    f"locale: {locale}",
+                    f"artifact_id: {artifact.id}",
+                    f"artifact_path: {artifact_primary_path(artifact)}",
+                    f"missing_block_count: {summary.get('missing_block_count', 0)}",
+                    f"missing_subtask_count: {summary.get('missing_subtask_count', 0)}",
+                    "",
+                    "Update `outputs/research_plan.json` so every human-visible `timeline_blocks` string is in the requested locale.",
+                    "Preserve the project-specific plan structure and Codex-authored intent; do not replace it with a fixed template.",
+                    "If a canonical English copy is useful, keep it under `localizations` while making the requested locale complete.",
                     "",
                 ]
             ),
@@ -1537,6 +1580,7 @@ def run_codex_cli_turn_streaming(
                     project_id=project_id,
                     session_id=session_id,
                     workspace=workspace,
+                    allow_notebook_auto_capture=False,
                 )
                 last_workspace_ingest = now
             if now - last_output_at > timeout_seconds and process.poll() is None and not timeout_sent:
@@ -1575,6 +1619,7 @@ def run_codex_cli_turn_streaming(
                     project_id=project_id,
                     session_id=session_id,
                     workspace=workspace,
+                    allow_notebook_auto_capture=False,
                 )
                 last_workspace_ingest = now
             if process.poll() is not None:
@@ -1605,6 +1650,7 @@ def run_codex_cli_turn_streaming(
         project_id=project_id,
         session_id=session_id,
         workspace=workspace,
+        allow_notebook_auto_capture=True,
     )
     with session_factory() as db:
         session = db.get(AgentSession, session_id)
@@ -1631,6 +1677,7 @@ def ingest_session_workspace_outputs_safely(
     project_id: str,
     session_id: str,
     workspace: Path,
+    allow_notebook_auto_capture: bool = True,
 ) -> None:
     try:
         with session_factory() as db:
@@ -1638,7 +1685,14 @@ def ingest_session_workspace_outputs_safely(
             session = db.get(AgentSession, session_id)
             if project is None or session is None:
                 return
-            ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+            ingest_session_workspace_outputs(
+                db,
+                store=store,
+                project=project,
+                session=session,
+                workspace=workspace,
+                allow_notebook_auto_capture=allow_notebook_auto_capture,
+            )
             db.commit()
     except Exception:
         return
@@ -1819,8 +1873,10 @@ def ingest_session_workspace_outputs(
     project: Project,
     session: AgentSession,
     workspace: Path,
+    allow_notebook_auto_capture: bool = True,
 ) -> None:
     output_roots = [workspace / "outputs", workspace / "reports", workspace / "notebooks", workspace / "artifacts"]
+    response_locale: str | None = None
     for root in output_roots:
         if not root.exists():
             continue
@@ -1887,12 +1943,20 @@ def ingest_session_workspace_outputs(
                 path=path,
                 artifact=artifact,
             )
-            maybe_capture_agent_session_notebook_output(
-                db,
-                store=store,
-                session=session,
-                artifact=artifact,
-            )
+            if asset_type == "research_plan":
+                response_locale = response_locale or latest_project_response_locale(db, project)
+                maybe_request_research_plan_locale_refresh(db, session=session, artifact=artifact, locale=response_locale)
+            if allow_notebook_auto_capture:
+                maybe_capture_agent_session_notebook_output(
+                    db,
+                    store=store,
+                    session=session,
+                    artifact=artifact,
+                )
+            else:
+                maybe_defer_agent_session_notebook_capture(db, session=session, artifact=artifact)
+    if allow_notebook_auto_capture:
+        capture_pending_agent_session_notebooks(db, store=store, project=project, session=session)
 
 
 def asset_type_for_session_output(path: Path) -> str:
@@ -1964,6 +2028,13 @@ def maybe_capture_agent_session_notebook_output(
     metadata = loads_json(artifact.metadata_json, {})
     if metadata.get("source") != "main_agent_session_workspace":
         return
+    if agent_session_notebook_capture_event_exists(
+        db,
+        session=session,
+        artifact=artifact,
+        event_types=("notebook_auto_capture_succeeded", "notebook_auto_capture_failed"),
+    ):
+        return
     existing_captures = list(
         db.scalars(
             select(Artifact)
@@ -2012,6 +2083,144 @@ def maybe_capture_agent_session_notebook_output(
         },
         artifact_id=capture.html_artifact.id,
     )
+
+
+def maybe_defer_agent_session_notebook_capture(db: Session, *, session: AgentSession, artifact: Artifact) -> None:
+    if artifact.asset_type != "analysis_notebook" or artifact.project_id is None:
+        return
+    metadata = loads_json(artifact.metadata_json, {})
+    if metadata.get("source") != "main_agent_session_workspace":
+        return
+    if agent_session_notebook_capture_event_exists(
+        db,
+        session=session,
+        artifact=artifact,
+        event_types=(
+            "notebook_auto_capture_deferred",
+            "notebook_auto_capture_succeeded",
+            "notebook_auto_capture_failed",
+        ),
+    ):
+        return
+    append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="notebook_auto_capture_deferred",
+        role="harness",
+        title="Notebook preview capture deferred",
+        content="A Codex-authored marimo notebook was registered; preview rendering will run after the active Codex turn yields.",
+        payload={"notebook_artifact_id": artifact.id},
+        artifact_id=artifact.id,
+        update_heartbeat=False,
+    )
+
+
+def capture_pending_agent_session_notebooks(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    session: AgentSession,
+) -> None:
+    notebook_artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+            .order_by(Artifact.created_at.desc())
+            .limit(50)
+        ).all()
+    )
+    for artifact in reversed(notebook_artifacts):
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("source") != "main_agent_session_workspace":
+            continue
+        if metadata.get("agent_session_id") != session.id:
+            continue
+        maybe_capture_agent_session_notebook_output(db, store=store, session=session, artifact=artifact)
+
+
+def agent_session_notebook_capture_event_exists(
+    db: Session,
+    *,
+    session: AgentSession,
+    artifact: Artifact,
+    event_types: tuple[str, ...],
+) -> bool:
+    recent_events = list(
+        db.scalars(
+            select(AgentTranscriptEvent)
+            .where(
+                AgentTranscriptEvent.session_id == session.id,
+                AgentTranscriptEvent.event_type.in_(event_types),
+            )
+            .order_by(AgentTranscriptEvent.event_index.desc())
+            .limit(100)
+        ).all()
+    )
+    for event in recent_events:
+        payload = loads_json(event.payload_json, {})
+        if payload.get("notebook_artifact_id") == artifact.id:
+            return True
+    return False
+
+
+def maybe_request_research_plan_locale_refresh(
+    db: Session,
+    *,
+    session: AgentSession,
+    artifact: Artifact,
+    locale: str | None,
+) -> None:
+    if artifact.asset_type != "research_plan" or artifact.project_id is None or not session.workspace_path:
+        return
+    if not locale or locale.lower().startswith("en"):
+        return
+    try:
+        payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+    except OSError:
+        return
+    raw_blocks = payload.get("timeline_blocks") if isinstance(payload, dict) else None
+    summary = research_plan_localization_summary(raw_blocks, locale=locale)
+    if not summary.get("requires_explicit_locale"):
+        return
+    if not summary.get("missing_block_count") and not summary.get("missing_subtask_count"):
+        return
+    recent_events = list(
+        db.scalars(
+            select(AgentTranscriptEvent)
+            .where(
+                AgentTranscriptEvent.session_id == session.id,
+                AgentTranscriptEvent.source == "tablex_sidecar",
+                AgentTranscriptEvent.event_type == "research_plan_locale_refresh_requested",
+            )
+            .order_by(AgentTranscriptEvent.event_index.desc())
+            .limit(50)
+        ).all()
+    )
+    for event in recent_events:
+        event_payload = loads_json(event.payload_json, {})
+        if event_payload.get("artifact_id") == artifact.id and event_payload.get("locale") == locale:
+            return
+    event = append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="research_plan_locale_refresh_requested",
+        role="harness",
+        title="ResearchPlan display-language refresh requested",
+        content="Tablex asked Codex to refresh the ResearchPlan display fields in the user's selected locale.",
+        payload={
+            "artifact_id": artifact.id,
+            "locale": locale,
+            "missing_block_count": summary.get("missing_block_count", 0),
+            "missing_subtask_count": summary.get("missing_subtask_count", 0),
+            "blocks": summary.get("blocks", []),
+        },
+        artifact_id=artifact.id,
+        update_heartbeat=False,
+    )
+    write_research_plan_locale_request_to_workspace_inbox(session, event=event, artifact=artifact, locale=locale, summary=summary)
 
 
 def maybe_register_chat_update_from_workspace_output(

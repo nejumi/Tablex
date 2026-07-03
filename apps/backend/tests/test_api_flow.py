@@ -1917,10 +1917,12 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized["blocks"][0]["localization_status"] == "localized"
     assert localized["blocks"][0]["subtasks"][0]["title"] == "高salary裾の確認"
     assert localized["blocks"][0]["subtasks"][0]["detail"] == "裾ラベルに別の判断経路が必要か確認します。"
-    assert localized["blocks"][1]["title"] == "approval response contract v19"
+    assert localized["blocks"][1]["title"] == "表示言語を更新中の計画ブロック"
+    assert localized["blocks"][1]["subtitle"] == ""
     assert localized["blocks"][1]["localization_status"] == "needs_locale_refresh"
     assert localized["blocks"][1]["missing_localization_fields"] == ["title", "why_it_matters", "blockers"]
-    assert localized["blocks"][1]["evidence"] == "ブロッカー 2件"
+    assert localized["blocks"][1]["evidence"] is None
+    assert localized["blocks"][1]["blockers"] == []
     assert localized["blocks"][2]["status"] == "pending"
     assert localized["blocks"][2]["localization_status"] == "needs_locale_refresh"
 
