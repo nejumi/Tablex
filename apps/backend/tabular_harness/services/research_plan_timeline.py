@@ -61,7 +61,6 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None =
             raw_block,
             "title",
             locale=locale,
-            placeholder=_research_plan_placeholder("block_title", locale=locale),
         )
         if not title:
             continue
@@ -95,11 +94,11 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None =
                 "subtasks": subtasks,
                 "phase": str(raw_block.get("phase") or "").strip()[:120] or None,
                 "next_action": (
-                    _research_plan_display_string(raw_block, "next_action", locale=locale, placeholder=None) or ""
+                    _research_plan_display_string(raw_block, "next_action", locale=locale) or ""
                 )[:600]
                 or None,
                 "done_criteria": (
-                    _research_plan_display_string(raw_block, "done_criteria", locale=locale, placeholder=None) or ""
+                    _research_plan_display_string(raw_block, "done_criteria", locale=locale) or ""
                 )[:600]
                 or None,
                 "blockers": _research_plan_string_list(
@@ -130,7 +129,6 @@ def clean_research_plan_timeline_subtasks(raw_subtasks: Any, *, locale: str | No
             raw_subtask,
             "title",
             locale=locale,
-            placeholder=_research_plan_placeholder("subtask_title", locale=locale),
         )
         if not title:
             continue
@@ -153,8 +151,8 @@ def clean_research_plan_timeline_subtasks(raw_subtasks: Any, *, locale: str | No
                 "id": subtask_id if isinstance(subtask_id, str) and subtask_id.strip() else f"subtask_{index}",
                 "title": title.strip()[:160],
                 "detail": (
-                    _research_plan_display_string(raw_subtask, "detail", locale=locale, placeholder=None)
-                    or _research_plan_display_string(raw_subtask, "subtitle", locale=locale, placeholder=None)
+                    _research_plan_display_string(raw_subtask, "detail", locale=locale)
+                    or _research_plan_display_string(raw_subtask, "subtitle", locale=locale)
                     or ""
                 )[:600],
                 "status": status,
@@ -213,7 +211,7 @@ def research_plan_localization_summary(raw_blocks: Any, *, locale: str | None = 
 
 def _research_plan_block_subtitle(raw_block: dict[str, Any], *, locale: str | None = None) -> str:
     for key in ("subtitle", "why_it_matters", "next_action", "notes", "done_criteria"):
-        value = _research_plan_display_string(raw_block, key, locale=locale, placeholder=None)
+        value = _research_plan_display_string(raw_block, key, locale=locale)
         if value:
             return value.strip()
     return ""
@@ -247,7 +245,6 @@ def _research_plan_display_string(
     key: str,
     *,
     locale: str | None,
-    placeholder: str | None,
 ) -> str | None:
     value = _research_plan_localized_value(raw_block, key, locale=locale, allow_unlocalized_fallback=False)
     if isinstance(value, str) and value.strip():
@@ -492,16 +489,6 @@ def _research_plan_payload_locale(payload: Any) -> str | None:
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return None
-
-
-def _research_plan_placeholder(kind: str, *, locale: str | None) -> str:
-    if _research_plan_locale_is_japanese(locale):
-        if kind == "subtask_title":
-            return "表示言語を更新中のサブタスク"
-        return "表示言語を更新中の計画ブロック"
-    if kind == "subtask_title":
-        return "Subtask pending display-language refresh"
-    return "Plan block pending display-language refresh"
 
 
 def _research_plan_count_label(count: int, noun: str, *, locale: str | None) -> str:
