@@ -4551,8 +4551,69 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
                 "created_at": job.created_at.isoformat(),
             }
         )
+    chat_jobs = list(
+        db.scalars(
+            select(Job)
+            .where(Job.project_id == project_id, Job.job_type == "agent_chat_turn")
+            .order_by(Job.created_at.desc())
+            .limit(30)
+        ).all()
+    )
+    for job in reversed(chat_jobs):
+        if job.id in seen_job_ids:
+            continue
+        payload = loads_json(job.input_json, {})
+        message = payload.get("message")
+        if not isinstance(message, str) or not message.strip():
+            continue
+        turns.append(pending_agent_chat_turn_from_job(project_id, job, payload))
     turns.sort(key=lambda turn: turn["created_at"])
     return turns[-60:]
+
+
+def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[str, Any]) -> dict[str, Any]:
+    output = loads_json(job.output_json, {})
+    locale = payload.get("locale") if isinstance(payload.get("locale"), str) else "en-US"
+    japanese = locale.lower().startswith("ja")
+    if job.status in {"failed", "cancelled", "timed_out"}:
+        error_message = job.error_message or str(output.get("error_message") or "")
+        assistant_message = (
+            f"応答生成が完了しませんでした: {error_message}" if japanese else f"Response did not complete: {error_message}"
+        )
+    else:
+        assistant_message = "応答を準備しています。" if japanese else "Preparing a response."
+    return {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": project_id,
+        "user_message": str(payload["message"]),
+        "assistant_message": assistant_message,
+        "intent": {
+            "type": "agent_conversation",
+            "source": "agent_chat_turn_job",
+        },
+        "actions": [],
+        "action_summary": {},
+        "response_brief": {
+            "schema_version": "agent_chat_job_status.v1",
+            "response_locale": locale,
+            "job_id": job.id,
+            "status": job.status,
+            "error_message": job.error_message,
+        },
+        "response_composer": {
+            "schema_version": "agent_response_composer.v1",
+            "mode": "queued_worker",
+            "status": job.status,
+        },
+        "worker_events": output.get("worker_events") if isinstance(output.get("worker_events"), list) else [],
+        "token_usage": output.get("token_usage")
+        if isinstance(output.get("token_usage"), dict)
+        else {"source": "pending_response", "is_estimate": True, "series": []},
+        "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent Chat"},
+        "artifact_id": f"job_pending_{job.id}",
+        "job_id": job.id,
+        "created_at": job.created_at.isoformat(),
+    }
 
 
 @router.get("/api/projects/{project_id}/research-plan/timeline")

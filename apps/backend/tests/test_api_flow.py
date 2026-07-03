@@ -1181,6 +1181,15 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     assert chat["response_composer"]["status"] == "queued"
     assert chat["artifact_id"].startswith("pending_")
 
+    pending_history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
+    assert pending_history_response.status_code == 200
+    pending_history = pending_history_response.json()
+    assert len(pending_history) == 1
+    assert pending_history[0]["job_id"] == chat["job"]["id"]
+    assert pending_history[0]["artifact_id"] == f"job_pending_{chat['job']['id']}"
+    assert pending_history[0]["response_composer"]["status"] == "queued"
+    assert pending_history[0]["assistant_message"] == "応答を準備しています。"
+
     output = run_queued_agent_chat_turn(client, chat["job"]["id"])
     assert output["schema_version"] == "agent_chat_turn.v1"
 

@@ -6266,6 +6266,9 @@ function agentChatHistoryToMessages(turns: AgentChatHistoryTurn[]): AgentChatMes
   return turns.flatMap((turn) => {
     const messages: AgentChatMessage[] = [];
     const turnId = turn.job_id ? `turn:${turn.job_id}` : `turn:${turn.artifact_id}`;
+    const composerStatus = String(turn.response_composer?.status ?? "");
+    const activeHistoryTurn =
+      turn.artifact_id.startsWith("job_pending_") || ["queued", "running", "pending", "in_progress"].includes(composerStatus);
     if (turn.user_message.trim()) {
       messages.push({
         id: `${turnId}:user`,
@@ -6282,7 +6285,8 @@ function agentChatHistoryToMessages(turns: AgentChatHistoryTurn[]): AgentChatMes
       actionSummary: agentActionSummaryOrUndefined(turn.action_summary),
       responseBrief: turn.response_brief ?? null,
       responseComposer: turn.response_composer ?? null,
-      createdAt: turn.created_at
+      createdAt: turn.created_at,
+      transient: activeHistoryTurn
     });
     return messages;
   });
