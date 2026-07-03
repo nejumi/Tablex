@@ -4229,9 +4229,9 @@ def _notebook_ui_copy(locale: str) -> dict[str, str]:
             "semantic_type_mix": "意味タイプとロールの構成",
             "no_quality_rubric": "EDA品質チェックはまだありません。",
             "no_storyboard": "分析ストーリーボードはまだありません。",
-            "no_guardrails": "ガードレールはまだ生成されていません。",
+            "no_guardrails": "このノートブックでは追加のガードレールは検出されていません。",
             "no_columns": "カラムプロファイルはまだ利用できません。",
-            "no_findings": "発見はまだ生成されていません。",
+            "no_findings": "このノートブックでは追加の発見は検出されていません。",
             "default_next_actions": (
                 "- 1行の意味と予測時点を確認する。\n"
                 "- 欠損が多い列と高カーディナリティ列を確認する。\n"
@@ -4277,9 +4277,9 @@ def _notebook_ui_copy(locale: str) -> dict[str, str]:
         "semantic_type_mix": "Semantic type and role mix",
         "no_quality_rubric": "No quality rubric available.",
         "no_storyboard": "No storyboard available.",
-        "no_guardrails": "No guardrails generated yet.",
+        "no_guardrails": "No additional guardrails were detected in this notebook.",
         "no_columns": "No profile columns are available yet.",
-        "no_findings": "No findings have been generated yet.",
+        "no_findings": "No additional findings were detected in this notebook.",
         "default_next_actions": (
             "- Confirm row semantics and prediction time.\n"
             "- Review high-missing and high-cardinality columns.\n"
@@ -5321,7 +5321,7 @@ def _missing_rows(rows: list[dict[str, Any]]) -> str:
 
 def _finding_rows(findings: list[dict[str, Any]]) -> str:
     if not findings:
-        return "<p>No findings generated yet.</p>"
+        return "<p>No additional findings were detected in this view.</p>"
     output = []
     for item in findings:
         severity = str(item.get("severity") or "info")
@@ -5408,7 +5408,7 @@ def _result_interpretation_html(interpretation: dict[str, Any]) -> str:
 
 def _read_order_rows(rows: list[dict[str, Any]]) -> str:
     if not rows:
-        return "<p>No read order generated yet.</p>"
+        return "<p>No preferred read order is available for this view.</p>"
     output = []
     for index, item in enumerate(rows[:6], start=1):
         output.append(
@@ -5423,7 +5423,7 @@ def _read_order_rows(rows: list[dict[str, Any]]) -> str:
 
 def _story_card_rows(rows: list[dict[str, Any]]) -> str:
     if not rows:
-        return "<p>No visual story cards generated yet.</p>"
+        return "<p>No visual story cards are available for this view.</p>"
     output = []
     for item in rows[:8]:
         output.append(
@@ -5439,7 +5439,7 @@ def _story_card_rows(rows: list[dict[str, Any]]) -> str:
 
 def _playbook_rows(rows: list[dict[str, Any]]) -> str:
     if not rows:
-        return "<p>No EDA playbook generated yet.</p>"
+        return "<p>No EDA playbook is available for this view.</p>"
     output = []
     for item in rows:
         output.append(
