@@ -116,6 +116,10 @@ const englishMessages = {
   activeProjects: "In Progress",
   totalJobs: "Jobs",
   totalArtifacts: "Artifacts",
+  metricDatasets: "Datasets",
+  metricRuns: "Runs",
+  metricRisks: "Risks",
+  metricArtifacts: "Artifacts",
   moreTabs: "More",
   projects: "Projects",
   refreshProjects: "Refresh projects",
@@ -486,6 +490,28 @@ const englishMessages = {
   ideasAndFindingsTitle: "Ideas & Findings",
   ideasAndFindingsEmpty: "Insights, domain knowledge, and candidate ideas will accumulate here as the agent learns.",
   ideasAndFindingsReady: "signals worth opening",
+  memoryKindIdea: "Idea",
+  memoryKindFinding: "Finding",
+  memoryLocaleRefreshTitle: "Display language refresh pending",
+  memoryLocaleRefreshSummary: "Codex needs to refresh these signals in the selected language before they are shown on Home.",
+  memoryOpenIdea: "Open this exact idea",
+  memoryOpenFinding: "Open this exact finding",
+  memoryOpenNotebookEvidence: "Open notebook evidence",
+  memoryConfidenceUnavailable: "confidence n/a",
+  memoryConfidenceSuffix: "confidence",
+  surfaceDatasets: "datasets",
+  surfaceTargetSet: "target set",
+  surfaceTargetOpen: "target open",
+  surfaceInsights: "insights",
+  surfaceReports: "reports",
+  surfaceNotebookReady: "notebook ready",
+  surfaceNotebookOpen: "notebook open",
+  surfaceLeaderboardEmpty: "ranked model runs appear here",
+  surfaceProjectArtifacts: "project artifacts",
+  surfaceRunnerContractReady: "runner contract ready",
+  surfaceNoContractYet: "no contract yet",
+  latestBriefLabel: "Latest brief",
+  latestIdeaLabel: "Latest idea",
   openDeepDive: "Open deep dive",
   equippedSkillsTitle: "Equipped Skills",
   equippedSkillsEmpty: "No project skills equipped yet.",
@@ -552,10 +578,14 @@ const japaneseMessages: LocaleMessages = {
   addIdea: "Ideaを追加",
   noIdeasYet: "まだideaはありません。",
   openProject: "Projectを開く",
-  totalProjects: "Projects",
+  totalProjects: "プロジェクト",
   activeProjects: "進行中",
-  totalJobs: "Jobs",
-  totalArtifacts: "Artifacts",
+  totalJobs: "ジョブ",
+  totalArtifacts: "アーティファクト",
+  metricDatasets: "データセット",
+  metricRuns: "実験",
+  metricRisks: "リスク",
+  metricArtifacts: "アーティファクト",
   moreTabs: "その他",
   projects: "プロジェクト",
   refreshProjects: "プロジェクトを更新",
@@ -747,7 +777,7 @@ const japaneseMessages: LocaleMessages = {
     "Codexが将来locale packを生成・更新できるよう、Tablex管理のrunner handoffを保存します。",
   localizationTaskCreated: "Localization runner handoffを保存しました。",
   noProjectForLocalization: "Localization AgentTaskを作成する前にProjectを選択してください。",
-  agentChatTitle: "Agent Chat",
+  agentChatTitle: "Agentチャット",
   agentChatSubtitle: "永続的な会話、判断、結果報告の場です。実行中のworkerだけ右側にライブ表示されます。",
   agentWorkspacePersistent: "永続Workspace",
   agentChatPlaceholder: "例: 状況を説明して、ターゲットを相談したい、次に何を考えるべき？",
@@ -919,12 +949,34 @@ const japaneseMessages: LocaleMessages = {
   currentTaskWaiting: "worker待ち",
   currentTaskWaitingBody: "local workerが利用可能になると、このqueued jobを開始します。",
   runWorkerOnce: "workerを1回実行",
-  agentWorkspaceTitle: "Agent workspace",
+  agentWorkspaceTitle: "Agentワークスペース",
   evidenceSurfacesTitle: "根拠面",
   supportingSurfacesTitle: "支援面",
-  ideasAndFindingsTitle: "Ideas & Findings",
-  ideasAndFindingsEmpty: "Agentが学んだinsight、domain knowledge、候補ideaがここに蓄積されます。",
+  ideasAndFindingsTitle: "アイデアと発見",
+  ideasAndFindingsEmpty: "Agentが学んだ発見、ドメイン知識、候補アイデアがここに蓄積されます。",
   ideasAndFindingsReady: "件の開くべきシグナル",
+  memoryKindIdea: "アイデア",
+  memoryKindFinding: "発見",
+  memoryLocaleRefreshTitle: "表示言語の更新待ち",
+  memoryLocaleRefreshSummary: "Homeに表示する前に、Codexがこのシグナルを選択中の言語で更新する必要があります。",
+  memoryOpenIdea: "このアイデアを開く",
+  memoryOpenFinding: "この発見を開く",
+  memoryOpenNotebookEvidence: "Notebook根拠を開く",
+  memoryConfidenceUnavailable: "信頼度未設定",
+  memoryConfidenceSuffix: "信頼度",
+  surfaceDatasets: "データセット",
+  surfaceTargetSet: "目的設定済み",
+  surfaceTargetOpen: "目的未確定",
+  surfaceInsights: "発見",
+  surfaceReports: "レポート",
+  surfaceNotebookReady: "ノートブック準備済み",
+  surfaceNotebookOpen: "ノートブック未確定",
+  surfaceLeaderboardEmpty: "順位付けされたモデル実行がここに表示されます",
+  surfaceProjectArtifacts: "アーティファクト",
+  surfaceRunnerContractReady: "runner契約準備済み",
+  surfaceNoContractYet: "契約未作成",
+  latestBriefLabel: "最新ブリーフ",
+  latestIdeaLabel: "最新アイデア",
   openDeepDive: "深掘りを開く",
   equippedSkillsTitle: "装備中SKILL",
   equippedSkillsEmpty: "このProjectに装備されたSkillはまだありません。",
@@ -5034,7 +5086,7 @@ function HomeTab({
   const canStartAutonomy = datasetCount > 0;
   const focusAction = recommendation.primaryAction;
   const [agentViewMode, setAgentViewMode] = React.useState<"chat" | "raw">("chat");
-  const ideaFindingItems = buildIdeaFindingItems(ideas, insights);
+  const ideaFindingItems = buildIdeaFindingItems(ideas, insights, text, locale);
   const equippedSkills = equippedSkillItems(projectAssetReferences, libraryAssets);
   const rawAgentEvents = buildRawAgentEvents(messages, jobs, agentTranscriptEvents, agentSession);
   const agentWorkspaceScrollResetKey = `${project.id}:${agentSession?.id ?? "no-agent-session"}`;
@@ -5131,10 +5183,10 @@ function HomeTab({
           </div>
           <ResearchPlanTimeline blocks={researchPlanBlocks} latestResearchPlan={latestResearchPlan} text={text} />
           <div className="mission-plan-facts">
-            <Metric label="Datasets" value={projectStateLoaded ? datasetCount : "..."} />
-            <Metric label="Runs" value={runs.length} />
-            <Metric label="Risks" value={highRiskAssumptions.length} />
-            <Metric label="Artifacts" value={projectStateLoaded ? totalArtifactCount : "..."} />
+            <Metric label={text.metricDatasets} value={projectStateLoaded ? datasetCount : "..."} />
+            <Metric label={text.metricRuns} value={runs.length} />
+            <Metric label={text.metricRisks} value={highRiskAssumptions.length} />
+            <Metric label={text.metricArtifacts} value={projectStateLoaded ? totalArtifactCount : "..."} />
           </div>
         </section>
       </div>
@@ -5229,7 +5281,7 @@ function HomeTab({
             label={text.tabData}
             detail={
               projectStateLoaded
-                ? `${datasetCount} datasets / ${project.target_column ? "target set" : "target open"}`
+                ? `${datasetCount} ${text.surfaceDatasets} / ${project.target_column ? text.surfaceTargetSet : text.surfaceTargetOpen}`
                 : "..."
             }
             onClick={() => onTabChange("Data")}
@@ -5237,7 +5289,9 @@ function HomeTab({
           <MissionSurfaceButton
             icon={<Lightbulb size={17} />}
             label={text.tabInsight}
-            detail={`${insights.length} insights / ${reports.length} reports / ${recommendedNotebook ? "notebook ready" : "notebook open"}`}
+            detail={`${insights.length} ${text.surfaceInsights} / ${reports.length} ${text.surfaceReports} / ${
+              recommendedNotebook ? text.surfaceNotebookReady : text.surfaceNotebookOpen
+            }`}
             onClick={() => onTabChange("Insight")}
           />
           <MissionSurfaceButton
@@ -5246,7 +5300,7 @@ function HomeTab({
             detail={
               topRun
                 ? `#1 ${topRun.runner_type} ${metricLabel(topRun.display_metric_name)}=${formatMaybeNumber(topRun.display_metric_value)}`
-                : "ranked model runs appear here"
+                : text.surfaceLeaderboardEmpty
             }
             onClick={() => onTabChange("Leaderboard")}
           />
@@ -5255,7 +5309,9 @@ function HomeTab({
             label={text.tabAssets}
             detail={
               projectStateLoaded
-                ? `${totalArtifactCount} project artifacts / ${latestContract ? "runner contract ready" : "no contract yet"}`
+                ? `${totalArtifactCount} ${text.surfaceProjectArtifacts} / ${
+                  latestContract ? text.surfaceRunnerContractReady : text.surfaceNoContractYet
+                }`
                 : "..."
             }
             onClick={() => onTabChange("Assets")}
@@ -5272,16 +5328,22 @@ function HomeTab({
           </div>
           {latestBrief ? (
             <div className="mission-note">
-              <span>Latest brief</span>
-              <strong>{latestBrief.title}</strong>
-              <small>{latestBrief.key_findings.slice(0, 2).join(" / ") || latestBrief.status}</small>
+              <span>{text.latestBriefLabel}</span>
+              <strong>{localeSafeDisplayText(latestBrief.title, locale, text.memoryLocaleRefreshTitle)}</strong>
+              <small>
+                {localeSafeDisplayText(
+                  latestBrief.key_findings.slice(0, 2).join(" / ") || latestBrief.status,
+                  locale,
+                  text.memoryLocaleRefreshSummary
+                )}
+              </small>
             </div>
           ) : null}
           {latestIdea ? (
             <div className="mission-note">
-              <span>Latest idea</span>
-              <strong>{latestIdea.title}</strong>
-              <small>{latestIdea.hypothesis}</small>
+              <span>{text.latestIdeaLabel}</span>
+              <strong>{localeSafeDisplayText(latestIdea.title, locale, text.memoryLocaleRefreshTitle)}</strong>
+              <small>{localeSafeDisplayText(latestIdea.hypothesis, locale, text.memoryLocaleRefreshSummary)}</small>
             </div>
           ) : null}
           <SkillManagerPanel
@@ -6409,13 +6471,21 @@ function conciseMemoryText(value: string | null | undefined, fallback: string, m
   return `${text.slice(0, maxLength - 1).trim()}...`;
 }
 
+function localeSafeMemoryText(value: string | null | undefined, locale: string, fallback: string, maxLength = 170) {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+  if (displayTextMatchesLocale(normalized, locale)) return conciseMemoryText(normalized, fallback, maxLength);
+  return fallback;
+}
+
 function memoryAnchor(prefix: "idea" | "finding", id: string) {
   return `${prefix}-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
-function confidenceLabel(value: number | null | undefined) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "confidence n/a";
-  return `${Math.round(value * 100)}% confidence`;
+function confidenceLabel(value: number | null | undefined, text: LocaleMessages, locale: string) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return text.memoryConfidenceUnavailable;
+  const percentage = `${Math.round(value * 100)}%`;
+  if (localeLooksJapanese(locale)) return `${text.memoryConfidenceSuffix}${percentage}`;
+  return `${percentage} ${text.memoryConfidenceSuffix}`;
 }
 
 function insightDeepDiveAnchor(insight: Insight) {
@@ -6425,18 +6495,19 @@ function insightDeepDiveAnchor(insight: Insight) {
   return memoryAnchor("finding", insight.id);
 }
 
-function buildIdeaFindingItems(ideas: Idea[], insights: Insight[]): HomeMemoryItem[] {
-  return [
+function buildIdeaFindingItems(ideas: Idea[], insights: Insight[], text: LocaleMessages, locale: string): HomeMemoryItem[] {
+  const items: HomeMemoryItem[] = [
     ...ideas.map((idea) => ({
       id: idea.id,
       kind: "idea" as const,
-      title: conciseMemoryText(idea.title, "Candidate idea", 90),
-      summary: conciseMemoryText(
+      title: localeSafeMemoryText(idea.title, locale, text.memoryLocaleRefreshTitle, 90),
+      summary: localeSafeMemoryText(
         idea.hypothesis || idea.rationale_md,
-        "Review the saved rationale, expected artifacts, and proposed next experiment."
+        locale,
+        text.memoryLocaleRefreshSummary
       ),
-      meta: `Idea · ${idea.approach_type.replace(/_/g, " ")} · ${idea.risk_level.replace(/_/g, " ")}`,
-      cta: "Open this exact idea",
+      meta: text.memoryKindIdea,
+      cta: text.memoryOpenIdea,
       target_tab: "Insight",
       target_anchor: memoryAnchor("idea", idea.id),
       created_at: idea.created_at,
@@ -6445,10 +6516,10 @@ function buildIdeaFindingItems(ideas: Idea[], insights: Insight[]): HomeMemoryIt
     ...insights.map((insight) => ({
       id: insight.id,
       kind: "finding" as const,
-      title: conciseMemoryText(insight.title, "Finding", 90),
-      summary: conciseMemoryText(insight.summary, "Review the saved evidence behind this finding."),
-      meta: `Finding · ${insight.insight_type.replace(/_/g, " ")} · ${confidenceLabel(insight.confidence)}`,
-      cta: insightDeepDiveAnchor(insight) === "notebook-focus" ? "Open notebook evidence" : "Open this exact finding",
+      title: localeSafeMemoryText(insight.title, locale, text.memoryLocaleRefreshTitle, 90),
+      summary: localeSafeMemoryText(insight.summary, locale, text.memoryLocaleRefreshSummary),
+      meta: `${text.memoryKindFinding} · ${confidenceLabel(insight.confidence, text, locale)}`,
+      cta: insightDeepDiveAnchor(insight) === "notebook-focus" ? text.memoryOpenNotebookEvidence : text.memoryOpenFinding,
       target_tab: "Insight",
       target_anchor: insightDeepDiveAnchor(insight),
       created_at: insight.created_at,
@@ -6459,6 +6530,33 @@ function buildIdeaFindingItems(ideas: Idea[], insights: Insight[]): HomeMemoryIt
     if (priorityDelta !== 0) return priorityDelta;
     return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
   });
+  return collapseUnlocalizedMemoryItems(items, text);
+}
+
+function collapseUnlocalizedMemoryItems(items: HomeMemoryItem[], text: LocaleMessages): HomeMemoryItem[] {
+  const visible: HomeMemoryItem[] = [];
+  const hidden: HomeMemoryItem[] = [];
+  for (const item of items) {
+    if (item.title === text.memoryLocaleRefreshTitle) {
+      hidden.push(item);
+    } else {
+      visible.push(item);
+    }
+  }
+  if (hidden.length <= 1) return items;
+  const summary: HomeMemoryItem = {
+    id: "memory_locale_refresh_group",
+    kind: "finding",
+    title: text.memoryLocaleRefreshTitle,
+    summary: text.memoryLocaleRefreshSummary,
+    meta: `${hidden.length} ${text.ideasAndFindingsReady}`,
+    cta: text.openDeepDive,
+    target_tab: "Insight",
+    target_anchor: "insights",
+    created_at: hidden[0]?.created_at ?? new Date().toISOString(),
+    signal_priority: 1
+  };
+  return [...visible, summary];
 }
 
 function homeInsightSignalPriority(insight: Insight): number {
