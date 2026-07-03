@@ -5029,6 +5029,14 @@ td {
   color: var(--text-strong);
 }
 
+.chat-bubble.assistant.pending {
+  border-color: color-mix(in srgb, var(--accent-2) 40%, var(--border));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-2) 8%, transparent), transparent 70%),
+    var(--surface-muted);
+  color: var(--muted-strong);
+}
+
 .chat-avatar {
   display: inline-grid;
   flex: 0 0 auto;

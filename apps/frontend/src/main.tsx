@@ -314,6 +314,7 @@ const englishMessages = {
   createAgentTaskContract: "Send",
   youAsked: "You asked",
   tableeAnswered: "Tablee answered",
+  agentReplyPendingTitle: "Waiting for Codex",
   agentReplyPending: "Thinking and preparing the next useful response.",
   agentReplyFailed: "I could not complete that request. The error is recorded here so it does not disappear.",
   chatTurnStatus: "Status",
@@ -749,6 +750,7 @@ const japaneseMessages: LocaleMessages = {
   createAgentTaskContract: "送信",
   youAsked: "あなたの依頼",
   tableeAnswered: "Tableeからの返答",
+  agentReplyPendingTitle: "Codexの返答待ち",
   agentReplyPending: "受け取りました。分析エージェントの返答が届き次第、このチャットに残します。",
   agentReplyFailed: "この依頼を完了できませんでした。消えないように、エラーをここに記録します。",
   chatTurnStatus: "状態",
@@ -7587,10 +7589,10 @@ function AgentConversationTurnCard({
           <TableeAvatar state={tableeMotionState} active={active} />
           <div className="chat-message-stack">
             <div className="chat-message-meta">
-              <span>{text.tableeAnswered}</span>
+              <span>{active ? text.agentReplyPendingTitle : text.tableeAnswered}</span>
               {outcomeLabel ? <small className={statusClass}>{outcomeLabel}</small> : null}
             </div>
-            <div className="chat-bubble assistant">
+            <div className={`chat-bubble assistant ${active ? "pending" : ""}`}>
               {assistant.text.split("\n").map((line, index) => (
                 <p key={`${index}-${line}`}>{line}</p>
               ))}
@@ -7621,10 +7623,10 @@ function AgentConversationTurnCard({
           <TableeAvatar state={tableeMotionState} active />
           <div className="chat-message-stack">
             <div className="chat-message-meta">
-              <span>{text.tableeAnswered}</span>
+              <span>{text.agentReplyPendingTitle}</span>
               <small className="badge">{text.agentReplyPending}</small>
             </div>
-            <div className="chat-bubble assistant">
+            <div className="chat-bubble assistant pending">
               <p>{text.agentReplyPending}</p>
             </div>
           </div>
