@@ -340,6 +340,8 @@ const englishMessages = {
   agentActivityTitle: "Agent Activity",
   agentActivitySubtitle: "Running and waiting work. Finished work is summarized in Agent Chat.",
   agentActivityLiveOnly: "Active work",
+  agentActivityExpand: "Expand",
+  agentActivityMinimize: "Minimize",
   turnStateObserved: "Observed state",
   turnStateSource: "Observed from Tablex jobs and local Codex process state.",
   turnStateWaitingForUser: "Your turn",
@@ -820,9 +822,11 @@ const japaneseMessages: LocaleMessages = {
   chatActionReview: "確認",
   chatChangedLabel: "変更",
   chatReviewLabel: "要確認",
-  agentActivityTitle: "Agent Activity",
+  agentActivityTitle: "Agentアクティビティ",
   agentActivitySubtitle: "実行中または待機中のworkを表示します。完了後の要約はAgent Chatに残ります。",
   agentActivityLiveOnly: "稼働中",
+  agentActivityExpand: "展開",
+  agentActivityMinimize: "最小化",
   turnStateObserved: "観測状態",
   turnStateSource: "Tablexのjob状態とlocal Codex process状態から観測しています。",
   turnStateWaitingForUser: "あなたの入力待ち",
@@ -8157,7 +8161,12 @@ function AgentActivityRail({
         </div>
         <div className="agent-activity-controls">
           <span className="agent-scope-pill live">{text.agentActivityLiveOnly}</span>
-          <button className="icon-button" onClick={toggleMinimized} title={minimized ? "Expand" : "Minimize"} type="button">
+          <button
+            className="icon-button"
+            onClick={toggleMinimized}
+            title={minimized ? text.agentActivityExpand : text.agentActivityMinimize}
+            type="button"
+          >
             {minimized ? <Plus size={14} /> : <Minus size={14} />}
           </button>
         </div>
