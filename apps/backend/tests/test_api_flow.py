@@ -1924,6 +1924,102 @@ def test_agent_chat_history_pairs_main_session_update_to_delivered_instruction(t
     assert turn["job_id"] == chat["job"]["id"]
 
 
+def test_agent_chat_history_pairs_each_main_session_update_once(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "One progress update per chat"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    workspace = app.state.artifact_store.root / "agent_sessions" / project_id / "ags_one_update"
+
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "AUTONOMOUS_LOOP"
+        project.autonomy_mode = "full_auto"
+        db.add(
+            AgentSession(
+                id="ags_one_update",
+                project_id=project_id,
+                org_id=project.org_id,
+                session_type="main_autonomous",
+                status="running",
+                autonomy_mode="full_auto",
+                runner_kind="codex_cli",
+                goal_text="Keep working and publish chat updates.",
+                workspace_path=str(workspace),
+                created_by="test",
+            )
+        )
+        db.commit()
+
+    first_chat = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "最初の質問です。", "locale": "ja-JP"},
+    ).json()
+    second_chat = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "二つ目の質問です。", "locale": "ja-JP"},
+    ).json()
+
+    with app.state.session_factory() as db:
+        progress_artifact = store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="agent_chat_turn",
+            name="agent_session_chat_update_ags_one_update_manual",
+            filename="agent_chat_turn.json",
+            payload={
+                "schema_version": "agent_chat_turn.v1",
+                "project_id": project_id,
+                "user_message": "",
+                "assistant_message": "最初の質問に対応する進捗です。次は評価設計を見ます。",
+                "intent": {
+                    "type": "autonomous_agent_progress_report",
+                    "source": "main_codex_session",
+                    "routing_policy": "codex_authored_human_update",
+                },
+                "actions": [],
+                "action_summary": {},
+                "response_brief": {
+                    "schema_version": "agent_progress_report_brief.v1",
+                    "agent_session_id": "ags_one_update",
+                    "source_artifact_id": "art_one_update",
+                    "workspace_relative_path": "reports/chat_update.md",
+                },
+                "response_composer": {
+                    "schema_version": "agent_response_composer.v1",
+                    "mode": "main_codex_session",
+                    "status": "codex_authored",
+                },
+                "worker_events": [],
+                "token_usage": {"source": "codex_cli_transcript", "is_estimate": True, "series": []},
+                "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent workspace"},
+            },
+            metadata={
+                "project_id": project_id,
+                "agent_session_id": "ags_one_update",
+                "source_artifact_id": "art_one_update",
+                "source": "main_codex_session_chat_update",
+            },
+        )
+        db.commit()
+
+    history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
+    first_turn = next(turn for turn in history if turn.get("job_id") == first_chat["job"]["id"])
+    second_turn = next(turn for turn in history if turn.get("job_id") == second_chat["job"]["id"])
+
+    assert first_turn["user_message"] == "最初の質問です。"
+    assert first_turn["response_brief"]["progress_artifact_id"] == progress_artifact.id
+    assert "最初の質問に対応する進捗" in first_turn["assistant_message"]
+    assert second_turn["user_message"] == "二つ目の質問です。"
+    assert second_turn["response_composer"]["status"] == "queued"
+    assert "worker待ち" in second_turn["assistant_message"]
+    assert second_turn["artifact_id"].startswith("job_pending_")
+
+
 def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_response = client.post("/api/projects", json={"name": "Timeline Plan"})

@@ -4731,6 +4731,7 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
             .limit(30)
         ).all()
     )
+    paired_update_ids: set[str] = set()
     for job in reversed(chat_jobs):
         if job.id in seen_job_ids:
             continue
@@ -4738,16 +4739,24 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
         message = payload.get("message")
         if not isinstance(message, str) or not message.strip():
             continue
-        paired_update = matching_main_session_update_for_chat_job(job, payload, main_session_update_turns)
+        paired_update = matching_main_session_update_for_chat_job(
+            job,
+            payload,
+            main_session_update_turns,
+            already_paired_update_ids=paired_update_ids,
+        )
         if paired_update is not None:
             turns.append(agent_chat_turn_from_main_session_update(project_id, job, payload, paired_update))
+            progress_artifact_id = paired_update.get("artifact_id")
+            if isinstance(progress_artifact_id, str):
+                paired_update_ids.add(progress_artifact_id)
         else:
             turns.append(pending_agent_chat_turn_from_job(project_id, job, payload))
-    paired_update_ids = {
+    paired_update_ids.update({
         str(turn.get("paired_progress_artifact_id"))
         for turn in turns
         if isinstance(turn.get("paired_progress_artifact_id"), str)
-    }
+    })
     turns.extend(
         turn for turn in main_session_update_turns if isinstance(turn.get("artifact_id"), str) and turn["artifact_id"] not in paired_update_ids
     )
@@ -4758,18 +4767,30 @@ def matching_main_session_update_for_chat_job(
     job: Job,
     payload: dict[str, Any],
     updates: list[dict[str, Any]],
+    *,
+    already_paired_update_ids: set[str] | None = None,
 ) -> dict[str, Any] | None:
     delivered_session_id = payload.get("delivered_agent_session_id")
     if not isinstance(delivered_session_id, str) or not delivered_session_id.strip():
         return None
+    paired = already_paired_update_ids or set()
+    output = loads_json(job.output_json, {})
+    progress_artifact_id = output.get("progress_artifact_id")
+    if isinstance(progress_artifact_id, str) and progress_artifact_id.strip() and progress_artifact_id not in paired:
+        for update in updates:
+            if update.get("agent_session_id") == delivered_session_id and update.get("artifact_id") == progress_artifact_id:
+                return update
+        return None
     candidates = [
         update
         for update in updates
-        if update.get("agent_session_id") == delivered_session_id and str(update.get("created_at") or "") >= job.created_at.isoformat()
+        if update.get("agent_session_id") == delivered_session_id
+        and str(update.get("created_at") or "") >= job.created_at.isoformat()
+        and (not isinstance(update.get("artifact_id"), str) or update["artifact_id"] not in paired)
     ]
     if not candidates:
         return None
-    return sorted(candidates, key=lambda update: str(update.get("created_at") or ""))[-1]
+    return sorted(candidates, key=lambda update: str(update.get("created_at") or ""))[0]
 
 
 def agent_chat_turn_from_main_session_update(
