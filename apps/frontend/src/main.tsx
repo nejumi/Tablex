@@ -436,6 +436,9 @@ const englishMessages = {
   researchPlanBlockLocaleRefreshTitle: "Display language refresh pending",
   researchPlanSummaryBlock: "block",
   researchPlanSummaryBlocks: "blocks",
+  planEvidenceObjective: "objective evidence",
+  planEvidenceUnderstanding: "understanding evidence",
+  planEvidencePriorResearch: "research evidence",
   planBlockDataUpload: "Data upload",
   planBlockDataUploadPending: "Drop CSV/Parquet files or import a benchmark before the loop starts.",
   planBlockDataUploadDone: "DatasetSnapshot exists.",
@@ -1012,6 +1015,9 @@ const japaneseMessages: LocaleMessages = {
   researchPlanBlockLocaleRefreshTitle: "表示言語の更新待ち",
   researchPlanSummaryBlock: "ブロック",
   researchPlanSummaryBlocks: "ブロック",
+  planEvidenceObjective: "目的根拠",
+  planEvidenceUnderstanding: "理解根拠",
+  planEvidencePriorResearch: "調査根拠",
   planBlockDataUpload: "データアップロード",
   planBlockDataUploadPending: "CSV/Parquetを投入するか、benchmarkをimportするとloopを開始できます。",
   planBlockDataUploadDone: "DatasetSnapshotがあります。",
@@ -1482,6 +1488,27 @@ function localeSafeDisplayText(value: string | null | undefined, locale: string 
   const text = (value ?? "").trim();
   if (displayTextMatchesLocale(text, locale)) return text;
   return fallback;
+}
+
+function localeSafeOptionalDisplayText(
+  value: string | null | undefined,
+  locale: string | null | undefined,
+  fallback: string
+): string | null {
+  const text = (value ?? "").trim();
+  if (!text) return null;
+  return localeSafeDisplayText(text, locale, fallback);
+}
+
+function localizedObjectCount(
+  count: number,
+  englishSingular: string,
+  englishPlural: string,
+  japaneseLabel: string,
+  locale: string | null | undefined
+): string {
+  if (localeLooksJapanese(locale)) return `${japaneseLabel} ${count}件`;
+  return `${count} ${count === 1 ? englishSingular : englishPlural}`;
 }
 
 function researchPlanTimelineMatchesDisplayLocale(
@@ -4313,6 +4340,7 @@ function ProjectDetail({
   const [agentSession, setAgentSession] = React.useState<AgentSession | null>(null);
   const [agentTranscriptEvents, setAgentTranscriptEvents] = React.useState<AgentTranscriptEvent[]>([]);
   const [agentRawTranscript, setAgentRawTranscript] = React.useState<AgentRawTranscript | null>(null);
+  const userSettingsLocaleRef = React.useRef(userSettings.locale);
   const transcriptSinceIndexRef = React.useRef<number | null>(null);
   const transcriptSessionIdRef = React.useRef<string | null>(null);
   const [activityTick, setActivityTick] = React.useState(0);
@@ -4332,8 +4360,22 @@ function ProjectDetail({
       : "idle";
 
   React.useEffect(() => {
+    userSettingsLocaleRef.current = userSettings.locale;
+  }, [userSettings.locale]);
+
+  const setResearchPlanTimelineForCurrentLocale = React.useCallback((timeline: ResearchPlanTimelineResponse | null) => {
+    if (!timeline) {
+      setResearchPlanTimeline(null);
+      return;
+    }
+    if (researchPlanTimelineMatchesDisplayLocale(timeline, userSettingsLocaleRef.current)) {
+      setResearchPlanTimeline(timeline);
+    }
+  }, []);
+
+  React.useEffect(() => {
     setResearchPlanTimeline(null);
-  }, [project.id, userSettings.locale]);
+  }, [project.id, setResearchPlanTimelineForCurrentLocale, userSettings.locale]);
   const turnState = agentActivity?.turn_state ?? fallbackTurnState(project);
   const focusRecommendation = React.useMemo(
     () => {
@@ -4465,7 +4507,7 @@ function ProjectDetail({
       setAgentSession(agentSessionData);
       setAgentTranscriptEvents(agentTranscriptData);
       setAgentRawTranscript(agentRawTranscriptData);
-      setResearchPlanTimeline(researchPlanTimelineData);
+      setResearchPlanTimelineForCurrentLocale(researchPlanTimelineData);
       transcriptSessionIdRef.current = agentSessionData?.id ?? null;
       transcriptSinceIndexRef.current = maxTranscriptEventIndex(agentTranscriptData);
       const validationEntries = await Promise.all(
@@ -4480,7 +4522,7 @@ function ProjectDetail({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [project.id, userSettings.locale]);
+  }, [project.id, setResearchPlanTimelineForCurrentLocale, userSettings.locale]);
 
   const refreshAgentActivity = React.useCallback(async () => {
     try {
@@ -4505,7 +4547,7 @@ function ProjectDetail({
       setAgentSession(sessionData);
       setAgentRawTranscript(rawTranscriptData);
       if (researchPlanTimelineData) {
-        setResearchPlanTimeline(researchPlanTimelineData);
+        setResearchPlanTimelineForCurrentLocale(researchPlanTimelineData);
       }
       setAgentChatMessages((current) => mergeAgentChatMessages(agentChatHistoryToMessages(agentChatHistoryData), current));
       setAgentTranscriptEvents((current) => {
@@ -4517,7 +4559,7 @@ function ProjectDetail({
     } catch {
       // The activity overlay is opportunistic; project refresh still surfaces hard errors.
     }
-  }, [project.id, userSettings.locale]);
+  }, [project.id, setResearchPlanTimelineForCurrentLocale, userSettings.locale]);
 
   React.useEffect(() => {
     void refresh();
@@ -6136,9 +6178,31 @@ function buildResearchPlanBlocks({
       ? "active"
       : hasPriorResearchPreparation
         ? "pending"
-      : hasUnderstandingCompletionEvidence
-        ? "active"
-        : "waiting";
+        : hasUnderstandingCompletionEvidence
+          ? "active"
+          : "waiting";
+  const targetDefinitionEvidence = localeSafeOptionalDisplayText(
+    latestArtifactName(artifacts, "target_definition_proposal"),
+    locale,
+    text.planEvidenceObjective
+  );
+  const understandingArtifactEvidence = localeSafeOptionalDisplayText(
+    latestDataUnderstandingNotebookName(artifacts) ??
+      latestAgentAuthoredDataUnderstandingName(artifacts) ??
+      latestArtifactName(artifacts, "understanding_report") ??
+      latestArtifactName(artifacts, "eda_profile") ??
+      latestArtifactName(artifacts, "eda_review_report"),
+    locale,
+    text.planEvidenceUnderstanding
+  );
+  const priorResearchArtifactEvidence = localeSafeOptionalDisplayText(
+    latestArtifactName(artifacts, "research_finding_synthesis") ??
+      latestArtifactName(artifacts, "research_findings_report") ??
+      noFindingsResearchArtifact?.name ??
+      latestArtifactName(artifacts, "research_source_pack"),
+    locale,
+    text.planEvidencePriorResearch
+  );
 
   const blocks: ResearchPlanBlock[] = [
     {
@@ -6147,7 +6211,8 @@ function buildResearchPlanBlocks({
       subtitle: datasetCount > 0 ? text.planBlockDataUploadDone : text.planBlockDataUploadPending,
       status: dataUploadStatus,
       eyebrow: "01",
-      evidence: datasetCount > 0 ? `${datasetCount} DatasetSnapshot${datasetCount === 1 ? "" : "s"}` : null,
+      evidence:
+        datasetCount > 0 ? localizedObjectCount(datasetCount, "DatasetSnapshot", "DatasetSnapshots", "DatasetSnapshot", locale) : null,
       onClick: () => onTabChange("Data")
     },
     {
@@ -6164,7 +6229,7 @@ function buildResearchPlanBlocks({
         ? `${text.targetLabelShort}: ${project.target_column}`
         : objectiveDelegatedToCodex
           ? text.planBlockObjectiveDelegated
-          : latestArtifactName(artifacts, "target_definition_proposal"),
+          : targetDefinitionEvidence,
       onClick: () => onTabChange("Assumptions")
     },
     {
@@ -6177,12 +6242,7 @@ function buildResearchPlanBlocks({
           : text.planBlockUnderstandingPending,
       status: understandingStatus,
       eyebrow: "03",
-      evidence:
-        latestDataUnderstandingNotebookName(artifacts) ??
-        latestAgentAuthoredDataUnderstandingName(artifacts) ??
-        latestArtifactName(artifacts, "understanding_report") ??
-        latestArtifactName(artifacts, "eda_profile") ??
-        latestArtifactName(artifacts, "eda_review_report"),
+      evidence: understandingArtifactEvidence,
       onClick: () => {
         if (hasDataUnderstandingNotebook) {
           onNavigateToTarget("Notebooks", "notebook-preview-top");
@@ -6206,12 +6266,9 @@ function buildResearchPlanBlocks({
       status: priorResearchStatus,
       eyebrow: "04",
       evidence:
-        latestArtifactName(artifacts, "research_finding_synthesis") ??
-        latestArtifactName(artifacts, "research_findings_report") ??
-        noFindingsResearchArtifact?.name ??
-        latestArtifactName(artifacts, "research_source_pack") ??
-        (equippedSkills.length ? `${equippedSkills.length} Skill${equippedSkills.length === 1 ? "" : "s"}` : null) ??
-        (researchBriefs.length ? `${researchBriefs.length} brief${researchBriefs.length === 1 ? "" : "s"}` : null),
+        priorResearchArtifactEvidence ??
+        (equippedSkills.length ? localizedObjectCount(equippedSkills.length, "Skill", "Skills", "Skill", locale) : null) ??
+        (researchBriefs.length ? localizedObjectCount(researchBriefs.length, "brief", "briefs", "brief", locale) : null),
       onClick: () => onNavigateToTarget("Notebooks", "notebook-preview-top")
     }
   ];
