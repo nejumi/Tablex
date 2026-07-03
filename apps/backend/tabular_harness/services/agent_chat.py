@@ -29,6 +29,7 @@ from tabular_harness.services.artifacts import (
     artifact_primary_path,
     create_lineage_edge,
 )
+from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.portal import running_codex_processes_for_project
 from tabular_harness.services.project_guidance import build_project_guidance
 
@@ -539,7 +540,7 @@ def render_conversation_fallback_message(
     run_count = int(counts.get("experiment_runs") or 0)
     next_label = str(focus.get("label") or "review the current project focus")
     target_tab = str(focus.get("target_tab") or "Home")
-    if (locale or "").lower().startswith("ja"):
+    if locale_is_japanese(locale):
         return (
             f"現在の状態を見ました。データセットは {dataset_count} 件、実験 run は {run_count} 件、"
             f"ターゲットは {target} です。次に見るなら {target_tab} の「{next_label}」です。"

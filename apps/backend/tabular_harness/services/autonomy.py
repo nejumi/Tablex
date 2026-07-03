@@ -64,6 +64,7 @@ from tabular_harness.services.evaluation import (
 )
 from tabular_harness.services.experiment_lifecycle import draft_run_report
 from tabular_harness.services.jobs import create_job
+from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.planned_agent_execution import run_planned_agent_task_codex_cli
 from tabular_harness.services.planned_agent_workspace import (
@@ -1672,7 +1673,7 @@ def render_assistant_message(
     evaluation_ready = any(step.label == "evaluation_spec" and step.status == "approved" for step in state.steps)
     split_ready = any(step.label == "split_manifest" and step.status == "created" for step in state.steps)
     codex_step = next((step for step in reversed(state.steps) if step.label == "codex_execution"), None)
-    if locale and locale.lower().startswith("ja"):
+    if locale_is_japanese(locale):
         if status == "waiting_for_data":
             return (
                 f"{mode_label}を起動しました。まだデータがないので、モデルや評価は走らせず、"

@@ -24,7 +24,7 @@ def test_btw_is_explicit_sidecar_status_shortcut() -> None:
 
 
 def test_codex_unavailable_message_does_not_expose_unfinished_placeholder_copy() -> None:
-    message = codex_unavailable_message({"response_locale": "ja-JP", "composer_warning": "timeout"})
+    message = codex_unavailable_message({"response_locale": "Japanese", "composer_warning": "timeout"})
 
     assert "まだ実行" not in message
     assert "まだ生成" not in message

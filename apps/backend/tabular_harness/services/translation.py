@@ -17,6 +17,7 @@ from tabular_harness.services.artifacts import (
     next_artifact_version,
     register_artifact,
 )
+from tabular_harness.services.locales import locale_is_japanese, locale_language
 
 TRANSLATABLE_SUFFIXES = {".csv", ".json", ".md", ".txt", ".yaml", ".yml", ".tsv", ".log"}
 
@@ -251,9 +252,9 @@ def read_translatable_text(path: Path, limit_bytes: int = 80_000) -> str:
 def translate_text(text: str, *, source_locale: str, target_locale: str) -> tuple[str, str, str]:
     normalized_target = normalize_locale(target_locale)
     normalized_source = normalize_locale(source_locale)
-    if normalized_target.lower().startswith(normalized_source.lower().split("-")[0]):
+    if locale_language(normalized_target) == locale_language(normalized_source):
         return text, "source_locale_matches_target", "source_returned"
-    if normalized_target.lower().startswith("ja"):
+    if locale_is_japanese(normalized_target):
         return translate_to_japanese_stub(text, source_locale=normalized_source), "codex_runner_not_executed_local_preview", "draft_translation"
     header = (
         f"> Translation draft for `{normalized_target}` is pending a configured translator runner. "

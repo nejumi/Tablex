@@ -33,6 +33,7 @@ from tabular_harness.services.approach import (
     store_json_artifact,
     store_text_artifact,
 )
+from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
     artifact_primary_path,
@@ -4193,7 +4194,7 @@ def _profile_summary(
 
 
 def _notebook_ui_copy(locale: str) -> dict[str, str]:
-    if locale.lower().startswith("ja"):
+    if locale_is_japanese(locale):
         return {
             "title": "データ理解ノートブック",
             "reader_brief": "最初に読む要点",
@@ -4298,7 +4299,7 @@ def _notebook_ui_copy(locale: str) -> dict[str, str]:
 
 def _notebook_authoring_notice(locale: str, *, authoring_brief_artifact_id: str | None) -> str:
     brief = authoring_brief_artifact_id or "notebook_authoring_brief"
-    if locale.lower().startswith("ja"):
+    if locale_is_japanese(locale):
         return (
             "このアーティファクトはハーネス生成の足場であり、最終的なCodex執筆の深いEDAではありません。"
             f"Codexは `{brief}` と tablex-grandmaster-eda / tablex-notebook-quality Skill、実データを読み、"

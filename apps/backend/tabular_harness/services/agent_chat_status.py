@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from tabular_harness.models.entities import Job, utc_now
+from tabular_harness.services.locales import locale_is_japanese
 
 
 def format_elapsed_for_agent_chat(seconds: int, *, japanese: bool) -> str:
@@ -34,7 +35,7 @@ def agent_chat_wait_state(
     locale: str | None,
     response_worker_status: str | None = None,
 ) -> dict[str, Any]:
-    japanese = (locale or "").lower().startswith("ja")
+    japanese = locale_is_japanese(locale)
     now = utc_now()
     job_age_seconds = seconds_since_timestamp(job.created_at, now=now) or 0
     updated_age_seconds = seconds_since_timestamp(job.updated_at, now=now) or 0

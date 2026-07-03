@@ -45,6 +45,7 @@ from tabular_harness.services.artifacts import (
 )
 from tabular_harness.services.jobs import TERMINAL_STATUSES as TERMINAL_JOB_STATUSES
 from tabular_harness.services.jobs import mark_job_succeeded
+from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.research_plan_timeline import research_plan_localization_summary
 
 MAIN_AUTONOMOUS_SESSION_TYPE = "main_autonomous"
@@ -434,7 +435,7 @@ def write_progress_request_to_workspace_inbox(
         return
     workspace = Path(session.workspace_path)
     path = progress_request_path(workspace)
-    japanese = bool(locale and locale.lower().startswith("ja"))
+    japanese = locale_is_japanese(locale)
     if japanese:
         message = (
             "人間向けの進捗説明がしばらく更新されていません。"

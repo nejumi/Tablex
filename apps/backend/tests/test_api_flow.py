@@ -104,6 +104,7 @@ def test_agent_activity_elapsed_output_helpers() -> None:
     assert format_elapsed_seconds(125) == "2m"
     assert format_elapsed_seconds(3660) == "1h 1m"
     assert heartbeat_phrase_for_locale(75, locale="ja-JP") == " 最終出力は1分前です。"
+    assert heartbeat_phrase_for_locale(75, locale="Japanese") == " 最終出力は1分前です。"
     assert heartbeat_phrase_for_locale(75, locale="en-US") == " Last observed output was 1m ago."
 
 
@@ -228,7 +229,7 @@ def test_autonomy_mode_change_is_persisted_in_agent_chat_history(tmp_path: Path)
 
     update_response = client.patch(
         f"/api/projects/{project_id}",
-        json={"autonomy_mode": "full_auto", "locale": "ja-JP"},
+        json={"autonomy_mode": "full_auto", "locale": "Japanese"},
     )
     assert update_response.status_code == 200, update_response.text
 
@@ -241,7 +242,7 @@ def test_autonomy_mode_change_is_persisted_in_agent_chat_history(tmp_path: Path)
 
     update_response = client.patch(
         f"/api/projects/{project_id}",
-        json={"autonomy_mode": "approval_based", "locale": "ja-JP"},
+        json={"autonomy_mode": "approval_based", "locale": "日本語"},
     )
     assert update_response.status_code == 200, update_response.text
 
@@ -3479,12 +3480,12 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
 
     artifact_translation_response = client.post(
         f"/api/artifacts/{report['artifact_id']}/translate",
-        json={"target_locale": "ja-JP", "source_locale": "en-US"},
+        json={"target_locale": "Japanese", "source_locale": "en-US"},
     )
     assert artifact_translation_response.status_code == 200, artifact_translation_response.text
     artifact_translation = artifact_translation_response.json()
     assert artifact_translation["source_type"] == "artifact"
-    assert artifact_translation["target_locale"] == "ja-JP"
+    assert artifact_translation["target_locale"] == "Japanese"
     assert artifact_translation["artifact"]["asset_type"] == "translated_artifact_preview"
     assert artifact_translation["job"]["output"]["codex_translation_contract_artifact_id"]
     assert "Codex" in artifact_translation["preview"]["preview"]

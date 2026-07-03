@@ -13,6 +13,7 @@ from typing import Any
 from tabular_harness.agent.runners import safe_env
 from tabular_harness.models.entities import Project
 from tabular_harness.services.codex_transcript import build_codex_cli_transcript
+from tabular_harness.services.locales import locale_is_japanese
 
 
 @dataclass(frozen=True)
@@ -394,7 +395,7 @@ def response_shortcut_for_message(user_message: str) -> str | None:
 def codex_unavailable_message(brief: dict[str, Any]) -> str:
     locale = str(brief.get("response_locale") or "")
     warning = str(brief.get("composer_warning") or "Codex response composition is unavailable.")
-    if locale.lower().startswith("ja"):
+    if locale_is_japanese(locale):
         return (
             "この返答はCodexで生成できませんでした。"
             f"理由: {warning}\n"

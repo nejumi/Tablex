@@ -345,6 +345,7 @@ from tabular_harness.services.result_notebook_evidence import (
     result_notebook_evidence_job_output,
 )
 from tabular_harness.services.result_readout import build_result_readout
+from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.translation import TranslationResult
 from tabular_harness.services.translation import translate_artifact as translate_artifact_service
 from tabular_harness.worker.jobs import create_default_worker
@@ -1149,7 +1150,7 @@ def record_autonomy_mode_change_chat_turn(
     locale: str | None,
     stopped_session_id: str | None,
 ) -> Artifact:
-    japanese = bool(locale and locale.lower().startswith("ja"))
+    japanese = locale_is_japanese(locale)
     if japanese:
         user_message = "フルオート" if next_mode == "full_auto" else "承認ベース"
         assistant_message = (
@@ -1218,7 +1219,7 @@ def record_autonomy_mode_change_chat_turn(
 
 
 def queued_autonomy_start_output(project: Project, job: Job, *, locale: str | None) -> dict[str, Any]:
-    japanese = bool(locale and locale.lower().startswith("ja"))
+    japanese = locale_is_japanese(locale)
     assistant_message = (
         "Full Autoを起動しました。データ理解、評価設計、実験準備をバックグラウンドで進めます。"
         "進行はAgent ActivityとこのWorkspaceに表示します。"
@@ -1273,7 +1274,7 @@ def queued_agent_session_start_output(
     *,
     locale: str | None,
 ) -> dict[str, Any]:
-    japanese = bool(locale and locale.lower().startswith("ja"))
+    japanese = locale_is_japanese(locale)
     is_resume = bool(session.started_at or session.turn_index > 0 or session.codex_thread_id)
     if is_resume:
         assistant_message = (
@@ -1352,7 +1353,7 @@ def queued_agent_session_start_output(
 def mark_autonomy_start_output_running(job: Job, project: Project, *, locale: str | None) -> None:
     output = loads_json(job.output_json, {})
     now = utc_now().isoformat()
-    japanese = bool(locale and locale.lower().startswith("ja"))
+    japanese = locale_is_japanese(locale)
     title = "Full Autoが動いています" if japanese else "Full Auto is running"
     summary = (
         "現在のプロジェクト状態を読み込み、データ理解、評価設計、実験準備を進めています。"
@@ -1446,7 +1447,7 @@ def run_autonomy_start_job_background(
             assistant_message = str(output.get("assistant_message") or "Agent loop started.")
             created_job_ids = output.get("created_job_ids") if isinstance(output.get("created_job_ids"), list) else []
             if created_job_ids:
-                if locale and locale.lower().startswith("ja"):
+                if locale_is_japanese(locale):
                     assistant_message = (
                         f"{assistant_message}\n\n"
                         "右側の Agent Activity に、次に進むための待機中ジョブを表示します。"
@@ -1468,7 +1469,7 @@ def run_autonomy_start_job_background(
                 store,
                 project=project,
                 job=job,
-                user_message="Agent loopを開始" if locale and locale.lower().startswith("ja") else "Start agent loop",
+                user_message="Agent loopを開始" if locale_is_japanese(locale) else "Start agent loop",
                 assistant_message=assistant_message,
                 output=output,
                 locale=locale,
@@ -1633,7 +1634,7 @@ def start_project_autonomy(
                 store,
                 project=project,
                 job=job,
-                user_message="Agent loopを開始" if payload.locale and payload.locale.lower().startswith("ja") else "Start agent loop",
+                user_message="Agent loopを開始" if locale_is_japanese(payload.locale) else "Start agent loop",
                 assistant_message=assistant_message,
                 output=output,
                 locale=payload.locale,
@@ -1685,7 +1686,7 @@ def start_project_autonomy(
             store,
             project=project,
             job=job,
-            user_message="Agent loopを開始" if payload.locale and payload.locale.lower().startswith("ja") else "Start agent loop",
+            user_message="Agent loopを開始" if locale_is_japanese(payload.locale) else "Start agent loop",
             assistant_message=assistant_message,
             output=output,
             locale=payload.locale,
@@ -1723,7 +1724,7 @@ def stop_project_autonomy(
     try:
         project = require_project(db, project_id)
         locale = payload.locale if payload is not None else None
-        japanese = bool(locale and locale.lower().startswith("ja"))
+        japanese = locale_is_japanese(locale)
         job = create_job(
             db,
             job_type="stop_autonomous_loop",
@@ -4688,9 +4689,9 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
             continue
         response_locale = output.get("response_locale") if isinstance(output.get("response_locale"), str) else "en-US"
         started = job.job_type == "start_autonomous_loop"
-        user_message = "Agent loopを開始" if response_locale.lower().startswith("ja") and started else "Start agent loop"
+        user_message = "Agent loopを開始" if locale_is_japanese(response_locale) and started else "Start agent loop"
         if not started:
-            user_message = "Agent loopを停止" if response_locale.lower().startswith("ja") else "Stop agent loop"
+            user_message = "Agent loopを停止" if locale_is_japanese(response_locale) else "Stop agent loop"
         turns.append(
             {
                 "schema_version": "agent_chat_turn.v1",
@@ -4830,7 +4831,7 @@ def agent_chat_turn_from_main_session_update(
 def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[str, Any]) -> dict[str, Any]:
     output = loads_json(job.output_json, {})
     locale = payload.get("locale") if isinstance(payload.get("locale"), str) else "en-US"
-    japanese = locale.lower().startswith("ja")
+    japanese = locale_is_japanese(locale)
     delivered_session_id = payload.get("delivered_agent_session_id")
     delivered_to_running_codex = isinstance(delivered_session_id, str) and bool(delivered_session_id.strip())
     wait_state = agent_chat_wait_state(
@@ -6954,7 +6955,7 @@ def get_project_agent_activity(
         )
         session_active = session_has_process or session.status in {"starting", "between_turns", "waiting_for_runner"}
         retry_delay = retry_state.get("retry_delay_seconds") if retry_state else None
-        japanese = response_locale.lower().startswith("ja")
+        japanese = locale_is_japanese(response_locale)
         retry_detail = (
             (
                 f"Codex runnerをまだ使えません。同じセッションを約{int(retry_delay)}秒後に再試行します。"
@@ -7170,7 +7171,7 @@ def format_elapsed_seconds(seconds: int) -> str:
 def heartbeat_phrase_for_locale(seconds: int | None, *, locale: str | None) -> str:
     if seconds is None:
         return ""
-    if (locale or "").lower().startswith("ja"):
+    if locale_is_japanese(locale):
         return f" 最終出力は{format_elapsed_seconds_ja(seconds)}前です。"
     return f" Last observed output was {format_elapsed_seconds(seconds)} ago."
 
