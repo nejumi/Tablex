@@ -4979,6 +4979,7 @@ function HomeTab({
   const ideaFindingItems = buildIdeaFindingItems(ideas, insights);
   const equippedSkills = equippedSkillItems(projectAssetReferences, libraryAssets);
   const rawAgentEvents = buildRawAgentEvents(messages, jobs, agentTranscriptEvents, agentSession);
+  const agentWorkspaceScrollResetKey = `${project.id}:${agentSession?.id ?? "no-agent-session"}`;
   const researchPlanBlocks = buildResearchPlanBlocks({
     project,
     datasetCount,
@@ -5140,6 +5141,7 @@ function HomeTab({
               latestContract={latestContract}
               tableeMotionState={tableeMotionState}
               turnState={turnState}
+              scrollResetKey={agentWorkspaceScrollResetKey}
               onSubmit={onSubmitAgentChat}
               onActionOpen={onActionOpen}
             />
@@ -5152,6 +5154,7 @@ function HomeTab({
               rawTranscript={agentRawTranscript}
               submitShortcut={submitShortcut}
               turnState={turnState}
+              scrollResetKey={agentWorkspaceScrollResetKey}
               onSubmit={onSubmitAgentChat}
             />
           )}
@@ -6880,10 +6883,11 @@ function buildAgentConversationTurns(messages: AgentChatMessage[]): AgentConvers
   return turns;
 }
 
-function useStickyBottomScroll<T extends HTMLElement>(dependencyKey: string) {
+function useStickyBottomScroll<T extends HTMLElement>(dependencyKey: string, resetKey?: string) {
   const ref = React.useRef<T | null>(null);
   const shouldStickRef = React.useRef(true);
   const mountedRef = React.useRef(false);
+  const resetKeyRef = React.useRef(resetKey);
 
   const onScroll = React.useCallback(() => {
     const element = ref.current;
@@ -6895,12 +6899,17 @@ function useStickyBottomScroll<T extends HTMLElement>(dependencyKey: string) {
   React.useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
+    if (resetKeyRef.current !== resetKey) {
+      resetKeyRef.current = resetKey;
+      mountedRef.current = false;
+      shouldStickRef.current = true;
+    }
     if (!mountedRef.current || shouldStickRef.current) {
       element.scrollTop = element.scrollHeight;
       shouldStickRef.current = true;
     }
     mountedRef.current = true;
-  }, [dependencyKey]);
+  }, [dependencyKey, resetKey]);
 
   return { ref, onScroll };
 }
@@ -7138,6 +7147,7 @@ function RawAgentStream({
   rawTranscript,
   submitShortcut,
   turnState,
+  scrollResetKey,
   onSubmit
 }: {
   busy: boolean;
@@ -7147,6 +7157,7 @@ function RawAgentStream({
   rawTranscript: AgentRawTranscript | null;
   submitShortcut: ChatSubmitShortcut;
   turnState: TurnState;
+  scrollResetKey: string;
   onSubmit: (objective: string) => Promise<void>;
 }) {
   const [draft, setDraft] = React.useState("");
@@ -7170,7 +7181,7 @@ function RawAgentStream({
       : rawLines.length
         ? `${rawLines[rawLines.length - 1].stream}-${rawLines[rawLines.length - 1].line_number}`
         : null;
-  const rawScroll = useStickyBottomScroll<HTMLDivElement>(rawKey);
+  const rawScroll = useStickyBottomScroll<HTMLDivElement>(rawKey, scrollResetKey);
 
   async function submitDraft() {
     const objective = draft.trim();
@@ -7556,6 +7567,7 @@ function AgentChatDock({
   latestContract,
   tableeMotionState,
   turnState,
+  scrollResetKey,
   onSubmit,
   onActionOpen
 }: {
@@ -7568,6 +7580,7 @@ function AgentChatDock({
   latestContract: Artifact | null;
   tableeMotionState: TableeMotionState;
   turnState: TurnState;
+  scrollResetKey: string;
   onSubmit: (objective: string) => Promise<void>;
   onActionOpen: (action: AgentChatAction) => void;
 }) {
@@ -7577,7 +7590,8 @@ function AgentChatDock({
   const olderTurns = turns.slice(0, -5);
   const latestTurn = turns[turns.length - 1];
   const chatScroll = useStickyBottomScroll<HTMLDivElement>(
-    `${turns.length}:${latestTurn?.id ?? "empty"}:${latestTurn?.user?.text.length ?? 0}:${latestTurn?.assistant?.text.length ?? 0}`
+    `${turns.length}:${latestTurn?.id ?? "empty"}:${latestTurn?.user?.text.length ?? 0}:${latestTurn?.assistant?.text.length ?? 0}`,
+    scrollResetKey
   );
 
   async function submitDraft() {
@@ -7624,8 +7638,9 @@ function AgentChatDock({
         </div>
       </div>
       <TurnStateBar text={text} locale={locale} turnState={turnState} />
-      {turns.length ? (
-        <div className="agent-chat-log" ref={chatScroll.ref} onScroll={chatScroll.onScroll}>
+      <div className="agent-chat-log" ref={chatScroll.ref} onScroll={chatScroll.onScroll}>
+        {turns.length ? (
+          <>
           {olderTurns.length ? (
             <details className="agent-chat-history">
               <summary>
@@ -7656,8 +7671,11 @@ function AgentChatDock({
               onActionOpen={onActionOpen}
             />
           ))}
-        </div>
-      ) : null}
+          </>
+        ) : (
+          <EmptyInline text={text.agentChatPlaceholder} />
+        )}
+      </div>
       <form className={agentInputFormClassName(turnState)} onSubmit={(event) => void submit(event)}>
         <textarea
           value={draft}
