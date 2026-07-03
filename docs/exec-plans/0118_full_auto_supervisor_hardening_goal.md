@@ -33,6 +33,7 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
 - Marked main-session-delivered Chat jobs as `waiting_for_agent` instead of runnable `queued` work so the main Codex session remains the response source; the job is completed when a Codex-authored `reports/chat_update.md` is registered.
 - Updated the frontend so `waiting_for_agent` chat turns remain visibly active in Chat, use the Codex-delivery message returned by the backend, stay out of Research Plan task blocks, and show localized Jobs labels instead of raw status strings.
 - Rendered HTML notebook previews from the preview API's inlined/reset HTML via `srcDoc` and added an explicit empty-preview warning so blank panels are distinguishable from loading or rendering.
+- Added browser-download URLs for the main AgentSession raw stdout JSONL and stderr log so Raw can show a bounded tail while still giving direct access to the complete saved transcript files.
 
 ## 2026-07-04 Fable Feedback Audit
 
@@ -45,6 +46,7 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
 | User chat instructions must not fall out of a recent-event window | Implemented | `undelivered_user_instruction_events` uses the last delivered user event index; the prompt includes all undelivered instructions and then records delivery. |
 | Workspace artifact ingestion must avoid stem-only name collisions | Implemented | Session output artifact names include sanitized workspace-relative paths; regression coverage prevents alternating `summary.md` collisions. |
 | Raw transcript storage must scale beyond small logs | Implemented for current Raw/Chat path | `(session_id, event_index)` indexes exist, stream events are batched, the transcript API supports `since_index`, and the Home activity poll uses that delta path after the initial load. The Raw file viewer separately reads bounded stdout/stderr tails. |
+| Raw transcript view must expose the actual saved Codex output, not only derived event cards | Implemented | `/agent-session/raw-transcript` now returns download URLs for full stdout JSONL and stderr log files; the Raw UI exposes those links while keeping the bounded parsed tail in view. |
 | Agent Chat should not synchronously block on Codex response composition | Implemented for product path | `/agent-chat` creates an `agent_chat_turn` job and immediately returns a visible wait state; the local daemon processes concrete chat jobs and history replaces pending entries with persisted responses. |
 | Chat should remember recent conversation | Implemented | `build_agent_conversation_context` includes recent `agent_chat_turn` artifacts; regression test covers a second turn seeing the first. |
 | Main-session Chat updates should attach to the right user instruction | Implemented | Pairing now compares normalized UTC datetimes and has regression coverage for local-time strings that would sort incorrectly as raw strings. |

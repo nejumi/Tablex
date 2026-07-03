@@ -5153,6 +5153,8 @@ def get_agent_session_raw_transcript(
             "session_id": None,
             "stdout_path": None,
             "stderr_path": None,
+            "stdout_download_url": None,
+            "stderr_download_url": None,
             "stdout_line_count": 0,
             "stderr_line_count": 0,
             "stdout_tail": [],
@@ -5171,6 +5173,8 @@ def get_agent_session_raw_transcript(
         "session_id": session.id,
         "stdout_path": str(stdout_path),
         "stderr_path": str(stderr_path),
+        "stdout_download_url": f"/api/projects/{project_id}/agent-session/raw-transcript/stdout/download",
+        "stderr_download_url": f"/api/projects/{project_id}/agent-session/raw-transcript/stderr/download",
         "stdout_line_count": stdout_count,
         "stderr_line_count": stderr_count,
         "stdout_tail": stdout_tail,
@@ -5179,6 +5183,30 @@ def get_agent_session_raw_transcript(
         "stderr_tail_lines": stderr_tail_lines,
         "updated_at": max((item for item in (stdout_updated_at, stderr_updated_at) if item), default=None),
     }
+
+
+@router.get("/api/projects/{project_id}/agent-session/raw-transcript/{stream_name}/download")
+def download_agent_session_raw_transcript(
+    project_id: str,
+    stream_name: str,
+    db: Annotated[Session, Depends(get_session)],
+):
+    require_project(db, project_id)
+    session = active_main_session(db, project_id) or latest_main_session(db, project_id)
+    if session is None or not session.workspace_path:
+        raise HTTPException(status_code=404, detail="AgentSession raw transcript is not available.")
+    workspace = Path(session.workspace_path)
+    if stream_name == "stdout":
+        path = raw_codex_transcript_path(workspace)
+        filename = "codex_raw_transcript.jsonl"
+    elif stream_name == "stderr":
+        path = raw_codex_stderr_path(workspace)
+        filename = "codex_stderr.log"
+    else:
+        raise HTTPException(status_code=404, detail="Raw transcript stream must be stdout or stderr.")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Raw transcript file not found.")
+    return FileResponse(path=path, filename=filename, media_type="text/plain")
 
 
 @router.post("/api/agent-task-contracts/{artifact_id}/prepare-workspace", response_model=JobRead)

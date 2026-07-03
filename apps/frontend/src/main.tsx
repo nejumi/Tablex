@@ -506,6 +506,8 @@ const englishMessages = {
   rawAgentRawJsonl: "Raw JSONL",
   rawAgentRawLine: "Raw line",
   rawAgentParsedEvent: "Parsed event",
+  rawAgentOpenStdout: "Open full stdout",
+  rawAgentOpenStderr: "Open full stderr",
   openSurface: "Open",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "One guided next step from the current project evidence.",
@@ -937,6 +939,8 @@ const japaneseMessages: LocaleMessages = {
   rawAgentRawJsonl: "Raw JSONL",
   rawAgentRawLine: "Raw line",
   rawAgentParsedEvent: "Parsed event",
+  rawAgentOpenStdout: "stdout全文を開く",
+  rawAgentOpenStderr: "stderr全文を開く",
   openSurface: "開く",
   strategyBriefTitle: "Adaptive Strategy Brief",
   strategyBriefSubtitle: "現在の根拠に基づく次の一手を表示します。",
@@ -1743,6 +1747,8 @@ type AgentRawTranscript = {
   session_id: string | null;
   stdout_path: string | null;
   stderr_path: string | null;
+  stdout_download_url: string | null;
+  stderr_download_url: string | null;
   stdout_line_count: number;
   stderr_line_count: number;
   stdout_tail: string[];
@@ -7225,14 +7231,40 @@ function RawAgentStream({
   return (
     <div className="raw-agent-stream">
       <div className="raw-agent-head">
-        <span>{text.rawAgentTitle}</span>
-        <small>
-          {rawLines.length ? rawTranscriptTailSummary(rawTranscript, rawLines, text) : `${events.length} transcript items`}
-          {rawTranscript?.session_id
-            ? ` · ${text.rawAgentStdout} ${rawTranscript.stdout_line_count} · ${text.rawAgentStderr} ${rawTranscript.stderr_line_count}`
-            : ""}
-          {rawTranscript?.updated_at ? ` · ${text.rawAgentUpdated} ${formatDate(rawTranscript.updated_at)}` : ""}
-        </small>
+        <div>
+          <span>{text.rawAgentTitle}</span>
+          <small>
+            {rawLines.length ? rawTranscriptTailSummary(rawTranscript, rawLines, text) : `${events.length} transcript items`}
+            {rawTranscript?.session_id
+              ? ` · ${text.rawAgentStdout} ${rawTranscript.stdout_line_count} · ${text.rawAgentStderr} ${rawTranscript.stderr_line_count}`
+              : ""}
+            {rawTranscript?.updated_at ? ` · ${text.rawAgentUpdated} ${formatDate(rawTranscript.updated_at)}` : ""}
+          </small>
+        </div>
+        {rawTranscript?.session_id ? (
+          <div className="raw-agent-head-actions">
+            {rawTranscript.stdout_download_url ? (
+              <a
+                className="secondary-button text-link-button"
+                href={`${apiBase}${rawTranscript.stdout_download_url}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {text.rawAgentOpenStdout}
+              </a>
+            ) : null}
+            {rawTranscript.stderr_download_url ? (
+              <a
+                className="secondary-button text-link-button"
+                href={`${apiBase}${rawTranscript.stderr_download_url}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {text.rawAgentOpenStderr}
+              </a>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <TurnStateBar text={text} locale={locale} turnState={turnState} />
       <div className="raw-agent-log" ref={rawScroll.ref} onScroll={rawScroll.onScroll}>

@@ -992,11 +992,19 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
     assert raw_transcript["session_id"] == session_id
     assert raw_transcript["stdout_line_count"] == 2
     assert raw_transcript["stderr_line_count"] == 0
+    assert raw_transcript["stdout_download_url"].endswith("/agent-session/raw-transcript/stdout/download")
+    assert raw_transcript["stderr_download_url"].endswith("/agent-session/raw-transcript/stderr/download")
     assert raw_transcript["stdout_tail"][-1].startswith('{"type":"item.completed"')
     assert raw_transcript["stdout_tail_lines"][-1]["line_number"] == 2
     assert raw_transcript["stdout_tail_lines"][-1]["parsed"]["type"] == "item.completed"
     assert raw_transcript["stdout_tail_lines"][-1]["truncated"] is False
     assert raw_transcript["stderr_tail_lines"] == []
+    raw_stdout_download = client.get(raw_transcript["stdout_download_url"])
+    assert raw_stdout_download.status_code == 200
+    assert raw_stdout_download.headers["content-type"].startswith("text/plain")
+    assert raw_stdout_download.text.startswith('{"type":"thread.started"')
+    invalid_raw_download = client.get(f"/api/projects/{project_id}/agent-session/raw-transcript/stdin/download")
+    assert invalid_raw_download.status_code == 404
 
     raw_path = Path(session["workspace_path"]) / ".tablex" / "codex_raw_transcript.jsonl"
     raw_path.write_text(

@@ -1157,11 +1157,26 @@ textarea {
 .raw-agent-head {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
   gap: 10px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 820;
   text-transform: uppercase;
+}
+
+.raw-agent-head > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.raw-agent-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  text-transform: none;
 }
 
 .raw-agent-log {
