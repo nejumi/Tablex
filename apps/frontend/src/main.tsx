@@ -1628,7 +1628,7 @@ function localeLooksJapanese(locale: string | null | undefined): boolean {
 
 function localeRequiresLocalizedDisplay(locale: string | null | undefined): boolean {
   const language = localeLanguage(locale);
-  return Boolean(language && language !== "en");
+  return Boolean(language);
 }
 
 const allowedInlineLatinTermsPattern =
@@ -1638,6 +1638,9 @@ function displayTextMatchesLocale(value: string | null | undefined, locale: stri
   const text = (value ?? "").trim();
   if (!text) return false;
   if (!localeRequiresLocalizedDisplay(locale)) return true;
+  if (localeLanguage(locale) === "en") {
+    return !/[\u3040-\u30ff\u3400-\u9fff]/.test(text);
+  }
   if (localeLooksJapanese(locale)) {
     const japaneseCharCount = text.match(/[\u3040-\u30ff\u3400-\u9fff]/g)?.length ?? 0;
     const latinSafeText = text.replace(allowedInlineLatinTermsPattern, " ");

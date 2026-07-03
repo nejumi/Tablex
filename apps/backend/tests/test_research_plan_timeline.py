@@ -52,3 +52,31 @@ def test_research_plan_timeline_uses_explicit_localized_display() -> None:
     assert blocks[0]["title"] == "特徴量の利用可能性を監査する"
     assert blocks[0]["subtitle"] == "承認後の再構築で使える入力列を先に整理します。"
     assert blocks[0]["localization_status"] == "localized"
+
+
+def test_research_plan_timeline_masks_japanese_blocks_for_english_display() -> None:
+    raw_blocks = [
+        {
+            "id": "objective_task_framing",
+            "title": "目的・タスク定義",
+            "why_it_matters": "salary予測の目的を確認します。",
+            "status": "active",
+        },
+        {
+            "id": "model_review",
+            "title": "Model review",
+            "why_it_matters": "Compare the current run evidence.",
+            "status": "pending",
+        },
+    ]
+
+    summary = research_plan_localization_summary(raw_blocks, locale="en-US")
+    blocks = clean_research_plan_timeline_blocks(raw_blocks, locale="en-US")
+
+    assert summary["missing_block_count"] == 1
+    assert blocks[0]["title"] == "Display language refresh pending"
+    assert blocks[0]["subtitle"] == ""
+    assert blocks[0]["localization_status"] == "needs_locale_refresh"
+    assert blocks[1]["title"] == "Model review"
+    assert blocks[1]["subtitle"] == "Compare the current run evidence."
+    assert blocks[1]["localization_status"] == "localized"

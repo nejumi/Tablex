@@ -450,7 +450,10 @@ def _research_plan_value_matches_locale(value: Any, *, locale: str | None) -> bo
 
 
 def _research_plan_text_matches_locale(value: str, *, locale: str | None) -> bool:
-    if not _research_plan_locale_is_japanese(locale):
+    language = _research_plan_locale_language(locale)
+    if language == "en":
+        return not _research_plan_has_cjk_text(value)
+    if language != "ja":
         return False
     japanese_char_count = len(re.findall(r"[\u3040-\u30ff\u3400-\u9fff]", value))
     latin_letter_count = len(re.findall(r"[A-Za-z]", value))
@@ -472,11 +475,12 @@ def _research_plan_has_unlocalized_latin_phrase(value: str) -> bool:
     return False
 
 
+def _research_plan_has_cjk_text(value: str) -> bool:
+    return bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", value))
+
+
 def _research_plan_requires_explicit_locale(locale: str | None) -> bool:
-    if not isinstance(locale, str) or not locale.strip():
-        return False
-    language = locale.strip().replace("_", "-").split("-", 1)[0].lower()
-    return language not in {"", "en"}
+    return bool(_research_plan_locale_language(locale))
 
 
 def _research_plan_missing_title_label(locale: str | None) -> str:
@@ -485,14 +489,19 @@ def _research_plan_missing_title_label(locale: str | None) -> str:
     return "Display language refresh pending"
 
 
-def _research_plan_locale_is_japanese(locale: str | None) -> bool:
+def _research_plan_locale_language(locale: str | None) -> str:
     if not isinstance(locale, str):
-        return False
+        return ""
     normalized = locale.strip().lower().replace("_", "-")
     if not normalized:
-        return False
-    language = normalized.split("-", 1)[0]
-    return language == "ja" or normalized in {"japanese", "日本語"} or normalized.startswith("日本語")
+        return ""
+    if normalized in {"japanese", "日本語"} or normalized.startswith("日本語"):
+        return "ja"
+    return normalized.split("-", 1)[0]
+
+
+def _research_plan_locale_is_japanese(locale: str | None) -> bool:
+    return _research_plan_locale_language(locale) == "ja"
 
 
 def _research_plan_effective_locale(requested_locale: str | None, payload: Any) -> str | None:
