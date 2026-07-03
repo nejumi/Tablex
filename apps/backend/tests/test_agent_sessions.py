@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import create_engine, select
@@ -24,8 +24,11 @@ from tabular_harness.services.agent_sessions import (
     build_turn_prompt,
     chat_update_message_from_text,
     ingest_session_workspace_outputs,
+    latest_codex_transcript_output_at,
     mark_user_instructions_delivered,
+    maybe_request_codex_progress_update,
     metadata_for_session_output,
+    progress_request_path,
     publish_raw_codex_transcript_snapshot,
     raw_codex_stderr_path,
     raw_codex_transcript_path,
@@ -249,12 +252,105 @@ def test_turn_prompt_keeps_chat_update_human_facing_not_internal_changelog(tmp_p
         prompt = build_turn_prompt(db, project=project, session=session)
 
         assert "reports/chat_update.md" in prompt.text
+        assert ".tablex/inbox/progress_request.md" in prompt.text
         assert "user-facing explanation, not an internal changelog" in prompt.text
         assert "Avoid raw artifact IDs" in prompt.text
         assert "do not make approval-waiting the dominant status" in prompt.text
         assert "make that active work the headline" in prompt.text
         assert "Do not present Full Auto as stopped on approval" in prompt.text
         assert "which reversible analysis, modeling, diagnostics, notebook/report work, or research" in prompt.text
+
+
+def test_latest_codex_output_ignores_sidecar_events(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_codex_time", name="Codex Time", current_phase="AUTONOMOUS_LOOP", autonomy_mode="full_auto")
+        session = AgentSession(
+            id="as_codex_time",
+            project_id=project.id,
+            goal_text="Run a useful data science loop.",
+            last_heartbeat_at=utc_now() - timedelta(minutes=10),
+        )
+        db.add_all([project, session])
+        db.flush()
+        codex_event = append_session_event(
+            db,
+            session,
+            source="codex_cli",
+            event_type="item.completed",
+            role="runner",
+            title="Codex message",
+            content="Working on analysis.",
+            payload={},
+        )
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="progress_update_requested",
+            role="harness",
+            title="Progress update requested",
+            content="Sidecar nudge.",
+            payload={},
+            update_heartbeat=False,
+        )
+        db.commit()
+
+        assert latest_codex_transcript_output_at(db, session_id=session.id) == codex_event.created_at
+
+
+def test_progress_update_nudge_writes_inbox_without_faking_heartbeat(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    workspace = tmp_path / "workspace"
+    old_heartbeat = utc_now() - timedelta(minutes=20)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_nudge", name="Nudge Project", current_phase="AUTONOMOUS_LOOP", autonomy_mode="full_auto")
+        session = AgentSession(
+            id="as_nudge",
+            project_id=project.id,
+            goal_text="Run a useful data science loop.",
+            status="running",
+            workspace_path=str(workspace),
+            created_at=utc_now() - timedelta(minutes=20),
+            started_at=utc_now() - timedelta(minutes=20),
+            last_heartbeat_at=old_heartbeat,
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        event = maybe_request_codex_progress_update(
+            db,
+            session=session,
+            locale="ja-JP",
+            now=utc_now(),
+            stale_after_seconds=60,
+            min_interval_seconds=300,
+        )
+        db.commit()
+
+        assert event is not None
+        db.refresh(session)
+        assert session.last_heartbeat_at is not None
+        assert session.last_heartbeat_at.replace(tzinfo=timezone.utc) == old_heartbeat
+        request_path = progress_request_path(workspace)
+        assert request_path.exists()
+        request_text = request_path.read_text(encoding="utf-8")
+        assert "reports/chat_update.md" in request_text
+        assert "Raw logの要約ではなく" in request_text
+
+        second_event = maybe_request_codex_progress_update(
+            db,
+            session=session,
+            locale="ja-JP",
+            now=utc_now(),
+            stale_after_seconds=60,
+            min_interval_seconds=300,
+        )
+        assert second_event is None
 
 
 def test_chat_update_message_uses_latest_concise_tail_for_cumulative_files() -> None:

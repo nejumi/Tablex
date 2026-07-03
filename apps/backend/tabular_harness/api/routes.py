@@ -144,8 +144,10 @@ from tabular_harness.services.agent_sessions import (
     append_session_event,
     append_user_instruction_to_workspace_inbox,
     chat_update_message_from_text,
+    latest_codex_transcript_output_at,
     latest_main_session,
     latest_project_response_locale,
+    maybe_request_codex_progress_update,
     raw_codex_stderr_path,
     raw_codex_transcript_path,
     run_main_agent_session_supervisor,
@@ -6744,7 +6746,8 @@ def get_project_agent_activity(
     if session is not None:
         session_processes = running_codex_processes_for_project(project_id)
         session_has_process = bool(session_processes)
-        heartbeat_age_seconds = seconds_since_timestamp(session.last_heartbeat_at, now=utc_now())
+        last_codex_output_at = latest_codex_transcript_output_at(db, session_id=session.id)
+        heartbeat_age_seconds = seconds_since_timestamp(last_codex_output_at, now=utc_now())
         response_locale = latest_project_response_locale(db, project)
         heartbeat_phrase = heartbeat_phrase_for_locale(heartbeat_age_seconds, locale=response_locale)
         running_quietly = session_has_process and heartbeat_age_seconds is not None and heartbeat_age_seconds >= 120
@@ -6815,6 +6818,12 @@ def get_project_agent_activity(
                 or session.last_error
                 or fallback_detail
             )
+        if session_has_process:
+            maybe_request_codex_progress_update(
+                db,
+                session=session,
+                locale=response_locale,
+            )
         workers.insert(
             0,
             {
@@ -6835,7 +6844,7 @@ def get_project_agent_activity(
                 "started_at": session.started_at.isoformat() if session.started_at else None,
                 "run_after": None,
                 "active": session_active,
-                "last_output_at": session.last_heartbeat_at.isoformat() if session.last_heartbeat_at else None,
+                "last_output_at": last_codex_output_at.isoformat() if last_codex_output_at else None,
                 "last_output_seconds_ago": heartbeat_age_seconds,
                 "human_description": {
                     "source": "agent_session",
@@ -6858,7 +6867,8 @@ def get_project_agent_activity(
     if session is not None and session.status in {"starting", "running", "between_turns", "waiting_for_runner"}:
         observed_processes = list(turn_state.get("codex_processes") or [])
         session_has_process = bool(observed_processes)
-        heartbeat_age_seconds = seconds_since_timestamp(session.last_heartbeat_at, now=utc_now())
+        last_codex_output_at = latest_codex_transcript_output_at(db, session_id=session.id)
+        heartbeat_age_seconds = seconds_since_timestamp(last_codex_output_at, now=utc_now())
         heartbeat_phrase = heartbeat_phrase_for_locale(heartbeat_age_seconds, locale=response_locale)
         running_quietly = session_has_process and heartbeat_age_seconds is not None and heartbeat_age_seconds >= 120
         if session_has_process:
@@ -6884,7 +6894,7 @@ def get_project_agent_activity(
             "agent_session_id": session.id,
             "active_job_id": None,
             "active_job_type": "agent_session",
-            "last_output_at": session.last_heartbeat_at.isoformat() if session.last_heartbeat_at else None,
+            "last_output_at": last_codex_output_at.isoformat() if last_codex_output_at else None,
             "last_output_seconds_ago": heartbeat_age_seconds,
         }
     return {

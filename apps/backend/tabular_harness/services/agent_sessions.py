@@ -12,7 +12,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -56,8 +56,11 @@ SESSION_INTERNAL_DIR = ".tablex"
 SESSION_INBOX_DIR = "inbox"
 USER_INSTRUCTIONS_INBOX_FILENAME = "user_instructions.jsonl"
 USER_INSTRUCTIONS_LATEST_FILENAME = "latest_user_instruction.md"
+PROGRESS_REQUEST_FILENAME = "progress_request.md"
 CODEX_RAW_TRANSCRIPT_FILENAME = "codex_raw_transcript.jsonl"
 CODEX_STDERR_LOG_FILENAME = "codex_stderr.log"
+PROGRESS_UPDATE_NUDGE_AFTER_SECONDS = 180
+PROGRESS_UPDATE_NUDGE_MIN_INTERVAL_SECONDS = 300
 _SUPERVISOR_LOCK = threading.Lock()
 _ACTIVE_SUPERVISORS: set[str] = set()
 
@@ -168,6 +171,10 @@ def latest_user_instruction_path(workspace: Path) -> Path:
     return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / USER_INSTRUCTIONS_LATEST_FILENAME
 
 
+def progress_request_path(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / PROGRESS_REQUEST_FILENAME
+
+
 def build_default_goal_text(db: Session, project: Project) -> str:
     datasets = list(
         db.scalars(
@@ -214,6 +221,7 @@ def append_session_event(
     payload: dict[str, Any] | None = None,
     artifact_id: str | None = None,
     job_id: str | None = None,
+    update_heartbeat: bool = True,
 ) -> AgentTranscriptEvent:
     db.flush()
     current_max = db.scalar(
@@ -236,7 +244,8 @@ def append_session_event(
     )
     db.add(event)
     session.updated_at = utc_now()
-    session.last_heartbeat_at = utc_now()
+    if update_heartbeat:
+        session.last_heartbeat_at = utc_now()
     return event
 
 
@@ -331,6 +340,139 @@ def append_user_instruction_to_workspace_inbox(
         )
     except OSError:
         return
+
+
+def write_progress_request_to_workspace_inbox(
+    session: AgentSession,
+    *,
+    event: AgentTranscriptEvent,
+    locale: str | None,
+) -> None:
+    if not session.workspace_path:
+        return
+    workspace = Path(session.workspace_path)
+    path = progress_request_path(workspace)
+    japanese = bool(locale and locale.lower().startswith("ja"))
+    if japanese:
+        message = (
+            "人間向けの進捗説明がしばらく更新されていません。"
+            "次に意味のある節目、現在の作業、詰まり、計画変更、または確認すべき成果物があるタイミングで、"
+            "`reports/chat_update.md` をユーザーの言語で短く更新してください。"
+            "Raw logの要約ではなく、今何をしていて、なぜそれが重要で、次にどこを見るべきかを説明してください。"
+        )
+    else:
+        message = (
+            "The human-facing progress update has been quiet for a while. "
+            "At the next meaningful checkpoint, current work, issue, plan change, or artifact worth reviewing, "
+            "update `reports/chat_update.md` concisely in the user's locale. "
+            "Do not summarize Raw logs; explain what you are doing now, why it matters, and where the user should look next."
+        )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "\n".join(
+                [
+                    "schema_version: tablex_progress_request.v1",
+                    f"event_index: {event.event_index}",
+                    f"created_at: {event.created_at.isoformat()}",
+                    f"locale: {locale or 'unspecified'}",
+                    "",
+                    message,
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+
+
+def latest_codex_transcript_output_at(db: Session, *, session_id: str) -> datetime | None:
+    event = db.scalar(
+        select(AgentTranscriptEvent)
+        .where(
+            AgentTranscriptEvent.session_id == session_id,
+            AgentTranscriptEvent.source.in_(["codex_cli", "codex_cli_stderr"]),
+        )
+        .order_by(AgentTranscriptEvent.event_index.desc())
+        .limit(1)
+    )
+    return event.created_at if event is not None else None
+
+
+def latest_codex_chat_update_at(db: Session, *, project_id: str, session_id: str) -> datetime | None:
+    artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project_id, Artifact.asset_type == "agent_chat_turn")
+            .order_by(Artifact.created_at.desc())
+            .limit(50)
+        ).all()
+    )
+    for artifact in artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("source") == "main_codex_session_chat_update" and metadata.get("agent_session_id") == session_id:
+            return artifact.created_at
+    return None
+
+
+def latest_progress_update_nudge_at(db: Session, *, session_id: str) -> datetime | None:
+    event = db.scalar(
+        select(AgentTranscriptEvent)
+        .where(
+            AgentTranscriptEvent.session_id == session_id,
+            AgentTranscriptEvent.source == "tablex_sidecar",
+            AgentTranscriptEvent.event_type == "progress_update_requested",
+        )
+        .order_by(AgentTranscriptEvent.event_index.desc())
+        .limit(1)
+    )
+    return event.created_at if event is not None else None
+
+
+def maybe_request_codex_progress_update(
+    db: Session,
+    *,
+    session: AgentSession,
+    locale: str | None,
+    now: datetime | None = None,
+    stale_after_seconds: int = PROGRESS_UPDATE_NUDGE_AFTER_SECONDS,
+    min_interval_seconds: int = PROGRESS_UPDATE_NUDGE_MIN_INTERVAL_SECONDS,
+) -> AgentTranscriptEvent | None:
+    if not session.workspace_path or session.status not in ACTIVE_SESSION_STATUSES:
+        return None
+    observed_at = now or utc_now()
+    reference = latest_codex_chat_update_at(db, project_id=session.project_id, session_id=session.id)
+    if reference is None:
+        reference = session.started_at or session.created_at
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    if (observed_at.astimezone(timezone.utc) - reference.astimezone(timezone.utc)).total_seconds() < stale_after_seconds:
+        return None
+    latest_nudge = latest_progress_update_nudge_at(db, session_id=session.id)
+    if latest_nudge is not None:
+        if latest_nudge.tzinfo is None:
+            latest_nudge = latest_nudge.replace(tzinfo=timezone.utc)
+        if (observed_at.astimezone(timezone.utc) - latest_nudge.astimezone(timezone.utc)).total_seconds() < min_interval_seconds:
+            return None
+    event = append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="progress_update_requested",
+        role="harness",
+        title="Progress update requested",
+        content="Tablex asked the main Codex session to refresh the human-facing progress update without interrupting the session.",
+        payload={
+            "locale": locale,
+            "stale_after_seconds": stale_after_seconds,
+            "min_interval_seconds": min_interval_seconds,
+            "latest_chat_update_at": reference.isoformat(),
+        },
+        update_heartbeat=False,
+    )
+    write_progress_request_to_workspace_inbox(session, event=event, locale=locale)
+    return event
 
 
 def publish_raw_codex_transcript_snapshot(workspace: Path) -> list[Path]:
@@ -900,7 +1042,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Prefer marimo notebooks for data understanding, modeling diagnostics, and reports.",
         "- Read `.tablex/context.json` for `human_interface.response_locale` and write human-facing notebooks/reports/chat in that language.",
         "- Read equipped Skill paths in `.tablex/context.json` before EDA, prior research, notebook authoring, or modeling strategy work.",
-        "- During long turns, check `.tablex/inbox/user_instructions.jsonl` and `.tablex/inbox/latest_user_instruction.md` for new user messages; incorporate them without waiting for a new Codex turn when practical.",
+        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, and `.tablex/inbox/progress_request.md`; incorporate user messages and publish progress updates without waiting for a new Codex turn when practical.",
         "- If you need user input in Full Auto, state the question and your provisional assumption, then continue unless a true hard safety boundary makes all useful work impossible.",
         "- Treat formal approval, data-owner confirmation, deployment permission, or production-write clearance as future evidence unless the current action would write to production, expose secrets, or violate evaluation integrity. Keep doing reversible local analysis and artifact generation while waiting.",
         "- Do not present Full Auto as stopped on approval unless no useful reversible work remains. If a destructive or deployment-grade action is deferred, say which reversible analysis, modeling, diagnostics, notebook/report work, or research you are continuing now.",

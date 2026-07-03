@@ -447,6 +447,69 @@ def test_agent_activity_watchdog_starts_main_session_when_full_auto_has_no_sessi
     assert session["session_type"] == "main_autonomous"
 
 
+def test_agent_activity_last_output_uses_codex_transcript_not_sidecar_heartbeat(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Codex output clock"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.autonomy_mode = "full_auto"
+        project.current_phase = "AUTONOMOUS_LOOP"
+        session = AgentSession(
+            id="ags_codex_output_clock",
+            project_id=project_id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Keep working.",
+            last_heartbeat_at=utc_now(),
+        )
+        db.add(session)
+        db.flush()
+        codex_event = append_session_event(
+            db,
+            session,
+            source="codex_cli",
+            event_type="item.completed",
+            role="runner",
+            title="Codex message",
+            content="A real Codex update.",
+            payload={},
+        )
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="sidecar_status",
+            role="harness",
+            title="Sidecar status",
+            content="Harness sidecar update.",
+            payload={},
+        )
+        expected_output_at = codex_event.created_at.replace(tzinfo=None).isoformat()
+        db.commit()
+
+    activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
+    assert activity_response.status_code == 200
+    activity = activity_response.json()
+    assert activity["turn_state"]["last_output_at"] == expected_output_at
+    assert activity["workers"][0]["last_output_at"] == expected_output_at
+    assert activity["workers"][0]["human_description"]["summary"] == "A real Codex update."
+
+
 def test_agent_activity_surfaces_runner_retry_state(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setattr(
         "tabular_harness.api.routes.run_main_agent_session_supervisor",
