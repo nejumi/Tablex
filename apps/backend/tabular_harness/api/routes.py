@@ -21,7 +21,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -1813,9 +1813,7 @@ def project_overview(project_id: str, db: Annotated[Session, Depends(get_session
         .where(DatasetSnapshot.project_id == project_id)
         .order_by(DatasetSnapshot.created_at.desc())
     )
-    recent_artifacts = db.scalars(
-        select(Artifact).where(Artifact.project_id == project_id).order_by(Artifact.created_at.desc()).limit(8)
-    ).all()
+    recent_artifacts = latest_artifact_rows(db, project_id, limit=8)
     recent_jobs = db.scalars(
         select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc()).limit(8)
     ).all()
@@ -1827,7 +1825,8 @@ def project_overview(project_id: str, db: Annotated[Session, Depends(get_session
     ).all()
     counts = {
         "datasets": count_rows(db, DatasetSnapshot, project_id),
-        "artifacts": count_rows(db, Artifact, project_id),
+        "artifacts": count_latest_artifacts(db, project_id),
+        "artifact_versions": count_rows(db, Artifact, project_id),
         "questions": count_rows(db, Question, project_id),
         "assumptions": count_rows(db, Assumption, project_id),
         "evaluation_candidates": count_rows(db, EvaluationCandidate, project_id),
@@ -6736,15 +6735,19 @@ def list_artifacts(
     db: Annotated[Session, Depends(get_session)],
     limit: int | None = None,
     asset_type: str | None = None,
+    latest_only: bool = True,
 ) -> list[dict[str, Any]]:
     require_project(db, project_id)
-    query = select(Artifact).where(Artifact.project_id == project_id)
-    if asset_type:
-        query = query.where(Artifact.asset_type == asset_type)
-    query = query.order_by(Artifact.created_at.desc())
-    if limit is not None:
-        query = query.limit(max(1, min(limit, 5000)))
-    artifacts = db.scalars(query).all()
+    if latest_only:
+        artifacts = latest_artifact_rows(db, project_id, limit=limit, asset_type=asset_type)
+    else:
+        query = select(Artifact).where(Artifact.project_id == project_id)
+        if asset_type:
+            query = query.where(Artifact.asset_type == asset_type)
+        query = query.order_by(Artifact.created_at.desc())
+        if limit is not None:
+            query = query.limit(max(1, min(limit, 5000)))
+        artifacts = db.scalars(query).all()
     return [artifact_to_dict(item) for item in artifacts]
 
 
@@ -7779,6 +7782,51 @@ def latest_profile_for_dataset(db: Session, dataset: DatasetSnapshot) -> dict[st
 
 def count_rows(db: Session, model: type[Any], project_id: str) -> int:
     return int(db.scalar(select(func.count()).select_from(model).where(model.project_id == project_id)) or 0)
+
+
+def count_latest_artifacts(db: Session, project_id: str, asset_type: str | None = None) -> int:
+    subquery = select(Artifact.asset_type, Artifact.name).where(Artifact.project_id == project_id)
+    if asset_type:
+        subquery = subquery.where(Artifact.asset_type == asset_type)
+    grouped = subquery.group_by(Artifact.asset_type, Artifact.name).subquery()
+    return int(db.scalar(select(func.count()).select_from(grouped)) or 0)
+
+
+def latest_artifact_rows(
+    db: Session,
+    project_id: str,
+    *,
+    limit: int | None = None,
+    asset_type: str | None = None,
+) -> list[Artifact]:
+    latest_versions = (
+        select(
+            Artifact.asset_type.label("asset_type"),
+            Artifact.name.label("name"),
+            func.max(Artifact.version).label("version"),
+        )
+        .where(Artifact.project_id == project_id)
+        .group_by(Artifact.asset_type, Artifact.name)
+    )
+    if asset_type:
+        latest_versions = latest_versions.where(Artifact.asset_type == asset_type)
+    latest_versions_subquery = latest_versions.subquery()
+    query = (
+        select(Artifact)
+        .join(
+            latest_versions_subquery,
+            and_(
+                Artifact.asset_type == latest_versions_subquery.c.asset_type,
+                Artifact.name == latest_versions_subquery.c.name,
+                Artifact.version == latest_versions_subquery.c.version,
+            ),
+        )
+        .where(Artifact.project_id == project_id)
+        .order_by(Artifact.created_at.desc())
+    )
+    if limit is not None:
+        query = query.limit(max(1, min(limit, 5000)))
+    return list(db.scalars(query).all())
 
 
 def leaderboard_sort_key(run: ExperimentRun) -> tuple[int, float]:

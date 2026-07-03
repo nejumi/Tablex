@@ -171,6 +171,26 @@ def test_project_artifacts_support_limit_and_asset_type_filters(tmp_path: Path) 
                 payload={"index": index},
                 metadata={"index": index},
             )
+        store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="agent_session_report",
+            name="versioned_report",
+            filename="artifact.json",
+            payload={"version": 1},
+            metadata={"version": 1},
+        )
+        store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="agent_session_report",
+            name="versioned_report",
+            filename="artifact.json",
+            payload={"version": 2},
+            metadata={"version": 2},
+        )
         db.commit()
 
     limited_response = client.get(f"/api/projects/{project_id}/artifacts?limit=2")
@@ -180,6 +200,23 @@ def test_project_artifacts_support_limit_and_asset_type_filters(tmp_path: Path) 
     filtered_response = client.get(f"/api/projects/{project_id}/artifacts?asset_type=analysis_notebook")
     assert filtered_response.status_code == 200
     assert {item["asset_type"] for item in filtered_response.json()} == {"analysis_notebook"}
+
+    latest_response = client.get(f"/api/projects/{project_id}/artifacts")
+    assert latest_response.status_code == 200
+    latest_versioned = [item for item in latest_response.json() if item["name"] == "versioned_report"]
+    assert len(latest_versioned) == 1
+    assert latest_versioned[0]["version"] == 2
+
+    all_versions_response = client.get(f"/api/projects/{project_id}/artifacts?latest_only=false")
+    assert all_versions_response.status_code == 200
+    all_versioned = [item for item in all_versions_response.json() if item["name"] == "versioned_report"]
+    assert [item["version"] for item in all_versioned] == [2, 1]
+
+    overview_response = client.get(f"/api/projects/{project_id}/overview")
+    assert overview_response.status_code == 200
+    overview_counts = overview_response.json()["counts"]
+    assert overview_counts["artifacts"] == 6
+    assert overview_counts["artifact_versions"] == 7
 
 
 def test_autonomy_mode_change_is_persisted_in_agent_chat_history(tmp_path: Path) -> None:
