@@ -5978,7 +5978,7 @@ function researchPlanBlocksFromTimeline(
   onNavigateToTarget: (tab: Tab, anchor?: string | null) => void
 ): ResearchPlanBlock[] {
   if (!timeline?.blocks.length) return [];
-  return timeline.blocks.map((block, index) => {
+  const blocks = timeline.blocks.map((block, index) => {
     const targetTab = block.target_tab ? tabFromString(block.target_tab, "Home") : null;
     const subtasks: ResearchPlanSubtask[] = block.subtasks.map((subtask) => {
       const subtaskTab = subtask.target_tab ? tabFromString(subtask.target_tab, targetTab ?? "Home") : targetTab;
@@ -6005,6 +6005,7 @@ function researchPlanBlocksFromTimeline(
       onClick: targetTab ? () => onNavigateToTarget(targetTab, block.target_anchor) : undefined
     };
   });
+  return collapseUnlocalizedResearchPlanBlocks(blocks, text);
 }
 
 function derivedResearchPlanSubtasks(
@@ -6077,6 +6078,30 @@ function derivedResearchPlanSubtasks(
     });
   }
   return derived;
+}
+
+function collapseUnlocalizedResearchPlanBlocks(blocks: ResearchPlanBlock[], text: LocaleMessages): ResearchPlanBlock[] {
+  const refreshTitle = text.researchPlanBlockLocaleRefreshTitle;
+  const stableBlocks: ResearchPlanBlock[] = [];
+  const refreshBlocks: ResearchPlanBlock[] = [];
+  for (const block of blocks) {
+    if (block.title === refreshTitle) {
+      refreshBlocks.push(block);
+    } else {
+      stableBlocks.push(block);
+    }
+  }
+  if (refreshBlocks.length <= 1) return blocks;
+  const status: ResearchPlanBlockStatus = refreshBlocks.some((block) => block.status === "active") ? "active" : "pending";
+  const refreshSummary: ResearchPlanBlock = {
+    id: "research_plan_locale_refresh_group",
+    title: refreshTitle,
+    subtitle: text.researchPlanLocaleRefreshDetail,
+    status,
+    eyebrow: "",
+    evidence: `${refreshBlocks.length} ${text.researchPlanSummaryBlocks}`
+  };
+  return [...stableBlocks, refreshSummary];
 }
 
 function researchPlanCompactSummary(blocks: ResearchPlanBlock[], text: LocaleMessages): string {
