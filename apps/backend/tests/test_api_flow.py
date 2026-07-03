@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import zipfile
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,7 +12,11 @@ from typing import Any, cast
 
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
-from tabular_harness.api.routes import visible_activity_workers
+from tabular_harness.api.routes import (
+    format_elapsed_seconds,
+    seconds_since_timestamp,
+    visible_activity_workers,
+)
 from tabular_harness.core.config import Settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
@@ -86,6 +90,16 @@ def test_visible_activity_workers_hide_old_terminal_cards() -> None:
     )
 
     assert [worker["worker_id"] for worker in workers] == ["recent", "queued", "session"]
+
+
+def test_agent_activity_elapsed_output_helpers() -> None:
+    now = datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc)
+
+    assert seconds_since_timestamp(now - timedelta(seconds=42), now=now) == 42
+    assert seconds_since_timestamp(None, now=now) is None
+    assert format_elapsed_seconds(42) == "42s"
+    assert format_elapsed_seconds(125) == "2m"
+    assert format_elapsed_seconds(3660) == "1h 1m"
 
 
 def test_project_autonomy_mode_persists(tmp_path: Path) -> None:

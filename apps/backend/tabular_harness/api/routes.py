@@ -6601,6 +6601,13 @@ def get_project_agent_activity(
     if session is not None:
         session_processes = running_codex_processes_for_project(project_id)
         session_has_process = bool(session_processes)
+        heartbeat_age_seconds = seconds_since_timestamp(session.last_heartbeat_at, now=utc_now())
+        heartbeat_phrase = (
+            f" Last observed output was {format_elapsed_seconds(heartbeat_age_seconds)} ago."
+            if heartbeat_age_seconds is not None
+            else ""
+        )
+        running_quietly = session_has_process and heartbeat_age_seconds is not None and heartbeat_age_seconds >= 120
         retry_state = latest_agent_session_retry_state(db, session.id)
         session_display_status = (
             "running"
@@ -6617,7 +6624,7 @@ def get_project_agent_activity(
             else "Codex runner is not ready; Tablex will keep retrying this same session."
         )
         session_detail = (
-            "Codex is running in the project workspace now."
+            f"Codex is running in the project workspace now.{heartbeat_phrase}"
             if session_has_process
             else retry_detail
             if session.status == "waiting_for_runner"
@@ -6631,7 +6638,9 @@ def get_project_agent_activity(
                 "worker_id": "main-agent-session",
                 "display_name": "Autonomous Analyst",
                 "status": session_display_status,
-                "headline": "Codex is working"
+                "headline": "Codex is running quietly"
+                if running_quietly
+                else "Codex is working"
                 if session_has_process
                 else "Codex runner retry scheduled"
                 if session.status == "waiting_for_runner"
@@ -6649,6 +6658,8 @@ def get_project_agent_activity(
                 "started_at": session.started_at.isoformat() if session.started_at else None,
                 "run_after": None,
                 "active": session_active,
+                "last_output_at": session.last_heartbeat_at.isoformat() if session.last_heartbeat_at else None,
+                "last_output_seconds_ago": heartbeat_age_seconds,
                 "human_description": {
                     "source": "agent_session",
                     "title": "Autonomous Analyst",
@@ -6670,8 +6681,15 @@ def get_project_agent_activity(
     if session is not None and session.status in {"starting", "running", "between_turns", "waiting_for_runner"}:
         observed_processes = list(turn_state.get("codex_processes") or [])
         session_has_process = bool(observed_processes)
+        heartbeat_age_seconds = seconds_since_timestamp(session.last_heartbeat_at, now=utc_now())
+        heartbeat_phrase = (
+            f" Last observed output was {format_elapsed_seconds(heartbeat_age_seconds)} ago."
+            if heartbeat_age_seconds is not None
+            else ""
+        )
+        running_quietly = session_has_process and heartbeat_age_seconds is not None and heartbeat_age_seconds >= 120
         turn_detail = (
-            "Codex is running in the project workspace now."
+            f"Codex is running in the project workspace now.{heartbeat_phrase}"
             if session_has_process
             else session_detail
             if session.status == "waiting_for_runner"
@@ -6683,7 +6701,9 @@ def get_project_agent_activity(
             **turn_state,
             "state": "agent_running" if session_has_process else "agent_scheduled",
             "owner": "agent",
-            "label": "Codex is working"
+            "label": "Codex is running quietly"
+            if running_quietly
+            else "Codex is working"
             if session_has_process
             else "Codex runner retry scheduled"
             if session.status == "waiting_for_runner"
@@ -6694,6 +6714,8 @@ def get_project_agent_activity(
             "agent_session_id": session.id,
             "active_job_id": None,
             "active_job_type": "agent_session",
+            "last_output_at": session.last_heartbeat_at.isoformat() if session.last_heartbeat_at else None,
+            "last_output_seconds_ago": heartbeat_age_seconds,
         }
     return {
         "schema_version": "agent_activity.v1",
@@ -6703,6 +6725,25 @@ def get_project_agent_activity(
         "turn_state": turn_state,
         "workers": visible_workers[:20],
     }
+
+
+def seconds_since_timestamp(value: datetime | None, *, now: datetime) -> int | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return max(0, int((now.astimezone(timezone.utc) - value.astimezone(timezone.utc)).total_seconds()))
+
+
+def format_elapsed_seconds(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    remaining_minutes = minutes % 60
+    return f"{hours}h {remaining_minutes}m" if remaining_minutes else f"{hours}h"
 
 
 def latest_agent_session_retry_state(db: Session, session_id: str) -> dict[str, Any] | None:
