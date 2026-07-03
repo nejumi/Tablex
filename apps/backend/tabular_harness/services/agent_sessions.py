@@ -841,13 +841,9 @@ def consecutive_runner_failure_count(db: Session, session_id: str) -> int:
         ).all()
     )
     count = 0
-    failure_events = {
-        "runner_unavailable",
-        "runner_retry_scheduled",
-        "turn_recovery_scheduled",
-        "process_timeout",
-        "process_killed_after_timeout",
-    }
+    current_attempt_counted = False
+    scheduled_failure_events = {"runner_retry_scheduled", "turn_recovery_scheduled"}
+    raw_failure_events = {"runner_unavailable", "process_timeout", "process_killed_after_timeout"}
     for event in events:
         if event.event_type in {"turn_completed_supervisor_continue"}:
             break
@@ -855,8 +851,17 @@ def consecutive_runner_failure_count(db: Session, session_id: str) -> int:
             payload = loads_json(event.payload_json, {})
             if payload.get("exit_code") == 0:
                 break
-        if event.event_type in failure_events:
+            if not current_attempt_counted:
+                count += 1
+                current_attempt_counted = True
+            continue
+        if event.event_type in scheduled_failure_events:
             count += 1
+            current_attempt_counted = True
+            continue
+        if event.event_type in raw_failure_events and not current_attempt_counted:
+            count += 1
+            current_attempt_counted = True
     return max(1, count)
 
 

@@ -429,6 +429,60 @@ def test_turn_prompt_includes_living_research_plan_contract(tmp_path: Path) -> N
         assert "freely add, remove, reorder, branch, or revise" in prompt.text
 
 
+def test_runner_failure_backoff_counts_attempts_not_sidecar_events(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_retry_count", name="Retry Count", current_phase="AUTONOMOUS_LOOP", autonomy_mode="full_auto")
+        session = AgentSession(
+            id="as_retry_count",
+            project_id=project.id,
+            goal_text="Keep the main session alive.",
+        )
+        db.add_all([project, session])
+        db.flush()
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="runner_unavailable",
+            role="harness",
+            title="Codex CLI is not available",
+            content="Codex binary is missing.",
+            payload={},
+        )
+        db.commit()
+
+        assert agent_sessions_module.consecutive_runner_failure_count(db, session.id) == 1
+        assert agent_sessions_module.retry_delay_seconds(1) == 5
+
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="runner_retry_scheduled",
+            role="harness",
+            title="Codex runner retry scheduled",
+            content="Retry scheduled.",
+            payload={"retry_delay_seconds": 5},
+        )
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="runner_unavailable",
+            role="harness",
+            title="Codex CLI is still not available",
+            content="Codex binary is missing.",
+            payload={},
+        )
+        db.commit()
+
+        assert agent_sessions_module.consecutive_runner_failure_count(db, session.id) == 2
+        assert agent_sessions_module.retry_delay_seconds(2) == 30
+
+
 def test_turn_prompt_keeps_chat_update_human_facing_not_internal_changelog(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
