@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
+import re
 import shutil
 import signal
 import subprocess
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +34,7 @@ from tabular_harness.models.entities import (
     User,
     utc_now,
 )
+from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
     artifact_primary_path,
@@ -40,8 +45,16 @@ from tabular_harness.services.artifacts import (
 MAIN_AUTONOMOUS_SESSION_TYPE = "main_autonomous"
 ACTIVE_SESSION_STATUSES = {"starting", "running", "between_turns", "waiting_for_runner"}
 TERMINAL_SESSION_STATUSES = {"stopped", "failed", "gave_up", "completed"}
+RETRY_BACKOFF_SECONDS = (5, 30, 120, 600)
+STALE_PROCESS_TERM_GRACE_SECONDS = 5
 _SUPERVISOR_LOCK = threading.Lock()
 _ACTIVE_SUPERVISORS: set[str] = set()
+
+
+@dataclass(frozen=True)
+class TurnPrompt:
+    text: str
+    delivered_user_event_indexes: tuple[int, ...]
 
 
 def active_main_session(db: Session, project_id: str) -> AgentSession | None:
@@ -240,6 +253,115 @@ def transcript_event_to_dict(event: AgentTranscriptEvent) -> dict[str, Any]:
     }
 
 
+SupervisorRunner = Callable[..., None]
+
+
+def start_main_agent_session_supervisor_thread(
+    session_factory: sessionmaker[Session],
+    store: LocalArtifactStore,
+    *,
+    project_id: str,
+    session_id: str,
+    agent_model: str | None = None,
+    supervisor_runner: SupervisorRunner | None = None,
+) -> threading.Thread | None:
+    if not acquire_supervisor_slot(session_id):
+        return None
+    runner = supervisor_runner or run_main_agent_session_supervisor
+    if supervisor_runner is not None and supervisor_runner is not run_main_agent_session_supervisor:
+        try:
+            runner(
+                session_factory,
+                store,
+                project_id=project_id,
+                session_id=session_id,
+                agent_model=agent_model,
+                slot_acquired=True,
+            )
+        finally:
+            release_supervisor_slot(session_id)
+        return None
+
+    def target() -> None:
+        try:
+            runner(
+                session_factory,
+                store,
+                project_id=project_id,
+                session_id=session_id,
+                agent_model=agent_model,
+                slot_acquired=True,
+            )
+        finally:
+            if runner is not run_main_agent_session_supervisor:
+                release_supervisor_slot(session_id)
+
+    thread = threading.Thread(
+        target=target,
+        name=f"tablex-agent-session-{session_id}",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def start_active_main_session_supervisors(
+    session_factory: sessionmaker[Session],
+    store: LocalArtifactStore,
+    *,
+    agent_model: str | None = None,
+) -> list[threading.Thread]:
+    launch_specs: list[tuple[str, str]] = []
+    with session_factory() as db:
+        projects = list(
+            db.scalars(
+                select(Project).where(
+                    Project.current_phase == "AUTONOMOUS_LOOP",
+                    Project.autonomy_mode == "full_auto",
+                )
+            ).all()
+        )
+        for project in projects:
+            session = active_main_session(db, project.id)
+            if session is None:
+                session = start_or_resume_main_session(
+                    db,
+                    store=store,
+                    project=project,
+                    goal_text=None,
+                    autonomy_mode="full_auto",
+                    runner_kind="codex_cli",
+                    created_by="tablex-startup-supervisor",
+                )
+            elif session.pid is not None:
+                session.status = "between_turns"
+                session.last_error = "Server restarted while Codex was active; Tablex will resume the same session."
+                append_session_event(
+                    db,
+                    session,
+                    source="tablex_sidecar",
+                    event_type="startup_stale_runner_detected",
+                    role="harness",
+                    title="Startup will recover Full Auto",
+                    content="Tablex restarted and will recover the active autonomous session.",
+                    payload={"previous_pid": session.pid},
+                )
+            launch_specs.append((project.id, session.id))
+        db.commit()
+    threads: list[threading.Thread] = []
+    for project_id, session_id in launch_specs:
+        thread = start_main_agent_session_supervisor_thread(
+            session_factory,
+            store,
+            project_id=project_id,
+            session_id=session_id,
+            agent_model=agent_model,
+        )
+        if thread is not None:
+            threads.append(thread)
+    return threads
+
+
 def run_main_agent_session_supervisor(
     session_factory: sessionmaker[Session],
     store: LocalArtifactStore,
@@ -249,8 +371,9 @@ def run_main_agent_session_supervisor(
     agent_model: str | None = None,
     max_turns: int = 100_000,
     turn_timeout_seconds: int = 1800,
+    slot_acquired: bool = False,
 ) -> None:
-    if not acquire_supervisor_slot(session_id):
+    if not slot_acquired and not acquire_supervisor_slot(session_id):
         return
     try:
         for _ in range(max_turns):
@@ -260,10 +383,28 @@ def run_main_agent_session_supervisor(
                 if project is None or session is None:
                     return
                 if session.pid and pid_is_alive(session.pid):
-                    session.status = "running"
-                    session.last_heartbeat_at = utc_now()
+                    previous_pid = session.pid
+                    workspace_hint = Path(session.workspace_path) if session.workspace_path else None
+                    terminated = False
+                    if pid_matches_agent_codex_process(previous_pid, workspace_hint, session.id):
+                        terminate_stale_codex_process(previous_pid)
+                        terminated = True
+                    session.pid = None
+                    session.status = "between_turns"
+                    session.last_error = "Recovered an unobserved Codex process from an earlier supervisor."
+                    append_session_event(
+                        db,
+                        session,
+                        source="tablex_sidecar",
+                        event_type="stale_runner_process_recovered",
+                        role="harness",
+                        title="Recovered unobserved Codex process",
+                        content="A stored Codex PID could not be monitored by this supervisor; Tablex cleared it and will resume the same session.",
+                        payload={"previous_pid": previous_pid, "terminated_process": terminated},
+                    )
                     db.commit()
-                    return
+                    time.sleep(1)
+                    continue
                 if project.current_phase != "AUTONOMOUS_LOOP" or session.status in TERMINAL_SESSION_STATUSES:
                     session.status = "stopped"
                     session.pid = None
@@ -281,7 +422,7 @@ def run_main_agent_session_supervisor(
                     db.commit()
                     return
                 workspace = prepare_session_workspace(db, store=store, project=project, session=session)
-                prompt = build_turn_prompt(db, project=project, session=session)
+                turn_prompt = build_turn_prompt(db, project=project, session=session)
                 session.status = "running"
                 session.started_at = session.started_at or utc_now()
                 session.updated_at = utc_now()
@@ -291,10 +432,12 @@ def run_main_agent_session_supervisor(
 
             exit_code = run_codex_cli_turn_streaming(
                 session_factory,
+                store=store,
                 project_id=project_id,
                 session_id=session_id,
                 workspace=workspace,
-                prompt=prompt,
+                prompt=turn_prompt.text,
+                delivered_user_event_indexes=turn_prompt.delivered_user_event_indexes,
                 agent_model=agent_model,
                 timeout_seconds=turn_timeout_seconds,
             )
@@ -314,13 +457,27 @@ def run_main_agent_session_supervisor(
                     session.status = "waiting_for_runner"
                     session.pid = None
                     session.last_error = "Codex CLI is not available."
+                    retry_delay = retry_delay_seconds(consecutive_runner_failure_count(db, session.id))
+                    append_session_event(
+                        db,
+                        session,
+                        source="tablex_sidecar",
+                        event_type="runner_retry_scheduled",
+                        role="harness",
+                        title="Codex runner retry scheduled",
+                        content="Codex CLI is unavailable. Tablex will keep the same session and retry after a cooldown.",
+                        payload={"retry_delay_seconds": retry_delay, "failure_kind": "runner_unavailable"},
+                    )
                     db.commit()
-                    time.sleep(10)
+                    time.sleep(retry_delay)
                     continue
                 if exit_code != 0:
                     session.status = "between_turns"
                     session.pid = None
-                    session.last_error = f"Codex turn exited with code {exit_code}; supervisor will continue the same AgentSession."
+                    retry_delay = retry_delay_seconds(consecutive_runner_failure_count(db, session.id))
+                    session.last_error = (
+                        f"Codex turn exited with code {exit_code}; supervisor will retry in {retry_delay}s."
+                    )
                     append_session_event(
                         db,
                         session,
@@ -328,11 +485,11 @@ def run_main_agent_session_supervisor(
                         event_type="turn_recovery_scheduled",
                         role="harness",
                         title="Codex turn returned non-zero; continuing session",
-                        content="Full Auto remains on, so Tablex will resume the same AgentSession instead of leaving the project stopped.",
-                        payload={"exit_code": exit_code},
+                        content="Full Auto remains on. Tablex will resume the same session after a cooldown instead of leaving the project stopped.",
+                        payload={"exit_code": exit_code, "retry_delay_seconds": retry_delay},
                     )
                     db.commit()
-                    time.sleep(5)
+                    time.sleep(retry_delay)
                     continue
                 session.status = "between_turns"
                 session.pid = None
@@ -366,12 +523,83 @@ def release_supervisor_slot(session_id: str) -> None:
         _ACTIVE_SUPERVISORS.discard(session_id)
 
 
+def supervisor_slot_active(session_id: str) -> bool:
+    with _SUPERVISOR_LOCK:
+        return session_id in _ACTIVE_SUPERVISORS
+
+
 def pid_is_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except OSError:
         return False
     return True
+
+
+def terminate_stale_codex_process(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return
+    deadline = time.monotonic() + STALE_PROCESS_TERM_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        if not pid_is_alive(pid):
+            return
+        time.sleep(0.1)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        return
+
+
+def pid_matches_agent_codex_process(pid: int, workspace: Path | None, session_id: str) -> bool:
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+    except OSError:
+        return False
+    if "codex" not in cmdline or "exec" not in cmdline:
+        return False
+    if session_id in cmdline:
+        return True
+    if workspace is not None and str(workspace) in cmdline:
+        return True
+    return False
+
+
+def retry_delay_seconds(consecutive_failures: int) -> int:
+    if consecutive_failures <= 0:
+        return RETRY_BACKOFF_SECONDS[0]
+    index = min(consecutive_failures - 1, len(RETRY_BACKOFF_SECONDS) - 1)
+    return RETRY_BACKOFF_SECONDS[index]
+
+
+def consecutive_runner_failure_count(db: Session, session_id: str) -> int:
+    events = list(
+        db.scalars(
+            select(AgentTranscriptEvent)
+            .where(AgentTranscriptEvent.session_id == session_id)
+            .order_by(AgentTranscriptEvent.event_index.desc())
+            .limit(80)
+        ).all()
+    )
+    count = 0
+    failure_events = {
+        "runner_unavailable",
+        "runner_retry_scheduled",
+        "turn_recovery_scheduled",
+        "process_timeout",
+        "process_killed_after_timeout",
+    }
+    for event in events:
+        if event.event_type in {"turn_completed_supervisor_continue"}:
+            break
+        if event.event_type == "process_exited":
+            payload = loads_json(event.payload_json, {})
+            if payload.get("exit_code") == 0:
+                break
+        if event.event_type in failure_events:
+            count += 1
+    return max(1, count)
 
 
 def prepare_session_workspace(
@@ -528,20 +756,9 @@ def read_skill_asset_content(artifact: Artifact | None) -> dict[str, Any]:
     return {"text": text[:12000]}
 
 
-def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -> str:
-    recent_events = list(
-        db.scalars(
-            select(AgentTranscriptEvent)
-            .where(AgentTranscriptEvent.session_id == session.id)
-            .order_by(AgentTranscriptEvent.event_index.desc())
-            .limit(40)
-        ).all()
-    )
-    user_instructions = [
-        event.content
-        for event in reversed(recent_events)
-        if event.source == "user" and event.content
-    ]
+def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -> TurnPrompt:
+    user_instruction_events = undelivered_user_instruction_events(db, session.id)
+    user_instructions = [event.content for event in user_instruction_events if event.content]
     if session.turn_index == 0 or not session.codex_thread_id:
         intro = [
             "Treat this as the main Tablex /goal for a long-running autonomous data-science session.",
@@ -560,6 +777,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Do not use validation/test targets in feature generation prompts.",
         "- Do not destructively modify EvaluationSpec or SplitManifest.",
         "- Register important outputs by writing files under outputs/, reports/, notebooks/, or artifacts/.",
+        "- Keep human-facing accountability continuous: when you make meaningful progress, hit uncertainty, start or finish a long-running step, recover from an error, change the plan, or need the user to know what changed, overwrite `reports/chat_update.md` with only the latest concise update in the user's locale. Keep it under 1200 characters. Use separate report files for long history. Do not wait for Tablex to infer this from logs.",
         "- Prefer marimo notebooks for data understanding, modeling diagnostics, and reports.",
         "- Read `.tablex/context.json` for `human_interface.response_locale` and write human-facing notebooks/reports/chat in that language.",
         "- Read equipped Skill paths in `.tablex/context.json` before EDA, prior research, notebook authoring, or modeling strategy work.",
@@ -572,18 +790,84 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "Project context is available at `.tablex/context.json`.",
     ]
     if user_instructions:
-        lines.extend(["", "Recent user instructions to incorporate:"])
-        lines.extend([f"- {item}" for item in user_instructions[-10:]])
-    return "\n".join(lines).strip() + "\n"
+        lines.extend(["", "User instructions not yet delivered to Codex:"])
+        lines.extend([f"- {item}" for item in user_instructions])
+    return TurnPrompt(
+        text="\n".join(lines).strip() + "\n",
+        delivered_user_event_indexes=tuple(event.event_index for event in user_instruction_events),
+    )
+
+
+def latest_delivered_user_event_index(db: Session, session_id: str) -> int:
+    event = db.scalar(
+        select(AgentTranscriptEvent)
+        .where(
+            AgentTranscriptEvent.session_id == session_id,
+            AgentTranscriptEvent.event_type == "user_instructions_delivered_to_codex",
+        )
+        .order_by(AgentTranscriptEvent.event_index.desc())
+        .limit(1)
+    )
+    if event is None:
+        return -1
+    payload = loads_json(event.payload_json, {})
+    value = payload.get("last_user_event_index")
+    return int(value) if isinstance(value, int) else -1
+
+
+def undelivered_user_instruction_events(db: Session, session_id: str) -> list[AgentTranscriptEvent]:
+    delivered_index = latest_delivered_user_event_index(db, session_id)
+    return list(
+        db.scalars(
+            select(AgentTranscriptEvent)
+            .where(
+                AgentTranscriptEvent.session_id == session_id,
+                AgentTranscriptEvent.source == "user",
+                AgentTranscriptEvent.event_type == "user_instruction",
+                AgentTranscriptEvent.event_index > delivered_index,
+            )
+            .order_by(AgentTranscriptEvent.event_index.asc())
+        ).all()
+    )
+
+
+def mark_user_instructions_delivered(
+    session_factory: sessionmaker[Session],
+    *,
+    session_id: str,
+    delivered_user_event_indexes: tuple[int, ...],
+) -> None:
+    if not delivered_user_event_indexes:
+        return
+    with session_factory() as db:
+        session = db.get(AgentSession, session_id)
+        if session is None:
+            return
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="user_instructions_delivered_to_codex",
+            role="harness",
+            title="User instructions delivered to Codex",
+            content=f"Delivered {len(delivered_user_event_indexes)} pending user instruction(s) to the main Codex session.",
+            payload={
+                "delivered_user_event_indexes": list(delivered_user_event_indexes),
+                "last_user_event_index": max(delivered_user_event_indexes),
+            },
+        )
+        db.commit()
 
 
 def run_codex_cli_turn_streaming(
     session_factory: sessionmaker[Session],
     *,
+    store: LocalArtifactStore,
     project_id: str,
     session_id: str,
     workspace: Path,
     prompt: str,
+    delivered_user_event_indexes: tuple[int, ...],
     agent_model: str | None,
     timeout_seconds: int,
 ) -> int | None:
@@ -685,9 +969,18 @@ def run_codex_cli_turn_streaming(
     if process.stdin is not None:
         process.stdin.write(prompt)
         process.stdin.close()
+    mark_user_instructions_delivered(
+        session_factory,
+        session_id=session_id,
+        delivered_user_event_indexes=delivered_user_event_indexes,
+    )
 
     line_queue: queue.Queue[tuple[str, str | None]] = queue.Queue()
     start = time.monotonic()
+    last_output_at = start
+    last_workspace_ingest = 0.0
+    timeout_sent = False
+    terminated_at: float | None = None
 
     def read_stream(name: str, stream: Any) -> None:
         try:
@@ -702,9 +995,25 @@ def run_codex_cli_turn_streaming(
     stderr_thread.start()
     finished_streams: set[str] = set()
     while True:
-        if time.monotonic() - start > timeout_seconds and process.poll() is None:
+        now = time.monotonic()
+        if now - last_workspace_ingest >= 10:
+            ingest_session_workspace_outputs_safely(
+                session_factory,
+                store=store,
+                project_id=project_id,
+                session_id=session_id,
+                workspace=workspace,
+            )
+            last_workspace_ingest = now
+        if now - last_output_at > timeout_seconds and process.poll() is None and not timeout_sent:
             process.terminate()
             append_process_timeout_event(session_factory, session_id=session_id, timeout_seconds=timeout_seconds)
+            timeout_sent = True
+            terminated_at = now
+        if terminated_at is not None and now - terminated_at > 15 and process.poll() is None:
+            process.kill()
+            append_process_killed_event(session_factory, session_id=session_id, timeout_seconds=timeout_seconds)
+            terminated_at = None
         try:
             stream_name, line = line_queue.get(timeout=0.5)
         except queue.Empty:
@@ -716,8 +1025,24 @@ def run_codex_cli_turn_streaming(
             if process.poll() is not None and len(finished_streams) >= 2:
                 break
             continue
+        last_output_at = time.monotonic()
         append_codex_stream_line(session_factory, project_id=project_id, session_id=session_id, stream_name=stream_name, line=line)
-    return_code = process.wait(timeout=5)
+        now = time.monotonic()
+        if now - last_workspace_ingest >= 10:
+            ingest_session_workspace_outputs_safely(
+                session_factory,
+                store=store,
+                project_id=project_id,
+                session_id=session_id,
+                workspace=workspace,
+            )
+            last_workspace_ingest = now
+    try:
+        return_code = process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        append_process_killed_event(session_factory, session_id=session_id, timeout_seconds=timeout_seconds)
+        return_code = process.wait(timeout=5)
     with session_factory() as db:
         session = db.get(AgentSession, session_id)
         if session is not None:
@@ -734,6 +1059,26 @@ def run_codex_cli_turn_streaming(
             )
             db.commit()
     return return_code
+
+
+def ingest_session_workspace_outputs_safely(
+    session_factory: sessionmaker[Session],
+    *,
+    store: LocalArtifactStore,
+    project_id: str,
+    session_id: str,
+    workspace: Path,
+) -> None:
+    try:
+        with session_factory() as db:
+            project = db.get(Project, project_id)
+            session = db.get(AgentSession, session_id)
+            if project is None or session is None:
+                return
+            ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+            db.commit()
+    except Exception:
+        return
 
 
 def append_process_timeout_event(
@@ -753,8 +1098,31 @@ def append_process_timeout_event(
             event_type="process_timeout",
             role="harness",
             title="Codex turn timed out",
-            content="The current Codex CLI process exceeded the per-turn timeout. The AgentSession supervisor will continue if Full Auto remains on.",
-            payload={"timeout_seconds": timeout_seconds},
+            content="The current Codex CLI process produced no output for the idle timeout. The supervisor will continue if Full Auto remains on.",
+            payload={"idle_timeout_seconds": timeout_seconds},
+        )
+        db.commit()
+
+
+def append_process_killed_event(
+    session_factory: sessionmaker[Session],
+    *,
+    session_id: str,
+    timeout_seconds: int,
+) -> None:
+    with session_factory() as db:
+        session = db.get(AgentSession, session_id)
+        if session is None:
+            return
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="process_killed_after_timeout",
+            role="harness",
+            title="Codex process killed after idle timeout",
+            content="The Codex process did not exit after the idle timeout termination request, so Tablex killed it and will continue the same session if Full Auto remains on.",
+            payload={"idle_timeout_seconds": timeout_seconds},
         )
         db.commit()
 
@@ -851,7 +1219,7 @@ def ingest_session_workspace_outputs(
         if not root.exists():
             continue
         for path in sorted(item for item in root.rglob("*") if item.is_file()):
-            if path.name.startswith(".") or path.name == "artifact_manifest.json":
+            if should_skip_session_output(path):
                 continue
             metadata = {
                 "project_id": project.id,
@@ -860,16 +1228,16 @@ def ingest_session_workspace_outputs(
                 "source": "main_agent_session_workspace",
                 **metadata_for_session_output(path),
             }
-            name = f"agent_session_{session.id}_{path.stem}".replace(".", "_")[:180]
+            name = session_output_artifact_name(session.id, path.relative_to(workspace))
             asset_type = asset_type_for_session_output(path)
             existing = db.scalar(
                 select(Artifact).where(
                     Artifact.project_id == project.id,
                     Artifact.asset_type == asset_type,
                     Artifact.name == name,
-                )
+                ).order_by(Artifact.version.desc())
             )
-            if existing is not None:
+            if existing is not None and not should_register_session_output(path, existing):
                 continue
             version = next_artifact_version(db, project.id, asset_type, name)
             target_dir, stored, content_hash = store.store_existing_file(
@@ -905,6 +1273,14 @@ def ingest_session_workspace_outputs(
                 payload=metadata,
                 artifact_id=artifact.id,
             )
+            maybe_register_chat_update_from_workspace_output(
+                db,
+                store=store,
+                project=project,
+                session=session,
+                path=path,
+                artifact=artifact,
+            )
 
 
 def asset_type_for_session_output(path: Path) -> str:
@@ -918,6 +1294,117 @@ def asset_type_for_session_output(path: Path) -> str:
     if suffix in {".png", ".jpg", ".jpeg", ".svg", ".webp"}:
         return "agent_session_figure"
     return "agent_session_output"
+
+
+def session_output_artifact_name(session_id: str, relative_path: Path) -> str:
+    relative_text = relative_path.as_posix()
+    digest = hashlib.sha1(relative_text.encode("utf-8")).hexdigest()[:10]
+    readable = re.sub(r"[^A-Za-z0-9]+", "_", relative_text).strip("_") or "output"
+    return f"agent_session_{session_id}_{readable[:145]}_{digest}"
+
+
+def should_skip_session_output(path: Path) -> bool:
+    return (
+        path.name.startswith(".")
+        or path.name == "artifact_manifest.json"
+        or path.suffix == ".pyc"
+        or "__pycache__" in path.parts
+    )
+
+
+def should_register_session_output(path: Path, existing: Artifact | None) -> bool:
+    if existing is None:
+        return True
+    try:
+        existing_path = artifact_primary_path(existing)
+        return hashlib.sha256(path.read_bytes()).hexdigest() != hashlib.sha256(existing_path.read_bytes()).hexdigest()
+    except OSError:
+        return True
+
+
+def is_chat_update_path(path: Path) -> bool:
+    return path.name == "chat_update.md" and path.parent.name == "reports"
+
+
+def maybe_register_chat_update_from_workspace_output(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    session: AgentSession,
+    path: Path,
+    artifact: Artifact,
+) -> None:
+    if not is_chat_update_path(path):
+        return
+    try:
+        message = chat_update_message_from_text(path.read_text(encoding="utf-8"))
+    except OSError:
+        return
+    if not message:
+        return
+    response = {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": project.id,
+        "user_message": "",
+        "assistant_message": message[:4000],
+        "intent": {
+            "type": "autonomous_agent_progress_report",
+            "source": "main_codex_session",
+            "routing_policy": "codex_authored_human_update",
+        },
+        "actions": [],
+        "action_summary": {},
+        "response_brief": {
+            "schema_version": "agent_progress_report_brief.v1",
+            "agent_session_id": session.id,
+            "source_artifact_id": artifact.id,
+            "workspace_relative_path": str(path.relative_to(Path(session.workspace_path or path.parent))),
+        },
+        "response_composer": {
+            "schema_version": "agent_response_composer.v1",
+            "mode": "main_codex_session",
+            "status": "codex_authored",
+        },
+        "worker_events": [],
+        "token_usage": {"source": "codex_cli_transcript", "is_estimate": True, "series": []},
+        "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent workspace"},
+    }
+    chat_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="agent_chat_turn",
+        name=f"agent_session_chat_update_{session.id}_{artifact.id}",
+        filename="agent_chat_turn.json",
+        payload=response,
+        metadata={
+            "project_id": project.id,
+            "agent_session_id": session.id,
+            "source_artifact_id": artifact.id,
+            "source": "main_codex_session_chat_update",
+        },
+    )
+    append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="chat_update_registered",
+        role="harness",
+        title="Codex progress report registered",
+        content="Registered Codex-authored human progress report for Agent Chat.",
+        payload={"chat_artifact_id": chat_artifact.id, "source_artifact_id": artifact.id},
+        artifact_id=chat_artifact.id,
+    )
+
+
+def chat_update_message_from_text(text: str, limit: int = 900) -> str:
+    stripped = text.strip()
+    paragraphs = [item.strip() for item in re.split(r"\n\s*\n", stripped) if item.strip()]
+    message = paragraphs[-1] if paragraphs else stripped
+    if len(message) <= limit:
+        return message
+    return message[-limit:].lstrip()
 
 
 def metadata_for_session_output(path: Path) -> dict[str, Any]:

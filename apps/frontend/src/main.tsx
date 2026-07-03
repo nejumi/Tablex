@@ -160,6 +160,9 @@ const englishMessages = {
   focusUnderstandData: "Understand the data before choosing an objective or evaluation",
   focusUnderstandDataReason:
     "The next useful decision depends on schema, possible task shapes, leakage risk, missingness, and semantic assumptions.",
+  focusPriorResearch: "Research prior knowledge",
+  focusPriorResearchReason:
+    "Codex is collecting or deciding whether external, Kaggle, arXiv, or Skill evidence is needed before approach selection.",
   focusAssumptions: "Resolve risky assumptions",
   focusAssumptionsReason: "High-risk assumptions can silently invalidate evaluation or feature design if they are not reviewed.",
   focusEvaluation: "Lock a reliable evaluation design",
@@ -298,7 +301,6 @@ const englishMessages = {
   agentReplyPending: "Thinking and preparing the next useful response.",
   agentReplyFailed: "I could not complete that request. The error is recorded here so it does not disappear.",
   chatTurnStatus: "Status",
-  chatBriefAvailable: "Codex response unavailable",
   earlierConversation: "Earlier conversation",
   nextActionLabel: "Next",
   downloadLatestAgentTaskContract: "Download latest AgentTaskContract",
@@ -379,10 +381,22 @@ const englishMessages = {
   planBlockUnderstandingDone: "Data understanding artifacts are available.",
   planBlockPriorResearch: "Prior knowledge research",
   planBlockPriorResearchPending: "Use Kaggle, arXiv, Skills, and Codex-selected sources to add evidence before approach selection.",
+  planBlockPriorResearchActive: "Codex is working on this step; research evidence or a no-findings decision has not been registered yet.",
   planBlockPriorResearchPrepared: "Research context is prepared, but retrieved findings and a readable notebook are not registered yet.",
   planBlockPriorResearchDone: "Research or Skill evidence is available.",
   planBlockPriorResearchNoFindings: "Codex researched or reviewed this step and found no additional external findings worth adding.",
-  planBlockCodexLane: "Codex planned",
+  planBlockCodexLane: "Codex work",
+  planBlockCodexRunning: "Codex is working in this project workspace.",
+  planBlockCodexWaiting: "Codex session is ready; the next live turn will appear here.",
+  strategyActionUploadData: "Upload data",
+  strategyActionUploadDataReason: "A project-specific strategy needs at least one DatasetSnapshot.",
+  strategyActionExploreObjective: "Explore objective candidates",
+  strategyActionExploreObjectiveReason:
+    "Ask Codex to review whether the task is a direct target, derived aggregate, unsupervised workflow, or another project-specific objective.",
+  strategyActionResolveAssumptions: "Resolve risky assumptions",
+  strategyActionResolveAssumptionsReason: "Review assumptions that can affect evaluation, feature safety, or deployment-sensitive decisions.",
+  strategyActionLockEvaluation: "Lock evaluation design",
+  strategyActionLockEvaluationReason: "Approve the EvaluationSpec and SplitManifest before trusting model-comparison claims.",
   planStatusDone: "Done",
   planStatusActive: "Running",
   planStatusPending: "Next",
@@ -516,6 +530,9 @@ const japaneseMessages: LocaleMessages = {
   focusUnderstandData: "目的や評価を決める前にデータを理解する",
   focusUnderstandDataReason:
     "schema、あり得るタスク形状、leakage risk、missingness、semantic assumptionsを見てから次の意思決定をします。",
+  focusPriorResearch: "従来知見を調査する",
+  focusPriorResearchReason:
+    "approach選択の前に、Codexが外部情報、Kaggle、arXiv、Skill由来の知見が必要かを調査または判断しています。",
   focusAssumptions: "リスクの高い仮定を確認する",
   focusAssumptionsReason: "高リスクの仮定を放置すると、評価や特徴量設計が静かに壊れる可能性があります。",
   focusEvaluation: "信頼できる評価設計を固定する",
@@ -654,7 +671,6 @@ const japaneseMessages: LocaleMessages = {
   agentReplyPending: "状況を確認し、次に役立つ返答を準備しています。",
   agentReplyFailed: "この依頼を完了できませんでした。消えないように、エラーをここに記録します。",
   chatTurnStatus: "状態",
-  chatBriefAvailable: "Codex応答未実行",
   earlierConversation: "以前の会話",
   nextActionLabel: "次に開く",
   downloadLatestAgentTaskContract: "最新のAgentTaskContractをダウンロード",
@@ -734,10 +750,22 @@ const japaneseMessages: LocaleMessages = {
   planBlockUnderstandingDone: "Data understanding artifactがあります。",
   planBlockPriorResearch: "従来知見の調査",
   planBlockPriorResearchPending: "Kaggle、arXiv、Skill、Codex裁量の情報源から知見を追加します。",
+  planBlockPriorResearchActive: "Codexがこのステップを進めています。調査知見または追加調査不要の判断はまだ登録されていません。",
   planBlockPriorResearchPrepared: "調査コンテキストは準備済みですが、取得済みの知見と読めるNotebookはまだ登録されていません。",
   planBlockPriorResearchDone: "取得済みの調査知見と根拠があります。",
   planBlockPriorResearchNoFindings: "Codexが調査または確認し、追加すべき外部知見はないと判断しました。",
-  planBlockCodexLane: "Codex計画",
+  planBlockCodexLane: "Codex作業",
+  planBlockCodexRunning: "Codexがこのプロジェクトのworkspaceで作業中です。",
+  planBlockCodexWaiting: "Codex sessionは準備済みです。次の実行ターンがここに表示されます。",
+  strategyActionUploadData: "データをアップロード",
+  strategyActionUploadDataReason: "Project固有のstrategyには少なくとも1つのDatasetSnapshotが必要です。",
+  strategyActionExploreObjective: "目的候補を探索",
+  strategyActionExploreObjectiveReason:
+    "直接target、派生集計、教師なし、逆問題などを含めて、CodexにこのProject固有の目的をレビューさせます。",
+  strategyActionResolveAssumptions: "重要な仮定を確認",
+  strategyActionResolveAssumptionsReason: "評価、特徴量の安全性、deployment判断に影響する仮定だけを確認します。",
+  strategyActionLockEvaluation: "評価設計を確定",
+  strategyActionLockEvaluationReason: "モデル比較を信頼する前に、EvaluationSpecとSplitManifestを確定します。",
   planStatusDone: "完了",
   planStatusActive: "実行中",
   planStatusPending: "次",
@@ -2584,7 +2612,7 @@ function App() {
     }
   }, []);
 
-  const refreshProjects = React.useCallback(async () => {
+  const refreshProjects = React.useCallback(async (preferredProjectId?: string) => {
     setLoading(true);
     setError(null);
     try {
@@ -2595,7 +2623,9 @@ function App() {
       setProjects(data);
       setPortalOverview(portalData);
       setPortalIdeas(portalData?.ideas ?? []);
-      if (!selectedProjectId && data[0]) {
+      if (preferredProjectId) {
+        setSelectedProjectId(preferredProjectId);
+      } else if (!selectedProjectId && data[0]) {
         setSelectedProjectId(data[0].id);
       }
     } catch (err) {
@@ -2773,7 +2803,15 @@ function App() {
             </button>
           ))}
         </div>
-        <CreateProjectForm text={text} onCreated={refreshProjects} />
+        <CreateProjectForm
+          text={text}
+          onCreated={async (project) => {
+            setSelectedProjectId(project.id);
+            setViewMode("project");
+            setTab("Home");
+            await refreshProjects(project.id);
+          }}
+        />
       </aside>
       <main className="main">
         <header className="topbar">
@@ -3544,7 +3582,7 @@ function UserSettingsPanel({
   );
 }
 
-function CreateProjectForm({ text, onCreated }: { text: LocaleMessages; onCreated: () => Promise<void> }) {
+function CreateProjectForm({ text, onCreated }: { text: LocaleMessages; onCreated: (project: Project) => Promise<void> }) {
   const [name, setName] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
@@ -3552,14 +3590,17 @@ function CreateProjectForm({ text, onCreated }: { text: LocaleMessages; onCreate
     event.preventDefault();
     if (!name.trim()) return;
     setBusy(true);
-    await api<Project>("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: name.trim() })
-    });
-    setName("");
-    setBusy(false);
-    await onCreated();
+    try {
+      const project = await api<Project>("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim() })
+      });
+      setName("");
+      await onCreated(project);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -3626,6 +3667,8 @@ function ProjectDetail({
   const [agentActivity, setAgentActivity] = React.useState<AgentActivityResponse | null>(null);
   const [agentSession, setAgentSession] = React.useState<AgentSession | null>(null);
   const [agentTranscriptEvents, setAgentTranscriptEvents] = React.useState<AgentTranscriptEvent[]>([]);
+  const transcriptSinceIndexRef = React.useRef<number | null>(null);
+  const transcriptSessionIdRef = React.useRef<string | null>(null);
   const [activityTick, setActivityTick] = React.useState(0);
   const [pendingIntervention, setPendingIntervention] = React.useState<PendingAutonomyIntervention | null>(null);
   const seenInterventionKeysRef = React.useRef<Set<string>>(new Set());
@@ -3764,6 +3807,8 @@ function ProjectDetail({
       setAgentActivity(agentActivityData);
       setAgentSession(agentSessionData);
       setAgentTranscriptEvents(agentTranscriptData);
+      transcriptSessionIdRef.current = agentSessionData?.id ?? null;
+      transcriptSinceIndexRef.current = maxTranscriptEventIndex(agentTranscriptData);
       const validationEntries = await Promise.all(
         modelVersionsData.map(async (modelVersion) => {
           const validations = await api<ModelValidation[]>(`/api/model-versions/${modelVersion.id}/validations`);
@@ -3780,14 +3825,26 @@ function ProjectDetail({
 
   const refreshAgentActivity = React.useCallback(async () => {
     try {
-      const [data, sessionData, transcriptData] = await Promise.all([
+      const [data, sessionData] = await Promise.all([
         api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`),
-        api<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`).catch(() => null),
-        api<AgentTranscriptEvent[]>(`/api/projects/${project.id}/agent-session/transcript`).catch(() => [])
+        api<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`).catch(() => null)
       ]);
+      const sessionId = sessionData?.id ?? null;
+      const canRequestDelta = sessionId !== null && sessionId === transcriptSessionIdRef.current;
+      const sinceIndex = canRequestDelta ? transcriptSinceIndexRef.current : null;
+      const transcriptUrl =
+        sinceIndex === null
+          ? `/api/projects/${project.id}/agent-session/transcript`
+          : `/api/projects/${project.id}/agent-session/transcript?since_index=${sinceIndex}`;
+      const transcriptData = await api<AgentTranscriptEvent[]>(transcriptUrl).catch(() => []);
       setAgentActivity(data);
       setAgentSession(sessionData);
-      setAgentTranscriptEvents(transcriptData);
+      setAgentTranscriptEvents((current) => {
+        const next = sinceIndex === null ? transcriptData : mergeTranscriptEvents(current, transcriptData);
+        transcriptSessionIdRef.current = sessionId;
+        transcriptSinceIndexRef.current = maxTranscriptEventIndex(next);
+        return next;
+      });
     } catch {
       // The activity overlay is opportunistic; project refresh still surfaces hard errors.
     }
@@ -3927,17 +3984,40 @@ function ProjectDetail({
         })
       });
       const responseCreatedAt = result.job?.updated_at ?? new Date().toISOString();
+      const composerStatus = String(result.response_composer?.status ?? result.job?.status ?? "");
+      const queuedForWorker =
+        result.artifact_id.startsWith("pending_") || ["queued", "running", "pending", "in_progress"].includes(composerStatus);
+      if (queuedForWorker) {
+        const turnId = `turn:${result.job.id}`;
+        setPendingAgentChatMessages([
+          { ...optimisticUser, id: `${turnId}:user`, transient: true },
+          {
+            ...pendingAssistant,
+            id: `${turnId}:system`,
+            responseComposer: result.response_composer ?? pendingAssistant.responseComposer,
+            createdAt: responseCreatedAt,
+            transient: true
+          }
+        ]);
+        setAgentWorkerEvents((current) =>
+          [...result.worker_events, ...current.filter((event) => event.job_id !== pendingWorker.job_id)].slice(0, 8)
+        );
+        await refreshAgentActivity();
+        await refresh();
+        await onProjectChanged();
+        return result;
+      }
       setPendingAgentChatMessages([]);
       setAgentChatMessages((current) =>
         upsertAgentChatMessages(current, [
           {
-            id: `${result.artifact_id}:user`,
+            id: `turn:${result.job.id}:user`,
             role: "user",
             text: result.user_message,
             createdAt: responseCreatedAt
           },
           {
-            id: `${result.artifact_id}:system`,
+            id: `turn:${result.job.id}:system`,
             role: "system",
             text: result.assistant_message,
             actions: result.actions,
@@ -3999,33 +4079,32 @@ function ProjectDetail({
     setBusy(true);
     setError(null);
     const userText = nextMode === "full_auto" ? text.fullAutoMode : text.approvalBasedMode;
-    setAgentChatMessages((current) => [...current.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT), { role: "user", text: userText }]);
+    const localTurnId = `local-mode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setPendingAgentChatMessages([
+      { id: `${localTurnId}:user`, role: "user", text: userText, createdAt: new Date().toISOString(), transient: true },
+      {
+        id: `${localTurnId}:assistant`,
+        role: "system",
+        text: text.agentReplyPending,
+        createdAt: new Date().toISOString(),
+        transient: true
+      }
+    ]);
     try {
       await api<Project>(`/api/projects/${project.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ autonomy_mode: nextMode })
+        body: JSON.stringify({ autonomy_mode: nextMode, locale: userSettings.locale })
       });
-      setAgentChatMessages((current) => [
-        ...current.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT),
-        {
-          role: "system",
-          text:
-            nextMode === "full_auto"
-              ? text.fullAutoModeSelected
-              : text.approvalModeSelected
-        }
-      ]);
+      setPendingAgentChatMessages([]);
       await refreshAgentActivity();
       await refresh();
       await onProjectChanged();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
-      setAgentChatMessages((current) => [
-        ...current.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT),
-        { role: "system", text: message }
-      ]);
+      setPendingAgentChatMessages([]);
+      setAgentChatMessages((current) => upsertAgentChatMessages(current, [{ role: "system", text: message, transient: true }]));
     } finally {
       setBusy(false);
     }
@@ -4036,7 +4115,17 @@ function ProjectDetail({
     setBusy(true);
     setError(null);
     const userText = poweredOn ? text.stopAgentLoopUserMessage : text.startAgentLoopUserMessage;
-    setAgentChatMessages((current) => [...current.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT), { role: "user", text: userText }]);
+    const localTurnId = `local-power-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setPendingAgentChatMessages([
+      { id: `${localTurnId}:user`, role: "user", text: userText, createdAt: new Date().toISOString(), transient: true },
+      {
+        id: `${localTurnId}:assistant`,
+        role: "system",
+        text: text.agentReplyPending,
+        createdAt: new Date().toISOString(),
+        transient: true
+      }
+    ]);
     try {
       const job = await api<Job>(`/api/projects/${project.id}/autonomy/${poweredOn ? "stop" : "start"}`, {
         method: "POST",
@@ -4058,9 +4147,17 @@ function ProjectDetail({
           : poweredOn
             ? text.agentLoopStopped
             : text.agentLoopStarted;
+      const chatArtifactId =
+        typeof job.output.agent_chat_turn_artifact_id === "string" ? job.output.agent_chat_turn_artifact_id : null;
+      setPendingAgentChatMessages([]);
       setAgentChatMessages((current) => [
         ...current.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT),
-        { role: "system", text: assistantMessage }
+        ...(chatArtifactId
+          ? [
+              { id: `${chatArtifactId}:user`, role: "user" as const, text: userText, createdAt: job.updated_at },
+              { id: `${chatArtifactId}:system`, role: "system" as const, text: assistantMessage, createdAt: job.updated_at }
+            ]
+          : [{ role: "system" as const, text: assistantMessage, transient: true }])
       ]);
       setAgentWorkerEvents((current) => [...workerEvents, ...current].slice(0, 8));
       const intervention = firstAutonomyIntervention(job.output);
@@ -4078,10 +4175,8 @@ function ProjectDetail({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
-      setAgentChatMessages((current) => [
-        ...current.slice(-AGENT_CHAT_MESSAGE_HISTORY_LIMIT),
-        { role: "system", text: message }
-      ]);
+      setPendingAgentChatMessages([]);
+      setAgentChatMessages((current) => upsertAgentChatMessages(current, [{ role: "system", text: message, transient: true }]));
     } finally {
       setBusy(false);
     }
@@ -4586,23 +4681,39 @@ function HomeTab({
     notebookIndex,
     equippedSkills,
     jobs: planJobs,
+    agentSession,
+    agentTranscriptEvents,
     nextStrategyAction,
     text,
     onTabChange,
     onNavigateToTarget,
     onStrategyAction
   });
+  const activeResearchPlanBlock = researchPlanBlocks.find((block) => block.status === "active") ?? null;
+  const missionUsesPlanFocus = activeResearchPlanBlock?.id === "prior_research";
+  const missionTitle = missionUsesPlanFocus ? text.focusPriorResearch : recommendation.title;
+  const missionReason = missionUsesPlanFocus ? text.focusPriorResearchReason : recommendation.reason;
+  const missionRiskLevel = missionUsesPlanFocus ? "active" : (recommendation.riskLevel ?? "ready");
+  const missionFocusLabel = missionUsesPlanFocus ? text.openSurface : (focusAction?.label ?? text.recommendedFocus);
+  const missionFocusDisabled = busy || (!missionUsesPlanFocus && (!focusAction || focusAction.disabled));
+  const handleMissionFocus = () => {
+    if (missionUsesPlanFocus) {
+      activeResearchPlanBlock?.onClick?.();
+      return;
+    }
+    onFocusAction(focusAction);
+  };
 
   return (
     <div className="mission-home stack">
       <section className="mission-hero">
         <div className="mission-hero-copy">
           <div className="eyebrow">{text.missionControlTitle}</div>
-          <h2>{recommendation.title}</h2>
-          <p>{recommendation.reason}</p>
+          <h2>{missionTitle}</h2>
+          <p>{missionReason}</p>
           <div className="badge-row">
-            <span className={navigatorStatusClass(recommendation.riskLevel ?? "ready")}>
-              {(recommendation.riskLevel ?? "ready").replace(/_/g, " ")}
+            <span className={navigatorStatusClass(missionRiskLevel)}>
+              {missionRiskLevel.replace(/_/g, " ")}
             </span>
             <span className="badge muted">{formatWorkflowState(project.current_phase)}</span>
             <span className="badge muted">
@@ -4628,12 +4739,12 @@ function HomeTab({
           />
           <button
             className="primary-button mission-focus-button"
-            disabled={busy || !focusAction || focusAction.disabled}
-            onClick={() => onFocusAction(focusAction)}
+            disabled={missionFocusDisabled}
+            onClick={handleMissionFocus}
             type="button"
           >
             {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-            {focusAction?.label ?? text.recommendedFocus}
+            {missionFocusLabel}
           </button>
         </div>
       </section>
@@ -4716,7 +4827,6 @@ function HomeTab({
               busy={busy}
               text={text}
               messages={messages}
-              transcriptEvents={agentTranscriptEvents}
               submitShortcut={submitShortcut}
               userAvatarSrc={userAvatarSrc}
               latestContract={latestContract}
@@ -5228,6 +5338,8 @@ function buildResearchPlanBlocks({
   notebookIndex,
   equippedSkills,
   jobs,
+  agentSession,
+  agentTranscriptEvents,
   nextStrategyAction,
   text,
   onTabChange,
@@ -5241,6 +5353,8 @@ function buildResearchPlanBlocks({
   notebookIndex: NotebookIndex | null;
   equippedSkills: EquippedSkillItem[];
   jobs: Job[];
+  agentSession: AgentSession | null;
+  agentTranscriptEvents: AgentTranscriptEvent[];
   nextStrategyAction: StrategyAction | null;
   text: LocaleMessages;
   onTabChange: (tab: Tab) => void;
@@ -5250,7 +5364,8 @@ function buildResearchPlanBlocks({
   const hasObjectiveEvidence = Boolean(project.target_column) || hasAnyArtifactType(artifacts, ["target_definition_proposal"]);
   const hasUnderstandingEvidence =
     hasAnyArtifactType(artifacts, ["data_understanding_complete"]) ||
-    hasReviewableDataUnderstandingNotebook(notebookIndex);
+    hasReviewableDataUnderstandingNotebook(notebookIndex) ||
+    hasAnyArtifactType(artifacts, ["agent_session_figure", "eda_review_report"]);
   const hasDataUnderstandingNotebook = artifacts.some(isDataUnderstandingNotebookArtifact);
   const hasPriorResearchPreparation =
     researchBriefs.length > 0 ||
@@ -5258,6 +5373,13 @@ function buildResearchPlanBlocks({
     hasAnyArtifactType(artifacts, ["research_plan", "research_source_pack", "research_source_report", "notebook_authoring_brief"]);
   const noFindingsResearchArtifact = researchNoFindingsArtifact(artifacts);
   const hasPriorResearchEvidence = hasAnyResolvedResearchArtifact(artifacts);
+  const latestCodexMessage = latestCodexTranscriptMessage(agentTranscriptEvents);
+  const activeAgentSession =
+    agentSession && ["starting", "running", "between_turns", "waiting_for_runner"].includes(agentSession.status)
+      ? agentSession
+      : null;
+  const activeCodexTurn = Boolean(activeAgentSession && (activeAgentSession.status === "running" || activeAgentSession.pid));
+  const activeCodexAssignedToPriorResearch = Boolean(activeCodexTurn && hasUnderstandingEvidence && !hasPriorResearchEvidence);
 
   const primaryPlanJob = jobs.find((job) => jobActiveForActivity(job)) ?? jobs.find((job) => !isTerminalJob(job)) ?? null;
   const activeInitialBlockId = activeInitialResearchPlanBlockId(primaryPlanJob);
@@ -5285,6 +5407,8 @@ function buildResearchPlanBlocks({
         : "waiting";
   const priorResearchStatus = hasPriorResearchEvidence
     ? "done"
+    : activeCodexAssignedToPriorResearch
+      ? "active"
     : activeInitialBlockId === "prior_research"
       ? "active"
       : hasPriorResearchPreparation
@@ -5347,6 +5471,8 @@ function buildResearchPlanBlocks({
         ? noFindingsResearchArtifact
           ? text.planBlockPriorResearchNoFindings
           : text.planBlockPriorResearchDone
+        : priorResearchStatus === "active"
+          ? text.planBlockPriorResearchActive
         : hasPriorResearchPreparation
           ? text.planBlockPriorResearchPrepared
           : text.planBlockPriorResearchPending,
@@ -5363,13 +5489,23 @@ function buildResearchPlanBlocks({
     }
   ];
 
-  const initialComplete = initialResearchPlanComplete(blocks);
+  if (activeAgentSession && !activeCodexAssignedToPriorResearch) {
+    blocks.push({
+      id: "agent_session",
+      title: text.planBlockCodexLane,
+      subtitle: latestCodexMessage ?? (activeCodexTurn ? text.planBlockCodexRunning : text.planBlockCodexWaiting),
+      status: activeAgentSession.status === "running" || activeAgentSession.pid ? "active" : "waiting",
+      eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
+      evidence: activeAgentSession.status,
+      onClick: () => onTabChange("Jobs")
+    });
+  }
 
-  if (nextStrategyAction && initialComplete) {
+  if (nextStrategyAction && !activeAgentSession) {
     blocks.push({
       id: "next_strategy_action",
-      title: nextStrategyAction.label,
-      subtitle: nextStrategyAction.reason,
+      title: localizedStrategyActionLabel(nextStrategyAction, text),
+      subtitle: localizedStrategyActionReason(nextStrategyAction, text),
       status: "pending",
       eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
       evidence: text.strategyRecommendedAction,
@@ -5377,29 +5513,7 @@ function buildResearchPlanBlocks({
     });
   }
 
-  return enforceInitialResearchPlan(
-    attachResearchPlanSubtasks(blocks, jobs, text, onTabChange, { appendUnassigned: initialComplete })
-  );
-}
-
-function initialResearchPlanComplete(blocks: ResearchPlanBlock[]) {
-  return blocks.every((block) => block.status === "done" || block.status === "skipped");
-}
-
-function enforceInitialResearchPlan(blocks: ResearchPlanBlock[]): ResearchPlanBlock[] {
-  let frontierSeen = false;
-  return blocks.map((block) => {
-    if (!frontierSeen) {
-      if (block.status !== "done" && block.status !== "skipped") {
-        frontierSeen = true;
-      }
-      return block;
-    }
-    return {
-      ...block,
-      status: "waiting"
-    };
-  });
+  return attachResearchPlanSubtasks(blocks, jobs, text, onTabChange, { appendUnassigned: true });
 }
 
 function attachResearchPlanSubtasks(
@@ -5420,7 +5534,7 @@ function attachResearchPlanSubtasks(
       const existing = byBlock.get(blockId) ?? [];
       existing.push(subtask);
       byBlock.set(blockId, existing);
-    } else {
+    } else if (!isTerminalJob(job)) {
       unassigned.push(subtask);
     }
   }
@@ -5449,6 +5563,16 @@ function attachResearchPlanSubtasks(
   return nextBlocks;
 }
 
+function latestCodexTranscriptMessage(events: AgentTranscriptEvent[]): string | null {
+  for (const event of [...events].reverse()) {
+    if (event.source !== "codex_cli") continue;
+    if (event.title !== "Codex message" && event.event_type !== "item.completed") continue;
+    const content = event.content?.trim();
+    if (content) return content;
+  }
+  return null;
+}
+
 function researchPlanSubtaskFromJob(job: Job, onTabChange: (tab: Tab) => void): ResearchPlanSubtask {
   return {
     id: job.id,
@@ -5458,6 +5582,33 @@ function researchPlanSubtaskFromJob(job: Job, onTabChange: (tab: Tab) => void): 
     evidence: `${job.status} · ${formatDate(job.updated_at ?? job.created_at)}`,
     onClick: () => onTabChange(tabForResearchPlanJob(job))
   };
+}
+
+function localizedStrategyActionLabel(action: StrategyAction, text: LocaleMessages): string {
+  const key = strategyActionKey(action);
+  if (key === "upload_data") return text.strategyActionUploadData;
+  if (key === "explore_objective") return text.strategyActionExploreObjective;
+  if (key === "resolve_assumptions") return text.strategyActionResolveAssumptions;
+  if (key === "lock_evaluation") return text.strategyActionLockEvaluation;
+  return action.label;
+}
+
+function localizedStrategyActionReason(action: StrategyAction, text: LocaleMessages): string {
+  const key = strategyActionKey(action);
+  if (key === "upload_data") return text.strategyActionUploadDataReason;
+  if (key === "explore_objective") return text.strategyActionExploreObjectiveReason;
+  if (key === "resolve_assumptions") return text.strategyActionResolveAssumptionsReason;
+  if (key === "lock_evaluation") return text.strategyActionLockEvaluationReason;
+  return action.reason;
+}
+
+function strategyActionKey(action: StrategyAction): string | null {
+  const targetTab = action.target_tab.toLowerCase();
+  if (targetTab === "data") return "upload_data";
+  if (targetTab === "understanding") return "explore_objective";
+  if (targetTab === "assumptions") return "resolve_assumptions";
+  if (targetTab === "evaluation") return "lock_evaluation";
+  return null;
 }
 
 function researchPlanStatusFromJob(job: Job): ResearchPlanBlockStatus {
@@ -6011,28 +6162,59 @@ function dedupeRawAgentEvents(events: RawAgentEvent[]) {
   return [...byId.values()];
 }
 
+function maxTranscriptEventIndex(events: AgentTranscriptEvent[]): number | null {
+  let maxIndex: number | null = null;
+  for (const event of events) {
+    if (maxIndex === null || event.event_index > maxIndex) maxIndex = event.event_index;
+  }
+  return maxIndex;
+}
+
+function mergeTranscriptEvents(current: AgentTranscriptEvent[], incoming: AgentTranscriptEvent[]) {
+  if (!incoming.length) return current;
+  const byKey = new Map<string, AgentTranscriptEvent>();
+  for (const event of current) {
+    byKey.set(`${event.session_id}:${event.event_index}`, event);
+  }
+  for (const event of incoming) {
+    byKey.set(`${event.session_id}:${event.event_index}`, event);
+  }
+  return [...byKey.values()]
+    .sort((left, right) => left.event_index - right.event_index)
+    .slice(-500);
+}
+
 function agentChatHistoryToMessages(turns: AgentChatHistoryTurn[]): AgentChatMessage[] {
-  return turns.flatMap((turn) => [
-    {
-      id: `${turn.artifact_id}:user`,
-      role: "user" as const,
-      text: turn.user_message,
-      createdAt: turn.created_at
-    },
-    {
-      id: `${turn.artifact_id}:system`,
+  return turns.flatMap((turn) => {
+    const messages: AgentChatMessage[] = [];
+    const turnId = turn.job_id ? `turn:${turn.job_id}` : `turn:${turn.artifact_id}`;
+    if (turn.user_message.trim()) {
+      messages.push({
+        id: `${turnId}:user`,
+        role: "user" as const,
+        text: turn.user_message,
+        createdAt: turn.created_at
+      });
+    }
+    messages.push({
+      id: `${turnId}:system`,
       role: "system" as const,
       text: turn.assistant_message,
       actions: turn.actions,
-      actionSummary: turn.action_summary,
+      actionSummary: agentActionSummaryOrUndefined(turn.action_summary),
       responseBrief: turn.response_brief ?? null,
       responseComposer: turn.response_composer ?? null,
       createdAt: turn.created_at
-    }
-  ]);
+    });
+    return messages;
+  });
 }
 
-function mergeAgentChatMessages(persisted: AgentChatMessage[], transient: AgentChatMessage[]) {
+function agentActionSummaryOrUndefined(summary: AgentActionSummary | undefined): AgentActionSummary | undefined {
+  return summary?.schema_version ? summary : undefined;
+}
+
+function mergeAgentChatMessages(persisted: AgentChatMessage[], current: AgentChatMessage[]) {
   const merged: AgentChatMessage[] = [];
   const seen = new Set<string>();
   const persistedContent = new Set<string>();
@@ -6043,9 +6225,9 @@ function mergeAgentChatMessages(persisted: AgentChatMessage[], transient: AgentC
     persistedContent.add(`${message.role}:${message.text}`);
     merged.push(message);
   }
-  for (const message of transient) {
+  for (const message of current.filter((item) => item.transient)) {
     const key = message.id ?? `${message.role}:${message.text}`;
-    if (seen.has(key) || (!message.id && persistedContent.has(`${message.role}:${message.text}`))) continue;
+    if (seen.has(key) || persistedContent.has(`${message.role}:${message.text}`)) continue;
     seen.add(key);
     merged.push(message);
   }
@@ -6495,13 +6677,6 @@ function AgentConversationTurnCard({
   const statusClass = agentChatOutcomeClass(outcome);
   const hasPrimaryNext = Boolean(assistant?.actionSummary?.next_step?.target_tab);
   const visibleActions = hasPrimaryNext ? [] : assistant?.actions?.slice(0, 2) ?? [];
-  const composerStatus = String(assistant?.responseComposer?.status ?? "");
-  const showComposerProblem = Boolean(
-    assistant?.responseComposer &&
-      composerStatus &&
-      composerStatus !== "succeeded" &&
-      !["pending", "running", "queued", "in_progress"].includes(composerStatus)
-  );
   return (
     <article className={`agent-turn-card ${active ? "is-active" : ""}`}>
       {turn.user ? (
@@ -6550,7 +6725,6 @@ function AgentConversationTurnCard({
                 ))}
               </div>
             ) : null}
-            {showComposerProblem ? <small className="agent-turn-brief">{text.chatBriefAvailable}</small> : null}
           </div>
         </section>
       ) : (
@@ -6571,38 +6745,10 @@ function AgentConversationTurnCard({
   );
 }
 
-function agentChatLiveCodexEvents(events: AgentTranscriptEvent[]): AgentTranscriptEvent[] {
-  return events.filter(
-    (event) =>
-      event.source === "codex_cli" &&
-      event.event_type === "item.completed" &&
-      typeof event.content === "string" &&
-      event.content.trim().length > 0
-  );
-}
-
-function AgentLiveTranscriptCard({ event }: { event: AgentTranscriptEvent }) {
-  return (
-    <section className="chat-message-row assistant">
-      <TableeAvatar state="working" active />
-      <div className="chat-message-stack">
-        <div className="chat-message-meta">
-          <span>Codex</span>
-          <time>{formatDate(event.created_at)}</time>
-        </div>
-        <div className="agent-chat-message assistant live-codex">
-          <p>{event.content}</p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function AgentChatDock({
   busy,
   text,
   messages,
-  transcriptEvents,
   submitShortcut,
   userAvatarSrc,
   latestContract,
@@ -6614,7 +6760,6 @@ function AgentChatDock({
   busy: boolean;
   text: LocaleMessages;
   messages: AgentChatMessage[];
-  transcriptEvents: AgentTranscriptEvent[];
   submitShortcut: ChatSubmitShortcut;
   userAvatarSrc: string | null;
   latestContract: Artifact | null;
@@ -6625,13 +6770,11 @@ function AgentChatDock({
 }) {
   const [draft, setDraft] = React.useState("");
   const turns = React.useMemo(() => buildAgentConversationTurns(messages), [messages]);
-  const liveCodexEvents = React.useMemo(() => agentChatLiveCodexEvents(transcriptEvents), [transcriptEvents]);
   const recentTurns = turns.slice(-5);
   const olderTurns = turns.slice(0, -5);
   const latestTurn = turns[turns.length - 1];
-  const latestLiveCodexEvent = liveCodexEvents[liveCodexEvents.length - 1];
   const chatScroll = useStickyBottomScroll<HTMLDivElement>(
-    `${turns.length}:${latestTurn?.id ?? "empty"}:${latestTurn?.user?.text.length ?? 0}:${latestTurn?.assistant?.text.length ?? 0}:${latestLiveCodexEvent?.id ?? "no-live-codex"}`
+    `${turns.length}:${latestTurn?.id ?? "empty"}:${latestTurn?.user?.text.length ?? 0}:${latestTurn?.assistant?.text.length ?? 0}`
   );
 
   async function submitDraft() {
@@ -6678,7 +6821,7 @@ function AgentChatDock({
         </div>
       </div>
       <TurnStateBar text={text} turnState={turnState} />
-      {turns.length || liveCodexEvents.length ? (
+      {turns.length ? (
         <div className="agent-chat-log" ref={chatScroll.ref} onScroll={chatScroll.onScroll}>
           {olderTurns.length ? (
             <details className="agent-chat-history">
@@ -6709,9 +6852,6 @@ function AgentChatDock({
               tableeMotionState={tableeMotionState}
               onActionOpen={onActionOpen}
             />
-          ))}
-          {liveCodexEvents.slice(-3).map((event) => (
-            <AgentLiveTranscriptCard event={event} key={event.id} />
           ))}
         </div>
       ) : null}
@@ -7652,6 +7792,8 @@ function VisualArtifactPreview({ preview }: { preview: ArtifactPreview }) {
 
 function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
   const previewType = preview.content_type === "image/svg+xml" || preview.filename.toLowerCase().endsWith(".svg") ? "SVG" : "HTML";
+  const url = `${apiBase}/api/artifacts/${preview.id}/download`;
+  const inlineSource = typeof preview.preview === "string" && !preview.truncated ? preview.preview : null;
   return (
     <div className="preview-block">
       <div className="preview-toolbar">
@@ -7666,8 +7808,10 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
       ) : null}
       <div className="html-preview-shell">
         <iframe
+          key={preview.id}
           className="html-preview-frame"
-          srcDoc={preview.preview ?? ""}
+          src={inlineSource ? undefined : url}
+          srcDoc={inlineSource ?? undefined}
           sandbox="allow-scripts"
           title={`${preview.name} preview`}
         />

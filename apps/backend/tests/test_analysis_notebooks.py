@@ -5,6 +5,7 @@ from tabular_harness.services.analysis_notebooks import (
     _notebook_content_signal,
     _notebook_recommendation_reason,
     _notebook_recommendation_score,
+    notebook_execution_status,
 )
 
 
@@ -93,3 +94,12 @@ def test_model_metric_comparison_respects_metric_direction() -> None:
     assert rmse_comparison["status"] == "beats_sanity_floor"
     assert rmse_comparison["delta"] < 0
     assert rmse_comparison["higher_is_better"] is False
+
+
+def test_notebook_execution_status_separates_marimo_failure_from_static_capture() -> None:
+    compile_ok = {"status": "succeeded"}
+
+    assert notebook_execution_status(compile_ok, {"status": "succeeded"}) == "marimo_export_succeeded"
+    assert notebook_execution_status(compile_ok, {"status": "skipped"}) == "static_capture_succeeded"
+    assert notebook_execution_status(compile_ok, {"status": "failed"}) == "marimo_export_failed"
+    assert notebook_execution_status({"status": "failed"}, {"status": "succeeded"}) == "static_capture_failed"

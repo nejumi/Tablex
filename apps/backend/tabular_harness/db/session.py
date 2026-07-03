@@ -78,6 +78,20 @@ def ensure_sqlite_mvp_columns(engine: Engine) -> None:
                 if column_name not in existing:
                     connection.execute(text(f"ALTER TABLE jobs ADD COLUMN {column_name} {ddl}"))
 
+        if "agent_transcript_events" in table_names:
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_agent_transcript_events_session_index "
+                    "ON agent_transcript_events (session_id, event_index)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_agent_transcript_events_project_created "
+                    "ON agent_transcript_events (project_id, created_at)"
+                )
+            )
+
 
 def session_scope(session_factory: sessionmaker[Session]) -> Generator[Session, None, None]:
     session = session_factory()

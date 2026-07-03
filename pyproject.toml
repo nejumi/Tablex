@@ -14,6 +14,10 @@ dependencies = [
   "joblib>=1.4",
   "jsonschema>=4.22",
   "lightgbm>=4.0",
+  "marimo>=0.10",
+  "matplotlib>=3.8",
+  "pandas>=2.2",
+  "plotly>=5.22",
   "python-multipart>=0.0.9",
   "scikit-learn>=1.4",
   "sqlalchemy>=2.0",
@@ -26,10 +30,6 @@ tablex-worker = "tabular_harness.worker.cli:main"
 
 [project.optional-dependencies]
 analysis = [
-  "marimo>=0.10",
-  "matplotlib>=3.8",
-  "pandas>=2.2",
-  "plotly>=5.22",
 ]
 dev = [
   "httpx>=0.27",

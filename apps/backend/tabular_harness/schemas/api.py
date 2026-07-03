@@ -19,6 +19,7 @@ class ProjectUpdate(BaseModel):
     task_type: str | None = None
     target_column: str | None = None
     autonomy_mode: Literal["approval_based", "full_auto"] | None = None
+    locale: str | None = None
 
 
 class AutonomyStartCreate(BaseModel):

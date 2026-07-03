@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -515,6 +525,10 @@ class AgentSession(Base):
 
 class AgentTranscriptEvent(Base):
     __tablename__ = "agent_transcript_events"
+    __table_args__ = (
+        Index("ix_agent_transcript_events_session_index", "session_id", "event_index"),
+        Index("ix_agent_transcript_events_project_created", "project_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     project_id: Mapped[str] = mapped_column(String, ForeignKey("projects.id"), nullable=False)

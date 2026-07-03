@@ -27,6 +27,10 @@ npm install
 
 Mascot assets live under `apps/frontend/public/mascot`. `Tablee` is the current mascot concept name, not a final product name. Use the SVG variants for compact surfaces and the transparent PNG only for larger guidance or empty-state moments. Keep copy in locale messages rather than baking text into graphics.
 
+## Agent Experience Contract
+
+Read [agent_interface_spec.md](agent_interface_spec.md) before changing Full Auto, Raw, Chat, Research Plan, or marimo notebook behavior. In short: Raw is the real Codex transcript, Chat is Codex-authored human accountability, Full Auto is one continuing main Codex session, and marimo notebooks are Codex-authored first-class assets rather than backend prose templates.
+
 ## Backend
 
 Run the API on port 8000:

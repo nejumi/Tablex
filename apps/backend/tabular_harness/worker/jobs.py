@@ -14,6 +14,7 @@ from tabular_harness.models.entities import (
     SplitManifest,
     utc_now,
 )
+from tabular_harness.services.agent_chat import handle_agent_chat_turn
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.autonomy import (
     RUNNER_MODE_CODEX_IF_AVAILABLE,
@@ -48,6 +49,47 @@ def stub_job_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[s
         "context": loads_json(job.context_json, {}),
         "policy": loads_json(job.policy_json, {}),
         "attempt_count": job.attempt_count,
+    }
+
+
+def agent_chat_turn_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project_id = job.project_id
+    if project_id is None:
+        raise ValueError("agent_chat_turn requires a project_id")
+    project = db.get(Project, project_id)
+    if project is None:
+        raise ValueError("Project not found")
+    message = payload.get("message")
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError("agent_chat_turn requires a non-empty message")
+    locale = payload.get("locale") if isinstance(payload.get("locale"), str) else None
+    agent_model = payload.get("agent_model") if isinstance(payload.get("agent_model"), str) else None
+    utility_model = payload.get("utility_model") if isinstance(payload.get("utility_model"), str) else None
+    result = handle_agent_chat_turn(
+        db,
+        store=store,
+        project=project,
+        job=job,
+        message=message,
+        locale=locale,
+        agent_model=agent_model,
+        utility_model=utility_model,
+    )
+    return {
+        "schema_version": result.response["schema_version"],
+        "agent_chat_turn_artifact_id": result.artifact.id,
+        "artifact_id": result.artifact.id,
+        "artifact_ids": [result.artifact.id],
+        "intent_type": result.response["intent"]["type"],
+        "action_count": len(result.response["actions"]),
+        "assistant_message": result.response["assistant_message"],
+        "response_composer": result.response["response_composer"],
+        "worker_events": result.response["worker_events"],
+        "token_usage": result.response["token_usage"],
+        "agent_task_contract_artifact_id": result.planned_agent_task.artifact.id
+        if result.planned_agent_task
+        else None,
     }
 
 
@@ -597,6 +639,7 @@ def default_handlers() -> dict[str, JobHandler]:
     handlers["train_model_candidates"] = train_model_candidates_handler
     handlers["run_planned_agent_task_codex"] = run_planned_agent_task_codex_handler
     handlers["continue_autonomous_session"] = continue_autonomous_session_handler
+    handlers["agent_chat_turn"] = agent_chat_turn_handler
     return handlers
 
 

@@ -13,13 +13,14 @@ from typing import Any, cast
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 from tabular_harness.core.config import Settings
+from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
 from tabular_harness.models.entities import Artifact, Job, Project, Question, utc_now
 from tabular_harness.schemas import AgentResult
 from tabular_harness.services.agent_sessions import append_session_event
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.jobs import acquire_next_job, create_job
-from tabular_harness.worker.jobs import continue_autonomous_session_handler
+from tabular_harness.worker.jobs import agent_chat_turn_handler, continue_autonomous_session_handler
 from tabular_harness.worker.runner import SyncWorker
 
 
@@ -33,6 +34,17 @@ def make_client(tmp_path: Path) -> TestClient:
         cors_origins=("http://localhost:5173",),
     )
     return TestClient(create_app(settings))
+
+
+def run_queued_agent_chat_turn(client: TestClient, job_id: str) -> dict[str, Any]:
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        job = db.get(Job, job_id)
+        assert job is not None
+        worker = SyncWorker(handlers={"agent_chat_turn": agent_chat_turn_handler}, store=app.state.artifact_store)
+        completed = worker.run_job(db, job)
+        assert completed.status == "succeeded", completed.error_message
+        return loads_json(completed.output_json, {})
 
 
 def test_sqlite_engine_uses_wal_and_busy_timeout(tmp_path: Path) -> None:
@@ -66,6 +78,40 @@ def test_project_autonomy_mode_persists(tmp_path: Path) -> None:
     read_response = client.get(f"/api/projects/{project['id']}")
     assert read_response.status_code == 200
     assert read_response.json()["autonomy_mode"] == "full_auto"
+
+
+def test_autonomy_mode_change_is_persisted_in_agent_chat_history(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Mode history"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    update_response = client.patch(
+        f"/api/projects/{project_id}",
+        json={"autonomy_mode": "full_auto", "locale": "ja-JP"},
+    )
+    assert update_response.status_code == 200, update_response.text
+
+    history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
+    assert history_response.status_code == 200
+    history = history_response.json()
+    assert history[-1]["intent"]["type"] == "autonomy_mode_change"
+    assert history[-1]["user_message"] == "フルオート"
+    assert "フルオートに切り替えました" in history[-1]["assistant_message"]
+
+    update_response = client.patch(
+        f"/api/projects/{project_id}",
+        json={"autonomy_mode": "approval_based", "locale": "ja-JP"},
+    )
+    assert update_response.status_code == 200, update_response.text
+
+    history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
+    assert history_response.status_code == 200
+    history = history_response.json()
+    assert history[-1]["intent"]["type"] == "autonomy_mode_change"
+    assert history[-1]["user_message"] == "承認ベース"
+    assert "承認ベースに切り替えました" in history[-1]["assistant_message"]
 
 
 def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -> None:
@@ -573,6 +619,19 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
     assert transcript[-1]["source"] == "codex_cli"
     assert transcript[-1]["content"] == "I am continuing the main autonomous session."
 
+    delta_response = client.get(
+        f"/api/projects/{project_id}/agent-session/transcript?since_index={transcript[-2]['event_index']}"
+    )
+    assert delta_response.status_code == 200
+    delta = delta_response.json()
+    assert [event["event_index"] for event in delta] == [transcript[-1]["event_index"]]
+
+    empty_delta_response = client.get(
+        f"/api/projects/{project_id}/agent-session/transcript?since_index={transcript[-1]['event_index']}"
+    )
+    assert empty_delta_response.status_code == 200
+    assert empty_delta_response.json() == []
+
 
 def test_agent_chat_appends_user_instruction_to_active_main_session(
     tmp_path: Path,
@@ -735,7 +794,7 @@ def test_full_auto_start_queues_training_for_large_dataset_boundary(
     history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
     assert history
     assert history[-1]["intent"]["type"] == "agent_loop_control"
-    assert "AgentSession" in history[-1]["assistant_message"]
+    assert "Full Auto" in history[-1]["assistant_message"]
 
 
 def test_full_auto_passes_readiness_constraints_to_main_codex_session(
@@ -1117,18 +1176,32 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     assert chat["schema_version"] == "agent_chat_turn.v1"
     assert chat["intent"]["type"] == "agent_conversation"
     assert chat["actions"] == []
-    assert chat["worker_events"] == []
-    assert chat["action_summary"]["outcome"] == "answered"
-    assert "schema-validated agent proposals" in chat["action_summary"]["boundaries"][0]
-    assert chat["response_brief"]["response_locale"] == "ja-JP"
-    assert chat["response_brief"]["conversation_context"]["schema_version"] == "agent_conversation_context.v1"
+    assert chat["job"]["status"] == "queued"
+    assert chat["response_composer"]["status"] == "queued"
+    assert chat["artifact_id"].startswith("pending_")
+
+    output = run_queued_agent_chat_turn(client, chat["job"]["id"])
+    assert output["schema_version"] == "agent_chat_turn.v1"
+
+    history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
+    assert history_response.status_code == 200
+    history = history_response.json()
+    assert len(history) == 1
+    answered = history[0]
+    assert answered["user_message"] == "metricはROCーAUCにして"
+    assert answered["actions"] == []
+    assert answered["intent"]["type"] == "agent_conversation"
+    assert answered["artifact_id"] == output["artifact_id"]
+    assert answered["action_summary"]["outcome"] == "answered"
+    assert "schema-validated agent proposals" in answered["action_summary"]["boundaries"][0]
+    assert answered["response_brief"]["response_locale"] == "ja-JP"
+    assert answered["response_brief"]["conversation_context"]["schema_version"] == "agent_conversation_context.v1"
     explicit_actions = {
-        item["action"] for item in chat["response_brief"]["conversation_context"]["available_explicit_actions"]
+        item["action"] for item in answered["response_brief"]["conversation_context"]["available_explicit_actions"]
     }
     assert {"create_skill", "equip_existing_skill"} <= explicit_actions
-    assert chat["response_brief"]["conversation_context"]["skill_context"]["purpose"].startswith("Skills are reusable")
-    assert chat["token_usage"]["is_estimate"] is True
-    assert chat["job"]["status"] == "succeeded"
+    assert answered["response_brief"]["conversation_context"]["skill_context"]["purpose"].startswith("Skills are reusable")
+    assert answered["token_usage"]["is_estimate"] is True
 
     candidates_after = client.get(f"/api/projects/{project_id}/evaluation/candidates").json()
     assert candidates_after == candidates_before
@@ -1137,15 +1210,6 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     artifacts = client.get(f"/api/projects/{project_id}/artifacts").json()
     assert any(item["asset_type"] == "agent_chat_turn" for item in artifacts)
     assert not any(item["asset_type"] == "evaluation_metric_preference" for item in artifacts)
-
-    history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
-    assert history_response.status_code == 200
-    history = history_response.json()
-    assert len(history) == 1
-    assert history[0]["user_message"] == "metricはROCーAUCにして"
-    assert history[0]["actions"] == []
-    assert history[0]["intent"]["type"] == "agent_conversation"
-    assert history[0]["artifact_id"] == chat["artifact_id"]
 
     metric_response = client.post(f"/api/projects/{project_id}/leaderboard/metric", json={"metric": "ROCーAUC"})
     assert metric_response.status_code == 200, metric_response.text
@@ -1458,7 +1522,11 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path, monkeypatch: A
     chat = chat_response.json()
     assert chat["intent"]["type"] == "agent_conversation"
     assert chat["actions"] == []
-    assert chat["response_brief"]["conversation_context"]["counts"]["datasets"] == 1
+    assert chat["response_composer"]["status"] == "queued"
+
+    run_queued_agent_chat_turn(client, chat["job"]["id"])
+    history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
+    assert history[-1]["response_brief"]["conversation_context"]["counts"]["datasets"] == 1
 
     activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
     assert activity_response.status_code == 200

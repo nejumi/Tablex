@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -11,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from tabular_harness.api.routes import router
 from tabular_harness.core.config import Settings, get_settings
 from tabular_harness.db.session import create_engine_for_settings, create_session_factory, init_db
+from tabular_harness.services.agent_sessions import start_active_main_session_supervisors
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.auth import ensure_bootstrap_user, user_for_session_token
 
@@ -21,7 +24,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     init_db(engine)
     session_factory = create_session_factory(engine)
 
-    app = FastAPI(title=f"{app_settings.app_display_name} API")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        start_active_main_session_supervisors(session_factory, app.state.artifact_store)
+        yield
+
+    app = FastAPI(title=f"{app_settings.app_display_name} API", lifespan=lifespan)
     app.state.settings = app_settings
     app.state.engine = engine
     app.state.session_factory = session_factory
@@ -33,6 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             password=app_settings.bootstrap_user_password,
         )
         session.commit()
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(app_settings.cors_origins),

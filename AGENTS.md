@@ -4,6 +4,7 @@ This repository is building Tablex, a tabular-first prediction meta-harness. Tab
 
 ## Core Rules
 
+- Treat [docs/agent_interface_spec.md](docs/agent_interface_spec.md) as the product contract for Full Auto, Raw, Chat, Research Plan, and marimo behavior.
 - Do not read, log, copy, or request secrets.
 - Do not pass connector credentials, OAuth tokens, database passwords, or production write credentials to an agent runner.
 - Do not pass login passwords, password hashes, session cookies, session-token hashes, Google/OIDC tokens, or user-auth credentials to Codex/AgentRunner workspaces, prompts, artifacts, logs, or reports.

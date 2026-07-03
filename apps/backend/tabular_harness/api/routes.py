@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
+import re
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -21,6 +24,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from tabular_harness.api.deps import get_artifact_store, get_session
+from tabular_harness.core.config import get_settings
 from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
@@ -131,16 +135,18 @@ from tabular_harness.services.adaptive_strategy import (
     build_adaptive_strategy_brief,
     create_adaptive_strategy_brief,
 )
-from tabular_harness.services.agent_chat import handle_agent_chat_turn
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
 from tabular_harness.services.agent_sessions import (
     active_main_session,
     append_session_event,
+    chat_update_message_from_text,
     latest_main_session,
     run_main_agent_session_supervisor,
     session_to_dict,
+    start_main_agent_session_supervisor_thread,
     start_or_resume_main_session,
     stop_main_session,
+    supervisor_slot_active,
     transcript_event_to_dict,
 )
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
@@ -1010,10 +1016,20 @@ def update_project(
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
     data = payload.model_dump(exclude_unset=True)
+    previous_autonomy_mode = project.autonomy_mode
+    previous_phase = project.current_phase
+    locale = data.pop("locale", None)
     for key, value in data.items():
         if key == "autonomy_mode" and value is None:
             continue
         setattr(project, key, value)
+    stopped_session = None
+    if (
+        previous_autonomy_mode == "full_auto"
+        and project.autonomy_mode == "approval_based"
+        and previous_phase == "AUTONOMOUS_LOOP"
+    ):
+        stopped_session = stop_main_session(db, project)
     project.updated_at = utc_now()
     session = ensure_project_full_auto_agent_session(
         db,
@@ -1022,12 +1038,26 @@ def update_project(
         created_by=request_actor_id(request),
     )
     if session is not None:
-        background_tasks.add_task(
-            run_main_agent_session_supervisor,
+        start_main_agent_session_supervisor_thread(
             request.app.state.session_factory,
             store,
             project_id=project_id,
             session_id=session.id,
+            supervisor_runner=run_main_agent_session_supervisor,
+        )
+    if (
+        "autonomy_mode" in data
+        and project.autonomy_mode in {"approval_based", "full_auto"}
+        and project.autonomy_mode != previous_autonomy_mode
+    ):
+        record_autonomy_mode_change_chat_turn(
+            db,
+            store,
+            project=project,
+            previous_mode=previous_autonomy_mode,
+            next_mode=project.autonomy_mode,
+            locale=locale if isinstance(locale, str) else None,
+            stopped_session_id=stopped_session.id if stopped_session is not None else None,
         )
     db.flush()
     return project_to_dict(project)
@@ -1060,18 +1090,7 @@ def record_autonomy_control_chat_turn(
             "routing_policy": "explicit_ui_control_not_natural_language_routing",
         },
         "actions": [],
-        "action_summary": {
-            "schema_version": "agent_action_summary.v1",
-            "outcome": "started" if job.job_type == "start_autonomous_loop" else "stopped",
-            "headline": "Agent loop control",
-            "what_changed": [f"Recorded {len(created_job_ids)} queued follow-up job(s)."]
-            if created_job_ids
-            else ["Recorded the agent loop control event."],
-            "what_needs_review": [],
-            "next_step": {"label": "Agent Activity", "target_tab": "Home", "target_anchor": "agent-workspace"},
-            "boundaries": output.get("boundaries") if isinstance(output.get("boundaries"), list) else [],
-            "actions": [],
-        },
+        "action_summary": {},
         "response_brief": {
             "source": "autonomy_control",
             "response_locale": response_locale,
@@ -1103,6 +1122,84 @@ def record_autonomy_control_chat_turn(
             "token_usage_source": token_usage.get("source") if isinstance(token_usage.get("source"), str) else None,
             "response_locale": response_locale,
             "response_composer_mode": "autonomy_control_event",
+        },
+    )
+
+
+def record_autonomy_mode_change_chat_turn(
+    db: Session,
+    store: LocalArtifactStore,
+    *,
+    project: Project,
+    previous_mode: str,
+    next_mode: str,
+    locale: str | None,
+    stopped_session_id: str | None,
+) -> Artifact:
+    japanese = bool(locale and locale.lower().startswith("ja"))
+    if japanese:
+        user_message = "フルオート" if next_mode == "full_auto" else "承認ベース"
+        assistant_message = (
+            "フルオートに切り替えました。電源がONのときは、現在のProject状態を読み直して自律実行を続けます。"
+            if next_mode == "full_auto"
+            else (
+                "承認ベースに切り替えました。以降は判断が必要な場面で人間の確認を待ちます。"
+                + (" 実行中のフルオートセッションは停止しました。" if stopped_session_id else "")
+            )
+        )
+    else:
+        user_message = "Full Auto" if next_mode == "full_auto" else "Approval Based"
+        assistant_message = (
+            "Switched to Full Auto. When power is on, the agent will reread the current project state and continue autonomously."
+            if next_mode == "full_auto"
+            else (
+                "Switched to Approval Based. I will wait for human confirmation at decision points that need review."
+                + (" The running Full Auto session was stopped." if stopped_session_id else "")
+            )
+        )
+    payload = {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": project.id,
+        "user_message": user_message,
+        "assistant_message": assistant_message,
+        "intent": {
+            "type": "autonomy_mode_change",
+            "source": "autonomy_mode_toggle",
+            "routing_policy": "explicit_ui_control_not_natural_language_routing",
+        },
+        "actions": [],
+        "action_summary": {},
+        "response_brief": {
+            "source": "autonomy_mode_change",
+            "response_locale": locale or "en-US",
+            "previous_mode": previous_mode,
+            "next_mode": next_mode,
+            "stopped_agent_session_id": stopped_session_id,
+        },
+        "response_composer": {
+            "mode": "explicit_ui_control",
+            "status": "persisted",
+        },
+        "worker_events": [],
+        "token_usage": {"source": "explicit_ui_control", "is_estimate": False, "series": []},
+        "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent workspace"},
+    }
+    return store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="agent_chat_turn",
+        name=f"autonomy_mode_change_{new_id('mode')}",
+        filename="agent_chat_turn.json",
+        payload=payload,
+        metadata={
+            "project_id": project.id,
+            "intent_type": "autonomy_mode_change",
+            "previous_mode": previous_mode,
+            "next_mode": next_mode,
+            "response_locale": locale or "en-US",
+            "stopped_agent_session_id": stopped_session_id,
+            "response_composer_mode": "explicit_ui_control",
         },
     )
 
@@ -1387,8 +1484,47 @@ def ensure_project_full_auto_agent_session(
         return None
     existing = active_main_session(db, project.id)
     if existing is not None:
-        if running_codex_processes_for_project(project.id):
+        if supervisor_slot_active(existing.id):
             return None
+        observed_processes = running_codex_processes_for_project(project.id)
+        if observed_processes and not supervisor_slot_active(existing.id):
+            already_recorded = existing.last_error == (
+                "A Codex process is visible but no supervisor is attached; Tablex will recover the session."
+            )
+            existing.status = "between_turns"
+            existing.last_error = "A Codex process is visible but no supervisor is attached; Tablex will recover the session."
+            existing.updated_at = utc_now()
+            if not already_recorded:
+                append_session_event(
+                    db,
+                    existing,
+                    source="tablex_sidecar",
+                    event_type="unattached_runner_process_detected",
+                    role="harness",
+                    title="Unattached Codex process detected",
+                    content="Tablex observed a Codex process without an attached supervisor and will recover the same AgentSession.",
+                    payload={"project_id": project.id, "process_count": len(observed_processes)},
+                )
+            return existing
+        if existing.pid is not None or existing.status == "running":
+            already_recorded = existing.last_error == (
+                "No live Codex process was observed; the supervisor will resume the same AgentSession."
+            )
+            existing.pid = None
+            existing.status = "between_turns"
+            existing.last_error = "No live Codex process was observed; the supervisor will resume the same AgentSession."
+            existing.updated_at = utc_now()
+            if not already_recorded:
+                append_session_event(
+                    db,
+                    existing,
+                    source="tablex_sidecar",
+                    event_type="stale_runner_pid_cleared",
+                    role="harness",
+                    title="Stale Codex process reference cleared",
+                    content="Tablex observed Full Auto without a live Codex process and will resume the same AgentSession.",
+                    payload={"project_id": project.id},
+                )
         return existing
     return start_or_resume_main_session(
         db,
@@ -1465,13 +1601,13 @@ def start_project_autonomy(
             output["agent_chat_turn_artifact_id"] = artifact.id
             job.output_json = dumps_json(output)
             db.commit()
-            background_tasks.add_task(
-                run_main_agent_session_supervisor,
+            start_main_agent_session_supervisor_thread(
                 request.app.state.session_factory,
                 store,
                 project_id=project_id,
                 session_id=session.id,
                 agent_model=payload.agent_model,
+                supervisor_runner=run_main_agent_session_supervisor,
             )
             return job_to_dict(job)
         job = create_job(
@@ -4218,11 +4354,11 @@ def create_agent_chat_turn(
     project_id: str,
     payload: AgentChatCreate,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
     session = active_main_session(db, project_id)
-    if session is not None:
+    sidecar_only = is_sidecar_chat_request(payload.message)
+    if session is not None and not sidecar_only:
         append_session_event(
             db,
             session,
@@ -4254,47 +4390,60 @@ def create_agent_chat_turn(
             "connector_credentials": "not_materialized",
             "runner_execution": "codex_response_composer",
             "response_composer": "codex_cli_if_available",
+            "sidecar_only": sidecar_only,
             "response_locale": payload.locale,
             "agent_model": payload.agent_model,
             "utility_model": payload.utility_model,
         },
     )
-    try:
-        mark_job_running(job)
-        result = handle_agent_chat_turn(
-            db,
-            store=store,
-            project=project,
-            job=job,
-            message=payload.message,
-            locale=payload.locale,
-            agent_model=payload.agent_model,
-            utility_model=payload.utility_model,
-        )
-        mark_job_succeeded(
-            job,
+    return {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": project.id,
+        "user_message": payload.message,
+        "assistant_message": "",
+        "intent": {
+            "type": "agent_conversation",
+            "confidence": None,
+            "summary": "Queued for Codex-authored response composition.",
+        },
+        "actions": [],
+        "action_summary": {},
+        "response_brief": {
+            "schema_version": "agent_chat_queued.v1",
+            "response_locale": payload.locale,
+            "job_id": job.id,
+        },
+        "response_composer": {
+            "schema_version": "agent_response_composer.v1",
+            "mode": "queued_worker",
+            "status": "queued",
+        },
+        "worker_events": [
             {
-                "schema_version": result.response["schema_version"],
-                "agent_chat_turn_artifact_id": result.artifact.id,
-                "artifact_id": result.artifact.id,
-                "artifact_ids": [result.artifact.id],
-                "intent_type": result.response["intent"]["type"],
-                "action_count": len(result.response["actions"]),
-                "assistant_message": result.response["assistant_message"],
-                "response_composer": result.response["response_composer"],
-                "worker_events": result.response["worker_events"],
-                "token_usage": result.response["token_usage"],
-                "agent_task_contract_artifact_id": result.planned_agent_task.artifact.id
-                if result.planned_agent_task
-                else None,
-            },
-        )
-        response = dict(result.response)
-        response["job"] = job_to_dict(job)
-        return response
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+                "worker_id": "agent-chat",
+                "display_name": "Agent Chat",
+                "status": "queued",
+                "headline": "Queued for response",
+                "detail": "The local worker will compose the response and save it to the workspace history.",
+                "job_id": job.id,
+                "project_id": project.id,
+                "target_tab": "Home",
+                "target_anchor": "agent-workspace",
+                "created_at": job.created_at.isoformat(),
+                "updated_at": job.updated_at.isoformat(),
+                "active": True,
+                "token_usage": {"source": "pending_response", "is_estimate": True, "series": []},
+            }
+        ],
+        "token_usage": {"source": "pending_response", "is_estimate": True, "series": []},
+        "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent Chat"},
+        "artifact_id": f"pending_{job.id}",
+        "job": job_to_dict(job),
+    }
+
+
+def is_sidecar_chat_request(message: str) -> bool:
+    return message.strip().lower() == "/btw"
 
 
 @router.get("/api/projects/{project_id}/agent-chat/history", response_model=list[AgentChatHistoryTurnRead])
@@ -4321,6 +4470,10 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
         if not isinstance(payload, dict) or payload.get("schema_version") != "agent_chat_turn.v1":
             continue
         metadata = loads_json(artifact.metadata_json, {})
+        assistant_message = str(payload.get("assistant_message") or "")
+        intent = payload.get("intent") if isinstance(payload.get("intent"), dict) else {}
+        if intent.get("type") == "autonomous_agent_progress_report":
+            assistant_message = chat_update_message_from_text(assistant_message)
         if isinstance(metadata.get("job_id"), str):
             seen_job_ids.add(metadata["job_id"])
         turns.append(
@@ -4328,8 +4481,8 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
                 "schema_version": "agent_chat_turn.v1",
                 "project_id": project_id,
                 "user_message": str(payload.get("user_message") or ""),
-                "assistant_message": str(payload.get("assistant_message") or ""),
-                "intent": payload.get("intent") if isinstance(payload.get("intent"), dict) else {},
+                "assistant_message": assistant_message,
+                "intent": intent,
                 "actions": payload.get("actions") if isinstance(payload.get("actions"), list) else [],
                 "action_summary": payload.get("action_summary") if isinstance(payload.get("action_summary"), dict) else {},
                 "response_brief": payload.get("response_brief") if isinstance(payload.get("response_brief"), dict) else None,
@@ -4379,16 +4532,7 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
                     "routing_policy": "explicit_ui_control_not_natural_language_routing",
                 },
                 "actions": [],
-                "action_summary": {
-                    "schema_version": "agent_action_summary.v1",
-                    "outcome": "started" if started else "stopped",
-                    "headline": "Agent loop control",
-                    "what_changed": [],
-                    "what_needs_review": [],
-                    "next_step": {"label": "Agent Activity", "target_tab": "Home", "target_anchor": "agent-workspace"},
-                    "boundaries": output.get("boundaries") if isinstance(output.get("boundaries"), list) else [],
-                    "actions": [],
-                },
+                "action_summary": {},
                 "response_brief": {
                     "source": "autonomy_control_backfill",
                     "response_locale": response_locale,
@@ -4423,12 +4567,26 @@ def list_agent_session_transcript(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
     limit: int = 300,
+    since_index: int | None = None,
 ) -> list[dict[str, Any]]:
     require_project(db, project_id)
     session = active_main_session(db, project_id) or latest_main_session(db, project_id)
     if session is None:
         return []
     bounded_limit = max(1, min(limit, 1000))
+    if since_index is not None:
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(
+                    AgentTranscriptEvent.session_id == session.id,
+                    AgentTranscriptEvent.event_index > since_index,
+                )
+                .order_by(AgentTranscriptEvent.event_index.asc())
+                .limit(bounded_limit)
+            ).all()
+        )
+        return [transcript_event_to_dict(event) for event in events]
     events = list(
         db.scalars(
             select(AgentTranscriptEvent)
@@ -6090,7 +6248,19 @@ def preview_artifact(artifact_id: str, db: Annotated[Session, Depends(get_sessio
     path = artifact_primary_path(artifact)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file not found")
-    limit_bytes = 500_000 if artifact.asset_type == "relational_catalog" else 20_000
+    limit_bytes = (
+        5_000_000
+        if artifact.asset_type
+        in {
+            "notebook_html",
+            "notebook_execution_html",
+            "notebook_evidence_html",
+            "eda_review_html",
+        }
+        else 500_000
+        if artifact.asset_type == "relational_catalog"
+        else 20_000
+    )
     return artifact_preview_to_dict(artifact, path, limit_bytes=limit_bytes)
 
 
@@ -6180,13 +6350,15 @@ def get_project_agent_activity(
     )
     if recovered_session is not None:
         db.flush()
-        background_tasks.add_task(
-            run_main_agent_session_supervisor,
-            request.app.state.session_factory,
-            store,
-            project_id=project_id,
-            session_id=recovered_session.id,
-        )
+        db.commit()
+        if not supervisor_slot_active(recovered_session.id):
+            start_main_agent_session_supervisor_thread(
+                request.app.state.session_factory,
+                store,
+                project_id=project_id,
+                session_id=recovered_session.id,
+                supervisor_runner=run_main_agent_session_supervisor,
+            )
     jobs = list(
         db.scalars(
             select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc()).limit(30)
@@ -7114,11 +7286,29 @@ def report_to_dict(report: Report) -> dict[str, Any]:
         "title": report.title,
         "summary": report.summary,
         "artifact_id": report.artifact_id,
-        "source_asset_ids": loads_json(report.source_asset_ids_json, []),
+        "source_asset_ids": normalize_source_asset_refs(loads_json(report.source_asset_ids_json, [])),
         "status": report.status,
         "created_by_type": report.created_by_type,
         "created_at": report.created_at.isoformat(),
     }
+
+
+def normalize_source_asset_refs(raw_refs: Any) -> list[dict[str, str]]:
+    refs: list[dict[str, str]] = []
+    if not isinstance(raw_refs, list):
+        return refs
+    for ref in raw_refs:
+        if isinstance(ref, dict):
+            asset_type = ref.get("asset_type") or ref.get("type") or "artifact"
+            asset_id = ref.get("asset_id") or ref.get("id")
+        elif isinstance(ref, str):
+            asset_type = "artifact"
+            asset_id = ref
+        else:
+            continue
+        if asset_id:
+            refs.append({"asset_type": str(asset_type), "asset_id": str(asset_id)})
+    return refs
 
 
 def visualization_to_dict(visualization: VisualizationSpec) -> dict[str, Any]:
@@ -7264,6 +7454,8 @@ def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 
         if suffix == ".svg"
         else suffix.removeprefix(".") or "text"
     )
+    if content_type == "text/html" and not truncated:
+        preview = inline_local_html_assets(artifact, path, preview)
     return {
         **base,
         "content_type": content_type,
@@ -7272,6 +7464,68 @@ def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 
         "truncated": truncated,
         "reason": None,
     }
+
+
+def inline_local_html_assets(artifact: Artifact, path: Path, html: str, max_preview_bytes: int = 5_000_000) -> str:
+    base_dirs = html_asset_base_dirs(artifact, path)
+    current_size = len(html.encode("utf-8"))
+
+    def replace_src(match: re.Match[str]) -> str:
+        nonlocal current_size
+        prefix, src, suffix = match.groups()
+        if not src or src.startswith(("#", "data:", "http://", "https://", "mailto:", "/", "blob:")):
+            return match.group(0)
+        asset_path = resolve_local_html_asset(src, base_dirs)
+        if asset_path is None:
+            return match.group(0)
+        mime_type = mimetypes.guess_type(asset_path.name)[0] or "application/octet-stream"
+        try:
+            raw = asset_path.read_bytes()
+        except OSError:
+            return match.group(0)
+        encoded = base64.b64encode(raw).decode("ascii")
+        data_uri = f"data:{mime_type};base64,{encoded}"
+        projected_size = current_size - len(src.encode("utf-8")) + len(data_uri)
+        if projected_size > max_preview_bytes:
+            return match.group(0)
+        current_size = projected_size
+        return f"{prefix}{data_uri}{suffix}"
+
+    return re.sub(r'(<(?:img|source)\b[^>]*\bsrc=["\'])([^"\']+)(["\'])', replace_src, html, flags=re.IGNORECASE)
+
+
+def html_asset_base_dirs(artifact: Artifact, path: Path) -> list[Path]:
+    metadata = loads_json(artifact.metadata_json, {})
+    dirs = [path.parent, path.parent.parent]
+    project_id = metadata.get("project_id") or artifact.project_id
+    session_id = metadata.get("agent_session_id")
+    if isinstance(project_id, str) and isinstance(session_id, str):
+        workspace_root = get_settings().artifact_root / "agent_sessions" / project_id / session_id
+        workspace_relative_path = metadata.get("workspace_relative_path")
+        if isinstance(workspace_relative_path, str) and workspace_relative_path:
+            dirs.append((workspace_root / workspace_relative_path).parent)
+        dirs.extend([workspace_root / "reports", workspace_root])
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for directory in dirs:
+        key = str(directory)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(directory)
+    return deduped
+
+
+def resolve_local_html_asset(src: str, base_dirs: list[Path]) -> Path | None:
+    for base_dir in base_dirs:
+        candidate = (base_dir / src).resolve()
+        try:
+            candidate.relative_to(base_dir.resolve())
+        except ValueError:
+            if not any(candidate.is_relative_to(parent.resolve()) for parent in base_dirs):
+                continue
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
 
 
 def create_translation_job(

@@ -75,6 +75,7 @@ def compose_agent_chat_response(
                     "mode": "codex_cli",
                     "status": "succeeded",
                     "raw_surface": "codex_exec",
+                    "model": response_composer_model(brief),
                     "command": codex_response.command,
                     "prompt_preamble": codex_response.prompt_preamble,
                     "timeout_seconds": codex_response.timeout_seconds,
@@ -98,6 +99,7 @@ def compose_agent_chat_response(
                     "status": codex_response.status,
                     "failure_reason": codex_response.failure_reason,
                     "raw_surface": "codex_exec",
+                    "model": response_composer_model(brief),
                     "command": codex_response.command,
                     "prompt_preamble": codex_response.prompt_preamble,
                     "timeout_seconds": codex_response.timeout_seconds,
@@ -118,6 +120,7 @@ def compose_agent_chat_response(
             "schema_version": "agent_response_composer.v1",
             "mode": mode or "structured_fallback",
             "status": "codex_unavailable" if mode in {"codex_cli", "codex_cli_if_available"} else "fallback",
+            "model": response_composer_model(brief),
             "failure_reason": brief.get("composer_warning"),
         },
     )
@@ -153,6 +156,7 @@ def build_human_response_brief(
             },
         },
         "user_message": user_message,
+        "response_shortcut": response_shortcut_for_message(user_message),
         "detected_intent": intent,
         "interaction_role": {
             "agent": "Codex/Tablee as a data-science partner and interface, not a ticketing bot",
@@ -208,10 +212,14 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
         workspace = Path(tmp)
         response_path = workspace / "response.txt"
         timeout_seconds = codex_response_timeout_seconds()
+        model = response_composer_model(brief)
         prompt_preamble = [
             "You are Tablex's human-facing data-science agent interface.",
             "Write one concise response to the user from the structured brief below.",
             "Use the requested response_locale. Do not sound like a log. Do not invent completed work.",
+            "Use agent_session_context and recent_raw_transcript_events when explaining what Codex is doing now.",
+            "Use recent_conversation_turns so the reply can follow the user's ongoing conversation.",
+            "If response_shortcut is btw_status_explanation, act as a sidecar: explain current progress without changing the main session.",
             "If the work only created a plan or contract, say so naturally and state the next useful move.",
             "",
         ]
@@ -230,6 +238,9 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
             "--skip-git-repo-check",
             "-",
         ]
+        if model is not None:
+            cmd[2:2] = ["--model", model]
+            command_summary = f"codex exec --model {model} --json --sandbox read-only --output-last-message response.txt -"
         started_at = time.perf_counter()
         try:
             completed = subprocess.run(
@@ -360,6 +371,23 @@ def codex_response_timeout_seconds() -> int:
     except ValueError:
         return 90
     return min(max(value, 15), 300)
+
+
+def response_composer_model(brief: dict[str, Any]) -> str | None:
+    preferences = brief.get("model_preferences")
+    if not isinstance(preferences, dict):
+        return None
+    utility_model = preferences.get("utility_model")
+    if not isinstance(utility_model, str):
+        return None
+    normalized = utility_model.strip()
+    if not normalized or normalized in {"default", "codex-default"}:
+        return None
+    return normalized
+
+
+def response_shortcut_for_message(user_message: str) -> str | None:
+    return "btw_status_explanation" if user_message.strip().lower() == "/btw" else None
 
 
 def codex_unavailable_message(brief: dict[str, Any]) -> str:
