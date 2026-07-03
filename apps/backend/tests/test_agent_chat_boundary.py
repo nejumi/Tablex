@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+from tabular_harness.api.routes import is_sidecar_chat_request
 import tabular_harness.services.agent_chat as agent_chat
 from tabular_harness.models.entities import AgentSession
 from tabular_harness.services.agent_chat import (
@@ -39,6 +40,20 @@ def test_agent_chat_source_does_not_keyword_match_user_language() -> None:
     ]
     for fragment in prohibited_fragments:
         assert fragment not in source
+
+
+def test_sidecar_chat_escape_is_only_an_explicit_slash_command() -> None:
+    assert is_sidecar_chat_request("/btw") is True
+    assert is_sidecar_chat_request(" /BTW ") is True
+
+    natural_language_messages = [
+        "状況を説明してください",
+        "btw, what is running now?",
+        "状況 /btw",
+        "by the way, explain this project",
+    ]
+    for message in natural_language_messages:
+        assert is_sidecar_chat_request(message) is False
 
 
 def test_conversation_next_focus_uses_project_guidance_context() -> None:
