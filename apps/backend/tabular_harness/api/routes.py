@@ -4912,11 +4912,11 @@ def _research_plan_block_evidence(raw_block: dict[str, Any], *, locale: str | No
         return evidence.strip()
     blockers = _research_plan_string_list(_research_plan_localized_value(raw_block, "blockers", locale=locale), limit=3)
     if blockers:
-        return f"{len(blockers)} blocker{'s' if len(blockers) != 1 else ''}"
+        return _research_plan_count_label(len(blockers), "blocker", locale=locale)
     supporting_artifacts = _research_plan_supporting_artifacts(raw_block.get("supporting_artifacts"), limit=8)
     existing_count = sum(1 for item in supporting_artifacts if item.get("exists") is True)
     if existing_count:
-        return f"{existing_count} evidence"
+        return _research_plan_count_label(existing_count, "evidence", locale=locale)
     phase = raw_block.get("phase")
     if isinstance(phase, str) and phase.strip():
         return phase.strip()
@@ -4943,7 +4943,90 @@ def _research_plan_localized_value(raw_block: dict[str, Any], key: str, *, local
             field_key = f"{key}_{locale_key.replace('-', '_')}"
             if field_key in raw_block:
                 return raw_block[field_key]
-    return raw_block.get(key)
+    return _research_plan_locale_fallback(raw_block.get(key), key=key, locale=locale)
+
+
+def _research_plan_locale_fallback(value: Any, *, key: str, locale: str | None) -> Any:
+    if not _research_plan_locale_is_japanese(locale):
+        return value
+    if isinstance(value, str):
+        return _research_plan_japanese_structured_text(value, key=key)
+    if isinstance(value, list):
+        return [_research_plan_japanese_structured_text(item, key=key) if isinstance(item, str) else item for item in value]
+    return value
+
+
+def _research_plan_locale_is_japanese(locale: str | None) -> bool:
+    return isinstance(locale, str) and locale.strip().lower().replace("_", "-").startswith("ja")
+
+
+def _research_plan_count_label(count: int, noun: str, *, locale: str | None) -> str:
+    if _research_plan_locale_is_japanese(locale):
+        if noun == "blocker":
+            return f"ブロッカー {count}件"
+        if noun == "evidence":
+            return f"根拠 {count}件"
+    if noun == "blocker":
+        return f"{count} blocker{'s' if count != 1 else ''}"
+    return f"{count} evidence"
+
+
+_RESEARCH_PLAN_JA_TITLE_FALLBACKS = {
+    "approval blocker handoff": "承認ブロッカー引き継ぎ",
+    "approval decision brief": "承認判断ブリーフ",
+    "approval response contract": "承認回答の契約",
+    "approval response intake guard": "承認回答の取り込みガード",
+    "approval review evidence pack": "承認レビュー用の根拠パック",
+    "baseline and diagnostics": "ベースラインと診断",
+    "baseline, diagnostics, release candidate evidence": "ベースライン・診断・リリース候補の根拠",
+    "baseline、diagnostics、release candidate evidence": "ベースライン・診断・リリース候補の根拠",
+    "contextual money mention triage": "文脈別の金額表現トリアージ",
+    "data owner approval request": "データオーナーへの承認依頼",
+    "data owner faq": "データオーナーFAQ",
+    "data owner response kit": "データオーナー回答キット",
+    "feature availability and leakage surface audit": "特徴量利用可否と漏洩面の監査",
+    "inbox delivery acknowledgement": "受信箱反映の確認",
+    "post-response execution runbook": "回答後の実行手順",
+    "prior-knowledge research anchors": "従来知見の調査アンカー",
+    "target policy human resolution": "ターゲット方針の人間確認",
+    "target policy response dry-run harness": "ターゲット方針回答のドライランハーネス",
+    "target policy risk register": "ターゲット方針リスク台帳",
+    "target-free input schema guard": "ターゲット非依存の入力スキーマガード",
+    "text compensation leakage audit": "テキスト内報酬表現の漏洩監査",
+    "text scrub blast radius": "テキストマスク影響範囲",
+    "text scrub policy contract": "テキストマスク方針契約",
+    "text scrub policy simulator": "テキストマスク方針シミュレーター",
+}
+
+_RESEARCH_PLAN_JA_TITLE_PHRASE_FALLBACKS = {
+    "project context": "プロジェクト文脈",
+}
+
+
+def _research_plan_japanese_structured_text(value: str, *, key: str) -> str:
+    text = value.strip()
+    if not text:
+        return value
+    if key == "evidence":
+        count_match = re.fullmatch(r"(\d+)\s+(evidence|blockers?)", text, flags=re.IGNORECASE)
+        if count_match:
+            noun = "blocker" if count_match.group(2).lower().startswith("blocker") else "evidence"
+            return _research_plan_count_label(int(count_match.group(1)), noun, locale="ja-JP")
+    if key != "title":
+        return value
+    version_match = re.search(r"\s+(v\d+)$", text, flags=re.IGNORECASE)
+    version = f" {version_match.group(1)}" if version_match else ""
+    base = text[: version_match.start()].strip() if version_match else text
+    normalized = re.sub(r"[_\s]+", " ", base.replace("/", " ").strip()).lower()
+    translated = _RESEARCH_PLAN_JA_TITLE_FALLBACKS.get(normalized)
+    if translated:
+        return f"{translated}{version}"
+    display = text
+    for source, target in sorted(_RESEARCH_PLAN_JA_TITLE_PHRASE_FALLBACKS.items(), key=lambda item: len(item[0]), reverse=True):
+        display = re.sub(re.escape(source), target, display, flags=re.IGNORECASE)
+    if display != text:
+        return display
+    return value
 
 
 def _research_plan_locale_keys(locale: str | None) -> list[str]:

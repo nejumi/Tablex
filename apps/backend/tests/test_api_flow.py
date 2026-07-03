@@ -1869,6 +1869,13 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
                             }
                         ],
                     },
+                    {
+                        "id": "approval_response_contract_v19",
+                        "title": "approval response contract v19",
+                        "why_it_matters": "Prepare the data owner reply shape.",
+                        "blockers": ["Owner review is pending.", "Metric choice is pending."],
+                        "status": "blocked",
+                    },
                     {"id": "broken", "status": "done"},
                     {"id": "invalid_status", "title": "Invalid status becomes pending", "status": "surprise"},
                 ],
@@ -1880,7 +1887,11 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert response.status_code == 200
     timeline = response.json()
     assert timeline["source_artifact_id"] == artifact.id
-    assert [block["id"] for block in timeline["blocks"]] == ["deep_eda", "invalid_status"]
+    assert [block["id"] for block in timeline["blocks"]] == [
+        "deep_eda",
+        "approval_response_contract_v19",
+        "invalid_status",
+    ]
     assert timeline["blocks"][0]["status"] == "active"
     assert timeline["blocks"][0]["subtitle"] == "Inspect salary tail and relational coverage."
     assert timeline["blocks"][0]["next_action"] == "Open the EDA notebook and validate the tail story."
@@ -1888,7 +1899,8 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert timeline["blocks"][0]["evidence"] == "1 evidence"
     assert timeline["blocks"][0]["supporting_artifacts"][0]["path"] == "notebooks/deep_eda.py"
     assert timeline["blocks"][0]["subtasks"][0]["target_tab"] == "Insight"
-    assert timeline["blocks"][1]["status"] == "pending"
+    assert timeline["blocks"][1]["status"] == "blocked"
+    assert timeline["blocks"][2]["status"] == "pending"
 
     localized_response = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
     assert localized_response.status_code == 200
@@ -1901,6 +1913,9 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized["blocks"][0]["blockers"] == ["データオーナー確認が未完了です。"]
     assert localized["blocks"][0]["subtasks"][0]["title"] == "高salary裾の確認"
     assert localized["blocks"][0]["subtasks"][0]["detail"] == "裾ラベルに別の判断経路が必要か確認します。"
+    assert localized["blocks"][1]["title"] == "承認回答の契約 v19"
+    assert localized["blocks"][1]["evidence"] == "ブロッカー 2件"
+    assert localized["blocks"][2]["status"] == "pending"
 
 
 def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_path: Path) -> None:
