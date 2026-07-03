@@ -3,7 +3,11 @@ from __future__ import annotations
 import inspect
 
 import tabular_harness.services.agent_chat as agent_chat
-from tabular_harness.services.agent_chat import conversation_next_focus
+from tabular_harness.models.entities import AgentSession
+from tabular_harness.services.agent_chat import (
+    conversation_next_focus,
+    session_has_observed_codex_process,
+)
 
 
 def test_agent_chat_has_no_natural_language_intent_router() -> None:
@@ -55,3 +59,19 @@ def test_conversation_next_focus_uses_project_guidance_context() -> None:
     assert focus["target_tab"] == "Evaluation"
     assert focus["target_anchor"] == "evaluation-design"
     assert focus["label"] == "Open evaluation design"
+
+
+def test_session_process_observation_requires_matching_codex_process() -> None:
+    session = AgentSession(
+        id="ags_pid",
+        project_id="p_pid",
+        session_type="main_autonomous",
+        status="running",
+        pid=101,
+    )
+
+    assert session_has_observed_codex_process(session, [{"pid": 202, "command": "codex exec --cd /tmp/p_pid/ags_pid"}]) is False
+    assert session_has_observed_codex_process(session, [{"pid": 101, "command": "codex exec --cd /tmp/p_pid/ags_pid"}]) is True
+
+    session.pid = None
+    assert session_has_observed_codex_process(session, [{"pid": 303, "command": "codex exec --cd /tmp/p_pid/ags_pid"}]) is True

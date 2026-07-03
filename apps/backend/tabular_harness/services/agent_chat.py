@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +29,7 @@ from tabular_harness.services.artifacts import (
     artifact_primary_path,
     create_lineage_edge,
 )
+from tabular_harness.services.portal import running_codex_processes_for_project
 from tabular_harness.services.project_guidance import build_project_guidance
 
 
@@ -346,7 +346,8 @@ def build_agent_session_context(db: Session, project_id: str) -> dict[str, Any]:
         ).all()
     )
     ordered_events = list(reversed(events))
-    live_pid = pid_is_alive(session.pid)
+    codex_processes = running_codex_processes_for_project(project_id)
+    live_pid = session_has_observed_codex_process(session, codex_processes)
     latest_chat_created_at = latest_chat_artifact.created_at if latest_chat_artifact else None
     events_after_chat = [
         event for event in ordered_events if latest_chat_created_at is None or event.created_at > latest_chat_created_at
@@ -374,6 +375,7 @@ def build_agent_session_context(db: Session, project_id: str) -> dict[str, Any]:
             "pid": session.pid,
             "pid_is_alive": live_pid,
             "observed_runner_state": observed_runner_state(session.status, live_pid),
+            "observed_codex_process_count": len(codex_processes),
             "codex_thread_id": session.codex_thread_id,
             "last_heartbeat_at": session.last_heartbeat_at.isoformat() if session.last_heartbeat_at else None,
             "last_error": session.last_error,
@@ -425,14 +427,12 @@ def text_excerpt(value: str | None, limit: int) -> str | None:
     return stripped[:limit] if stripped else None
 
 
-def pid_is_alive(pid: int | None) -> bool:
-    if pid is None:
+def session_has_observed_codex_process(session: AgentSession, processes: list[dict[str, Any]]) -> bool:
+    if not processes:
         return False
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
+    if session.pid is None:
+        return True
+    return any(process.get("pid") == session.pid for process in processes)
 
 
 def observed_runner_state(status: str, live_pid: bool) -> str:
