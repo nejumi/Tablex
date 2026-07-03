@@ -13,6 +13,7 @@ from typing import Any, cast
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 from tabular_harness.api.routes import (
+    compact_agent_chat_history_turns,
     format_elapsed_seconds,
     seconds_since_timestamp,
     visible_activity_workers,
@@ -100,6 +101,34 @@ def test_agent_activity_elapsed_output_helpers() -> None:
     assert format_elapsed_seconds(42) == "42s"
     assert format_elapsed_seconds(125) == "2m"
     assert format_elapsed_seconds(3660) == "1h 1m"
+
+
+def test_agent_chat_history_compaction_preserves_user_turns() -> None:
+    turns: list[dict[str, Any]] = []
+    for index in range(40):
+        turns.append(
+            {
+                "created_at": f"2026-07-03T00:{index:02d}:00",
+                "user_message": "",
+                "assistant_message": f"progress {index}",
+                "intent": {"type": "autonomous_agent_progress_report"},
+            }
+        )
+    turns.append(
+        {
+            "created_at": "2026-07-03T00:10:30",
+            "user_message": "状況を説明してください",
+            "assistant_message": "説明します。",
+            "intent": {"type": "agent_conversation"},
+        }
+    )
+
+    compacted = compact_agent_chat_history_turns(turns, max_turns=20, max_autonomous_progress_turns=5)
+
+    progress_turns = [turn for turn in compacted if turn["intent"]["type"] == "autonomous_agent_progress_report"]
+    assert len(progress_turns) == 5
+    assert any(turn["user_message"] == "状況を説明してください" for turn in compacted)
+    assert compacted[-1]["assistant_message"] == "progress 39"
 
 
 def test_project_autonomy_mode_persists(tmp_path: Path) -> None:

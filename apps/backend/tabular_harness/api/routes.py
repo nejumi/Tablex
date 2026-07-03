@@ -4579,8 +4579,7 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
         if not isinstance(message, str) or not message.strip():
             continue
         turns.append(pending_agent_chat_turn_from_job(project_id, job, payload))
-    turns.sort(key=lambda turn: turn["created_at"])
-    return turns[-60:]
+    return compact_agent_chat_history_turns(turns)
 
 
 def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[str, Any]) -> dict[str, Any]:
@@ -4626,6 +4625,28 @@ def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[st
         "job_id": job.id,
         "created_at": job.created_at.isoformat(),
     }
+
+
+def compact_agent_chat_history_turns(
+    turns: list[dict[str, Any]],
+    *,
+    max_turns: int = 60,
+    max_autonomous_progress_turns: int = 12,
+) -> list[dict[str, Any]]:
+    ordered = sorted(turns, key=lambda turn: str(turn.get("created_at") or ""))
+    selected_reversed: list[dict[str, Any]] = []
+    progress_count = 0
+    for turn in reversed(ordered):
+        intent = turn.get("intent") if isinstance(turn.get("intent"), dict) else {}
+        is_autonomous_progress = intent.get("type") == "autonomous_agent_progress_report"
+        if is_autonomous_progress:
+            if progress_count >= max_autonomous_progress_turns:
+                continue
+            progress_count += 1
+        selected_reversed.append(turn)
+        if len(selected_reversed) >= max_turns:
+            break
+    return list(reversed(selected_reversed))
 
 
 @router.get("/api/projects/{project_id}/research-plan/timeline")
