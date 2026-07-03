@@ -44,6 +44,7 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
 - Localized the floating Agent Activity rail title and minimize/expand affordance so the activity overlay no longer leaves fixed English control labels in Japanese UI.
 - Localized high-visibility Insight / decision-report / Notebook Center shelves and table affordances so Japanese UI no longer drops back to English around the report reader and notebook surface.
 - Hardened the floating Agent Activity rail so the same job/session is rendered as one card, cards without backend project names still show the current project, the live-work pill includes the visible card count, and `waiting_for_agent` remains visible as an active wait state instead of disappearing after the transient TTL.
+- Hardened the backend Agent Activity contract so `waiting_for_agent` chat turns delivered to the main Codex session are active worker cards at the API level, not only a frontend interpretation.
 
 ## 2026-07-04 Fable Feedback Audit
 
@@ -70,6 +71,7 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
 | Paired Agent Chat turns must remain traceable to Raw after the pending state is replaced | Implemented | The paired Chat history response now carries `agent_session_observation` in `response_brief`; regression coverage asserts the session id and observation schema persist after the Codex-authored update is paired. |
 | Pending Chat turns should show whether Tablex has nudged Codex for a human-facing update | Implemented | Active Chat wait cards now include last Chat update age and progress-request-sent metadata from the backend `response_brief`, without generating a replacement natural-language answer in the harness. |
 | Agent Activity should not duplicate or hide active/waiting work cards | Implemented | The frontend now deduplicates worker cards by job/session identity, preserves richer telemetry while merging duplicates, fills the current project name when missing, and treats `waiting_for_agent` as an active wait state. |
+| Main-session Chat waits should stay visible in Agent Activity | Implemented | `job_active_for_activity` now treats `waiting_for_agent` as active, and the active-session chat regression asserts `/agent-activity` returns the waiting chat job as an active worker and increments `active_count`. |
 | Chat/Raw latest-log visibility must be predictable | Implemented in UI | Chat and Raw sticky-bottom scroll state resets per project/session while preserving manual scroll-up within the same view. |
 | Long-running Codex turns should still be prompted to explain progress | Implemented with non-blocking nudge | The supervisor now writes `.tablex/inbox/progress_request.md` during active Codex turns when the latest Codex-authored Chat update is stale; tests verify project locale and no browser polling dependency. |
 | Notebook preview state should not look blank or broken while rendering | Implemented in UI | HTML/SVG preview iframes now show localized loading and slow-render states before `onLoad`, with the existing open-original fallback still available. |
@@ -112,3 +114,4 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
   - Saved visual evidence outside git at `output/playwright/fable-hardening-chat-ja-firefox.png`, `output/playwright/fable-hardening-raw-ja-firefox.png`, and `output/playwright/fable-hardening-insight-ja-firefox.png`.
   - Console error check reported 0 browser errors.
   - Activity overlay follow-up: `npm run lint`, `npm run build`, `curl http://127.0.0.1:8000/health`, Playwright Firefox reload for `#/projects/p_9f25dd620d8c`, and console error check reported 0 browser errors.
+  - Backend Activity contract follow-up: `.venv/bin/pytest apps/backend/tests/test_api_flow.py::test_agent_chat_writes_active_session_instruction_to_workspace_inbox apps/backend/tests/test_api_flow.py::test_agent_activity_turn_state_waits_for_user_when_no_agent_work_is_observed apps/backend/tests/test_api_flow.py::test_agent_activity_does_not_show_future_autonomous_heartbeat_as_active -q`, `.venv/bin/ruff check apps/backend`, `npm run lint`, and `npm run build`.

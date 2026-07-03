@@ -446,7 +446,7 @@ def job_active_for_activity(job: Job, *, active_job_ids: set[str] | None = None)
     waiting_child_ids = heartbeat_waiting_child_ids(job)
     if waiting_child_ids and (active_job_ids is None or any(child_id in active_job_ids for child_id in waiting_child_ids)):
         return False
-    if job.status in {"running", "approval_required"}:
+    if job.status in {"running", "approval_required", "waiting_for_agent"}:
         return True
     if job.status == "queued":
         run_after = job.run_after

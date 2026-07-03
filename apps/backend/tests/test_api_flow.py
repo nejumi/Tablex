@@ -1866,6 +1866,15 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert "この条件で特徴量を見直してください" in latest.read_text(encoding="utf-8")
     jobs = client.get(f"/api/projects/{project_id}/jobs").json()
     assert any(job["job_type"] == "agent_chat_turn" and job["status"] == "waiting_for_agent" for job in jobs)
+    activity = client.get(f"/api/projects/{project_id}/agent-activity").json()
+    waiting_workers = [
+        worker
+        for worker in activity["workers"]
+        if worker.get("job_id") == chat["job"]["id"] and worker.get("status") == "waiting_for_agent"
+    ]
+    assert waiting_workers
+    assert waiting_workers[0]["active"] is True
+    assert activity["active_count"] >= 1
     history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
     assert history[-1]["job_id"] == chat["job"]["id"]
     assert history[-1]["user_message"] == "この条件で特徴量を見直してください"
