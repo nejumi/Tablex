@@ -97,6 +97,28 @@ def test_turn_prompt_delivers_all_undelivered_user_instructions_beyond_recent_ra
         assert "評価指標はROC-AUCにしてください。" not in prompt_after_delivery.text
 
 
+def test_turn_prompt_includes_living_research_plan_contract(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+
+    with session_factory() as db:
+        project = Project(id="p_plan", name="Plan Project", current_phase="AUTONOMOUS_LOOP", autonomy_mode="full_auto")
+        session = AgentSession(
+            id="as_plan",
+            project_id=project.id,
+            goal_text="Run a useful data science loop.",
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        prompt = build_turn_prompt(db, project=project, session=session)
+
+        assert "outputs/research_plan.json" in prompt.text
+        assert "timeline_blocks" in prompt.text
+        assert "freely add, remove, reorder, branch, or revise" in prompt.text
+
+
 def test_chat_update_message_uses_latest_concise_tail_for_cumulative_files() -> None:
     text = "\n\n".join(
         [

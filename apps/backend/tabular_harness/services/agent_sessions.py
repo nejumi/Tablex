@@ -687,6 +687,10 @@ def build_session_context(db: Session, *, project: Project, session: AgentSessio
         "output_contract": {
             "registerable_dirs": ["outputs", "reports", "notebooks", "artifacts"],
             "marimo_notebooks": "Place .py marimo notebooks under notebooks/ or outputs/notebooks/.",
+            "living_research_plan": (
+                "When the project plan changes, write outputs/research_plan.json with optional timeline_blocks. "
+                "Tablex renders those blocks directly; after the initial anchors, Codex may add, remove, reorder, or branch them."
+            ),
             "progress": "Explain progress naturally in Codex messages. Tablex stores the raw transcript and Chat explains it to humans.",
             "notebook_quality": (
                 "Data understanding and research notebooks are human deliverables, not only model context. "
@@ -777,6 +781,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Do not use validation/test targets in feature generation prompts.",
         "- Do not destructively modify EvaluationSpec or SplitManifest.",
         "- Register important outputs by writing files under outputs/, reports/, notebooks/, or artifacts/.",
+        "- Keep a living plan when it helps the user follow the work: write `outputs/research_plan.json` with `schema_version: \"research_plan.v1\"` and optional `timeline_blocks`. Use `timeline_blocks` only as a display contract: after data upload, objective/task framing, data understanding, and prior-knowledge research anchors, freely add, remove, reorder, branch, or revise project-specific blocks. Mark a block done only when the supporting artifact exists or you explicitly record that no useful output is needed.",
         "- Keep human-facing accountability continuous: when you make meaningful progress, hit uncertainty, start or finish a long-running step, recover from an error, change the plan, or need the user to know what changed, overwrite `reports/chat_update.md` with only the latest concise update in the user's locale. Keep it under 1200 characters. Use separate report files for long history. Do not wait for Tablex to infer this from logs.",
         "- Prefer marimo notebooks for data understanding, modeling diagnostics, and reports.",
         "- Read `.tablex/context.json` for `human_interface.response_locale` and write human-facing notebooks/reports/chat in that language.",
