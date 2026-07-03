@@ -41,6 +41,7 @@ from tabular_harness.services.agent_sessions import (
     mark_user_instructions_delivered,
     maybe_register_chat_update_from_workspace_output,
     maybe_request_codex_progress_update,
+    maybe_request_codex_progress_update_safely,
     metadata_for_session_output,
     progress_request_path,
     publish_raw_codex_transcript_snapshot,
@@ -58,8 +59,8 @@ from tabular_harness.services.agent_sessions import (
     start_supervisor_lease_heartbeat,
     supervisor_slot_active,
 )
-from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
 from tabular_harness.services.approach import store_text_artifact
+from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
 from tabular_harness.services.jobs import create_job
 
 
@@ -161,14 +162,17 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"d
     monkeypatch.setenv("PATH", str(bin_dir))
 
     with session_factory() as db:
-        project = Project(id="p_file_tail", name="File Tail")
+        user = User(id="u_file_tail", email="file-tail@example.com", locale="ja-JP")
+        project = Project(id="p_file_tail", name="File Tail", created_by=user.id)
         session = AgentSession(
             id="as_file_tail",
             project_id=project.id,
             goal_text="Continue.",
             workspace_path=str(workspace),
+            created_at=utc_now() - timedelta(minutes=20),
+            started_at=utc_now() - timedelta(minutes=20),
         )
-        db.add_all([project, session])
+        db.add_all([user, project, session])
         db.commit()
 
     return_code = run_codex_cli_turn_streaming(
@@ -186,6 +190,8 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"d
     assert return_code == 0
     assert '"thread_id":"thread_file_tail"' in raw_codex_transcript_path(workspace).read_text(encoding="utf-8")
     assert raw_codex_stderr_path(workspace).read_text(encoding="utf-8") == "fake stderr line\n"
+    assert progress_request_path(workspace).exists()
+    assert "locale: ja-JP" in progress_request_path(workspace).read_text(encoding="utf-8")
 
     with session_factory() as db:
         session = db.get(AgentSession, "as_file_tail")
@@ -1098,6 +1104,60 @@ def test_progress_update_nudge_writes_inbox_without_faking_heartbeat(tmp_path: P
             min_interval_seconds=300,
         )
         assert second_event is None
+
+
+def test_supervisor_safe_progress_update_uses_project_locale_without_browser_polling(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    workspace = tmp_path / "workspace"
+
+    with session_factory() as db:
+        user = User(id="u_progress_locale", email="progress@example.com", locale="ja-JP")
+        project = Project(
+            id="p_safe_nudge",
+            name="Safe Nudge Project",
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+            created_by=user.id,
+        )
+        session = AgentSession(
+            id="as_safe_nudge",
+            project_id=project.id,
+            goal_text="Run a useful data science loop.",
+            status="running",
+            workspace_path=str(workspace),
+            created_at=utc_now() - timedelta(minutes=20),
+            started_at=utc_now() - timedelta(minutes=20),
+        )
+        db.add_all([user, project, session])
+        db.commit()
+
+    maybe_request_codex_progress_update_safely(
+        session_factory,
+        project_id="p_safe_nudge",
+        session_id="as_safe_nudge",
+    )
+
+    request_path = progress_request_path(workspace)
+    assert request_path.exists()
+    request_text = request_path.read_text(encoding="utf-8")
+    assert "locale: ja-JP" in request_text
+    assert "Raw logの要約ではなく" in request_text
+    with session_factory() as db:
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(
+                    AgentTranscriptEvent.session_id == "as_safe_nudge",
+                    AgentTranscriptEvent.event_type == "progress_update_requested",
+                )
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            ).all()
+        )
+        assert len(events) == 1
+        payload = loads_json(events[0].payload_json, {})
+        assert payload["locale"] == "ja-JP"
 
 
 def test_chat_update_message_uses_latest_concise_tail_for_cumulative_files() -> None:

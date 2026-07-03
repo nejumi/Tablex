@@ -596,6 +596,30 @@ def maybe_request_codex_progress_update(
     return event
 
 
+def maybe_request_codex_progress_update_safely(
+    session_factory: sessionmaker[Session],
+    *,
+    project_id: str,
+    session_id: str,
+) -> None:
+    try:
+        with session_factory() as db:
+            project = db.get(Project, project_id)
+            session = db.get(AgentSession, session_id)
+            if project is None or session is None:
+                return
+            maybe_request_codex_progress_update(
+                db,
+                session=session,
+                locale=latest_project_response_locale(db, project),
+                stale_after_seconds=PROGRESS_UPDATE_NUDGE_AFTER_SECONDS,
+                min_interval_seconds=PROGRESS_UPDATE_NUDGE_MIN_INTERVAL_SECONDS,
+            )
+            db.commit()
+    except Exception:
+        return
+
+
 def publish_raw_codex_transcript_snapshot(workspace: Path) -> list[Path]:
     artifacts_dir = workspace / "artifacts"
     published: list[Path] = []
@@ -1618,6 +1642,11 @@ def run_codex_cli_turn_streaming(
             session_id=session_id,
             delivered_user_event_indexes=delivered_user_event_indexes,
         )
+        maybe_request_codex_progress_update_safely(
+            session_factory,
+            project_id=project_id,
+            session_id=session_id,
+        )
 
         stream_tailers = {
             "stdout": StreamFileTailer(raw_stdout_path, offset=stdout_offset),
@@ -1648,6 +1677,11 @@ def run_codex_cli_turn_streaming(
                     session_id=session_id,
                     workspace=workspace,
                     allow_notebook_auto_capture=False,
+                )
+                maybe_request_codex_progress_update_safely(
+                    session_factory,
+                    project_id=project_id,
+                    session_id=session_id,
                 )
                 last_workspace_ingest = now
             if cancel_event is not None and cancel_event.is_set() and process.poll() is None and not cancel_sent:
@@ -1696,6 +1730,11 @@ def run_codex_cli_turn_streaming(
                     session_id=session_id,
                     workspace=workspace,
                     allow_notebook_auto_capture=False,
+                )
+                maybe_request_codex_progress_update_safely(
+                    session_factory,
+                    project_id=project_id,
+                    session_id=session_id,
                 )
                 last_workspace_ingest = now
             if process.poll() is not None:
