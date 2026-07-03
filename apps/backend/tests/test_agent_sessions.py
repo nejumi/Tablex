@@ -15,7 +15,9 @@ from tabular_harness.models.entities import (
     AgentTranscriptEvent,
     Artifact,
     Base,
+    Job,
     Project,
+    User,
     utc_now,
 )
 from tabular_harness.services.agent_sessions import (
@@ -31,6 +33,7 @@ from tabular_harness.services.agent_sessions import (
     chat_update_message_from_text,
     ingest_session_workspace_outputs,
     latest_codex_transcript_output_at,
+    latest_project_response_locale,
     mark_user_instructions_delivered,
     maybe_request_codex_progress_update,
     metadata_for_session_output,
@@ -648,6 +651,45 @@ def test_turn_prompt_keeps_chat_update_human_facing_not_internal_changelog(tmp_p
         assert "make that active work the headline" in prompt.text
         assert "Do not present Full Auto as stopped on approval" in prompt.text
         assert "which reversible analysis, modeling, diagnostics, notebook/report work, or research" in prompt.text
+
+
+def test_project_response_locale_uses_latest_explicit_user_or_chat_locale(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    now = utc_now()
+
+    with sessionmaker(engine)() as db:
+        user = User(id="u_locale", email="locale@example.com", locale="en-US", updated_at=now)
+        project = Project(id="p_locale", name="Locale Project", created_by=user.id)
+        start_job = Job(
+            id="job_start_locale",
+            project_id=project.id,
+            job_type="start_autonomous_loop",
+            input_json=dumps_json({"locale": "ja-JP"}),
+            created_at=now + timedelta(seconds=10),
+        )
+        db.add_all([user, project, start_job])
+        db.commit()
+
+        assert latest_project_response_locale(db, project) == "ja-JP"
+
+        user.locale = "fr-FR"
+        user.updated_at = now + timedelta(seconds=20)
+        db.commit()
+
+        assert latest_project_response_locale(db, project) == "fr-FR"
+
+        chat_job = Job(
+            id="job_chat_locale",
+            project_id=project.id,
+            job_type="agent_chat_turn",
+            input_json=dumps_json({"message": "状況を説明して", "locale": "ja-JP"}),
+            created_at=now + timedelta(seconds=30),
+        )
+        db.add(chat_job)
+        db.commit()
+
+        assert latest_project_response_locale(db, project) == "ja-JP"
 
 
 def test_latest_codex_output_ignores_sidecar_events(tmp_path: Path) -> None:

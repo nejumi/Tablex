@@ -1163,21 +1163,41 @@ def build_session_context(db: Session, *, project: Project, session: AgentSessio
 
 
 def latest_project_response_locale(db: Session, project: Project) -> str:
-    job = db.scalar(
+    candidates: list[tuple[datetime, str]] = []
+    user = db.get(User, project.created_by)
+    if user is not None and user.locale and user.locale.strip():
+        candidates.append((_utc_comparable(user.updated_at), user.locale.strip()))
+    jobs = list(
+        db.scalars(
+            select(Job)
+            .where(Job.project_id == project.id, Job.job_type.in_(["start_autonomous_loop", "agent_chat_turn"]))
+            .order_by(Job.created_at.desc())
+            .limit(20)
+        ).all()
+    )
+    for job in jobs:
+        payload = loads_json(job.input_json, {})
+        locale = payload.get("locale")
+        if isinstance(locale, str) and locale.strip():
+            candidates.append((_utc_comparable(job.created_at), locale.strip()))
+    if candidates:
+        return max(candidates, key=lambda item: item[0])[1]
+    legacy_job = db.scalar(
         select(Job)
         .where(Job.project_id == project.id, Job.job_type == "start_autonomous_loop")
         .order_by(Job.created_at.desc())
         .limit(1)
     )
-    if job is not None:
-        payload = loads_json(job.input_json, {})
+    if legacy_job is not None:
+        payload = loads_json(legacy_job.input_json, {})
         locale = payload.get("locale")
         if isinstance(locale, str) and locale.strip():
             return locale.strip()
-    user = db.get(User, project.created_by)
-    if user is not None and user.locale:
-        return user.locale
     return "en-US"
+
+
+def _utc_comparable(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 def research_plan_display_context(artifact: Artifact | None, *, response_locale: str) -> dict[str, Any]:
