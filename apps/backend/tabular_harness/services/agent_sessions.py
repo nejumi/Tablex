@@ -49,6 +49,7 @@ TERMINAL_SESSION_STATUSES = {"stopped", "failed", "gave_up", "completed"}
 RETRY_BACKOFF_SECONDS = (5, 30, 120, 600)
 STALE_PROCESS_TERM_GRACE_SECONDS = 5
 SESSION_OUTPUT_MIN_VERSION_INTERVAL_SECONDS = 30
+MAIN_AGENT_IDLE_TIMEOUT_SECONDS = 6 * 60 * 60
 SESSION_INTERNAL_DIR = ".tablex"
 SESSION_INBOX_DIR = "inbox"
 USER_INSTRUCTIONS_INBOX_FILENAME = "user_instructions.jsonl"
@@ -473,7 +474,7 @@ def run_main_agent_session_supervisor(
     session_id: str,
     agent_model: str | None = None,
     max_turns: int = 100_000,
-    turn_timeout_seconds: int = 1800,
+    turn_timeout_seconds: int = MAIN_AGENT_IDLE_TIMEOUT_SECONDS,
     slot_acquired: bool = False,
 ) -> None:
     if not slot_acquired and not acquire_supervisor_slot(session_id):
