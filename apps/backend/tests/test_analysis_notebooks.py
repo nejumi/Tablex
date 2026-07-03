@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from tabular_harness.core.json import dumps_json
+from tabular_harness.models.entities import Artifact, Base, Project
 from tabular_harness.services.analysis_notebooks import (
     _model_metric_comparison,
     _notebook_content_signal,
     _notebook_recommendation_reason,
     _notebook_recommendation_score,
+    build_project_notebook_index,
     notebook_execution_status,
 )
 
@@ -103,3 +110,70 @@ def test_notebook_execution_status_separates_marimo_failure_from_static_capture(
     assert notebook_execution_status(compile_ok, {"status": "skipped"}) == "static_capture_succeeded"
     assert notebook_execution_status(compile_ok, {"status": "failed"}) == "marimo_export_failed"
     assert notebook_execution_status({"status": "failed"}, {"status": "succeeded"}) == "static_capture_failed"
+
+
+def artifact(
+    artifact_id: str,
+    *,
+    project_id: str,
+    asset_type: str,
+    name: str,
+    metadata: dict[str, object] | None = None,
+) -> Artifact:
+    return Artifact(
+        id=artifact_id,
+        project_id=project_id,
+        asset_type=asset_type,
+        name=name,
+        version=1,
+        uri=f"/tmp/{artifact_id}",
+        content_hash=artifact_id,
+        metadata_json=dumps_json(metadata or {}),
+    )
+
+
+def test_notebook_index_ignores_unrelated_agent_session_reports(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    project_id = "p_notebook_index"
+    session_id = "ags_notebook_index"
+
+    with sessionmaker(engine)() as db:
+        project = Project(id=project_id, name="Notebook Index")
+        notebook = artifact(
+            "art_notebook",
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="agent_session_ags_notebook_index_notebooks_grandmaster_eda_py",
+            metadata={
+                "agent_session_id": session_id,
+                "workspace_relative_path": "notebooks/grandmaster_eda.py",
+                "notebook_kind": "data_understanding",
+            },
+        )
+        matching_html = artifact(
+            "art_matching_html",
+            project_id=project_id,
+            asset_type="agent_session_report",
+            name="agent_session_ags_notebook_index_reports_grandmaster_eda_html",
+            metadata={"agent_session_id": session_id, "workspace_relative_path": "reports/grandmaster_eda.html"},
+        )
+        unrelated_reports = [
+            artifact(
+                f"art_unrelated_{index}",
+                project_id=project_id,
+                asset_type="agent_session_report",
+                name=f"agent_session_ags_notebook_index_reports_unrelated_{index}_html",
+                metadata={"agent_session_id": session_id, "workspace_relative_path": f"reports/unrelated_{index}.html"},
+            )
+            for index in range(300)
+        ]
+        db.add_all([project, notebook, matching_html, *unrelated_reports])
+        db.commit()
+
+        index = build_project_notebook_index(db, project)
+
+        assert index["counts"]["total"] == 1
+        assert index["counts"]["with_html_preview"] == 1
+        item = index["items"][0]
+        assert item["artifact_ids"]["html_preview"] == "art_matching_html"

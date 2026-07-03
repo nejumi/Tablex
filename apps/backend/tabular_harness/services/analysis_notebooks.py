@@ -91,6 +91,18 @@ class NotebookExecutionCaptureResult:
     artifact_ids: list[str]
 
 
+@dataclass
+class NotebookArtifactLookup:
+    by_asset_type: dict[str, list[Artifact]]
+    by_session_id: dict[str, list[Artifact]]
+    metadata_by_artifact_id: dict[str, dict[str, Any]]
+    workspace_path_by_artifact_id: dict[str, str]
+    text_by_artifact_id: dict[str, str]
+    generic_candidates_by_session_id: dict[str, list[Artifact]]
+    kind_candidates_by_session_id: dict[tuple[str, str], list[Artifact]]
+    stem_candidates_by_session_id: dict[tuple[str, str], list[Artifact]]
+
+
 def create_data_understanding_notebook(
     db: Session,
     *,
@@ -105,13 +117,13 @@ def create_data_understanding_notebook(
 
 
 def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any]:
-    notebook_artifacts = list(
-        db.scalars(
-            select(Artifact)
-            .where(Artifact.project_id == project.id, Artifact.asset_type.in_(["analysis_notebook", "marimo_notebook"]))
-            .order_by(Artifact.created_at.desc())
-        ).all()
+    project_artifacts = list(
+        db.scalars(select(Artifact).where(Artifact.project_id == project.id).order_by(Artifact.created_at.desc())).all()
     )
+    artifact_lookup = _build_notebook_artifact_lookup(project_artifacts)
+    notebook_artifacts = [
+        artifact for artifact in project_artifacts if artifact.asset_type in {"analysis_notebook", "marimo_notebook"}
+    ]
     reports = list(
         db.scalars(
             select(Report)
@@ -135,6 +147,7 @@ def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any
             notebook_artifact,
             reports_by_artifact_id=reports_by_artifact_id,
             visualizations_by_artifact_id=visualizations_by_artifact_id,
+            artifact_lookup=artifact_lookup,
         )
         for notebook_artifact in notebook_artifacts
     ]
@@ -1830,6 +1843,60 @@ def _model_diagnostics_source_artifacts(
     }
 
 
+def _build_notebook_artifact_lookup(artifacts: list[Artifact]) -> NotebookArtifactLookup:
+    by_asset_type: dict[str, list[Artifact]] = {}
+    by_session_id: dict[str, list[Artifact]] = {}
+    metadata_by_artifact_id: dict[str, dict[str, Any]] = {}
+    workspace_path_by_artifact_id: dict[str, str] = {}
+    text_by_artifact_id: dict[str, str] = {}
+    generic_candidates_by_session_id: dict[str, list[Artifact]] = {}
+    kind_candidates_by_session_id: dict[tuple[str, str], list[Artifact]] = {}
+    stem_candidates_by_session_id: dict[tuple[str, str], list[Artifact]] = {}
+    data_markers = ("eda", "data_understanding", "exploration", "visual_story", "session_summary")
+    model_markers = ("model", "diagnostic", "leaderboard", "experiment", "result")
+    generic_markers = (
+        "notebook_figure_manifest",
+        "notebook_evidence_bundle",
+        "notebook_evidence",
+        "visual_story_cards",
+    )
+    for artifact in artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        metadata_by_artifact_id[artifact.id] = metadata
+        raw_workspace_path = str(metadata.get("workspace_relative_path") or artifact.name)
+        workspace_path = raw_workspace_path.lower().replace("-", "_")
+        name = artifact.name.lower().replace("-", "_")
+        workspace_path_by_artifact_id[artifact.id] = workspace_path
+        artifact_text = f"{workspace_path} {name}"
+        text_by_artifact_id[artifact.id] = artifact_text
+        by_asset_type.setdefault(artifact.asset_type, []).append(artifact)
+        session_id = metadata.get("agent_session_id")
+        if isinstance(session_id, str) and session_id.strip():
+            by_session_id.setdefault(session_id, []).append(artifact)
+            if artifact.asset_type == "agent_session_figure" or any(marker in artifact_text for marker in generic_markers):
+                generic_candidates_by_session_id.setdefault(session_id, []).append(artifact)
+            if any(marker in artifact_text for marker in data_markers):
+                kind_candidates_by_session_id.setdefault((session_id, "data_understanding"), []).append(artifact)
+            if any(marker in artifact_text for marker in model_markers):
+                kind_candidates_by_session_id.setdefault((session_id, "model_diagnostics"), []).append(artifact)
+            for stem in {
+                Path(raw_workspace_path).stem.lower().replace("-", "_"),
+                Path(artifact.name).stem.lower().replace("-", "_"),
+            }:
+                if stem:
+                    stem_candidates_by_session_id.setdefault((session_id, stem), []).append(artifact)
+    return NotebookArtifactLookup(
+        by_asset_type=by_asset_type,
+        by_session_id=by_session_id,
+        metadata_by_artifact_id=metadata_by_artifact_id,
+        workspace_path_by_artifact_id=workspace_path_by_artifact_id,
+        text_by_artifact_id=text_by_artifact_id,
+        generic_candidates_by_session_id=generic_candidates_by_session_id,
+        kind_candidates_by_session_id=kind_candidates_by_session_id,
+        stem_candidates_by_session_id=stem_candidates_by_session_id,
+    )
+
+
 def _notebook_index_item(
     db: Session,
     project: Project,
@@ -1837,52 +1904,53 @@ def _notebook_index_item(
     *,
     reports_by_artifact_id: dict[str, Report],
     visualizations_by_artifact_id: dict[str, VisualizationSpec],
+    artifact_lookup: NotebookArtifactLookup | None = None,
 ) -> dict[str, Any]:
     metadata = loads_json(notebook_artifact.metadata_json, {})
     notebook_kind = str(metadata.get("notebook_kind") or _infer_notebook_kind_from_artifact(notebook_artifact, metadata))
-    html_artifact = _latest_artifact_for_metadata(
-        db, project.id, "notebook_html", "notebook_artifact_id", notebook_artifact.id
+    html_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "notebook_html", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    manifest_artifact = _latest_artifact_for_metadata(
-        db, project.id, "notebook_run_manifest", "notebook_artifact_id", notebook_artifact.id
+    manifest_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "notebook_run_manifest", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    report_artifact = _latest_artifact_for_metadata(
-        db, project.id, "notebook_report", "notebook_artifact_id", notebook_artifact.id
+    report_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "notebook_report", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    visualization_artifact = _latest_artifact_for_metadata(
-        db, project.id, "visualization_spec", "source_artifact_id", notebook_artifact.id
+    visualization_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "visualization_spec", "source_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    execution_plan_artifact = _latest_artifact_for_metadata(
-        db, project.id, "notebook_execution_plan", "notebook_artifact_id", notebook_artifact.id
+    execution_plan_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "notebook_execution_plan", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    agent_task_contract_artifact = _latest_artifact_for_metadata(
-        db, project.id, "agent_task_contract", "notebook_artifact_id", notebook_artifact.id
+    agent_task_contract_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "agent_task_contract", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    execution_manifest_artifact = _latest_artifact_for_metadata(
-        db, project.id, "notebook_execution_manifest", "notebook_artifact_id", notebook_artifact.id
+    execution_manifest_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "notebook_execution_manifest", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    execution_report_artifact = _latest_artifact_for_metadata(
-        db, project.id, "notebook_execution_report", "notebook_artifact_id", notebook_artifact.id
+    execution_report_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "notebook_execution_report", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    execution_html_artifact = _latest_artifact_for_metadata(
-        db, project.id, "notebook_execution_html", "notebook_artifact_id", notebook_artifact.id
+    execution_html_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "notebook_execution_html", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    figure_manifest_artifact = _latest_artifact_for_metadata(
-        db, project.id, "notebook_figure_manifest", "notebook_artifact_id", notebook_artifact.id
+    figure_manifest_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "notebook_figure_manifest", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    execution_source_artifact = _latest_artifact_for_metadata(
-        db, project.id, "notebook_execution_source", "notebook_artifact_id", notebook_artifact.id
+    execution_source_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "notebook_execution_source", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    evidence_bundle_artifact = _latest_artifact_for_metadata(
-        db, project.id, "notebook_evidence_bundle", "notebook_artifact_id", notebook_artifact.id
+    evidence_bundle_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "notebook_evidence_bundle", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    evidence_html_artifact = _latest_artifact_for_metadata(
-        db, project.id, "notebook_evidence_html", "notebook_artifact_id", notebook_artifact.id
+    evidence_html_artifact = _latest_artifact_for_metadata_cached(
+        db, project.id, "notebook_evidence_html", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    evidence_figure_artifacts = _artifacts_for_metadata(
-        db, project.id, "notebook_evidence_svg", "notebook_artifact_id", notebook_artifact.id
+    evidence_figure_artifacts = _artifacts_for_metadata_cached(
+        db, project.id, "notebook_evidence_svg", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    session_linked = _agent_session_notebook_artifacts(db, project.id, notebook_artifact, notebook_kind)
+    session_linked = _agent_session_notebook_artifacts(db, project.id, notebook_artifact, notebook_kind, artifact_lookup)
     html_artifact = html_artifact or session_linked["html_preview"]
     report_artifact = report_artifact or session_linked["report_artifact"]
     manifest_artifact = manifest_artifact or session_linked["manifest"]
@@ -2002,6 +2070,7 @@ def _agent_session_notebook_artifacts(
     project_id: str,
     notebook_artifact: Artifact,
     notebook_kind: str,
+    artifact_lookup: NotebookArtifactLookup | None = None,
 ) -> dict[str, Any]:
     metadata = loads_json(notebook_artifact.metadata_json, {})
     session_id = metadata.get("agent_session_id")
@@ -2009,23 +2078,46 @@ def _agent_session_notebook_artifacts(
         return _empty_agent_session_notebook_artifacts()
     notebook_path = str(metadata.get("workspace_relative_path") or notebook_artifact.name)
     notebook_stem = Path(notebook_path).stem.lower().replace("-", "_")
-    artifacts = [
-        artifact
-        for artifact in db.scalars(
-            select(Artifact)
-            .where(Artifact.project_id == project_id, Artifact.id != notebook_artifact.id)
-            .order_by(Artifact.created_at.desc())
-        ).all()
-        if loads_json(artifact.metadata_json, {}).get("agent_session_id") == session_id
-    ]
+    if artifact_lookup is not None and isinstance(session_id, str):
+        artifacts = _candidate_agent_session_artifacts(
+            session_id=session_id,
+            notebook_stem=notebook_stem,
+            notebook_kind=notebook_kind,
+            artifact_lookup=artifact_lookup,
+            excluded_artifact_id=notebook_artifact.id,
+        )
+    else:
+        artifacts = [
+            artifact
+            for artifact in db.scalars(
+                select(Artifact)
+                .where(Artifact.project_id == project_id, Artifact.id != notebook_artifact.id)
+                .order_by(Artifact.created_at.desc())
+            ).all()
+            if loads_json(artifact.metadata_json, {}).get("agent_session_id") == session_id
+        ]
     return {
-        "html_preview": _best_agent_session_artifact(artifacts, role="html_preview", notebook_stem=notebook_stem, notebook_kind=notebook_kind),
-        "manifest": _best_agent_session_artifact(artifacts, role="manifest", notebook_stem=notebook_stem, notebook_kind=notebook_kind),
-        "report_artifact": _best_agent_session_artifact(artifacts, role="report", notebook_stem=notebook_stem, notebook_kind=notebook_kind),
-        "figure_manifest": _best_agent_session_artifact(artifacts, role="figure_manifest", notebook_stem=notebook_stem, notebook_kind=notebook_kind),
-        "evidence_bundle": _best_agent_session_artifact(artifacts, role="evidence_bundle", notebook_stem=notebook_stem, notebook_kind=notebook_kind),
-        "evidence_html": _best_agent_session_artifact(artifacts, role="evidence_html", notebook_stem=notebook_stem, notebook_kind=notebook_kind),
-        "visual_story_cards": _best_agent_session_artifact(artifacts, role="visual_story_cards", notebook_stem=notebook_stem, notebook_kind=notebook_kind),
+        "html_preview": _best_agent_session_artifact(
+            artifacts, role="html_preview", notebook_stem=notebook_stem, notebook_kind=notebook_kind, artifact_lookup=artifact_lookup
+        ),
+        "manifest": _best_agent_session_artifact(
+            artifacts, role="manifest", notebook_stem=notebook_stem, notebook_kind=notebook_kind, artifact_lookup=artifact_lookup
+        ),
+        "report_artifact": _best_agent_session_artifact(
+            artifacts, role="report", notebook_stem=notebook_stem, notebook_kind=notebook_kind, artifact_lookup=artifact_lookup
+        ),
+        "figure_manifest": _best_agent_session_artifact(
+            artifacts, role="figure_manifest", notebook_stem=notebook_stem, notebook_kind=notebook_kind, artifact_lookup=artifact_lookup
+        ),
+        "evidence_bundle": _best_agent_session_artifact(
+            artifacts, role="evidence_bundle", notebook_stem=notebook_stem, notebook_kind=notebook_kind, artifact_lookup=artifact_lookup
+        ),
+        "evidence_html": _best_agent_session_artifact(
+            artifacts, role="evidence_html", notebook_stem=notebook_stem, notebook_kind=notebook_kind, artifact_lookup=artifact_lookup
+        ),
+        "visual_story_cards": _best_agent_session_artifact(
+            artifacts, role="visual_story_cards", notebook_stem=notebook_stem, notebook_kind=notebook_kind, artifact_lookup=artifact_lookup
+        ),
         "evidence_figures": _agent_session_figure_artifacts(artifacts),
     }
 
@@ -2043,17 +2135,50 @@ def _empty_agent_session_notebook_artifacts() -> dict[str, Any]:
     }
 
 
+def _candidate_agent_session_artifacts(
+    *,
+    session_id: str,
+    notebook_stem: str,
+    notebook_kind: str,
+    artifact_lookup: NotebookArtifactLookup,
+    excluded_artifact_id: str,
+) -> list[Artifact]:
+    return [
+        artifact
+        for artifact in _unique_artifacts(
+            [
+                *artifact_lookup.generic_candidates_by_session_id.get(session_id, []),
+                *artifact_lookup.kind_candidates_by_session_id.get((session_id, notebook_kind), []),
+                *artifact_lookup.stem_candidates_by_session_id.get((session_id, notebook_stem), []),
+            ]
+        )
+        if artifact.id != excluded_artifact_id
+    ]
+
+
 def _best_agent_session_artifact(
     artifacts: list[Artifact],
     *,
     role: str,
     notebook_stem: str,
     notebook_kind: str,
+    artifact_lookup: NotebookArtifactLookup | None = None,
 ) -> Artifact | None:
     scored = [
         (score, artifact)
         for artifact in artifacts
-        if (score := _agent_session_artifact_link_score(artifact, role=role, notebook_stem=notebook_stem, notebook_kind=notebook_kind)) > 0
+        if (
+            score := _agent_session_artifact_link_score(
+                artifact,
+                role=role,
+                notebook_stem=notebook_stem,
+                notebook_kind=notebook_kind,
+                metadata=artifact_lookup.metadata_by_artifact_id.get(artifact.id, {}) if artifact_lookup else None,
+                workspace_path=artifact_lookup.workspace_path_by_artifact_id.get(artifact.id) if artifact_lookup else None,
+                artifact_text=artifact_lookup.text_by_artifact_id.get(artifact.id) if artifact_lookup else None,
+            )
+        )
+        > 0
     ]
     if not scored:
         return None
@@ -2066,11 +2191,17 @@ def _agent_session_artifact_link_score(
     role: str,
     notebook_stem: str,
     notebook_kind: str,
+    metadata: dict[str, Any] | None = None,
+    workspace_path: str | None = None,
+    artifact_text: str | None = None,
 ) -> int:
-    metadata = loads_json(artifact.metadata_json, {})
-    workspace_path = str(metadata.get("workspace_relative_path") or artifact.name).lower().replace("-", "_")
-    name = artifact.name.lower().replace("-", "_")
-    value = f"{workspace_path} {name}"
+    if workspace_path is None or artifact_text is None:
+        resolved_metadata = metadata or loads_json(artifact.metadata_json, {})
+        workspace_path = str(resolved_metadata.get("workspace_relative_path") or artifact.name).lower().replace("-", "_")
+        name = artifact.name.lower().replace("-", "_")
+        value = f"{workspace_path} {name}"
+    else:
+        value = artifact_text
     if role == "html_preview":
         if not workspace_path.endswith(".html"):
             return 0
@@ -3109,6 +3240,43 @@ def _latest_artifact_for_metadata(
         if metadata.get(key) == value:
             return artifact
     return None
+
+
+def _latest_artifact_for_metadata_cached(
+    db: Session,
+    project_id: str,
+    asset_type: str,
+    key: str,
+    value: object,
+    artifact_lookup: NotebookArtifactLookup | None,
+) -> Artifact | None:
+    if artifact_lookup is None:
+        return _latest_artifact_for_metadata(db, project_id, asset_type, key, value)
+    if value is None:
+        return None
+    for artifact in artifact_lookup.by_asset_type.get(asset_type, []):
+        if artifact_lookup.metadata_by_artifact_id.get(artifact.id, {}).get(key) == value:
+            return artifact
+    return None
+
+
+def _artifacts_for_metadata_cached(
+    db: Session,
+    project_id: str,
+    asset_type: str,
+    key: str,
+    value: object,
+    artifact_lookup: NotebookArtifactLookup | None,
+) -> list[Artifact]:
+    if artifact_lookup is None:
+        return _artifacts_for_metadata(db, project_id, asset_type, key, value)
+    if value is None:
+        return []
+    return [
+        artifact
+        for artifact in artifact_lookup.by_asset_type.get(asset_type, [])
+        if artifact_lookup.metadata_by_artifact_id.get(artifact.id, {}).get(key) == value
+    ]
 
 
 def _read_prediction_summary(artifact: Artifact | None, limit_rows: int = 200_000) -> dict[str, Any]:
