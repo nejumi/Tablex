@@ -397,12 +397,12 @@ def codex_unavailable_message(brief: dict[str, Any]) -> str:
         return (
             "この返答はCodexで生成できませんでした。"
             f"理由: {warning}\n"
-            "チャット内容とプロジェクト文脈は保存済みですが、自然な状況説明や判断はまだ実行されていません。"
+            "入力は保存済みです。Full AutoがONの場合はメインのCodex sessionへ配送され、進行はChat、Raw、Agent Activityに反映されます。"
         )
     return (
         "I could not generate this reply with Codex. "
         f"Reason: {warning}\n"
-        "The chat turn and project context were saved, but no natural-language reasoning response was executed."
+        "Your input was saved. If Full Auto is on, it will be delivered to the main Codex session and reflected in Chat, Raw, and Agent Activity."
     )
 
 
