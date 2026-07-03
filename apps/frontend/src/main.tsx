@@ -5332,7 +5332,7 @@ function ResearchPlanTimeline({
             >
               <span>{block.eyebrow}</span>
               <strong>{block.title}</strong>
-              <p>{block.subtitle}</p>
+              {block.subtitle ? <p>{block.subtitle}</p> : null}
               {block.subtasks?.length ? (
                 <em className="research-plan-subtask-pill">
                   {block.subtasks.length} {block.subtasks.length === 1 ? text.planSubtaskSingular : text.planSubtaskPlural}
@@ -5605,7 +5605,7 @@ function researchPlanBlocksFromTimeline(
     return {
       id: block.id,
       title: block.title,
-      subtitle: block.subtitle || text.researchPlanTimelineHint,
+      subtitle: block.subtitle,
       status: block.status,
       eyebrow: `${index + 1}`.padStart(2, "0"),
       evidence: block.evidence,
