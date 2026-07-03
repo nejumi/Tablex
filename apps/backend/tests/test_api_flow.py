@@ -646,8 +646,15 @@ def test_agent_activity_surfaces_runner_retry_state(tmp_path: Path, monkeypatch:
     assert activity["turn_state"]["state"] == "agent_scheduled"
     assert activity["turn_state"]["label"] == "Codex runner retry scheduled"
     assert "120s" in activity["turn_state"]["detail"]
+    assert activity["turn_state"]["retry_state"]["event_type"] == "runner_retry_scheduled"
+    assert activity["turn_state"]["retry_state"]["event_index"] == 0
+    assert activity["turn_state"]["retry_state"]["created_at"]
+    assert activity["turn_state"]["retry_state"]["retry_delay_seconds"] == 120
+    assert activity["turn_state"]["retry_state"]["failure_kind"] == "runner_unavailable"
     assert activity["workers"][0]["status"] == "waiting_for_runner"
     assert activity["workers"][0]["headline"] == "Codex runner retry scheduled"
+    assert activity["workers"][0]["retry_state"]["retry_delay_seconds"] == 120
+    assert activity["workers"][0]["retry_state"]["failure_kind"] == "runner_unavailable"
 
 
 def test_project_update_starts_main_session_after_target_change(

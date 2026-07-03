@@ -7024,6 +7024,7 @@ def get_project_agent_activity(
         heartbeat_phrase = heartbeat_phrase_for_locale(heartbeat_age_seconds, locale=response_locale)
         running_quietly = session_has_process and heartbeat_age_seconds is not None and heartbeat_age_seconds >= 120
         retry_state = latest_agent_session_retry_state(db, session.id)
+        retry_state_payload = agent_session_retry_state_payload(retry_state)
         session_display_status = (
             "running"
             if session.status == "running" and session_has_process
@@ -7119,6 +7120,7 @@ def get_project_agent_activity(
                 "last_output_at": last_codex_output_at.isoformat() if last_codex_output_at else None,
                 "last_output_seconds_ago": heartbeat_age_seconds,
                 "raw_transcript": raw_observation,
+                "retry_state": retry_state_payload,
                 "human_description": {
                     "source": "agent_session",
                     "title": display_name,
@@ -7170,6 +7172,7 @@ def get_project_agent_activity(
             "last_output_at": last_codex_output_at.isoformat() if last_codex_output_at else None,
             "last_output_seconds_ago": heartbeat_age_seconds,
             "raw_transcript": raw_observation,
+            "retry_state": retry_state_payload,
         }
     return {
         "schema_version": "agent_activity.v1",
@@ -7289,6 +7292,25 @@ def latest_agent_session_retry_state(db: Session, session_id: str) -> dict[str, 
     payload["event_index"] = event.event_index
     payload["created_at"] = event.created_at.isoformat()
     return payload
+
+
+def agent_session_retry_state_payload(retry_state: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not retry_state:
+        return None
+    payload: dict[str, Any] = {}
+    for key in (
+        "event_type",
+        "event_index",
+        "created_at",
+        "retry_delay_seconds",
+        "failure_kind",
+        "exit_code",
+        "idle_timeout_seconds",
+    ):
+        value = retry_state.get(key)
+        if value is not None:
+            payload[key] = value
+    return payload or None
 
 
 def visible_activity_workers(workers: list[dict[str, Any]], *, now: datetime) -> list[dict[str, Any]]:

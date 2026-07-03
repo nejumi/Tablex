@@ -351,6 +351,7 @@ const englishMessages = {
   workerStatusRunning: "Running",
   workerStatusApproval: "Approval",
   workerStatusWaitingForAgent: "Waiting for Codex",
+  workerStatusWaitingForRunner: "Codex will retry",
   workerStatusFinished: "Finished",
   workerDisplayAutonomousSession: "Autonomous Session",
   workerDisplayTraining: "Training Worker",
@@ -785,6 +786,7 @@ const japaneseMessages: LocaleMessages = {
   workerStatusRunning: "実行中",
   workerStatusApproval: "承認待ち",
   workerStatusWaitingForAgent: "Codex返答待ち",
+  workerStatusWaitingForRunner: "Codex再試行待ち",
   workerStatusFinished: "完了",
   workerDisplayAutonomousSession: "自律セッション",
   workerDisplayTraining: "学習Worker",
@@ -1682,6 +1684,16 @@ type TokenSeriesPoint = {
   tokens: number;
 };
 
+type AgentRetryState = {
+  event_type?: string;
+  event_index?: number;
+  created_at?: string;
+  retry_delay_seconds?: number;
+  failure_kind?: string;
+  exit_code?: number;
+  idle_timeout_seconds?: number;
+};
+
 type AgentWorkerEvent = {
   worker_id: string;
   display_name: string;
@@ -1709,6 +1721,7 @@ type AgentWorkerEvent = {
     is_estimate: boolean;
     series: TokenSeriesPoint[];
   };
+  retry_state?: AgentRetryState | null;
 };
 
 type AgentSession = {
@@ -1981,6 +1994,7 @@ type TurnState = {
     stderr_line_count?: number;
     updated_at?: string | null;
   } | null;
+  retry_state?: AgentRetryState | null;
   sources?: string[];
 };
 
@@ -8096,7 +8110,7 @@ function isLiveWorkerStatus(status: string) {
 }
 
 function isWaitingWorkerStatus(status: string) {
-  return ["queued", "approval_required"].includes(status);
+  return ["queued", "approval_required", "starting", "between_turns", "waiting_for_runner"].includes(status);
 }
 
 function isRunningWorkerStatus(status: string) {
@@ -8206,7 +8220,8 @@ function compareWorkerEvents(left: AgentWorkerEvent, right: AgentWorkerEvent) {
 function workerStatusRank(status: string) {
   if (status === "running") return 0;
   if (status === "approval_required") return 1;
-  if (status === "queued") return 2;
+  if (["starting", "between_turns", "waiting_for_runner"].includes(status)) return 2;
+  if (status === "queued") return 3;
   return 3;
 }
 
@@ -8223,6 +8238,7 @@ function workerStatusLabel(status: string, text: LocaleMessages) {
   if (status === "running") return text.workerStatusRunning;
   if (status === "approval_required") return text.workerStatusApproval;
   if (status === "waiting_for_agent") return text.workerStatusWaitingForAgent;
+  if (["starting", "between_turns", "waiting_for_runner"].includes(status)) return text.workerStatusWaitingForRunner;
   if (["succeeded", "failed", "cancelled", "timed_out"].includes(status)) return text.workerStatusFinished;
   return humanizeLabel(status);
 }
