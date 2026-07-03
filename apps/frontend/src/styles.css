@@ -4318,7 +4318,7 @@ td {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface-subtle);
+  background: #fff;
   min-height: 560px;
 }
 
@@ -4327,7 +4327,8 @@ td {
   width: 100%;
   height: min(760px, 78vh);
   border: 0;
-  background: var(--surface);
+  background: #fff;
+  color-scheme: light;
 }
 
 .visual-preview-shell {

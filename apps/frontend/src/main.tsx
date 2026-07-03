@@ -7986,7 +7986,7 @@ function VisualArtifactPreview({ preview }: { preview: ArtifactPreview }) {
 function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
   const previewType = preview.content_type === "image/svg+xml" || preview.filename.toLowerCase().endsWith(".svg") ? "SVG" : "HTML";
   const url = `${apiBase}/api/artifacts/${preview.id}/download`;
-  const inlineSource = typeof preview.preview === "string" && !preview.truncated ? preview.preview : null;
+  const inlineSource = typeof preview.preview === "string" && !preview.truncated ? htmlPreviewSrcDoc(preview) : null;
   return (
     <div className="preview-block">
       <div className="preview-toolbar">
@@ -8011,6 +8011,16 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
       </div>
     </div>
   );
+}
+
+function htmlPreviewSrcDoc(preview: ArtifactPreview) {
+  const source = typeof preview.preview === "string" ? preview.preview : "";
+  if (preview.content_type === "image/svg+xml" || preview.filename.toLowerCase().endsWith(".svg")) return source;
+  const resetStyle =
+    '<style id="tablex-preview-reset">html,body{background:#fff!important;color:#1f2933;color-scheme:light;min-height:100%;}body{box-sizing:border-box;}*,*:before,*:after{box-sizing:inherit;}</style>';
+  if (source.includes("tablex-preview-reset")) return source;
+  if (/<head[^>]*>/i.test(source)) return source.replace(/<head([^>]*)>/i, `<head$1>${resetStyle}`);
+  return `${resetStyle}${source}`;
 }
 
 function OverviewTab({
