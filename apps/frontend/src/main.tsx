@@ -322,6 +322,9 @@ const englishMessages = {
   agentReplyPending: "Thinking and preparing the next useful response.",
   agentReplyWaitMetaStatus: "Agent",
   agentReplyWaitMetaOutput: "Last Codex output",
+  agentReplyWaitMetaChatUpdate: "Last Chat update",
+  agentReplyWaitMetaProgressRequest: "Progress request",
+  agentReplyWaitMetaRequested: "sent",
   agentReplyWaitMetaRaw: "Raw",
   agentReplyWaitMetaAgo: "ago",
   agentReplyFailed: "I could not complete that request. The error is recorded here so it does not disappear.",
@@ -802,6 +805,9 @@ const japaneseMessages: LocaleMessages = {
   agentReplyPending: "受け取りました。分析エージェントの返答が届き次第、このチャットに残します。",
   agentReplyWaitMetaStatus: "Agent",
   agentReplyWaitMetaOutput: "最後のCodex出力",
+  agentReplyWaitMetaChatUpdate: "最後のChat更新",
+  agentReplyWaitMetaProgressRequest: "進捗説明の依頼",
+  agentReplyWaitMetaRequested: "送信済み",
   agentReplyWaitMetaRaw: "Raw",
   agentReplyWaitMetaAgo: "前",
   agentReplyFailed: "この依頼を完了できませんでした。消えないように、エラーをここに記録します。",
@@ -7767,6 +7773,7 @@ function agentChatWaitObservationItems(brief: Record<string, unknown> | null | u
   const observation = objectRecord(brief?.agent_session_observation);
   if (!observation) return [];
   const items: string[] = [];
+  const progressRequestEventId = textField(brief?.progress_update_requested_event_id);
   const status = textField(observation.status);
   const turnIndex = numberField(observation.turn_index);
   if (status) {
@@ -7776,13 +7783,20 @@ function agentChatWaitObservationItems(brief: Record<string, unknown> | null | u
   if (lastOutputSeconds !== null) {
     items.push(`${text.agentReplyWaitMetaOutput}: ${formatElapsedSeconds(lastOutputSeconds)} ${text.agentReplyWaitMetaAgo}`);
   }
+  const lastChatUpdateSeconds = numberField(observation.last_chat_update_seconds_ago);
+  if (lastChatUpdateSeconds !== null) {
+    items.push(`${text.agentReplyWaitMetaChatUpdate}: ${formatElapsedSeconds(lastChatUpdateSeconds)} ${text.agentReplyWaitMetaAgo}`);
+  }
+  if (progressRequestEventId) {
+    items.push(`${text.agentReplyWaitMetaProgressRequest}: ${text.agentReplyWaitMetaRequested}`);
+  }
   const raw = objectRecord(observation.raw_transcript);
   const stdout = numberField(raw?.stdout_line_count) ?? 0;
   const stderr = numberField(raw?.stderr_line_count) ?? 0;
   if (stdout > 0 || stderr > 0) {
     items.push(`${text.agentReplyWaitMetaRaw}: stdout ${stdout} / stderr ${stderr}`);
   }
-  return items.slice(0, 3);
+  return items.slice(0, 5);
 }
 
 function AgentConversationTurnCard({
