@@ -4474,7 +4474,6 @@ function ProjectDetail({
           onTabChange={onTabChange}
           onNavigateToTarget={navigateToTarget}
           onFocusAction={(action) => void runFocusAction(action)}
-          onStrategyAction={(action) => void runStrategyAction(action)}
           onEquipSkill={(asset) => runAction(() => equipLibraryAsset(asset))}
           onCreateSkill={(draft) => runAction(() => createAndEquipSkill(draft))}
           onAutonomyModeChange={(mode) => void changeAutonomyMode(mode)}
@@ -4727,7 +4726,6 @@ function HomeTab({
   onTabChange,
   onNavigateToTarget,
   onFocusAction,
-  onStrategyAction,
   onEquipSkill,
   onCreateSkill,
   onAutonomyModeChange,
@@ -4767,7 +4765,6 @@ function HomeTab({
   onTabChange: (tab: Tab) => void;
   onNavigateToTarget: (tab: Tab, anchor?: string | null) => void;
   onFocusAction: (action: FocusAction | null) => void;
-  onStrategyAction: (action: StrategyAction) => void;
   onEquipSkill: (asset: LibraryAsset) => Promise<void>;
   onCreateSkill: (draft: SkillDraft) => Promise<void>;
   onAutonomyModeChange: (mode: AutonomyMode) => void;
@@ -4784,7 +4781,6 @@ function HomeTab({
   const datasetCount = overview?.counts.datasets ?? 0;
   const autonomyPoweredOn = project.current_phase === "AUTONOMOUS_LOOP";
   const canStartAutonomy = datasetCount > 0;
-  const nextStrategyAction = strategyBrief?.recommended_next_action ?? null;
   const focusAction = recommendation.primaryAction;
   const [agentViewMode, setAgentViewMode] = React.useState<"chat" | "raw">("chat");
   const ideaFindingItems = buildIdeaFindingItems(ideas, insights);
@@ -4802,11 +4798,9 @@ function HomeTab({
     agentSession,
     turnState,
     agentTranscriptEvents,
-    nextStrategyAction,
     text,
     onTabChange,
-    onNavigateToTarget,
-    onStrategyAction
+    onNavigateToTarget
   });
   const activeResearchPlanBlock = researchPlanBlocks.find((block) => block.status === "active") ?? null;
   const missionUsesPlanFocus = Boolean(activeResearchPlanBlock);
@@ -5363,8 +5357,7 @@ function ResearchPlanTimeline({
   const timelineRef = React.useRef<HTMLDivElement | null>(null);
   const activeBlockRef = React.useRef<HTMLButtonElement | null>(null);
   const expandedBlock = blocks.find((block) => block.id === expandedBlockId && block.subtasks?.length);
-  const activeBlockKey =
-    blocks.find((block) => block.status === "active" || block.status === "pending" || block.status === "blocked")?.id ?? "";
+  const activeBlockKey = selectedResearchPlanBlockKey(blocks);
 
   React.useLayoutEffect(() => {
     if (!timelineRef.current || !activeBlockRef.current) return;
@@ -5462,11 +5455,9 @@ function buildResearchPlanBlocks({
   agentSession,
   turnState,
   agentTranscriptEvents,
-  nextStrategyAction,
   text,
   onTabChange,
-  onNavigateToTarget,
-  onStrategyAction
+  onNavigateToTarget
 }: {
   project: Project;
   datasetCount: number;
@@ -5479,16 +5470,14 @@ function buildResearchPlanBlocks({
   agentSession: AgentSession | null;
   turnState: TurnState;
   agentTranscriptEvents: AgentTranscriptEvent[];
-  nextStrategyAction: StrategyAction | null;
   text: LocaleMessages;
   onTabChange: (tab: Tab) => void;
   onNavigateToTarget: (tab: Tab, anchor?: string | null) => void;
-  onStrategyAction: (action: StrategyAction) => void;
 }): ResearchPlanBlock[] {
   const codexAuthoredBlocks = researchPlanBlocksFromTimeline(researchPlanTimeline, text, onNavigateToTarget);
   if (codexAuthoredBlocks.length) {
     return appendObservedAgentPlanBlock(
-      attachResearchPlanSubtasks(codexAuthoredBlocks, jobs, text, onTabChange, { appendUnassigned: true }),
+      attachResearchPlanSubtasks(codexAuthoredBlocks, jobs, text, onTabChange, { appendUnassigned: false }),
       turnState,
       text,
       onTabChange
@@ -5499,7 +5488,7 @@ function buildResearchPlanBlocks({
   const hasUnderstandingEvidence =
     hasAnyArtifactType(artifacts, ["data_understanding_complete"]) ||
     hasReviewableDataUnderstandingNotebook(notebookIndex) ||
-    hasAnyArtifactType(artifacts, ["agent_session_figure", "eda_review_report"]);
+    hasAnyArtifactType(artifacts, ["agent_session_report", "agent_session_research_notebook", "eda_review_report"]);
   const hasDataUnderstandingNotebook = artifacts.some(isDataUnderstandingNotebookArtifact);
   const hasPriorResearchPreparation =
     researchBriefs.length > 0 ||
@@ -5632,23 +5621,21 @@ function buildResearchPlanBlocks({
     });
   }
 
-  if (nextStrategyAction && !activeAgentSession) {
-    blocks.push({
-      id: "next_strategy_action",
-      title: localizedStrategyActionLabel(nextStrategyAction, text),
-      subtitle: localizedStrategyActionReason(nextStrategyAction, text),
-      status: "pending",
-      eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
-      evidence: text.strategyRecommendedAction,
-      onClick: () => onStrategyAction(nextStrategyAction)
-    });
-  }
-
   return appendObservedAgentPlanBlock(
-    attachResearchPlanSubtasks(blocks, jobs, text, onTabChange, { appendUnassigned: true }),
+    attachResearchPlanSubtasks(blocks, jobs, text, onTabChange, { appendUnassigned: false }),
     turnState,
     text,
     onTabChange
+  );
+}
+
+function selectedResearchPlanBlockKey(blocks: ResearchPlanBlock[]): string {
+  return (
+    blocks.find((block) => block.status === "active")?.id ??
+    blocks.find((block) => block.status === "blocked")?.id ??
+    blocks.find((block) => block.status === "pending")?.id ??
+    blocks.find((block) => block.status === "waiting")?.id ??
+    ""
   );
 }
 
@@ -5780,33 +5767,6 @@ function researchPlanSubtaskFromJob(job: Job, onTabChange: (tab: Tab) => void): 
     evidence: `${job.status} · ${formatDate(job.updated_at ?? job.created_at)}`,
     onClick: () => onTabChange(tabForResearchPlanJob(job))
   };
-}
-
-function localizedStrategyActionLabel(action: StrategyAction, text: LocaleMessages): string {
-  const key = strategyActionKey(action);
-  if (key === "upload_data") return text.strategyActionUploadData;
-  if (key === "explore_objective") return text.strategyActionExploreObjective;
-  if (key === "resolve_assumptions") return text.strategyActionResolveAssumptions;
-  if (key === "lock_evaluation") return text.strategyActionLockEvaluation;
-  return action.label;
-}
-
-function localizedStrategyActionReason(action: StrategyAction, text: LocaleMessages): string {
-  const key = strategyActionKey(action);
-  if (key === "upload_data") return text.strategyActionUploadDataReason;
-  if (key === "explore_objective") return text.strategyActionExploreObjectiveReason;
-  if (key === "resolve_assumptions") return text.strategyActionResolveAssumptionsReason;
-  if (key === "lock_evaluation") return text.strategyActionLockEvaluationReason;
-  return action.reason;
-}
-
-function strategyActionKey(action: StrategyAction): string | null {
-  const targetTab = action.target_tab.toLowerCase();
-  if (targetTab === "data") return "upload_data";
-  if (targetTab === "understanding") return "explore_objective";
-  if (targetTab === "assumptions") return "resolve_assumptions";
-  if (targetTab === "evaluation") return "lock_evaluation";
-  return null;
 }
 
 function researchPlanStatusFromJob(job: Job): ResearchPlanBlockStatus {
