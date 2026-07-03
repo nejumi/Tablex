@@ -18,7 +18,10 @@ from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
 from tabular_harness.models.entities import AgentSession, Artifact, Job, Project, Question, utc_now
 from tabular_harness.schemas import AgentResult
-from tabular_harness.services.agent_sessions import append_session_event
+from tabular_harness.services.agent_sessions import (
+    append_runner_stream_to_workspace,
+    append_session_event,
+)
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.jobs import acquire_next_job, create_job
@@ -634,6 +637,17 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
             session = db.get(AgentSession, session_id)
             assert session is not None
             session.status = "running"
+            workspace_path = Path(session.workspace_path or "")
+            append_runner_stream_to_workspace(
+                workspace_path,
+                stream_name="stdout",
+                line='{"type":"thread.started","thread_id":"thread_test"}\n',
+            )
+            append_runner_stream_to_workspace(
+                workspace_path,
+                stream_name="stdout",
+                line='{"type":"item.completed","item":{"type":"agent_message","text":"I am continuing."}}\n',
+            )
             append_session_event(
                 db,
                 session,
@@ -702,6 +716,14 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
     )
     assert empty_delta_response.status_code == 200
     assert empty_delta_response.json() == []
+
+    raw_transcript_response = client.get(f"/api/projects/{project_id}/agent-session/raw-transcript")
+    assert raw_transcript_response.status_code == 200
+    raw_transcript = raw_transcript_response.json()
+    assert raw_transcript["session_id"] == session_id
+    assert raw_transcript["stdout_line_count"] == 2
+    assert raw_transcript["stderr_line_count"] == 0
+    assert raw_transcript["stdout_tail"][-1].startswith('{"type":"item.completed"')
 
 
 def test_agent_chat_appends_user_instruction_to_active_main_session(

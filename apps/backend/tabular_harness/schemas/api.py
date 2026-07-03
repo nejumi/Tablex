@@ -74,6 +74,17 @@ class AgentTranscriptEventRead(BaseModel):
     created_at: str
 
 
+class AgentRawTranscriptRead(BaseModel):
+    session_id: str | None
+    stdout_path: str | None
+    stderr_path: str | None
+    stdout_line_count: int
+    stderr_line_count: int
+    stdout_tail: list[str]
+    stderr_tail: list[str]
+    updated_at: str | None
+
+
 class ProjectRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

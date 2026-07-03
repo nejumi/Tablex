@@ -7,6 +7,9 @@ from sqlalchemy.orm import sessionmaker
 from tabular_harness.core.json import loads_json
 from tabular_harness.models.entities import AgentSession, Artifact, Base, Project
 from tabular_harness.services.agent_sessions import (
+    CODEX_RAW_TRANSCRIPT_FILENAME,
+    CODEX_STDERR_LOG_FILENAME,
+    append_runner_stream_to_workspace,
     append_session_event,
     asset_type_for_session_output,
     build_turn_prompt,
@@ -14,6 +17,9 @@ from tabular_harness.services.agent_sessions import (
     ingest_session_workspace_outputs,
     mark_user_instructions_delivered,
     metadata_for_session_output,
+    publish_raw_codex_transcript_snapshot,
+    raw_codex_stderr_path,
+    raw_codex_transcript_path,
     session_output_artifact_name,
 )
 from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
@@ -36,6 +42,39 @@ def test_agent_session_model_notebook_outputs_are_diagnostics_notebooks() -> Non
 def test_agent_session_research_plan_json_outputs_are_research_plans() -> None:
     assert asset_type_for_session_output(Path("outputs/research_plan.json")) == "research_plan"
     assert asset_type_for_session_output(Path("artifacts/research_plan_timeline.json")) == "research_plan"
+
+
+def test_agent_session_raw_codex_transcript_outputs_are_transcript_artifacts() -> None:
+    path = Path(f"artifacts/{CODEX_RAW_TRANSCRIPT_FILENAME}")
+
+    assert asset_type_for_session_output(path) == "agent_session_transcript"
+    assert metadata_for_session_output(path) == {"transcript_kind": "codex_cli_stdout_jsonl", "raw_codex_cli": True}
+
+
+def test_agent_session_codex_stderr_outputs_are_log_artifacts() -> None:
+    path = Path(f"artifacts/{CODEX_STDERR_LOG_FILENAME}")
+
+    assert asset_type_for_session_output(path) == "agent_session_log"
+    assert metadata_for_session_output(path) == {"transcript_kind": "codex_cli_stderr", "raw_codex_cli": True}
+
+
+def test_codex_stream_lines_are_persisted_and_published_without_rewriting_stdout(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    stdout_line = '{"type":"thread.started","thread_id":"abc"}\n'
+    stderr_line = "2026-07-03T00:00:00Z ERROR example\n"
+
+    append_runner_stream_to_workspace(workspace, stream_name="stdout", line=stdout_line)
+    append_runner_stream_to_workspace(workspace, stream_name="stderr", line=stderr_line)
+
+    assert raw_codex_transcript_path(workspace).read_text(encoding="utf-8") == stdout_line
+    assert raw_codex_stderr_path(workspace).read_text(encoding="utf-8") == stderr_line
+
+    published = publish_raw_codex_transcript_snapshot(workspace)
+
+    assert workspace / "artifacts" / CODEX_RAW_TRANSCRIPT_FILENAME in published
+    assert workspace / "artifacts" / CODEX_STDERR_LOG_FILENAME in published
+    assert (workspace / "artifacts" / CODEX_RAW_TRANSCRIPT_FILENAME).read_text(encoding="utf-8") == stdout_line
+    assert (workspace / "artifacts" / CODEX_STDERR_LOG_FILENAME).read_text(encoding="utf-8") == stderr_line
 
 
 def test_session_output_artifact_name_uses_relative_path_to_avoid_stem_collisions() -> None:
@@ -194,3 +233,37 @@ def test_codex_authored_chat_update_is_registered_as_persistent_chat_turn(tmp_pa
             )
         )
         assert len(updated_chat_artifacts) == 2
+
+
+def test_published_raw_codex_transcript_is_ingested_as_session_artifact(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    append_runner_stream_to_workspace(
+        workspace,
+        stream_name="stdout",
+        line='{"type":"turn.started","turn_id":"turn_1"}\n',
+    )
+    publish_raw_codex_transcript_snapshot(workspace)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_raw", name="Raw Project", current_phase="AUTONOMOUS_LOOP", autonomy_mode="full_auto")
+        session = AgentSession(
+            id="as_raw",
+            project_id=project.id,
+            goal_text="Run a useful data science loop.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        artifact = db.scalar(select(Artifact).where(Artifact.project_id == project.id))
+        assert artifact is not None
+        assert artifact.asset_type == "agent_session_transcript"
+        metadata = loads_json(artifact.metadata_json, {})
+        assert metadata["transcript_kind"] == "codex_cli_stdout_jsonl"
+        assert artifact_primary_path(artifact).read_text(encoding="utf-8").startswith('{"type":"turn.started"')

@@ -47,6 +47,9 @@ ACTIVE_SESSION_STATUSES = {"starting", "running", "between_turns", "waiting_for_
 TERMINAL_SESSION_STATUSES = {"stopped", "failed", "gave_up", "completed"}
 RETRY_BACKOFF_SECONDS = (5, 30, 120, 600)
 STALE_PROCESS_TERM_GRACE_SECONDS = 5
+SESSION_INTERNAL_DIR = ".tablex"
+CODEX_RAW_TRANSCRIPT_FILENAME = "codex_raw_transcript.jsonl"
+CODEX_STDERR_LOG_FILENAME = "codex_stderr.log"
 _SUPERVISOR_LOCK = threading.Lock()
 _ACTIVE_SUPERVISORS: set[str] = set()
 
@@ -139,6 +142,14 @@ def start_or_resume_main_session(
 
 def session_workspace_path(store: LocalArtifactStore, project_id: str, session_id: str) -> Path:
     return store.root / "agent_sessions" / project_id / session_id
+
+
+def raw_codex_transcript_path(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / CODEX_RAW_TRANSCRIPT_FILENAME
+
+
+def raw_codex_stderr_path(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / CODEX_STDERR_LOG_FILENAME
 
 
 def build_default_goal_text(db: Session, project: Project) -> str:
@@ -251,6 +262,42 @@ def transcript_event_to_dict(event: AgentTranscriptEvent) -> dict[str, Any]:
         "job_id": event.job_id,
         "created_at": event.created_at.isoformat(),
     }
+
+
+def append_runner_stream_to_workspace(workspace: Path, *, stream_name: str, line: str) -> None:
+    target = raw_codex_transcript_path(workspace) if stream_name == "stdout" else raw_codex_stderr_path(workspace)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(line if line.endswith("\n") else f"{line}\n")
+    except OSError:
+        return
+
+
+def publish_raw_codex_transcript_snapshot(workspace: Path) -> list[Path]:
+    artifacts_dir = workspace / "artifacts"
+    published: list[Path] = []
+    for source, filename in (
+        (raw_codex_transcript_path(workspace), CODEX_RAW_TRANSCRIPT_FILENAME),
+        (raw_codex_stderr_path(workspace), CODEX_STDERR_LOG_FILENAME),
+    ):
+        if not source.exists():
+            continue
+        try:
+            payload = source.read_bytes()
+        except OSError:
+            continue
+        if not payload:
+            continue
+        try:
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            target = artifacts_dir / filename
+            if not target.exists() or target.read_bytes() != payload:
+                target.write_bytes(payload)
+            published.append(target)
+        except OSError:
+            continue
+    return published
 
 
 SupervisorRunner = Callable[..., None]
@@ -1031,6 +1078,7 @@ def run_codex_cli_turn_streaming(
                 break
             continue
         last_output_at = time.monotonic()
+        append_runner_stream_to_workspace(workspace, stream_name=stream_name, line=line)
         append_codex_stream_line(session_factory, project_id=project_id, session_id=session_id, stream_name=stream_name, line=line)
         now = time.monotonic()
         if now - last_workspace_ingest >= 10:
@@ -1048,6 +1096,14 @@ def run_codex_cli_turn_streaming(
         process.kill()
         append_process_killed_event(session_factory, session_id=session_id, timeout_seconds=timeout_seconds)
         return_code = process.wait(timeout=5)
+    publish_raw_codex_transcript_snapshot(workspace)
+    ingest_session_workspace_outputs_safely(
+        session_factory,
+        store=store,
+        project_id=project_id,
+        session_id=session_id,
+        workspace=workspace,
+    )
     with session_factory() as db:
         session = db.get(AgentSession, session_id)
         if session is not None:
@@ -1290,6 +1346,10 @@ def ingest_session_workspace_outputs(
 
 def asset_type_for_session_output(path: Path) -> str:
     suffix = path.suffix.lower()
+    if path.name == CODEX_RAW_TRANSCRIPT_FILENAME or (suffix == ".jsonl" and "transcript" in path.stem.lower()):
+        return "agent_session_transcript"
+    if path.name == CODEX_STDERR_LOG_FILENAME:
+        return "agent_session_log"
     if suffix == ".py" and ("notebook" in path.parts or "notebooks" in path.parts):
         return "analysis_notebook"
     if suffix in {".md", ".html"}:
@@ -1415,6 +1475,10 @@ def chat_update_message_from_text(text: str, limit: int = 900) -> str:
 
 
 def metadata_for_session_output(path: Path) -> dict[str, Any]:
+    if path.name == CODEX_RAW_TRANSCRIPT_FILENAME:
+        return {"transcript_kind": "codex_cli_stdout_jsonl", "raw_codex_cli": True}
+    if path.name == CODEX_STDERR_LOG_FILENAME:
+        return {"transcript_kind": "codex_cli_stderr", "raw_codex_cli": True}
     suffix = path.suffix.lower()
     if suffix == ".py" and ("notebook" in path.parts or "notebooks" in path.parts):
         return {"notebook_kind": notebook_kind_for_session_output(path)}

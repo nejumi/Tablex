@@ -4,6 +4,7 @@ import base64
 import json
 import mimetypes
 import re
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -64,6 +65,7 @@ from tabular_harness.schemas import (
     AgentChatCreate,
     AgentChatHistoryTurnRead,
     AgentChatRead,
+    AgentRawTranscriptRead,
     AgentSessionRead,
     AgentTaskPlanCreate,
     AgentTranscriptEventRead,
@@ -142,6 +144,8 @@ from tabular_harness.services.agent_sessions import (
     append_session_event,
     chat_update_message_from_text,
     latest_main_session,
+    raw_codex_stderr_path,
+    raw_codex_transcript_path,
     run_main_agent_session_supervisor,
     session_to_dict,
     start_main_agent_session_supervisor_thread,
@@ -4748,6 +4752,59 @@ def list_agent_session_transcript(
         ).all()
     )
     return [transcript_event_to_dict(event) for event in reversed(events)]
+
+
+def tail_text_file(path: Path, *, limit: int) -> tuple[int, list[str], str | None]:
+    if not path.exists():
+        return 0, [], None
+    lines: deque[str] = deque(maxlen=limit)
+    count = 0
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for raw_line in handle:
+                count += 1
+                lines.append(raw_line.rstrip("\n"))
+        updated_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+    except OSError:
+        return 0, [], None
+    return count, list(lines), updated_at
+
+
+@router.get("/api/projects/{project_id}/agent-session/raw-transcript", response_model=AgentRawTranscriptRead)
+def get_agent_session_raw_transcript(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    limit: int = 80,
+) -> dict[str, Any]:
+    require_project(db, project_id)
+    session = active_main_session(db, project_id) or latest_main_session(db, project_id)
+    if session is None or not session.workspace_path:
+        return {
+            "session_id": None,
+            "stdout_path": None,
+            "stderr_path": None,
+            "stdout_line_count": 0,
+            "stderr_line_count": 0,
+            "stdout_tail": [],
+            "stderr_tail": [],
+            "updated_at": None,
+        }
+    bounded_limit = max(1, min(limit, 500))
+    workspace = Path(session.workspace_path)
+    stdout_path = raw_codex_transcript_path(workspace)
+    stderr_path = raw_codex_stderr_path(workspace)
+    stdout_count, stdout_tail, stdout_updated_at = tail_text_file(stdout_path, limit=bounded_limit)
+    stderr_count, stderr_tail, stderr_updated_at = tail_text_file(stderr_path, limit=bounded_limit)
+    return {
+        "session_id": session.id,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "stdout_line_count": stdout_count,
+        "stderr_line_count": stderr_count,
+        "stdout_tail": stdout_tail,
+        "stderr_tail": stderr_tail,
+        "updated_at": max((item for item in (stdout_updated_at, stderr_updated_at) if item), default=None),
+    }
 
 
 @router.post("/api/agent-task-contracts/{artifact_id}/prepare-workspace", response_model=JobRead)

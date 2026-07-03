@@ -1577,6 +1577,17 @@ type AgentTranscriptEvent = {
   created_at: string;
 };
 
+type AgentRawTranscript = {
+  session_id: string | null;
+  stdout_path: string | null;
+  stderr_path: string | null;
+  stdout_line_count: number;
+  stderr_line_count: number;
+  stdout_tail: string[];
+  stderr_tail: string[];
+  updated_at: string | null;
+};
+
 type RequiredHumanDescription = {
   title: string;
   summary: string;
@@ -3697,6 +3708,7 @@ function ProjectDetail({
   const [agentActivity, setAgentActivity] = React.useState<AgentActivityResponse | null>(null);
   const [agentSession, setAgentSession] = React.useState<AgentSession | null>(null);
   const [agentTranscriptEvents, setAgentTranscriptEvents] = React.useState<AgentTranscriptEvent[]>([]);
+  const [agentRawTranscript, setAgentRawTranscript] = React.useState<AgentRawTranscript | null>(null);
   const transcriptSinceIndexRef = React.useRef<number | null>(null);
   const transcriptSessionIdRef = React.useRef<string | null>(null);
   const [activityTick, setActivityTick] = React.useState(0);
@@ -3770,6 +3782,7 @@ function ProjectDetail({
         agentActivityData,
         agentSessionData,
         agentTranscriptData,
+        agentRawTranscriptData,
         researchPlanTimelineData,
         understandingData
       ] = await Promise.all([
@@ -3805,6 +3818,7 @@ function ProjectDetail({
         api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`).catch(() => null),
         api<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`).catch(() => null),
         api<AgentTranscriptEvent[]>(`/api/projects/${project.id}/agent-session/transcript`).catch(() => []),
+        api<AgentRawTranscript>(`/api/projects/${project.id}/agent-session/raw-transcript`).catch(() => null),
         api<ResearchPlanTimelineResponse>(`/api/projects/${project.id}/research-plan/timeline`).catch(() => null),
         api<{ markdown: string | null }>(`/api/projects/${project.id}/understanding/latest`)
       ]);
@@ -3839,6 +3853,7 @@ function ProjectDetail({
       setAgentActivity(agentActivityData);
       setAgentSession(agentSessionData);
       setAgentTranscriptEvents(agentTranscriptData);
+      setAgentRawTranscript(agentRawTranscriptData);
       setResearchPlanTimeline(researchPlanTimelineData);
       transcriptSessionIdRef.current = agentSessionData?.id ?? null;
       transcriptSinceIndexRef.current = maxTranscriptEventIndex(agentTranscriptData);
@@ -3858,9 +3873,10 @@ function ProjectDetail({
 
   const refreshAgentActivity = React.useCallback(async () => {
     try {
-      const [data, sessionData] = await Promise.all([
+      const [data, sessionData, rawTranscriptData] = await Promise.all([
         api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`),
-        api<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`).catch(() => null)
+        api<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`).catch(() => null),
+        api<AgentRawTranscript>(`/api/projects/${project.id}/agent-session/raw-transcript`).catch(() => null)
       ]);
       const sessionId = sessionData?.id ?? null;
       const canRequestDelta = sessionId !== null && sessionId === transcriptSessionIdRef.current;
@@ -3872,6 +3888,7 @@ function ProjectDetail({
       const transcriptData = await api<AgentTranscriptEvent[]>(transcriptUrl).catch(() => []);
       setAgentActivity(data);
       setAgentSession(sessionData);
+      setAgentRawTranscript(rawTranscriptData);
       setAgentTranscriptEvents((current) => {
         const next = sinceIndex === null ? transcriptData : mergeTranscriptEvents(current, transcriptData);
         transcriptSessionIdRef.current = sessionId;
@@ -4389,6 +4406,7 @@ function ProjectDetail({
           turnState={turnState}
           agentSession={agentSession}
           agentTranscriptEvents={agentTranscriptEvents}
+          agentRawTranscript={agentRawTranscript}
           onSubmitAgentChat={submitAgentChatWithoutResponse}
           onActionOpen={openAgentChatAction}
           onOpenMemoryItem={openHomeMemoryItem}
@@ -4641,6 +4659,7 @@ function HomeTab({
   turnState,
   agentSession,
   agentTranscriptEvents,
+  agentRawTranscript,
   onSubmitAgentChat,
   onActionOpen,
   onOpenMemoryItem,
@@ -4680,6 +4699,7 @@ function HomeTab({
   turnState: TurnState;
   agentSession: AgentSession | null;
   agentTranscriptEvents: AgentTranscriptEvent[];
+  agentRawTranscript: AgentRawTranscript | null;
   onSubmitAgentChat: (objective: string) => Promise<void>;
   onActionOpen: (action: AgentChatAction) => void;
   onOpenMemoryItem: (item: HomeMemoryItem) => void;
@@ -4877,6 +4897,7 @@ function HomeTab({
               busy={busy}
               text={text}
               events={rawAgentEvents}
+              rawTranscript={agentRawTranscript}
               submitShortcut={submitShortcut}
               turnState={turnState}
               onSubmit={onSubmitAgentChat}
@@ -6622,6 +6643,7 @@ function RawAgentStream({
   busy,
   text,
   events,
+  rawTranscript,
   submitShortcut,
   turnState,
   onSubmit
@@ -6629,6 +6651,7 @@ function RawAgentStream({
   busy: boolean;
   text: LocaleMessages;
   events: RawAgentEvent[];
+  rawTranscript: AgentRawTranscript | null;
   submitShortcut: ChatSubmitShortcut;
   turnState: TurnState;
   onSubmit: (objective: string) => Promise<void>;
@@ -6659,7 +6682,12 @@ function RawAgentStream({
     <div className="raw-agent-stream">
       <div className="raw-agent-head">
         <span>{text.rawAgentTitle}</span>
-        <small>{events.length} transcript items</small>
+        <small>
+          {events.length} transcript items
+          {rawTranscript?.session_id
+            ? ` · JSONL ${rawTranscript.stdout_line_count} lines · stderr ${rawTranscript.stderr_line_count}`
+            : ""}
+        </small>
       </div>
       <TurnStateBar text={text} turnState={turnState} />
       <div className="raw-agent-log" ref={rawScroll.ref} onScroll={rawScroll.onScroll}>
