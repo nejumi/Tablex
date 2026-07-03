@@ -173,7 +173,27 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"d
             started_at=utc_now() - timedelta(minutes=20),
         )
         db.add_all([user, project, session])
+        db.flush()
+        append_session_event(
+            db,
+            session,
+            source="user",
+            event_type="user_instruction",
+            role="user",
+            title="User instruction",
+            content="この依頼を処理してください。",
+            payload={},
+        )
         db.commit()
+
+    with session_factory() as db:
+        project = db.get(Project, "p_file_tail")
+        session = db.get(AgentSession, "as_file_tail")
+        assert project is not None
+        assert session is not None
+        prompt = build_turn_prompt(db, project=project, session=session)
+        assert "この依頼を処理してください。" in prompt.text
+        assert prompt.delivered_user_event_indexes
 
     return_code = run_codex_cli_turn_streaming(
         session_factory,
@@ -181,8 +201,8 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"d
         project_id="p_file_tail",
         session_id="as_file_tail",
         workspace=workspace,
-        prompt="hello",
-        delivered_user_event_indexes=(),
+        prompt=prompt.text,
+        delivered_user_event_indexes=prompt.delivered_user_event_indexes,
         agent_model=None,
         timeout_seconds=30,
     )
@@ -213,6 +233,105 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"d
     ]
     process_started = next(event for event in events if event.event_type == "process_started")
     assert loads_json(process_started.payload_json, {})["stdout_mode"] == "workspace_file_tail"
+
+    with session_factory() as db:
+        project = db.get(Project, "p_file_tail")
+        session = db.get(AgentSession, "as_file_tail")
+        assert project is not None
+        assert session is not None
+        prompt_after_success = build_turn_prompt(db, project=project, session=session)
+        assert "この依頼を処理してください。" not in prompt_after_success.text
+
+
+def test_codex_cli_turn_failure_does_not_mark_user_instructions_delivered(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_codex = bin_dir / "codex"
+    fake_codex.write_text(
+        """#!/bin/sh
+while IFS= read -r _line; do
+  :
+done
+printf '%s\n' '{"type":"turn.started"}'
+printf '%s\n' 'simulated failure' >&2
+exit 2
+""",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    with session_factory() as db:
+        project = Project(id="p_retry_prompt", name="Retry Prompt")
+        session = AgentSession(
+            id="as_retry_prompt",
+            project_id=project.id,
+            goal_text="Continue.",
+            workspace_path=str(workspace),
+            created_at=utc_now() - timedelta(minutes=20),
+            started_at=utc_now() - timedelta(minutes=20),
+        )
+        db.add_all([project, session])
+        db.flush()
+        append_session_event(
+            db,
+            session,
+            source="user",
+            event_type="user_instruction",
+            role="user",
+            title="User instruction",
+            content="失敗しても次のturnで再度読んでください。",
+            payload={},
+        )
+        db.commit()
+
+    with session_factory() as db:
+        project = db.get(Project, "p_retry_prompt")
+        session = db.get(AgentSession, "as_retry_prompt")
+        assert project is not None
+        assert session is not None
+        prompt = build_turn_prompt(db, project=project, session=session)
+        assert "失敗しても次のturnで再度読んでください。" in prompt.text
+        assert prompt.delivered_user_event_indexes
+
+    return_code = run_codex_cli_turn_streaming(
+        session_factory,
+        store=store,
+        project_id="p_retry_prompt",
+        session_id="as_retry_prompt",
+        workspace=workspace,
+        prompt=prompt.text,
+        delivered_user_event_indexes=prompt.delivered_user_event_indexes,
+        agent_model=None,
+        timeout_seconds=30,
+    )
+
+    assert return_code == 2
+    with session_factory() as db:
+        project = db.get(Project, "p_retry_prompt")
+        session = db.get(AgentSession, "as_retry_prompt")
+        assert project is not None
+        assert session is not None
+        retry_prompt = build_turn_prompt(db, project=project, session=session)
+        assert "失敗しても次のturnで再度読んでください。" in retry_prompt.text
+        delivered_events = list(
+            db.scalars(
+                select(AgentTranscriptEvent).where(
+                    AgentTranscriptEvent.session_id == "as_retry_prompt",
+                    AgentTranscriptEvent.event_type == "user_instructions_delivered_to_codex",
+                )
+            )
+        )
+        assert delivered_events == []
 
 
 def test_codex_cli_turn_streaming_cancels_when_supervisor_lease_is_lost(

@@ -1700,11 +1700,6 @@ def run_codex_cli_turn_streaming(
         if process.stdin is not None:
             process.stdin.write(prompt)
             process.stdin.close()
-        mark_user_instructions_delivered(
-            session_factory,
-            session_id=session_id,
-            delivered_user_event_indexes=delivered_user_event_indexes,
-        )
         maybe_request_codex_progress_update_safely(
             session_factory,
             project_id=project_id,
@@ -1821,6 +1816,12 @@ def run_codex_cli_turn_streaming(
         process.kill()
         append_process_killed_event(session_factory, session_id=session_id, timeout_seconds=timeout_seconds)
         return_code = process.wait(timeout=5)
+    if return_code == 0:
+        mark_user_instructions_delivered(
+            session_factory,
+            session_id=session_id,
+            delivered_user_event_indexes=delivered_user_event_indexes,
+        )
     publish_raw_codex_transcript_snapshot(workspace)
     ingest_session_workspace_outputs_safely(
         session_factory,
