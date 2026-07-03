@@ -550,8 +550,7 @@ def start_main_agent_session_supervisor_thread(
                 slot_acquired=True,
             )
         finally:
-            if runner is not run_main_agent_session_supervisor:
-                release_supervisor_slot(session_id)
+            release_supervisor_slot(session_id)
 
     thread = threading.Thread(
         target=target,
@@ -567,6 +566,7 @@ def start_active_main_session_supervisors(
     store: LocalArtifactStore,
     *,
     agent_model: str | None = None,
+    supervisor_runner: SupervisorRunner | None = None,
 ) -> list[threading.Thread]:
     launch_specs: list[tuple[str, str]] = []
     with session_factory() as db:
@@ -613,6 +613,7 @@ def start_active_main_session_supervisors(
             project_id=project_id,
             session_id=session_id,
             agent_model=agent_model,
+            supervisor_runner=supervisor_runner,
         )
         if thread is not None:
             threads.append(thread)

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import timedelta, timezone
 from pathlib import Path
+from typing import Any
 
+import tabular_harness.services.agent_sessions as agent_sessions_module
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 from tabular_harness.core.json import dumps_json, loads_json
@@ -35,6 +37,9 @@ from tabular_harness.services.agent_sessions import (
     raw_codex_transcript_path,
     session_output_artifact_name,
     should_register_session_output,
+    start_active_main_session_supervisors,
+    start_main_agent_session_supervisor_thread,
+    supervisor_slot_active,
 )
 from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
 
@@ -128,6 +133,93 @@ def test_codex_stream_lines_are_indexed_in_one_batch(tmp_path: Path) -> None:
     assert [event.event_index for event in events] == [0, 1, 2]
     assert [event.event_type for event in events] == ["thread.started", "turn.started", "codex_stderr"]
     assert events[-1].source == "codex_cli_stderr"
+
+
+def test_supervisor_thread_releases_slot_when_global_runner_is_replaced(tmp_path: Path, monkeypatch: Any) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+
+    with session_factory() as db:
+        project = Project(id="p_slot_release", name="Slot Release")
+        session = AgentSession(id="as_slot_release", project_id=project.id, goal_text="Continue.")
+        db.add_all([project, session])
+        db.commit()
+
+    calls: list[str] = []
+
+    def fake_runner(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls.append("ran")
+
+    monkeypatch.setattr(agent_sessions_module, "run_main_agent_session_supervisor", fake_runner)
+
+    thread = start_main_agent_session_supervisor_thread(
+        session_factory,
+        store,
+        project_id="p_slot_release",
+        session_id="as_slot_release",
+    )
+
+    assert thread is not None
+    thread.join(timeout=2)
+    assert calls == ["ran"]
+    assert supervisor_slot_active("as_slot_release") is False
+
+
+def test_startup_supervisor_recovers_full_auto_project_without_browser_polling(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+
+    with session_factory() as db:
+        project = Project(
+            id="p_startup_recover",
+            name="Startup Recover",
+            autonomy_mode="full_auto",
+            current_phase="AUTONOMOUS_LOOP",
+        )
+        db.add(project)
+        db.commit()
+
+    launched: list[tuple[str, str]] = []
+
+    def fake_runner(
+        session_factory_arg: object,
+        store_arg: object,
+        *,
+        project_id: str,
+        session_id: str,
+        **kwargs: object,
+    ) -> None:
+        del session_factory_arg, store_arg, kwargs
+        launched.append((project_id, session_id))
+
+    threads = start_active_main_session_supervisors(
+        session_factory,
+        store,
+        supervisor_runner=fake_runner,
+    )
+
+    assert threads == []
+    assert len(launched) == 1
+    assert launched[0][0] == "p_startup_recover"
+
+    with session_factory() as db:
+        session = db.get(AgentSession, launched[0][1])
+        assert session is not None
+        assert session.session_type == "main_autonomous"
+        assert session.status == "starting"
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(AgentTranscriptEvent.session_id == session.id)
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            ).all()
+        )
+        assert [event.event_type for event in events] == ["session_created"]
 
 
 def test_transcript_index_reservation_survives_uncommitted_sidecar_event(tmp_path: Path) -> None:
