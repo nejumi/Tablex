@@ -282,6 +282,7 @@ from tabular_harness.services.kaggle_probe import (
     fetch_kaggle_competition_inventory,
     probe_kaggle_benchmark_access,
 )
+from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.metric_preferences import (
     BUILTIN_METRIC_OPTIONS,
     latest_metric_preference,
@@ -346,7 +347,6 @@ from tabular_harness.services.result_notebook_evidence import (
     result_notebook_evidence_job_output,
 )
 from tabular_harness.services.result_readout import build_result_readout
-from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.translation import TranslationResult
 from tabular_harness.services.translation import translate_artifact as translate_artifact_service
 from tabular_harness.worker.jobs import create_default_worker
@@ -1025,7 +1025,6 @@ def get_project(project_id: str, db: Annotated[Session, Depends(get_session)]) -
 def update_project(
     project_id: str,
     payload: ProjectUpdate,
-    background_tasks: BackgroundTasks,
     request: Request,
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
@@ -6937,7 +6936,6 @@ def list_project_jobs(project_id: str, db: Annotated[Session, Depends(get_sessio
 @router.get("/api/projects/{project_id}/agent-activity", response_model=AgentActivityRead)
 def get_project_agent_activity(
     project_id: str,
-    background_tasks: BackgroundTasks,
     request: Request,
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
