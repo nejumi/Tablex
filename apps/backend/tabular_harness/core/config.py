@@ -22,6 +22,9 @@ class Settings:
     bootstrap_user_password: str | None = None
     google_auth_enabled: bool = False
     google_client_id: str | None = None
+    local_worker_enabled: bool = True
+    local_worker_interval_seconds: float = 1.0
+    local_worker_max_jobs_per_wake: int = 3
 
 
 @lru_cache(maxsize=1)
@@ -48,6 +51,9 @@ def get_settings() -> Settings:
         bootstrap_user_password=os.getenv("TABLEX_BOOTSTRAP_PASSWORD") or None,
         google_auth_enabled=bool_env("TABLEX_GOOGLE_AUTH_ENABLED", False),
         google_client_id=os.getenv("TABLEX_GOOGLE_CLIENT_ID") or None,
+        local_worker_enabled=bool_env("TABLEX_LOCAL_WORKER_ENABLED", True),
+        local_worker_interval_seconds=float(os.getenv("TABLEX_LOCAL_WORKER_INTERVAL_SECONDS", "1.0")),
+        local_worker_max_jobs_per_wake=int(os.getenv("TABLEX_LOCAL_WORKER_MAX_JOBS_PER_WAKE", "3")),
     )
 
 

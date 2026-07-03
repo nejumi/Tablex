@@ -16,6 +16,7 @@ from tabular_harness.db.session import create_engine_for_settings, create_sessio
 from tabular_harness.services.agent_sessions import start_active_main_session_supervisors
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.auth import ensure_bootstrap_user, user_for_session_token
+from tabular_harness.worker.daemon import LocalWorkerDaemon
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -27,7 +28,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         start_active_main_session_supervisors(session_factory, app.state.artifact_store)
-        yield
+        worker_daemon: LocalWorkerDaemon | None = None
+        if app_settings.local_worker_enabled:
+            worker_daemon = LocalWorkerDaemon(
+                session_factory,
+                app.state.artifact_store,
+                interval_seconds=app_settings.local_worker_interval_seconds,
+                max_jobs_per_wake=app_settings.local_worker_max_jobs_per_wake,
+            )
+            worker_daemon.start()
+            app.state.local_worker_daemon = worker_daemon
+        try:
+            yield
+        finally:
+            if worker_daemon is not None:
+                worker_daemon.stop()
 
     app = FastAPI(title=f"{app_settings.app_display_name} API", lifespan=lifespan)
     app.state.settings = app_settings
