@@ -407,6 +407,7 @@ def set_auth_cookie(response: Response, request: Request, token: str) -> None:
 
 @router.get("/health")
 @router.get("/healthz")
+@router.get("/api/health")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
 

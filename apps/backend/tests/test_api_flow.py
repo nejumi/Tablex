@@ -267,6 +267,7 @@ def test_health_aliases_are_public_when_auth_is_enabled(tmp_path: Path) -> None:
 
     assert client.get("/health").json() == {"status": "ok"}
     assert client.get("/healthz").json() == {"status": "ok"}
+    assert client.get("/api/health").json() == {"status": "ok"}
     assert client.get("/api/projects").status_code == 401
 
 

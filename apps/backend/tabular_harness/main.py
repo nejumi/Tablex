@@ -91,7 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 def is_public_path(path: str) -> bool:
-    if path in {"/health", "/healthz", "/api/config"}:
+    if path in {"/health", "/healthz", "/api/health", "/api/config"}:
         return True
     return path.startswith("/api/auth/")
 
