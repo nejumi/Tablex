@@ -3588,15 +3588,18 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     baseline_response = client.post(f"/api/projects/{project_id}/baseline/run")
     assert baseline_response.status_code == 200, baseline_response.text
     baseline_job = baseline_response.json()
-    assert baseline_job["status"] == "succeeded"
-    assert baseline_job["output"]["experiment_run_id"]
-    assert baseline_job["output"]["model_version_id"]
-    baseline_metrics = baseline_job["output"]["metrics"]
+    assert baseline_job["status"] == "queued"
+    assert baseline_job["job_type"] == "run_baseline"
+    assert baseline_job["policy"]["execution"] == "queued_worker"
+    baseline_output = run_queued_job(client, baseline_job["id"])
+    assert baseline_output["experiment_run_id"]
+    assert baseline_output["model_version_id"]
+    baseline_metrics = baseline_output["metrics"]
     assert baseline_metrics["model_baseline_attempted"] is True
     assert baseline_metrics["baseline_type"] in {"xgboost_classifier", "logistic_regression", "majority_classifier"}
     assert baseline_metrics["primary_metric_value"] >= 0
     assert "roc_auc" in baseline_metrics
-    assert len(baseline_job["output"]["artifact_ids"]) >= 7
+    assert len(baseline_output["artifact_ids"]) >= 7
 
     leaderboard_metric_response = client.post(
         f"/api/projects/{project_id}/leaderboard/metric",
@@ -3608,7 +3611,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
     assert leaderboard_response.status_code == 200, leaderboard_response.text
     leaderboard = leaderboard_response.json()
-    assert leaderboard[0]["run_id"] == baseline_job["output"]["experiment_run_id"]
+    assert leaderboard[0]["run_id"] == baseline_output["experiment_run_id"]
     assert leaderboard[0]["display_metric_name"] == "roc_auc"
     assert leaderboard[0]["display_metric_source"] == "metric_preference"
     assert leaderboard[0]["display_metric_available"] is True
@@ -3619,7 +3622,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert initial_readout_response.status_code == 200, initial_readout_response.text
     initial_readout = initial_readout_response.json()
     assert initial_readout["schema_version"] == "result_readout.v1"
-    assert initial_readout["top_run"]["id"] == baseline_job["output"]["experiment_run_id"]
+    assert initial_readout["top_run"]["id"] == baseline_output["experiment_run_id"]
     assert initial_readout["evaluation_contract"]["status"] == "ready"
     assert initial_readout["next_action"]["target_tab"] == "Leaderboard"
 
@@ -3629,7 +3632,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert result_notebook_job["status"] == "succeeded"
     assert result_notebook_job["job_type"] == "prepare_result_notebook_evidence"
     assert result_notebook_job["output"]["schema_version"] == "result_notebook_evidence.v1"
-    assert result_notebook_job["output"]["top_run_id"] == baseline_job["output"]["experiment_run_id"]
+    assert result_notebook_job["output"]["top_run_id"] == baseline_output["experiment_run_id"]
     assert result_notebook_job["output"]["analysis_notebook_artifact_id"] is None
     assert result_notebook_job["output"]["notebook_evidence_html_artifact_id"] is None
     assert result_notebook_job["output"]["preview_artifact_id"] is None
@@ -3659,7 +3662,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert comparison_readout["comparison"]["report_artifact"]["asset_type"] == "experiment_comparison_report"
     assert comparison_readout["read_order"][0]["title"] == "Read the result"
 
-    model_response = client.get(f"/api/model-versions/{baseline_job['output']['model_version_id']}")
+    model_response = client.get(f"/api/model-versions/{baseline_output['model_version_id']}")
     assert model_response.status_code == 200, model_response.text
     model_version = model_response.json()
     assert model_version["model_family"] == "xgboost"

@@ -6542,9 +6542,8 @@ def list_project_insights(project_id: str, db: Annotated[Session, Depends(get_se
 def run_baseline_endpoint(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     spec = latest_approved_spec(db, project_id)
     if spec is None:
         raise HTTPException(status_code=400, detail="Approve an EvaluationSpec before running baseline")
@@ -6556,28 +6555,13 @@ def run_baseline_endpoint(
         job_type="run_baseline",
         project_id=project_id,
         input_payload={"evaluation_spec_id": spec.id, "split_manifest_id": split.id},
+        policy={
+            "execution": "queued_worker",
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+        },
     )
-    try:
-        mark_job_running(job)
-        result = run_baseline_service(
-            db,
-            store=store,
-            project=project,
-            evaluation_spec=spec,
-            split_manifest=split,
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "experiment_run_id": result.run.id,
-                "model_version_id": result.model_version_id,
-                "artifact_ids": result.artifact_ids,
-                "metrics": result.metrics,
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
