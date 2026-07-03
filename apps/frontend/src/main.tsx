@@ -6499,11 +6499,18 @@ function surfaceLabel(anchor: string) {
   return labels[anchor] ?? anchor.replace(/-/g, " ");
 }
 
-function agentChatOutcomeClass(outcome: string) {
+function agentChatOutcomeClass(outcome: string | null | undefined) {
   if (outcome === "applied") return "badge success";
   if (outcome === "needs_review") return "badge warning";
   if (outcome === "planned") return "badge muted";
   return "badge";
+}
+
+function agentChatOutcomeLabel(outcome: string | null | undefined) {
+  const normalized = (outcome ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (["response", "answered", "persisted", "started", "stopped", "succeeded"].includes(normalized)) return null;
+  return normalized.replace(/_/g, " ");
 }
 
 function isActiveAgentTurn(turn: AgentConversationTurn): boolean {
@@ -6783,7 +6790,8 @@ function AgentConversationTurnCard({
 }) {
   const assistant = turn.assistant;
   const active = isActiveAgentTurn(turn);
-  const outcome = active ? "pending" : assistant?.actionSummary?.outcome ?? (assistant ? "response" : "waiting");
+  const outcome = active ? "pending" : assistant?.actionSummary?.outcome;
+  const outcomeLabel = active ? text.agentReplyPending : agentChatOutcomeLabel(outcome);
   const statusClass = agentChatOutcomeClass(outcome);
   const hasPrimaryNext = Boolean(assistant?.actionSummary?.next_step?.target_tab);
   const visibleActions = hasPrimaryNext ? [] : assistant?.actions?.slice(0, 2) ?? [];
@@ -6809,7 +6817,7 @@ function AgentConversationTurnCard({
           <div className="chat-message-stack">
             <div className="chat-message-meta">
               <span>{text.tableeAnswered}</span>
-              <small className={statusClass}>{outcome.replace(/_/g, " ")}</small>
+              {outcomeLabel ? <small className={statusClass}>{outcomeLabel}</small> : null}
             </div>
             <div className="chat-bubble assistant">
               {assistant.text.split("\n").map((line, index) => (
