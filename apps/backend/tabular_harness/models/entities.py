@@ -87,7 +87,11 @@ class Project(Base):
 
 class Artifact(Base):
     __tablename__ = "artifacts"
-    __table_args__ = (UniqueConstraint("project_id", "asset_type", "name", "version"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "asset_type", "name", "version"),
+        Index("ix_artifacts_project_created", "project_id", "created_at"),
+        Index("ix_artifacts_project_type_created", "project_id", "asset_type", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     org_id: Mapped[str] = mapped_column(String, default="local-org", nullable=False)

@@ -78,6 +78,20 @@ def ensure_sqlite_mvp_columns(engine: Engine) -> None:
                 if column_name not in existing:
                     connection.execute(text(f"ALTER TABLE jobs ADD COLUMN {column_name} {ddl}"))
 
+        if "artifacts" in table_names:
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_artifacts_project_created "
+                    "ON artifacts (project_id, created_at)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_artifacts_project_type_created "
+                    "ON artifacts (project_id, asset_type, created_at)"
+                )
+            )
+
         if "agent_transcript_events" in table_names:
             repair_agent_transcript_event_indexes(connection)
             connection.execute(

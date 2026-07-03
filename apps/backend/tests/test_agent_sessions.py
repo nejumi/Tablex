@@ -318,9 +318,12 @@ def test_sqlite_schema_sync_repairs_duplicate_transcript_indexes(tmp_path: Path)
             )
         )
         indexes = [row[1] for row in connection.exec_driver_sql("PRAGMA index_list(agent_transcript_events)")]
+        artifact_indexes = [row[1] for row in connection.exec_driver_sql("PRAGMA index_list(artifacts)")]
 
     assert duplicates == []
     assert "ux_agent_transcript_events_session_index" in indexes
+    assert "ix_artifacts_project_created" in artifact_indexes
+    assert "ix_artifacts_project_type_created" in artifact_indexes
 
 
 def test_session_output_artifact_name_uses_relative_path_to_avoid_stem_collisions() -> None:
