@@ -739,6 +739,11 @@ def build_session_context(db: Session, *, project: Project, session: AgentSessio
                 "Tablex renders those blocks directly; after the initial anchors, Codex may add, remove, reorder, or branch them."
             ),
             "progress": "Explain progress naturally in Codex messages. Tablex stores the raw transcript and Chat explains it to humans.",
+            "chat_update": (
+                "reports/chat_update.md is the human-facing Chat update, not an internal changelog. "
+                "Explain the current work, why it matters, what changed, open uncertainty, and the next useful place to look. "
+                "Avoid raw artifact IDs, hashes, internal schema names, and implementation vocabulary unless they are needed for a user decision."
+            ),
             "notebook_quality": (
                 "Data understanding and research notebooks are human deliverables, not only model context. "
                 "Use equipped Skills such as tablex-grandmaster-eda and tablex-notebook-quality when present."
@@ -830,6 +835,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Register important outputs by writing files under outputs/, reports/, notebooks/, or artifacts/.",
         "- Keep a living plan when it helps the user follow the work: write `outputs/research_plan.json` with `schema_version: \"research_plan.v1\"` and optional `timeline_blocks`. Use `timeline_blocks` only as a display contract: after data upload, objective/task framing, data understanding, and prior-knowledge research anchors, freely add, remove, reorder, branch, or revise project-specific blocks. Mark a block done only when the supporting artifact exists or you explicitly record that no useful output is needed.",
         "- Keep human-facing accountability continuous: when you make meaningful progress, hit uncertainty, start or finish a long-running step, recover from an error, change the plan, or need the user to know what changed, overwrite `reports/chat_update.md` with only the latest concise update in the user's locale. Keep it under 1200 characters. Use separate report files for long history. Do not wait for Tablex to infer this from logs.",
+        "- Treat `reports/chat_update.md` as a user-facing explanation, not an internal changelog: say what you are doing now, why it matters, what changed, what uncertainty remains, and where the user should look next. Avoid raw artifact IDs, hashes, filenames, internal schema names, and implementation vocabulary unless they are necessary for a user decision.",
         "- Prefer marimo notebooks for data understanding, modeling diagnostics, and reports.",
         "- Read `.tablex/context.json` for `human_interface.response_locale` and write human-facing notebooks/reports/chat in that language.",
         "- Read equipped Skill paths in `.tablex/context.json` before EDA, prior research, notebook authoring, or modeling strategy work.",

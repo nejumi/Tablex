@@ -158,6 +158,27 @@ def test_turn_prompt_includes_living_research_plan_contract(tmp_path: Path) -> N
         assert "freely add, remove, reorder, branch, or revise" in prompt.text
 
 
+def test_turn_prompt_keeps_chat_update_human_facing_not_internal_changelog(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_chat_prompt", name="Chat Prompt", current_phase="AUTONOMOUS_LOOP", autonomy_mode="full_auto")
+        session = AgentSession(
+            id="as_chat_prompt",
+            project_id=project.id,
+            goal_text="Run a useful data science loop.",
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        prompt = build_turn_prompt(db, project=project, session=session)
+
+        assert "reports/chat_update.md" in prompt.text
+        assert "user-facing explanation, not an internal changelog" in prompt.text
+        assert "Avoid raw artifact IDs" in prompt.text
+
+
 def test_chat_update_message_uses_latest_concise_tail_for_cumulative_files() -> None:
     text = "\n\n".join(
         [
