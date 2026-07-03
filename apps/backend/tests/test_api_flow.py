@@ -16,7 +16,7 @@ from tabular_harness.api.routes import visible_activity_workers
 from tabular_harness.core.config import Settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
-from tabular_harness.models.entities import Artifact, Job, Project, Question, utc_now
+from tabular_harness.models.entities import AgentSession, Artifact, Job, Project, Question, utc_now
 from tabular_harness.schemas import AgentResult
 from tabular_harness.services.agent_sessions import append_session_event
 from tabular_harness.services.approach import store_json_artifact
@@ -353,6 +353,57 @@ def test_agent_activity_watchdog_starts_main_session_when_full_auto_has_no_sessi
     session = client.get(f"/api/projects/{project_id}/agent-session/current").json()
     assert session["id"] == session_id
     assert session["session_type"] == "main_autonomous"
+
+
+def test_agent_activity_surfaces_runner_retry_state(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Runner retry state"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.autonomy_mode = "full_auto"
+        project.current_phase = "AUTONOMOUS_LOOP"
+        session = AgentSession(
+            id="ags_retry_state",
+            project_id=project_id,
+            session_type="main_autonomous",
+            status="waiting_for_runner",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Keep working.",
+            last_error="Codex CLI is not available.",
+        )
+        db.add(session)
+        db.flush()
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="runner_retry_scheduled",
+            role="harness",
+            title="Codex runner retry scheduled",
+            content="Codex CLI is unavailable. Tablex will retry.",
+            payload={"retry_delay_seconds": 120, "failure_kind": "runner_unavailable"},
+        )
+        db.commit()
+
+    activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
+    assert activity_response.status_code == 200
+    activity = activity_response.json()
+    assert activity["turn_state"]["state"] == "agent_scheduled"
+    assert activity["turn_state"]["label"] == "Codex runner retry scheduled"
+    assert "120s" in activity["turn_state"]["detail"]
+    assert activity["workers"][0]["status"] == "waiting_for_runner"
+    assert activity["workers"][0]["headline"] == "Codex runner retry scheduled"
 
 
 def test_project_update_starts_main_session_after_target_change(

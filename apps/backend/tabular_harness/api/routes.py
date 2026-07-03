@@ -6526,6 +6526,7 @@ def get_project_agent_activity(
     if session is not None:
         session_processes = running_codex_processes_for_project(project_id)
         session_has_process = bool(session_processes)
+        retry_state = latest_agent_session_retry_state(db, session.id)
         session_display_status = (
             "running"
             if session.status == "running" and session_has_process
@@ -6534,9 +6535,17 @@ def get_project_agent_activity(
             else session.status
         )
         session_active = session_has_process or session.status in {"starting", "between_turns", "waiting_for_runner"}
+        retry_delay = retry_state.get("retry_delay_seconds") if retry_state else None
+        retry_detail = (
+            f"Codex runner is not ready; Tablex will retry this same session in about {retry_delay}s."
+            if isinstance(retry_delay, int | float)
+            else "Codex runner is not ready; Tablex will keep retrying this same session."
+        )
         session_detail = (
             "Codex is running in the project workspace now."
             if session_has_process
+            else retry_detail
+            if session.status == "waiting_for_runner"
             else "No live Codex process is observed yet. Full Auto is preparing the next turn."
             if session.status == "running"
             else session.last_error or "Preparing context, running analysis, or waiting for the next available worker."
@@ -6547,7 +6556,11 @@ def get_project_agent_activity(
                 "worker_id": "main-agent-session",
                 "display_name": "Autonomous Analyst",
                 "status": session_display_status,
-                "headline": "Codex is working" if session_has_process else "Full Auto will continue",
+                "headline": "Codex is working"
+                if session_has_process
+                else "Codex runner retry scheduled"
+                if session.status == "waiting_for_runner"
+                else "Full Auto will continue",
                 "detail": session_detail,
                 "job_id": None,
                 "job_type": "agent_session",
@@ -6585,6 +6598,8 @@ def get_project_agent_activity(
         turn_detail = (
             "Codex is running in the project workspace now."
             if session_has_process
+            else session_detail
+            if session.status == "waiting_for_runner"
             else "No live Codex process is observed yet. Full Auto is preparing the next turn."
             if session.status == "running"
             else session.last_error or "The project is still active. Progress will appear here when the next step starts."
@@ -6593,7 +6608,11 @@ def get_project_agent_activity(
             **turn_state,
             "state": "agent_running" if session_has_process else "agent_scheduled",
             "owner": "agent",
-            "label": "Codex is working" if session_has_process else "Full Auto will continue",
+            "label": "Codex is working"
+            if session_has_process
+            else "Codex runner retry scheduled"
+            if session.status == "waiting_for_runner"
+            else "Full Auto will continue",
             "detail": turn_detail,
             "input_attention": False,
             "confidence": "observed",
@@ -6609,6 +6628,32 @@ def get_project_agent_activity(
         "turn_state": turn_state,
         "workers": visible_workers[:20],
     }
+
+
+def latest_agent_session_retry_state(db: Session, session_id: str) -> dict[str, Any] | None:
+    event = db.scalar(
+        select(AgentTranscriptEvent)
+        .where(
+            AgentTranscriptEvent.session_id == session_id,
+            AgentTranscriptEvent.event_type.in_(
+                [
+                    "runner_retry_scheduled",
+                    "turn_recovery_scheduled",
+                    "process_timeout",
+                    "process_killed_after_timeout",
+                ]
+            ),
+        )
+        .order_by(AgentTranscriptEvent.event_index.desc())
+        .limit(1)
+    )
+    if event is None:
+        return None
+    payload = loads_json(event.payload_json, {})
+    payload["event_type"] = event.event_type
+    payload["event_index"] = event.event_index
+    payload["created_at"] = event.created_at.isoformat()
+    return payload
 
 
 def visible_activity_workers(workers: list[dict[str, Any]], *, now: datetime) -> list[dict[str, Any]]:
