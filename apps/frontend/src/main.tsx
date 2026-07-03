@@ -1989,6 +1989,7 @@ type ResearchPlanTimelineResponse = {
   schema_version: "research_plan_timeline.v1";
   project_id: string;
   source_artifact_id: string | null;
+  response_locale?: string | null;
   generated_at: string;
   blocks: ResearchPlanTimelineBlock[];
 };
@@ -3908,7 +3909,9 @@ function ProjectDetail({
         api<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`).catch(() => null),
         api<AgentTranscriptEvent[]>(`/api/projects/${project.id}/agent-session/transcript`).catch(() => []),
         api<AgentRawTranscript>(`/api/projects/${project.id}/agent-session/raw-transcript`).catch(() => null),
-        api<ResearchPlanTimelineResponse>(`/api/projects/${project.id}/research-plan/timeline`).catch(() => null),
+        api<ResearchPlanTimelineResponse>(
+          `/api/projects/${project.id}/research-plan/timeline?locale=${encodeURIComponent(userSettings.locale)}`
+        ).catch(() => null),
         api<{ markdown: string | null }>(`/api/projects/${project.id}/understanding/latest`)
       ]);
       setOverview(overviewData);
@@ -3958,7 +3961,7 @@ function ProjectDetail({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [project.id]);
+  }, [project.id, userSettings.locale]);
 
   const refreshAgentActivity = React.useCallback(async () => {
     try {

@@ -380,3 +380,46 @@ def test_notebook_index_caps_figure_ids_and_targets_recommended_capture(tmp_path
         assert recommended["coverage"]["evidence_figure_count"] == 20
         assert len(recommended["artifact_ids"]["evidence_figures"]) == 12
         assert index["next_actions"][0]["endpoint"] == f"/api/analysis-notebooks/{data_notebook.id}/execution-capture"
+
+
+def test_notebook_index_uses_execution_manifest_status_when_notebook_metadata_is_unknown(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    project_id = "p_notebook_execution_status"
+
+    with sessionmaker(engine)() as db:
+        project = Project(id=project_id, name="Notebook Execution Status")
+        notebook = artifact(
+            "art_notebook",
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="data_understanding_notebook",
+            metadata={"notebook_kind": "data_understanding"},
+        )
+        execution_manifest = artifact(
+            "art_execution_manifest",
+            project_id=project_id,
+            asset_type="notebook_execution_manifest",
+            name="notebook_execution_manifest",
+            metadata={
+                "notebook_artifact_id": notebook.id,
+                "execution_status": "marimo_export_succeeded",
+            },
+        )
+        execution_html = artifact(
+            "art_execution_html",
+            project_id=project_id,
+            asset_type="notebook_execution_html",
+            name="notebook_execution_html",
+            metadata={"notebook_artifact_id": notebook.id},
+        )
+        db.add_all([project, notebook, execution_manifest, execution_html])
+        db.commit()
+
+        index = build_project_notebook_index(db, project)
+
+        item = index["items"][0]
+        assert item["status"] == "marimo_export_succeeded"
+        assert item["coverage"]["execution_status"] == "marimo_export_succeeded"
+        assert item["coverage"]["execution_capture_status"] == "marimo_export_succeeded"
+        assert item["coverage"]["has_execution_html"] is True

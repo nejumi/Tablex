@@ -425,6 +425,8 @@ def test_full_auto_start_creates_main_agent_session_without_dataset_even_with_le
     restart_job = restart_response.json()
     assert restart_job["output"]["schema_version"] == "agent_session_start.v1"
     assert restart_job["output"]["agent_session_id"] == queued_job["output"]["agent_session_id"]
+    assert restart_job["output"]["status"] == "resumed"
+    assert "resumed" in restart_job["output"]["assistant_message"]
 
     restarted_session_response = client.get(f"/api/projects/{project_id}/agent-session/current")
     assert restarted_session_response.status_code == 200
@@ -1836,10 +1838,21 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
                         "why_it_matters": "Inspect salary tail and relational coverage.",
                         "next_action": "Open the EDA notebook and validate the tail story.",
                         "done_criteria": "Tail risk is documented with a readable artifact.",
+                        "evidence": "1 evidence",
+                        "blockers": ["Owner review is pending."],
                         "supporting_artifacts": [{"path": "notebooks/deep_eda.py", "exists": True}],
                         "status": "active",
                         "target_tab": "Notebooks",
                         "target_anchor": "notebook-preview-top",
+                        "localizations": {
+                            "ja-JP": {
+                                "title": "深いEDA",
+                                "why_it_matters": "salaryの裾とリレーショナルなカバレッジを確認します。",
+                                "next_action": "EDAノートブックを開き、裾の見立てを確認します。",
+                                "done_criteria": "裾のリスクが読めるartifactで記録されていること。",
+                                "blockers": ["データオーナー確認が未完了です。"],
+                            }
+                        },
                         "subtasks": [
                             {
                                 "id": "tail_review",
@@ -1847,6 +1860,12 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
                                 "detail": "Check whether tail labels need a separate decision path.",
                                 "status": "pending",
                                 "target_tab": "Insight",
+                                "localizations": {
+                                    "ja-JP": {
+                                        "title": "高salary裾の確認",
+                                        "detail": "裾ラベルに別の判断経路が必要か確認します。",
+                                    }
+                                },
                             }
                         ],
                     },
@@ -1870,6 +1889,18 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert timeline["blocks"][0]["supporting_artifacts"][0]["path"] == "notebooks/deep_eda.py"
     assert timeline["blocks"][0]["subtasks"][0]["target_tab"] == "Insight"
     assert timeline["blocks"][1]["status"] == "pending"
+
+    localized_response = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
+    assert localized_response.status_code == 200
+    localized = localized_response.json()
+    assert localized["response_locale"] == "ja-JP"
+    assert localized["blocks"][0]["title"] == "深いEDA"
+    assert localized["blocks"][0]["subtitle"] == "salaryの裾とリレーショナルなカバレッジを確認します。"
+    assert localized["blocks"][0]["next_action"] == "EDAノートブックを開き、裾の見立てを確認します。"
+    assert localized["blocks"][0]["done_criteria"] == "裾のリスクが読めるartifactで記録されていること。"
+    assert localized["blocks"][0]["blockers"] == ["データオーナー確認が未完了です。"]
+    assert localized["blocks"][0]["subtasks"][0]["title"] == "高salary裾の確認"
+    assert localized["blocks"][0]["subtasks"][0]["detail"] == "裾ラベルに別の判断経路が必要か確認します。"
 
 
 def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_path: Path) -> None:

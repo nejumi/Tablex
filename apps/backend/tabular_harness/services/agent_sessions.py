@@ -141,6 +141,7 @@ def start_or_resume_main_session(
         stopped.runner_kind = runner_kind
         stopped.pid = None
         stopped.ended_at = None
+        stopped.started_at = stopped.started_at or utc_now()
         stopped.updated_at = utc_now()
         return stopped
 
@@ -1136,7 +1137,10 @@ def build_session_context(db: Session, *, project: Project, session: AgentSessio
             "marimo_notebooks": "Place .py marimo notebooks under notebooks/ or outputs/notebooks/.",
             "living_research_plan": (
                 "When the project plan changes, write outputs/research_plan.json with optional timeline_blocks. "
-                "Tablex renders those blocks directly; after the initial anchors, Codex may add, remove, reorder, or branch them."
+                "Tablex renders those blocks directly; after the initial anchors, Codex may add, remove, reorder, or branch them. "
+                "Write human-visible timeline fields such as title, subtitle, why_it_matters, next_action, done_criteria, blockers, "
+                "and subtask title/detail in human_interface.response_locale. If you keep canonical English, also include "
+                "localizations like {\"ja-JP\": {\"title\": \"...\", \"subtitle\": \"...\"}}."
             ),
             "progress": "Explain progress naturally in Codex messages. Tablex stores the raw transcript and Chat explains it to humans.",
             "chat_update": (
@@ -1234,6 +1238,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Do not destructively modify EvaluationSpec or SplitManifest.",
         "- Register important outputs by writing files under outputs/, reports/, notebooks/, or artifacts/.",
         "- Keep a living plan when it helps the user follow the work: write `outputs/research_plan.json` with `schema_version: \"research_plan.v1\"` and optional `timeline_blocks`. Use `timeline_blocks` only as a display contract: after data upload, objective/task framing, data understanding, and prior-knowledge research anchors, freely add, remove, reorder, branch, or revise project-specific blocks. Mark a block done only when the supporting artifact exists or you explicitly record that no useful output is needed.",
+        "- For `outputs/research_plan.json` timeline_blocks, write every human-visible string in `.tablex/context.json` `human_interface.response_locale`. If you need a canonical English copy, put localized display fields under `localizations` and keep the active locale complete.",
         "- Keep human-facing accountability continuous: when you make meaningful progress, hit uncertainty, start or finish a long-running step, recover from an error, change the plan, or need the user to know what changed, overwrite `reports/chat_update.md` with only the latest concise update in the user's locale. Keep it under 1200 characters. Use separate report files for long history. Do not wait for Tablex to infer this from logs.",
         "- Treat `reports/chat_update.md` as a user-facing explanation, not an internal changelog: say what you are doing now, why it matters, what changed, what uncertainty remains, and where the user should look next. Avoid raw artifact IDs, hashes, filenames, internal schema names, and implementation vocabulary unless they are necessary for a user decision.",
         "- In Full Auto progress reports, do not make approval-waiting the dominant status. If an unconfirmed decision exists, pair it with the concrete reversible work that is continuing now, and make that active work the headline.",

@@ -2040,6 +2040,7 @@ def _notebook_index_item(
             evidence_figure_artifacts=evidence_figure_artifacts,
             visual_story_artifact=session_linked["visual_story_cards"],
         )
+    execution_status = str(metadata.get("execution_status") or execution_metadata.get("execution_status") or "unknown")
     coverage = {
         "has_html_preview": html_artifact is not None,
         "has_manifest": manifest_artifact is not None,
@@ -2053,7 +2054,7 @@ def _notebook_index_item(
         "has_evidence_bundle": evidence_bundle_artifact is not None,
         "evidence_figure_count": len(evidence_figure_artifacts),
         "has_figure_manifest": figure_manifest_artifact is not None,
-        "execution_status": str(metadata.get("execution_status") or "unknown"),
+        "execution_status": execution_status,
         "execution_capture_status": str(execution_metadata.get("execution_status") or "not_captured"),
         "content_readiness": content["readiness"],
         "content_quality_score": content["quality_score"],
@@ -2063,7 +2064,7 @@ def _notebook_index_item(
         "notebook_artifact_id": notebook_artifact.id,
         "notebook_kind": notebook_kind,
         "title": _notebook_title(notebook_kind),
-        "status": str(metadata.get("execution_status") or "ready"),
+        "status": execution_status if execution_status != "unknown" else "ready",
         "created_at": notebook_artifact.created_at.isoformat(),
         "dataset_snapshot_id": metadata.get("dataset_snapshot_id"),
         "run_id": metadata.get("run_id"),

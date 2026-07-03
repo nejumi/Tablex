@@ -1272,17 +1272,26 @@ def queued_agent_session_start_output(
     locale: str | None,
 ) -> dict[str, Any]:
     japanese = bool(locale and locale.lower().startswith("ja"))
-    assistant_message = (
-        "フルオートを開始しました。データの確認、目的の整理、評価設計、分析ノートブック作成へ順に進めます。"
-        "進行中の内容はこのチャットとアクティビティに表示します。"
-        if japanese
-        else "Full Auto started. I will work through data review, objective framing, evaluation design, and analysis notebooks. Progress will appear in this chat and Activity."
-    )
+    is_resume = bool(session.started_at or session.turn_index > 0 or session.codex_thread_id)
+    if is_resume:
+        assistant_message = (
+            "フルオートを再開しました。これまでの作業と最新のProject状態を読み直して、続きから進めます。"
+            "進行中の内容はこのチャットとアクティビティに表示します。"
+            if japanese
+            else "Full Auto resumed. I will reread the previous work and current project state, then continue from there. Progress will appear in this chat and Activity."
+        )
+    else:
+        assistant_message = (
+            "フルオートを開始しました。データの確認、目的の整理、評価設計、分析ノートブック作成へ順に進めます。"
+            "進行中の内容はこのチャットとアクティビティに表示します。"
+            if japanese
+            else "Full Auto started. I will work through data review, objective framing, evaluation design, and analysis notebooks. Progress will appear in this chat and Activity."
+        )
     return {
         "schema_version": "agent_session_start.v1",
         "project_id": project.id,
         "agent_session_id": session.id,
-        "status": "started",
+        "status": "resumed" if is_resume else "started",
         "assistant_message": assistant_message,
         "created_job_ids": [],
         "worker_events": [
@@ -1290,10 +1299,22 @@ def queued_agent_session_start_output(
                 "worker_id": "main-agent-session",
                 "display_name": "自律分析" if japanese else "Autonomous Analyst",
                 "status": session.status,
-                "headline": "Analysis is starting" if not japanese else "分析を開始しています",
-                "detail": (
-                    "Preparing the project context and beginning the next analysis step."
+                "headline": (
+                    "Analysis is resuming"
+                    if is_resume and not japanese
+                    else "Analysis is starting"
                     if not japanese
+                    else "分析を再開しています"
+                    if is_resume
+                    else "分析を開始しています"
+                ),
+                "detail": (
+                    "Rereading the current project state and continuing from the previous work."
+                    if is_resume and not japanese
+                    else "Preparing the project context and beginning the next analysis step."
+                    if not japanese
+                    else "プロジェクトの状況とこれまでの作業を確認し、続きから進めています。"
+                    if is_resume
                     else "プロジェクトの状況を確認し、次の分析ステップを開始しています。"
                 ),
                 "job_id": job.id,
@@ -4802,7 +4823,11 @@ def compact_agent_chat_history_turns(
 
 
 @router.get("/api/projects/{project_id}/research-plan/timeline")
-def get_research_plan_timeline(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+def get_research_plan_timeline(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    locale: str | None = None,
+) -> dict[str, Any]:
     require_project(db, project_id)
     artifact = db.scalar(
         select(Artifact)
@@ -4815,6 +4840,7 @@ def get_research_plan_timeline(project_id: str, db: Annotated[Session, Depends(g
             "schema_version": "research_plan_timeline.v1",
             "project_id": project_id,
             "source_artifact_id": None,
+            "response_locale": locale,
             "generated_at": utc_now().isoformat(),
             "blocks": [],
         }
@@ -4827,12 +4853,13 @@ def get_research_plan_timeline(project_id: str, db: Annotated[Session, Depends(g
         "schema_version": "research_plan_timeline.v1",
         "project_id": project_id,
         "source_artifact_id": artifact.id,
+        "response_locale": locale,
         "generated_at": artifact.created_at.isoformat(),
-        "blocks": clean_research_plan_timeline_blocks(raw_blocks),
+        "blocks": clean_research_plan_timeline_blocks(raw_blocks, locale=locale),
     }
 
 
-def clean_research_plan_timeline_blocks(raw_blocks: Any) -> list[dict[str, Any]]:
+def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None = None) -> list[dict[str, Any]]:
     if not isinstance(raw_blocks, list):
         return []
     statuses = {"done", "active", "pending", "blocked", "waiting", "skipped"}
@@ -4840,14 +4867,14 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any) -> list[dict[str, Any]]
     for index, raw_block in enumerate(raw_blocks[:40], start=1):
         if not isinstance(raw_block, dict):
             continue
-        title = raw_block.get("title")
-        if not isinstance(title, str) or not title.strip():
+        title = _research_plan_localized_string(raw_block, "title", locale=locale)
+        if not title:
             continue
         raw_status = raw_block.get("status")
         status = raw_status if isinstance(raw_status, str) and raw_status in statuses else "pending"
         block_id = raw_block.get("id")
-        evidence = _research_plan_block_evidence(raw_block)
-        subtitle = _research_plan_block_subtitle(raw_block)
+        evidence = _research_plan_block_evidence(raw_block, locale=locale)
+        subtitle = _research_plan_block_subtitle(raw_block, locale=locale)
         blocks.append(
             {
                 "id": block_id if isinstance(block_id, str) and block_id.strip() else f"plan_block_{index}",
@@ -4857,30 +4884,33 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any) -> list[dict[str, Any]]
                 "evidence": evidence[:240] if evidence else None,
                 "target_tab": raw_block.get("target_tab") if isinstance(raw_block.get("target_tab"), str) else None,
                 "target_anchor": raw_block.get("target_anchor") if isinstance(raw_block.get("target_anchor"), str) else None,
-                "subtasks": clean_research_plan_timeline_subtasks(raw_block.get("subtasks")),
+                "subtasks": clean_research_plan_timeline_subtasks(raw_block.get("subtasks"), locale=locale),
                 "phase": str(raw_block.get("phase") or "").strip()[:120] or None,
-                "next_action": str(raw_block.get("next_action") or "").strip()[:600] or None,
-                "done_criteria": str(raw_block.get("done_criteria") or "").strip()[:600] or None,
-                "blockers": _research_plan_string_list(raw_block.get("blockers"), limit=6),
+                "next_action": (_research_plan_localized_string(raw_block, "next_action", locale=locale) or "")[:600] or None,
+                "done_criteria": (_research_plan_localized_string(raw_block, "done_criteria", locale=locale) or "")[:600]
+                or None,
+                "blockers": _research_plan_string_list(
+                    _research_plan_localized_value(raw_block, "blockers", locale=locale), limit=6
+                ),
                 "supporting_artifacts": _research_plan_supporting_artifacts(raw_block.get("supporting_artifacts"), limit=8),
             }
         )
     return blocks
 
 
-def _research_plan_block_subtitle(raw_block: dict[str, Any]) -> str:
+def _research_plan_block_subtitle(raw_block: dict[str, Any], *, locale: str | None = None) -> str:
     for key in ("subtitle", "why_it_matters", "next_action", "notes", "done_criteria"):
-        value = raw_block.get(key)
-        if isinstance(value, str) and value.strip():
+        value = _research_plan_localized_string(raw_block, key, locale=locale)
+        if value:
             return value.strip()
     return ""
 
 
-def _research_plan_block_evidence(raw_block: dict[str, Any]) -> str | None:
-    evidence = raw_block.get("evidence")
+def _research_plan_block_evidence(raw_block: dict[str, Any], *, locale: str | None = None) -> str | None:
+    evidence = _research_plan_localized_value(raw_block, "evidence", locale=locale)
     if isinstance(evidence, str) and evidence.strip():
         return evidence.strip()
-    blockers = _research_plan_string_list(raw_block.get("blockers"), limit=3)
+    blockers = _research_plan_string_list(_research_plan_localized_value(raw_block, "blockers", locale=locale), limit=3)
     if blockers:
         return f"{len(blockers)} blocker{'s' if len(blockers) != 1 else ''}"
     supporting_artifacts = _research_plan_supporting_artifacts(raw_block.get("supporting_artifacts"), limit=8)
@@ -4891,6 +4921,38 @@ def _research_plan_block_evidence(raw_block: dict[str, Any]) -> str | None:
     if isinstance(phase, str) and phase.strip():
         return phase.strip()
     return None
+
+
+def _research_plan_localized_string(raw_block: dict[str, Any], key: str, *, locale: str | None) -> str | None:
+    value = _research_plan_localized_value(raw_block, key, locale=locale)
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _research_plan_localized_value(raw_block: dict[str, Any], key: str, *, locale: str | None) -> Any:
+    locale_keys = _research_plan_locale_keys(locale)
+    if locale_keys:
+        for container_key in ("localizations", "localized"):
+            container = raw_block.get(container_key)
+            if not isinstance(container, dict):
+                continue
+            for locale_key in locale_keys:
+                localized = container.get(locale_key)
+                if isinstance(localized, dict) and key in localized:
+                    return localized[key]
+        for locale_key in locale_keys:
+            field_key = f"{key}_{locale_key.replace('-', '_')}"
+            if field_key in raw_block:
+                return raw_block[field_key]
+    return raw_block.get(key)
+
+
+def _research_plan_locale_keys(locale: str | None) -> list[str]:
+    if not isinstance(locale, str) or not locale.strip():
+        return []
+    normalized = locale.strip().replace("_", "-")
+    lower = normalized.lower()
+    language = lower.split("-", 1)[0]
+    return list(dict.fromkeys([normalized, lower, language]))
 
 
 def _research_plan_string_list(value: Any, *, limit: int) -> list[str]:
@@ -4926,7 +4988,7 @@ def _research_plan_supporting_artifacts(value: Any, *, limit: int) -> list[dict[
     return output
 
 
-def clean_research_plan_timeline_subtasks(raw_subtasks: Any) -> list[dict[str, Any]]:
+def clean_research_plan_timeline_subtasks(raw_subtasks: Any, *, locale: str | None = None) -> list[dict[str, Any]]:
     if not isinstance(raw_subtasks, list):
         return []
     statuses = {"done", "active", "pending", "blocked", "waiting", "skipped"}
@@ -4934,18 +4996,22 @@ def clean_research_plan_timeline_subtasks(raw_subtasks: Any) -> list[dict[str, A
     for index, raw_subtask in enumerate(raw_subtasks[:80], start=1):
         if not isinstance(raw_subtask, dict):
             continue
-        title = raw_subtask.get("title")
-        if not isinstance(title, str) or not title.strip():
+        title = _research_plan_localized_string(raw_subtask, "title", locale=locale)
+        if not title:
             continue
         raw_status = raw_subtask.get("status")
         status = raw_status if isinstance(raw_status, str) and raw_status in statuses else "pending"
         subtask_id = raw_subtask.get("id")
-        evidence = raw_subtask.get("evidence")
+        evidence = _research_plan_localized_value(raw_subtask, "evidence", locale=locale)
         subtasks.append(
             {
                 "id": subtask_id if isinstance(subtask_id, str) and subtask_id.strip() else f"subtask_{index}",
                 "title": title.strip()[:160],
-                "detail": str(raw_subtask.get("detail") or raw_subtask.get("subtitle") or "").strip()[:600],
+                "detail": (
+                    _research_plan_localized_string(raw_subtask, "detail", locale=locale)
+                    or _research_plan_localized_string(raw_subtask, "subtitle", locale=locale)
+                    or ""
+                )[:600],
                 "status": status,
                 "evidence": str(evidence).strip()[:240] if evidence is not None else None,
                 "target_tab": raw_subtask.get("target_tab") if isinstance(raw_subtask.get("target_tab"), str) else None,
