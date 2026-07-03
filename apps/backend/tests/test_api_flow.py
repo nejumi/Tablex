@@ -18,6 +18,7 @@ from tabular_harness.api.routes import (
     format_elapsed_seconds,
     heartbeat_phrase_for_locale,
     matching_main_session_update_for_chat_job,
+    merge_activity_workers,
     seconds_since_timestamp,
     visible_activity_workers,
 )
@@ -107,6 +108,73 @@ def test_visible_activity_workers_hide_old_terminal_cards() -> None:
     )
 
     assert [worker["worker_id"] for worker in workers] == ["recent", "queued", "session"]
+
+
+def test_merge_activity_workers_keeps_subagent_cards_distinct() -> None:
+    now = utc_now()
+    old_time = (now - timedelta(seconds=30)).isoformat()
+    recent_time = (now - timedelta(seconds=3)).isoformat()
+    workers = merge_activity_workers(
+        [
+            {
+                "worker_id": "child-a",
+                "job_id": "job_shared",
+                "status": "queued",
+                "updated_at": old_time,
+                "active": True,
+                "detail": "queued fallback",
+                "token_usage": {"is_estimate": True, "series": []},
+            },
+            {
+                "worker_id": "child-a",
+                "job_id": "job_shared",
+                "status": "running",
+                "updated_at": recent_time,
+                "active": True,
+                "detail": "live child A",
+                "project_name": "Project A",
+                "human_description": {"title": "Child A", "summary": "live"},
+                "token_usage": {"is_estimate": False, "series": [{"step": "live", "tokens": 12}]},
+            },
+            {
+                "worker_id": "child-b",
+                "job_id": "job_shared",
+                "status": "running",
+                "updated_at": recent_time,
+                "active": True,
+                "detail": "live child B",
+                "token_usage": {"is_estimate": True, "series": []},
+            },
+            {
+                "worker_id": "main-agent-session",
+                "agent_session_id": "ags_same",
+                "status": "between_turns",
+                "updated_at": old_time,
+                "active": True,
+                "detail": "older session",
+                "token_usage": {"is_estimate": True, "series": []},
+            },
+            {
+                "worker_id": "main-agent-session-retry",
+                "agent_session_id": "ags_same",
+                "status": "running",
+                "updated_at": recent_time,
+                "active": True,
+                "detail": "live session",
+                "raw_transcript": {"stdout_line_count": 5},
+                "token_usage": {"is_estimate": True, "series": []},
+            },
+        ]
+    )
+
+    assert [worker["worker_id"] for worker in workers] == ["child-a", "child-b", "main-agent-session-retry"]
+    assert workers[0]["status"] == "running"
+    assert workers[0]["detail"] == "live child A"
+    assert workers[0]["project_name"] == "Project A"
+    assert workers[0]["token_usage"]["is_estimate"] is False
+    assert workers[2]["raw_transcript"]["stdout_line_count"] == 5
+    assert len([worker for worker in workers if worker["active"]]) == 3
+    assert len(visible_activity_workers(workers, now=now)) == 3
 
 
 def test_agent_activity_elapsed_output_helpers() -> None:

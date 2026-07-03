@@ -7198,6 +7198,7 @@ def get_project_agent_activity(
                 },
             },
         )
+    workers = merge_activity_workers(workers)
     active_workers = [worker for worker in workers if worker.get("active")]
     turn_state = build_project_turn_state(project, jobs, workers, active_job_ids=active_job_ids)
     visible_workers = visible_activity_workers(workers, now=utc_now())
@@ -7389,6 +7390,99 @@ def visible_activity_workers(workers: list[dict[str, Any]], *, now: datetime) ->
         if updated_at is not None and (now - updated_at).total_seconds() <= 15:
             visible.append(worker)
     return visible
+
+
+def merge_activity_workers(workers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for worker in workers:
+        identity = activity_worker_identity(worker)
+        existing = merged.get(identity)
+        merged[identity] = merge_activity_worker(existing, worker) if existing is not None else worker
+    return list(merged.values())
+
+
+def activity_worker_identity(worker: dict[str, Any]) -> str:
+    session_id = worker.get("agent_session_id")
+    if isinstance(session_id, str) and session_id.strip():
+        return f"session:{session_id.strip()}"
+    job_id = worker.get("job_id")
+    worker_id = worker.get("worker_id")
+    if isinstance(job_id, str) and job_id.strip():
+        if isinstance(worker_id, str) and worker_id.strip():
+            return f"job:{job_id.strip()}:worker:{worker_id.strip()}"
+        return f"job:{job_id.strip()}"
+    return f"worker:{str(worker_id or '').strip()}:{worker.get('created_at') or worker.get('updated_at') or 'event'}"
+
+
+def merge_activity_worker(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    primary, secondary = preferred_activity_worker(left, right), left
+    if primary is left:
+        secondary = right
+    merged = {**secondary, **primary}
+    for key in ("project_name", "human_description", "raw_transcript", "retry_state", "started_at", "run_after"):
+        if merged.get(key) is None and secondary.get(key) is not None:
+            merged[key] = secondary[key]
+    primary_token_usage = primary.get("token_usage")
+    secondary_token_usage = secondary.get("token_usage")
+    if (
+        isinstance(primary_token_usage, dict)
+        and isinstance(secondary_token_usage, dict)
+        and primary_token_usage.get("is_estimate") is True
+        and secondary_token_usage.get("is_estimate") is False
+    ):
+        merged["token_usage"] = secondary_token_usage
+    return merged
+
+
+def preferred_activity_worker(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    left_rank = activity_worker_status_rank(left.get("status"))
+    right_rank = activity_worker_status_rank(right.get("status"))
+    if left_rank != right_rank:
+        return left if left_rank < right_rank else right
+    if bool(left.get("active")) != bool(right.get("active")):
+        return left if left.get("active") else right
+    left_token_usage = left.get("token_usage")
+    right_token_usage = right.get("token_usage")
+    left_estimate = not isinstance(left_token_usage, dict) or left_token_usage.get("is_estimate") is not False
+    right_estimate = not isinstance(right_token_usage, dict) or right_token_usage.get("is_estimate") is not False
+    if left_estimate != right_estimate:
+        return right if left_estimate else left
+    left_description_score = activity_worker_description_score(left)
+    right_description_score = activity_worker_description_score(right)
+    if left_description_score != right_description_score:
+        return left if left_description_score > right_description_score else right
+    left_time = parse_worker_event_time(left.get("updated_at") or left.get("created_at"))
+    right_time = parse_worker_event_time(right.get("updated_at") or right.get("created_at"))
+    if left_time is not None and right_time is not None and left_time != right_time:
+        return left if left_time > right_time else right
+    return right
+
+
+def activity_worker_status_rank(status: Any) -> int:
+    status_text = str(status or "")
+    if status_text == "running":
+        return 0
+    if status_text == "approval_required":
+        return 1
+    if status_text in {"starting", "between_turns", "waiting_for_runner", "waiting_for_agent"}:
+        return 2
+    if status_text == "queued":
+        return 3
+    return 4
+
+
+def activity_worker_description_score(worker: dict[str, Any]) -> int:
+    score = 0
+    for key in ("headline", "detail", "display_name"):
+        if isinstance(worker.get(key), str) and worker[key].strip():
+            score += 1
+    description = worker.get("human_description")
+    if isinstance(description, dict):
+        if isinstance(description.get("title"), str) and description["title"].strip():
+            score += 1
+        if isinstance(description.get("summary"), str) and description["summary"].strip():
+            score += 1
+    return score
 
 
 def parse_worker_event_time(value: Any) -> datetime | None:

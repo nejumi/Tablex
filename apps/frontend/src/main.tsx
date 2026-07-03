@@ -8599,8 +8599,8 @@ function mergeAgentWorkerEvents(events: AgentWorkerEvent[], fallbackProjectName:
 }
 
 function agentWorkerEventIdentity(event: AgentWorkerEvent): string {
-  if (event.job_id && !event.job_id.startsWith("local-")) return `job:${event.job_id}`;
   if (event.agent_session_id) return `session:${event.agent_session_id}`;
+  if (event.job_id && !event.job_id.startsWith("local-")) return `job:${event.job_id}:worker:${event.worker_id || "default"}`;
   return `worker:${event.worker_id}:${event.job_id ?? event.created_at ?? event.updated_at ?? "event"}`;
 }
 
