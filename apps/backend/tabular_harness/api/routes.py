@@ -428,6 +428,8 @@ def app_config(request: Request) -> dict[str, Any]:
         "auth_enabled": bool(settings.auth_enabled),
         "password_auth_enabled": True,
         "google_auth_enabled": bool(settings.google_auth_enabled),
+        "api_agent_session_supervisor_enabled": bool(settings.api_agent_session_supervisor_enabled),
+        "local_worker_enabled": bool(settings.local_worker_enabled),
     }
 
 

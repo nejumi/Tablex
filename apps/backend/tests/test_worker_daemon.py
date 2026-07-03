@@ -165,5 +165,8 @@ def test_api_lifespan_can_disable_agent_session_supervisor(tmp_path: Path, monke
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
+        config = client.get("/api/config").json()
+        assert config["api_agent_session_supervisor_enabled"] is False
+        assert config["local_worker_enabled"] is False
 
     assert calls == []
