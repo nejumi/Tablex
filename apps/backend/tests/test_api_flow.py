@@ -31,6 +31,7 @@ from tabular_harness.models.entities import (
     Job,
     Project,
     Question,
+    User,
     utc_now,
 )
 from tabular_harness.schemas import AgentResult
@@ -2573,6 +2574,71 @@ def test_research_plan_timeline_refresh_uses_artifact_locale_when_query_locale_a
     assert timeline["blocks"][0]["subtitle"] == ""
     assert timeline["blocks"][0]["localization_status"] == "needs_locale_refresh"
     assert "title" in timeline["blocks"][0]["missing_localization_fields"]
+    request_path = research_plan_locale_request_path(workspace)
+    assert request_path.exists()
+    assert "locale: ja-JP" in request_path.read_text(encoding="utf-8")
+
+
+def test_research_plan_timeline_defaults_to_latest_project_locale(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    app = cast(Any, client.app)
+    workspace = app.state.artifact_store.root / "agent_sessions" / "p_project_locale_plan" / "ags_project_locale_plan"
+
+    with app.state.session_factory() as db:
+        user = User(id="u_project_locale_plan", email="plan-locale-default@example.com", locale="ja-JP")
+        project = Project(
+            id="p_project_locale_plan",
+            name="Project locale plan",
+            created_by=user.id,
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+        )
+        db.add_all([user, project])
+        db.commit()
+        session = AgentSession(
+            id="ags_project_locale_plan",
+            project_id=project.id,
+            org_id=project.org_id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Keep project plan display localized.",
+            workspace_path=str(workspace),
+            created_by=user.id,
+        )
+        db.add(session)
+        store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project.id,
+            asset_type="research_plan",
+            name="codex_plan_project_locale",
+            filename="research_plan.json",
+            payload={
+                "schema_version": "research_plan.v1",
+                "timeline_blocks": [
+                    {
+                        "id": "codex_added_modeling",
+                        "title": "Model diagnostics and feature importance",
+                        "why_it_matters": "Explain error slices before choosing the next experiment.",
+                        "status": "active",
+                    }
+                ],
+            },
+            metadata={"source": "test"},
+        )
+        db.commit()
+
+    response = client.get("/api/projects/p_project_locale_plan/research-plan/timeline")
+    assert response.status_code == 200
+    timeline = response.json()
+    assert timeline["response_locale"] == "ja-JP"
+    assert timeline["requested_locale"] == "ja-JP"
+    assert timeline["localization"]["missing_block_count"] == 1
+    assert timeline["blocks"][0]["title"] == "表示言語の更新待ち"
+    assert timeline["blocks"][0]["subtitle"] == ""
+
     request_path = research_plan_locale_request_path(workspace)
     assert request_path.exists()
     assert "locale: ja-JP" in request_path.read_text(encoding="utf-8")

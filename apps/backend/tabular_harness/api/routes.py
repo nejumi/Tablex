@@ -4994,8 +4994,13 @@ def get_research_plan_timeline(
     db: Annotated[Session, Depends(get_session)],
     locale: str | None = None,
 ) -> dict[str, Any]:
-    require_project(db, project_id)
-    response = build_research_plan_timeline_response(db, project_id=project_id, locale=locale)
+    project = require_project(db, project_id)
+    response_locale = (
+        locale.strip()
+        if isinstance(locale, str) and locale.strip()
+        else explicit_project_response_locale(db, project)
+    )
+    response = build_research_plan_timeline_response(db, project_id=project_id, locale=response_locale)
     localization = response.get("localization") if isinstance(response, dict) else None
     missing_count = 0
     if isinstance(localization, dict):
@@ -5011,6 +5016,24 @@ def get_research_plan_timeline(
             maybe_request_research_plan_locale_refresh(db, session=session, artifact=artifact, locale=response_locale)
             db.commit()
     return response
+
+
+def explicit_project_response_locale(db: Session, project: Project) -> str | None:
+    if project.created_by and db.get(User, project.created_by) is not None:
+        return latest_project_response_locale(db, project)
+    jobs = list(
+        db.scalars(
+            select(Job)
+            .where(Job.project_id == project.id, Job.job_type.in_(["start_autonomous_loop", "agent_chat_turn"]))
+            .order_by(Job.created_at.desc())
+            .limit(20)
+        ).all()
+    )
+    for job in jobs:
+        payload = loads_json(job.input_json, {})
+        if isinstance(payload.get("locale"), str) and payload["locale"].strip():
+            return latest_project_response_locale(db, project)
+    return None
 
 
 @router.get("/api/projects/{project_id}/agent-session/current", response_model=AgentSessionRead | None)

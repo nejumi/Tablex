@@ -1484,6 +1484,20 @@ function localeSafeDisplayText(value: string | null | undefined, locale: string 
   return fallback;
 }
 
+function researchPlanTimelineMatchesDisplayLocale(
+  timeline: ResearchPlanTimelineResponse | null,
+  locale: string | null | undefined
+): boolean {
+  if (!timeline) return true;
+  const responseLocale = timeline.response_locale ?? timeline.requested_locale ?? timeline.authored_locale ?? null;
+  if (!localeRequiresLocalizedDisplay(locale)) {
+    return !localeRequiresLocalizedDisplay(responseLocale);
+  }
+  if (!responseLocale) return false;
+  if (localeLooksJapanese(locale)) return localeLooksJapanese(responseLocale);
+  return localeLanguage(responseLocale) === localeLanguage(locale);
+}
+
 function shouldSubmitTextarea(
   event: React.KeyboardEvent<HTMLTextAreaElement>,
   shortcut: ChatSubmitShortcut
@@ -2463,6 +2477,8 @@ type ResearchPlanTimelineResponse = {
   project_id: string;
   source_artifact_id: string | null;
   response_locale?: string | null;
+  requested_locale?: string | null;
+  authored_locale?: string | null;
   generated_at: string;
   localization?: {
     requested_locale?: string | null;
@@ -4314,6 +4330,10 @@ function ProjectDetail({
     : project.current_phase === "AUTONOMOUS_LOOP"
       ? "awake"
       : "idle";
+
+  React.useEffect(() => {
+    setResearchPlanTimeline(null);
+  }, [project.id, userSettings.locale]);
   const turnState = agentActivity?.turn_state ?? fallbackTurnState(project);
   const focusRecommendation = React.useMemo(
     () => {
@@ -5339,12 +5359,15 @@ function HomeTab({
   const equippedSkills = equippedSkillItems(projectAssetReferences, libraryAssets);
   const rawAgentEvents = buildRawAgentEvents(messages, jobs, agentTranscriptEvents, agentSession);
   const agentWorkspaceScrollResetKey = `${project.id}:${agentSession?.id ?? "no-agent-session"}`;
+  const researchPlanTimelineForDisplay = researchPlanTimelineMatchesDisplayLocale(researchPlanTimeline, locale)
+    ? researchPlanTimeline
+    : null;
   const researchPlanBlocks = buildResearchPlanBlocks({
     project,
     datasetCount,
     artifacts,
     researchBriefs,
-    researchPlanTimeline,
+    researchPlanTimeline: researchPlanTimelineForDisplay,
     notebookIndex,
     equippedSkills,
     jobs: planJobs,
