@@ -33,7 +33,7 @@ from tabular_harness.services.agent_sessions import (
 )
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore
-from tabular_harness.services.jobs import acquire_next_job, create_job
+from tabular_harness.services.jobs import acquire_next_job, create_job, reap_stale_running_jobs
 from tabular_harness.worker.jobs import agent_chat_turn_handler, continue_autonomous_session_handler
 from tabular_harness.worker.runner import SyncWorker
 
@@ -1030,6 +1030,51 @@ def test_worker_acquire_recovers_stale_queued_lock(tmp_path: Path) -> None:
         assert acquired is not None
         assert acquired.id == stale_id
         assert acquired.locked_by == "recovery-worker"
+
+
+def test_reap_stale_running_jobs_only_times_out_short_control_jobs(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Stale running cleanup"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    session_factory = app.state.session_factory
+    now = utc_now()
+    with session_factory() as db:
+        stale_chat = create_job(db, job_type="agent_chat_turn", project_id=project_id, priority=90)
+        stale_chat.status = "running"
+        stale_chat.locked_by = "dead-worker"
+        stale_chat.locked_at = now - timedelta(minutes=6)
+        stale_continuation = create_job(db, job_type="continue_autonomous_session", project_id=project_id, priority=45)
+        stale_continuation.status = "running"
+        stale_continuation.locked_by = "dead-worker"
+        stale_continuation.locked_at = now - timedelta(minutes=11)
+        old_training = create_job(db, job_type="train_model_candidates", project_id=project_id, priority=60)
+        old_training.status = "running"
+        old_training.locked_by = "busy-worker"
+        old_training.locked_at = now - timedelta(hours=2)
+        fresh_chat = create_job(db, job_type="agent_chat_turn", project_id=project_id, priority=90)
+        fresh_chat.status = "running"
+        fresh_chat.locked_by = "active-worker"
+        fresh_chat.locked_at = now - timedelta(minutes=1)
+        ids = {
+            "stale_chat": stale_chat.id,
+            "stale_continuation": stale_continuation.id,
+            "old_training": old_training.id,
+            "fresh_chat": fresh_chat.id,
+        }
+        db.commit()
+
+    with session_factory() as db:
+        assert reap_stale_running_jobs(db, now=now) == 2
+        db.commit()
+
+    with session_factory() as db:
+        assert db.get(Job, ids["stale_chat"]).status == "timed_out"
+        assert db.get(Job, ids["stale_continuation"]).status == "timed_out"
+        assert db.get(Job, ids["old_training"]).status == "running"
+        assert db.get(Job, ids["fresh_chat"]).status == "running"
 
 
 def test_sync_worker_marks_failed_after_handler_transaction_error(tmp_path: Path) -> None:

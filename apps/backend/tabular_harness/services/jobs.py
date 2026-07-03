@@ -85,6 +85,10 @@ TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}
 RUNNABLE_STATUSES = {"queued"}
 APPROVAL_REQUIRED_JOB_TYPES = {"run_agent_task"}
 JOB_LOCK_EXPIRY_SECONDS = 10 * 60
+STALE_RUNNING_JOB_TIMEOUT_SECONDS = {
+    "agent_chat_turn": 5 * 60,
+    "continue_autonomous_session": 10 * 60,
+}
 
 
 def create_job(
@@ -161,6 +165,16 @@ def mark_job_failed(job: Job, error_message: str, output: dict[str, Any] | None 
     job.updated_at = utc_now()
 
 
+def mark_job_timed_out(job: Job, error_message: str, output: dict[str, Any] | None = None) -> None:
+    job.status = "timed_out"
+    job.error_message = error_message
+    job.output_json = dumps_json(output or {})
+    job.locked_by = None
+    job.locked_at = None
+    job.ended_at = utc_now()
+    job.updated_at = utc_now()
+
+
 def approve_job(job: Job, *, approved_by: str = "local-user") -> None:
     if job.status != "approval_required":
         return
@@ -203,6 +217,7 @@ def acquire_next_job(
     project_id: str | None = None,
 ) -> Job | None:
     now = utc_now()
+    reap_stale_running_jobs(db, now=now)
     stmt = select(Job).where(Job.status.in_(RUNNABLE_STATUSES)).order_by(Job.priority.desc(), Job.created_at)
     if job_types:
         stmt = stmt.where(Job.job_type.in_(job_types))
@@ -225,6 +240,38 @@ def acquire_next_job(
         db.flush()
         return job
     return None
+
+
+def reap_stale_running_jobs(db: Session, *, now: datetime | None = None) -> int:
+    observed_at = now or utc_now()
+    candidates = db.scalars(
+        select(Job).where(
+            Job.status == "running",
+            Job.job_type.in_(set(STALE_RUNNING_JOB_TIMEOUT_SECONDS)),
+        )
+    ).all()
+    reaped = 0
+    for job in candidates:
+        timeout_seconds = STALE_RUNNING_JOB_TIMEOUT_SECONDS[job.job_type]
+        reference = job.locked_at or job.started_at or job.updated_at or job.created_at
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=timezone.utc)
+        if (observed_at - reference).total_seconds() < timeout_seconds:
+            continue
+        mark_job_timed_out(
+            job,
+            f"{job.job_type} exceeded the local worker stale-running timeout of {timeout_seconds}s.",
+            {
+                "schema_version": "stale_running_job_timeout.v1",
+                "job_type": job.job_type,
+                "timeout_seconds": timeout_seconds,
+                "stale_reference_at": reference.isoformat(),
+            },
+        )
+        reaped += 1
+    if reaped:
+        db.flush()
+    return reaped
 
 
 def queued_job_lock_is_stale(job: Job, *, now: datetime | None = None) -> bool:
