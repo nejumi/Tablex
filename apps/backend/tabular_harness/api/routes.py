@@ -5701,7 +5701,7 @@ def preview_report(report_id: str, db: Annotated[Session, Depends(get_session)])
     path = artifact_primary_path(artifact)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file not found")
-    return artifact_preview_to_dict(artifact, path)
+    return artifact_preview_to_dict(artifact, path, limit_bytes=artifact_preview_limit_bytes(artifact, path))
 
 
 @router.get("/api/reports/{report_id}/download")
@@ -6589,20 +6589,7 @@ def preview_artifact(artifact_id: str, db: Annotated[Session, Depends(get_sessio
     path = artifact_primary_path(artifact)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file not found")
-    limit_bytes = (
-        5_000_000
-        if artifact.asset_type
-        in {
-            "notebook_html",
-            "notebook_execution_html",
-            "notebook_evidence_html",
-            "eda_review_html",
-        }
-        else 500_000
-        if artifact.asset_type == "relational_catalog"
-        else 20_000
-    )
-    return artifact_preview_to_dict(artifact, path, limit_bytes=limit_bytes)
+    return artifact_preview_to_dict(artifact, path, limit_bytes=artifact_preview_limit_bytes(artifact, path))
 
 
 @router.post("/api/artifacts/{artifact_id}/translate", response_model=TranslationRead)
@@ -7894,6 +7881,21 @@ def model_validation_to_dict(db: Session, job: Job, model_version_id: str) -> di
         "created_at": job.created_at.isoformat(),
         "ended_at": job.ended_at.isoformat() if job.ended_at else None,
     }
+
+
+def artifact_preview_limit_bytes(artifact: Artifact, path: Path) -> int:
+    if path.suffix.lower() in {".html", ".htm"}:
+        return 5_000_000
+    if artifact.asset_type in {
+        "notebook_html",
+        "notebook_execution_html",
+        "notebook_evidence_html",
+        "eda_review_html",
+    }:
+        return 5_000_000
+    if artifact.asset_type == "relational_catalog":
+        return 500_000
+    return 20_000
 
 
 def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 20_000) -> dict[str, Any]:
