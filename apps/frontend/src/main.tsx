@@ -349,6 +349,7 @@ const englishMessages = {
   workerStatusQueued: "Waiting",
   workerStatusRunning: "Running",
   workerStatusApproval: "Approval",
+  workerStatusWaitingForAgent: "Waiting for Codex",
   workerStatusFinished: "Finished",
   workerDisplayAutonomousSession: "Autonomous Session",
   workerDisplayTraining: "Training Worker",
@@ -360,6 +361,8 @@ const englishMessages = {
   workerOptimisticHeadline: "Reading your request and checking project context.",
   workerWaitingSummaryPrefix: "Waiting for a local worker to pick it up.",
   workerWaitingNoTelemetry: "No live token telemetry is available yet.",
+  workerMainAgentWaitTitle: "Waiting for Codex reply",
+  workerMainAgentWaitSummary: "Your message is in the main Codex session. The next Codex-authored update will appear in Chat.",
   workerRunBaselineTitle: "Train the adaptive baseline",
   workerRunBaselineSummary:
     "Use the approved evaluation design, train the current adaptive tabular baseline, and publish comparable run evidence for the Leaderboard.",
@@ -777,6 +780,7 @@ const japaneseMessages: LocaleMessages = {
   workerStatusQueued: "待機中",
   workerStatusRunning: "実行中",
   workerStatusApproval: "承認待ち",
+  workerStatusWaitingForAgent: "Codex返答待ち",
   workerStatusFinished: "完了",
   workerDisplayAutonomousSession: "自律セッション",
   workerDisplayTraining: "学習Worker",
@@ -788,6 +792,8 @@ const japaneseMessages: LocaleMessages = {
   workerOptimisticHeadline: "依頼を読み取り、プロジェクト文脈を確認しています。",
   workerWaitingSummaryPrefix: "local workerが拾うのを待っています。",
   workerWaitingNoTelemetry: "開始前のため、まだlive token telemetryはありません。",
+  workerMainAgentWaitTitle: "Codexの返答待ち",
+  workerMainAgentWaitSummary: "あなたの入力はメインCodexセッションに届いています。次のCodexによる説明がChatに表示されます。",
   workerRunBaselineTitle: "適応ベースラインを学習",
   workerRunBaselineSummary:
     "採用済みの評価設計を使って現在の適応型tabular baselineを学習し、Leaderboardで比較できるrun evidenceを保存します。",
@@ -4292,7 +4298,7 @@ function ProjectDetail({
       const responseCreatedAt = result.job?.updated_at ?? new Date().toISOString();
       const composerStatus = String(result.response_composer?.status ?? result.job?.status ?? "");
       const queuedForWorker =
-        result.artifact_id.startsWith("pending_") || ["queued", "running", "pending", "in_progress"].includes(composerStatus);
+        result.artifact_id.startsWith("pending_") || ["queued", "running", "pending", "in_progress", "waiting_for_agent"].includes(composerStatus);
       if (queuedForWorker) {
         const turnId = `turn:${result.job?.id ?? result.artifact_id}`;
         setPendingAgentChatMessages([
@@ -4300,6 +4306,10 @@ function ProjectDetail({
           {
             ...pendingAssistant,
             id: `${turnId}:system`,
+            text: result.assistant_message || pendingAssistant.text,
+            actions: result.actions,
+            actionSummary: result.action_summary,
+            responseBrief: result.response_brief ?? null,
             responseComposer: result.response_composer ?? pendingAssistant.responseComposer,
             createdAt: responseCreatedAt,
             transient: true
@@ -6051,6 +6061,7 @@ function attachResearchPlanSubtasks(
   const byBlock = new Map<string, ResearchPlanSubtask[]>();
   const unassigned: ResearchPlanSubtask[] = [];
   for (const job of jobs) {
+    if (isMainAgentReplyWaitJob(job)) continue;
     const subtask = researchPlanSubtaskFromJob(job, text, locale, onTabChange);
     const blockId = researchPlanBlockIdForJob(job);
     if (blockId && blockIds.has(blockId)) {
@@ -6144,7 +6155,7 @@ function researchPlanSubtaskFromJob(
 function researchPlanStatusFromJob(job: Job): ResearchPlanBlockStatus {
   if (job.status === "running") return "active";
   if (job.status === "approval_required") return "blocked";
-  if (job.status === "queued") return "waiting";
+  if (job.status === "queued" || job.status === "waiting_for_agent") return "waiting";
   if (job.status === "succeeded") return "done";
   if (job.status === "failed" || job.status === "timed_out" || job.status === "cancelled") return "blocked";
   return "pending";
@@ -6749,7 +6760,7 @@ function agentChatHistoryToMessages(turns: AgentChatHistoryTurn[]): AgentChatMes
     const turnId = turn.job_id ? `turn:${turn.job_id}` : `turn:${turn.artifact_id}`;
     const composerStatus = String(turn.response_composer?.status ?? "");
     const activeHistoryTurn =
-      turn.artifact_id.startsWith("job_pending_") || ["queued", "running", "pending", "in_progress"].includes(composerStatus);
+      turn.artifact_id.startsWith("job_pending_") || ["queued", "running", "pending", "in_progress", "waiting_for_agent"].includes(composerStatus);
     if (turn.user_message.trim()) {
       messages.push({
         id: `${turnId}:user`,
@@ -6982,7 +6993,7 @@ function agentChatOutcomeLabel(outcome: string | null | undefined) {
 function isActiveAgentTurn(turn: AgentConversationTurn): boolean {
   if (!turn.assistant) return Boolean(turn.user?.transient);
   const status = String(turn.assistant.responseComposer?.status ?? "");
-  return Boolean(turn.assistant.transient) && ["pending", "running", "queued", "in_progress"].includes(status);
+  return Boolean(turn.assistant.transient) && ["pending", "running", "queued", "in_progress", "waiting_for_agent"].includes(status);
 }
 
 function isActiveRawEvent(event: RawAgentEvent): boolean {
@@ -8168,6 +8179,7 @@ function workerStatusLabel(status: string, text: LocaleMessages) {
   if (status === "queued") return text.workerStatusQueued;
   if (status === "running") return text.workerStatusRunning;
   if (status === "approval_required") return text.workerStatusApproval;
+  if (status === "waiting_for_agent") return text.workerStatusWaitingForAgent;
   if (["succeeded", "failed", "cancelled", "timed_out"].includes(status)) return text.workerStatusFinished;
   return humanizeLabel(status);
 }
@@ -8218,6 +8230,13 @@ function coerceHumanDescription(raw: unknown): AgentWorkerEvent["human_descripti
 }
 
 function jobHumanDescription(job: Job, text: LocaleMessages): RequiredHumanDescription {
+  if (isMainAgentReplyWaitJob(job)) {
+    return {
+      title: text.workerMainAgentWaitTitle,
+      summary: text.workerMainAgentWaitSummary,
+      source: "main_agent_chat_wait_state"
+    };
+  }
   const fromOutput = coerceHumanDescription(job.output.human_description);
   if (fromOutput?.title || fromOutput?.summary) {
     return { title: fromOutput.title ?? jobHeadline(job), summary: fromOutput.summary ?? jobHeadline(job), source: fromOutput.source };
@@ -8377,7 +8396,7 @@ function estimatedJobTokens(job: Job): TokenSeriesPoint[] {
   const base = Math.max(24, job.job_type.length * 3);
   const multiplier = job.status === "running" ? 4 : job.status === "failed" ? 2 : 3;
   return [
-    { step: "queued", tokens: base },
+    { step: job.status === "waiting_for_agent" ? "delivered" : "queued", tokens: base },
     { step: "context", tokens: base * 3 },
     { step: job.status, tokens: base * multiplier }
   ];
@@ -9994,7 +10013,7 @@ function DataTab({
               const artifactCount = Array.isArray(job.output.artifact_ids) ? job.output.artifact_ids.length : 0;
               return [
                 String(job.output.benchmark_id ?? "-"),
-                formatJobStatus(job),
+                formatJobStatus(job, text),
                 String(job.output.experiment_run_id ?? "-"),
                 String(job.output.model_version_id ?? "-"),
                 metricText,
@@ -15389,6 +15408,7 @@ function JobsTab({
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
+  const { text } = React.useContext(LocaleContext);
   const [jobArtifacts, setJobArtifacts] = React.useState<JobArtifactsResponse | null>(null);
   const [artifactPreview, setArtifactPreview] = React.useState<ArtifactPreview | null>(null);
   const [artifactError, setArtifactError] = React.useState<string | null>(null);
@@ -15439,7 +15459,7 @@ function JobsTab({
             rows={jobs.map((job) => [
               job.id,
               job.job_type,
-              formatJobStatus(job),
+              formatJobStatus(job, text),
               `${job.attempt_count}/${job.max_attempts}`,
               job.priority,
               formatDate(job.started_at),
@@ -15560,8 +15580,9 @@ function JobsTab({
   );
 }
 
-function formatJobStatus(job: Job) {
-  const status = job.error_message ? `${job.status}: ${job.error_message}` : job.status;
+function formatJobStatus(job: Job, text: LocaleMessages) {
+  const statusLabel = job.status === "waiting_for_agent" ? text.workerStatusWaitingForAgent : job.status;
+  const status = job.error_message ? `${statusLabel}: ${job.error_message}` : statusLabel;
   if (job.approval_required && job.status === "queued") return `${status} / approved`;
   if (job.approval_required) return `${status} / approval required`;
   return status;
@@ -15579,6 +15600,10 @@ function formatWorkflowState(value: string | null) {
 
 function isTerminalJob(job: Job) {
   return ["succeeded", "failed", "cancelled", "timed_out"].includes(job.status);
+}
+
+function isMainAgentReplyWaitJob(job: Job) {
+  return job.job_type === "agent_chat_turn" && job.status === "waiting_for_agent";
 }
 
 function canRetryJob(job: Job) {
