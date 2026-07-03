@@ -21,6 +21,8 @@ from tabular_harness.schemas import AgentResult
 from tabular_harness.services.agent_sessions import (
     append_runner_stream_to_workspace,
     append_session_event,
+    latest_user_instruction_path,
+    user_instructions_inbox_path,
 )
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore
@@ -1346,6 +1348,54 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     metric_response = client.post(f"/api/projects/{project_id}/leaderboard/metric", json={"metric": "ROCーAUC"})
     assert metric_response.status_code == 200, metric_response.text
     assert metric_response.json()["metric"] == "roc_auc"
+
+
+def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Inbox delivery"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    workspace = app.state.artifact_store.root / "agent_sessions" / project_id / "ags_inbox_delivery"
+
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "AUTONOMOUS_LOOP"
+        project.autonomy_mode = "full_auto"
+        session = AgentSession(
+            id="ags_inbox_delivery",
+            project_id=project_id,
+            org_id=project.org_id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Keep working and read the workspace inbox.",
+            workspace_path=str(workspace),
+            created_by="test",
+        )
+        db.add(session)
+        db.commit()
+
+    chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "この条件で特徴量を見直してください", "locale": "ja-JP"},
+    )
+    assert chat_response.status_code == 200, chat_response.text
+
+    inbox = user_instructions_inbox_path(workspace)
+    latest = latest_user_instruction_path(workspace)
+    assert inbox.exists()
+    assert latest.exists()
+    inbox_lines = inbox.read_text(encoding="utf-8").strip().splitlines()
+    payload = json.loads(inbox_lines[-1])
+    assert payload["schema_version"] == "tablex_user_instruction.v1"
+    assert payload["session_id"] == "ags_inbox_delivery"
+    assert payload["locale"] == "ja-JP"
+    assert payload["message"] == "この条件で特徴量を見直してください"
+    assert "この条件で特徴量を見直してください" in latest.read_text(encoding="utf-8")
 
 
 def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -> None:

@@ -142,6 +142,7 @@ from tabular_harness.services.agent_context import prepare_idea_agent_context_pa
 from tabular_harness.services.agent_sessions import (
     active_main_session,
     append_session_event,
+    append_user_instruction_to_workspace_inbox,
     chat_update_message_from_text,
     latest_main_session,
     raw_codex_stderr_path,
@@ -4364,7 +4365,7 @@ def create_agent_chat_turn(
     session = active_main_session(db, project_id)
     sidecar_only = is_sidecar_chat_request(payload.message)
     if session is not None and not sidecar_only:
-        append_session_event(
+        event = append_session_event(
             db,
             session,
             source="user",
@@ -4378,6 +4379,12 @@ def create_agent_chat_turn(
                 "utility_model": payload.utility_model,
                 "delivery": "queued_for_main_agent_session",
             },
+        )
+        append_user_instruction_to_workspace_inbox(
+            session,
+            event=event,
+            message=payload.message,
+            locale=payload.locale,
         )
     job = create_job(
         db,

@@ -48,6 +48,9 @@ TERMINAL_SESSION_STATUSES = {"stopped", "failed", "gave_up", "completed"}
 RETRY_BACKOFF_SECONDS = (5, 30, 120, 600)
 STALE_PROCESS_TERM_GRACE_SECONDS = 5
 SESSION_INTERNAL_DIR = ".tablex"
+SESSION_INBOX_DIR = "inbox"
+USER_INSTRUCTIONS_INBOX_FILENAME = "user_instructions.jsonl"
+USER_INSTRUCTIONS_LATEST_FILENAME = "latest_user_instruction.md"
 CODEX_RAW_TRANSCRIPT_FILENAME = "codex_raw_transcript.jsonl"
 CODEX_STDERR_LOG_FILENAME = "codex_stderr.log"
 _SUPERVISOR_LOCK = threading.Lock()
@@ -150,6 +153,14 @@ def raw_codex_transcript_path(workspace: Path) -> Path:
 
 def raw_codex_stderr_path(workspace: Path) -> Path:
     return workspace / SESSION_INTERNAL_DIR / CODEX_STDERR_LOG_FILENAME
+
+
+def user_instructions_inbox_path(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / USER_INSTRUCTIONS_INBOX_FILENAME
+
+
+def latest_user_instruction_path(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / USER_INSTRUCTIONS_LATEST_FILENAME
 
 
 def build_default_goal_text(db: Session, project: Project) -> str:
@@ -270,6 +281,49 @@ def append_runner_stream_to_workspace(workspace: Path, *, stream_name: str, line
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as handle:
             handle.write(line if line.endswith("\n") else f"{line}\n")
+    except OSError:
+        return
+
+
+def append_user_instruction_to_workspace_inbox(
+    session: AgentSession,
+    *,
+    event: AgentTranscriptEvent,
+    message: str,
+    locale: str | None,
+) -> None:
+    if not session.workspace_path:
+        return
+    workspace = Path(session.workspace_path)
+    inbox_path = user_instructions_inbox_path(workspace)
+    latest_path = latest_user_instruction_path(workspace)
+    payload = {
+        "schema_version": "tablex_user_instruction.v1",
+        "session_id": session.id,
+        "project_id": session.project_id,
+        "event_id": event.id,
+        "event_index": event.event_index,
+        "created_at": event.created_at.isoformat(),
+        "locale": locale,
+        "message": message,
+    }
+    try:
+        inbox_path.parent.mkdir(parents=True, exist_ok=True)
+        with inbox_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+        latest_path.write_text(
+            "\n".join(
+                [
+                    f"event_index: {event.event_index}",
+                    f"created_at: {event.created_at.isoformat()}",
+                    f"locale: {locale or 'unspecified'}",
+                    "",
+                    message.strip(),
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
     except OSError:
         return
 
@@ -663,6 +717,7 @@ def prepare_session_workspace(
     (workspace / "reports").mkdir(parents=True, exist_ok=True)
     (workspace / "notebooks").mkdir(parents=True, exist_ok=True)
     (workspace / "artifacts").mkdir(parents=True, exist_ok=True)
+    (workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR).mkdir(parents=True, exist_ok=True)
     context = build_session_context(db, project=project, session=session)
     (workspace / ".tablex" / "context.json").write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
     (workspace / ".tablex" / "GOAL.md").write_text(session.goal_text, encoding="utf-8")
@@ -839,6 +894,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Prefer marimo notebooks for data understanding, modeling diagnostics, and reports.",
         "- Read `.tablex/context.json` for `human_interface.response_locale` and write human-facing notebooks/reports/chat in that language.",
         "- Read equipped Skill paths in `.tablex/context.json` before EDA, prior research, notebook authoring, or modeling strategy work.",
+        "- During long turns, check `.tablex/inbox/user_instructions.jsonl` and `.tablex/inbox/latest_user_instruction.md` for new user messages; incorporate them without waiting for a new Codex turn when practical.",
         "- If you need user input in Full Auto, state the question and your provisional assumption, then continue unless impossible.",
         "- Use Give Up only as a last resort; if you give up, explain exactly what is missing and preserve partial work.",
         "",
