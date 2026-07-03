@@ -5459,7 +5459,6 @@ function buildResearchPlanBlocks({
       ? agentSession
       : null;
   const activeCodexTurn = Boolean(activeAgentSession && (activeAgentSession.status === "running" || activeAgentSession.pid));
-  const activeCodexAssignedToPriorResearch = Boolean(activeCodexTurn && hasUnderstandingEvidence && !hasPriorResearchEvidence);
 
   const primaryPlanJob = jobs.find((job) => jobActiveForActivity(job)) ?? jobs.find((job) => !isTerminalJob(job)) ?? null;
   const activeInitialBlockId = activeInitialResearchPlanBlockId(primaryPlanJob);
@@ -5487,8 +5486,6 @@ function buildResearchPlanBlocks({
         : "waiting";
   const priorResearchStatus = hasPriorResearchEvidence
     ? "done"
-    : activeCodexAssignedToPriorResearch
-      ? "active"
     : activeInitialBlockId === "prior_research"
       ? "active"
       : hasPriorResearchPreparation
@@ -5569,7 +5566,7 @@ function buildResearchPlanBlocks({
     }
   ];
 
-  if (activeAgentSession && !activeCodexAssignedToPriorResearch) {
+  if (activeAgentSession) {
     blocks.push({
       id: "agent_session",
       title: text.planBlockCodexLane,
