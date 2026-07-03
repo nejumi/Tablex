@@ -335,6 +335,28 @@ const englishMessages = {
   workerStatusRunning: "Running",
   workerStatusApproval: "Approval",
   workerStatusFinished: "Finished",
+  workerDisplayAutonomousSession: "Autonomous Session",
+  workerDisplayTraining: "Training Worker",
+  workerDisplayNotebook: "Notebook Worker",
+  workerDisplayResearch: "Research Worker",
+  workerDisplayAgentRunner: "Agent Runner",
+  workerDisplayHarness: "Harness Worker",
+  workerDisplayOrchestrator: "Tablee Orchestrator",
+  workerOptimisticHeadline: "Reading your request and checking project context.",
+  workerWaitingSummaryPrefix: "Waiting for a local worker to pick it up.",
+  workerWaitingNoTelemetry: "No live token telemetry is available yet.",
+  workerRunBaselineTitle: "Train the adaptive baseline",
+  workerRunBaselineSummary:
+    "Use the approved evaluation design, train the current adaptive tabular baseline, and publish comparable run evidence for the Leaderboard.",
+  workerTrainCandidatesTitle: "Train candidate models",
+  workerTrainCandidatesSummary:
+    "Train the candidate model set on the same split and metric surface so the Leaderboard can compare runs fairly.",
+  workerRunCodexTaskTitle: "Run Codex on the prepared agent task",
+  workerRunCodexTaskSummary:
+    "Execute the prepared AgentTaskContract, then return artifacts, findings, and next recommendations to the harness.",
+  workerContinueSessionTitle: "Continue the main Full Auto session",
+  workerContinueSessionSummary:
+    "Keep the autonomous data-science thread moving after child workers or Codex return control to the harness.",
   workerProjectLabel: "Project",
   workerJobLabel: "Job",
   workerElapsedLabel: "Elapsed",
@@ -710,12 +732,34 @@ const japaneseMessages: LocaleMessages = {
   telemetryEstimate: "活動量の推定",
   telemetryWaiting: "開始待ち",
   workerCancelLabel: "キャンセル",
-  workerStatusQueued: "Waiting",
-  workerStatusRunning: "Running",
-  workerStatusApproval: "Approval",
-  workerStatusFinished: "Finished",
-  workerProjectLabel: "Project",
-  workerJobLabel: "Job",
+  workerStatusQueued: "待機中",
+  workerStatusRunning: "実行中",
+  workerStatusApproval: "承認待ち",
+  workerStatusFinished: "完了",
+  workerDisplayAutonomousSession: "自律セッション",
+  workerDisplayTraining: "学習Worker",
+  workerDisplayNotebook: "ノートブックWorker",
+  workerDisplayResearch: "調査Worker",
+  workerDisplayAgentRunner: "Agent Runner",
+  workerDisplayHarness: "Harness Worker",
+  workerDisplayOrchestrator: "Tablee Orchestrator",
+  workerOptimisticHeadline: "依頼を読み取り、プロジェクト文脈を確認しています。",
+  workerWaitingSummaryPrefix: "local workerが拾うのを待っています。",
+  workerWaitingNoTelemetry: "開始前のため、まだlive token telemetryはありません。",
+  workerRunBaselineTitle: "適応ベースラインを学習",
+  workerRunBaselineSummary:
+    "採用済みの評価設計を使って現在の適応型tabular baselineを学習し、Leaderboardで比較できるrun evidenceを保存します。",
+  workerTrainCandidatesTitle: "候補モデルを学習",
+  workerTrainCandidatesSummary:
+    "同じsplitとmetric surfaceで候補モデルを学習し、Leaderboardで公平に比較できるようにします。",
+  workerRunCodexTaskTitle: "準備済みAgent TaskをCodexで実行",
+  workerRunCodexTaskSummary:
+    "準備済みAgentTaskContractを実行し、artifact、finding、次の推奨をハーネスへ返します。",
+  workerContinueSessionTitle: "メインFull Autoセッションを継続",
+  workerContinueSessionSummary:
+    "子workerやCodexが制御を返した後も、自律的なdata-science threadを止めずに進めます。",
+  workerProjectLabel: "プロジェクト",
+  workerJobLabel: "ジョブ",
   workerElapsedLabel: "経過",
   workerIdLabel: "ID",
   workerChatPlaceholder: "このworkerにメッセージ",
@@ -4114,7 +4158,7 @@ function ProjectDetail({
       createdAt,
       transient: true
     };
-    const pendingWorker = optimisticWorkerEvent(project.id, trimmed);
+    const pendingWorker = optimisticWorkerEvent(project.id, trimmed, text);
     setPendingAgentChatMessages([optimisticUser, pendingAssistant]);
     setAgentWorkerEvents((current) => [pendingWorker, ...current].slice(0, 8));
     try {
@@ -4286,7 +4330,7 @@ function ProjectDetail({
               utility_model: userSettings.utilityModel
             })
       });
-      const workerEvents = workerEventsFromJob(job, Date.now());
+      const workerEvents = workerEventsFromJob(job, Date.now(), text);
       const assistantMessage =
         typeof job.output.assistant_message === "string"
           ? job.output.assistant_message
@@ -7393,7 +7437,7 @@ function AgentActivityRail({
   const workerEvents = React.useMemo(() => {
     const now = Date.now() + tick;
     const fromActivity = activity?.workers ?? [];
-    const fromJobs = jobs.flatMap((job) => workerEventsFromJob(job, now));
+    const fromJobs = jobs.flatMap((job) => workerEventsFromJob(job, now, text));
     const merged = [...fromJobs, ...events, ...fromActivity];
     const byKey = new Map<string, AgentWorkerEvent>();
     merged.forEach((event) => {
@@ -7403,7 +7447,7 @@ function AgentActivityRail({
       .filter((event) => isVisibleWorkerEvent(event, now))
       .sort(compareWorkerEvents)
       .slice(0, 8);
-  }, [activity, events, jobs, tick]);
+  }, [activity, events, jobs, text, tick]);
 
   if (!workerEvents.length) {
     return null;
@@ -7674,14 +7718,14 @@ function AgentWorkerCard({
   );
 }
 
-function optimisticWorkerEvent(projectId: string, message: string): AgentWorkerEvent {
+function optimisticWorkerEvent(projectId: string, message: string, text: LocaleMessages): AgentWorkerEvent {
   const now = new Date().toISOString();
   const base = Math.max(32, Math.min(160, message.length));
   return {
     worker_id: "agent-chat-orchestrator",
-    display_name: "Tablee Orchestrator",
+    display_name: text.workerDisplayOrchestrator,
     status: "running",
-    headline: "Reading your request and checking project context.",
+    headline: text.workerOptimisticHeadline,
     detail: message,
     job_id: `local-${Date.now()}`,
     project_id: projectId,
@@ -7881,7 +7925,7 @@ function coerceHumanDescription(raw: unknown): AgentWorkerEvent["human_descripti
   return { title, summary, source };
 }
 
-function jobHumanDescription(job: Job): RequiredHumanDescription {
+function jobHumanDescription(job: Job, text: LocaleMessages): RequiredHumanDescription {
   const fromOutput = coerceHumanDescription(job.output.human_description);
   if (fromOutput?.title || fromOutput?.summary) {
     return { title: fromOutput.title ?? jobHeadline(job), summary: fromOutput.summary ?? jobHeadline(job), source: fromOutput.source };
@@ -7890,13 +7934,13 @@ function jobHumanDescription(job: Job): RequiredHumanDescription {
   if (fromContext?.title || fromContext?.summary) {
     return { title: fromContext.title ?? jobHeadline(job), summary: fromContext.summary ?? jobHeadline(job), source: fromContext.source };
   }
-  const defaultDescription = defaultJobHumanDescription(job);
+  const defaultDescription = defaultJobHumanDescription(job, text);
   if (defaultDescription) return defaultDescription;
   const title = jobHeadline(job);
   if (job.status === "queued") {
     return {
       title,
-      summary: `Waiting for a local worker to pick up ${job.id}. No live token telemetry is available yet.`,
+      summary: `${text.workerWaitingSummaryPrefix} ${text.workerWaitingNoTelemetry}`,
       source: "job_status_fallback"
     };
   }
@@ -7907,44 +7951,44 @@ function jobHumanDescription(job: Job): RequiredHumanDescription {
   };
 }
 
-function defaultJobHumanDescription(job: Job): RequiredHumanDescription | null {
-  const waiting = job.status === "queued" ? "Waiting for a local worker to pick it up. " : "";
+function defaultJobHumanDescription(job: Job, text: LocaleMessages): RequiredHumanDescription | null {
+  const waiting = job.status === "queued" ? `${text.workerWaitingSummaryPrefix} ` : "";
   if (job.job_type === "run_baseline") {
     return {
-      title: "Train the adaptive baseline",
-      summary: `${waiting}Use the approved evaluation design, train the current adaptive tabular baseline, and publish comparable run evidence for the Leaderboard.`,
+      title: text.workerRunBaselineTitle,
+      summary: `${waiting}${text.workerRunBaselineSummary}`,
       source: "job_type_default"
     };
   }
   if (job.job_type === "train_model_candidates") {
     return {
-      title: "Train candidate models",
-      summary: `${waiting}Train the candidate model set on the same split and metric surface so the Leaderboard can compare runs fairly.`,
+      title: text.workerTrainCandidatesTitle,
+      summary: `${waiting}${text.workerTrainCandidatesSummary}`,
       source: "job_type_default"
     };
   }
   if (job.job_type === "run_planned_agent_task_codex") {
     return {
-      title: "Run Codex on the prepared agent task",
-      summary: `${waiting}Execute the prepared AgentTaskContract, then return artifacts, findings, and next recommendations to the harness.`,
+      title: text.workerRunCodexTaskTitle,
+      summary: `${waiting}${text.workerRunCodexTaskSummary}`,
       source: "job_type_default"
     };
   }
   if (job.job_type === "continue_autonomous_session") {
     return {
-      title: "Continue the main Full Auto session",
-      summary: `${waiting}Keep the autonomous data-science thread moving after child workers or Codex return control to the harness.`,
+      title: text.workerContinueSessionTitle,
+      summary: `${waiting}${text.workerContinueSessionSummary}`,
       source: "job_type_default"
     };
   }
   return null;
 }
 
-function workerEventsFromJob(job: Job, now: number = Date.now()): AgentWorkerEvent[] {
+function workerEventsFromJob(job: Job, now: number, text: LocaleMessages): AgentWorkerEvent[] {
   const outputEvents = job.output.worker_events;
   if (Array.isArray(outputEvents)) {
     return outputEvents
-      .map((event, index) => coerceWorkerEvent(event, job, index, now))
+      .map((event, index) => coerceWorkerEvent(event, job, index, now, text))
       .filter((event): event is AgentWorkerEvent => event !== null);
   }
   if (isTerminalJob(job)) {
@@ -7953,10 +7997,10 @@ function workerEventsFromJob(job: Job, now: number = Date.now()): AgentWorkerEve
   return [
     {
       worker_id: `job-${job.job_type}`,
-      display_name: workerDisplayName(job.job_type),
+      display_name: workerDisplayName(job.job_type, text),
       status: job.status,
       headline: jobHeadline(job),
-      detail: job.error_message ?? jobHumanDescription(job).summary,
+      detail: job.error_message ?? jobHumanDescription(job, text).summary,
       job_id: job.id,
       job_type: job.job_type,
       project_id: job.project_id,
@@ -7966,7 +8010,7 @@ function workerEventsFromJob(job: Job, now: number = Date.now()): AgentWorkerEve
       started_at: job.started_at,
       run_after: job.run_after,
       active: jobActiveForActivity(job, now),
-      human_description: jobHumanDescription(job),
+      human_description: jobHumanDescription(job, text),
       token_usage: {
         source: job.status === "queued" ? "estimated_waiting_for_worker" : "estimated_until_runner_telemetry",
         is_estimate: true,
@@ -7976,7 +8020,13 @@ function workerEventsFromJob(job: Job, now: number = Date.now()): AgentWorkerEve
   ];
 }
 
-function coerceWorkerEvent(raw: unknown, job: Job, index: number, now: number = Date.now()): AgentWorkerEvent | null {
+function coerceWorkerEvent(
+  raw: unknown,
+  job: Job,
+  index: number,
+  now: number,
+  text: LocaleMessages
+): AgentWorkerEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
   const eventStatus = typeof record.status === "string" ? record.status : job.status;
@@ -7995,10 +8045,10 @@ function coerceWorkerEvent(raw: unknown, job: Job, index: number, now: number = 
       : estimatedJobTokens(job);
   return {
     worker_id: typeof record.worker_id === "string" ? record.worker_id : `worker-${index}`,
-    display_name: typeof record.display_name === "string" ? record.display_name : workerDisplayName(job.job_type),
+    display_name: typeof record.display_name === "string" ? record.display_name : workerDisplayName(job.job_type, text),
     status,
     headline: typeof record.headline === "string" ? record.headline : jobHeadline(job),
-    detail: typeof record.detail === "string" ? record.detail : jobHumanDescription(job).summary,
+    detail: typeof record.detail === "string" ? record.detail : jobHumanDescription(job, text).summary,
     job_id: typeof record.job_id === "string" ? record.job_id : job.id,
     job_type: typeof record.job_type === "string" ? record.job_type : job.job_type,
     project_id: typeof record.project_id === "string" ? record.project_id : job.project_id,
@@ -8009,7 +8059,7 @@ function coerceWorkerEvent(raw: unknown, job: Job, index: number, now: number = 
     started_at: typeof record.started_at === "string" ? record.started_at : job.started_at,
     run_after: runAfter,
     active: eventActiveForActivity(status, explicitActive ?? jobActiveForActivity(job, now), createdAt, runAfter, now),
-    human_description: coerceHumanDescription(record.human_description) ?? jobHumanDescription(job),
+    human_description: coerceHumanDescription(record.human_description) ?? jobHumanDescription(job, text),
     token_usage: {
       source:
         usage && typeof usage === "object" && typeof (usage as Record<string, unknown>).source === "string"
@@ -8041,20 +8091,20 @@ function estimatedJobTokens(job: Job): TokenSeriesPoint[] {
   ];
 }
 
-function workerDisplayName(jobType: string) {
-  if (jobType === "continue_autonomous_session") return "Autonomous Session";
-  if (jobType.includes("train") || jobType.includes("baseline")) return "Training Worker";
-  if (jobType.includes("notebook")) return "Notebook Worker";
-  if (jobType.includes("research")) return "Research Worker";
-  if (jobType.includes("agent")) return "Agent Runner";
-  return "Harness Worker";
+function workerDisplayName(jobType: string, text: LocaleMessages) {
+  if (jobType === "continue_autonomous_session") return text.workerDisplayAutonomousSession;
+  if (jobType.includes("train") || jobType.includes("baseline")) return text.workerDisplayTraining;
+  if (jobType.includes("notebook")) return text.workerDisplayNotebook;
+  if (jobType.includes("research")) return text.workerDisplayResearch;
+  if (jobType.includes("agent")) return text.workerDisplayAgentRunner;
+  return text.workerDisplayHarness;
 }
 
 function targetTabForJob(jobType: string): string | null {
   if (jobType.includes("autonomous")) return "Home";
   if (jobType.includes("train") || jobType.includes("baseline")) return "Leaderboard";
   if (jobType.includes("notebook")) return "Notebooks";
-  if (jobType.includes("research") || jobType.includes("agent")) return "Approach";
+  if (jobType.includes("research") || jobType.includes("agent")) return "Home";
   if (jobType.includes("experiment")) return "Experiments";
   return null;
 }
