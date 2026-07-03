@@ -4099,7 +4099,7 @@ function ProjectDetail({
       const [data, sessionData, rawTranscriptData, agentChatHistoryData] = await Promise.all([
         api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`),
         api<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`).catch(() => null),
-        api<AgentRawTranscript>(`/api/projects/${project.id}/agent-session/raw-transcript`).catch(() => null),
+        api<AgentRawTranscript>(`/api/projects/${project.id}/agent-session/raw-transcript?limit=8`).catch(() => null),
         api<AgentChatHistoryTurn[]>(`/api/projects/${project.id}/agent-chat/history`).catch(() => [])
       ]);
       const sessionId = sessionData?.id ?? null;
