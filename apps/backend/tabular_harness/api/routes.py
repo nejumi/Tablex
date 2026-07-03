@@ -4968,7 +4968,8 @@ def get_research_plan_timeline(
         artifact_id = response.get("source_artifact_id") if isinstance(response, dict) else None
         artifact = db.get(Artifact, artifact_id) if isinstance(artifact_id, str) else None
         if session is not None and artifact is not None:
-            maybe_request_research_plan_locale_refresh(db, session=session, artifact=artifact, locale=locale)
+            response_locale = response.get("response_locale") if isinstance(response.get("response_locale"), str) else locale
+            maybe_request_research_plan_locale_refresh(db, session=session, artifact=artifact, locale=response_locale)
             db.commit()
     return response
 

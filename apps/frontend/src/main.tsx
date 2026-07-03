@@ -1170,9 +1170,17 @@ function displayTextMatchesLocale(value: string | null | undefined, locale: stri
   if (localeLooksJapanese(locale)) {
     const japaneseCharCount = text.match(/[\u3040-\u30ff\u3400-\u9fff]/g)?.length ?? 0;
     const latinLetterCount = text.match(/[A-Za-z]/g)?.length ?? 0;
+    if (hasUnlocalizedLatinPhrase(text)) return false;
     return japaneseCharCount >= 2 && latinLetterCount <= Math.max(18, Math.floor(japaneseCharCount * 1.5));
   }
   return false;
+}
+
+function hasUnlocalizedLatinPhrase(value: string): boolean {
+  const stripped = value.replace(/`[^`]*`/g, " ").replace(/https?:\/\/\S+/g, " ");
+  return stripped
+    .split(/[\u3040-\u30ff\u3400-\u9fff]+/)
+    .some((fragment) => (fragment.match(/\b[A-Za-z][A-Za-z-]{2,}\b/g)?.length ?? 0) >= 2);
 }
 
 function localeSafeDisplayText(value: string | null | undefined, locale: string | null | undefined, fallback: string): string {
@@ -6003,10 +6011,11 @@ function derivedResearchPlanSubtasks(
     });
   }
   if (block.blockers?.length) {
+    const blockerDetail = localeSafeDisplayText(block.blockers.join(" / "), locale, text.researchPlanLocaleRefreshDetail);
     derived.push({
       id: `${block.id}:blockers`,
       title: text.researchPlanDetailBlockers,
-      detail: block.blockers.join(" / "),
+      detail: blockerDetail,
       status: "blocked",
       evidence: `${block.blockers.length}`
     });

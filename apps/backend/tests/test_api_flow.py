@@ -2387,6 +2387,147 @@ def test_research_plan_timeline_requests_locale_refresh_for_active_session(tmp_p
         assert event_count == 1
 
 
+def test_research_plan_timeline_uses_artifact_locale_and_codex_display_fields(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Plan display locale"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="research_plan",
+            name="codex_plan_with_display_locale",
+            filename="research_plan.json",
+            payload={
+                "schema_version": "research_plan.v1",
+                "project": {"locale": "ja-JP"},
+                "timeline_blocks": [
+                    {
+                        "id": "approval_contract",
+                        "title": "approval response contract",
+                        "why_it_matters": "Keep the owner decision reversible and auditable.",
+                        "next_action": "Review the response choices.",
+                        "done_criteria": "The owner can answer without ambiguity.",
+                        "blockers": ["Owner answer is missing."],
+                        "display_title": "承認応答の設計",
+                        "display_why_it_matters": "オーナー判断を可逆的かつ監査可能に保ちます。",
+                        "display_next_action": "回答選択肢を確認します。",
+                        "display_done_criteria": "オーナーが迷わず回答できること。",
+                        "display_blockers": ["オーナー回答が未提出です。"],
+                        "status": "active",
+                        "subtasks": [
+                            {
+                                "id": "response_options",
+                                "title": "response options",
+                                "detail": "Check choices before publication.",
+                                "status": "pending",
+                                "human_display": {
+                                    "title": "回答選択肢",
+                                    "detail": "公開前に選択肢を確認します。",
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "id": "translation_map",
+                        "title": "model review",
+                        "why_it_matters": "Keep diagnostics readable.",
+                        "status": "pending",
+                        "translations": {
+                            "ja": {
+                                "title": "モデル確認",
+                                "why_it_matters": "診断結果を読みやすく保ちます。",
+                            }
+                        },
+                    },
+                ],
+            },
+            metadata={"source": "test"},
+        )
+        db.commit()
+
+    response = client.get(f"/api/projects/{project_id}/research-plan/timeline")
+    assert response.status_code == 200
+    timeline = response.json()
+    assert timeline["requested_locale"] is None
+    assert timeline["authored_locale"] == "ja-JP"
+    assert timeline["response_locale"] == "ja-JP"
+    assert timeline["localization"]["missing_block_count"] == 0
+    assert timeline["blocks"][0]["title"] == "承認応答の設計"
+    assert timeline["blocks"][0]["subtitle"] == "オーナー判断を可逆的かつ監査可能に保ちます。"
+    assert timeline["blocks"][0]["next_action"] == "回答選択肢を確認します。"
+    assert timeline["blocks"][0]["done_criteria"] == "オーナーが迷わず回答できること。"
+    assert timeline["blocks"][0]["blockers"] == ["オーナー回答が未提出です。"]
+    assert timeline["blocks"][0]["localization_status"] == "localized"
+    assert timeline["blocks"][0]["subtasks"][0]["title"] == "回答選択肢"
+    assert timeline["blocks"][0]["subtasks"][0]["detail"] == "公開前に選択肢を確認します。"
+    assert timeline["blocks"][1]["title"] == "モデル確認"
+    assert timeline["blocks"][1]["subtitle"] == "診断結果を読みやすく保ちます。"
+
+
+def test_research_plan_timeline_refresh_uses_artifact_locale_when_query_locale_absent(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Plan artifact locale refresh"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    workspace = app.state.artifact_store.root / "agent_sessions" / project_id / "ags_artifact_locale_refresh"
+
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "AUTONOMOUS_LOOP"
+        session = AgentSession(
+            id="ags_artifact_locale_refresh",
+            project_id=project_id,
+            org_id=project.org_id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Keep locale-specific plan display current.",
+            workspace_path=str(workspace),
+            created_by="test",
+        )
+        db.add(session)
+        store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="research_plan",
+            name="codex_plan_artifact_locale",
+            filename="research_plan.json",
+            payload={
+                "schema_version": "research_plan.v1",
+                "project": {"locale": "ja-JP"},
+                "timeline_blocks": [
+                    {
+                        "id": "codex_added_plan",
+                        "title": "model review and deployment readiness",
+                        "why_it_matters": "Explain the next validation work.",
+                        "status": "active",
+                    }
+                ],
+            },
+            metadata={"source": "test"},
+        )
+        db.commit()
+
+    response = client.get(f"/api/projects/{project_id}/research-plan/timeline")
+    assert response.status_code == 200
+    timeline = response.json()
+    assert timeline["requested_locale"] is None
+    assert timeline["response_locale"] == "ja-JP"
+    assert timeline["blocks"][0]["title"] == "表示言語を更新中の計画ブロック"
+    request_path = research_plan_locale_request_path(workspace)
+    assert request_path.exists()
+    assert "locale: ja-JP" in request_path.read_text(encoding="utf-8")
+
+
 def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 

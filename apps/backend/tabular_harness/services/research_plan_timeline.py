@@ -10,6 +10,8 @@ from tabular_harness.core.json import loads_json
 from tabular_harness.models.entities import Artifact, utc_now
 from tabular_harness.services.artifacts import artifact_primary_path
 
+_MISSING = object()
+
 
 def build_research_plan_timeline_response(db: Session, *, project_id: str, locale: str | None = None) -> dict[str, Any]:
     artifact = db.scalar(
@@ -33,14 +35,17 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
     except OSError:
         payload = {}
     raw_blocks = payload.get("timeline_blocks") if isinstance(payload, dict) else None
+    response_locale = _research_plan_effective_locale(locale, payload)
     return {
         "schema_version": "research_plan_timeline.v1",
         "project_id": project_id,
         "source_artifact_id": artifact.id,
-        "response_locale": locale,
+        "response_locale": response_locale,
+        "requested_locale": locale,
+        "authored_locale": _research_plan_payload_locale(payload),
         "generated_at": artifact.created_at.isoformat(),
-        "localization": research_plan_localization_summary(raw_blocks, locale=locale),
-        "blocks": clean_research_plan_timeline_blocks(raw_blocks, locale=locale),
+        "localization": research_plan_localization_summary(raw_blocks, locale=response_locale),
+        "blocks": clean_research_plan_timeline_blocks(raw_blocks, locale=response_locale),
     }
 
 
@@ -276,24 +281,64 @@ def _research_plan_localized_value(
     locale: str | None,
     allow_unlocalized_fallback: bool = True,
 ) -> Any:
-    locale_keys = _research_plan_locale_keys(locale)
-    if locale_keys:
-        for container_key in ("localizations", "localized"):
-            container = raw_block.get(container_key)
-            if not isinstance(container, dict):
-                continue
-            for locale_key in locale_keys:
-                localized = container.get(locale_key)
-                if isinstance(localized, dict) and key in localized:
-                    return localized[key]
-        for locale_key in locale_keys:
-            field_key = f"{key}_{locale_key.replace('-', '_')}"
-            if field_key in raw_block:
-                return raw_block[field_key]
+    explicit_value = _research_plan_explicit_localized_value(raw_block, key, locale=locale)
+    if explicit_value is not _MISSING:
+        return explicit_value
     value = raw_block.get(key)
     if allow_unlocalized_fallback or not _research_plan_requires_explicit_locale(locale):
         return value
     return value if _research_plan_value_matches_locale(value, locale=locale) else None
+
+
+def _research_plan_explicit_localized_value(raw_block: dict[str, Any], key: str, *, locale: str | None) -> Any:
+    locale_keys = _research_plan_locale_keys(locale)
+    if not locale_keys:
+        return _MISSING
+    for container_key in ("localizations", "localized", "translations", "translated"):
+        container = raw_block.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for locale_key in locale_keys:
+            localized = container.get(locale_key)
+            if isinstance(localized, dict) and key in localized:
+                return localized[key]
+    for container_key in ("display", "human_display", "ui_display", "localized_display"):
+        container = raw_block.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for locale_key in locale_keys:
+            localized = container.get(locale_key)
+            if isinstance(localized, dict) and key in localized:
+                return localized[key]
+        for field_key in (key, *_research_plan_display_field_keys(key)):
+            if field_key in container:
+                value = container[field_key]
+                if not _research_plan_requires_explicit_locale(locale) or _research_plan_value_matches_locale(value, locale=locale):
+                    return value
+    for locale_key in locale_keys:
+        suffix = locale_key.replace("-", "_")
+        for field_key in (f"{key}_{suffix}", f"{suffix}_{key}"):
+            if field_key in raw_block:
+                return raw_block[field_key]
+    for field_key in _research_plan_display_field_keys(key):
+        if field_key in raw_block:
+            value = raw_block[field_key]
+            if not _research_plan_requires_explicit_locale(locale) or _research_plan_value_matches_locale(value, locale=locale):
+                return value
+    return _MISSING
+
+
+def _research_plan_display_field_keys(key: str) -> tuple[str, ...]:
+    return (
+        f"display_{key}",
+        f"{key}_display",
+        f"localized_{key}",
+        f"{key}_localized",
+        f"human_{key}",
+        f"{key}_human",
+        f"ui_{key}",
+        f"{key}_ui",
+    )
 
 
 def _research_plan_locale_keys(locale: str | None) -> list[str]:
@@ -362,16 +407,8 @@ def _research_plan_missing_localization_fields(
 
 
 def _research_plan_has_explicit_locale_value(raw_block: dict[str, Any], key: str, *, locale: str | None) -> bool:
-    for locale_key in _research_plan_locale_keys(locale):
-        for container_key in ("localizations", "localized"):
-            container = raw_block.get(container_key)
-            localized = container.get(locale_key) if isinstance(container, dict) else None
-            if isinstance(localized, dict) and _research_plan_has_visible_value(localized.get(key)):
-                return True
-        field_key = f"{key}_{locale_key.replace('-', '_')}"
-        if _research_plan_has_visible_value(raw_block.get(field_key)):
-            return True
-    return False
+    value = _research_plan_explicit_localized_value(raw_block, key, locale=locale)
+    return value is not _MISSING and _research_plan_has_visible_value(value)
 
 
 def _research_plan_has_visible_value(value: Any) -> bool:
@@ -431,6 +468,30 @@ def _research_plan_locale_is_japanese(locale: str | None) -> bool:
         return False
     language = normalized.split("-", 1)[0]
     return language == "ja" or normalized in {"japanese", "日本語"} or normalized.startswith("日本語")
+
+
+def _research_plan_effective_locale(requested_locale: str | None, payload: Any) -> str | None:
+    if isinstance(requested_locale, str) and requested_locale.strip():
+        return requested_locale.strip()
+    return _research_plan_payload_locale(payload)
+
+
+def _research_plan_payload_locale(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    for key in ("response_locale", "locale", "language"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for container_key in ("project", "human_interface", "ui", "display"):
+        container = payload.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for key in ("response_locale", "locale", "language", "notebook_language"):
+            value = container.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
 
 
 def _research_plan_placeholder(kind: str, *, locale: str | None) -> str:
