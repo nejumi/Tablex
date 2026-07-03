@@ -705,7 +705,7 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
         agent_model: str | None = None,
         **_: Any,
     ) -> None:
-        del store, project_id, agent_model
+        del project_id, agent_model
         with session_factory() as db:
             from tabular_harness.models.entities import AgentSession
 
@@ -742,6 +742,28 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
                 title="Codex message",
                 content="I am continuing the main autonomous session.",
                 payload={"type": "item.completed", "item": {"type": "agent_message", "text": "I am continuing."}},
+            )
+            store_json_artifact(
+                db,
+                store,
+                project_id=session.project_id,
+                asset_type="agent_chat_turn",
+                name=f"agent_session_chat_update_{session.id}",
+                filename="agent_chat_turn.json",
+                payload={
+                    "schema_version": "agent_chat_turn.v1",
+                    "project_id": session.project_id,
+                    "user_message": "",
+                    "assistant_message": "データ理解の根拠を確認し、次に評価設計へ進む準備をしています。",
+                    "intent": {"type": "autonomous_agent_progress_report"},
+                    "actions": [],
+                    "action_summary": {},
+                },
+                metadata={
+                    "project_id": session.project_id,
+                    "agent_session_id": session.id,
+                    "source": "main_codex_session_chat_update",
+                },
             )
             db.commit()
 
@@ -799,6 +821,13 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
     assert raw_transcript["stdout_line_count"] == 2
     assert raw_transcript["stderr_line_count"] == 0
     assert raw_transcript["stdout_tail"][-1].startswith('{"type":"item.completed"')
+
+    activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
+    assert activity_response.status_code == 200
+    activity = activity_response.json()
+    main_worker = next(worker for worker in activity["workers"] if worker.get("agent_session_id") == session_id)
+    assert "データ理解の根拠" in main_worker["detail"]
+    assert "データ理解の根拠" in main_worker["human_description"]["summary"]
 
 
 def test_agent_chat_appends_user_instruction_to_active_main_session(

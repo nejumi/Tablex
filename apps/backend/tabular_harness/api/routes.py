@@ -6644,15 +6644,19 @@ def get_project_agent_activity(
             if isinstance(retry_delay, int | float)
             else "Codex runner is not ready; Tablex will keep retrying this same session."
         )
-        session_detail = (
-            f"Codex is running in the project workspace now.{heartbeat_phrase}"
-            if session_has_process
-            else retry_detail
-            if session.status == "waiting_for_runner"
-            else "No live Codex process is observed yet. Full Auto is preparing the next turn."
-            if session.status == "running"
-            else session.last_error or "Preparing context, running analysis, or waiting for the next available worker."
-        )
+        current_focus = latest_agent_session_activity_summary(db, project_id=project_id, session_id=session.id)
+        if session_has_process:
+            session_detail = f"{current_focus or 'Codex is running in the project workspace now.'}{heartbeat_phrase}"
+        elif session.status == "waiting_for_runner":
+            session_detail = retry_detail
+        elif session.status == "running":
+            session_detail = "No live Codex process is observed yet. Full Auto is preparing the next turn."
+        else:
+            session_detail = (
+                current_focus
+                or session.last_error
+                or "Preparing context, running analysis, or waiting for the next available worker."
+            )
         workers.insert(
             0,
             {
@@ -6684,7 +6688,7 @@ def get_project_agent_activity(
                 "human_description": {
                     "source": "agent_session",
                     "title": "Autonomous Analyst",
-                    "summary": "Shows whether the analysis is running, waiting, or needs attention.",
+                    "summary": current_focus or session_detail,
                 },
                 "token_usage": {
                     "source": "codex_cli_transcript",
@@ -6709,15 +6713,18 @@ def get_project_agent_activity(
             else ""
         )
         running_quietly = session_has_process and heartbeat_age_seconds is not None and heartbeat_age_seconds >= 120
-        turn_detail = (
-            f"Codex is running in the project workspace now.{heartbeat_phrase}"
-            if session_has_process
-            else session_detail
-            if session.status == "waiting_for_runner"
-            else "No live Codex process is observed yet. Full Auto is preparing the next turn."
-            if session.status == "running"
-            else session.last_error or "The project is still active. Progress will appear here when the next step starts."
-        )
+        if session_has_process:
+            turn_detail = f"{current_focus or 'Codex is running in the project workspace now.'}{heartbeat_phrase}"
+        elif session.status == "waiting_for_runner":
+            turn_detail = session_detail
+        elif session.status == "running":
+            turn_detail = "No live Codex process is observed yet. Full Auto is preparing the next turn."
+        else:
+            turn_detail = (
+                current_focus
+                or session.last_error
+                or "The project is still active. Progress will appear here when the next step starts."
+            )
         turn_state = {
             **turn_state,
             "state": "agent_running" if session_has_process else "agent_scheduled",
@@ -6754,6 +6761,52 @@ def seconds_since_timestamp(value: datetime | None, *, now: datetime) -> int | N
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return max(0, int((now.astimezone(timezone.utc) - value.astimezone(timezone.utc)).total_seconds()))
+
+
+def latest_agent_session_activity_summary(db: Session, *, project_id: str, session_id: str, limit: int = 280) -> str | None:
+    chat_artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project_id, Artifact.asset_type == "agent_chat_turn")
+            .order_by(Artifact.created_at.desc())
+            .limit(30)
+        ).all()
+    )
+    for artifact in chat_artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("source") != "main_codex_session_chat_update" or metadata.get("agent_session_id") != session_id:
+            continue
+        try:
+            payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+        except OSError:
+            continue
+        message = payload.get("assistant_message")
+        if isinstance(message, str) and message.strip():
+            return compact_activity_summary(message, limit=limit)
+
+    events = list(
+        db.scalars(
+            select(AgentTranscriptEvent)
+            .where(
+                AgentTranscriptEvent.session_id == session_id,
+                AgentTranscriptEvent.source == "codex_cli",
+                AgentTranscriptEvent.content.is_not(None),
+            )
+            .order_by(AgentTranscriptEvent.event_index.desc())
+            .limit(20)
+        ).all()
+    )
+    for event in events:
+        if event.content and event.content.strip() and not event.content.strip().startswith("usage:"):
+            return compact_activity_summary(event.content, limit=limit)
+    return None
+
+
+def compact_activity_summary(message: str, *, limit: int = 280) -> str:
+    compact = re.sub(r"\s+", " ", message).strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(limit - 1, 0)].rstrip() + "…"
 
 
 def format_elapsed_seconds(seconds: int) -> str:
