@@ -242,10 +242,7 @@ from tabular_harness.services.benchmarks import (
     validate_required_files,
 )
 from tabular_harness.services.data_quality import analyze_dataset_quality
-from tabular_harness.services.decision_reporting import (
-    create_decision_report_v1,
-    current_decision_report_payload,
-)
+from tabular_harness.services.decision_reporting import current_decision_report_payload
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
 from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
@@ -340,10 +337,6 @@ from tabular_harness.services.research_plan_timeline import build_research_plan_
 from tabular_harness.services.research_runner import run_research_source_pack_local_stub
 from tabular_harness.services.research_sources import create_research_source_pack
 from tabular_harness.services.research_synthesis import create_research_finding_synthesis
-from tabular_harness.services.result_notebook_evidence import (
-    prepare_result_notebook_evidence,
-    result_notebook_evidence_job_output,
-)
 from tabular_harness.services.result_readout import build_result_readout
 from tabular_harness.services.translation import TranslationResult
 from tabular_harness.services.translation import translate_artifact as translate_artifact_service
@@ -6119,9 +6112,8 @@ def result_readout_endpoint(project_id: str, db: Annotated[Session, Depends(get_
 def prepare_result_notebook_evidence_endpoint(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     job = create_job(
         db,
         job_type="prepare_result_notebook_evidence",
@@ -6133,15 +6125,9 @@ def prepare_result_notebook_evidence_endpoint(
             "secrets_materialized": False,
             "execution_mode": "generate_and_safe_static_capture",
             "executes_notebook_code": False,
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        result = prepare_result_notebook_evidence(db, store=store, project=project)
-        mark_job_succeeded(job, result_notebook_evidence_job_output(result))
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -6149,31 +6135,20 @@ def prepare_result_notebook_evidence_endpoint(
 def generate_decision_report_endpoint(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
-    job = create_job(db, job_type="generate_decision_report", project_id=project_id, input_payload={})
-    try:
-        mark_job_running(job)
-        result = create_decision_report_v1(db, store=store, project=project)
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.bundle["schema_version"],
-                "readiness_status": result.bundle["readiness"]["status"],
-                "report_id": result.report.id,
-                "decision_report_artifact_id": result.report_artifact.id,
-                "decision_report_bundle_artifact_id": result.bundle_artifact.id,
-                "decision_report_evidence_id": result.evidence.id,
-                "next_action_count": len(result.bundle["next_actions"]),
-                "coverage_ready_count": result.bundle["coverage_summary"]["ready_count"],
-                "coverage_attention_count": result.bundle["coverage_summary"]["attention_count"],
-                "source_asset_count": len(result.bundle["source_assets"]),
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="generate_decision_report",
+        project_id=project_id,
+        input_payload={},
+        policy={
+            "execution": "queued_worker",
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+        },
+    )
     return job_to_dict(job)
 
 

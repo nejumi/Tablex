@@ -3147,8 +3147,10 @@ def test_core_harness_actions_use_explicit_endpoints(tmp_path: Path) -> None:
     report_response = client.post(f"/api/projects/{project_id}/decision-report/generate")
     assert report_response.status_code == 200, report_response.text
     report_job = report_response.json()
-    assert report_job["status"] == "succeeded"
-    assert report_job["output"]["decision_report_artifact_id"]
+    assert report_job["status"] == "queued"
+    assert report_job["policy"]["execution"] == "queued_worker"
+    report_output = run_queued_job(client, report_job["id"])
+    assert report_output["decision_report_artifact_id"]
 
     readout_response = client.get(f"/api/projects/{project_id}/results/readout")
     assert readout_response.status_code == 200, readout_response.text
@@ -3684,16 +3686,18 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     result_notebook_response = client.post(f"/api/projects/{project_id}/results/notebook-evidence")
     assert result_notebook_response.status_code == 200, result_notebook_response.text
     result_notebook_job = result_notebook_response.json()
-    assert result_notebook_job["status"] == "succeeded"
+    assert result_notebook_job["status"] == "queued"
     assert result_notebook_job["job_type"] == "prepare_result_notebook_evidence"
-    assert result_notebook_job["output"]["schema_version"] == "result_notebook_evidence.v1"
-    assert result_notebook_job["output"]["top_run_id"] == baseline_output["experiment_run_id"]
-    assert result_notebook_job["output"]["analysis_notebook_artifact_id"] is None
-    assert result_notebook_job["output"]["notebook_evidence_html_artifact_id"] is None
-    assert result_notebook_job["output"]["preview_artifact_id"] is None
-    assert result_notebook_job["output"]["capture_mode"] == "not_created_by_harness"
-    assert result_notebook_job["output"]["execution_status"] == "awaiting_agent_authored_notebook"
-    assert result_notebook_job["output"]["notebook_authoring_brief_artifact_id"]
+    assert result_notebook_job["policy"]["execution"] == "queued_worker"
+    result_notebook_output = run_queued_job(client, result_notebook_job["id"])
+    assert result_notebook_output["schema_version"] == "result_notebook_evidence.v1"
+    assert result_notebook_output["top_run_id"] == baseline_output["experiment_run_id"]
+    assert result_notebook_output["analysis_notebook_artifact_id"] is None
+    assert result_notebook_output["notebook_evidence_html_artifact_id"] is None
+    assert result_notebook_output["preview_artifact_id"] is None
+    assert result_notebook_output["capture_mode"] == "not_created_by_harness"
+    assert result_notebook_output["execution_status"] == "awaiting_agent_authored_notebook"
+    assert result_notebook_output["notebook_authoring_brief_artifact_id"]
 
     notebook_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
     assert notebook_readout_response.status_code == 200, notebook_readout_response.text
@@ -4504,16 +4508,18 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     decision_report_v1_response = client.post(f"/api/projects/{project_id}/decision-report/generate")
     assert decision_report_v1_response.status_code == 200, decision_report_v1_response.text
     decision_report_v1_job = decision_report_v1_response.json()
-    assert decision_report_v1_job["status"] == "succeeded"
+    assert decision_report_v1_job["status"] == "queued"
     assert decision_report_v1_job["job_type"] == "generate_decision_report"
-    assert decision_report_v1_job["output"]["schema_version"] == "decision_report_bundle.v1"
-    assert decision_report_v1_job["output"]["decision_report_bundle_artifact_id"]
-    assert decision_report_v1_job["output"]["decision_report_artifact_id"]
-    assert decision_report_v1_job["output"]["decision_report_evidence_id"]
-    assert decision_report_v1_job["output"]["source_asset_count"] > 0
+    assert decision_report_v1_job["policy"]["execution"] == "queued_worker"
+    decision_report_v1_output = run_queued_job(client, decision_report_v1_job["id"])
+    assert decision_report_v1_output["schema_version"] == "decision_report_bundle.v1"
+    assert decision_report_v1_output["decision_report_bundle_artifact_id"]
+    assert decision_report_v1_output["decision_report_artifact_id"]
+    assert decision_report_v1_output["decision_report_evidence_id"]
+    assert decision_report_v1_output["source_asset_count"] > 0
 
     decision_report_bundle_response = client.get(
-        f"/api/artifacts/{decision_report_v1_job['output']['decision_report_bundle_artifact_id']}/download"
+        f"/api/artifacts/{decision_report_v1_output['decision_report_bundle_artifact_id']}/download"
     )
     assert decision_report_bundle_response.status_code == 200
     decision_report_bundle = decision_report_bundle_response.json()
@@ -4530,7 +4536,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert decision_report_bundle["next_actions"]
 
     decision_report_v1_preview_response = client.get(
-        f"/api/reports/{decision_report_v1_job['output']['report_id']}/preview"
+        f"/api/reports/{decision_report_v1_output['report_id']}/preview"
     )
     assert decision_report_v1_preview_response.status_code == 200
     decision_report_v1_preview = decision_report_v1_preview_response.json()["preview"]
@@ -4546,7 +4552,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert current_decision_report_response.status_code == 200
     current_decision_report = current_decision_report_response.json()
     assert current_decision_report["available"] is True
-    assert current_decision_report["report"]["id"] == decision_report_v1_job["output"]["report_id"]
+    assert current_decision_report["report"]["id"] == decision_report_v1_output["report_id"]
     assert current_decision_report["bundle"]["schema_version"] == "decision_report_bundle.v1"
 
     post_run_readout_response = client.get(f"/api/projects/{project_id}/results/readout")

@@ -39,10 +39,15 @@ from tabular_harness.services.baseline import (
     run_baseline,
     run_model_candidate,
 )
+from tabular_harness.services.decision_reporting import create_decision_report_v1
 from tabular_harness.services.evaluation import generate_split_manifest
 from tabular_harness.services.jobs import JOB_TYPES, create_job
 from tabular_harness.services.planned_agent_execution import run_planned_agent_task_codex_cli
 from tabular_harness.services.planned_agent_workspace import load_contract_payload
+from tabular_harness.services.result_notebook_evidence import (
+    prepare_result_notebook_evidence,
+    result_notebook_evidence_job_output,
+)
 from tabular_harness.worker.runner import JobHandler, SyncWorker
 
 INITIAL_JOB_TYPES = tuple(sorted(JOB_TYPES))
@@ -261,6 +266,50 @@ def capture_notebook_execution_handler(db: Session, job: Job, store: LocalArtifa
     }
 
 
+def prepare_result_notebook_evidence_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "prepare_result_notebook_evidence")
+    result = prepare_result_notebook_evidence(db, store=store, project=project)
+    output = result_notebook_evidence_job_output(result)
+    output["worker_events"] = [
+        notebook_worker_event(
+            job,
+            result.authoring_brief_artifact,
+            status="succeeded",
+            headline="Result notebook evidence prepared",
+            detail="Registered the notebook authoring brief for the current top run.",
+        )
+    ]
+    return output
+
+
+def generate_decision_report_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "generate_decision_report")
+    result = create_decision_report_v1(db, store=store, project=project)
+    return {
+        "schema_version": result.bundle["schema_version"],
+        "readiness_status": result.bundle["readiness"]["status"],
+        "report_id": result.report.id,
+        "decision_report_artifact_id": result.report_artifact.id,
+        "decision_report_bundle_artifact_id": result.bundle_artifact.id,
+        "decision_report_evidence_id": result.evidence.id,
+        "next_action_count": len(result.bundle["next_actions"]),
+        "coverage_ready_count": result.bundle["coverage_summary"]["ready_count"],
+        "coverage_attention_count": result.bundle["coverage_summary"]["attention_count"],
+        "source_asset_count": len(result.bundle["source_assets"]),
+        "worker_events": [
+            project_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Decision report generated",
+                detail="Registered the decision report, evidence bundle, and source coverage summary.",
+                target_tab="Insight",
+                target_anchor="decision-report",
+            )
+        ],
+    }
+
+
 def project_for_job(db: Session, job: Job, job_type: str) -> Project:
     if job.project_id is None:
         raise ValueError(f"{job_type} requires a project_id")
@@ -361,6 +410,41 @@ def notebook_worker_event(
                 {"step": "validate notebook", "tokens": 40},
                 {"step": "capture preview", "tokens": 120},
                 {"step": "register artifacts", "tokens": 80},
+            ],
+        },
+    }
+
+
+def project_worker_event(
+    job: Job,
+    project: Project,
+    *,
+    status: str,
+    headline: str,
+    detail: str,
+    target_tab: str,
+    target_anchor: str,
+) -> dict[str, Any]:
+    return {
+        "worker_id": "project-reporting",
+        "display_name": "Reporting Worker",
+        "status": status,
+        "headline": headline,
+        "detail": detail,
+        "job_id": job.id,
+        "project_id": project.id,
+        "target_tab": target_tab,
+        "target_anchor": target_anchor,
+        "created_at": job.created_at.isoformat(),
+        "updated_at": utc_now().isoformat(),
+        "active": status in {"queued", "running"},
+        "token_usage": {
+            "source": "reporting_worker_estimate",
+            "is_estimate": True,
+            "series": [
+                {"step": "load evidence", "tokens": 80},
+                {"step": "compose report", "tokens": 160},
+                {"step": "register artifacts", "tokens": 90},
             ],
         },
     }
@@ -918,6 +1002,8 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["plan_agent_task"] = plan_agent_task_handler
     handlers["plan_notebook_execution"] = plan_notebook_execution_handler
     handlers["capture_notebook_execution"] = capture_notebook_execution_handler
+    handlers["prepare_result_notebook_evidence"] = prepare_result_notebook_evidence_handler
+    handlers["generate_decision_report"] = generate_decision_report_handler
     handlers["run_baseline"] = run_baseline_handler
     handlers["build_split_manifest"] = build_split_manifest_handler
     handlers["train_model_candidates"] = train_model_candidates_handler
