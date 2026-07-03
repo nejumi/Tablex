@@ -4778,7 +4778,7 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
             already_paired_update_ids=paired_update_ids,
         )
         if paired_update is not None:
-            turns.append(agent_chat_turn_from_main_session_update(project_id, job, payload, paired_update))
+            turns.append(agent_chat_turn_from_main_session_update(db, project_id, job, payload, paired_update))
             progress_artifact_id = paired_update.get("artifact_id")
             if isinstance(progress_artifact_id, str):
                 paired_update_ids.add(progress_artifact_id)
@@ -4837,6 +4837,7 @@ def agent_chat_update_is_not_older_than_job(update: dict[str, Any], job: Job) ->
 
 
 def agent_chat_turn_from_main_session_update(
+    db: Session,
     project_id: str,
     job: Job,
     payload: dict[str, Any],
@@ -4844,6 +4845,7 @@ def agent_chat_turn_from_main_session_update(
 ) -> dict[str, Any]:
     locale = payload.get("locale") if isinstance(payload.get("locale"), str) else "en-US"
     delivered_session_id = payload.get("delivered_agent_session_id")
+    delivered_session = db.get(AgentSession, delivered_session_id) if isinstance(delivered_session_id, str) else None
     return {
         "schema_version": "agent_chat_turn.v1",
         "project_id": project_id,
@@ -4872,6 +4874,9 @@ def agent_chat_turn_from_main_session_update(
             if isinstance(payload.get("progress_update_requested_event_id"), str)
             else None,
             "progress_artifact_id": update_turn.get("artifact_id") if isinstance(update_turn.get("artifact_id"), str) else None,
+            "agent_session_observation": agent_session_observation_for_chat_wait(db=db, session=delivered_session)
+            if delivered_session is not None
+            else None,
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",

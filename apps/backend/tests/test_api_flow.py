@@ -2012,6 +2012,8 @@ def test_agent_chat_history_pairs_main_session_update_to_delivered_instruction(t
     assert turn["response_composer"]["mode"] == "main_codex_session"
     assert turn["response_composer"]["status"] == "codex_authored"
     assert turn["response_brief"]["progress_artifact_id"] == progress_artifact.id
+    assert turn["response_brief"]["agent_session_observation"]["agent_session_id"] == "ags_update_pairing"
+    assert turn["response_brief"]["agent_session_observation"]["schema_version"] == "agent_session_chat_wait_observation.v1"
     assert turn["job_id"] == chat["job"]["id"]
 
 
