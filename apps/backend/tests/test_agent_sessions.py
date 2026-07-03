@@ -129,6 +129,59 @@ def test_codex_stream_lines_are_indexed_in_one_batch(tmp_path: Path) -> None:
     assert events[-1].source == "codex_cli_stderr"
 
 
+def test_transcript_index_reservation_survives_uncommitted_sidecar_event(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+
+    with session_factory() as db:
+        project = Project(id="p_index_reservation", name="Index Reservation")
+        session = AgentSession(id="as_index_reservation", project_id=project.id, goal_text="Continue.")
+        db.add_all([project, session])
+        db.commit()
+
+    with session_factory() as db:
+        session = db.get(AgentSession, "as_index_reservation")
+        assert session is not None
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="progress_update_requested",
+            role="harness",
+            title="Progress update requested",
+            content="Progress update requested.",
+            payload={},
+        )
+
+        append_codex_stream_lines(
+            session_factory,
+            project_id="p_index_reservation",
+            session_id="as_index_reservation",
+            lines=[
+                ("stdout", '{"type":"thread.started","thread_id":"thread_2"}\n'),
+                ("stdout", '{"type":"turn.started"}\n'),
+            ],
+        )
+        db.commit()
+
+    with session_factory() as db:
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(AgentTranscriptEvent.session_id == "as_index_reservation")
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            ).all()
+        )
+
+    assert [event.event_index for event in events] == [0, 1, 2]
+    assert [event.event_type for event in events] == [
+        "progress_update_requested",
+        "thread.started",
+        "turn.started",
+    ]
+
+
 def test_session_output_artifact_name_uses_relative_path_to_avoid_stem_collisions() -> None:
     report_name = session_output_artifact_name("as_path", Path("reports/summary.md"))
     output_name = session_output_artifact_name("as_path", Path("outputs/summary.md"))

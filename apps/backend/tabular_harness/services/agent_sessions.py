@@ -63,6 +63,8 @@ PROGRESS_UPDATE_NUDGE_AFTER_SECONDS = 180
 PROGRESS_UPDATE_NUDGE_MIN_INTERVAL_SECONDS = 300
 _SUPERVISOR_LOCK = threading.Lock()
 _ACTIVE_SUPERVISORS: set[str] = set()
+_TRANSCRIPT_EVENT_LOCK = threading.Lock()
+_TRANSCRIPT_EVENT_NEXT_INDEX: dict[str, int] = {}
 
 
 @dataclass(frozen=True)
@@ -223,30 +225,37 @@ def append_session_event(
     job_id: str | None = None,
     update_heartbeat: bool = True,
 ) -> AgentTranscriptEvent:
-    db.flush()
-    current_max = db.scalar(
-        select(func.max(AgentTranscriptEvent.event_index)).where(AgentTranscriptEvent.session_id == session.id)
-    )
-    event = AgentTranscriptEvent(
-        id=new_id("agte"),
-        project_id=session.project_id,
-        session_id=session.id,
-        event_index=int(current_max if current_max is not None else -1) + 1,
-        source=source,
-        event_type=event_type,
-        role=role,
-        title=title,
-        content=content,
-        payload_json=dumps_json(payload or {}),
-        artifact_id=artifact_id,
-        job_id=job_id,
-        created_at=utc_now(),
-    )
-    db.add(event)
-    session.updated_at = utc_now()
-    if update_heartbeat:
-        session.last_heartbeat_at = utc_now()
-    return event
+    with _TRANSCRIPT_EVENT_LOCK:
+        db.flush()
+        current_max = db.scalar(
+            select(func.max(AgentTranscriptEvent.event_index)).where(AgentTranscriptEvent.session_id == session.id)
+        )
+        cached_next = _TRANSCRIPT_EVENT_NEXT_INDEX.get(session.id)
+        next_index = max(
+            int(current_max if current_max is not None else -1) + 1,
+            int(cached_next) if cached_next is not None else 0,
+        )
+        _TRANSCRIPT_EVENT_NEXT_INDEX[session.id] = next_index + 1
+        event = AgentTranscriptEvent(
+            id=new_id("agte"),
+            project_id=session.project_id,
+            session_id=session.id,
+            event_index=next_index,
+            source=source,
+            event_type=event_type,
+            role=role,
+            title=title,
+            content=content,
+            payload_json=dumps_json(payload or {}),
+            artifact_id=artifact_id,
+            job_id=job_id,
+            created_at=utc_now(),
+        )
+        db.add(event)
+        session.updated_at = utc_now()
+        if update_heartbeat:
+            session.last_heartbeat_at = utc_now()
+        return event
 
 
 def session_to_dict(session: AgentSession) -> dict[str, Any]:
@@ -1446,38 +1455,44 @@ def append_codex_stream_lines(
 ) -> None:
     if not lines:
         return
-    with session_factory() as db:
-        session = db.get(AgentSession, session_id)
-        if session is None:
-            return
-        current_max = db.scalar(
-            select(func.max(AgentTranscriptEvent.event_index)).where(AgentTranscriptEvent.session_id == session.id)
-        )
-        next_index = int(current_max if current_max is not None else -1) + 1
-        now = utc_now()
-        for stream_name, line in lines:
-            source, event_type, title, content, payload = codex_stream_event_fields(stream_name, line)
-            if event_type == "thread.started" and isinstance(payload.get("thread_id"), str):
-                session.codex_thread_id = str(payload["thread_id"])
-            db.add(
-                AgentTranscriptEvent(
-                    id=new_id("agte"),
-                    project_id=project_id,
-                    session_id=session.id,
-                    event_index=next_index,
-                    source=source,
-                    event_type=event_type,
-                    role="runner",
-                    title=title,
-                    content=content,
-                    payload_json=dumps_json(payload),
-                    created_at=now,
-                )
+    with _TRANSCRIPT_EVENT_LOCK:
+        with session_factory() as db:
+            session = db.get(AgentSession, session_id)
+            if session is None:
+                return
+            current_max = db.scalar(
+                select(func.max(AgentTranscriptEvent.event_index)).where(AgentTranscriptEvent.session_id == session.id)
             )
-            next_index += 1
-        session.updated_at = utc_now()
-        session.last_heartbeat_at = utc_now()
-        db.commit()
+            cached_next = _TRANSCRIPT_EVENT_NEXT_INDEX.get(session.id)
+            next_index = max(
+                int(current_max if current_max is not None else -1) + 1,
+                int(cached_next) if cached_next is not None else 0,
+            )
+            _TRANSCRIPT_EVENT_NEXT_INDEX[session.id] = next_index + len(lines)
+            now = utc_now()
+            for stream_name, line in lines:
+                source, event_type, title, content, payload = codex_stream_event_fields(stream_name, line)
+                if event_type == "thread.started" and isinstance(payload.get("thread_id"), str):
+                    session.codex_thread_id = str(payload["thread_id"])
+                db.add(
+                    AgentTranscriptEvent(
+                        id=new_id("agte"),
+                        project_id=project_id,
+                        session_id=session.id,
+                        event_index=next_index,
+                        source=source,
+                        event_type=event_type,
+                        role="runner",
+                        title=title,
+                        content=content,
+                        payload_json=dumps_json(payload),
+                        created_at=now,
+                    )
+                )
+                next_index += 1
+            session.updated_at = utc_now()
+            session.last_heartbeat_at = utc_now()
+            db.commit()
 
 
 def codex_stream_event_fields(stream_name: str, line: str) -> tuple[str, str, str, str | None, dict[str, Any]]:
