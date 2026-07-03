@@ -19,7 +19,7 @@ from fastapi import (
     Response,
     UploadFile,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
@@ -6783,6 +6783,36 @@ def download_artifact(artifact_id: str, db: Annotated[Session, Depends(get_sessi
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file not found")
     return FileResponse(path=path, filename=path.name)
+
+
+@router.get("/api/artifacts/{artifact_id}/inline-preview")
+def inline_preview_artifact(artifact_id: str, db: Annotated[Session, Depends(get_session)]):
+    artifact = db.get(Artifact, artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    path = artifact_primary_path(artifact)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Artifact file not found")
+    suffix = path.suffix.lower()
+    media_types = {
+        ".gif": "image/gif",
+        ".jpeg": "image/jpeg",
+        ".jpg": "image/jpeg",
+        ".pdf": "application/pdf",
+        ".png": "image/png",
+        ".svg": "image/svg+xml",
+        ".webp": "image/webp",
+    }
+    if suffix in {".html", ".htm"}:
+        try:
+            html = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="HTML artifact is not valid UTF-8.") from exc
+        return HTMLResponse(content=inline_local_html_assets(artifact, path, html), media_type="text/html")
+    media_type = media_types.get(suffix)
+    if media_type is None:
+        raise HTTPException(status_code=400, detail="Inline preview is only available for HTML, SVG, images, and PDF artifacts.")
+    return FileResponse(path=path, media_type=media_type)
 
 
 @router.get("/api/artifacts/{artifact_id}/preview", response_model=ArtifactPreviewRead)

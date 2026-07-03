@@ -173,6 +173,17 @@ const englishMessages = {
   focusExperimentsReason: "The project needs run evidence, diagnostics, and reports before comparing approaches.",
   focusNotebooks: "Review notebook evidence",
   focusNotebooksReason: "Notebook previews and safe captures turn run evidence into inspectable findings before final reporting.",
+  artifactPreviewHtmlBadge: "HTML preview",
+  artifactPreviewSvgBadge: "SVG preview",
+  artifactPreviewImageBadge: "image preview",
+  artifactPreviewPdfBadge: "PDF preview",
+  artifactPreviewTruncatedBadge: "truncated",
+  artifactPreviewOpenOriginal: "Open original",
+  artifactPreviewTruncatedWarning: "This preview is truncated. Download the artifact for the full notebook preview.",
+  artifactPreviewFrameFailedWarning: "The embedded preview did not load. Open the original artifact in a new tab.",
+  artifactPreviewAvailableTitle: "Preview is available as an artifact.",
+  artifactPreviewAvailableBody: "Open it in a new tab if the embedded frame stays blank.",
+  artifactPreviewInspectSource: "Inspect preview source",
   focusReports: "Read the decision report",
   focusReportsReason: "Reports summarize readiness, risks, evidence, and next actions without requiring raw artifact inspection.",
   showAllAssumptionsEvidence: "Show all assumptions and evidence",
@@ -581,6 +592,17 @@ const japaneseMessages: LocaleMessages = {
   focusExperimentsReason: "approachを比較する前に、run evidence、diagnostics、reportが必要です。",
   focusNotebooks: "notebook evidenceを確認する",
   focusNotebooksReason: "Notebook previewとsafe captureで、最終report前にrun evidenceを検査可能なfindingへ変換します。",
+  artifactPreviewHtmlBadge: "HTMLプレビュー",
+  artifactPreviewSvgBadge: "SVGプレビュー",
+  artifactPreviewImageBadge: "画像プレビュー",
+  artifactPreviewPdfBadge: "PDFプレビュー",
+  artifactPreviewTruncatedBadge: "一部のみ",
+  artifactPreviewOpenOriginal: "元のartifactを開く",
+  artifactPreviewTruncatedWarning: "このプレビューは一部のみです。完全なNotebook previewはartifactを開いて確認してください。",
+  artifactPreviewFrameFailedWarning: "埋め込みプレビューを読み込めませんでした。元のartifactを新しいタブで開いてください。",
+  artifactPreviewAvailableTitle: "プレビューartifactがあります。",
+  artifactPreviewAvailableBody: "埋め込み表示が空のままの場合は、新しいタブで開いてください。",
+  artifactPreviewInspectSource: "プレビューソースを確認",
   focusReports: "decision reportを読む",
   focusReportsReason: "raw artifactを追わなくても、readiness、risk、evidence、next actionを把握できます。",
   showAllAssumptionsEvidence: "すべての仮定と根拠を表示",
@@ -8506,17 +8528,18 @@ function isVisualArtifactPreview(preview: ArtifactPreview | null): boolean {
 }
 
 function VisualArtifactPreview({ preview }: { preview: ArtifactPreview }) {
+  const { text } = React.useContext(LocaleContext);
   const url = preview.preview?.startsWith("/api/") ? `${apiBase}${preview.preview}` : preview.preview ?? `${apiBase}/api/artifacts/${preview.id}/download`;
   const isPdf = preview.content_type === "application/pdf" || preview.filename.toLowerCase().endsWith(".pdf");
   return (
     <div className="preview-block">
       <div className="preview-toolbar">
         <div className="preview-meta">
-          <span className="badge">{isPdf ? "PDF preview" : "image preview"}</span>
+          <span className="badge">{isPdf ? text.artifactPreviewPdfBadge : text.artifactPreviewImageBadge}</span>
           <span className="badge muted">{preview.filename}</span>
         </div>
         <a className="secondary-button text-link-button" href={url} target="_blank" rel="noreferrer">
-          Open original
+          {text.artifactPreviewOpenOriginal}
         </a>
       </div>
       <div className="visual-preview-shell">
@@ -8531,8 +8554,11 @@ function VisualArtifactPreview({ preview }: { preview: ArtifactPreview }) {
 }
 
 function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
-  const previewType = preview.content_type === "image/svg+xml" || preview.filename.toLowerCase().endsWith(".svg") ? "SVG" : "HTML";
+  const { text } = React.useContext(LocaleContext);
+  const isSvg = preview.content_type === "image/svg+xml" || preview.filename.toLowerCase().endsWith(".svg");
+  const previewType = isSvg ? text.artifactPreviewSvgBadge : text.artifactPreviewHtmlBadge;
   const url = `${apiBase}/api/artifacts/${preview.id}/download`;
+  const inlineUrl = `${apiBase}/api/artifacts/${preview.id}/inline-preview`;
   const inlineSource = typeof preview.preview === "string" && !preview.truncated ? htmlPreviewSrcDoc(preview) : null;
   const [frameFailed, setFrameFailed] = React.useState(false);
 
@@ -8540,34 +8566,34 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
     setFrameFailed(false);
   }, [preview.id]);
 
-  const canRenderInline = Boolean(inlineSource);
+  const canRenderInline = isSvg ? Boolean(inlineSource) : true;
   return (
     <div className="preview-block">
       <div className="preview-toolbar">
         <div className="preview-meta">
-          <span className="badge">{previewType} preview</span>
+          <span className="badge">{previewType}</span>
           <span className="badge muted">{preview.filename}</span>
-          {preview.truncated ? <span className="badge risk">truncated</span> : null}
+          {preview.truncated ? <span className="badge risk">{text.artifactPreviewTruncatedBadge}</span> : null}
         </div>
         <a className="secondary-button text-link-button" href={url} target="_blank" rel="noreferrer">
-          Open original
+          {text.artifactPreviewOpenOriginal}
         </a>
       </div>
       {preview.truncated ? (
-        <div className="banner warning">This preview is truncated. Download the artifact for the full notebook preview.</div>
+        <div className="banner warning">{text.artifactPreviewTruncatedWarning}</div>
       ) : null}
       {frameFailed ? (
-        <div className="banner warning">The embedded preview did not load. Open the original artifact in a new tab.</div>
+        <div className="banner warning">{text.artifactPreviewFrameFailedWarning}</div>
       ) : null}
       {!canRenderInline ? (
         <div className="html-preview-fallback">
           <FileText size={22} />
           <div>
-            <strong>Preview is available as an artifact.</strong>
-            <p>Open the original artifact to inspect the full HTML output.</p>
+            <strong>{text.artifactPreviewAvailableTitle}</strong>
+            <p>{text.artifactPreviewAvailableBody}</p>
           </div>
           <a className="secondary-button text-link-button" href={url} target="_blank" rel="noreferrer">
-            Open original
+            {text.artifactPreviewOpenOriginal}
           </a>
         </div>
       ) : (
@@ -8575,13 +8601,20 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
           <iframe
             key={preview.id}
             className="html-preview-frame"
-            srcDoc={inlineSource ?? undefined}
+            src={isSvg ? undefined : inlineUrl}
+            srcDoc={isSvg ? inlineSource ?? undefined : undefined}
             sandbox="allow-scripts"
             title={`${preview.name} preview`}
             onError={() => setFrameFailed(true)}
           />
         </div>
       )}
+      {inlineSource ? (
+        <details className="html-preview-source-fallback">
+          <summary>{text.artifactPreviewInspectSource}</summary>
+          <pre>{inlineSource}</pre>
+        </details>
+      ) : null}
     </div>
   );
 }

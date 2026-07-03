@@ -2480,6 +2480,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert "Read this first" in eda_html["preview"]
     assert "Visual story cards" in eda_html["preview"]
     assert "Ask Codex next" in eda_html["preview"]
+    eda_inline_response = client.get(
+        f"/api/artifacts/{eda_review_job['output']['eda_review_html_artifact_id']}/inline-preview"
+    )
+    assert eda_inline_response.status_code == 200
+    assert eda_inline_response.headers["content-type"].startswith("text/html")
+    assert "content-disposition" not in eda_inline_response.headers
+    assert "Tablex Data Review" in eda_inline_response.text
     eda_svg_response = client.get(
         f"/api/artifacts/{eda_review_job['output']['eda_review_figure_artifact_ids'][0]}/preview"
     )

@@ -4486,6 +4486,34 @@ td {
   color: var(--text-muted);
 }
 
+.html-preview-source-fallback {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.html-preview-source-fallback summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.html-preview-source-fallback pre {
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: var(--surface-strong);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
 .visual-preview-shell {
   display: grid;
   place-items: center;
