@@ -53,6 +53,7 @@ def handle_agent_chat_turn(
     utility_model: str | None = None,
 ) -> AgentChatTurnResult:
     conversation_context = build_agent_conversation_context(db, project=project)
+    attach_chat_delivery_context(conversation_context, job)
     intent = {
         "type": "agent_conversation",
         "confidence": None,
@@ -139,6 +140,27 @@ def handle_agent_chat_turn(
         artifact=artifact,
         planned_agent_task=planned_agent_task,
     )
+
+
+def attach_chat_delivery_context(conversation_context: dict[str, Any], job: Job) -> None:
+    payload = loads_json(job.input_json, {})
+    delivered_session_id = payload.get("delivered_agent_session_id")
+    if not isinstance(delivered_session_id, str) or not delivered_session_id.strip():
+        return
+    conversation_context["current_chat_delivery"] = {
+        "schema_version": "agent_chat_delivery_context.v1",
+        "delivered_to_running_codex": True,
+        "agent_session_id": delivered_session_id,
+        "agent_transcript_event_id": payload.get("agent_transcript_event_id")
+        if isinstance(payload.get("agent_transcript_event_id"), str)
+        else None,
+        "agent_transcript_event_index": payload.get("agent_transcript_event_index")
+        if isinstance(payload.get("agent_transcript_event_index"), int)
+        else None,
+        "progress_update_requested_event_id": payload.get("progress_update_requested_event_id")
+        if isinstance(payload.get("progress_update_requested_event_id"), str)
+        else None,
+    }
 
 
 def build_agent_conversation_context(db: Session, *, project: Project) -> dict[str, Any]:

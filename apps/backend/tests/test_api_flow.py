@@ -1605,9 +1605,10 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     chat = chat_response.json()
     assert chat["job"]["job_type"] == "agent_chat_turn"
     assert chat["job"]["status"] == "queued"
+    assert chat["job"]["priority"] == 90
     assert chat["response_composer"]["mode"] == "queued_worker"
     assert chat["response_composer"]["status"] == "queued"
-    assert chat["assistant_message"] == "応答を準備しています。"
+    assert chat["assistant_message"] == "入力は届いています。説明を準備しています。"
     assert chat["response_brief"]["progress_update_requested_event_id"]
 
     inbox = user_instructions_inbox_path(workspace)
@@ -1629,6 +1630,16 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert history[-1]["job_id"] == chat["job"]["id"]
     assert history[-1]["user_message"] == "この条件で特徴量を見直してください"
     assert history[-1]["response_composer"]["status"] == "queued"
+    assert history[-1]["assistant_message"] == "入力は届いています。説明を準備しています。"
+    assert history[-1]["response_brief"]["delivered_agent_session_id"] == "ags_inbox_delivery"
+
+    output = run_queued_agent_chat_turn(client, chat["job"]["id"])
+    assert output["schema_version"] == "agent_chat_turn.v1"
+    completed_history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
+    assert completed_history[-1]["artifact_id"] == output["artifact_id"]
+    delivery_context = completed_history[-1]["response_brief"]["conversation_context"]["current_chat_delivery"]
+    assert delivery_context["delivered_to_running_codex"] is True
+    assert delivery_context["agent_session_id"] == "ags_inbox_delivery"
 
 
 def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -> None:

@@ -4429,6 +4429,7 @@ def create_agent_chat_turn(
                 "utility_model": payload.utility_model,
                 "delivered_to_running_codex_session": True,
             },
+            priority=90,
         )
         response = queued_main_session_chat_response(
             project=project,
@@ -4462,6 +4463,7 @@ def create_agent_chat_turn(
             "agent_model": payload.agent_model,
             "utility_model": payload.utility_model,
         },
+        priority=80,
     )
     return {
         "schema_version": "agent_chat_turn.v1",
@@ -4573,7 +4575,11 @@ def queued_main_session_chat_response(
     progress_event: AgentTranscriptEvent | None = None,
 ) -> dict[str, Any]:
     japanese = (locale or "").lower().startswith("ja")
-    assistant_message = "応答を準備しています。" if japanese else "Preparing a response."
+    assistant_message = (
+        "入力は届いています。説明を準備しています。"
+        if japanese
+        else "Your message was received. Preparing an explanation."
+    )
     return {
         "schema_version": "agent_chat_turn.v1",
         "project_id": project.id,
@@ -4758,10 +4764,18 @@ def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[st
     output = loads_json(job.output_json, {})
     locale = payload.get("locale") if isinstance(payload.get("locale"), str) else "en-US"
     japanese = locale.lower().startswith("ja")
+    delivered_session_id = payload.get("delivered_agent_session_id")
+    delivered_to_running_codex = isinstance(delivered_session_id, str) and bool(delivered_session_id.strip())
     if job.status in {"failed", "cancelled", "timed_out"}:
         error_message = job.error_message or str(output.get("error_message") or "")
         assistant_message = (
             f"応答生成が完了しませんでした: {error_message}" if japanese else f"Response did not complete: {error_message}"
+        )
+    elif delivered_to_running_codex:
+        assistant_message = (
+            "入力は届いています。説明を準備しています。"
+            if japanese
+            else "Your message was received. Preparing an explanation."
         )
     else:
         assistant_message = "応答を準備しています。" if japanese else "Preparing a response."
@@ -4782,6 +4796,16 @@ def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[st
             "job_id": job.id,
             "status": job.status,
             "error_message": job.error_message,
+            "delivered_agent_session_id": delivered_session_id if delivered_to_running_codex else None,
+            "agent_transcript_event_id": payload.get("agent_transcript_event_id")
+            if isinstance(payload.get("agent_transcript_event_id"), str)
+            else None,
+            "agent_transcript_event_index": payload.get("agent_transcript_event_index")
+            if isinstance(payload.get("agent_transcript_event_index"), int)
+            else None,
+            "progress_update_requested_event_id": payload.get("progress_update_requested_event_id")
+            if isinstance(payload.get("progress_update_requested_event_id"), str)
+            else None,
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",
