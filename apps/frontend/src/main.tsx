@@ -6303,6 +6303,7 @@ function codexEventBody(event: Record<string, unknown>) {
   }
   return (
     textField(item?.text) ??
+    textField(item?.aggregated_output) ??
     textField(item?.output) ??
     textField(item?.summary) ??
     textField(item?.command) ??
@@ -6753,6 +6754,12 @@ function RawAgentStream({
         rawTranscript?.stderr_line_count ?? 0
       }:${rawTranscript?.updated_at ?? ""}`
     : `${events.length}:${latestEvent?.id ?? "empty"}`;
+  const activeRawLineKey =
+    rawTranscript && rawTranscript.stdout_line_count > 0
+      ? `stdout-${rawTranscript.stdout_line_count}`
+      : rawLines.length
+        ? `${rawLines[rawLines.length - 1].stream}-${rawLines[rawLines.length - 1].line_number}`
+        : null;
   const rawScroll = useStickyBottomScroll<HTMLDivElement>(rawKey);
 
   async function submitDraft() {
@@ -6788,9 +6795,9 @@ function RawAgentStream({
       <div className="raw-agent-log" ref={rawScroll.ref} onScroll={rawScroll.onScroll}>
         {rawLines.length ? (
           <>
-            {rawLines.map((line, index) => (
+            {rawLines.map((line) => (
               <RawTranscriptLineCard
-                active={turnState.owner === "agent" && index === rawLines.length - 1}
+                active={turnState.owner === "agent" && `${line.stream}-${line.line_number}` === activeRawLineKey}
                 key={`${line.stream}-${line.line_number}`}
                 line={line}
               />
@@ -6827,30 +6834,103 @@ function RawAgentStream({
 
 function RawTranscriptLineCard({ line, active }: { line: AgentRawTranscriptViewLine; active: boolean }) {
   const event = line.parsed;
-  const title = event ? codexEventTitle(event) : line.stream === "stderr" ? "Codex stderr" : "Raw JSONL line";
-  const level = event ? textField(event.type) ?? "jsonl" : line.stream;
-  const body = event ? codexEventBody(event) ?? line.text : line.text;
+  const view = rawCodexLineView(line);
   return (
-    <div className={`raw-agent-event raw-jsonl-line ${line.stream === "stderr" ? "is-stderr" : ""} ${active ? "is-active" : ""}`}>
-      <div className="raw-agent-line raw-jsonl-meta">
+    <div className={`raw-agent-event raw-cli-line ${view.kind} ${active ? "is-active" : ""}`}>
+      <div className="raw-cli-gutter" aria-hidden="true">
         <span>#{line.line_number}</span>
-        <b>{line.stream}</b>
-        <em>{level}</em>
-        <strong>{title}</strong>
+        <b>{view.prompt}</b>
       </div>
-      {body ? <div className="raw-agent-body raw-jsonl-body">{body}</div> : null}
-      <details className="raw-agent-detail">
-        <summary>{event ? "Raw JSONL" : "Raw line"}</summary>
-        <pre>{line.text}</pre>
-      </details>
-      {event ? (
-        <details className="raw-agent-detail compact">
-          <summary>Parsed event</summary>
-          <pre>{rawDetailText(event)}</pre>
+      <div className="raw-cli-content">
+        <div className="raw-cli-head">
+          <strong>{view.title}</strong>
+          <span>{view.level}</span>
+        </div>
+        {view.body ? <pre className="raw-cli-body">{view.body}</pre> : null}
+        <details className="raw-agent-detail">
+          <summary>{event ? "Raw JSONL" : "Raw line"}</summary>
+          <pre>{line.text}</pre>
         </details>
-      ) : null}
+        {event ? (
+          <details className="raw-agent-detail compact">
+            <summary>Parsed event</summary>
+            <pre>{rawDetailText(event)}</pre>
+          </details>
+        ) : null}
+      </div>
     </div>
   );
+}
+
+type RawCodexLineView = {
+  kind: "stderr" | "message" | "command" | "tool" | "edit" | "lifecycle" | "event";
+  prompt: string;
+  title: string;
+  level: string;
+  body: string | null;
+};
+
+function rawCodexLineView(line: AgentRawTranscriptViewLine): RawCodexLineView {
+  const event = line.parsed;
+  if (!event) {
+    return {
+      kind: line.stream === "stderr" ? "stderr" : "event",
+      prompt: line.stream === "stderr" ? "err" : "raw",
+      title: line.stream === "stderr" ? "Codex stderr" : "Raw JSONL line",
+      level: line.stream,
+      body: line.text
+    };
+  }
+  const eventType = textField(event.type) ?? "jsonl";
+  const item = objectRecord(event.item);
+  const itemType = textField(item?.type) ?? "";
+  const command = textField(item?.command) ?? textField(item?.name) ?? textField(item?.tool_name);
+  const output = textField(item?.aggregated_output) ?? textField(item?.output) ?? textField(item?.summary);
+  if (line.stream === "stderr") {
+    return { kind: "stderr", prompt: "err", title: "Codex stderr", level: eventType, body: line.text };
+  }
+  if (itemType === "agent_message") {
+    return { kind: "message", prompt: "codex", title: "Codex", level: eventType, body: textField(item?.text) ?? null };
+  }
+  if (itemType.includes("command") || itemType.includes("exec")) {
+    const commandBody = command ? `$ ${command}` : null;
+    const body = [commandBody, output].filter(Boolean).join("\n\n") || codexEventBody(event) || null;
+    return {
+      kind: "command",
+      prompt: eventType === "item.started" ? "$ ..." : "$",
+      title: eventType === "item.started" ? "Command started" : "Command execution",
+      level: itemType || eventType,
+      body
+    };
+  }
+  if (itemType.includes("tool")) {
+    return {
+      kind: "tool",
+      prompt: "tool",
+      title: command ? `Tool use: ${command}` : "Tool use",
+      level: itemType || eventType,
+      body: output ?? codexEventBody(event)
+    };
+  }
+  if (itemType.includes("patch") || itemType.includes("edit")) {
+    return {
+      kind: "edit",
+      prompt: "edit",
+      title: "Code edit",
+      level: itemType || eventType,
+      body: output ?? codexEventBody(event)
+    };
+  }
+  if (eventType === "thread.started" || eventType === "turn.started" || eventType === "turn.completed") {
+    return { kind: "lifecycle", prompt: "sys", title: humanizeLabel(eventType), level: eventType, body: codexEventBody(event) };
+  }
+  return {
+    kind: "event",
+    prompt: "evt",
+    title: codexEventTitle(event),
+    level: itemType || eventType,
+    body: codexEventBody(event)
+  };
 }
 
 function renderRawAgentEvent(event: RawAgentEvent) {

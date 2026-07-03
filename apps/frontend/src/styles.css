@@ -1245,6 +1245,131 @@ textarea {
   font-size: 12px;
 }
 
+.raw-cli-line {
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+  border-color: rgba(148, 163, 184, 0.14);
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.74));
+  padding: 0;
+}
+
+.raw-cli-gutter {
+  display: grid;
+  align-content: start;
+  justify-items: end;
+  gap: 5px;
+  min-width: 0;
+  border-right: 1px solid rgba(148, 163, 184, 0.18);
+  color: #64748b;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 10px 0 10px 10px;
+}
+
+.raw-cli-gutter b {
+  max-width: 58px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 820;
+  line-height: 1.2;
+  padding: 3px 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.raw-cli-content {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 10px 10px 10px 0;
+}
+
+.raw-cli-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.raw-cli-head strong {
+  color: #f8fafc;
+  font-size: 13px;
+}
+
+.raw-cli-head span {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+  color: #94a3b8;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.raw-cli-body {
+  margin: 0;
+  overflow: auto;
+  max-height: 360px;
+  color: #e2e8f0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.raw-cli-line.message {
+  border-color: rgba(96, 165, 250, 0.2);
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.92), rgba(30, 58, 138, 0.24));
+}
+
+.raw-cli-line.message .raw-cli-gutter b {
+  background: rgba(96, 165, 250, 0.18);
+  color: #bfdbfe;
+}
+
+.raw-cli-line.message .raw-cli-body {
+  color: #f8fafc;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.raw-cli-line.command .raw-cli-gutter b {
+  background: rgba(52, 211, 153, 0.15);
+  color: #bbf7d0;
+}
+
+.raw-cli-line.tool .raw-cli-gutter b,
+.raw-cli-line.edit .raw-cli-gutter b {
+  background: rgba(167, 139, 250, 0.16);
+  color: #ddd6fe;
+}
+
+.raw-cli-line.stderr {
+  border-color: rgba(251, 191, 36, 0.28);
+  background: linear-gradient(90deg, rgba(69, 26, 3, 0.48), rgba(120, 53, 15, 0.22));
+}
+
+.raw-cli-line.stderr .raw-cli-gutter b {
+  background: rgba(251, 191, 36, 0.18);
+  color: #fde68a;
+}
+
+.raw-cli-line.stderr .raw-cli-body {
+  color: #fde68a;
+}
+
+.raw-cli-line.lifecycle {
+  border-color: rgba(148, 163, 184, 0.1);
+  background: rgba(15, 23, 42, 0.46);
+}
+
 .raw-agent-detail {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 7px;
