@@ -8056,6 +8056,9 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
           <span className="badge muted">{preview.filename}</span>
           {preview.truncated ? <span className="badge risk">truncated</span> : null}
         </div>
+        <a className="secondary-button text-link-button" href={url} target="_blank" rel="noreferrer">
+          Open original
+        </a>
       </div>
       {preview.truncated ? (
         <div className="banner warning">This preview is truncated. Download the artifact for the full notebook preview.</div>
