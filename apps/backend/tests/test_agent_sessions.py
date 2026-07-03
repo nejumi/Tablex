@@ -527,6 +527,196 @@ def test_startup_supervisor_recovers_full_auto_project_without_browser_polling(t
         assert [event.event_type for event in events] == ["session_created"]
 
 
+def test_startup_supervisor_clears_dead_stored_pid_before_launch(tmp_path: Path, monkeypatch: Any) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    monkeypatch.setattr(agent_sessions_module, "pid_is_alive", lambda pid: False)
+
+    with session_factory() as db:
+        project = Project(
+            id="p_startup_dead_pid",
+            name="Startup Dead PID",
+            autonomy_mode="full_auto",
+            current_phase="AUTONOMOUS_LOOP",
+        )
+        session = AgentSession(
+            id="as_startup_dead_pid",
+            project_id=project.id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Continue the existing session.",
+            pid=987654321,
+        )
+        db.add_all([project, session])
+        db.commit()
+
+    launched: list[tuple[str, str]] = []
+
+    def fake_runner(
+        session_factory_arg: object,
+        store_arg: object,
+        *,
+        project_id: str,
+        session_id: str,
+        **kwargs: object,
+    ) -> None:
+        del session_factory_arg, store_arg, kwargs
+        launched.append((project_id, session_id))
+
+    start_active_main_session_supervisors(
+        session_factory,
+        store,
+        supervisor_runner=fake_runner,
+    )
+
+    assert launched == [("p_startup_dead_pid", "as_startup_dead_pid")]
+    with session_factory() as db:
+        session = db.get(AgentSession, "as_startup_dead_pid")
+        assert session is not None
+        assert session.pid is None
+        assert session.status == "between_turns"
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(AgentTranscriptEvent.session_id == session.id)
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            ).all()
+        )
+        assert [event.event_type for event in events] == ["startup_dead_runner_pid_cleared"]
+        payload = loads_json(events[0].payload_json, {})
+        assert payload["previous_pid"] == 987654321
+        assert payload["process_alive"] is False
+
+
+def test_startup_supervisor_does_not_emit_stale_pid_event_when_local_slot_is_active(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    monkeypatch.setattr(agent_sessions_module, "pid_is_alive", lambda pid: True)
+
+    with session_factory() as db:
+        project = Project(
+            id="p_startup_active_slot",
+            name="Startup Active Slot",
+            autonomy_mode="full_auto",
+            current_phase="AUTONOMOUS_LOOP",
+        )
+        session = AgentSession(
+            id="as_startup_active_slot",
+            project_id=project.id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Continue the existing session.",
+            pid=12345,
+        )
+        db.add_all([project, session])
+        db.commit()
+
+    assert agent_sessions_module.acquire_supervisor_slot("as_startup_active_slot")
+    try:
+        launched: list[tuple[str, str]] = []
+
+        def fake_runner(
+            session_factory_arg: object,
+            store_arg: object,
+            *,
+            project_id: str,
+            session_id: str,
+            **kwargs: object,
+        ) -> None:
+            del session_factory_arg, store_arg, kwargs
+            launched.append((project_id, session_id))
+
+        start_active_main_session_supervisors(
+            session_factory,
+            store,
+            supervisor_runner=fake_runner,
+        )
+    finally:
+        agent_sessions_module.release_supervisor_slot("as_startup_active_slot")
+
+    assert launched == []
+    with session_factory() as db:
+        events = list(db.scalars(select(AgentTranscriptEvent).where(AgentTranscriptEvent.session_id == "as_startup_active_slot")))
+        assert events == []
+
+
+def test_startup_supervisor_does_not_emit_stale_pid_event_when_cross_process_lease_is_active(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    monkeypatch.setattr(agent_sessions_module, "pid_is_alive", lambda pid: True)
+
+    with session_factory() as db:
+        project = Project(
+            id="p_startup_active_lease",
+            name="Startup Active Lease",
+            autonomy_mode="full_auto",
+            current_phase="AUTONOMOUS_LOOP",
+        )
+        session = AgentSession(
+            id="as_startup_active_lease",
+            project_id=project.id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Continue the existing session.",
+            pid=23456,
+        )
+        db.add_all([project, session])
+        db.commit()
+
+    assert acquire_supervisor_lease(
+        session_factory,
+        session_id="as_startup_active_lease",
+        owner_id="other-supervisor",
+        ttl_seconds=60,
+    )
+    try:
+        launched: list[tuple[str, str]] = []
+
+        def fake_runner(
+            session_factory_arg: object,
+            store_arg: object,
+            *,
+            project_id: str,
+            session_id: str,
+            **kwargs: object,
+        ) -> None:
+            del session_factory_arg, store_arg, kwargs
+            launched.append((project_id, session_id))
+
+        start_active_main_session_supervisors(
+            session_factory,
+            store,
+            supervisor_runner=fake_runner,
+        )
+    finally:
+        release_supervisor_lease(
+            session_factory,
+            session_id="as_startup_active_lease",
+            owner_id="other-supervisor",
+        )
+
+    assert launched == []
+    with session_factory() as db:
+        events = list(db.scalars(select(AgentTranscriptEvent).where(AgentTranscriptEvent.session_id == "as_startup_active_lease")))
+        assert events == []
+
+
 def test_agent_supervisor_lease_prevents_duplicate_cross_process_owners(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)

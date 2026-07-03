@@ -769,18 +769,36 @@ def start_active_main_session_supervisors(
                     created_by="tablex-startup-supervisor",
                 )
             elif session.pid is not None:
-                session.status = "between_turns"
-                session.last_error = "Server restarted while Codex was active; Tablex will resume the same session."
-                append_session_event(
-                    db,
-                    session,
-                    source="tablex_sidecar",
-                    event_type="startup_stale_runner_detected",
-                    role="harness",
-                    title="Startup will recover Full Auto",
-                    content="Tablex restarted and will recover the active autonomous session.",
-                    payload={"previous_pid": session.pid},
-                )
+                previous_pid = session.pid
+                if pid_is_alive(previous_pid):
+                    if supervisor_slot_active(session.id) or supervisor_lease_active(db, session.id):
+                        continue
+                    session.status = "between_turns"
+                    session.last_error = "Server restarted while Codex was active; Tablex will resume the same session."
+                    append_session_event(
+                        db,
+                        session,
+                        source="tablex_sidecar",
+                        event_type="startup_stale_runner_detected",
+                        role="harness",
+                        title="Startup will recover Full Auto",
+                        content="Tablex restarted and will recover the active autonomous session.",
+                        payload={"previous_pid": previous_pid, "process_alive": True},
+                    )
+                else:
+                    session.pid = None
+                    session.status = "between_turns"
+                    session.last_error = "Cleared a stale Codex PID from before startup; Tablex will resume the same session."
+                    append_session_event(
+                        db,
+                        session,
+                        source="tablex_sidecar",
+                        event_type="startup_dead_runner_pid_cleared",
+                        role="harness",
+                        title="Startup cleared stale Codex PID",
+                        content="Tablex found a stored Codex PID that is no longer alive and will resume the same AgentSession.",
+                        payload={"previous_pid": previous_pid, "process_alive": False},
+                    )
             launch_specs.append((project.id, session.id))
         db.commit()
     threads: list[threading.Thread] = []
@@ -835,26 +853,7 @@ def run_main_agent_session_supervisor(
                     append_supervisor_lease_lost_event(db, session=session, owner_id=owner_id)
                     db.commit()
                     return
-                if session.pid and pid_is_alive(session.pid):
-                    previous_pid = session.pid
-                    workspace_hint = Path(session.workspace_path) if session.workspace_path else None
-                    terminated = False
-                    if pid_matches_agent_codex_process(previous_pid, workspace_hint, session.id):
-                        terminate_stale_codex_process(previous_pid)
-                        terminated = True
-                    session.pid = None
-                    session.status = "between_turns"
-                    session.last_error = "Recovered an unobserved Codex process from an earlier supervisor."
-                    append_session_event(
-                        db,
-                        session,
-                        source="tablex_sidecar",
-                        event_type="stale_runner_process_recovered",
-                        role="harness",
-                        title="Recovered unobserved Codex process",
-                        content="A stored Codex PID could not be monitored by this supervisor; Tablex cleared it and will resume the same session.",
-                        payload={"previous_pid": previous_pid, "terminated_process": terminated},
-                    )
+                if clear_stale_stored_runner_pid(db, session=session):
                     db.commit()
                     if lease_lost_event.wait(1):
                         continue
@@ -1004,6 +1003,11 @@ def _lease_expired(expires_at: datetime, now: datetime) -> bool:
     if comparable.tzinfo is None:
         comparable = comparable.replace(tzinfo=timezone.utc)
     return comparable <= now
+
+
+def supervisor_lease_active(db: Session, session_id: str, *, now: datetime | None = None) -> bool:
+    lease = db.get(AgentSupervisorLease, session_id)
+    return bool(lease is not None and not _lease_expired(lease.expires_at, now or utc_now()))
 
 
 def acquire_supervisor_lease(
@@ -1178,6 +1182,51 @@ def pid_matches_agent_codex_process(pid: int, workspace: Path | None, session_id
     if workspace is not None and str(workspace) in cmdline:
         return True
     return False
+
+
+def clear_stale_stored_runner_pid(db: Session, *, session: AgentSession) -> bool:
+    if session.pid is None:
+        return False
+    previous_pid = session.pid
+    process_alive = pid_is_alive(previous_pid)
+    workspace_hint = Path(session.workspace_path) if session.workspace_path else None
+    matched_codex_process = process_alive and pid_matches_agent_codex_process(previous_pid, workspace_hint, session.id)
+    terminated = False
+    if matched_codex_process:
+        terminate_stale_codex_process(previous_pid)
+        terminated = True
+    session.pid = None
+    session.status = "between_turns"
+    if process_alive:
+        session.last_error = "Recovered an unobserved Codex process from an earlier supervisor."
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="stale_runner_process_recovered",
+            role="harness",
+            title="Recovered unobserved Codex process",
+            content="A stored Codex PID could not be monitored by this supervisor; Tablex cleared it and will resume the same session.",
+            payload={
+                "previous_pid": previous_pid,
+                "process_alive": True,
+                "matched_codex_process": matched_codex_process,
+                "terminated_process": terminated,
+            },
+        )
+    else:
+        session.last_error = "Cleared a stale Codex PID; Tablex will resume the same session."
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="stale_runner_pid_cleared",
+            role="harness",
+            title="Cleared stale Codex PID",
+            content="A stored Codex PID was no longer alive; Tablex cleared it and will resume the same AgentSession.",
+            payload={"previous_pid": previous_pid, "process_alive": False},
+        )
+    return True
 
 
 def retry_delay_seconds(consecutive_failures: int) -> int:
