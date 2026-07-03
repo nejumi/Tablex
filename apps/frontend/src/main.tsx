@@ -368,6 +368,12 @@ const englishMessages = {
   researchPlanTitle: "Research Plan",
   researchPlanEmpty: "No active ResearchPlan yet. Start the agent or ask in Chat; Tablex will create planning artifacts when they are useful.",
   researchPlanTimelineHint: "Codex can append project-specific blocks as the work evolves.",
+  researchPlanDetailNextAction: "Next action",
+  researchPlanDetailDoneCriteria: "Done criteria",
+  researchPlanDetailBlockers: "Blockers",
+  researchPlanDetailEvidence: "Evidence",
+  researchPlanSummaryBlock: "block",
+  researchPlanSummaryBlocks: "blocks",
   planBlockDataUpload: "Data upload",
   planBlockDataUploadPending: "Drop CSV/Parquet files or import a benchmark before the loop starts.",
   planBlockDataUploadDone: "DatasetSnapshot exists.",
@@ -737,6 +743,12 @@ const japaneseMessages: LocaleMessages = {
   researchPlanTitle: "Research Plan",
   researchPlanEmpty: "有効なResearchPlanはまだありません。Agentを開始するかChatで依頼すると、必要な時にTablexが計画artifactを作ります。",
   researchPlanTimelineHint: "Codexが状況に応じてProject固有のブロックを右へ継ぎ足します。",
+  researchPlanDetailNextAction: "次の行動",
+  researchPlanDetailDoneCriteria: "完了条件",
+  researchPlanDetailBlockers: "止めているもの",
+  researchPlanDetailEvidence: "根拠",
+  researchPlanSummaryBlock: "ブロック",
+  researchPlanSummaryBlocks: "ブロック",
   planBlockDataUpload: "データアップロード",
   planBlockDataUploadPending: "CSV/Parquetを投入するか、benchmarkをimportするとloopを開始できます。",
   planBlockDataUploadDone: "DatasetSnapshotがあります。",
@@ -1944,6 +1956,14 @@ type ResearchPlanTimelineBlock = {
   evidence: string | null;
   target_tab: string | null;
   target_anchor: string | null;
+  phase?: string | null;
+  next_action?: string | null;
+  done_criteria?: string | null;
+  blockers?: string[];
+  supporting_artifacts?: Array<{
+    path: string;
+    exists: boolean | null;
+  }>;
   subtasks: Array<{
     id: string;
     title: string;
@@ -5358,6 +5378,7 @@ function ResearchPlanTimeline({
   const activeBlockRef = React.useRef<HTMLButtonElement | null>(null);
   const expandedBlock = blocks.find((block) => block.id === expandedBlockId && block.subtasks?.length);
   const activeBlockKey = selectedResearchPlanBlockKey(blocks);
+  const summary = researchPlanCompactSummary(blocks, text);
 
   React.useLayoutEffect(() => {
     if (!timelineRef.current || !activeBlockRef.current) return;
@@ -5432,7 +5453,11 @@ function ResearchPlanTimeline({
         </div>
       ) : null}
       <div className="research-plan-footer">
-        <span>{text.researchPlanTimelineHint}</span>
+        <span>
+          {summary}
+          {summary ? " · " : ""}
+          {text.researchPlanTimelineHint}
+        </span>
         {latestResearchPlan ? (
           <a className="icon-link" href={`${apiBase}/api/artifacts/${latestResearchPlan.id}/download`} title="Download ResearchPlan">
             <Download size={16} />
@@ -5675,7 +5700,7 @@ function researchPlanBlocksFromTimeline(
   if (!timeline?.blocks.length) return [];
   return timeline.blocks.map((block, index) => {
     const targetTab = block.target_tab ? tabFromString(block.target_tab, "Home") : null;
-    const subtasks = block.subtasks.map((subtask) => {
+    const subtasks: ResearchPlanSubtask[] = block.subtasks.map((subtask) => {
       const subtaskTab = subtask.target_tab ? tabFromString(subtask.target_tab, targetTab ?? "Home") : targetTab;
       return {
         id: subtask.id,
@@ -5688,6 +5713,7 @@ function researchPlanBlocksFromTimeline(
         onClick: subtaskTab ? () => onNavigateToTarget(subtaskTab, subtask.target_anchor) : undefined
       };
     });
+    subtasks.push(...derivedResearchPlanSubtasks(block, text));
     return {
       id: block.id,
       title: block.title,
@@ -5699,6 +5725,67 @@ function researchPlanBlocksFromTimeline(
       onClick: targetTab ? () => onNavigateToTarget(targetTab, block.target_anchor) : undefined
     };
   });
+}
+
+function derivedResearchPlanSubtasks(block: ResearchPlanTimelineBlock, text: LocaleMessages): ResearchPlanSubtask[] {
+  const derived: ResearchPlanSubtask[] = [];
+  if (block.next_action) {
+    derived.push({
+      id: `${block.id}:next_action`,
+      title: text.researchPlanDetailNextAction,
+      detail: block.next_action,
+      status: block.status,
+      evidence: block.phase ?? null
+    });
+  }
+  if (block.done_criteria) {
+    derived.push({
+      id: `${block.id}:done_criteria`,
+      title: text.researchPlanDetailDoneCriteria,
+      detail: block.done_criteria,
+      status: block.status,
+      evidence: null
+    });
+  }
+  if (block.blockers?.length) {
+    derived.push({
+      id: `${block.id}:blockers`,
+      title: text.researchPlanDetailBlockers,
+      detail: block.blockers.join(" / "),
+      status: "blocked",
+      evidence: `${block.blockers.length}`
+    });
+  }
+  const existingArtifacts = block.supporting_artifacts?.filter((artifact) => artifact.exists !== false) ?? [];
+  if (existingArtifacts.length) {
+    derived.push({
+      id: `${block.id}:supporting_artifacts`,
+      title: text.researchPlanDetailEvidence,
+      detail: existingArtifacts
+        .slice(0, 4)
+        .map((artifact) => artifact.path)
+        .join(" / "),
+      status: block.status === "blocked" ? "pending" : block.status,
+      evidence: `${existingArtifacts.length}`
+    });
+  }
+  return derived;
+}
+
+function researchPlanCompactSummary(blocks: ResearchPlanBlock[], text: LocaleMessages): string {
+  if (!blocks.length) return "";
+  const counts = blocks.reduce<Record<ResearchPlanBlockStatus, number>>(
+    (acc, block) => {
+      acc[block.status] += 1;
+      return acc;
+    },
+    { done: 0, active: 0, pending: 0, blocked: 0, waiting: 0, skipped: 0 }
+  );
+  const parts = (Object.keys(counts) as ResearchPlanBlockStatus[])
+    .filter((status) => counts[status] > 0)
+    .map((status) => `${researchPlanStatusLabel(status, text)} ${counts[status]}`);
+  const blockLabel = blocks.length === 1 ? text.researchPlanSummaryBlock : text.researchPlanSummaryBlocks;
+  return `${blocks.length} ${blockLabel}: ${parts.join(" / ")}`;
 }
 
 function attachResearchPlanSubtasks(
@@ -12452,6 +12539,9 @@ function NotebooksTab({
   const hasEvidenceCapture = Boolean(reviewNotebook?.coverage.has_execution_capture || reviewEvidenceHtml);
   const story = analysisStory?.story ?? null;
   const storyPreviewArtifactId = textField(story?.selected_source?.preview_artifact_id) ?? readablePreviewArtifactId;
+  const storySourceType = textField(story?.source_type);
+  const hasReadableStoryEvidence = Boolean(storyPreviewArtifactId || hasEvidenceCapture);
+  const hasEdaReviewEvidence = Boolean(latestEdaReviewHtml || storySourceType === "eda_review");
   const notebookFocusHeadline =
     textField(story?.headline) ??
     (reviewNotebook ? reviewNotebook.title : "Create the first readable analysis story");
@@ -12516,11 +12606,11 @@ function NotebooksTab({
           <p>{notebookFocusReason}</p>
           <div className="badge-row">
             <span className={story ? "badge" : "badge muted"}>{story ? "story ready" : "story pending"}</span>
-            <span className={hasEvidenceCapture ? "badge" : "badge risk"}>
-              {hasEvidenceCapture ? "evidence captured" : "capture needed"}
+            <span className={hasReadableStoryEvidence ? "badge" : "badge risk"}>
+              {hasReadableStoryEvidence ? "readable evidence" : "capture needed"}
             </span>
-            <span className={latestEdaReviewHtml ? "badge" : "badge warning"}>
-              {latestEdaReviewHtml ? "EDA review ready" : "EDA review not run"}
+            <span className={hasEdaReviewEvidence ? "badge" : "badge warning"}>
+              {hasEdaReviewEvidence ? "EDA review ready" : "EDA review not run"}
             </span>
             {divertedFromEmptyDiagnostics ? <span className="badge warning">empty diagnostics skipped</span> : null}
           </div>

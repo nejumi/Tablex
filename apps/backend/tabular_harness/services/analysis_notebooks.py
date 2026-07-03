@@ -39,6 +39,8 @@ from tabular_harness.services.artifacts import (
     create_lineage_edge,
 )
 
+NOTEBOOK_INDEX_FIGURE_ID_LIMIT = 12
+
 
 @dataclass(frozen=True)
 class AnalysisNotebookResult:
@@ -195,7 +197,7 @@ def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any
         "recommended_notebook": recommended,
         "groups": _notebook_groups(items_by_created),
         "items": items_by_created,
-        "next_actions": _notebook_index_next_actions(project, items_by_created),
+        "next_actions": _notebook_index_next_actions(project, items_by_created, recommended=recommended),
     }
 
 
@@ -2081,7 +2083,7 @@ def _notebook_index_item(
             "execution_source": execution_source_artifact.id if execution_source_artifact else None,
             "evidence_bundle": evidence_bundle_artifact.id if evidence_bundle_artifact else None,
             "evidence_html": evidence_html_artifact.id if evidence_html_artifact else None,
-            "evidence_figures": [artifact.id for artifact in evidence_figure_artifacts],
+            "evidence_figures": [artifact.id for artifact in evidence_figure_artifacts[:NOTEBOOK_INDEX_FIGURE_ID_LIMIT]],
         },
         "report_id": report.id if report else None,
         "visualization_id": visualization.id if visualization else None,
@@ -2838,7 +2840,12 @@ def _notebook_groups(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return groups
 
 
-def _notebook_index_next_actions(project: Project, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _notebook_index_next_actions(
+    project: Project,
+    items: list[dict[str, Any]],
+    *,
+    recommended: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     kinds = {str(item["notebook_kind"]) for item in items}
     actions: list[dict[str, Any]] = []
     if "data_understanding" not in kinds:
@@ -2849,21 +2856,31 @@ def _notebook_index_next_actions(project: Project, items: list[dict[str, Any]]) 
                 "reason": "Start with profile, target, missingness, and assumption context before model analysis.",
             }
         )
-    if "model_diagnostics" not in kinds:
-        actions.append(
-            {
-                "label": "Generate Model Diagnostics notebook after a run",
-                "endpoint": "/api/runs/{run_id}/analysis-notebook",
-                "reason": "Use persisted ExperimentRun evidence, prediction outputs, validation status, and diagnostics artifacts.",
-            }
+    uncaptured = recommended if recommended and not recommended["coverage"].get("has_execution_capture") else None
+    if uncaptured is None:
+        uncaptured = next(
+            (
+                item
+                for item in items
+                if item["notebook_kind"] in {"data_understanding", "model_diagnostics"}
+                and not item["coverage"].get("has_execution_capture")
+            ),
+            None,
         )
-    uncaptured = next((item for item in items if not item["coverage"].get("has_execution_capture")), None)
     if uncaptured is not None:
         actions.append(
             {
                 "label": "Capture notebook execution evidence",
                 "endpoint": f"/api/analysis-notebooks/{uncaptured['artifact_ids']['notebook']}/execution-capture",
                 "reason": "Create a safe static capture manifest, report, HTML preview, and figure manifest before full notebook execution.",
+            }
+        )
+    if "model_diagnostics" not in kinds:
+        actions.append(
+            {
+                "label": "Generate Model Diagnostics notebook after a run",
+                "endpoint": "/api/runs/{run_id}/analysis-notebook",
+                "reason": "Use persisted ExperimentRun evidence, prediction outputs, validation status, and diagnostics artifacts.",
             }
         )
     if not actions:

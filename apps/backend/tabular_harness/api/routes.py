@@ -4841,20 +4841,84 @@ def clean_research_plan_timeline_blocks(raw_blocks: Any) -> list[dict[str, Any]]
         raw_status = raw_block.get("status")
         status = raw_status if isinstance(raw_status, str) and raw_status in statuses else "pending"
         block_id = raw_block.get("id")
-        evidence = raw_block.get("evidence")
+        evidence = _research_plan_block_evidence(raw_block)
+        subtitle = _research_plan_block_subtitle(raw_block)
         blocks.append(
             {
                 "id": block_id if isinstance(block_id, str) and block_id.strip() else f"plan_block_{index}",
                 "title": title.strip()[:160],
-                "subtitle": str(raw_block.get("subtitle") or "").strip()[:600],
+                "subtitle": subtitle[:600],
                 "status": status,
-                "evidence": str(evidence).strip()[:240] if evidence is not None else None,
+                "evidence": evidence[:240] if evidence else None,
                 "target_tab": raw_block.get("target_tab") if isinstance(raw_block.get("target_tab"), str) else None,
                 "target_anchor": raw_block.get("target_anchor") if isinstance(raw_block.get("target_anchor"), str) else None,
                 "subtasks": clean_research_plan_timeline_subtasks(raw_block.get("subtasks")),
+                "phase": str(raw_block.get("phase") or "").strip()[:120] or None,
+                "next_action": str(raw_block.get("next_action") or "").strip()[:600] or None,
+                "done_criteria": str(raw_block.get("done_criteria") or "").strip()[:600] or None,
+                "blockers": _research_plan_string_list(raw_block.get("blockers"), limit=6),
+                "supporting_artifacts": _research_plan_supporting_artifacts(raw_block.get("supporting_artifacts"), limit=8),
             }
         )
     return blocks
+
+
+def _research_plan_block_subtitle(raw_block: dict[str, Any]) -> str:
+    for key in ("subtitle", "why_it_matters", "next_action", "notes", "done_criteria"):
+        value = raw_block.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _research_plan_block_evidence(raw_block: dict[str, Any]) -> str | None:
+    evidence = raw_block.get("evidence")
+    if isinstance(evidence, str) and evidence.strip():
+        return evidence.strip()
+    blockers = _research_plan_string_list(raw_block.get("blockers"), limit=3)
+    if blockers:
+        return f"{len(blockers)} blocker{'s' if len(blockers) != 1 else ''}"
+    supporting_artifacts = _research_plan_supporting_artifacts(raw_block.get("supporting_artifacts"), limit=8)
+    existing_count = sum(1 for item in supporting_artifacts if item.get("exists") is True)
+    if existing_count:
+        return f"{existing_count} evidence"
+    phase = raw_block.get("phase")
+    if isinstance(phase, str) and phase.strip():
+        return phase.strip()
+    return None
+
+
+def _research_plan_string_list(value: Any, *, limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    output: list[str] = []
+    for item in value[:limit]:
+        text = str(item or "").strip()
+        if text:
+            output.append(text[:240])
+    return output
+
+
+def _research_plan_supporting_artifacts(value: Any, *, limit: int) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    output: list[dict[str, Any]] = []
+    for item in value[:limit]:
+        if isinstance(item, dict):
+            path = str(item.get("path") or item.get("artifact_id") or item.get("name") or "").strip()
+            if not path:
+                continue
+            output.append(
+                {
+                    "path": path[:320],
+                    "exists": bool(item.get("exists")) if "exists" in item else None,
+                }
+            )
+        else:
+            text = str(item or "").strip()
+            if text:
+                output.append({"path": text[:320], "exists": None})
+    return output
 
 
 def clean_research_plan_timeline_subtasks(raw_subtasks: Any) -> list[dict[str, Any]]:

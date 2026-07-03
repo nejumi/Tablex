@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from tabular_harness.api.routes import artifact_preview_limit_bytes, artifact_preview_to_dict, report_to_dict
+from tabular_harness.api.routes import (
+    artifact_preview_limit_bytes,
+    artifact_preview_to_dict,
+    report_to_dict,
+)
 from tabular_harness.models.entities import Artifact, Assumption, Project, Report, utc_now
 from tabular_harness.services.reporting import (
     build_assumption_risk_spec,

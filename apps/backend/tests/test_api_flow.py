@@ -1709,9 +1709,11 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
                     {
                         "id": "deep_eda",
                         "title": "Deep EDA",
-                        "subtitle": "Inspect salary tail and relational coverage.",
+                        "why_it_matters": "Inspect salary tail and relational coverage.",
+                        "next_action": "Open the EDA notebook and validate the tail story.",
+                        "done_criteria": "Tail risk is documented with a readable artifact.",
+                        "supporting_artifacts": [{"path": "notebooks/deep_eda.py", "exists": True}],
                         "status": "active",
-                        "evidence": "notebooks/deep_eda.py",
                         "target_tab": "Notebooks",
                         "target_anchor": "notebook-preview-top",
                         "subtasks": [
@@ -1737,6 +1739,11 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert timeline["source_artifact_id"] == artifact.id
     assert [block["id"] for block in timeline["blocks"]] == ["deep_eda", "invalid_status"]
     assert timeline["blocks"][0]["status"] == "active"
+    assert timeline["blocks"][0]["subtitle"] == "Inspect salary tail and relational coverage."
+    assert timeline["blocks"][0]["next_action"] == "Open the EDA notebook and validate the tail story."
+    assert timeline["blocks"][0]["done_criteria"] == "Tail risk is documented with a readable artifact."
+    assert timeline["blocks"][0]["evidence"] == "1 evidence"
+    assert timeline["blocks"][0]["supporting_artifacts"][0]["path"] == "notebooks/deep_eda.py"
     assert timeline["blocks"][0]["subtasks"][0]["target_tab"] == "Insight"
     assert timeline["blocks"][1]["status"] == "pending"
 

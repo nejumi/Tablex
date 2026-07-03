@@ -291,3 +291,46 @@ def test_notebook_index_uses_latest_artifact_version_per_name(tmp_path: Path) ->
         item = index["items"][0]
         assert item["notebook_artifact_id"] == "art_notebook_v2"
         assert item["artifact_ids"]["html_preview"] == "art_html_v2"
+
+
+def test_notebook_index_caps_figure_ids_and_targets_recommended_capture(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    project_id = "p_notebook_caps"
+
+    with sessionmaker(engine)() as db:
+        project = Project(id=project_id, name="Notebook Caps")
+        data_notebook = artifact(
+            "art_data_notebook",
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="data_understanding_notebook",
+            metadata={"notebook_kind": "data_understanding"},
+        )
+        newer_unknown_notebook = artifact(
+            "art_unknown_notebook",
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="agent_side_notebook",
+            metadata={"notebook_kind": "agent_authored"},
+        )
+        evidence_figures = [
+            artifact(
+                f"art_evidence_figure_{index}",
+                project_id=project_id,
+                asset_type="notebook_evidence_svg",
+                name=f"notebook_evidence_figure_{index}",
+                metadata={"notebook_artifact_id": data_notebook.id},
+            )
+            for index in range(20)
+        ]
+        db.add_all([project, data_notebook, newer_unknown_notebook, *evidence_figures])
+        db.commit()
+
+        index = build_project_notebook_index(db, project)
+
+        recommended = index["recommended_notebook"]
+        assert recommended["notebook_artifact_id"] == data_notebook.id
+        assert recommended["coverage"]["evidence_figure_count"] == 20
+        assert len(recommended["artifact_ids"]["evidence_figures"]) == 12
+        assert index["next_actions"][0]["endpoint"] == f"/api/analysis-notebooks/{data_notebook.id}/execution-capture"
