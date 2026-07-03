@@ -77,7 +77,7 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
 
 - Do not prune historical duplicate artifacts automatically. Existing projects may still contain large artifact histories from older naming behavior; deletion or compaction needs an explicit maintenance command and user approval.
 - systemd/supervisord unit files remain future work. Docker Compose wiring is present for local split-process operation.
-- Full browser UX review remains necessary for Chat/Raw rendering, Research Plan centering, end-to-end Notebook rendering, and Activity overlay behavior.
+- Full browser UX review remains necessary for end-to-end Notebook rendering and Activity overlay behavior under live running workloads. Chat/Raw and Research Plan Japanese rendering now have Firefox Playwright evidence for the inspected project.
 - Chat quality still depends on Codex honoring `reports/chat_update.md` at a useful cadence. The harness now requests those updates from the supervisor path as well as user/chat/activity paths, but real long-running sessions should be observed to confirm the cadence feels natural.
 - The product still has large frontend/backend files (`main.tsx`, `routes.py`, `analysis_notebooks.py`). Future edits should reduce risk through extraction rather than broad, unrelated edits.
 
@@ -103,4 +103,7 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
   - `npm run build` in `apps/frontend`
   - `.venv/bin/pytest apps/backend/tests/test_api_flow.py::test_agent_chat_writes_active_session_instruction_to_workspace_inbox apps/backend/tests/test_api_flow.py::test_agent_chat_history_pairs_main_session_update_to_delivered_instruction apps/backend/tests/test_api_flow.py::test_agent_chat_history_pairs_each_main_session_update_once -q`
   - `git diff --check`
-  - Playwright browser launch was attempted but could not run in this environment because the CLI requires system Chrome at `/opt/google/chrome/chrome`; `playwright-cli install-browser chrome` requires sudo/password and no existing browser session was available.
+  - Playwright CLI Firefox browser check for `#/projects/p_9f25dd620d8c` with `tablex.userSettings.v1.locale=ja-JP`.
+  - Verified the Japanese Home snapshot renders localized project status chips, Mission Control, Research Plan anchors, collapsed display-language refresh block for unlocalized Codex-added plan blocks, Chat input-ready state, and Raw stdout/stderr download links plus JSONL tail.
+  - Saved visual evidence outside git at `output/playwright/fable-hardening-chat-ja-firefox.png` and `output/playwright/fable-hardening-raw-ja-firefox.png`.
+  - Console error check reported 0 browser errors.
