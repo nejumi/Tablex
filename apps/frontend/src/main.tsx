@@ -8082,6 +8082,12 @@ function agentChatWaitObservationItems(brief: Record<string, unknown> | null | u
   return items.slice(0, 5);
 }
 
+function agentChatWaitLatestCodexMessage(brief: Record<string, unknown> | null | undefined): string | null {
+  const observation = objectRecord(brief?.agent_session_observation);
+  const latest = objectRecord(observation?.latest_codex_message);
+  return textField(latest?.content);
+}
+
 function AgentConversationTurnCard({
   turn,
   text,
@@ -8103,6 +8109,7 @@ function AgentConversationTurnCard({
   const hasPrimaryNext = Boolean(assistant?.actionSummary?.next_step?.target_tab);
   const visibleActions = hasPrimaryNext ? [] : assistant?.actions?.slice(0, 2) ?? [];
   const waitObservationItems = active ? agentChatWaitObservationItems(assistant?.responseBrief, text) : [];
+  const latestCodexMessage = active ? agentChatWaitLatestCodexMessage(assistant?.responseBrief) : null;
   return (
     <article className={`agent-turn-card ${active ? "is-active" : ""}`}>
       {turn.user ? (
@@ -8137,6 +8144,12 @@ function AgentConversationTurnCard({
                 {waitObservationItems.map((item) => (
                   <span key={item}>{item}</span>
                 ))}
+              </div>
+            ) : null}
+            {latestCodexMessage ? (
+              <div className="agent-chat-wait-latest">
+                <span>{text.agentReplyWaitMetaOutput}</span>
+                <p>{latestCodexMessage}</p>
               </div>
             ) : null}
             {assistant.actionSummary ? (

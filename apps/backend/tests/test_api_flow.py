@@ -1932,6 +1932,8 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert observation["agent_session_id"] == "ags_inbox_delivery"
     assert observation["status"] == "running"
     assert observation["last_codex_output_seconds_ago"] is not None
+    assert observation["latest_codex_message"]["content"] == "現在のデータを確認しています。"
+    assert observation["latest_codex_message"]["event_index"] == 0
     assert observation["raw_transcript"]["stdout_line_count"] == 1
 
     inbox = user_instructions_inbox_path(workspace)
@@ -1973,6 +1975,7 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert history[-1]["response_brief"]["wait_state"]["worker_state"] == "waiting_for_main_agent_reply"
     history_observation = history[-1]["response_brief"]["agent_session_observation"]
     assert history_observation["agent_session_id"] == "ags_inbox_delivery"
+    assert history_observation["latest_codex_message"]["content"] == "現在のデータを確認しています。"
     assert history_observation["raw_transcript"]["stdout_line_count"] == 1
 
     worker = SyncWorker(handlers={"agent_chat_turn": agent_chat_turn_handler}, store=app.state.artifact_store)

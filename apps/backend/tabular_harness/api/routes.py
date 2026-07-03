@@ -4654,6 +4654,7 @@ def agent_session_observation_for_chat_wait(db: Session, session: AgentSession) 
     now = utc_now()
     last_codex_output_at = latest_codex_transcript_output_at(db, session_id=session.id)
     last_chat_update_at = latest_codex_chat_update_at(db, project_id=session.project_id, session_id=session.id)
+    latest_codex_message = latest_codex_message_observation_for_session(db, session_id=session.id)
     raw_observation = raw_transcript_observation_for_session(session)
     return {
         "schema_version": "agent_session_chat_wait_observation.v1",
@@ -4666,10 +4667,42 @@ def agent_session_observation_for_chat_wait(db: Session, session: AgentSession) 
         "last_heartbeat_seconds_ago": seconds_since_timestamp(session.last_heartbeat_at, now=now),
         "last_codex_output_at": last_codex_output_at.isoformat() if last_codex_output_at else None,
         "last_codex_output_seconds_ago": seconds_since_timestamp(last_codex_output_at, now=now),
+        "latest_codex_message": latest_codex_message,
         "last_chat_update_at": last_chat_update_at.isoformat() if last_chat_update_at else None,
         "last_chat_update_seconds_ago": seconds_since_timestamp(last_chat_update_at, now=now),
         "raw_transcript": raw_observation,
     }
+
+
+def latest_codex_message_observation_for_session(
+    db: Session,
+    *,
+    session_id: str,
+    limit: int = 360,
+) -> dict[str, Any] | None:
+    events = list(
+        db.scalars(
+            select(AgentTranscriptEvent)
+            .where(
+                AgentTranscriptEvent.session_id == session_id,
+                AgentTranscriptEvent.source == "codex_cli",
+                AgentTranscriptEvent.title == "Codex message",
+                AgentTranscriptEvent.content.is_not(None),
+            )
+            .order_by(AgentTranscriptEvent.event_index.desc())
+            .limit(20)
+        ).all()
+    )
+    for event in events:
+        content = (event.content or "").strip()
+        if not content or content.startswith("usage:"):
+            continue
+        return {
+            "event_index": event.event_index,
+            "created_at": event.created_at.isoformat(),
+            "content": compact_activity_summary(content, limit=limit),
+        }
+    return None
 
 
 @router.get("/api/projects/{project_id}/agent-chat/history", response_model=list[AgentChatHistoryTurnRead])

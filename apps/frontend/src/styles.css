@@ -5055,6 +5055,30 @@ td {
   line-height: 1.2;
 }
 
+.agent-chat-wait-latest {
+  display: grid;
+  gap: 4px;
+  max-width: min(100%, 780px);
+  border: 1px solid color-mix(in srgb, var(--accent-2) 30%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-muted) 78%, transparent);
+  padding: 8px 10px;
+}
+
+.agent-chat-wait-latest span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 820;
+}
+
+.agent-chat-wait-latest p {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .chat-avatar {
   display: inline-grid;
   flex: 0 0 auto;
