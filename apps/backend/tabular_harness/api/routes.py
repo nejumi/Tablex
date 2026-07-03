@@ -4515,55 +4515,6 @@ def is_sidecar_chat_request(message: str) -> bool:
     return message.strip().lower() == "/btw"
 
 
-def delivered_to_main_session_chat_turn(
-    *,
-    project: Project,
-    session: AgentSession,
-    event: AgentTranscriptEvent,
-    message: str,
-    locale: str | None,
-    progress_event: AgentTranscriptEvent | None = None,
-) -> dict[str, Any]:
-    japanese = (locale or "").lower().startswith("ja")
-    assistant_message = (
-        "受け取りました。実行中の分析に届けました。次の進捗更新で、反映した内容がこのChatに戻ります。"
-        if japanese
-        else "Received. I delivered this to the running analysis; the next progress update will bring the reflected work back here."
-    )
-    return {
-        "schema_version": "agent_chat_turn.v1",
-        "project_id": project.id,
-        "user_message": message,
-        "assistant_message": assistant_message,
-        "intent": {
-            "type": "agent_conversation",
-            "source": "main_agent_session_inbox",
-            "routing_policy": "delivered_to_running_codex_session_without_small_response_job",
-        },
-        "actions": [],
-        "action_summary": {},
-        "response_brief": {
-            "schema_version": "agent_chat_main_session_delivery.v1",
-            "response_locale": locale,
-            "agent_session_id": session.id,
-            "agent_transcript_event_id": event.id,
-            "agent_transcript_event_index": event.event_index,
-            "delivery": "workspace_inbox_and_transcript",
-            "progress_update_requested_event_id": progress_event.id if progress_event is not None else None,
-        },
-        "response_composer": {
-            "schema_version": "agent_response_composer.v1",
-            "mode": "main_agent_session_inbox",
-            "status": "delivered_to_main_session",
-        },
-        "worker_events": [],
-        "token_usage": {"source": "main_agent_session_transcript", "is_estimate": True, "series": []},
-        "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent Chat"},
-        "artifact_id": f"pending_{event.id}",
-        "job": None,
-    }
-
-
 def queued_main_session_chat_response(
     *,
     project: Project,
