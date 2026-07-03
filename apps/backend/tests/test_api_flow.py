@@ -2040,6 +2040,59 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert completed_turn["response_brief"]["progress_artifact_id"]
 
 
+def test_agent_chat_wait_observation_falls_back_to_raw_codex_transcript(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Raw only Codex wait"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    workspace = app.state.artifact_store.root / "agent_sessions" / project_id / "ags_raw_only_wait"
+
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "AUTONOMOUS_LOOP"
+        project.autonomy_mode = "full_auto"
+        session = AgentSession(
+            id="ags_raw_only_wait",
+            project_id=project_id,
+            org_id=project.org_id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Keep the raw transcript visible while chat waits.",
+            workspace_path=str(workspace),
+            created_by="test",
+        )
+        db.add(session)
+        db.commit()
+    append_runner_stream_to_workspace(
+        workspace,
+        stream_name="stdout",
+        line='{"type":"item.completed","item":{"type":"agent_message","text":"Raw transcriptだけにある進捗です。"}}',
+    )
+
+    response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "状況を説明してください", "locale": "ja-JP"},
+    )
+    assert response.status_code == 200, response.text
+    observation = response.json()["response_brief"]["agent_session_observation"]
+    assert observation["raw_transcript"]["stdout_line_count"] == 1
+    assert observation["latest_codex_message"]["source"] == "raw_transcript_file"
+    assert observation["latest_codex_message"]["line_number"] == 1
+    assert observation["latest_codex_message"]["content"] == "Raw transcriptだけにある進捗です。"
+
+    history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
+    history_observation = history[-1]["response_brief"]["agent_session_observation"]
+    assert history_observation["latest_codex_message"]["source"] == "raw_transcript_file"
+    assert history_observation["latest_codex_message"]["content"] == "Raw transcriptだけにある進捗です。"
+
+
 def test_agent_chat_history_pairs_main_session_update_to_delivered_instruction(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")
     client = make_client(tmp_path)

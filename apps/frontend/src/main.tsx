@@ -7732,12 +7732,8 @@ function RawAgentStream({
         rawTranscript?.stderr_line_count ?? 0
       }:${rawTranscript?.updated_at ?? ""}`
     : `${events.length}:${latestEvent?.id ?? "empty"}`;
-  const activeRawLineKey =
-    rawTranscript && rawTranscript.stdout_line_count > 0
-      ? `stdout-${rawTranscript.stdout_line_count}`
-      : rawLines.length
-        ? `${rawLines[rawLines.length - 1].stream}-${rawLines[rawLines.length - 1].line_number}`
-        : null;
+  const latestRawLine = rawLines[rawLines.length - 1] ?? null;
+  const activeRawLineKey = latestRawLine ? `${latestRawLine.stream}-${latestRawLine.line_number}` : null;
   const rawScroll = useStickyBottomScroll<HTMLDivElement>(rawKey, scrollResetKey);
 
   async function submitDraft() {

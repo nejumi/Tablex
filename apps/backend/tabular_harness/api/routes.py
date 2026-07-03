@@ -4654,7 +4654,7 @@ def agent_session_observation_for_chat_wait(db: Session, session: AgentSession) 
     now = utc_now()
     last_codex_output_at = latest_codex_transcript_output_at(db, session_id=session.id)
     last_chat_update_at = latest_codex_chat_update_at(db, project_id=session.project_id, session_id=session.id)
-    latest_codex_message = latest_codex_message_observation_for_session(db, session_id=session.id)
+    latest_codex_message = latest_codex_message_observation_for_session(db, session=session)
     raw_observation = raw_transcript_observation_for_session(session)
     return {
         "schema_version": "agent_session_chat_wait_observation.v1",
@@ -4677,14 +4677,15 @@ def agent_session_observation_for_chat_wait(db: Session, session: AgentSession) 
 def latest_codex_message_observation_for_session(
     db: Session,
     *,
-    session_id: str,
+    session: AgentSession,
     limit: int = 360,
 ) -> dict[str, Any] | None:
+    db_candidate: dict[str, Any] | None = None
     events = list(
         db.scalars(
             select(AgentTranscriptEvent)
             .where(
-                AgentTranscriptEvent.session_id == session_id,
+                AgentTranscriptEvent.session_id == session.id,
                 AgentTranscriptEvent.source == "codex_cli",
                 AgentTranscriptEvent.title == "Codex message",
                 AgentTranscriptEvent.content.is_not(None),
@@ -4697,12 +4698,78 @@ def latest_codex_message_observation_for_session(
         content = (event.content or "").strip()
         if not content or content.startswith("usage:"):
             continue
-        return {
+        db_candidate = {
+            "source": "agent_transcript_event",
             "event_index": event.event_index,
             "created_at": event.created_at.isoformat(),
             "content": compact_activity_summary(content, limit=limit),
         }
+        break
+    raw_candidate = latest_codex_message_observation_from_raw_transcript(session, limit=limit)
+    if db_candidate and raw_candidate:
+        db_created_at = datetime_from_iso_or_none(db_candidate.get("created_at"))
+        raw_created_at = datetime_from_iso_or_none(raw_candidate.get("created_at"))
+        if db_created_at is not None and raw_created_at is not None and raw_created_at > db_created_at:
+            return raw_candidate
+        return db_candidate
+    return db_candidate or raw_candidate
+
+
+def latest_codex_message_observation_from_raw_transcript(
+    session: AgentSession,
+    *,
+    limit: int = 360,
+) -> dict[str, Any] | None:
+    if not session.workspace_path:
+        return None
+    stdout_path = raw_codex_transcript_path(Path(session.workspace_path))
+    _line_count, _tail, tail_lines, updated_at = tail_text_file(stdout_path, limit=80)
+    for line in reversed(tail_lines):
+        parsed = line.get("parsed")
+        if not isinstance(parsed, dict):
+            continue
+        content = codex_agent_message_content_from_event(parsed)
+        if not content or content.startswith("usage:"):
+            continue
+        created_at = codex_event_timestamp(parsed) or updated_at
+        return {
+            "source": "raw_transcript_file",
+            "line_number": line.get("line_number"),
+            "created_at": created_at,
+            "content": compact_activity_summary(content, limit=limit),
+        }
     return None
+
+
+def codex_agent_message_content_from_event(event: dict[str, Any]) -> str | None:
+    if event.get("type") != "item.completed":
+        return None
+    item = event.get("item")
+    if not isinstance(item, dict) or item.get("type") != "agent_message":
+        return None
+    for key in ("text", "output", "summary", "content"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def codex_event_timestamp(event: dict[str, Any]) -> str | None:
+    for key in ("timestamp", "time", "created_at", "createdAt"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def datetime_from_iso_or_none(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
 @router.get("/api/projects/{project_id}/agent-chat/history", response_model=list[AgentChatHistoryTurnRead])
