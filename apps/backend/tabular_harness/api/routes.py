@@ -4419,6 +4419,7 @@ def plan_project_agent_task_endpoint(
 def create_agent_chat_turn(
     project_id: str,
     payload: AgentChatCreate,
+    request: Request,
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
@@ -4487,6 +4488,11 @@ def create_agent_chat_turn(
         )
         job.status = MAIN_SESSION_CHAT_WAITING_STATUS
         job.updated_at = utc_now()
+        should_wake_main_session = (
+            project.current_phase == "AUTONOMOUS_LOOP"
+            and session.status in {"starting", "between_turns", "waiting_for_runner"}
+            and not supervisor_slot_active(session.id)
+        )
         response = queued_main_session_chat_response(
             db=db,
             project=project,
@@ -4498,6 +4504,14 @@ def create_agent_chat_turn(
             progress_event=progress_event,
         )
         db.commit()
+        if should_wake_main_session:
+            start_main_agent_session_supervisor_thread(
+                request.app.state.session_factory,
+                store,
+                project_id=project_id,
+                session_id=session.id,
+                supervisor_runner=run_main_agent_session_supervisor,
+            )
         return response
     job = create_job(
         db,

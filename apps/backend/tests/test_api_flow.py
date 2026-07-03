@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import tabular_harness.api.routes as routes_module
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -2038,6 +2039,59 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert "特徴量の見直し依頼" in completed_turn["assistant_message"]
     assert completed_turn["response_composer"]["mode"] == "main_codex_session"
     assert completed_turn["response_brief"]["progress_artifact_id"]
+
+
+def test_agent_chat_wakes_between_turns_main_session(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")
+    supervisor_starts: list[dict[str, str]] = []
+
+    def fake_start_supervisor(*args: Any, **kwargs: Any) -> None:
+        supervisor_starts.append(
+            {
+                "project_id": str(kwargs["project_id"]),
+                "session_id": str(kwargs["session_id"]),
+            }
+        )
+
+    monkeypatch.setattr(routes_module, "start_main_agent_session_supervisor_thread", fake_start_supervisor)
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Wake between turns"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    workspace = app.state.artifact_store.root / "agent_sessions" / project_id / "ags_wake_between_turns"
+
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "AUTONOMOUS_LOOP"
+        project.autonomy_mode = "full_auto"
+        session = AgentSession(
+            id="ags_wake_between_turns",
+            project_id=project_id,
+            org_id=project.org_id,
+            session_type="main_autonomous",
+            status="between_turns",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Continue when a user instruction arrives.",
+            workspace_path=str(workspace),
+            created_by="test",
+        )
+        db.add(session)
+        db.commit()
+
+    chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "この観点も次の分析に入れてください", "locale": "ja-JP"},
+    )
+
+    assert chat_response.status_code == 200, chat_response.text
+    assert supervisor_starts == [{"project_id": project_id, "session_id": "ags_wake_between_turns"}]
+    chat = chat_response.json()
+    assert chat["response_composer"]["mode"] == "main_codex_session"
+    assert chat["job"]["status"] == "waiting_for_agent"
+    assert user_instructions_inbox_path(workspace).exists()
 
 
 def test_agent_chat_wait_observation_falls_back_to_raw_codex_transcript(
