@@ -259,15 +259,7 @@ def append_session_event(
 ) -> AgentTranscriptEvent:
     with _TRANSCRIPT_EVENT_LOCK:
         db.flush()
-        current_max = db.scalar(
-            select(func.max(AgentTranscriptEvent.event_index)).where(AgentTranscriptEvent.session_id == session.id)
-        )
-        cached_next = _TRANSCRIPT_EVENT_NEXT_INDEX.get(session.id)
-        next_index = max(
-            int(current_max if current_max is not None else -1) + 1,
-            int(cached_next) if cached_next is not None else 0,
-        )
-        _TRANSCRIPT_EVENT_NEXT_INDEX[session.id] = next_index + 1
+        next_index = reserve_transcript_event_indexes(db, session_id=session.id, count=1)
         event = AgentTranscriptEvent(
             id=new_id("agte"),
             project_id=session.project_id,
@@ -288,6 +280,21 @@ def append_session_event(
         if update_heartbeat:
             session.last_heartbeat_at = utc_now()
         return event
+
+
+def reserve_transcript_event_indexes(db: Session, *, session_id: str, count: int) -> int:
+    if count <= 0:
+        raise ValueError("count must be positive")
+    cached_next = _TRANSCRIPT_EVENT_NEXT_INDEX.get(session_id)
+    if cached_next is None:
+        current_max = db.scalar(
+            select(func.max(AgentTranscriptEvent.event_index)).where(AgentTranscriptEvent.session_id == session_id)
+        )
+        next_index = int(current_max if current_max is not None else -1) + 1
+    else:
+        next_index = int(cached_next)
+    _TRANSCRIPT_EVENT_NEXT_INDEX[session_id] = next_index + count
+    return next_index
 
 
 def session_to_dict(session: AgentSession) -> dict[str, Any]:
@@ -1866,15 +1873,7 @@ def append_codex_stream_lines(
             session = db.get(AgentSession, session_id)
             if session is None:
                 return
-            current_max = db.scalar(
-                select(func.max(AgentTranscriptEvent.event_index)).where(AgentTranscriptEvent.session_id == session.id)
-            )
-            cached_next = _TRANSCRIPT_EVENT_NEXT_INDEX.get(session.id)
-            next_index = max(
-                int(current_max if current_max is not None else -1) + 1,
-                int(cached_next) if cached_next is not None else 0,
-            )
-            _TRANSCRIPT_EVENT_NEXT_INDEX[session.id] = next_index + len(lines)
+            next_index = reserve_transcript_event_indexes(db, session_id=session.id, count=len(lines))
             now = utc_now()
             for stream_name, line in lines:
                 source, event_type, title, content, payload = codex_stream_event_fields(stream_name, line)

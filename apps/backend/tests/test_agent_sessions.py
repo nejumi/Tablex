@@ -49,6 +49,7 @@ from tabular_harness.services.agent_sessions import (
     release_supervisor_lease,
     renew_supervisor_lease,
     research_plan_locale_request_path,
+    reserve_transcript_event_indexes,
     run_codex_cli_turn_streaming,
     session_output_artifact_name,
     should_register_session_output,
@@ -599,6 +600,34 @@ def test_transcript_index_reservation_survives_uncommitted_sidecar_event(tmp_pat
         "thread.started",
         "turn.started",
     ]
+
+
+def test_transcript_index_reservation_uses_cached_next_index_without_db_max_query() -> None:
+    session_id = "as_cached_index"
+    agent_sessions_module._TRANSCRIPT_EVENT_NEXT_INDEX.pop(session_id, None)
+
+    class CountingDB:
+        calls = 0
+
+        def scalar(self, statement: Any) -> int:
+            del statement
+            self.calls += 1
+            return 41
+
+    first_db = CountingDB()
+    assert reserve_transcript_event_indexes(first_db, session_id=session_id, count=2) == 42
+    assert first_db.calls == 1
+
+    class RaisingDB:
+        def scalar(self, statement: Any) -> int:
+            del statement
+            raise AssertionError("cached transcript index reservation should not query DB max")
+
+    try:
+        assert reserve_transcript_event_indexes(RaisingDB(), session_id=session_id, count=3) == 44
+        assert agent_sessions_module._TRANSCRIPT_EVENT_NEXT_INDEX[session_id] == 47
+    finally:
+        agent_sessions_module._TRANSCRIPT_EVENT_NEXT_INDEX.pop(session_id, None)
 
 
 def test_sqlite_schema_sync_repairs_duplicate_transcript_indexes(tmp_path: Path) -> None:
