@@ -3885,10 +3885,11 @@ function ProjectDetail({
 
   const refreshAgentActivity = React.useCallback(async () => {
     try {
-      const [data, sessionData, rawTranscriptData] = await Promise.all([
+      const [data, sessionData, rawTranscriptData, agentChatHistoryData] = await Promise.all([
         api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`),
         api<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`).catch(() => null),
-        api<AgentRawTranscript>(`/api/projects/${project.id}/agent-session/raw-transcript`).catch(() => null)
+        api<AgentRawTranscript>(`/api/projects/${project.id}/agent-session/raw-transcript`).catch(() => null),
+        api<AgentChatHistoryTurn[]>(`/api/projects/${project.id}/agent-chat/history`).catch(() => [])
       ]);
       const sessionId = sessionData?.id ?? null;
       const canRequestDelta = sessionId !== null && sessionId === transcriptSessionIdRef.current;
@@ -3901,6 +3902,7 @@ function ProjectDetail({
       setAgentActivity(data);
       setAgentSession(sessionData);
       setAgentRawTranscript(rawTranscriptData);
+      setAgentChatMessages((current) => mergeAgentChatMessages(agentChatHistoryToMessages(agentChatHistoryData), current));
       setAgentTranscriptEvents((current) => {
         const next = sinceIndex === null ? transcriptData : mergeTranscriptEvents(current, transcriptData);
         transcriptSessionIdRef.current = sessionId;
