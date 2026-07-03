@@ -398,7 +398,22 @@ def _research_plan_text_matches_locale(value: str, *, locale: str | None) -> boo
         return False
     japanese_char_count = len(re.findall(r"[\u3040-\u30ff\u3400-\u9fff]", value))
     latin_letter_count = len(re.findall(r"[A-Za-z]", value))
-    return japanese_char_count >= 2 and latin_letter_count <= max(18, int(japanese_char_count * 1.5))
+    if japanese_char_count < 2:
+        return False
+    if _research_plan_has_unlocalized_latin_phrase(value):
+        return False
+    return latin_letter_count <= max(18, int(japanese_char_count * 1.5))
+
+
+def _research_plan_has_unlocalized_latin_phrase(value: str) -> bool:
+    """Detect English phrase fragments that should not leak into localized plan UI."""
+    stripped = re.sub(r"`[^`]*`", " ", value)
+    stripped = re.sub(r"https?://\S+", " ", stripped)
+    for fragment in re.split(r"[\u3040-\u30ff\u3400-\u9fff]+", stripped):
+        words = re.findall(r"\b[A-Za-z][A-Za-z-]{2,}\b", fragment)
+        if len(words) >= 2:
+            return True
+    return False
 
 
 def _research_plan_requires_explicit_locale(locale: str | None) -> bool:
