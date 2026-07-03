@@ -909,6 +909,51 @@ def test_worker_acquire_handles_sqlite_naive_run_after(tmp_path: Path) -> None:
         assert acquired.id == created_id
 
 
+def test_worker_acquire_skips_currently_locked_queued_job(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Locked worker check"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    session_factory = app.state.session_factory
+    with session_factory() as db:
+        locked = create_job(db, job_type="profile_dataset", project_id=project_id, priority=100)
+        locked.locked_by = "active-worker"
+        locked.locked_at = utc_now()
+        available = create_job(db, job_type="profile_dataset", project_id=project_id, priority=10)
+        available_id = available.id
+        db.commit()
+
+    with session_factory() as db:
+        acquired = acquire_next_job(db, worker_id="second-worker", job_types={"profile_dataset"})
+        assert acquired is not None
+        assert acquired.id == available_id
+        assert acquired.locked_by == "second-worker"
+
+
+def test_worker_acquire_recovers_stale_queued_lock(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Stale lock worker check"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    session_factory = app.state.session_factory
+    with session_factory() as db:
+        stale = create_job(db, job_type="profile_dataset", project_id=project_id, priority=100)
+        stale.locked_by = "dead-worker"
+        stale.locked_at = utc_now() - timedelta(minutes=11)
+        stale_id = stale.id
+        db.commit()
+
+    with session_factory() as db:
+        acquired = acquire_next_job(db, worker_id="recovery-worker", job_types={"profile_dataset"})
+        assert acquired is not None
+        assert acquired.id == stale_id
+        assert acquired.locked_by == "recovery-worker"
+
+
 def test_sync_worker_marks_failed_after_handler_transaction_error(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_response = client.post("/api/projects", json={"name": "Worker rollback"})

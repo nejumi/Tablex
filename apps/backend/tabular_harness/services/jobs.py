@@ -84,6 +84,7 @@ JOB_TYPES = {
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}
 RUNNABLE_STATUSES = {"queued"}
 APPROVAL_REQUIRED_JOB_TYPES = {"run_agent_task"}
+JOB_LOCK_EXPIRY_SECONDS = 10 * 60
 
 
 def create_job(
@@ -209,6 +210,8 @@ def acquire_next_job(
         stmt = stmt.where(Job.project_id == project_id)
     candidates = db.scalars(stmt.limit(50)).all()
     for job in candidates:
+        if job.locked_by and not queued_job_lock_is_stale(job, now=now):
+            continue
         run_after = job.run_after
         if run_after is not None and run_after.tzinfo is None:
             run_after = run_after.replace(tzinfo=timezone.utc)
@@ -222,6 +225,18 @@ def acquire_next_job(
         db.flush()
         return job
     return None
+
+
+def queued_job_lock_is_stale(job: Job, *, now: datetime | None = None) -> bool:
+    if not job.locked_by:
+        return True
+    if job.locked_at is None:
+        return True
+    observed_now = now or utc_now()
+    locked_at = job.locked_at
+    if locked_at.tzinfo is None:
+        locked_at = locked_at.replace(tzinfo=timezone.utc)
+    return (observed_now - locked_at).total_seconds() >= JOB_LOCK_EXPIRY_SECONDS
 
 
 def dependencies_satisfied(db: Session, job: Job) -> bool:
