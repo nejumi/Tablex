@@ -4809,6 +4809,8 @@ function HomeTab({
   const latestIdea = ideas[0] ?? null;
   const mode = project.autonomy_mode ?? "approval_based";
   const datasetCount = overview?.counts.datasets ?? 0;
+  const totalArtifactCount = overview?.counts.artifacts ?? artifacts.length;
+  const projectStateLoaded = overview !== null;
   const autonomyPoweredOn = project.current_phase === "AUTONOMOUS_LOOP";
   const canStartAutonomy = datasetCount > 0;
   const focusAction = recommendation.primaryAction;
@@ -4902,10 +4904,10 @@ function HomeTab({
           </div>
           <ResearchPlanTimeline blocks={researchPlanBlocks} latestResearchPlan={latestResearchPlan} text={text} />
           <div className="mission-plan-facts">
-            <Metric label="Datasets" value={overview?.counts.datasets ?? 0} />
+            <Metric label="Datasets" value={projectStateLoaded ? datasetCount : "..."} />
             <Metric label="Runs" value={runs.length} />
             <Metric label="Risks" value={highRiskAssumptions.length} />
-            <Metric label="Artifacts" value={artifacts.length} />
+            <Metric label="Artifacts" value={projectStateLoaded ? totalArtifactCount : "..."} />
           </div>
         </section>
       </div>
@@ -4994,7 +4996,11 @@ function HomeTab({
           <MissionSurfaceButton
             icon={<Database size={17} />}
             label={text.tabData}
-            detail={`${overview?.counts.datasets ?? 0} datasets / ${project.target_column ? "target set" : "target open"}`}
+            detail={
+              projectStateLoaded
+                ? `${datasetCount} datasets / ${project.target_column ? "target set" : "target open"}`
+                : "..."
+            }
             onClick={() => onTabChange("Data")}
           />
           <MissionSurfaceButton
@@ -5016,7 +5022,11 @@ function HomeTab({
           <MissionSurfaceButton
             icon={<Layers size={17} />}
             label={text.tabAssets}
-            detail={`${artifacts.length} project artifacts / ${latestContract ? "runner contract ready" : "no contract yet"}`}
+            detail={
+              projectStateLoaded
+                ? `${totalArtifactCount} project artifacts / ${latestContract ? "runner contract ready" : "no contract yet"}`
+                : "..."
+            }
             onClick={() => onTabChange("Assets")}
           />
           <div className="mission-supporting">
@@ -8257,10 +8267,35 @@ function VisualArtifactPreview({ preview }: { preview: ArtifactPreview }) {
   );
 }
 
+function useInlinePreviewObjectUrl(source: string | null, contentType: string) {
+  const [objectUrl, setObjectUrl] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setObjectUrl(null);
+    if (!source) return undefined;
+    const blob = new Blob([source], { type: contentType });
+    const nextUrl = URL.createObjectURL(blob);
+    setObjectUrl(nextUrl);
+    return () => URL.revokeObjectURL(nextUrl);
+  }, [contentType, source]);
+
+  return objectUrl;
+}
+
 function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
   const previewType = preview.content_type === "image/svg+xml" || preview.filename.toLowerCase().endsWith(".svg") ? "SVG" : "HTML";
   const url = `${apiBase}/api/artifacts/${preview.id}/download`;
   const inlineSource = typeof preview.preview === "string" && !preview.truncated ? htmlPreviewSrcDoc(preview) : null;
+  const inlineContentType = previewType === "SVG" ? "image/svg+xml" : "text/html; charset=utf-8";
+  const inlinePreviewUrl = useInlinePreviewObjectUrl(inlineSource, inlineContentType);
+  const [frameFailed, setFrameFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    setFrameFailed(false);
+  }, [preview.id]);
+
+  const canRenderInline = Boolean(inlineSource);
+  const frameUrl = canRenderInline ? inlinePreviewUrl : null;
   return (
     <div className="preview-block">
       <div className="preview-toolbar">
@@ -8276,16 +8311,38 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
       {preview.truncated ? (
         <div className="banner warning">This preview is truncated. Download the artifact for the full notebook preview.</div>
       ) : null}
-      <div className="html-preview-shell">
-        <iframe
-          key={preview.id}
-          className="html-preview-frame"
-          src={inlineSource ? undefined : url}
-          srcDoc={inlineSource ?? undefined}
-          sandbox="allow-scripts"
-          title={`${preview.name} preview`}
-        />
-      </div>
+      {frameFailed ? (
+        <div className="banner warning">The embedded preview did not load. Open the original artifact in a new tab.</div>
+      ) : null}
+      {!canRenderInline ? (
+        <div className="html-preview-fallback">
+          <FileText size={22} />
+          <div>
+            <strong>Preview is available as an artifact.</strong>
+            <p>Open the original artifact to inspect the full HTML output.</p>
+          </div>
+          <a className="secondary-button text-link-button" href={url} target="_blank" rel="noreferrer">
+            Open original
+          </a>
+        </div>
+      ) : (
+        <div className="html-preview-shell">
+          {frameUrl ? null : (
+            <div className="html-preview-loading">
+              <Loader2 className="spin" size={16} />
+              Preparing preview...
+            </div>
+          )}
+          <iframe
+            key={preview.id}
+            className="html-preview-frame"
+            src={frameUrl ?? "about:blank"}
+            sandbox="allow-scripts"
+            title={`${preview.name} preview`}
+            onError={() => setFrameFailed(true)}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -4440,6 +4440,7 @@ td {
 }
 
 .html-preview-shell {
+  position: relative;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -4454,6 +4455,35 @@ td {
   border: 0;
   background: #fff;
   color-scheme: light;
+}
+
+.html-preview-loading,
+.html-preview-fallback {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.html-preview-loading {
+  position: absolute;
+  inset: 0;
+  justify-content: center;
+  min-height: 220px;
+  z-index: 1;
+}
+
+.html-preview-fallback {
+  justify-content: space-between;
+  padding: 18px;
+}
+
+.html-preview-fallback p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
 }
 
 .visual-preview-shell {

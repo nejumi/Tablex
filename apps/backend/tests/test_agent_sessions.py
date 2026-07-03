@@ -326,10 +326,15 @@ def test_sqlite_schema_sync_repairs_duplicate_transcript_indexes(tmp_path: Path)
 def test_session_output_artifact_name_uses_relative_path_to_avoid_stem_collisions() -> None:
     report_name = session_output_artifact_name("as_path", Path("reports/summary.md"))
     output_name = session_output_artifact_name("as_path", Path("outputs/summary.md"))
+    markdown_report_name = session_output_artifact_name("as_path", Path("reports/salary_band_report.md"))
+    html_report_name = session_output_artifact_name("as_path", Path("reports/salary_band_report.html"))
 
     assert report_name != output_name
+    assert markdown_report_name != html_report_name
     assert "reports_summary_md" in report_name
     assert "outputs_summary_md" in output_name
+    assert "reports_salary_band_report_md" in markdown_report_name
+    assert "reports_salary_band_report_html" in html_report_name
 
 
 def test_session_output_registration_throttles_fast_intermediate_versions(tmp_path: Path) -> None:
