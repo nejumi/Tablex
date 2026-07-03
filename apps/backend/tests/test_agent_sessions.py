@@ -20,6 +20,7 @@ from tabular_harness.models.entities import (
 from tabular_harness.services.agent_sessions import (
     CODEX_RAW_TRANSCRIPT_FILENAME,
     CODEX_STDERR_LOG_FILENAME,
+    StreamFileTailer,
     append_codex_stream_lines,
     append_runner_stream_to_workspace,
     append_session_event,
@@ -35,6 +36,7 @@ from tabular_harness.services.agent_sessions import (
     publish_raw_codex_transcript_snapshot,
     raw_codex_stderr_path,
     raw_codex_transcript_path,
+    run_codex_cli_turn_streaming,
     session_output_artifact_name,
     should_register_session_output,
     start_active_main_session_supervisors,
@@ -94,6 +96,100 @@ def test_codex_stream_lines_are_persisted_and_published_without_rewriting_stdout
     assert workspace / "artifacts" / CODEX_STDERR_LOG_FILENAME in published
     assert (workspace / "artifacts" / CODEX_RAW_TRANSCRIPT_FILENAME).read_text(encoding="utf-8") == stdout_line
     assert (workspace / "artifacts" / CODEX_STDERR_LOG_FILENAME).read_text(encoding="utf-8") == stderr_line
+
+
+def test_stream_file_tailer_reads_new_complete_lines_without_replaying_prefix(tmp_path: Path) -> None:
+    path = tmp_path / "codex_raw_transcript.jsonl"
+    path.write_text('{"type":"thread.started"}\n', encoding="utf-8")
+    tailer = StreamFileTailer(path, offset=path.stat().st_size)
+
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write('{"type":"turn.started"}\n{"type"')
+
+    assert tailer.read_completed_lines() == ['{"type":"turn.started"}\n']
+
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(':"item.completed"}\n')
+
+    assert tailer.read_completed_lines() == ['{"type":"item.completed"}\n']
+    assert tailer.read_completed_lines() == []
+
+
+def test_codex_cli_turn_streaming_uses_workspace_file_transcript(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_codex = bin_dir / "codex"
+    fake_codex.write_text(
+        """#!/bin/sh
+while IFS= read -r _line; do
+  :
+done
+printf '%s\n' '{"type":"thread.started","thread_id":"thread_file_tail"}'
+printf '%s\n' '{"type":"turn.started"}'
+printf '%s\n' 'fake stderr line' >&2
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}'
+""",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    with session_factory() as db:
+        project = Project(id="p_file_tail", name="File Tail")
+        session = AgentSession(
+            id="as_file_tail",
+            project_id=project.id,
+            goal_text="Continue.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+    return_code = run_codex_cli_turn_streaming(
+        session_factory,
+        store=store,
+        project_id="p_file_tail",
+        session_id="as_file_tail",
+        workspace=workspace,
+        prompt="hello",
+        delivered_user_event_indexes=(),
+        agent_model=None,
+        timeout_seconds=30,
+    )
+
+    assert return_code == 0
+    assert '"thread_id":"thread_file_tail"' in raw_codex_transcript_path(workspace).read_text(encoding="utf-8")
+    assert raw_codex_stderr_path(workspace).read_text(encoding="utf-8") == "fake stderr line\n"
+
+    with session_factory() as db:
+        session = db.get(AgentSession, "as_file_tail")
+        assert session is not None
+        assert session.codex_thread_id == "thread_file_tail"
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(AgentTranscriptEvent.session_id == "as_file_tail")
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            ).all()
+        )
+
+    assert [event.event_type for event in events if event.source == "codex_cli"] == [
+        "thread.started",
+        "turn.started",
+        "item.completed",
+        "process_exited",
+    ]
+    process_started = next(event for event in events if event.event_type == "process_started")
+    assert loads_json(process_started.payload_json, {})["stdout_mode"] == "workspace_file_tail"
 
 
 def test_codex_stream_lines_are_indexed_in_one_batch(tmp_path: Path) -> None:

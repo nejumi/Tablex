@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import queue
 import re
 import shutil
 import signal
@@ -306,6 +305,40 @@ def append_runner_stream_to_workspace(workspace: Path, *, stream_name: str, line
             handle.write(line if line.endswith("\n") else f"{line}\n")
     except OSError:
         return
+
+
+class StreamFileTailer:
+    """Tail complete text lines from a file that another process is appending to."""
+
+    def __init__(self, path: Path, *, offset: int = 0) -> None:
+        self.path = path
+        self.offset = offset
+        self._partial = ""
+
+    def read_completed_lines(self) -> list[str]:
+        try:
+            with self.path.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(self.offset)
+                chunk = handle.read()
+                self.offset = handle.tell()
+        except OSError:
+            return []
+        if not chunk:
+            return []
+        self._partial += chunk
+        parts = self._partial.splitlines(keepends=True)
+        if parts and not parts[-1].endswith(("\n", "\r")):
+            self._partial = parts.pop()
+        else:
+            self._partial = ""
+        return [line if line.endswith("\n") else f"{line}\n" for line in parts]
+
+    def drain_remaining_lines(self) -> list[str]:
+        lines = self.read_completed_lines()
+        if self._partial:
+            lines.append(f"{self._partial}\n")
+            self._partial = ""
+        return lines
 
 
 def append_user_instruction_to_workspace_inbox(
@@ -1218,43 +1251,67 @@ def run_codex_cli_turn_streaming(
         )
         db.commit()
 
-    process = subprocess.Popen(
-        cmd,
-        cwd=str(workspace),
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-        env=safe_env(workspace),
-    )
-    with session_factory() as db:
-        session = db.get(AgentSession, session_id)
-        if session is not None:
-            session.pid = process.pid
-            session.status = "running"
-            session.last_heartbeat_at = utc_now()
-            append_session_event(
-                db,
-                session,
-                source="tablex_sidecar",
-                event_type="process_started",
-                role="harness",
-                title="Codex started",
-                content=f"Codex process pid={process.pid} is running.",
-                payload={"pid": process.pid},
-            )
-            db.commit()
-    if process.stdin is not None:
-        process.stdin.write(prompt)
-        process.stdin.close()
-    mark_user_instructions_delivered(
-        session_factory,
-        session_id=session_id,
-        delivered_user_event_indexes=delivered_user_event_indexes,
-    )
+    raw_stdout_path = raw_codex_transcript_path(workspace)
+    raw_stderr_path = raw_codex_stderr_path(workspace)
+    raw_stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_stdout_path.touch(exist_ok=True)
+    raw_stderr_path.touch(exist_ok=True)
+    stdout_offset = raw_stdout_path.stat().st_size
+    stderr_offset = raw_stderr_path.stat().st_size
+    stdout_writer = raw_stdout_path.open("a", encoding="utf-8", buffering=1)
+    stderr_writer = raw_stderr_path.open("a", encoding="utf-8", buffering=1)
+    try:
+        process = subprocess.Popen(
+            cmd,
+            cwd=str(workspace),
+            stdin=subprocess.PIPE,
+            stdout=stdout_writer,
+            stderr=stderr_writer,
+            text=True,
+            bufsize=1,
+            env=safe_env(workspace),
+            start_new_session=True,
+        )
+        with session_factory() as db:
+            session = db.get(AgentSession, session_id)
+            if session is not None:
+                session.pid = process.pid
+                session.status = "running"
+                session.last_heartbeat_at = utc_now()
+                append_session_event(
+                    db,
+                    session,
+                    source="tablex_sidecar",
+                    event_type="process_started",
+                    role="harness",
+                    title="Codex started",
+                    content=f"Codex process pid={process.pid} is running.",
+                    payload={
+                        "pid": process.pid,
+                        "stdout_path": str(raw_stdout_path),
+                        "stderr_path": str(raw_stderr_path),
+                        "stdout_mode": "workspace_file_tail",
+                    },
+                )
+                db.commit()
+        if process.stdin is not None:
+            process.stdin.write(prompt)
+            process.stdin.close()
+        mark_user_instructions_delivered(
+            session_factory,
+            session_id=session_id,
+            delivered_user_event_indexes=delivered_user_event_indexes,
+        )
 
-    line_queue: queue.Queue[tuple[str, str | None]] = queue.Queue()
+        stream_tailers = {
+            "stdout": StreamFileTailer(raw_stdout_path, offset=stdout_offset),
+            "stderr": StreamFileTailer(raw_stderr_path, offset=stderr_offset),
+        }
+    except Exception:
+        stdout_writer.close()
+        stderr_writer.close()
+        raise
+
     start = time.monotonic()
     last_output_at = start
     last_workspace_ingest = 0.0
@@ -1263,74 +1320,64 @@ def run_codex_cli_turn_streaming(
     timeout_sent = False
     terminated_at: float | None = None
 
-    def read_stream(name: str, stream: Any) -> None:
-        try:
-            for line in stream:
-                line_queue.put((name, line))
-        finally:
-            line_queue.put((name, None))
+    try:
+        while True:
+            now = time.monotonic()
+            if now - last_workspace_ingest >= 10:
+                ingest_session_workspace_outputs_safely(
+                    session_factory,
+                    store=store,
+                    project_id=project_id,
+                    session_id=session_id,
+                    workspace=workspace,
+                )
+                last_workspace_ingest = now
+            if now - last_output_at > timeout_seconds and process.poll() is None and not timeout_sent:
+                process.terminate()
+                append_process_timeout_event(session_factory, session_id=session_id, timeout_seconds=timeout_seconds)
+                timeout_sent = True
+                terminated_at = now
+            if terminated_at is not None and now - terminated_at > 15 and process.poll() is None:
+                process.kill()
+                append_process_killed_event(session_factory, session_id=session_id, timeout_seconds=timeout_seconds)
+                terminated_at = None
 
-    stdout_thread = threading.Thread(target=read_stream, args=("stdout", process.stdout), daemon=True)
-    stderr_thread = threading.Thread(target=read_stream, args=("stderr", process.stderr), daemon=True)
-    stdout_thread.start()
-    stderr_thread.start()
-    finished_streams: set[str] = set()
-    while True:
-        now = time.monotonic()
-        if now - last_workspace_ingest >= 10:
-            ingest_session_workspace_outputs_safely(
-                session_factory,
-                store=store,
-                project_id=project_id,
-                session_id=session_id,
-                workspace=workspace,
-            )
-            last_workspace_ingest = now
-        if now - last_output_at > timeout_seconds and process.poll() is None and not timeout_sent:
-            process.terminate()
-            append_process_timeout_event(session_factory, session_id=session_id, timeout_seconds=timeout_seconds)
-            timeout_sent = True
-            terminated_at = now
-        if terminated_at is not None and now - terminated_at > 15 and process.poll() is None:
-            process.kill()
-            append_process_killed_event(session_factory, session_id=session_id, timeout_seconds=timeout_seconds)
-            terminated_at = None
-        try:
-            stream_name, line = line_queue.get(timeout=0.5)
-        except queue.Empty:
-            if process.poll() is not None and len(finished_streams) >= 2:
+            new_lines: list[tuple[str, str]] = []
+            for stream_name, tailer in stream_tailers.items():
+                new_lines.extend((stream_name, line) for line in tailer.read_completed_lines())
+            if new_lines:
+                last_output_at = time.monotonic()
+                pending_stream_events.extend(new_lines)
+            now = time.monotonic()
+            if pending_stream_events and (
+                len(pending_stream_events) >= STREAM_EVENT_FLUSH_MAX_LINES
+                or now - last_stream_event_flush >= STREAM_EVENT_FLUSH_INTERVAL_SECONDS
+            ):
+                append_codex_stream_lines(
+                    session_factory,
+                    project_id=project_id,
+                    session_id=session_id,
+                    lines=pending_stream_events,
+                )
+                pending_stream_events = []
+                last_stream_event_flush = now
+            if now - last_workspace_ingest >= 10:
+                ingest_session_workspace_outputs_safely(
+                    session_factory,
+                    store=store,
+                    project_id=project_id,
+                    session_id=session_id,
+                    workspace=workspace,
+                )
+                last_workspace_ingest = now
+            if process.poll() is not None:
+                for stream_name, tailer in stream_tailers.items():
+                    pending_stream_events.extend((stream_name, line) for line in tailer.drain_remaining_lines())
                 break
-            continue
-        if line is None:
-            finished_streams.add(stream_name)
-            if process.poll() is not None and len(finished_streams) >= 2:
-                break
-            continue
-        last_output_at = time.monotonic()
-        append_runner_stream_to_workspace(workspace, stream_name=stream_name, line=line)
-        pending_stream_events.append((stream_name, line))
-        now = time.monotonic()
-        if (
-            len(pending_stream_events) >= STREAM_EVENT_FLUSH_MAX_LINES
-            or now - last_stream_event_flush >= STREAM_EVENT_FLUSH_INTERVAL_SECONDS
-        ):
-            append_codex_stream_lines(
-                session_factory,
-                project_id=project_id,
-                session_id=session_id,
-                lines=pending_stream_events,
-            )
-            pending_stream_events = []
-            last_stream_event_flush = now
-        if now - last_workspace_ingest >= 10:
-            ingest_session_workspace_outputs_safely(
-                session_factory,
-                store=store,
-                project_id=project_id,
-                session_id=session_id,
-                workspace=workspace,
-            )
-            last_workspace_ingest = now
+            time.sleep(0.5)
+    finally:
+        stdout_writer.close()
+        stderr_writer.close()
     if pending_stream_events:
         append_codex_stream_lines(
             session_factory,
