@@ -826,7 +826,24 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
     assert raw_transcript["stdout_tail"][-1].startswith('{"type":"item.completed"')
     assert raw_transcript["stdout_tail_lines"][-1]["line_number"] == 2
     assert raw_transcript["stdout_tail_lines"][-1]["parsed"]["type"] == "item.completed"
+    assert raw_transcript["stdout_tail_lines"][-1]["truncated"] is False
     assert raw_transcript["stderr_tail_lines"] == []
+
+    raw_path = Path(session["workspace_path"]) / ".tablex" / "codex_raw_transcript.jsonl"
+    raw_path.write_text(
+        '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"'
+        + ("x" * 20_000)
+        + '"}}\n',
+        encoding="utf-8",
+    )
+    raw_transcript_response = client.get(f"/api/projects/{project_id}/agent-session/raw-transcript")
+    assert raw_transcript_response.status_code == 200
+    large_tail = raw_transcript_response.json()["stdout_tail_lines"][-1]
+    assert large_tail["truncated"] is True
+    assert large_tail["original_length"] > 20_000
+    assert len(large_tail["text"]) < large_tail["original_length"]
+    assert large_tail["parsed"]["type"] == "item.completed"
+    assert "[truncated" in large_tail["parsed"]["item"]["aggregated_output"]
 
     activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
     assert activity_response.status_code == 200

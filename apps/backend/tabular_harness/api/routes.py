@@ -4858,12 +4858,51 @@ def list_agent_session_transcript(
     return [transcript_event_to_dict(event) for event in reversed(events)]
 
 
+RAW_TRANSCRIPT_LINE_CHAR_LIMIT = 12_000
+RAW_TRANSCRIPT_PARSED_STRING_LIMIT = 4_000
+
+
 def parsed_jsonl_line(text: str) -> dict[str, Any] | None:
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def clipped_raw_transcript_text(text: str, *, max_chars: int = RAW_TRANSCRIPT_LINE_CHAR_LIMIT) -> tuple[str, bool, int]:
+    original_length = len(text)
+    if original_length <= max_chars:
+        return text, False, original_length
+    suffix = f"... [truncated {original_length - max_chars} chars; open raw transcript artifact for full line]"
+    return f"{text[:max_chars]}{suffix}", True, original_length
+
+
+def clipped_raw_transcript_value(value: Any, *, max_string_chars: int = RAW_TRANSCRIPT_PARSED_STRING_LIMIT) -> Any:
+    if isinstance(value, str):
+        if len(value) <= max_string_chars:
+            return value
+        return f"{value[:max_string_chars]}... [truncated {len(value) - max_string_chars} chars]"
+    if isinstance(value, list):
+        return [clipped_raw_transcript_value(item, max_string_chars=max_string_chars) for item in value[:80]]
+    if isinstance(value, dict):
+        return {
+            str(key): clipped_raw_transcript_value(item, max_string_chars=max_string_chars)
+            for key, item in list(value.items())[:80]
+        }
+    return value
+
+
+def raw_transcript_line_to_dict(line_number: int, line: str) -> dict[str, Any]:
+    clipped, truncated, original_length = clipped_raw_transcript_text(line)
+    parsed = parsed_jsonl_line(line)
+    return {
+        "line_number": line_number,
+        "text": clipped,
+        "parsed": clipped_raw_transcript_value(parsed) if parsed is not None else None,
+        "truncated": truncated,
+        "original_length": original_length,
+    }
 
 
 def tail_text_file(path: Path, *, limit: int) -> tuple[int, list[str], list[dict[str, Any]], str | None]:
@@ -4879,11 +4918,8 @@ def tail_text_file(path: Path, *, limit: int) -> tuple[int, list[str], list[dict
         updated_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
     except OSError:
         return 0, [], [], None
-    text_lines = [line for _, line in lines]
-    numbered_lines = [
-        {"line_number": line_number, "text": line, "parsed": parsed_jsonl_line(line)}
-        for line_number, line in lines
-    ]
+    numbered_lines = [raw_transcript_line_to_dict(line_number, line) for line_number, line in lines]
+    text_lines = [line["text"] for line in numbered_lines]
     return count, text_lines, numbered_lines, updated_at
 
 

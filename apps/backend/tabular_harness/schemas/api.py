@@ -78,6 +78,8 @@ class AgentRawTranscriptLineRead(BaseModel):
     line_number: int
     text: str
     parsed: dict[str, Any] | None = None
+    truncated: bool = False
+    original_length: int | None = None
 
 
 class AgentRawTranscriptRead(BaseModel):
