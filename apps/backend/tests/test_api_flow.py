@@ -2048,6 +2048,7 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized["blocks"][0]["next_action"] == "EDAノートブックを開き、裾の見立てを確認します。"
     assert localized["blocks"][0]["done_criteria"] == "裾のリスクが読めるartifactで記録されていること。"
     assert localized["blocks"][0]["blockers"] == ["データオーナー確認が未完了です。"]
+    assert localized["blocks"][0]["evidence"] == "ブロッカー 1件"
     assert localized["blocks"][0]["localization_status"] == "localized"
     assert localized["blocks"][0]["subtasks"][0]["title"] == "高salary裾の確認"
     assert localized["blocks"][0]["subtasks"][0]["detail"] == "裾ラベルに別の判断経路が必要か確認します。"

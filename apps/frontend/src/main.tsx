@@ -399,6 +399,7 @@ const englishMessages = {
   researchPlanDetailEvidence: "Evidence",
   researchPlanDetailLocaleRefresh: "Display language",
   researchPlanLocaleRefreshDetail: "Codex needs to refresh this plan block in the selected locale.",
+  researchPlanBlockLocaleRefreshTitle: "Plan block needs display-language refresh",
   researchPlanSummaryBlock: "block",
   researchPlanSummaryBlocks: "blocks",
   planBlockDataUpload: "Data upload",
@@ -805,6 +806,7 @@ const japaneseMessages: LocaleMessages = {
   researchPlanDetailEvidence: "根拠",
   researchPlanDetailLocaleRefresh: "表示言語",
   researchPlanLocaleRefreshDetail: "Codexがこの計画ブロックを選択中の言語で更新する必要があります。",
+  researchPlanBlockLocaleRefreshTitle: "表示言語を更新中の計画ブロック",
   researchPlanSummaryBlock: "ブロック",
   researchPlanSummaryBlocks: "ブロック",
   planBlockDataUpload: "データアップロード",
@@ -5848,21 +5850,25 @@ function researchPlanBlocksFromTimeline(
         onClick: subtaskTab ? () => onNavigateToTarget(subtaskTab, subtask.target_anchor) : undefined
       };
     });
-    subtasks.push(...derivedResearchPlanSubtasks(block, text));
+    subtasks.push(...derivedResearchPlanSubtasks(block, text, locale));
     return {
       id: block.id,
-      title: block.title,
-      subtitle: block.subtitle,
+      title: localeSafeDisplayText(block.title, locale, text.researchPlanBlockLocaleRefreshTitle),
+      subtitle: localeSafeDisplayText(block.subtitle, locale, block.localization_status === "needs_locale_refresh" ? text.researchPlanLocaleRefreshDetail : ""),
       status: block.status,
       eyebrow: `${index + 1}`.padStart(2, "0"),
-      evidence: block.evidence,
+      evidence: displayTextMatchesLocale(block.evidence, locale) ? block.evidence : null,
       subtasks,
       onClick: targetTab ? () => onNavigateToTarget(targetTab, block.target_anchor) : undefined
     };
   });
 }
 
-function derivedResearchPlanSubtasks(block: ResearchPlanTimelineBlock, text: LocaleMessages): ResearchPlanSubtask[] {
+function derivedResearchPlanSubtasks(
+  block: ResearchPlanTimelineBlock,
+  text: LocaleMessages,
+  locale: string
+): ResearchPlanSubtask[] {
   const derived: ResearchPlanSubtask[] = [];
   if (block.localization_status === "needs_locale_refresh") {
     derived.push({
@@ -5877,16 +5883,16 @@ function derivedResearchPlanSubtasks(block: ResearchPlanTimelineBlock, text: Loc
     derived.push({
       id: `${block.id}:next_action`,
       title: text.researchPlanDetailNextAction,
-      detail: block.next_action,
+      detail: localeSafeDisplayText(block.next_action, locale, text.researchPlanLocaleRefreshDetail),
       status: block.status,
-      evidence: block.phase ?? null
+      evidence: displayTextMatchesLocale(block.phase, locale) ? block.phase ?? null : null
     });
   }
   if (block.done_criteria) {
     derived.push({
       id: `${block.id}:done_criteria`,
       title: text.researchPlanDetailDoneCriteria,
-      detail: block.done_criteria,
+      detail: localeSafeDisplayText(block.done_criteria, locale, text.researchPlanLocaleRefreshDetail),
       status: block.status,
       evidence: null
     });
