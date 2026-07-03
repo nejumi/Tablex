@@ -1284,7 +1284,7 @@ def queued_agent_session_start_output(
         "worker_events": [
             {
                 "worker_id": "main-agent-session",
-                "display_name": "Autonomous Analyst",
+                "display_name": "自律分析" if japanese else "Autonomous Analyst",
                 "status": session.status,
                 "headline": "Analysis is starting" if not japanese else "分析を開始しています",
                 "detail": (
@@ -6716,37 +6716,70 @@ def get_project_agent_activity(
         )
         session_active = session_has_process or session.status in {"starting", "between_turns", "waiting_for_runner"}
         retry_delay = retry_state.get("retry_delay_seconds") if retry_state else None
+        japanese = response_locale.lower().startswith("ja")
         retry_detail = (
-            f"Codex runner is not ready; Tablex will retry this same session in about {retry_delay}s."
+            (
+                f"Codex runnerをまだ使えません。同じセッションを約{int(retry_delay)}秒後に再試行します。"
+                if japanese
+                else f"Codex runner is not ready; Tablex will retry this same session in about {retry_delay}s."
+            )
             if isinstance(retry_delay, int | float)
-            else "Codex runner is not ready; Tablex will keep retrying this same session."
+            else (
+                "Codex runnerをまだ使えません。同じセッションを継続して再試行します。"
+                if japanese
+                else "Codex runner is not ready; Tablex will keep retrying this same session."
+            )
         )
         current_focus = latest_agent_session_activity_summary(db, project_id=project_id, session_id=session.id)
+        display_name = "自律分析" if japanese else "Autonomous Analyst"
+        running_detail = "CodexがProject workspaceで作業中です。" if japanese else "Codex is running in the project workspace now."
+        preparing_detail = (
+            "実行中のCodex processはまだ観測されていません。Full Autoは次のturnを準備しています。"
+            if japanese
+            else "No live Codex process is observed yet. Full Auto is preparing the next turn."
+        )
+        fallback_detail = (
+            "コンテキスト準備、分析、または次のworker待ちです。"
+            if japanese
+            else "Preparing context, running analysis, or waiting for the next available worker."
+        )
+        progress_wait_detail = (
+            "Projectはまだアクティブです。次のstepが始まるとここに進捗が出ます。"
+            if japanese
+            else "The project is still active. Progress will appear here when the next step starts."
+        )
+        running_headline = "静かに作業中" if japanese else "Codex is running quietly"
+        working_headline = "Codexが作業中" if japanese else "Codex is working"
+        retry_headline = "Codex runnerを再試行予定" if japanese else "Codex runner retry scheduled"
+        continue_headline = "Full Autoは継続します" if japanese else "Full Auto will continue"
+        headline = (
+            running_headline
+            if running_quietly
+            else working_headline
+            if session_has_process
+            else retry_headline
+            if session.status == "waiting_for_runner"
+            else continue_headline
+        )
         if session_has_process:
-            session_detail = f"{current_focus or 'Codex is running in the project workspace now.'}{heartbeat_phrase}"
+            session_detail = f"{current_focus or running_detail}{heartbeat_phrase}"
         elif session.status == "waiting_for_runner":
             session_detail = retry_detail
         elif session.status == "running":
-            session_detail = "No live Codex process is observed yet. Full Auto is preparing the next turn."
+            session_detail = preparing_detail
         else:
             session_detail = (
                 current_focus
                 or session.last_error
-                or "Preparing context, running analysis, or waiting for the next available worker."
+                or fallback_detail
             )
         workers.insert(
             0,
             {
                 "worker_id": "main-agent-session",
-                "display_name": "Autonomous Analyst",
+                "display_name": display_name,
                 "status": session_display_status,
-                "headline": "Codex is running quietly"
-                if running_quietly
-                else "Codex is working"
-                if session_has_process
-                else "Codex runner retry scheduled"
-                if session.status == "waiting_for_runner"
-                else "Full Auto will continue",
+                "headline": headline,
                 "detail": session_detail,
                 "job_id": None,
                 "job_type": "agent_session",
@@ -6764,7 +6797,7 @@ def get_project_agent_activity(
                 "last_output_seconds_ago": heartbeat_age_seconds,
                 "human_description": {
                     "source": "agent_session",
-                    "title": "Autonomous Analyst",
+                    "title": display_name,
                     "summary": current_focus or session_detail,
                 },
                 "token_usage": {
@@ -6787,28 +6820,22 @@ def get_project_agent_activity(
         heartbeat_phrase = heartbeat_phrase_for_locale(heartbeat_age_seconds, locale=response_locale)
         running_quietly = session_has_process and heartbeat_age_seconds is not None and heartbeat_age_seconds >= 120
         if session_has_process:
-            turn_detail = f"{current_focus or 'Codex is running in the project workspace now.'}{heartbeat_phrase}"
+            turn_detail = f"{current_focus or running_detail}{heartbeat_phrase}"
         elif session.status == "waiting_for_runner":
             turn_detail = session_detail
         elif session.status == "running":
-            turn_detail = "No live Codex process is observed yet. Full Auto is preparing the next turn."
+            turn_detail = preparing_detail
         else:
             turn_detail = (
                 current_focus
                 or session.last_error
-                or "The project is still active. Progress will appear here when the next step starts."
+                or progress_wait_detail
             )
         turn_state = {
             **turn_state,
             "state": "agent_running" if session_has_process else "agent_scheduled",
             "owner": "agent",
-            "label": "Codex is running quietly"
-            if running_quietly
-            else "Codex is working"
-            if session_has_process
-            else "Codex runner retry scheduled"
-            if session.status == "waiting_for_runner"
-            else "Full Auto will continue",
+            "label": headline,
             "detail": turn_detail,
             "input_attention": False,
             "confidence": "observed",
