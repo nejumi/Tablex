@@ -1809,7 +1809,19 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
             created_by="test",
         )
         db.add(session)
+        db.flush()
+        append_session_event(
+            db,
+            session,
+            source="codex_cli",
+            event_type="item.completed",
+            role="runner",
+            title="Codex message",
+            content="現在のデータを確認しています。",
+            payload={"type": "item.completed", "item": {"type": "agent_message"}},
+        )
         db.commit()
+    append_runner_stream_to_workspace(workspace, stream_name="stdout", line='{"type":"turn.started"}')
 
     chat_response = client.post(
         f"/api/projects/{project_id}/agent-chat",
@@ -1827,6 +1839,12 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert "worker待ち" not in chat["assistant_message"]
     assert chat["response_brief"]["wait_state"]["worker_state"] == "waiting_for_main_agent_reply"
     assert chat["response_brief"]["progress_update_requested_event_id"]
+    observation = chat["response_brief"]["agent_session_observation"]
+    assert observation["schema_version"] == "agent_session_chat_wait_observation.v1"
+    assert observation["agent_session_id"] == "ags_inbox_delivery"
+    assert observation["status"] == "running"
+    assert observation["last_codex_output_seconds_ago"] is not None
+    assert observation["raw_transcript"]["stdout_line_count"] == 1
 
     inbox = user_instructions_inbox_path(workspace)
     latest = latest_user_instruction_path(workspace)
@@ -1856,6 +1874,9 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert "Codexの返答が届き次第" in history[-1]["assistant_message"]
     assert history[-1]["response_brief"]["delivered_agent_session_id"] == "ags_inbox_delivery"
     assert history[-1]["response_brief"]["wait_state"]["worker_state"] == "waiting_for_main_agent_reply"
+    history_observation = history[-1]["response_brief"]["agent_session_observation"]
+    assert history_observation["agent_session_id"] == "ags_inbox_delivery"
+    assert history_observation["raw_transcript"]["stdout_line_count"] == 1
 
     worker = SyncWorker(handlers={"agent_chat_turn": agent_chat_turn_handler}, store=app.state.artifact_store)
     with app.state.session_factory() as db:

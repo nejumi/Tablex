@@ -316,6 +316,10 @@ const englishMessages = {
   tableeAnswered: "Tablee answered",
   agentReplyPendingTitle: "Waiting for Codex",
   agentReplyPending: "Thinking and preparing the next useful response.",
+  agentReplyWaitMetaStatus: "Agent",
+  agentReplyWaitMetaOutput: "Last Codex output",
+  agentReplyWaitMetaRaw: "Raw",
+  agentReplyWaitMetaAgo: "ago",
   agentReplyFailed: "I could not complete that request. The error is recorded here so it does not disappear.",
   chatTurnStatus: "Status",
   earlierConversation: "Earlier conversation",
@@ -752,6 +756,10 @@ const japaneseMessages: LocaleMessages = {
   tableeAnswered: "Tableeからの返答",
   agentReplyPendingTitle: "Codexの返答待ち",
   agentReplyPending: "受け取りました。分析エージェントの返答が届き次第、このチャットに残します。",
+  agentReplyWaitMetaStatus: "Agent",
+  agentReplyWaitMetaOutput: "最後のCodex出力",
+  agentReplyWaitMetaRaw: "Raw",
+  agentReplyWaitMetaAgo: "前",
   agentReplyFailed: "この依頼を完了できませんでした。消えないように、エラーをここに記録します。",
   chatTurnStatus: "状態",
   earlierConversation: "以前の会話",
@@ -846,7 +854,7 @@ const japaneseMessages: LocaleMessages = {
   approvalBasedModeHint: "重要判断、外部実行、評価変更、deployment関連は人間の承認を待ちます。",
   fullAutoMode: "フルオート",
   fullAutoModeHint: "質問は残しつつ、仮定とfallback policyを明示して前に進みます。",
-  researchPlanTitle: "Research Plan",
+  researchPlanTitle: "リサーチプラン",
   researchPlanEmpty: "有効なResearchPlanはまだありません。Agentを開始するかChatで依頼すると、必要な時にTablexが計画artifactを作ります。",
   researchPlanTimelineHint: "Codexが状況に応じてProject固有のブロックを右へ継ぎ足します。",
   researchPlanDetailNextAction: "次の行動",
@@ -1190,7 +1198,6 @@ function hasUnlocalizedLatinPhrase(value: string): boolean {
 function localeSafeDisplayText(value: string | null | undefined, locale: string | null | undefined, fallback: string): string {
   const text = (value ?? "").trim();
   if (displayTextMatchesLocale(text, locale)) return text;
-  if (text) return text;
   return fallback;
 }
 
@@ -5113,7 +5120,13 @@ function HomeTab({
           <div className="mission-panel-head">
             <div>
               <span>{text.researchPlanTitle}</span>
-              <strong>{latestResearchPlan?.name ?? strategyBrief?.recommended_next_action.label ?? text.researchPlanTimelineHint}</strong>
+              <strong>
+                {localeSafeDisplayText(
+                  latestResearchPlan?.name ?? strategyBrief?.recommended_next_action.label,
+                  locale,
+                  text.researchPlanTimelineHint
+                )}
+              </strong>
             </div>
           </div>
           <ResearchPlanTimeline blocks={researchPlanBlocks} latestResearchPlan={latestResearchPlan} text={text} />
@@ -7548,6 +7561,28 @@ function TableeAvatar({
   );
 }
 
+function agentChatWaitObservationItems(brief: Record<string, unknown> | null | undefined, text: LocaleMessages): string[] {
+  const observation = objectRecord(brief?.agent_session_observation);
+  if (!observation) return [];
+  const items: string[] = [];
+  const status = textField(observation.status);
+  const turnIndex = numberField(observation.turn_index);
+  if (status) {
+    items.push(`${text.agentReplyWaitMetaStatus}: ${status}${turnIndex !== null ? ` · turn ${turnIndex}` : ""}`);
+  }
+  const lastOutputSeconds = numberField(observation.last_codex_output_seconds_ago);
+  if (lastOutputSeconds !== null) {
+    items.push(`${text.agentReplyWaitMetaOutput}: ${formatElapsedSeconds(lastOutputSeconds)} ${text.agentReplyWaitMetaAgo}`);
+  }
+  const raw = objectRecord(observation.raw_transcript);
+  const stdout = numberField(raw?.stdout_line_count) ?? 0;
+  const stderr = numberField(raw?.stderr_line_count) ?? 0;
+  if (stdout > 0 || stderr > 0) {
+    items.push(`${text.agentReplyWaitMetaRaw}: stdout ${stdout} / stderr ${stderr}`);
+  }
+  return items.slice(0, 3);
+}
+
 function AgentConversationTurnCard({
   turn,
   text,
@@ -7568,6 +7603,7 @@ function AgentConversationTurnCard({
   const statusClass = agentChatOutcomeClass(outcome);
   const hasPrimaryNext = Boolean(assistant?.actionSummary?.next_step?.target_tab);
   const visibleActions = hasPrimaryNext ? [] : assistant?.actions?.slice(0, 2) ?? [];
+  const waitObservationItems = active ? agentChatWaitObservationItems(assistant?.responseBrief, text) : [];
   return (
     <article className={`agent-turn-card ${active ? "is-active" : ""}`}>
       {turn.user ? (
@@ -7597,6 +7633,13 @@ function AgentConversationTurnCard({
                 <p key={`${index}-${line}`}>{line}</p>
               ))}
             </div>
+            {waitObservationItems.length ? (
+              <div className="agent-chat-wait-meta">
+                {waitObservationItems.map((item) => (
+                  <span key={item}>{item}</span>
+                ))}
+              </div>
+            ) : null}
             {assistant.actionSummary ? (
               <AgentChatSummaryCard summary={assistant.actionSummary} text={text} onActionOpen={onActionOpen} />
             ) : null}

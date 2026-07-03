@@ -5037,6 +5037,24 @@ td {
   color: var(--muted-strong);
 }
 
+.agent-chat-wait-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-width: min(100%, 780px);
+}
+
+.agent-chat-wait-meta span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-muted) 88%, transparent);
+  color: var(--muted);
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1.2;
+}
+
 .chat-avatar {
   display: inline-grid;
   flex: 0 0 auto;

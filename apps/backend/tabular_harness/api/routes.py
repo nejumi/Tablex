@@ -145,6 +145,7 @@ from tabular_harness.services.agent_sessions import (
     append_session_event,
     append_user_instruction_to_workspace_inbox,
     chat_update_message_from_text,
+    latest_codex_chat_update_at,
     latest_codex_transcript_output_at,
     latest_main_session,
     latest_project_response_locale,
@@ -4463,6 +4464,7 @@ def create_agent_chat_turn(
         job.status = MAIN_SESSION_CHAT_WAITING_STATUS
         job.updated_at = utc_now()
         response = queued_main_session_chat_response(
+            db=db,
             project=project,
             session=session,
             event=event,
@@ -4554,6 +4556,7 @@ def is_sidecar_chat_request(message: str) -> bool:
 
 def queued_main_session_chat_response(
     *,
+    db: Session,
     project: Project,
     session: AgentSession,
     event: AgentTranscriptEvent,
@@ -4585,6 +4588,7 @@ def queued_main_session_chat_response(
             "schema_version": "agent_chat_main_session_delivery.v1",
             "response_locale": locale,
             "agent_session_id": session.id,
+            "agent_session_observation": agent_session_observation_for_chat_wait(db=db, session=session),
             "agent_transcript_event_id": event.id,
             "agent_transcript_event_index": event.event_index,
             "delivery": "workspace_inbox_and_transcript",
@@ -4619,7 +4623,29 @@ def queued_main_session_chat_response(
         "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent Chat"},
         "artifact_id": f"pending_{job.id}",
         "job": job_to_dict(job),
-}
+    }
+
+
+def agent_session_observation_for_chat_wait(db: Session, session: AgentSession) -> dict[str, Any]:
+    now = utc_now()
+    last_codex_output_at = latest_codex_transcript_output_at(db, session_id=session.id)
+    last_chat_update_at = latest_codex_chat_update_at(db, project_id=session.project_id, session_id=session.id)
+    raw_observation = raw_transcript_observation_for_session(session)
+    return {
+        "schema_version": "agent_session_chat_wait_observation.v1",
+        "agent_session_id": session.id,
+        "status": session.status,
+        "turn_index": session.turn_index,
+        "has_process": session.pid is not None,
+        "last_error": session.last_error,
+        "last_heartbeat_at": session.last_heartbeat_at.isoformat() if session.last_heartbeat_at else None,
+        "last_heartbeat_seconds_ago": seconds_since_timestamp(session.last_heartbeat_at, now=now),
+        "last_codex_output_at": last_codex_output_at.isoformat() if last_codex_output_at else None,
+        "last_codex_output_seconds_ago": seconds_since_timestamp(last_codex_output_at, now=now),
+        "last_chat_update_at": last_chat_update_at.isoformat() if last_chat_update_at else None,
+        "last_chat_update_seconds_ago": seconds_since_timestamp(last_chat_update_at, now=now),
+        "raw_transcript": raw_observation,
+    }
 
 
 @router.get("/api/projects/{project_id}/agent-chat/history", response_model=list[AgentChatHistoryTurnRead])
@@ -4757,7 +4783,7 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
             if isinstance(progress_artifact_id, str):
                 paired_update_ids.add(progress_artifact_id)
         else:
-            turns.append(pending_agent_chat_turn_from_job(project_id, job, payload))
+            turns.append(pending_agent_chat_turn_from_job(db, project_id, job, payload))
     paired_update_ids.update({
         str(turn.get("paired_progress_artifact_id"))
         for turn in turns
@@ -4866,12 +4892,13 @@ def agent_chat_turn_from_main_session_update(
     }
 
 
-def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[str, Any]) -> dict[str, Any]:
+def pending_agent_chat_turn_from_job(db: Session, project_id: str, job: Job, payload: dict[str, Any]) -> dict[str, Any]:
     output = loads_json(job.output_json, {})
     locale = payload.get("locale") if isinstance(payload.get("locale"), str) else "en-US"
     japanese = locale_is_japanese(locale)
     delivered_session_id = payload.get("delivered_agent_session_id")
     delivered_to_running_codex = isinstance(delivered_session_id, str) and bool(delivered_session_id.strip())
+    delivered_session = db.get(AgentSession, delivered_session_id) if delivered_to_running_codex else None
     wait_state = agent_chat_wait_state(
         job,
         delivered_to_running_codex=delivered_to_running_codex,
@@ -4902,6 +4929,9 @@ def pending_agent_chat_turn_from_job(project_id: str, job: Job, payload: dict[st
             "status": job.status,
             "error_message": job.error_message,
             "delivered_agent_session_id": delivered_session_id if delivered_to_running_codex else None,
+            "agent_session_observation": agent_session_observation_for_chat_wait(db=db, session=delivered_session)
+            if delivered_session is not None
+            else None,
             "agent_transcript_event_id": payload.get("agent_transcript_event_id")
             if isinstance(payload.get("agent_transcript_event_id"), str)
             else None,
