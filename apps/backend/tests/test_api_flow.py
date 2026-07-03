@@ -1616,6 +1616,37 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     assert metric_response.json()["metric"] == "roc_auc"
 
 
+def test_agent_chat_brief_includes_recent_conversation_turns(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Conversation Memory"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    first_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "この会話でsalaryの扱いを後で確認したいです。", "locale": "ja-JP"},
+    )
+    assert first_response.status_code == 200, first_response.text
+    first_output = run_queued_agent_chat_turn(client, first_response.json()["job"]["id"])
+    assert first_output["schema_version"] == "agent_chat_turn.v1"
+
+    second_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "さっきの話を踏まえて状況を説明してください。", "locale": "ja-JP"},
+    )
+    assert second_response.status_code == 200, second_response.text
+    run_queued_agent_chat_turn(client, second_response.json()["job"]["id"])
+
+    history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
+    assert history_response.status_code == 200
+    second_turn = history_response.json()[-1]
+    recent_turns = second_turn["response_brief"]["conversation_context"]["recent_conversation_turns"]
+    assert any("salaryの扱い" in turn["user_message"] for turn in recent_turns)
+    assert any(turn["artifact_id"] == first_output["artifact_id"] for turn in recent_turns)
+
+
 def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")
     client = make_client(tmp_path)
