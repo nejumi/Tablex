@@ -145,6 +145,7 @@ from tabular_harness.services.agent_sessions import (
     append_user_instruction_to_workspace_inbox,
     chat_update_message_from_text,
     latest_main_session,
+    latest_project_response_locale,
     raw_codex_stderr_path,
     raw_codex_transcript_path,
     run_main_agent_session_supervisor,
@@ -6623,11 +6624,8 @@ def get_project_agent_activity(
         session_processes = running_codex_processes_for_project(project_id)
         session_has_process = bool(session_processes)
         heartbeat_age_seconds = seconds_since_timestamp(session.last_heartbeat_at, now=utc_now())
-        heartbeat_phrase = (
-            f" Last observed output was {format_elapsed_seconds(heartbeat_age_seconds)} ago."
-            if heartbeat_age_seconds is not None
-            else ""
-        )
+        response_locale = latest_project_response_locale(db, project)
+        heartbeat_phrase = heartbeat_phrase_for_locale(heartbeat_age_seconds, locale=response_locale)
         running_quietly = session_has_process and heartbeat_age_seconds is not None and heartbeat_age_seconds >= 120
         retry_state = latest_agent_session_retry_state(db, session.id)
         session_display_status = (
@@ -6707,11 +6705,7 @@ def get_project_agent_activity(
         observed_processes = list(turn_state.get("codex_processes") or [])
         session_has_process = bool(observed_processes)
         heartbeat_age_seconds = seconds_since_timestamp(session.last_heartbeat_at, now=utc_now())
-        heartbeat_phrase = (
-            f" Last observed output was {format_elapsed_seconds(heartbeat_age_seconds)} ago."
-            if heartbeat_age_seconds is not None
-            else ""
-        )
+        heartbeat_phrase = heartbeat_phrase_for_locale(heartbeat_age_seconds, locale=response_locale)
         running_quietly = session_has_process and heartbeat_age_seconds is not None and heartbeat_age_seconds >= 120
         if session_has_process:
             turn_detail = f"{current_focus or 'Codex is running in the project workspace now.'}{heartbeat_phrase}"
@@ -6818,6 +6812,25 @@ def format_elapsed_seconds(seconds: int) -> str:
     hours = minutes // 60
     remaining_minutes = minutes % 60
     return f"{hours}h {remaining_minutes}m" if remaining_minutes else f"{hours}h"
+
+
+def heartbeat_phrase_for_locale(seconds: int | None, *, locale: str | None) -> str:
+    if seconds is None:
+        return ""
+    if (locale or "").lower().startswith("ja"):
+        return f" 最終出力は{format_elapsed_seconds_ja(seconds)}前です。"
+    return f" Last observed output was {format_elapsed_seconds(seconds)} ago."
+
+
+def format_elapsed_seconds_ja(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds}秒"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}分"
+    hours = minutes // 60
+    remaining_minutes = minutes % 60
+    return f"{hours}時間{remaining_minutes}分" if remaining_minutes else f"{hours}時間"
 
 
 def latest_agent_session_retry_state(db: Session, session_id: str) -> dict[str, Any] | None:

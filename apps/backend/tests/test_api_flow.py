@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from tabular_harness.api.routes import (
     compact_agent_chat_history_turns,
     format_elapsed_seconds,
+    heartbeat_phrase_for_locale,
     seconds_since_timestamp,
     visible_activity_workers,
 )
@@ -101,6 +102,8 @@ def test_agent_activity_elapsed_output_helpers() -> None:
     assert format_elapsed_seconds(42) == "42s"
     assert format_elapsed_seconds(125) == "2m"
     assert format_elapsed_seconds(3660) == "1h 1m"
+    assert heartbeat_phrase_for_locale(75, locale="ja-JP") == " 最終出力は1分前です。"
+    assert heartbeat_phrase_for_locale(75, locale="en-US") == " Last observed output was 1m ago."
 
 
 def test_agent_chat_history_compaction_preserves_user_turns() -> None:
