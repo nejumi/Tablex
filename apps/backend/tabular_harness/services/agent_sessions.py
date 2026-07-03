@@ -508,6 +508,15 @@ def write_research_plan_locale_request_to_workspace_inbox(
         return
     workspace = Path(session.workspace_path)
     path = research_plan_locale_request_path(workspace)
+    missing_blocks = [
+        item
+        for item in summary.get("blocks", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("missing_fields")
+    ][:20]
+    missing_block_lines = [
+        f"- id: {item['id']} | missing_fields: {', '.join(str(field) for field in item.get('missing_fields', []))}"
+        for item in missing_blocks
+    ]
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
@@ -522,6 +531,9 @@ def write_research_plan_locale_request_to_workspace_inbox(
                     f"issue_signature: {research_plan_locale_issue_signature(summary)}",
                     f"missing_block_count: {summary.get('missing_block_count', 0)}",
                     f"missing_subtask_count: {summary.get('missing_subtask_count', 0)}",
+                    "",
+                    "missing_blocks:",
+                    *(missing_block_lines or ["- none"]),
                     "",
                     "Update `outputs/research_plan.json` so every human-visible `timeline_blocks` string is in the requested locale.",
                     "Preserve the project-specific plan structure and Codex-authored intent; do not replace it with a fixed template.",

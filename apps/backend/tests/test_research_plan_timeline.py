@@ -54,6 +54,41 @@ def test_research_plan_timeline_uses_explicit_localized_display() -> None:
     assert blocks[0]["localization_status"] == "localized"
 
 
+def test_research_plan_timeline_masks_codex_added_mixed_english_blocks() -> None:
+    raw_blocks = [
+        {
+            "id": "data_upload",
+            "title": "データアップロード / project context",
+            "why_it_matters": "Dataset identity、target hint、locale、output contractが確定している。",
+            "done_criteria": "context and GOAL are available.",
+            "status": "done",
+        },
+        {
+            "id": "approval_response_contract_v19",
+            "title": "approval response contract v19",
+            "why_it_matters": "data ownerが承認・override・拒否・追加質問を曖昧なく返せるcontractを作る。",
+            "next_action": "Apply the response after owner approval.",
+            "done_criteria": "approval response schema/template/options exist.",
+            "status": "active",
+        },
+        {
+            "id": "registration_packet_supplement_v44",
+            "title": "registration packet supplement v44",
+            "why_it_matters": "登録候補の追加根拠をまとめる。",
+            "status": "pending",
+        },
+    ]
+
+    summary = research_plan_localization_summary(raw_blocks, locale="ja-JP")
+    blocks = clean_research_plan_timeline_blocks(raw_blocks, locale="ja-JP")
+
+    assert summary["missing_block_count"] == 3
+    assert {block["title"] for block in blocks} == {"表示言語の更新待ち"}
+    assert all(block["subtitle"] == "" for block in blocks)
+    assert all(block["localization_status"] == "needs_locale_refresh" for block in blocks)
+    assert all(block["next_action"] is None for block in blocks)
+
+
 def test_research_plan_timeline_masks_japanese_blocks_for_english_display() -> None:
     raw_blocks = [
         {

@@ -5674,7 +5674,7 @@ function HomeTab({
               </strong>
             </div>
           </div>
-          <ResearchPlanTimeline blocks={researchPlanBlocks} latestResearchPlan={latestResearchPlan} text={text} />
+          <ResearchPlanTimeline blocks={researchPlanBlocks} latestResearchPlan={latestResearchPlan} locale={locale} text={text} />
           <div className="mission-plan-facts">
             <Metric label={text.metricDatasets} value={projectStateLoaded ? datasetCount : "..."} />
             <Metric label={text.metricRuns} value={runs.length} />
@@ -6173,10 +6173,12 @@ function MissionSurfaceButton({
 function ResearchPlanTimeline({
   blocks,
   latestResearchPlan,
+  locale,
   text
 }: {
   blocks: ResearchPlanBlock[];
   latestResearchPlan: Artifact | null;
+  locale: string;
   text: LocaleMessages;
 }) {
   const [expandedBlockId, setExpandedBlockId] = React.useState<string | null>(null);
@@ -6197,42 +6199,46 @@ function ResearchPlanTimeline({
   return (
     <div className="research-plan-timeline-wrap">
       <div className="research-plan-timeline" aria-label={text.researchPlanTitle} ref={timelineRef}>
-        {blocks.map((block, index) => (
-          <React.Fragment key={block.id}>
-            <button
-              ref={block.id === activeBlockKey ? activeBlockRef : undefined}
-              className={`research-plan-block ${block.status} ${expandedBlockId === block.id ? "expanded" : ""}`}
-              disabled={!block.onClick && !block.subtasks?.length}
-              onClick={() => {
-                if (block.subtasks?.length) {
-                  setExpandedBlockId((current) => (current === block.id ? null : block.id));
-                  return;
-                }
-                block.onClick?.();
-              }}
-              type="button"
-            >
-              <span>{block.eyebrow}</span>
-              <strong>{block.title}</strong>
-              {block.subtitle ? <p>{block.subtitle}</p> : null}
-              {block.subtasks?.length ? (
-                <em className="research-plan-subtask-pill">
-                  {block.subtasks.length} {block.subtasks.length === 1 ? text.planSubtaskSingular : text.planSubtaskPlural}
-                </em>
-              ) : null}
-              <small>
-                {researchPlanStatusLabel(block.status, text)}
-                {block.evidence ? ` · ${block.evidence}` : ""}
-              </small>
-            </button>
-            {index < blocks.length - 1 ? <div className="research-plan-connector" aria-hidden="true" /> : null}
-          </React.Fragment>
-        ))}
+        {blocks.map((block, index) => {
+          const displayTitle = localeSafeDisplayText(block.title, locale, text.researchPlanBlockLocaleRefreshTitle);
+          const displaySubtitle = block.subtitle ? localeSafeDisplayText(block.subtitle, locale, "") : "";
+          return (
+            <React.Fragment key={block.id}>
+              <button
+                ref={block.id === activeBlockKey ? activeBlockRef : undefined}
+                className={`research-plan-block ${block.status} ${expandedBlockId === block.id ? "expanded" : ""}`}
+                disabled={!block.onClick && !block.subtasks?.length}
+                onClick={() => {
+                  if (block.subtasks?.length) {
+                    setExpandedBlockId((current) => (current === block.id ? null : block.id));
+                    return;
+                  }
+                  block.onClick?.();
+                }}
+                type="button"
+              >
+                <span>{block.eyebrow}</span>
+                <strong>{displayTitle}</strong>
+                {displaySubtitle ? <p>{displaySubtitle}</p> : null}
+                {block.subtasks?.length ? (
+                  <em className="research-plan-subtask-pill">
+                    {block.subtasks.length} {block.subtasks.length === 1 ? text.planSubtaskSingular : text.planSubtaskPlural}
+                  </em>
+                ) : null}
+                <small>
+                  {researchPlanStatusLabel(block.status, text)}
+                  {block.evidence ? ` · ${block.evidence}` : ""}
+                </small>
+              </button>
+              {index < blocks.length - 1 ? <div className="research-plan-connector" aria-hidden="true" /> : null}
+            </React.Fragment>
+          );
+        })}
       </div>
       {expandedBlock ? (
         <div className="research-plan-subtasks">
           <div className="research-plan-subtasks-head">
-            <strong>{expandedBlock.title}</strong>
+            <strong>{localeSafeDisplayText(expandedBlock.title, locale, text.researchPlanBlockLocaleRefreshTitle)}</strong>
             <span>
               {expandedBlock.subtasks?.length ?? 0}{" "}
               {(expandedBlock.subtasks?.length ?? 0) === 1 ? text.planSubtaskSingular : text.planSubtaskPlural}
@@ -6249,8 +6255,8 @@ function ResearchPlanTimeline({
               >
                 <span className={navigatorStatusClass(subtask.status)}>{researchPlanStatusLabel(subtask.status, text)}</span>
                 <div>
-                  <strong>{subtask.title}</strong>
-                  <p>{subtask.detail}</p>
+                  <strong>{localeSafeDisplayText(subtask.title, locale, text.researchPlanDetailLocaleRefresh)}</strong>
+                  <p>{localeSafeDisplayText(subtask.detail, locale, text.researchPlanLocaleRefreshDetail)}</p>
                   {subtask.evidence ? <small>{subtask.evidence}</small> : null}
                 </div>
               </button>

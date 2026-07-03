@@ -1812,6 +1812,8 @@ def test_research_plan_ingest_requests_locale_refresh_for_mixed_language_timelin
         request_text = request_path.read_text(encoding="utf-8")
         assert "locale: ja-JP" in request_text
         assert "outputs/research_plan.json" in request_text
+        assert "missing_blocks:" in request_text
+        assert "id: modeling_review | missing_fields: title, why_it_matters" in request_text
         context = loads_json((workspace / ".tablex" / "context.json").read_text(encoding="utf-8"), {})
         assert context["human_interface"]["response_locale"] == "ja-JP"
         assert context["research_plan_display"]["localization"]["missing_block_count"] == 1

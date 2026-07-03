@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import csv
 import json
 import os
@@ -1639,12 +1640,7 @@ def _read_text_artifact(artifact: Artifact) -> str:
 
 
 def _validate_marimo_notebook_source(source: str) -> dict[str, Any]:
-    checks = {
-        "imports_marimo": "import marimo" in source,
-        "defines_marimo_app": "marimo.App" in source,
-        "has_main_run_guard": 'if __name__ == "__main__"' in source,
-        "mentions_artifact_policy": "EvaluationSpec" in source and "SplitManifest" in source,
-    }
+    checks = _marimo_source_checks(source)
     is_marimo_notebook = all(checks[key] for key in ("imports_marimo", "defines_marimo_app"))
     return {
         "schema_version": "marimo_notebook_source_validation.v1",
@@ -1652,6 +1648,45 @@ def _validate_marimo_notebook_source(source: str) -> dict[str, Any]:
         "is_capture_eligible": is_marimo_notebook,
         "checks": checks,
     }
+
+
+def _marimo_source_checks(source: str) -> dict[str, Any]:
+    checks = {
+        "imports_marimo": False,
+        "defines_marimo_app": False,
+        "has_main_run_guard": 'if __name__ == "__main__"' in source,
+        "mentions_artifact_policy": "EvaluationSpec" in source and "SplitManifest" in source,
+    }
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        checks["parse_error"] = f"{exc.__class__.__name__}: {exc.msg}"
+        return checks
+    marimo_module_names: set[str] = set()
+    marimo_app_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "marimo":
+                    checks["imports_marimo"] = True
+                    marimo_module_names.add(alias.asname or "marimo")
+        elif isinstance(node, ast.ImportFrom) and node.module == "marimo":
+            checks["imports_marimo"] = True
+            for alias in node.names:
+                if alias.name == "App":
+                    marimo_app_names.add(alias.asname or "App")
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = node.func
+        if isinstance(callee, ast.Attribute) and callee.attr == "App":
+            if isinstance(callee.value, ast.Name) and callee.value.id in marimo_module_names:
+                checks["defines_marimo_app"] = True
+                break
+        elif isinstance(callee, ast.Name) and callee.id in marimo_app_names:
+            checks["defines_marimo_app"] = True
+            break
+    return checks
 
 
 def run_notebook_static_compile(source: str, timeout_seconds: int = 15) -> dict[str, Any]:

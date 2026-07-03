@@ -137,6 +137,59 @@ def _():
     assert "is_tablex_generated" not in validation
 
 
+def test_codex_authored_marimo_notebook_allows_standard_alias_import() -> None:
+    source = """
+import marimo as mo
+
+app = mo.App()
+
+@app.cell
+def _():
+    return
+"""
+
+    validation = _validate_marimo_notebook_source(source)
+
+    assert validation["is_valid_marimo_notebook"] is True
+    assert validation["is_capture_eligible"] is True
+    assert validation["checks"]["imports_marimo"] is True
+    assert validation["checks"]["defines_marimo_app"] is True
+
+
+def test_codex_authored_marimo_notebook_allows_direct_app_import() -> None:
+    source = """
+from marimo import App
+
+app = App()
+
+@app.cell
+def _():
+    return
+"""
+
+    validation = _validate_marimo_notebook_source(source)
+
+    assert validation["is_valid_marimo_notebook"] is True
+    assert validation["is_capture_eligible"] is True
+    assert validation["checks"]["imports_marimo"] is True
+    assert validation["checks"]["defines_marimo_app"] is True
+
+
+def test_marimo_notebook_validation_does_not_accept_comment_markers_only() -> None:
+    source = '''
+# import marimo
+# app = marimo.App()
+text = "marimo.App should not make this a notebook"
+'''
+
+    validation = _validate_marimo_notebook_source(source)
+
+    assert validation["is_valid_marimo_notebook"] is False
+    assert validation["is_capture_eligible"] is False
+    assert validation["checks"]["imports_marimo"] is False
+    assert validation["checks"]["defines_marimo_app"] is False
+
+
 def test_source_notebook_export_prefers_agent_workspace_without_cwd_dependency(tmp_path: Path) -> None:
     project_id = "p_export"
     session_id = "ags_export"
