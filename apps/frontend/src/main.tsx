@@ -6061,6 +6061,17 @@ function fallbackNavigationAnchor(anchor: string) {
   return null;
 }
 
+function focusNavigationAnchor(anchor: string, delayMs = 90) {
+  window.setTimeout(() => {
+    const element = document.getElementById(anchor) ?? fallbackNavigationAnchor(anchor);
+    if (!element) return;
+    const top = Math.max(0, element.getBoundingClientRect().top + window.scrollY - 8);
+    window.scrollTo({ top, behavior: "smooth" });
+    element.classList.add("navigation-highlight");
+    window.setTimeout(() => element.classList.remove("navigation-highlight"), 1400);
+  }, delayMs);
+}
+
 function latestArtifactName(artifacts: Artifact[], assetType: string) {
   return latestArtifactByType(artifacts, assetType)?.name ?? null;
 }
@@ -8125,7 +8136,7 @@ function FocusedEvidenceReader({
           {nextButtonLabel}
         </button>
       </div>
-      <div className="evidence-reader-preview">
+      <div id={`${id}-preview`} className="evidence-reader-preview">
         <div className="evidence-reader-preview-head">
           <div className="eyebrow">Read this first</div>
           <h3>{previewTitle}</h3>
@@ -12090,6 +12101,7 @@ function ExperimentsTab({
     setPreviewError(null);
     try {
       setPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+      focusNavigationAnchor("notebook-preview-top");
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -13294,6 +13306,7 @@ function ReportsTab({
     try {
       setReportPreview(await api<ArtifactPreview>(`/api/reports/${reportId}/preview`));
       setReportPreviewSource({ type: "report", id: reportId });
+      focusNavigationAnchor("decision-report-preview");
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -13307,6 +13320,7 @@ function ReportsTab({
     try {
       setReportPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
       setReportPreviewSource({ type: "artifact", id: artifactId });
+      focusNavigationAnchor("decision-report-preview");
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : String(err));
     } finally {
