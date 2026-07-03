@@ -4473,7 +4473,15 @@ td {
   inset: 0;
   justify-content: center;
   min-height: 220px;
+  padding: 18px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  text-align: left;
   z-index: 1;
+}
+
+.html-preview-loading p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
 }
 
 .html-preview-fallback {

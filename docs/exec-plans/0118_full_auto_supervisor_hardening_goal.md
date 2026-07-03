@@ -27,6 +27,7 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
 - Added a regression test ensuring Chat response briefs include recent conversation turns.
 - Added `/health` as a public alias for `/healthz` and updated Vite proxy/docs.
 - Added supervisor-side progress-update nudging during Codex CLI turns. This writes `.tablex/inbox/progress_request.md` in the user's locale when the human-facing Chat update is stale, without interrupting Codex or depending on an open browser.
+- Added Notebook HTML preview loading and slow-render states so a marimo/HTML preview no longer looks like a silent blank panel while the iframe is opening.
 
 ## 2026-07-04 Fable Feedback Audit
 
@@ -45,12 +46,13 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
 | Research Plan after anchors must be Codex-authored and locale-aware | Implemented with active follow-up | UI reads `research_plan.v1` `timeline_blocks`; non-English locales suppress unlocalized text and request Codex to refresh visible fields in the selected locale. |
 | Chat/Raw latest-log visibility must be predictable | Implemented in UI | Chat and Raw sticky-bottom scroll state resets per project/session while preserving manual scroll-up within the same view. |
 | Long-running Codex turns should still be prompted to explain progress | Implemented with non-blocking nudge | The supervisor now writes `.tablex/inbox/progress_request.md` during active Codex turns when the latest Codex-authored Chat update is stale; tests verify project locale and no browser polling dependency. |
+| Notebook preview state should not look blank or broken while rendering | Implemented in UI | HTML/SVG preview iframes now show localized loading and slow-render states before `onLoad`, with the existing open-original fallback still available. |
 
 ## Deferred Scope
 
 - Do not prune historical duplicate artifacts automatically. Existing projects may still contain large artifact histories from older naming behavior; deletion or compaction needs an explicit maintenance command and user approval.
 - A dedicated out-of-process supervisor/worker remains a future improvement. The current implementation is still in-process, but startup recovery and file-backed Raw transcripts reduce the worst reload failure modes.
-- Full browser UX review remains necessary for Chat/Raw rendering, Research Plan centering, Notebook viewer affordance, and Activity overlay behavior.
+- Full browser UX review remains necessary for Chat/Raw rendering, Research Plan centering, end-to-end Notebook rendering, and Activity overlay behavior.
 - Chat quality still depends on Codex honoring `reports/chat_update.md` at a useful cadence. The harness now requests those updates from the supervisor path as well as user/chat/activity paths, but real long-running sessions should be observed to confirm the cadence feels natural.
 - The product still has large frontend/backend files (`main.tsx`, `routes.py`, `analysis_notebooks.py`). Future edits should reduce risk through extraction rather than broad, unrelated edits.
 

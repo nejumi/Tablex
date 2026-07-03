@@ -181,6 +181,10 @@ const englishMessages = {
   artifactPreviewOpenOriginal: "Open original",
   artifactPreviewTruncatedWarning: "This preview is truncated. Download the artifact for the full notebook preview.",
   artifactPreviewFrameFailedWarning: "The embedded preview did not load. Open the original artifact in a new tab.",
+  artifactPreviewLoadingTitle: "Loading preview",
+  artifactPreviewLoadingBody: "The notebook preview is opening in this panel.",
+  artifactPreviewSlowTitle: "Still rendering",
+  artifactPreviewSlowBody: "Large notebook previews can take a moment. You can also open the artifact in a new tab.",
   artifactPreviewAvailableTitle: "Preview is available as an artifact.",
   artifactPreviewAvailableBody: "Open it in a new tab if the embedded frame stays blank.",
   artifactPreviewInspectSource: "Inspect preview source",
@@ -605,6 +609,10 @@ const japaneseMessages: LocaleMessages = {
   artifactPreviewOpenOriginal: "元のartifactを開く",
   artifactPreviewTruncatedWarning: "このプレビューは一部のみです。完全なNotebook previewはartifactを開いて確認してください。",
   artifactPreviewFrameFailedWarning: "埋め込みプレビューを読み込めませんでした。元のartifactを新しいタブで開いてください。",
+  artifactPreviewLoadingTitle: "プレビューを読み込み中",
+  artifactPreviewLoadingBody: "このパネル内でNotebook previewを開いています。",
+  artifactPreviewSlowTitle: "レンダリング中",
+  artifactPreviewSlowBody: "大きいNotebook previewは表示に時間がかかることがあります。元のartifactを新しいタブで開くこともできます。",
   artifactPreviewAvailableTitle: "プレビューartifactがあります。",
   artifactPreviewAvailableBody: "埋め込み表示が空のままの場合は、新しいタブで開いてください。",
   artifactPreviewInspectSource: "プレビューソースを確認",
@@ -8626,12 +8634,19 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
   const inlineUrl = `${apiBase}/api/artifacts/${preview.id}/inline-preview`;
   const inlineSource = typeof preview.preview === "string" && !preview.truncated ? htmlPreviewSrcDoc(preview) : null;
   const [frameFailed, setFrameFailed] = React.useState(false);
+  const [frameLoaded, setFrameLoaded] = React.useState(false);
+  const [frameSlow, setFrameSlow] = React.useState(false);
+  const canRenderInline = isSvg ? Boolean(inlineSource) : true;
 
   React.useEffect(() => {
     setFrameFailed(false);
-  }, [preview.id]);
+    setFrameLoaded(false);
+    setFrameSlow(false);
+    if (!canRenderInline) return undefined;
+    const slowTimer = window.setTimeout(() => setFrameSlow(true), 2500);
+    return () => window.clearTimeout(slowTimer);
+  }, [preview.id, canRenderInline]);
 
-  const canRenderInline = isSvg ? Boolean(inlineSource) : true;
   return (
     <div className="preview-block">
       <div className="preview-toolbar">
@@ -8662,7 +8677,16 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
           </a>
         </div>
       ) : (
-        <div className="html-preview-shell">
+        <div className="html-preview-shell" aria-busy={!frameLoaded}>
+          {!frameLoaded ? (
+            <div className="html-preview-loading" role="status">
+              <Loader2 className="spin" size={22} />
+              <div>
+                <strong>{frameSlow ? text.artifactPreviewSlowTitle : text.artifactPreviewLoadingTitle}</strong>
+                <p>{frameSlow ? text.artifactPreviewSlowBody : text.artifactPreviewLoadingBody}</p>
+              </div>
+            </div>
+          ) : null}
           <iframe
             key={preview.id}
             className="html-preview-frame"
@@ -8671,6 +8695,10 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
             sandbox="allow-scripts"
             title={`${preview.name} preview`}
             onError={() => setFrameFailed(true)}
+            onLoad={() => {
+              setFrameLoaded(true);
+              setFrameSlow(false);
+            }}
           />
         </div>
       )}
