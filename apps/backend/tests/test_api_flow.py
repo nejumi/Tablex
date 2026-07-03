@@ -2420,6 +2420,7 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path, monkeypatch: A
     overview = overview_response.json()
     assert overview["schema_version"] == "portal_overview.v1"
     assert overview["summary"]["project_count"] >= 1
+    assert overview["summary"]["active_project_count"] == 1
     assert overview["summary"]["idea_count"] >= 1
     recent_updates = overview["recent_updates"]
     assert all("agent_chat_turn" not in update["title"] for update in recent_updates)

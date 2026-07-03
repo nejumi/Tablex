@@ -18,13 +18,31 @@ from tabular_harness.services.artifacts import (
     artifact_to_dict,
 )
 
+PORTAL_IN_PROGRESS_PHASES = {
+    "AUTONOMOUS_LOOP",
+    "UNDERSTANDING_REVIEW",
+}
+
 
 def build_portal_overview(db: Session) -> dict[str, Any]:
     projects = list(db.scalars(select(Project).order_by(Project.updated_at.desc())).all())
     recent_jobs = list(db.scalars(select(Job).order_by(Job.created_at.desc()).limit(12)).all())
+    active_jobs = list(
+        db.scalars(
+            select(Job)
+            .where(Job.status.in_(("queued", "running", "approval_required")))
+            .order_by(Job.created_at.desc())
+            .limit(100)
+        ).all()
+    )
     recent_artifacts = list(db.scalars(select(Artifact).order_by(Artifact.created_at.desc()).limit(12)).all())
     recent_ideas = list_portal_ideas(db, limit=8)
-    active_jobs = [job for job in recent_jobs if job.status in {"queued", "running", "approval_required"}]
+    active_project_ids = {
+        job.project_id
+        for job in active_jobs
+        if isinstance(job.project_id, str) and job.project_id
+    }
+    active_project_ids.update(project.id for project in projects if portal_project_in_progress(project))
     project_names = {project.id: project.name for project in projects}
     activity = [
         event
@@ -47,7 +65,7 @@ def build_portal_overview(db: Session) -> dict[str, Any]:
         "generated_at": utc_now().isoformat(),
         "summary": {
             "project_count": len(projects),
-            "active_project_count": len([project for project in projects if project.status != "archived"]),
+            "active_project_count": len(active_project_ids),
             "job_count": int(db.scalar(select(func.count()).select_from(Job)) or 0),
             "artifact_count": int(db.scalar(select(func.count()).select_from(Artifact)) or 0),
             "active_worker_count": len(active_jobs),
@@ -115,6 +133,10 @@ def portal_idea_from_artifact(artifact: Artifact) -> dict[str, Any]:
 NOISY_PORTAL_ARTIFACT_TYPES = {
     "agent_chat_turn",
 }
+
+
+def portal_project_in_progress(project: Project) -> bool:
+    return project.current_phase in PORTAL_IN_PROGRESS_PHASES
 
 
 def build_recent_updates(projects: list[Project], jobs: list[Job], artifacts: list[Artifact]) -> list[dict[str, Any]]:

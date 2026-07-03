@@ -113,7 +113,7 @@ const englishMessages = {
   noIdeasYet: "No captured ideas yet.",
   openProject: "Open project",
   totalProjects: "Projects",
-  activeProjects: "Active",
+  activeProjects: "In Progress",
   totalJobs: "Jobs",
   totalArtifacts: "Artifacts",
   moreTabs: "More",
@@ -532,7 +532,7 @@ const japaneseMessages: LocaleMessages = {
   noIdeasYet: "まだideaはありません。",
   openProject: "Projectを開く",
   totalProjects: "Projects",
-  activeProjects: "Active",
+  activeProjects: "進行中",
   totalJobs: "Jobs",
   totalArtifacts: "Artifacts",
   moreTabs: "その他",
@@ -3215,6 +3215,10 @@ function numberFromSummary(value: unknown, fallback: number | string): number | 
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function projectInProgressForPortal(project: Project): boolean {
+  return ["AUTONOMOUS_LOOP", "UNDERSTANDING_REVIEW"].includes(project.current_phase);
+}
+
 function AuthGate({
   status,
   text,
@@ -3330,7 +3334,7 @@ function PortalView({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const summary = overview?.summary ?? {};
-  const activeCount = numberFromSummary(summary.active_project_count, projects.filter((project) => project.status !== "archived").length);
+  const activeCount = numberFromSummary(summary.active_project_count, projects.filter(projectInProgressForPortal).length);
   const projectCount = numberFromSummary(summary.project_count, projects.length);
   const jobCount = numberFromSummary(summary.job_count, "Project tabs");
   const artifactCount = numberFromSummary(summary.artifact_count, "Workbench");
@@ -4096,11 +4100,14 @@ function ProjectDetail({
 
   const refreshAgentActivity = React.useCallback(async () => {
     try {
-      const [data, sessionData, rawTranscriptData, agentChatHistoryData] = await Promise.all([
+      const [data, sessionData, rawTranscriptData, agentChatHistoryData, researchPlanTimelineData] = await Promise.all([
         api<AgentActivityResponse>(`/api/projects/${project.id}/agent-activity`),
         api<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`).catch(() => null),
         api<AgentRawTranscript>(`/api/projects/${project.id}/agent-session/raw-transcript?limit=8`).catch(() => null),
-        api<AgentChatHistoryTurn[]>(`/api/projects/${project.id}/agent-chat/history`).catch(() => [])
+        api<AgentChatHistoryTurn[]>(`/api/projects/${project.id}/agent-chat/history`).catch(() => []),
+        api<ResearchPlanTimelineResponse>(
+          `/api/projects/${project.id}/research-plan/timeline?locale=${encodeURIComponent(userSettings.locale)}`
+        ).catch(() => null)
       ]);
       const sessionId = sessionData?.id ?? null;
       const canRequestDelta = sessionId !== null && sessionId === transcriptSessionIdRef.current;
@@ -4113,6 +4120,9 @@ function ProjectDetail({
       setAgentActivity(data);
       setAgentSession(sessionData);
       setAgentRawTranscript(rawTranscriptData);
+      if (researchPlanTimelineData) {
+        setResearchPlanTimeline(researchPlanTimelineData);
+      }
       setAgentChatMessages((current) => mergeAgentChatMessages(agentChatHistoryToMessages(agentChatHistoryData), current));
       setAgentTranscriptEvents((current) => {
         const next = sinceIndex === null ? transcriptData : mergeTranscriptEvents(current, transcriptData);
@@ -4123,7 +4133,7 @@ function ProjectDetail({
     } catch {
       // The activity overlay is opportunistic; project refresh still surfaces hard errors.
     }
-  }, [project.id]);
+  }, [project.id, userSettings.locale]);
 
   React.useEffect(() => {
     void refresh();
