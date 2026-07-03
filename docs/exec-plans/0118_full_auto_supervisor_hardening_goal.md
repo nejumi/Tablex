@@ -32,6 +32,7 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
 - Changed queued Agent Chat copy so messages delivered to the main Codex session say that the agent has the instruction and the next Codex reply will be saved, rather than leading with worker-waiting implementation language.
 - Marked main-session-delivered Chat jobs as `waiting_for_agent` instead of runnable `queued` work so the main Codex session remains the response source; the job is completed when a Codex-authored `reports/chat_update.md` is registered.
 - Updated the frontend so `waiting_for_agent` chat turns remain visibly active in Chat, use the Codex-delivery message returned by the backend, stay out of Research Plan task blocks, and show localized Jobs labels instead of raw status strings.
+- Rendered HTML notebook previews from the preview API's inlined/reset HTML via `srcDoc` and added an explicit empty-preview warning so blank panels are distinguishable from loading or rendering.
 
 ## 2026-07-04 Fable Feedback Audit
 
@@ -55,6 +56,7 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
 | Chat/Raw latest-log visibility must be predictable | Implemented in UI | Chat and Raw sticky-bottom scroll state resets per project/session while preserving manual scroll-up within the same view. |
 | Long-running Codex turns should still be prompted to explain progress | Implemented with non-blocking nudge | The supervisor now writes `.tablex/inbox/progress_request.md` during active Codex turns when the latest Codex-authored Chat update is stale; tests verify project locale and no browser polling dependency. |
 | Notebook preview state should not look blank or broken while rendering | Implemented in UI | HTML/SVG preview iframes now show localized loading and slow-render states before `onLoad`, with the existing open-original fallback still available. |
+| Notebook preview should not depend on a second iframe fetch for already-prepared HTML | Implemented in UI | Non-truncated HTML previews now render the API-provided inlined/reset HTML through `srcDoc`; empty previews show a visible warning and source/original fallbacks. |
 
 ## Deferred Scope
 

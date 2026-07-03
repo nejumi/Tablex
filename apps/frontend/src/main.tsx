@@ -181,6 +181,7 @@ const englishMessages = {
   artifactPreviewOpenOriginal: "Open original",
   artifactPreviewTruncatedWarning: "This preview is truncated. Download the artifact for the full notebook preview.",
   artifactPreviewFrameFailedWarning: "The embedded preview did not load. Open the original artifact in a new tab.",
+  artifactPreviewEmptyWarning: "This preview artifact does not contain visible HTML content. Open the original artifact or inspect the source.",
   artifactPreviewLoadingTitle: "Loading preview",
   artifactPreviewLoadingBody: "The notebook preview is opening in this panel.",
   artifactPreviewSlowTitle: "Still rendering",
@@ -612,6 +613,7 @@ const japaneseMessages: LocaleMessages = {
   artifactPreviewOpenOriginal: "元のartifactを開く",
   artifactPreviewTruncatedWarning: "このプレビューは一部のみです。完全なNotebook previewはartifactを開いて確認してください。",
   artifactPreviewFrameFailedWarning: "埋め込みプレビューを読み込めませんでした。元のartifactを新しいタブで開いてください。",
+  artifactPreviewEmptyWarning: "このpreview artifactには表示可能なHTML本文が見つかりません。元のartifactを開くか、ソースを確認してください。",
   artifactPreviewLoadingTitle: "プレビューを読み込み中",
   artifactPreviewLoadingBody: "このパネル内でNotebook previewを開いています。",
   artifactPreviewSlowTitle: "レンダリング中",
@@ -8652,10 +8654,12 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
   const url = `${apiBase}/api/artifacts/${preview.id}/download`;
   const inlineUrl = `${apiBase}/api/artifacts/${preview.id}/inline-preview`;
   const inlineSource = typeof preview.preview === "string" && !preview.truncated ? htmlPreviewSrcDoc(preview) : null;
+  const renderWithSrcDoc = Boolean(inlineSource);
+  const probablyEmpty = htmlPreviewLooksEmpty(preview);
   const [frameFailed, setFrameFailed] = React.useState(false);
   const [frameLoaded, setFrameLoaded] = React.useState(false);
   const [frameSlow, setFrameSlow] = React.useState(false);
-  const canRenderInline = isSvg ? Boolean(inlineSource) : true;
+  const canRenderInline = Boolean(inlineSource) || (!isSvg && !probablyEmpty);
 
   React.useEffect(() => {
     setFrameFailed(false);
@@ -8684,6 +8688,9 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
       {frameFailed ? (
         <div className="banner warning">{text.artifactPreviewFrameFailedWarning}</div>
       ) : null}
+      {probablyEmpty ? (
+        <div className="banner warning">{text.artifactPreviewEmptyWarning}</div>
+      ) : null}
       {!canRenderInline ? (
         <div className="html-preview-fallback">
           <FileText size={22} />
@@ -8709,8 +8716,8 @@ function HtmlArtifactPreview({ preview }: { preview: ArtifactPreview }) {
           <iframe
             key={preview.id}
             className="html-preview-frame"
-            src={isSvg ? undefined : inlineUrl}
-            srcDoc={isSvg ? inlineSource ?? undefined : undefined}
+            src={renderWithSrcDoc ? undefined : inlineUrl}
+            srcDoc={renderWithSrcDoc ? inlineSource ?? undefined : undefined}
             sandbox="allow-scripts"
             title={`${preview.name} preview`}
             onError={() => setFrameFailed(true)}
@@ -8739,6 +8746,21 @@ function htmlPreviewSrcDoc(preview: ArtifactPreview) {
   if (source.includes("tablex-preview-reset")) return source;
   if (/<head[^>]*>/i.test(source)) return source.replace(/<head([^>]*)>/i, `<head$1>${resetStyle}`);
   return `${resetStyle}${source}`;
+}
+
+function htmlPreviewLooksEmpty(preview: ArtifactPreview) {
+  if (preview.truncated || typeof preview.preview !== "string") return false;
+  const source = preview.preview.trim();
+  if (!source) return true;
+  const structuralTags = /<(svg|canvas|img|table|iframe|script|div|section|article|main|pre|p|h[1-6])\b/i;
+  const visibleText = source
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return visibleText.length < 2 && !structuralTags.test(source);
 }
 
 function OverviewTab({
