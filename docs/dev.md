@@ -43,7 +43,8 @@ uvicorn tabular_harness.main:app --app-dir apps/backend --reload --port 8000
 Health check:
 
 ```bash
-curl http://localhost:8000/healthz
+curl http://localhost:8000/health
+# `/healthz` is also available for existing local scripts.
 ```
 
 Metadata defaults to `data/metadata/app.db`. Artifacts default to `data/artifacts`.
@@ -509,7 +510,7 @@ cd apps/frontend
 npm run dev
 ```
 
-The dev server proxies `/api` and `/healthz` to `http://localhost:8000`.
+The dev server proxies `/api`, `/health`, and `/healthz` to `http://localhost:8000`.
 
 ## Tests And Checks
 
