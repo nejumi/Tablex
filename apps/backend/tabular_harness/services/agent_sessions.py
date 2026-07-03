@@ -124,6 +124,26 @@ def start_or_resume_main_session(
         existing.updated_at = utc_now()
         return existing
 
+    stopped = latest_main_session(db, project.id)
+    if stopped is not None and stopped.status == "stopped":
+        append_session_event(
+            db,
+            stopped,
+            source="tablex_sidecar",
+            event_type="session_resumed_after_power_on",
+            role="harness",
+            title="Full Auto resumed",
+            content="The existing main Codex session was resumed so Raw transcript and workspace history stay continuous.",
+            payload={"project_id": project.id, "autonomy_mode": autonomy_mode},
+        )
+        stopped.status = "between_turns"
+        stopped.autonomy_mode = autonomy_mode
+        stopped.runner_kind = runner_kind
+        stopped.pid = None
+        stopped.ended_at = None
+        stopped.updated_at = utc_now()
+        return stopped
+
     goal = goal_text or build_default_goal_text(db, project)
     session = AgentSession(
         id=new_id("ags"),

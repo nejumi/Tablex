@@ -420,6 +420,23 @@ def test_full_auto_start_creates_main_agent_session_without_dataset_even_with_le
     assert stopped_project_response.json()["autonomy_mode"] == "full_auto"
     assert stopped_project_response.json()["current_phase"] == "IDLE"
 
+    restart_response = client.post(f"/api/projects/{project_id}/autonomy/start", json={"runner_mode": "harness_only"})
+    assert restart_response.status_code == 200, restart_response.text
+    restart_job = restart_response.json()
+    assert restart_job["output"]["schema_version"] == "agent_session_start.v1"
+    assert restart_job["output"]["agent_session_id"] == queued_job["output"]["agent_session_id"]
+
+    restarted_session_response = client.get(f"/api/projects/{project_id}/agent-session/current")
+    assert restarted_session_response.status_code == 200
+    restarted_session = restarted_session_response.json()
+    assert restarted_session["id"] == queued_job["output"]["agent_session_id"]
+    assert restarted_session["status"] in {"between_turns", "running", "starting"}
+
+    transcript_response = client.get(f"/api/projects/{project_id}/agent-session/transcript")
+    assert transcript_response.status_code == 200
+    transcript_event_types = [event["event_type"] for event in transcript_response.json()]
+    assert "session_resumed_after_power_on" in transcript_event_types
+
 
 def test_agent_activity_does_not_show_future_autonomous_heartbeat_as_active(tmp_path: Path) -> None:
     client = make_client(tmp_path)
