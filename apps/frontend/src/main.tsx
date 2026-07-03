@@ -510,9 +510,22 @@ const englishMessages = {
   surfaceProjectArtifacts: "project artifacts",
   surfaceRunnerContractReady: "runner contract ready",
   surfaceNoContractYet: "no contract yet",
+  statusHigh: "High",
+  statusBlocking: "Blocking",
+  statusActive: "Active",
+  statusReady: "Ready",
+  statusLow: "Low",
+  statusMedium: "Medium",
+  statusNeedsAttention: "Needs attention",
+  workflowIdle: "Idle",
+  workflowDraft: "Draft",
+  workflowUnderstandingReview: "Understanding Review",
+  workflowAutonomousLoop: "Autonomous Loop",
+  targetLabelShort: "target",
   latestBriefLabel: "Latest brief",
   latestIdeaLabel: "Latest idea",
   openDeepDive: "Open deep dive",
+  downloadResearchPlan: "Download ResearchPlan",
   equippedSkillsTitle: "Equipped Skills",
   equippedSkillsEmpty: "No project skills equipped yet.",
   equippedSkillBadge: "E",
@@ -528,6 +541,7 @@ const englishMessages = {
   skillNoAvailable: "No unequipped Skills are available. Seed the library or create one here.",
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
+  agentDisplayModeLabel: "Agent display mode",
   rawAgentTitle: "Raw Codex transcript",
   rawAgentEmpty: "No Codex execution transcript is available yet. Start the agent or send a message to begin.",
   rawAgentTail: "tail",
@@ -858,14 +872,14 @@ const japaneseMessages: LocaleMessages = {
   workerIdLabel: "ID",
   workerChatPlaceholder: "このworkerにメッセージ",
   noAgentActivity: "chat、job、runner workが始まるとagent activityが表示されます。",
-  missionControlTitle: "Mission Control",
+  missionControlTitle: "ミッションコントロール",
   missionControlSubtitle: "次の判断、現在の計画、Agentとの会話をここに集約します。根拠面にはワンクリックで移動できます。",
   autonomyMode: "自律モード",
   autonomyPower: "Agent電源",
   startAgent: "開始",
   stopAgent: "停止",
   agentPowerReady: "データアップロード後に開始できます",
-  agentPowerNeedsData: "データをアップロードするとAgent run loopを開始できます。",
+  agentPowerNeedsData: "データをアップロードするとAgentの実行ループを開始できます。",
   agentPowerOn: "Agent loopはONです",
   agentPowerOff: "Agent loopはOFFです",
   targetCanWait: "ターゲットは今設定しても、Agentに作らせても、Data Understanding後に確定しても構いません。",
@@ -905,9 +919,9 @@ const japaneseMessages: LocaleMessages = {
   planBlockObjectiveSkipped: "Full AutoはここをCodexに委譲し、明示的な仮定boundaryを残して先に進んでいます。",
   planBlockObjectiveDelegated: "Codexに委譲",
   planBlockUnderstanding: "データ理解",
-  planBlockUnderstandingPending: "schema、欠損、行の意味、leakage risk、必要ならtarget-aware evidenceを確認します。",
-  planBlockUnderstandingNeedsNotebook: "作業証跡はありますが、読めるData Understanding notebookはまだ登録されていません。",
-  planBlockUnderstandingDone: "読めるData Understanding evidenceがあります。",
+  planBlockUnderstandingPending: "schema、欠損、行の意味、漏洩リスク、必要なら目的変数を踏まえた根拠を確認します。",
+  planBlockUnderstandingNeedsNotebook: "作業証跡はありますが、読めるデータ理解ノートブックはまだ登録されていません。",
+  planBlockUnderstandingDone: "読めるデータ理解の根拠があります。",
   planBlockPriorResearch: "従来知見の調査",
   planBlockPriorResearchPending: "Kaggle、arXiv、Skill、Codex裁量の情報源から知見を追加します。",
   planBlockPriorResearchActive: "Codexがこのステップを進めています。調査知見または追加調査不要の判断はまだ登録されていません。",
@@ -975,9 +989,22 @@ const japaneseMessages: LocaleMessages = {
   surfaceProjectArtifacts: "アーティファクト",
   surfaceRunnerContractReady: "runner契約準備済み",
   surfaceNoContractYet: "契約未作成",
+  statusHigh: "高リスク",
+  statusBlocking: "要対応",
+  statusActive: "実行中",
+  statusReady: "準備完了",
+  statusLow: "低リスク",
+  statusMedium: "中リスク",
+  statusNeedsAttention: "確認が必要",
+  workflowIdle: "待機中",
+  workflowDraft: "下書き",
+  workflowUnderstandingReview: "データ理解レビュー",
+  workflowAutonomousLoop: "自律実行中",
+  targetLabelShort: "目的",
   latestBriefLabel: "最新ブリーフ",
   latestIdeaLabel: "最新アイデア",
   openDeepDive: "深掘りを開く",
+  downloadResearchPlan: "ResearchPlanをダウンロード",
   equippedSkillsTitle: "装備中SKILL",
   equippedSkillsEmpty: "このProjectに装備されたSkillはまだありません。",
   equippedSkillBadge: "E",
@@ -990,9 +1017,10 @@ const japaneseMessages: LocaleMessages = {
   skillInstructions: "指示",
   skillTags: "タグ",
   skillCreateAndEquip: "作成して装備",
-  skillNoAvailable: "未装備のSkillはありません。Libraryをseedするか、ここで作成してください。",
+  skillNoAvailable: "未装備のSkillはありません。ライブラリを初期化するか、ここで作成してください。",
   agentModeChat: "Chat",
   agentModeRaw: "Raw",
+  agentDisplayModeLabel: "Agent表示モード",
   rawAgentTitle: "Codex生ログ",
   rawAgentEmpty: "Codexの実行transcriptはまだありません。Agentを開始するか、メッセージを送るとここに表示されます。",
   rawAgentTail: "tail",
@@ -1227,13 +1255,17 @@ function localeRequiresLocalizedDisplay(locale: string | null | undefined): bool
   return Boolean(language && language !== "en");
 }
 
+const allowedInlineLatinTermsPattern =
+  /\b(?:AI|API|CSV|DB|EDA|ER|HTML|ID|IME|JSON|JSONL|ML|PDP|QA|Raw|SQL|TFIDF|TF-IDF|UI|UX|XGBoost|arXiv|artifact|asset|band|baseline|boundary|case|catalog|chat|dataset|diagnostics|dry-run|evidence|fallback|feature|gate|hash|high-tail|interval|job|join|leakage|locale|log|marimo|metric|monitoring|notebook|override|policy|profile|rebuild|registration|report|risk|runner|salary|schema|skill|split|target|text|workflow|workspace)\b/gi;
+
 function displayTextMatchesLocale(value: string | null | undefined, locale: string | null | undefined): boolean {
   const text = (value ?? "").trim();
   if (!text) return false;
   if (!localeRequiresLocalizedDisplay(locale)) return true;
   if (localeLooksJapanese(locale)) {
     const japaneseCharCount = text.match(/[\u3040-\u30ff\u3400-\u9fff]/g)?.length ?? 0;
-    const latinLetterCount = text.match(/[A-Za-z]/g)?.length ?? 0;
+    const latinSafeText = text.replace(allowedInlineLatinTermsPattern, " ");
+    const latinLetterCount = latinSafeText.match(/[A-Za-z]/g)?.length ?? 0;
     if (hasUnlocalizedLatinPhrase(text)) return false;
     return japaneseCharCount >= 2 && latinLetterCount <= Math.max(18, Math.floor(japaneseCharCount * 1.5));
   }
@@ -1244,7 +1276,12 @@ function hasUnlocalizedLatinPhrase(value: string): boolean {
   const stripped = value.replace(/`[^`]*`/g, " ").replace(/https?:\/\/\S+/g, " ");
   return stripped
     .split(/[\u3040-\u30ff\u3400-\u9fff]+/)
-    .some((fragment) => (fragment.match(/\b[A-Za-z][A-Za-z-]{2,}\b/g)?.length ?? 0) >= 2);
+    .some((fragment) => {
+      const words = fragment.match(/\b[A-Za-z][A-Za-z-]{2,}\b/g) ?? [];
+      if (words.length < 2) return false;
+      const remainingWords = fragment.replace(allowedInlineLatinTermsPattern, " ").match(/\b[A-Za-z][A-Za-z-]{2,}\b/g) ?? [];
+      return remainingWords.length >= 2;
+    });
 }
 
 function localeSafeDisplayText(value: string | null | undefined, locale: string | null | undefined, fallback: string): string {
@@ -2685,10 +2722,10 @@ function normalizeTab(value: string | null | undefined): Tab {
   return tabFromString(value, "Home");
 }
 
-function guidanceActionToFocusAction(action: ProjectGuidanceAction): FocusAction {
+function guidanceActionToFocusAction(action: ProjectGuidanceAction, labelOverride?: string | null): FocusAction {
   return {
     id: action.id,
-    label: action.label,
+    label: labelOverride ?? action.label,
     targetTab: normalizeTab(action.target_tab),
     actionType: action.action_type,
     method: action.method,
@@ -2703,8 +2740,11 @@ function guidanceActionToFocusAction(action: ProjectGuidanceAction): FocusAction
 function focusFromGuidance(guidance: ProjectGuidance, text: LocaleMessages): FocusRecommendation {
   const focus = guidance.recommended_focus;
   const fallback = localizedFocusCopy(focus.focus_key, text);
-  const primaryAction = guidanceActionToFocusAction(focus.primary_action);
-  const secondaryActions = focus.secondary_actions.map(guidanceActionToFocusAction);
+  const primaryAction = guidanceActionToFocusAction(
+    focus.primary_action,
+    localizedFocusActionLabel(focus.focus_key, text)
+  );
+  const secondaryActions = focus.secondary_actions.map((action) => guidanceActionToFocusAction(action));
   return {
     tab: normalizeTab(focus.target_tab),
     title: fallback?.title ?? focus.title,
@@ -2718,6 +2758,18 @@ function focusFromGuidance(guidance: ProjectGuidance, text: LocaleMessages): Foc
     suggestedAgentPrompt: focus.suggested_agent_prompt,
     source: "api"
   };
+}
+
+function localizedFocusActionLabel(focusKey: string, text: LocaleMessages): string | null {
+  if (focusKey === "upload_data") return text.strategyActionUploadData;
+  if (focusKey === "understand_data") return text.focusUnderstandData;
+  if (focusKey === "assumptions") return text.strategyActionResolveAssumptions;
+  if (focusKey === "evaluation") return text.strategyActionLockEvaluation;
+  if (focusKey === "approach") return text.focusApproach;
+  if (focusKey === "experiments") return text.focusExperiments;
+  if (focusKey === "notebooks") return text.focusNotebooks;
+  if (focusKey === "reports") return text.focusReports;
+  return null;
 }
 
 function localizedFocusCopy(focusKey: string, text: LocaleMessages) {
@@ -3183,7 +3235,7 @@ function App() {
               onClick={() => openProject(project.id)}
             >
               <span>{project.name}</span>
-              <small>{formatWorkflowState(project.current_phase)}</small>
+              <small>{formatWorkflowState(project.current_phase, text)}</small>
             </button>
           ))}
         </div>
@@ -3466,7 +3518,7 @@ function PortalView({
           type: "project",
           project_id: project.id,
           title: project.name,
-          summary: formatWorkflowState(project.current_phase),
+          summary: formatWorkflowState(project.current_phase, text),
           created_at: project.updated_at,
           target_tab: "Overview"
         }));
@@ -5131,11 +5183,11 @@ function HomeTab({
           <p>{missionReason}</p>
           <div className="badge-row">
             <span className={navigatorStatusClass(missionRiskLevel)}>
-              {missionRiskLevel.replace(/_/g, " ")}
+              {displayStatusLabel(missionRiskLevel, text)}
             </span>
-            <span className="badge muted">{formatWorkflowState(project.current_phase)}</span>
+            <span className="badge muted">{formatWorkflowState(project.current_phase, text)}</span>
             <span className="badge muted">
-              {project.target_column ? `target: ${project.target_column}` : "target not fixed"}
+              {project.target_column ? `${text.targetLabelShort}: ${project.target_column}` : text.surfaceTargetOpen}
             </span>
           </div>
         </div>
@@ -5237,7 +5289,7 @@ function HomeTab({
                 <span>{text.missionControlSubtitle}</span>
               </div>
             </div>
-            <div className="agent-view-toggle" aria-label="Agent display mode">
+            <div className="agent-view-toggle" aria-label={text.agentDisplayModeLabel}>
               <button className={agentViewMode === "chat" ? "active" : ""} onClick={() => setAgentViewMode("chat")} type="button">
                 {text.agentModeChat}
               </button>
@@ -5481,7 +5533,7 @@ function AutonomyPowerPanel({
         <small>
           {mode === "full_auto" ? text.fullAutoMode : text.approvalBasedMode}
           {" · "}
-          {targetColumn ? `target: ${targetColumn}` : text.targetCanWait}
+          {targetColumn ? `${text.targetLabelShort}: ${targetColumn}` : text.targetCanWait}
         </small>
       </div>
     </div>
@@ -5584,7 +5636,7 @@ function SkillManagerPanel({
       {equippedSkills.length ? (
         <div className="equipped-skill-list">
           {equippedSkills.slice(0, compact ? 6 : 12).map((skill) => (
-            <div className="equipped-skill" key={skill.id} title={skill.description ?? skill.name}>
+            <div className="equipped-skill" key={skill.id} title={skill.name}>
               <b>{text.equippedSkillBadge}</b>
               <div>
                 <strong>{skill.name}</strong>
@@ -5772,7 +5824,7 @@ function ResearchPlanTimeline({
           {text.researchPlanTimelineHint}
         </span>
         {latestResearchPlan ? (
-          <a className="icon-link" href={`${apiBase}/api/artifacts/${latestResearchPlan.id}/download`} title="Download ResearchPlan">
+          <a className="icon-link" href={`${apiBase}/api/artifacts/${latestResearchPlan.id}/download`} title={text.downloadResearchPlan}>
             <Download size={16} />
           </a>
         ) : null}
@@ -5889,7 +5941,7 @@ function buildResearchPlanBlocks({
       status: objectiveStatus,
       eyebrow: "02",
       evidence: project.target_column
-        ? `target: ${project.target_column}`
+        ? `${text.targetLabelShort}: ${project.target_column}`
         : objectiveDelegatedToCodex
           ? text.planBlockObjectiveDelegated
           : latestArtifactName(artifacts, "target_definition_proposal"),
@@ -7118,6 +7170,18 @@ function navigatorStatusClass(status: string) {
   if (["blocked", "high", "needs_attention"].includes(status)) return "badge risk";
   if (["recover", "medium"].includes(status)) return "badge warning";
   return "badge muted";
+}
+
+function displayStatusLabel(status: string, text: LocaleMessages): string {
+  const normalized = status.toLowerCase().replace(/\s+/g, "_");
+  if (normalized === "high") return text.statusHigh;
+  if (normalized === "blocking" || normalized === "blocked") return text.statusBlocking;
+  if (normalized === "active" || normalized === "running") return text.statusActive;
+  if (normalized === "ready" || normalized === "ready_to_act") return text.statusReady;
+  if (normalized === "low") return text.statusLow;
+  if (normalized === "medium" || normalized === "recover") return text.statusMedium;
+  if (normalized === "needs_attention") return text.statusNeedsAttention;
+  return status.replace(/_/g, " ");
 }
 
 function agentChatActionLabel(action: AgentChatAction, text: LocaleMessages) {
@@ -15836,8 +15900,15 @@ function formatJobStatus(job: Job, text: LocaleMessages) {
   return status;
 }
 
-function formatWorkflowState(value: string | null) {
+function formatWorkflowState(value: string | null, text?: LocaleMessages) {
   if (!value) return "-";
+  const normalized = value.toLowerCase();
+  if (text) {
+    if (normalized === "idle") return text.workflowIdle;
+    if (normalized === "draft") return text.workflowDraft;
+    if (normalized === "understanding_review") return text.workflowUnderstandingReview;
+    if (normalized === "autonomous_loop") return text.workflowAutonomousLoop;
+  }
   return value
     .toLowerCase()
     .split("_")
