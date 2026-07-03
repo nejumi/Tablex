@@ -1227,11 +1227,11 @@ def run_runner_handoff(
             state.record(
                 "codex_execution",
                 "active",
-                "A main Codex session is already queued or running; Full Auto will not fragment the thread with another runner job.",
+                "Codex is already queued or running for this project.",
                 entity_ids={"job_id": active_codex_job.id, "agent_task_contract_artifact_id": plan.artifact.id},
             )
             return
-        title = "Continue the main Codex session" if task_type == "autonomous_session" else "Run Codex on the prepared agent task"
+        title = "Continue Codex work" if task_type == "autonomous_session" else "Run Codex on the prepared agent task"
         summary = (
             "Resume the long-running autonomous data-science thread in the controlled workspace, then return "
             "artifacts, findings, code/report outputs, and next-session recommendations to the harness."

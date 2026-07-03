@@ -112,8 +112,8 @@ def start_or_resume_main_session(
             source="tablex_sidecar",
             event_type="session_resume_requested",
             role="harness",
-            title="Full Auto resume requested",
-            content="Tablex observed an active main AgentSession and will continue supervising it instead of creating a fragmented runner job.",
+            title="Resume requested",
+            content="An active Codex session is already running for this project, so supervision will continue from the current state.",
             payload={"project_id": project.id, "autonomy_mode": autonomy_mode},
         )
         existing.status = "running"
@@ -145,7 +145,7 @@ def start_or_resume_main_session(
         event_type="session_created",
         role="harness",
         title="Full Auto started",
-        content="The analysis has started and will continue from the current project state.",
+        content="The analysis has started from the current project state.",
         payload={"project_id": project.id, "runner_kind": runner_kind, "autonomy_mode": autonomy_mode},
     )
     return session
@@ -462,7 +462,7 @@ def maybe_request_codex_progress_update(
         event_type="progress_update_requested",
         role="harness",
         title="Progress update requested",
-        content="Tablex asked the main Codex session to refresh the human-facing progress update without interrupting the session.",
+        content="Tablex asked Codex to refresh the progress update without interrupting the current work.",
         payload={
             "locale": locale,
             "stale_after_seconds": stale_after_seconds,
@@ -1114,7 +1114,7 @@ def mark_user_instructions_delivered(
             event_type="user_instructions_delivered_to_codex",
             role="harness",
             title="User instructions delivered to Codex",
-            content=f"Delivered {len(delivered_user_event_indexes)} pending user instruction(s) to the main Codex session.",
+            content=f"Delivered {len(delivered_user_event_indexes)} pending user instruction(s) to Codex.",
             payload={
                 "delivered_user_event_indexes": list(delivered_user_event_indexes),
                 "last_user_event_index": max(delivered_user_event_indexes),
@@ -1146,7 +1146,7 @@ def run_codex_cli_turn_streaming(
                     event_type="runner_unavailable",
                     role="harness",
                     title="Codex CLI is not available",
-                    content="Tablex cannot start the main Codex session because the codex binary is not on PATH.",
+                    content="Tablex cannot start Codex because the codex binary is not on PATH.",
                     payload={},
                 )
                 db.commit()
@@ -1197,8 +1197,8 @@ def run_codex_cli_turn_streaming(
             source="tablex_sidecar",
             event_type="codex_command",
             role="harness",
-            title="Launching Codex CLI",
-            content="Starting or resuming the main Codex session. Raw will store Codex JSONL events directly.",
+            title="Starting Codex",
+            content="Codex is starting from the current project workspace.",
             payload={"command": " ".join(cmd[:-1] + ["-"]), "workspace": str(workspace)},
         )
         db.commit()
@@ -1225,8 +1225,8 @@ def run_codex_cli_turn_streaming(
                 source="tablex_sidecar",
                 event_type="process_started",
                 role="harness",
-                title="Codex process started",
-                content=f"Codex CLI process pid={process.pid} is running for the main AgentSession.",
+                title="Codex started",
+                content=f"Codex process pid={process.pid} is running.",
                 payload={"pid": process.pid},
             )
             db.commit()
@@ -1792,7 +1792,7 @@ def stop_main_session(db: Session, project: Project) -> AgentSession | None:
         event_type="session_stop_requested",
         role="harness",
         title="User stopped Full Auto",
-        content="The main AgentSession was stopped by the project power control.",
+        content="Full Auto was stopped by the project power control.",
         payload={"project_id": project.id},
     )
     return session

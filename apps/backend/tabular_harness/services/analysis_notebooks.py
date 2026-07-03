@@ -892,7 +892,7 @@ def create_notebook_evidence_artifacts(
                 "asset_type": artifact.asset_type,
                 "content_type": "image/svg+xml",
                 "render_status": "rendered_from_profile_artifacts",
-                "runtime_execution_status": "notebook_cells_not_executed",
+                "runtime_execution_status": "static_preview",
             }
         )
 
@@ -982,7 +982,7 @@ def build_notebook_evidence_bundle(
         "generated_at": generated_at,
         "capture_mode": "safe_profile_evidence_render",
         "execution_status": execution_status,
-        "runtime_execution_status": "notebook_cells_not_executed",
+        "runtime_execution_status": "static_preview",
         "summary": {
             "title": summary.get("title"),
             "overview": summary.get("overview"),
@@ -1534,7 +1534,7 @@ def render_notebook_evidence_html(bundle: dict[str, Any], figure_specs: list[dic
       {_metric_card("Figures", summary.get("figure_count", 0))}
       {_metric_card("Guardrails", summary.get("guardrail_count", 0))}
       {_metric_card("Questions", summary.get("analysis_question_count", 0))}
-      {_metric_card("Runtime", bundle["runtime_execution_status"])}
+      {_metric_card("Runtime", _status_display(bundle["runtime_execution_status"]))}
     </section>
     {_result_interpretation_html(interpretation)}
     <section class="panel">
@@ -2676,18 +2676,18 @@ def render_notebook_execution_html_preview(manifest: dict[str, Any]) -> str:
       <p>This capture validates the generated marimo notebook source and records runner boundaries before full execution. It does not execute notebook cells or access external dashboards.</p>
     </header>
     <section class="grid">
-      {_metric_card("Status", manifest["execution_status"])}
+      {_metric_card("Status", _status_display(manifest["execution_status"]))}
       {_metric_card("Notebook kind", manifest["notebook_kind"])}
-      {_metric_card("Compile", compile_result["status"])}
-      {_metric_card("Runtime", summary["runtime_execution_status"])}
+      {_metric_card("Compile", _status_display(compile_result["status"]))}
+      {_metric_card("Runtime", _status_display(summary["runtime_execution_status"]))}
       {_metric_card("Evidence figures", summary.get("profile_evidence_figure_count", 0))}
     </section>
     <section class="panel">
       <h2>Profile evidence capture</h2>
-      <p>Notebook cells were not executed. Tablex rendered profile-backed EDA figures and tables from controlled notebook context and linked artifacts when available.</p>
+      <p>Static preview evidence was rendered from linked project artifacts.</p>
       <div class="badge-row">
-        <span class="badge">{escape(str(summary.get("profile_evidence_render_status", "not_available")))}</span>
-        <span class="badge">marimo cells: not executed</span>
+        <span class="badge">{escape(_status_display(summary.get("profile_evidence_render_status", "not_available")))}</span>
+        <span class="badge">static preview</span>
       </div>
     </section>
     <section class="panel">
@@ -2952,9 +2952,9 @@ def _notebook_story_caveats(
     caveats.extend(_string_list(brief.get("top_risks"))[:3])
     coverage = _dict_value(selected_item.get("coverage"))
     if coverage.get("has_execution_capture"):
-        caveats.append("Notebook cells were not executed; Tablex rendered harness-owned static evidence for safe in-product review.")
+        caveats.append("Static preview evidence is available for in-product review.")
     else:
-        caveats.append("Notebook cells were not executed; read this as harness-generated review context until captured evidence exists.")
+        caveats.append("Static preview evidence is not yet linked for this notebook.")
     if not coverage.get("has_html_preview"):
         caveats.append("No in-product preview artifact is linked yet; use controlled generation or capture before treating it as a report.")
     return _dedupe_strings(caveats)[:5]
@@ -5225,6 +5225,26 @@ def _metric_cell(value: object) -> str:
     if value is None:
         return "-"
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _status_display(value: object) -> str:
+    raw = str(value or "").strip()
+    labels = {
+        "succeeded": "Ready",
+        "success": "Ready",
+        "passed": "Passed",
+        "failed": "Failed",
+        "error": "Error",
+        "deferred": "Deferred",
+        "unknown": "Unknown",
+        "not_available": "Not available",
+        "rendered": "Rendered",
+        "rendered_from_profile_artifacts": "Rendered",
+        "static_preview": "Static preview",
+        "safe_static_capture": "Static preview",
+        "marimo_html_export": "HTML export",
+    }
+    return labels.get(raw, raw.replace("_", " ").strip().capitalize() if raw else "-")
 
 
 def _metric_card(label: str, value: object) -> str:
