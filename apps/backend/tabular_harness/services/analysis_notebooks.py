@@ -598,7 +598,7 @@ def create_notebook_execution_capture(
     linked_artifacts["agent_task_contract"] = contract_artifact
 
     notebook_source = _read_text_artifact(notebook_artifact)
-    source_validation = _validate_tablex_notebook_source(notebook_source)
+    source_validation = _validate_marimo_notebook_source(notebook_source)
     if not source_validation["is_capture_eligible"]:
         raise ValueError("Only valid marimo analysis notebooks can be captured by the local execution path")
     compile_result = run_notebook_static_compile(notebook_source)
@@ -1637,7 +1637,7 @@ def _read_text_artifact(artifact: Artifact) -> str:
         raise ValueError(f"Artifact content is not readable: {artifact.id}") from exc
 
 
-def _validate_tablex_notebook_source(source: str) -> dict[str, Any]:
+def _validate_marimo_notebook_source(source: str) -> dict[str, Any]:
     checks = {
         "imports_marimo": "import marimo" in source,
         "defines_marimo_app": "marimo.App" in source,
@@ -1646,9 +1646,8 @@ def _validate_tablex_notebook_source(source: str) -> dict[str, Any]:
     }
     is_marimo_notebook = all(checks[key] for key in ("imports_marimo", "defines_marimo_app"))
     return {
-        "schema_version": "notebook_source_validation.v1",
+        "schema_version": "marimo_notebook_source_validation.v1",
         "is_valid_marimo_notebook": is_marimo_notebook,
-        "is_tablex_generated": is_marimo_notebook,
         "is_capture_eligible": is_marimo_notebook,
         "checks": checks,
     }

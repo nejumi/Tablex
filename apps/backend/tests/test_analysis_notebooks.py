@@ -11,7 +11,7 @@ from tabular_harness.services.analysis_notebooks import (
     _notebook_content_signal,
     _notebook_recommendation_reason,
     _notebook_recommendation_score,
-    _validate_tablex_notebook_source,
+    _validate_marimo_notebook_source,
     build_project_notebook_index,
     list_latest_notebook_index_artifacts,
     notebook_execution_status,
@@ -115,7 +115,7 @@ def test_notebook_execution_status_separates_marimo_failure_from_static_capture(
     assert notebook_execution_status({"status": "failed"}, {"status": "succeeded"}) == "static_capture_failed"
 
 
-def test_codex_authored_marimo_notebook_does_not_need_tablex_marker() -> None:
+def test_codex_authored_marimo_notebook_does_not_need_product_marker() -> None:
     source = """
 import marimo
 
@@ -126,10 +126,11 @@ def _():
     return
 """
 
-    validation = _validate_tablex_notebook_source(source)
+    validation = _validate_marimo_notebook_source(source)
 
     assert validation["is_valid_marimo_notebook"] is True
     assert validation["is_capture_eligible"] is True
+    assert "is_tablex_generated" not in validation
 
 
 def test_source_notebook_export_prefers_agent_workspace_without_cwd_dependency(tmp_path: Path) -> None:
