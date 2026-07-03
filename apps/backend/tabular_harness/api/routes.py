@@ -4428,6 +4428,8 @@ def create_agent_chat_turn(
             locale=payload.locale,
             stale_after_seconds=0,
             min_interval_seconds=0,
+            trigger="user_chat_message",
+            user_message=payload.message,
         )
         job = create_job(
             db,

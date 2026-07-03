@@ -430,13 +430,29 @@ def write_progress_request_to_workspace_inbox(
     *,
     event: AgentTranscriptEvent,
     locale: str | None,
+    trigger: str = "stale_progress_update",
+    user_message: str | None = None,
 ) -> None:
     if not session.workspace_path:
         return
     workspace = Path(session.workspace_path)
     path = progress_request_path(workspace)
     japanese = locale_is_japanese(locale)
-    if japanese:
+    user_message_excerpt = user_message.strip()[:1200] if isinstance(user_message, str) and user_message.strip() else None
+    if trigger == "user_chat_message":
+        if japanese:
+            message = (
+                "ユーザーがAgent Chatで返答を待っています。"
+                "`reports/chat_update.md` をユーザーの言語で可能なタイミングですぐ更新してください。"
+                "Raw logの要約ではなく、今の状況、実際に進めていること、未確定事項、次に見るべき場所を人間にわかる言葉で説明してください。"
+            )
+        else:
+            message = (
+                "The user is waiting in Agent Chat. "
+                "Update `reports/chat_update.md` in the user's locale as soon as practical. "
+                "Do not summarize Raw logs; explain the current situation, what is actually moving, remaining uncertainty, and where to look next."
+            )
+    elif japanese:
         message = (
             "人間向けの進捗説明がしばらく更新されていません。"
             "次に意味のある節目、現在の作業、詰まり、計画変更、または確認すべき成果物があるタイミングで、"
@@ -459,9 +475,19 @@ def write_progress_request_to_workspace_inbox(
                     f"event_index: {event.event_index}",
                     f"created_at: {event.created_at.isoformat()}",
                     f"locale: {locale or 'unspecified'}",
+                    f"trigger: {trigger}",
                     "",
                     message,
                     "",
+                    *(
+                        [
+                            "latest_user_message:",
+                            user_message_excerpt,
+                            "",
+                        ]
+                        if user_message_excerpt
+                        else []
+                    ),
                 ]
             ),
             encoding="utf-8",
@@ -559,6 +585,8 @@ def maybe_request_codex_progress_update(
     now: datetime | None = None,
     stale_after_seconds: int = PROGRESS_UPDATE_NUDGE_AFTER_SECONDS,
     min_interval_seconds: int = PROGRESS_UPDATE_NUDGE_MIN_INTERVAL_SECONDS,
+    trigger: str = "stale_progress_update",
+    user_message: str | None = None,
 ) -> AgentTranscriptEvent | None:
     if not session.workspace_path or session.status not in ACTIVE_SESSION_STATUSES:
         return None
@@ -586,13 +614,23 @@ def maybe_request_codex_progress_update(
         content="Tablex asked Codex to refresh the progress update without interrupting the current work.",
         payload={
             "locale": locale,
+            "trigger": trigger,
             "stale_after_seconds": stale_after_seconds,
             "min_interval_seconds": min_interval_seconds,
             "latest_chat_update_at": reference.isoformat(),
+            "user_message_excerpt": user_message.strip()[:1200]
+            if isinstance(user_message, str) and user_message.strip()
+            else None,
         },
         update_heartbeat=False,
     )
-    write_progress_request_to_workspace_inbox(session, event=event, locale=locale)
+    write_progress_request_to_workspace_inbox(
+        session,
+        event=event,
+        locale=locale,
+        trigger=trigger,
+        user_message=user_message,
+    )
     return event
 
 

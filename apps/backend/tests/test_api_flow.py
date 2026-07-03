@@ -1840,6 +1840,11 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert payload["session_id"] == "ags_inbox_delivery"
     assert payload["locale"] == "ja-JP"
     assert payload["message"] == "この条件で特徴量を見直してください"
+    progress_request_text = progress_request.read_text(encoding="utf-8")
+    assert "trigger: user_chat_message" in progress_request_text
+    assert "latest_user_message:" in progress_request_text
+    assert "この条件で特徴量を見直してください" in progress_request_text
+    assert "ユーザーがAgent Chatで返答を待っています" in progress_request_text
     assert "この条件で特徴量を見直してください" in latest.read_text(encoding="utf-8")
     jobs = client.get(f"/api/projects/{project_id}/jobs").json()
     assert any(job["job_type"] == "agent_chat_turn" and job["status"] == "waiting_for_agent" for job in jobs)
