@@ -2019,6 +2019,12 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
         waiting_job = db.get(Job, chat["job"]["id"])
         assert waiting_job is not None
         assert waiting_job.status == "waiting_for_agent"
+        direct_run_result = worker.run_job(db, waiting_job)
+        assert direct_run_result.status == "waiting_for_agent"
+        db.refresh(waiting_job)
+        assert waiting_job.status == "waiting_for_agent"
+        assert waiting_job.started_at is None
+        assert waiting_job.ended_at is None
 
     report_path = workspace / "reports" / "chat_update.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)

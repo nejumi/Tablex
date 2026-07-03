@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from tabular_harness.models.entities import Job
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.jobs import (
+    RUNNABLE_STATUSES,
     acquire_next_job,
     mark_job_failed,
     mark_job_running,
@@ -28,6 +29,8 @@ class SyncWorker:
     worker_id: str = "local-worker"
 
     def run_job(self, db: Session, job: Job) -> Job:
+        if job.status not in RUNNABLE_STATUSES:
+            return job
         job_id = job.id
         handler = self.handlers.get(job.job_type)
         if handler is None:
