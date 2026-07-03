@@ -6190,12 +6190,12 @@ def capture_analysis_notebook_execution_endpoint(
         project_id=notebook_artifact.project_id,
         input_payload={"analysis_notebook_artifact_id": notebook_artifact.id},
         policy={
-            "external_network_access": "disabled",
+            "external_network_access": "not_granted_by_harness",
             "connector_credentials_materialized": False,
             "secrets_materialized": False,
-            "execution_mode": "safe_static_capture",
-            "executes_notebook_code": False,
-            "python_compile_only": True,
+            "execution_mode": "marimo_html_export_with_static_compile_precheck",
+            "executes_notebook_code": True,
+            "python_compile_only": False,
         },
     )
     try:

@@ -1727,6 +1727,7 @@ def run_marimo_html_export(
             "html",
             str(notebook_path),
             "--no-include-code",
+            "--no-sandbox",
             "--force",
             "-o",
             str(export_path),

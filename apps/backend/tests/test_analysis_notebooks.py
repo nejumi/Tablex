@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from tabular_harness.core.json import dumps_json
 from tabular_harness.models.entities import Artifact, Base, Project
+from tabular_harness.services import analysis_notebooks as analysis_notebooks_module
 from tabular_harness.services.analysis_notebooks import (
     _model_metric_comparison,
     _notebook_content_signal,
@@ -15,6 +18,7 @@ from tabular_harness.services.analysis_notebooks import (
     build_project_notebook_index,
     list_latest_notebook_index_artifacts,
     notebook_execution_status,
+    run_marimo_html_export,
     source_notebook_path_for_export,
 )
 
@@ -163,6 +167,47 @@ def test_source_notebook_export_prefers_agent_workspace_without_cwd_dependency(t
     )
 
     assert source_notebook_path_for_export(notebook) == workspace_notebook.resolve()
+
+
+def test_marimo_html_export_disables_marimo_uv_sandbox(tmp_path: Path, monkeypatch: Any) -> None:
+    notebook_path = tmp_path / "notebook.py"
+    notebook_path.write_text("import marimo\napp = marimo.App()\n", encoding="utf-8")
+    notebook = Artifact(
+        id="art_marimo_export",
+        org_id="local-org",
+        project_id="p_export",
+        asset_type="analysis_notebook",
+        name="notebook",
+        version=1,
+        uri=str(tmp_path),
+        content_hash="hash",
+        metadata_json=dumps_json({"primary_path": str(notebook_path)}),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run(
+        command: list[str],
+        *,
+        cwd: str,
+        env: dict[str, str],
+        capture_output: bool,
+        text: bool,
+        timeout: int,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, env, capture_output, text, timeout, check
+        captured["command"] = command
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text("<html><body>ok</body></html>", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(analysis_notebooks_module, "marimo_available", lambda: True)
+    monkeypatch.setattr(analysis_notebooks_module.subprocess, "run", fake_run)
+
+    result = run_marimo_html_export(notebook, notebook_path.read_text(encoding="utf-8"))
+
+    assert result["status"] == "succeeded"
+    assert "--no-sandbox" in captured["command"]
 
 
 def artifact(
