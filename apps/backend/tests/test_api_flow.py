@@ -1004,6 +1004,11 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
     assert activity_response.status_code == 200
     activity = activity_response.json()
     main_worker = next(worker for worker in activity["workers"] if worker.get("agent_session_id") == session_id)
+    assert activity["turn_state"]["raw_transcript"]["session_id"] == session_id
+    assert activity["turn_state"]["raw_transcript"]["stdout_line_count"] >= 1
+    assert activity["turn_state"]["raw_transcript"]["stderr_line_count"] == 0
+    assert activity["turn_state"]["raw_transcript"]["updated_at"]
+    assert main_worker["raw_transcript"]["stdout_line_count"] == activity["turn_state"]["raw_transcript"]["stdout_line_count"]
     assert "データ理解の根拠" in main_worker["detail"]
     assert "データ理解の根拠" in main_worker["human_description"]["summary"]
 

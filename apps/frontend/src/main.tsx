@@ -1877,6 +1877,12 @@ type TurnState = {
   active_codex_process_count?: number;
   last_output_at?: string | null;
   last_output_seconds_ago?: number | null;
+  raw_transcript?: {
+    session_id?: string | null;
+    stdout_line_count?: number;
+    stderr_line_count?: number;
+    updated_at?: string | null;
+  } | null;
   sources?: string[];
 };
 
@@ -6878,6 +6884,7 @@ function AgentChatSummaryCard({
 function TurnStateBar({ text, turnState }: { text: LocaleMessages; turnState: TurnState }) {
   const observedAt = turnState.observed_at ? formatDate(turnState.observed_at) : null;
   const detail = turnStateDisplayDetail(turnState, text);
+  const rawObservation = turnStateRawObservationText(turnState, text);
   return (
     <div className={turnStateClassName(turnState)} title={text.turnStateSource}>
       <div className="turn-state-main">
@@ -6890,10 +6897,20 @@ function TurnStateBar({ text, turnState }: { text: LocaleMessages; turnState: Tu
       <p>{detail}</p>
       <div className="turn-state-meta">
         <span>{turnState.input_attention ? text.turnStateUserTurnHint : text.turnStateSource}</span>
+        {rawObservation ? <span>{rawObservation}</span> : null}
         {observedAt ? <time>{observedAt}</time> : null}
       </div>
     </div>
   );
+}
+
+function turnStateRawObservationText(turnState: TurnState, text: LocaleMessages): string | null {
+  const raw = turnState.raw_transcript;
+  if (!raw) return null;
+  const stdout = typeof raw.stdout_line_count === "number" ? raw.stdout_line_count : 0;
+  const stderr = typeof raw.stderr_line_count === "number" ? raw.stderr_line_count : 0;
+  if (stdout <= 0 && stderr <= 0) return null;
+  return `${text.rawAgentStdout} ${stdout} / ${text.rawAgentStderr} ${stderr}`;
 }
 
 function turnStateDisplayDetail(turnState: TurnState, text: LocaleMessages): string {

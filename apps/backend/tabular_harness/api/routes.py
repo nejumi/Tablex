@@ -4956,6 +4956,29 @@ def tail_text_file(path: Path, *, limit: int) -> tuple[int, list[str], list[dict
     return count, text_lines, numbered_lines, updated_at
 
 
+def raw_transcript_observation_for_session(session: AgentSession | None) -> dict[str, Any]:
+    if session is None or not session.workspace_path:
+        return {
+            "session_id": None,
+            "stdout_line_count": 0,
+            "stderr_line_count": 0,
+            "updated_at": None,
+        }
+    workspace = Path(session.workspace_path)
+    stdout_count, _stdout_tail, _stdout_tail_lines, stdout_updated_at = tail_text_file(
+        raw_codex_transcript_path(workspace), limit=1
+    )
+    stderr_count, _stderr_tail, _stderr_tail_lines, stderr_updated_at = tail_text_file(
+        raw_codex_stderr_path(workspace), limit=1
+    )
+    return {
+        "session_id": session.id,
+        "stdout_line_count": stdout_count,
+        "stderr_line_count": stderr_count,
+        "updated_at": max((item for item in (stdout_updated_at, stderr_updated_at) if item), default=None),
+    }
+
+
 @router.get("/api/projects/{project_id}/agent-session/raw-transcript", response_model=AgentRawTranscriptRead)
 def get_agent_session_raw_transcript(
     project_id: str,
@@ -6772,6 +6795,7 @@ def get_project_agent_activity(
         for event in worker_events_from_job(job, project_name=project.name, active_job_ids=active_job_ids)
     ]
     session = active_main_session(db, project_id) or latest_main_session(db, project_id)
+    raw_observation = raw_transcript_observation_for_session(session)
     if session is not None:
         session_processes = running_codex_processes_for_project(project_id)
         session_has_process = bool(session_processes)
@@ -6875,6 +6899,7 @@ def get_project_agent_activity(
                 "active": session_active,
                 "last_output_at": last_codex_output_at.isoformat() if last_codex_output_at else None,
                 "last_output_seconds_ago": heartbeat_age_seconds,
+                "raw_transcript": raw_observation,
                 "human_description": {
                     "source": "agent_session",
                     "title": display_name,
@@ -6925,6 +6950,7 @@ def get_project_agent_activity(
             "active_job_type": "agent_session",
             "last_output_at": last_codex_output_at.isoformat() if last_codex_output_at else None,
             "last_output_seconds_ago": heartbeat_age_seconds,
+            "raw_transcript": raw_observation,
         }
     return {
         "schema_version": "agent_activity.v1",
