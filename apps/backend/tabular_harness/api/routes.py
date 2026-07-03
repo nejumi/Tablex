@@ -4,7 +4,7 @@ import base64
 import json
 import mimetypes
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -353,6 +353,7 @@ from tabular_harness.worker.jobs import create_default_worker
 
 router = APIRouter()
 INTERACTIVE_WORKER_JOB_TYPES = {"agent_chat_turn"}
+MAIN_SESSION_CHAT_DELIVERY_RUN_AFTER = timedelta(days=3650)
 
 
 def sqlite_database_is_locked(exc: OperationalError) -> bool:
@@ -4453,8 +4454,10 @@ def create_agent_chat_turn(
                 "agent_model": payload.agent_model,
                 "utility_model": payload.utility_model,
                 "delivered_to_running_codex_session": True,
+                "response_completion_source": "main_codex_session_chat_update",
             },
             priority=90,
+            run_after=utc_now() + MAIN_SESSION_CHAT_DELIVERY_RUN_AFTER,
         )
         response = queued_main_session_chat_response(
             project=project,

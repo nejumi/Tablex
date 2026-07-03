@@ -30,6 +30,7 @@ from tabular_harness.services.agent_sessions import (
     append_runner_stream_to_workspace,
     append_session_event,
     latest_user_instruction_path,
+    maybe_register_chat_update_from_workspace_output,
     progress_request_path,
     research_plan_locale_request_path,
     user_instructions_inbox_path,
@@ -1796,6 +1797,7 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert chat["job"]["job_type"] == "agent_chat_turn"
     assert chat["job"]["status"] == "queued"
     assert chat["job"]["priority"] == 90
+    assert chat["job"]["run_after"] is not None
     assert chat["response_composer"]["mode"] == "queued_worker"
     assert chat["response_composer"]["status"] == "queued"
     assert "入力は進行中の分析エージェントに届いています" in chat["assistant_message"]
@@ -1826,13 +1828,47 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert history[-1]["response_brief"]["delivered_agent_session_id"] == "ags_inbox_delivery"
     assert history[-1]["response_brief"]["wait_state"]["worker_state"] == "waiting_for_local_worker"
 
-    output = run_queued_agent_chat_turn(client, chat["job"]["id"])
-    assert output["schema_version"] == "agent_chat_turn.v1"
+    worker = SyncWorker(handlers={"agent_chat_turn": agent_chat_turn_handler}, store=app.state.artifact_store)
+    with app.state.session_factory() as db:
+        assert worker.run_next_job(db, project_id=project_id, job_types={"agent_chat_turn"}) is None
+        parked_job = db.get(Job, chat["job"]["id"])
+        assert parked_job is not None
+        assert parked_job.status == "queued"
+
+    report_path = workspace / "reports" / "chat_update.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("特徴量の見直し依頼を受け取りました。次に利用可能な列と漏洩リスクを確認します。", encoding="utf-8")
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        session = db.get(AgentSession, "ags_inbox_delivery")
+        assert project is not None
+        assert session is not None
+        source_artifact = store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="agent_session_report",
+            name="agent_session_reports_chat_update_md",
+            filename="chat_update.md",
+            payload={"message": report_path.read_text(encoding="utf-8")},
+            metadata={"project_id": project_id, "agent_session_id": session.id},
+        )
+        maybe_register_chat_update_from_workspace_output(
+            db,
+            store=app.state.artifact_store,
+            project=project,
+            session=session,
+            path=report_path,
+            artifact=source_artifact,
+        )
+        db.commit()
+
     completed_history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
-    assert completed_history[-1]["artifact_id"] == output["artifact_id"]
-    delivery_context = completed_history[-1]["response_brief"]["conversation_context"]["current_chat_delivery"]
-    assert delivery_context["delivered_to_running_codex"] is True
-    assert delivery_context["agent_session_id"] == "ags_inbox_delivery"
+    completed_turn = completed_history[-1]
+    assert completed_turn["job_id"] == chat["job"]["id"]
+    assert "特徴量の見直し依頼" in completed_turn["assistant_message"]
+    assert completed_turn["response_composer"]["mode"] == "main_codex_session"
+    assert completed_turn["response_brief"]["progress_artifact_id"]
 
 
 def test_agent_chat_history_pairs_main_session_update_to_delivered_instruction(tmp_path: Path, monkeypatch: Any) -> None:
