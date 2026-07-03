@@ -572,6 +572,98 @@ const englishMessages = {
   strategyOpenItems: "Open items",
   strategyIdeas: "Ideas",
   strategyRuns: "Runs",
+  decisionReportReader: "Decision Report Reader",
+  evidenceReaderNext: "Next",
+  evidenceReaderReadFirst: "Read this first",
+  evidenceReaderLoading: "Loading evidence...",
+  decisionReportMissingHeadline: "Generate a decision report to synthesize the current project evidence.",
+  decisionReportBody:
+    "This is the project-level reading surface: current evidence, coverage gaps, risks, and next actions in one place. Reports summarize evidence; they do not invent missing experiment or approval evidence.",
+  decisionReportBoundary: "Reports are summaries, not approval",
+  decisionMetricReady: "Ready",
+  decisionMetricNeedsAttention: "Needs attention",
+  decisionMetricMissing: "Missing",
+  decisionMetricSources: "Sources",
+  decisionNext: "Next",
+  decisionReportNextGenerate: "Generate the first decision report",
+  decisionReportNextOpen: "Read the current decision report",
+  decisionReportNextGenerateDetail:
+    "Synthesize Data Review, assumptions, evaluation, notebooks, experiments, runner outputs, citations, and lineage into a single in-product report.",
+  decisionReportNextOpenDetail: "Use this report to choose the next controlled human or runner action before scanning raw artifacts.",
+  decisionReportGenerateButton: "Generate Decision Report",
+  decisionReportOpenCurrent: "Open Current",
+  decisionReportCurrentText: "Current report text",
+  decisionReportNoneYet: "No decision report yet",
+  decisionReportEmpty: "Generate a decision report to read the current project state here.",
+  evidenceCoverageTitle: "Evidence Coverage",
+  evidenceCoverageEmpty: "Evidence coverage will appear after the decision report bundle is generated.",
+  supportingReportShelves: "Supporting report shelves",
+  supportingReportShelvesHint: "Notebooks, insights, prior reports, visualizations, and debug artifacts",
+  draftReport: "Draft Report",
+  visualizationDashboard: "Visualization Dashboard",
+  prepareNotebookContext: "Prepare Notebook Context",
+  generateInsights: "Generate Insights",
+  decisionDashboard: "Decision Dashboard",
+  compareJourney: "Compare Journey",
+  notebookCenterTitle: "Notebook Center",
+  recommendedNotebook: "Recommended notebook",
+  notebookPreview: "Preview",
+  notebookPlanExecution: "Plan Execution",
+  notebookDownloadMarimoSource: "Download marimo source",
+  notebookMetricNotebooks: "Notebooks",
+  notebookMetricHtmlPreviews: "HTML previews",
+  notebookMetricReports: "Reports",
+  notebookMetricCaptured: "Captured",
+  notebookTableNotebook: "Notebook",
+  notebookTableSource: "Source",
+  notebookTableCoverage: "Coverage",
+  notebookTableCreated: "Created",
+  notebookTableActions: "Actions",
+  notebookEmpty: "No authored notebook is available yet. Prepare notebook context, then let the agent write and register the notebook.",
+  reportShelfIdeasTitle: "Ideas",
+  reportShelfIdeasEmpty: "Agent ideas, domain observations, and improvement hypotheses will appear here with rationale and expected artifacts.",
+  reportShelfInsightsTitle: "Insights",
+  reportShelfInsightsEmpty:
+    "Generated insights will summarize data readiness, assumption risk, evaluation readiness, approach progress, and experiment signals with evidence and lineage.",
+  reportShelfReportsTitle: "Reports",
+  reportShelfReportsEmpty:
+    "Project reports will summarize data understanding, assumptions, evaluation design, approach candidates, runs, visualizations, and next decisions.",
+  reportShelfAnalysisNotebooksTitle: "Analysis Notebooks",
+  reportShelfAnalysisNotebooksEmpty:
+    "Analysis notebooks will appear here as marimo source, in-product HTML preview, run manifest, and Markdown report artifacts.",
+  reportShelfGuidanceHistoryTitle: "Guidance History",
+  reportShelfGuidanceHistoryEmpty:
+    "Saved Guided Journey snapshots and comparisons will appear here with previews, downloads, and lineage-backed reports.",
+  reportShelfDecisionArtifactsTitle: "Decision Artifacts",
+  reportShelfDecisionArtifactsEmpty:
+    "Decision dashboard artifacts will summarize readiness stages, artifact completeness, risks, next actions, benchmark fixture policy, and visualization specs.",
+  reportShelfVisualizationDashboardEmpty:
+    "Portable visualization specs for leaderboard, diagnostics, slices, and report figures will appear here.",
+  tableTitle: "Title",
+  tableType: "Type",
+  tableStatus: "Status",
+  tableArtifact: "Artifact",
+  tableCreated: "Created",
+  tableActions: "Actions",
+  tableKind: "Kind",
+  tableStage: "Stage",
+  tableFocus: "Focus",
+  tableVersion: "Version",
+  tableRisks: "Risks",
+  tableQuestions: "Questions",
+  tableRows: "Rows",
+  previewReport: "Preview report",
+  downloadReport: "Download report",
+  previewNotebookArtifact: "Preview notebook artifact",
+  downloadNotebookArtifact: "Download notebook artifact",
+  previewGuidanceArtifact: "Preview guidance artifact",
+  downloadGuidanceArtifact: "Download guidance artifact",
+  previewDecisionArtifact: "Preview decision artifact",
+  downloadDecisionArtifact: "Download decision artifact",
+  guidanceSnapshots: "Snapshots",
+  guidanceComparisons: "Comparisons",
+  guidanceLatestStage: "Latest stage",
+  guidanceLatestFocus: "Latest focus",
   translate: "Translate",
   translating: "Translating",
   translatedDraft: "Translated draft",
@@ -1056,6 +1148,98 @@ const japaneseMessages: LocaleMessages = {
   strategyOpenItems: "Open items",
   strategyIdeas: "Ideas",
   strategyRuns: "Runs",
+  decisionReportReader: "判断レポート",
+  evidenceReaderNext: "次",
+  evidenceReaderReadFirst: "最初に読む",
+  evidenceReaderLoading: "根拠を読み込んでいます...",
+  decisionReportMissingHeadline: "現在のProject根拠を統合する判断レポートを生成します。",
+  decisionReportBody:
+    "現在の根拠、カバレッジ不足、リスク、次の行動を一か所で読むための面です。レポートは根拠を要約しますが、不足している実験や承認を作ったことにはしません。",
+  decisionReportBoundary: "レポートは要約であり、承認ではありません",
+  decisionMetricReady: "準備済み",
+  decisionMetricNeedsAttention: "要確認",
+  decisionMetricMissing: "不足",
+  decisionMetricSources: "根拠",
+  decisionNext: "次",
+  decisionReportNextGenerate: "最初の判断レポートを生成",
+  decisionReportNextOpen: "現在の判断レポートを読む",
+  decisionReportNextGenerateDetail:
+    "データレビュー、仮定、評価、Notebook、実験、runner出力、引用、リネージを、プロダクト内で読める1つのレポートへ統合します。",
+  decisionReportNextOpenDetail: "生artifactを追う前に、このレポートで次の人間判断またはrunner actionを選びます。",
+  decisionReportGenerateButton: "判断レポートを生成",
+  decisionReportOpenCurrent: "現在のレポートを開く",
+  decisionReportCurrentText: "現在のレポート本文",
+  decisionReportNoneYet: "判断レポートはまだありません",
+  decisionReportEmpty: "判断レポートを生成すると、現在のProject状態をここで読めます。",
+  evidenceCoverageTitle: "根拠カバレッジ",
+  evidenceCoverageEmpty: "判断レポートbundleを生成すると、根拠カバレッジがここに表示されます。",
+  supportingReportShelves: "補助レポート棚",
+  supportingReportShelvesHint: "Notebook、発見、既存レポート、可視化、debug artifact",
+  draftReport: "レポート下書き",
+  visualizationDashboard: "可視化ダッシュボード",
+  prepareNotebookContext: "Notebook文脈を準備",
+  generateInsights: "インサイト生成",
+  decisionDashboard: "判断ダッシュボード",
+  compareJourney: "進行履歴を比較",
+  notebookCenterTitle: "Notebookセンター",
+  recommendedNotebook: "おすすめNotebook",
+  notebookPreview: "プレビュー",
+  notebookPlanExecution: "実行計画",
+  notebookDownloadMarimoSource: "marimo sourceをダウンロード",
+  notebookMetricNotebooks: "Notebook",
+  notebookMetricHtmlPreviews: "HTMLプレビュー",
+  notebookMetricReports: "レポート",
+  notebookMetricCaptured: "実行記録",
+  notebookTableNotebook: "Notebook",
+  notebookTableSource: "出所",
+  notebookTableCoverage: "カバレッジ",
+  notebookTableCreated: "作成日時",
+  notebookTableActions: "操作",
+  notebookEmpty: "作成済みNotebookはまだありません。Notebook文脈を準備し、AgentにNotebookを書かせて登録します。",
+  reportShelfIdeasTitle: "アイデア",
+  reportShelfIdeasEmpty: "Agentのアイデア、ドメイン観察、改善仮説が、根拠と期待artifact付きでここに表示されます。",
+  reportShelfInsightsTitle: "発見",
+  reportShelfInsightsEmpty:
+    "生成された発見は、データ準備、仮定リスク、評価準備、アプローチ進捗、実験シグナルを根拠とリネージ付きで要約します。",
+  reportShelfReportsTitle: "レポート",
+  reportShelfReportsEmpty:
+    "Projectレポートは、データ理解、仮定、評価設計、候補アプローチ、実験、可視化、次の判断を要約します。",
+  reportShelfAnalysisNotebooksTitle: "分析Notebook",
+  reportShelfAnalysisNotebooksEmpty:
+    "分析Notebookは、marimo source、プロダクト内HTML preview、run manifest、Markdown report artifactとしてここに表示されます。",
+  reportShelfGuidanceHistoryTitle: "ガイダンス履歴",
+  reportShelfGuidanceHistoryEmpty:
+    "保存済みのGuided Journey snapshotと比較が、preview、download、リネージ付きレポートとしてここに表示されます。",
+  reportShelfDecisionArtifactsTitle: "判断アーティファクト",
+  reportShelfDecisionArtifactsEmpty:
+    "判断ダッシュボードartifactは、準備ステージ、artifact充足、リスク、次の行動、benchmark fixture policy、可視化specを要約します。",
+  reportShelfVisualizationDashboardEmpty:
+    "Leaderboard、診断、slice、report figure向けの可搬な可視化specがここに表示されます。",
+  tableTitle: "タイトル",
+  tableType: "種別",
+  tableStatus: "状態",
+  tableArtifact: "Artifact",
+  tableCreated: "作成日時",
+  tableActions: "操作",
+  tableKind: "種類",
+  tableStage: "ステージ",
+  tableFocus: "フォーカス",
+  tableVersion: "バージョン",
+  tableRisks: "リスク",
+  tableQuestions: "質問",
+  tableRows: "行数",
+  previewReport: "レポートをプレビュー",
+  downloadReport: "レポートをダウンロード",
+  previewNotebookArtifact: "Notebook artifactをプレビュー",
+  downloadNotebookArtifact: "Notebook artifactをダウンロード",
+  previewGuidanceArtifact: "ガイダンスartifactをプレビュー",
+  downloadGuidanceArtifact: "ガイダンスartifactをダウンロード",
+  previewDecisionArtifact: "判断artifactをプレビュー",
+  downloadDecisionArtifact: "判断artifactをダウンロード",
+  guidanceSnapshots: "Snapshot",
+  guidanceComparisons: "比較",
+  guidanceLatestStage: "最新ステージ",
+  guidanceLatestFocus: "最新フォーカス",
   translate: "翻訳",
   translating: "翻訳中",
   translatedDraft: "翻訳ドラフト",
@@ -4862,6 +5046,7 @@ function ProjectDetail({
           insights={insights}
           busy={busy}
           locale={userSettings.locale}
+          text={text}
           runAction={runAction}
         />
       )}
@@ -5005,6 +5190,7 @@ function ProjectDetail({
           insights={insights}
           busy={busy}
           locale={userSettings.locale}
+          text={text}
           runAction={runAction}
         />
       )}
@@ -7203,6 +7389,7 @@ function displayStatusLabel(status: string, text: LocaleMessages): string {
   if (normalized === "blocking" || normalized === "blocked") return text.statusBlocking;
   if (normalized === "active" || normalized === "running") return text.statusActive;
   if (normalized === "ready" || normalized === "ready_to_act") return text.statusReady;
+  if (normalized === "missing") return text.decisionMetricMissing;
   if (normalized === "low") return text.statusLow;
   if (normalized === "medium" || normalized === "recover") return text.statusMedium;
   if (normalized === "needs_attention") return text.statusNeedsAttention;
@@ -8763,15 +8950,18 @@ function FocusedEvidenceReader({
   status,
   statusTone = "muted",
   metrics,
+  nextEyebrow = "Next",
   nextLabel,
   nextDetail,
   nextButtonLabel,
   nextDisabled = false,
   onNext,
+  previewEyebrow = "Read this first",
   previewTitle = "Evidence preview",
   preview,
   previewError,
   previewLoading,
+  previewLoadingLabel = "Loading evidence...",
   previewEmpty,
   previewSourceType = "artifact",
   previewSourceId,
@@ -8784,15 +8974,18 @@ function FocusedEvidenceReader({
   status: string;
   statusTone?: EvidenceReaderMetric["tone"];
   metrics: EvidenceReaderMetric[];
+  nextEyebrow?: string;
   nextLabel: string;
   nextDetail: string;
   nextButtonLabel: string;
   nextDisabled?: boolean;
   onNext?: () => void;
+  previewEyebrow?: string;
   previewTitle?: string;
   preview: ArtifactPreview | null;
   previewError?: string | null;
   previewLoading?: boolean;
+  previewLoadingLabel?: string;
   previewEmpty: string;
   previewSourceType?: "artifact" | "report";
   previewSourceId?: string;
@@ -8821,7 +9014,7 @@ function FocusedEvidenceReader({
       </div>
       <div className="evidence-reader-action">
         <div>
-          <span>Next</span>
+          <span>{nextEyebrow}</span>
           <strong>{nextLabel}</strong>
           <p>{nextDetail}</p>
         </div>
@@ -8832,14 +9025,14 @@ function FocusedEvidenceReader({
       </div>
       <div id={`${id}-preview`} className="evidence-reader-preview">
         <div className="evidence-reader-preview-head">
-          <div className="eyebrow">Read this first</div>
+          <div className="eyebrow">{previewEyebrow}</div>
           <h3>{previewTitle}</h3>
         </div>
         {previewError ? <div className="banner danger">{previewError}</div> : null}
         {previewLoading ? (
           <div className="banner muted">
             <Loader2 className="spin" size={16} />
-            Loading evidence...
+            {previewLoadingLabel}
           </div>
         ) : null}
         {preview?.preview_available ? (
@@ -13936,6 +14129,7 @@ function ReportsTab({
   insights,
   busy,
   locale,
+  text,
   runAction
 }: {
   project: Project;
@@ -13948,6 +14142,7 @@ function ReportsTab({
   insights: Insight[];
   busy: boolean;
   locale: string;
+  text: LocaleMessages;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const [reportPreview, setReportPreview] = React.useState<ArtifactPreview | null>(null);
@@ -13997,21 +14192,18 @@ function ReportsTab({
   const readinessStatus = textField(readiness.status) ?? (decisionReport?.available ? "ready" : "missing");
   const readinessHeadline =
     textField(readiness.headline) ??
-    (decisionReport?.available
-      ? "Decision report is available for review."
-      : "Generate a decision report to synthesize the current project evidence.");
+    (decisionReport?.available ? text.decisionReportCurrentText : text.decisionReportMissingHeadline);
   const reportStatusTone: EvidenceReaderMetric["tone"] =
     readinessStatus === "ready" || readinessStatus === "decision_ready"
       ? "ready"
       : readinessStatus === "blocked" || readinessStatus === "missing"
         ? "risk"
         : "warning";
-  const reportReaderBody =
-    "This is the project-level reading surface: current evidence, coverage gaps, risks, and next actions in one place. Reports summarize evidence; they do not invent missing experiment or approval evidence.";
-  const reportNextLabel = currentDecisionReportId ? "Read the current decision report" : "Generate the first decision report";
+  const reportReaderBody = text.decisionReportBody;
+  const reportNextLabel = currentDecisionReportId ? text.decisionReportNextOpen : text.decisionReportNextGenerate;
   const reportNextDetail = currentDecisionReportId
-    ? "Use this report to choose the next controlled human or runner action before scanning raw artifacts."
-    : "Synthesize Data Review, assumptions, evaluation, notebooks, experiments, runner outputs, citations, and lineage into a single in-product report.";
+    ? text.decisionReportNextOpenDetail
+    : text.decisionReportNextGenerateDetail;
   const autoPreviewedReportRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
@@ -14074,20 +14266,21 @@ function ReportsTab({
     <div className="stack">
       <FocusedEvidenceReader
         id="decision-report"
-        eyebrow="Decision Report Reader"
+        eyebrow={text.decisionReportReader}
         title={readinessHeadline}
         body={reportReaderBody}
-        status={readinessStatus.replace(/_/g, " ")}
+        status={displayStatusLabel(readinessStatus, text)}
         statusTone={reportStatusTone}
         metrics={[
-          { label: "Ready", value: String(coverage.ready_count ?? 0), tone: "ready" },
-          { label: "Needs attention", value: String(coverage.attention_count ?? 0), tone: Number(coverage.attention_count ?? 0) ? "warning" : "muted" },
-          { label: "Missing", value: String(coverage.missing_count ?? 0), tone: Number(coverage.missing_count ?? 0) ? "risk" : "muted" },
-          { label: "Sources", value: String(currentDecisionBundle?.source_assets.length ?? 0), tone: currentDecisionBundle?.source_assets.length ? "ready" : "muted" }
+          { label: text.decisionMetricReady, value: String(coverage.ready_count ?? 0), tone: "ready" },
+          { label: text.decisionMetricNeedsAttention, value: String(coverage.attention_count ?? 0), tone: Number(coverage.attention_count ?? 0) ? "warning" : "muted" },
+          { label: text.decisionMetricMissing, value: String(coverage.missing_count ?? 0), tone: Number(coverage.missing_count ?? 0) ? "risk" : "muted" },
+          { label: text.decisionMetricSources, value: String(currentDecisionBundle?.source_assets.length ?? 0), tone: currentDecisionBundle?.source_assets.length ? "ready" : "muted" }
         ]}
+        nextEyebrow={text.evidenceReaderNext}
         nextLabel={reportNextLabel}
         nextDetail={reportNextDetail}
-        nextButtonLabel={currentDecisionReportId ? "Open Current" : "Generate Decision Report"}
+        nextButtonLabel={currentDecisionReportId ? text.decisionReportOpenCurrent : text.decisionReportGenerateButton}
         nextDisabled={busy || Boolean(currentDecisionReportId && previewLoadingId === currentDecisionReportId)}
         onNext={() => {
           if (currentDecisionReportId) {
@@ -14096,14 +14289,16 @@ function ReportsTab({
             void runAction(generateDecisionReport);
           }
         }}
-        previewTitle={currentDecisionReportId ? "Current report text" : "No decision report yet"}
+        previewEyebrow={text.evidenceReaderReadFirst}
+        previewTitle={currentDecisionReportId ? text.decisionReportCurrentText : text.decisionReportNoneYet}
         preview={reportPreview}
         previewError={previewError}
         previewLoading={Boolean(previewLoadingId)}
-        previewEmpty="Generate a decision report to read the current project state here."
+        previewLoadingLabel={text.evidenceReaderLoading}
+        previewEmpty={text.decisionReportEmpty}
         previewSourceType={reportPreviewSource?.type ?? "report"}
         previewSourceId={reportPreviewSource?.id ?? currentDecisionReportId ?? undefined}
-        boundary="Reports are summaries, not approval"
+        boundary={text.decisionReportBoundary}
       />
       {currentDecisionBundle ? (
         <Panel title="Read This First" icon={<FileText size={18} />}>
@@ -14153,7 +14348,7 @@ function ReportsTab({
           </div>
         </Panel>
       ) : null}
-      <Panel title="Evidence Coverage" icon={<ListChecks size={18} />}>
+      <Panel title={text.evidenceCoverageTitle} icon={<ListChecks size={18} />}>
         {evidenceMap.length ? (
           <div className="decision-evidence-grid">
             {evidenceMap.map((row) => (
@@ -14169,13 +14364,13 @@ function ReportsTab({
             ))}
           </div>
         ) : (
-          <EmptyInline text="Evidence coverage will appear after the decision report bundle is generated." />
+          <EmptyInline text={text.evidenceCoverageEmpty} />
         )}
       </Panel>
       <details className="report-supporting-details">
         <summary>
-          <span>Supporting report shelves</span>
-          <small>Notebooks, insights, prior reports, visualizations, and debug artifacts</small>
+          <span>{text.supportingReportShelves}</span>
+          <small>{text.supportingReportShelvesHint}</small>
         </summary>
         <div className="toolbar">
         <button
@@ -14192,7 +14387,7 @@ function ReportsTab({
           }
         >
           {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
-          Draft Report
+          {text.draftReport}
         </button>
         <button
           className="secondary-button"
@@ -14202,7 +14397,7 @@ function ReportsTab({
           }
         >
           {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
-          Visualization Dashboard
+          {text.visualizationDashboard}
         </button>
         <button
           className="secondary-button"
@@ -14223,7 +14418,7 @@ function ReportsTab({
           }
         >
           {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-          Prepare Notebook Context
+          {text.prepareNotebookContext}
         </button>
         <button
           className="secondary-button"
@@ -14233,7 +14428,7 @@ function ReportsTab({
           }
         >
           {busy ? <Loader2 className="spin" size={16} /> : <Lightbulb size={16} />}
-          Generate Insights
+          {text.generateInsights}
         </button>
         <button
           className="secondary-button"
@@ -14250,7 +14445,7 @@ function ReportsTab({
           }
         >
           {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
-          Decision Dashboard
+          {text.decisionDashboard}
         </button>
         <button
           className="secondary-button"
@@ -14267,16 +14462,16 @@ function ReportsTab({
           }
         >
           {busy ? <Loader2 className="spin" size={16} /> : <GitBranch size={16} />}
-          Compare Journey
+          {text.compareJourney}
         </button>
         </div>
-      <Panel id="notebook-center" title="Notebook Center" icon={<BarChart3 size={18} />}>
+      <Panel id="notebook-center" title={text.notebookCenterTitle} icon={<BarChart3 size={18} />}>
         {notebookIndex && notebookIndex.counts.total > 0 ? (
           <div className="stack">
             {recommendedNotebook ? (
               <div className="focus-card">
                 <div>
-                  <div className="eyebrow">Recommended notebook</div>
+                  <div className="eyebrow">{text.recommendedNotebook}</div>
                   <h3>{recommendedNotebook.title}</h3>
                   <p>{recommendedNotebook.recommendation_reason}</p>
                   <div className="badge-row">
@@ -14296,7 +14491,7 @@ function ReportsTab({
                     ) : (
                       <Eye size={16} />
                     )}
-                    Preview
+                    {text.notebookPreview}
                   </button>
                   <button
                     className="secondary-button"
@@ -14304,12 +14499,12 @@ function ReportsTab({
                     onClick={() => void runAction(() => planNotebookExecution(recommendedNotebook))}
                   >
                     {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
-                    Plan Execution
+                    {text.notebookPlanExecution}
                   </button>
                   <a
                     className="icon-link"
                     href={`${apiBase}/api/artifacts/${recommendedNotebook.artifact_ids.notebook}/download`}
-                    title="Download marimo source"
+                    title={text.notebookDownloadMarimoSource}
                   >
                     <Download size={16} />
                   </a>
@@ -14317,13 +14512,13 @@ function ReportsTab({
               </div>
             ) : null}
             <div className="metric-grid compact">
-              <Metric label="Notebooks" value={notebookIndex.counts.total} />
-              <Metric label="HTML previews" value={notebookIndex.counts.with_html_preview} />
-              <Metric label="Reports" value={notebookIndex.counts.with_report} />
-              <Metric label="Captured" value={notebookIndex.counts.with_execution_capture} />
+              <Metric label={text.notebookMetricNotebooks} value={notebookIndex.counts.total} />
+              <Metric label={text.notebookMetricHtmlPreviews} value={notebookIndex.counts.with_html_preview} />
+              <Metric label={text.notebookMetricReports} value={notebookIndex.counts.with_report} />
+              <Metric label={text.notebookMetricCaptured} value={notebookIndex.counts.with_execution_capture} />
             </div>
             <Table
-              headers={["Notebook", "Source", "Coverage", "Created", "Actions"]}
+              headers={[text.notebookTableNotebook, text.notebookTableSource, text.notebookTableCoverage, text.notebookTableCreated, text.notebookTableActions]}
               rows={notebookIndex.items.slice(0, 8).map((item) => [
                 <div className="cell-stack" key={`${item.notebook_artifact_id}-title`}>
                   <span>{item.title}</span>
@@ -14337,7 +14532,7 @@ function ReportsTab({
                     className="icon-button"
                     disabled={previewLoadingId === notebookPreviewArtifactId(item)}
                     onClick={() => void loadArtifactPreview(notebookPreviewArtifactId(item))}
-                    title="Preview notebook"
+                    title={text.notebookPreview}
                   >
                     {previewLoadingId === notebookPreviewArtifactId(item) ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
                   </button>
@@ -14345,11 +14540,11 @@ function ReportsTab({
                     className="icon-button"
                     disabled={busy}
                     onClick={() => void runAction(() => planNotebookExecution(item))}
-                    title="Plan controlled notebook execution"
+                    title={text.notebookPlanExecution}
                   >
                     {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
                   </button>
-                  <a className="icon-link" href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`} title="Download marimo source">
+                  <a className="icon-link" href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`} title={text.notebookDownloadMarimoSource}>
                     <Download size={16} />
                   </a>
                 </div>
@@ -14357,10 +14552,10 @@ function ReportsTab({
             />
           </div>
         ) : (
-          <EmptyInline text="No authored notebook is available yet. Prepare notebook context, then let the agent write and register the notebook." />
+          <EmptyInline text={text.notebookEmpty} />
         )}
       </Panel>
-      <Panel id="ideas" title="Ideas" icon={<Lightbulb size={18} />}>
+      <Panel id="ideas" title={text.reportShelfIdeasTitle} icon={<Lightbulb size={18} />}>
         {ideas.length ? (
           <div className="card-grid">
             {ideas.map((idea) => (
@@ -14395,10 +14590,10 @@ function ReportsTab({
             ))}
           </div>
         ) : (
-          <EmptyInline text="Agent ideas, domain observations, and improvement hypotheses will appear here with rationale and expected artifacts." />
+          <EmptyInline text={text.reportShelfIdeasEmpty} />
         )}
       </Panel>
-      <Panel id="insights" title="Insights" icon={<Lightbulb size={18} />}>
+      <Panel id="insights" title={text.reportShelfInsightsTitle} icon={<Lightbulb size={18} />}>
         {insights.length ? (
           <div className="card-grid">
             {insights.map((insight) => (
@@ -14432,13 +14627,13 @@ function ReportsTab({
             ))}
           </div>
         ) : (
-          <EmptyInline text="Generated insights will summarize data readiness, assumption risk, evaluation readiness, approach progress, and experiment signals with evidence and lineage." />
+          <EmptyInline text={text.reportShelfInsightsEmpty} />
         )}
       </Panel>
-      <Panel id="reports" title="Reports" icon={<FileText size={18} />}>
+      <Panel id="reports" title={text.reportShelfReportsTitle} icon={<FileText size={18} />}>
         {reports.length ? (
           <Table
-            headers={["Title", "Type", "Status", "Artifact", "Created", "Actions"]}
+            headers={[text.tableTitle, text.tableType, text.tableStatus, text.tableArtifact, text.tableCreated, text.tableActions]}
             rows={reports.map((report) => [
               report.title,
               report.report_type,
@@ -14450,24 +14645,24 @@ function ReportsTab({
                   className="icon-button"
                   disabled={previewLoadingId === report.id}
                   onClick={() => void loadReportPreview(report.id)}
-                  title="Preview report"
+                  title={text.previewReport}
                 >
                   {previewLoadingId === report.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
                 </button>
-                <a className="icon-link" href={`${apiBase}/api/reports/${report.id}/download`} title="Download report">
+                <a className="icon-link" href={`${apiBase}/api/reports/${report.id}/download`} title={text.downloadReport}>
                   <Download size={16} />
                 </a>
               </div>
             ])}
           />
         ) : (
-          <EmptyInline text="Project reports will summarize data understanding, assumptions, evaluation design, approach candidates, runs, visualizations, and next decisions." />
+          <EmptyInline text={text.reportShelfReportsEmpty} />
         )}
       </Panel>
-      <Panel title="Analysis Notebooks" icon={<BarChart3 size={18} />}>
+      <Panel title={text.reportShelfAnalysisNotebooksTitle} icon={<BarChart3 size={18} />}>
         {analysisNotebookArtifacts.length ? (
           <Table
-            headers={["Type", "Kind", "Status", "Artifact", "Created", "Actions"]}
+            headers={[text.tableType, text.tableKind, text.tableStatus, text.tableArtifact, text.tableCreated, text.tableActions]}
             rows={analysisNotebookArtifacts.map((artifact) => [
               artifact.asset_type,
               String(artifact.metadata.notebook_kind ?? "-"),
@@ -14479,25 +14674,25 @@ function ReportsTab({
                   className="icon-button"
                   disabled={previewLoadingId === artifact.id}
                   onClick={() => void loadArtifactPreview(artifact.id)}
-                  title="Preview notebook artifact"
+                  title={text.previewNotebookArtifact}
                 >
                   {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
                 </button>
-                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download notebook artifact">
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title={text.downloadNotebookArtifact}>
                   <Download size={16} />
                 </a>
               </div>
             ])}
           />
         ) : (
-          <EmptyInline text="Analysis notebooks will appear here as marimo source, in-product HTML preview, run manifest, and Markdown report artifacts. They are generated from current data understanding and can later be extended with experiment diagnostics." />
+          <EmptyInline text={text.reportShelfAnalysisNotebooksEmpty} />
         )}
       </Panel>
-      <Panel title="Guidance History" icon={<GitBranch size={18} />}>
+      <Panel title={text.reportShelfGuidanceHistoryTitle} icon={<GitBranch size={18} />}>
         {guidedJourneyArtifacts.length ? (
           <div className="stack">
             <Table
-              headers={["Type", "Stage", "Focus", "Version", "Created", "Actions"]}
+              headers={[text.tableType, text.tableStage, text.tableFocus, text.tableVersion, text.tableCreated, text.tableActions]}
               rows={guidedJourneyArtifacts.slice(0, 10).map((artifact) => [
                 artifact.asset_type,
                 String(artifact.metadata.current_stage_id ?? "-"),
@@ -14514,37 +14709,37 @@ function ReportsTab({
                     className="icon-button"
                     disabled={previewLoadingId === artifact.id}
                     onClick={() => void loadArtifactPreview(artifact.id)}
-                    title="Preview guidance artifact"
+                    title={text.previewGuidanceArtifact}
                   >
                     {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
                   </button>
-                  <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download guidance artifact">
+                  <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title={text.downloadGuidanceArtifact}>
                     <Download size={16} />
                   </a>
                 </div>
               ])}
             />
             <div className="metric-grid compact">
-              <Metric label="Snapshots" value={guidedJourneySnapshots.length} />
-              <Metric label="Comparisons" value={guidedJourneyComparisons.length} />
+              <Metric label={text.guidanceSnapshots} value={guidedJourneySnapshots.length} />
+              <Metric label={text.guidanceComparisons} value={guidedJourneyComparisons.length} />
               <Metric
-                label="Latest stage"
+                label={text.guidanceLatestStage}
                 value={String(guidedJourneySnapshots[0]?.metadata.current_stage_id ?? "-")}
               />
               <Metric
-                label="Latest focus"
+                label={text.guidanceLatestFocus}
                 value={String(guidedJourneySnapshots[0]?.metadata.recommended_focus_key ?? "-")}
               />
             </div>
           </div>
         ) : (
-          <EmptyInline text="Saved Guided Journey snapshots and comparisons will appear here with previews, downloads, and lineage-backed reports." />
+          <EmptyInline text={text.reportShelfGuidanceHistoryEmpty} />
         )}
       </Panel>
-      <Panel title="Decision Artifacts" icon={<ListChecks size={18} />}>
+      <Panel title={text.reportShelfDecisionArtifactsTitle} icon={<ListChecks size={18} />}>
         {decisionArtifacts.length ? (
           <Table
-            headers={["Type", "Status", "Risks", "Questions", "Artifact", "Actions"]}
+            headers={[text.tableType, text.tableStatus, text.tableRisks, text.tableQuestions, text.tableArtifact, text.tableActions]}
             rows={decisionArtifacts.map((artifact) => [
               artifact.asset_type,
               String(artifact.metadata.readiness_status ?? "-"),
@@ -14556,25 +14751,25 @@ function ReportsTab({
                   className="icon-button"
                   disabled={previewLoadingId === artifact.id}
                   onClick={() => void loadArtifactPreview(artifact.id)}
-                  title="Preview decision artifact"
+                  title={text.previewDecisionArtifact}
                 >
                   {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
                 </button>
-                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download decision artifact">
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title={text.downloadDecisionArtifact}>
                   <Download size={16} />
                 </a>
               </div>
             ])}
           />
         ) : (
-          <EmptyInline text="Decision dashboard artifacts will summarize readiness stages, artifact completeness, risks, next actions, benchmark fixture policy, and visualization specs." />
+          <EmptyInline text={text.reportShelfDecisionArtifactsEmpty} />
         )}
       </Panel>
-      <Panel title="Visualization Dashboard" icon={<BarChart3 size={18} />}>
+      <Panel title={text.visualizationDashboard} icon={<BarChart3 size={18} />}>
         {visualizations.length ? (
           <div className="stack">
             <Table
-              headers={["Title", "Type", "Status", "Rows", "Artifact"]}
+              headers={[text.tableTitle, text.tableType, text.tableStatus, text.tableRows, text.tableArtifact]}
               rows={visualizations.map((visualization) => [
                 visualization.title,
                 visualization.chart_type,
@@ -14593,7 +14788,7 @@ function ReportsTab({
             </div>
           </div>
         ) : (
-          <EmptyInline text="Portable visualization specs for leaderboard, diagnostics, slices, and report figures will appear here." />
+          <EmptyInline text={text.reportShelfVisualizationDashboardEmpty} />
         )}
       </Panel>
       </details>

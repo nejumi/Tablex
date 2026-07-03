@@ -42,6 +42,7 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
 - Kept Codex-authored Research Plan display locale-aware on the frontend by using the timeline API `response_locale` and absorbing Codex-authored aliases for the fixed upload/objective/understanding/prior-research anchors instead of showing duplicated English anchor blocks.
 - Added structured Chat wait observations for delivered-to-main-session turns so the pending Chat card can show the last Codex output age, last Chat update age, whether a progress request has been sent, and raw transcript counts while still waiting for a Codex-authored `reports/chat_update.md`.
 - Localized the floating Agent Activity rail title and minimize/expand affordance so the activity overlay no longer leaves fixed English control labels in Japanese UI.
+- Localized high-visibility Insight / decision-report / Notebook Center shelves and table affordances so Japanese UI no longer drops back to English around the report reader and notebook surface.
 
 ## 2026-07-04 Fable Feedback Audit
 
@@ -105,5 +106,6 @@ Make the main Full Auto Codex session harder to lose, easier to observe, and les
   - `git diff --check`
   - Playwright CLI Firefox browser check for `#/projects/p_9f25dd620d8c` with `tablex.userSettings.v1.locale=ja-JP`.
   - Verified the Japanese Home snapshot renders localized project status chips, Mission Control, Research Plan anchors, collapsed display-language refresh block for unlocalized Codex-added plan blocks, Chat input-ready state, and Raw stdout/stderr download links plus JSONL tail.
-  - Saved visual evidence outside git at `output/playwright/fable-hardening-chat-ja-firefox.png` and `output/playwright/fable-hardening-raw-ja-firefox.png`.
+  - Verified the Japanese Insight snapshot renders localized decision report labels, evidence reader action labels, supporting report shelf controls, Notebook Center empty state, and lower report/notebook shelf empty states.
+  - Saved visual evidence outside git at `output/playwright/fable-hardening-chat-ja-firefox.png`, `output/playwright/fable-hardening-raw-ja-firefox.png`, and `output/playwright/fable-hardening-insight-ja-firefox.png`.
   - Console error check reported 0 browser errors.
