@@ -1093,6 +1093,31 @@ function localePrefersShiftEnter(locale: string): boolean {
   );
 }
 
+function localeLanguage(locale: string | null | undefined): string {
+  return (locale ?? "").trim().replace("_", "-").split("-", 1)[0].toLowerCase();
+}
+
+function localeRequiresLocalizedDisplay(locale: string | null | undefined): boolean {
+  const language = localeLanguage(locale);
+  return Boolean(language && language !== "en");
+}
+
+function displayTextMatchesLocale(value: string | null | undefined, locale: string | null | undefined): boolean {
+  const text = (value ?? "").trim();
+  if (!text) return false;
+  if (!localeRequiresLocalizedDisplay(locale)) return true;
+  if (localeLanguage(locale) === "ja") {
+    return /[\u3040-\u30ff\u3400-\u9fff]/.test(text);
+  }
+  return false;
+}
+
+function localeSafeDisplayText(value: string | null | undefined, locale: string | null | undefined, fallback: string): string {
+  const text = (value ?? "").trim();
+  if (displayTextMatchesLocale(text, locale)) return text;
+  return fallback;
+}
+
 function shouldSubmitTextarea(
   event: React.KeyboardEvent<HTMLTextAreaElement>,
   shortcut: ChatSubmitShortcut
@@ -4567,6 +4592,7 @@ function ProjectDetail({
           projectAssetReferences={projectAssetReferences}
           busy={busy}
           text={text}
+          locale={userSettings.locale}
           messages={visibleAgentChatMessages}
           submitShortcut={resolveChatSubmitShortcut(userSettings)}
           userAvatarSrc={userSettings.userAvatarDataUrl}
@@ -4819,6 +4845,7 @@ function HomeTab({
   projectAssetReferences,
   busy,
   text,
+  locale,
   messages,
   submitShortcut,
   userAvatarSrc,
@@ -4858,6 +4885,7 @@ function HomeTab({
   projectAssetReferences: AssetReference[];
   busy: boolean;
   text: LocaleMessages;
+  locale: string;
   messages: AgentChatMessage[];
   submitShortcut: ChatSubmitShortcut;
   userAvatarSrc: string | null;
@@ -4909,6 +4937,7 @@ function HomeTab({
     turnState,
     agentTranscriptEvents,
     text,
+    locale,
     onTabChange,
     onNavigateToTarget
   });
@@ -5049,6 +5078,7 @@ function HomeTab({
             <AgentChatDock
               busy={busy}
               text={text}
+              locale={locale}
               messages={messages}
               submitShortcut={submitShortcut}
               userAvatarSrc={userAvatarSrc}
@@ -5062,6 +5092,7 @@ function HomeTab({
             <RawAgentStream
               busy={busy}
               text={text}
+              locale={locale}
               events={rawAgentEvents}
               rawTranscript={agentRawTranscript}
               submitShortcut={submitShortcut}
@@ -5579,6 +5610,7 @@ function buildResearchPlanBlocks({
   turnState,
   agentTranscriptEvents,
   text,
+  locale,
   onTabChange,
   onNavigateToTarget
 }: {
@@ -5594,15 +5626,17 @@ function buildResearchPlanBlocks({
   turnState: TurnState;
   agentTranscriptEvents: AgentTranscriptEvent[];
   text: LocaleMessages;
+  locale: string;
   onTabChange: (tab: Tab) => void;
   onNavigateToTarget: (tab: Tab, anchor?: string | null) => void;
 }): ResearchPlanBlock[] {
-  const codexAuthoredBlocks = researchPlanBlocksFromTimeline(researchPlanTimeline, text, onNavigateToTarget);
+  const codexAuthoredBlocks = researchPlanBlocksFromTimeline(researchPlanTimeline, text, locale, onNavigateToTarget);
   if (codexAuthoredBlocks.length) {
     return appendObservedAgentPlanBlock(
-      attachResearchPlanSubtasks(codexAuthoredBlocks, jobs, text, onTabChange, { appendUnassigned: false }),
+      attachResearchPlanSubtasks(codexAuthoredBlocks, jobs, text, locale, onTabChange, { appendUnassigned: false }),
       turnState,
       text,
+      locale,
       onTabChange
     );
   }
@@ -5619,7 +5653,7 @@ function buildResearchPlanBlocks({
     hasAnyArtifactType(artifacts, ["research_plan", "research_source_pack", "research_source_report", "notebook_authoring_brief"]);
   const noFindingsResearchArtifact = researchNoFindingsArtifact(artifacts);
   const hasPriorResearchEvidence = hasAnyResolvedResearchArtifact(artifacts);
-  const latestCodexMessage = latestCodexTranscriptMessage(agentTranscriptEvents);
+  const latestCodexMessage = latestCodexTranscriptMessage(agentTranscriptEvents, locale);
   const activeAgentSession = agentSessionShouldRemainVisible(agentSession) ? agentSession : null;
   const activeCodexTurn = agentSessionHasObservedCodexProcess(activeAgentSession);
 
@@ -5743,9 +5777,10 @@ function buildResearchPlanBlocks({
   }
 
   return appendObservedAgentPlanBlock(
-    attachResearchPlanSubtasks(blocks, jobs, text, onTabChange, { appendUnassigned: false }),
+    attachResearchPlanSubtasks(blocks, jobs, text, locale, onTabChange, { appendUnassigned: false }),
     turnState,
     text,
+    locale,
     onTabChange
   );
 }
@@ -5764,18 +5799,19 @@ function appendObservedAgentPlanBlock(
   blocks: ResearchPlanBlock[],
   turnState: TurnState,
   text: LocaleMessages,
+  locale: string,
   onTabChange: (tab: Tab) => void
 ): ResearchPlanBlock[] {
   const agentOwnsTurn = turnState.owner === "agent" && ["agent_running", "agent_scheduled"].includes(turnState.state);
   if (!agentOwnsTurn) return blocks;
   const hasLiveBlock = blocks.some((block) => block.status === "active");
   if (hasLiveBlock) return blocks;
-  const detail = turnState.detail || turnState.label || text.planBlockCodexRunning;
+  const detail = localeSafeDisplayText(turnState.detail || turnState.label, locale, text.planBlockCodexRunning);
   return [
     ...blocks,
     {
       id: "observed_main_agent_session",
-      title: turnStateLabel(turnState, text),
+      title: turnStateLabel(turnState, text, locale),
       subtitle: detail,
       status: turnState.state === "agent_running" ? "active" : "pending",
       eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
@@ -5791,6 +5827,7 @@ function appendObservedAgentPlanBlock(
 function researchPlanBlocksFromTimeline(
   timeline: ResearchPlanTimelineResponse | null,
   text: LocaleMessages,
+  locale: string,
   onNavigateToTarget: (tab: Tab, anchor?: string | null) => void
 ): ResearchPlanBlock[] {
   if (!timeline?.blocks.length) return [];
@@ -5800,8 +5837,8 @@ function researchPlanBlocksFromTimeline(
       const subtaskTab = subtask.target_tab ? tabFromString(subtask.target_tab, targetTab ?? "Home") : targetTab;
       return {
         id: subtask.id,
-        title: subtask.title,
-        detail: subtask.detail,
+        title: localeSafeDisplayText(subtask.title, locale, text.researchPlanDetailLocaleRefresh),
+        detail: localeSafeDisplayText(subtask.detail, locale, text.researchPlanLocaleRefreshDetail),
         status: subtask.status,
         evidence: subtask.evidence,
         targetTab: subtaskTab,
@@ -5897,6 +5934,7 @@ function attachResearchPlanSubtasks(
   blocks: ResearchPlanBlock[],
   jobs: Job[],
   text: LocaleMessages,
+  locale: string,
   onTabChange: (tab: Tab) => void,
   options: { appendUnassigned: boolean } = { appendUnassigned: true }
 ): ResearchPlanBlock[] {
@@ -5905,7 +5943,7 @@ function attachResearchPlanSubtasks(
   const byBlock = new Map<string, ResearchPlanSubtask[]>();
   const unassigned: ResearchPlanSubtask[] = [];
   for (const job of jobs) {
-    const subtask = researchPlanSubtaskFromJob(job, onTabChange);
+    const subtask = researchPlanSubtaskFromJob(job, text, locale, onTabChange);
     const blockId = researchPlanBlockIdForJob(job);
     if (blockId && blockIds.has(blockId)) {
       const existing = byBlock.get(blockId) ?? [];
@@ -5940,12 +5978,12 @@ function attachResearchPlanSubtasks(
   return nextBlocks;
 }
 
-function latestCodexTranscriptMessage(events: AgentTranscriptEvent[]): string | null {
+function latestCodexTranscriptMessage(events: AgentTranscriptEvent[], locale: string): string | null {
   for (const event of [...events].reverse()) {
     if (event.source !== "codex_cli") continue;
     if (event.title !== "Codex message" && event.event_type !== "item.completed") continue;
     const content = event.content?.trim();
-    if (content) return content;
+    if (content && displayTextMatchesLocale(content, locale)) return content;
   }
   return null;
 }
@@ -5975,14 +6013,20 @@ function agentSessionPlanEvidence(session: AgentSession, text: LocaleMessages): 
   if (agentSessionHasObservedCodexProcess(session)) return text.turnStateAgentRunning;
   if (session.observed_runner_state === "supervisor_should_continue") return text.turnStateAgentScheduled;
   if (session.status === "waiting_for_runner") return text.turnStateWorkerPending;
-  return session.status.replace(/_/g, " ");
+  return text.turnStateObserved;
 }
 
-function researchPlanSubtaskFromJob(job: Job, onTabChange: (tab: Tab) => void): ResearchPlanSubtask {
+function researchPlanSubtaskFromJob(
+  job: Job,
+  text: LocaleMessages,
+  locale: string,
+  onTabChange: (tab: Tab) => void
+): ResearchPlanSubtask {
+  const humanDescription = jobHumanDescription(job, text);
   return {
     id: job.id,
-    title: job.job_type.replace(/_/g, " "),
-    detail: job.error_message ?? latestJobHeadline(job),
+    title: localeSafeDisplayText(humanDescription.title, locale, workerDisplayName(job.job_type, text)),
+    detail: localeSafeDisplayText(job.error_message ?? humanDescription.summary ?? latestJobHeadline(job), locale, text.researchPlanTimelineHint),
     status: researchPlanStatusFromJob(job),
     evidence: `${job.status} · ${formatDate(job.updated_at ?? job.created_at)}`,
     onClick: () => onTabChange(tabForResearchPlanJob(job))
@@ -6881,9 +6925,9 @@ function AgentChatSummaryCard({
   );
 }
 
-function TurnStateBar({ text, turnState }: { text: LocaleMessages; turnState: TurnState }) {
+function TurnStateBar({ text, locale, turnState }: { text: LocaleMessages; locale: string; turnState: TurnState }) {
   const observedAt = turnState.observed_at ? formatDate(turnState.observed_at) : null;
-  const detail = turnStateDisplayDetail(turnState, text);
+  const detail = turnStateDisplayDetail(turnState, text, locale);
   const rawObservation = turnStateRawObservationText(turnState, text);
   return (
     <div className={turnStateClassName(turnState)} title={text.turnStateSource}>
@@ -6891,7 +6935,7 @@ function TurnStateBar({ text, turnState }: { text: LocaleMessages; turnState: Tu
         <span className="turn-state-dot" />
         <div>
           <span>{text.turnStateObserved}</span>
-          <strong>{turnStateLabel(turnState, text)}</strong>
+          <strong>{turnStateLabel(turnState, text, locale)}</strong>
         </div>
       </div>
       <p>{detail}</p>
@@ -6913,14 +6957,28 @@ function turnStateRawObservationText(turnState: TurnState, text: LocaleMessages)
   return `${text.rawAgentStdout} ${stdout} / ${text.rawAgentStderr} ${stderr}`;
 }
 
-function turnStateDisplayDetail(turnState: TurnState, text: LocaleMessages): string {
+function turnStateDisplayDetail(turnState: TurnState, text: LocaleMessages, locale: string): string {
   if (turnState.state === "waiting_for_user") return text.turnStateUserTurnHint;
-  if (turnState.state === "worker_pending") return turnState.detail || text.turnStateWorkerPendingHint;
-  if (turnState.state === "agent_scheduled") return turnState.detail || text.turnStateAgentScheduledHint;
-  if (turnState.state === "needs_attention") return turnState.detail || text.turnStateNeedsAttentionHint;
-  if (turnState.state === "agent_running") return turnState.detail || text.turnStateAgentTurnHint;
-  if (turnState.state === "stale_runner") return turnState.detail || text.turnStateNeedsAttentionHint;
-  return turnState.detail || (turnState.input_attention ? text.turnStateUserTurnHint : text.turnStateAgentTurnHint);
+  if (turnState.state === "worker_pending") {
+    return localeSafeDisplayText(turnState.detail, locale, text.turnStateWorkerPendingHint);
+  }
+  if (turnState.state === "agent_scheduled") {
+    return localeSafeDisplayText(turnState.detail, locale, text.turnStateAgentScheduledHint);
+  }
+  if (turnState.state === "needs_attention") {
+    return localeSafeDisplayText(turnState.detail, locale, text.turnStateNeedsAttentionHint);
+  }
+  if (turnState.state === "agent_running") {
+    return localeSafeDisplayText(turnState.detail, locale, text.turnStateAgentTurnHint);
+  }
+  if (turnState.state === "stale_runner") {
+    return localeSafeDisplayText(turnState.detail, locale, text.turnStateNeedsAttentionHint);
+  }
+  return localeSafeDisplayText(
+    turnState.detail,
+    locale,
+    turnState.input_attention ? text.turnStateUserTurnHint : text.turnStateAgentTurnHint
+  );
 }
 
 function agentInputFormClassName(turnState: TurnState, extraClassName = "") {
@@ -6933,7 +6991,7 @@ function turnStateClassName(turnState: TurnState) {
   return `turn-state-bar is-${turnState.state.replace(/_/g, "-").replace(/[^a-z0-9-]/gi, "-")}`;
 }
 
-function turnStateLabel(turnState: TurnState, text: LocaleMessages) {
+function turnStateLabel(turnState: TurnState, text: LocaleMessages, locale?: string) {
   switch (turnState.state) {
     case "agent_running":
       return text.turnStateAgentRunning;
@@ -6948,7 +7006,7 @@ function turnStateLabel(turnState: TurnState, text: LocaleMessages) {
     case "waiting_for_user":
       return text.turnStateWaitingForUser;
     default:
-      return turnState.label || text.turnStateObserved;
+      return localeSafeDisplayText(turnState.label, locale, text.turnStateObserved);
   }
 }
 
@@ -6978,6 +7036,7 @@ function fallbackTurnState(project: Project): TurnState {
 function RawAgentStream({
   busy,
   text,
+  locale,
   events,
   rawTranscript,
   submitShortcut,
@@ -6986,6 +7045,7 @@ function RawAgentStream({
 }: {
   busy: boolean;
   text: LocaleMessages;
+  locale: string;
   events: RawAgentEvent[];
   rawTranscript: AgentRawTranscript | null;
   submitShortcut: ChatSubmitShortcut;
@@ -7045,7 +7105,7 @@ function RawAgentStream({
           {rawTranscript?.updated_at ? ` · ${text.rawAgentUpdated} ${formatDate(rawTranscript.updated_at)}` : ""}
         </small>
       </div>
-      <TurnStateBar text={text} turnState={turnState} />
+      <TurnStateBar text={text} locale={locale} turnState={turnState} />
       <div className="raw-agent-log" ref={rawScroll.ref} onScroll={rawScroll.onScroll}>
         {rawLines.length ? (
           <>
@@ -7381,6 +7441,7 @@ function AgentConversationTurnCard({
 function AgentChatDock({
   busy,
   text,
+  locale,
   messages,
   submitShortcut,
   userAvatarSrc,
@@ -7392,6 +7453,7 @@ function AgentChatDock({
 }: {
   busy: boolean;
   text: LocaleMessages;
+  locale: string;
   messages: AgentChatMessage[];
   submitShortcut: ChatSubmitShortcut;
   userAvatarSrc: string | null;
@@ -7453,7 +7515,7 @@ function AgentChatDock({
           ) : null}
         </div>
       </div>
-      <TurnStateBar text={text} turnState={turnState} />
+      <TurnStateBar text={text} locale={locale} turnState={turnState} />
       {turns.length ? (
         <div className="agent-chat-log" ref={chatScroll.ref} onScroll={chatScroll.onScroll}>
           {olderTurns.length ? (

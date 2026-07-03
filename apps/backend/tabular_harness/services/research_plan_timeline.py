@@ -220,7 +220,11 @@ def _research_plan_block_evidence(raw_block: dict[str, Any], *, locale: str | No
     if existing_count:
         return _research_plan_count_label(existing_count, "evidence", locale=locale)
     phase = raw_block.get("phase")
-    if isinstance(phase, str) and phase.strip():
+    if (
+        isinstance(phase, str)
+        and phase.strip()
+        and (not _research_plan_requires_explicit_locale(locale) or _research_plan_text_matches_locale(phase, locale=locale))
+    ):
         return phase.strip()
     return None
 

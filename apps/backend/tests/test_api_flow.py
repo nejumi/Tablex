@@ -1882,7 +1882,12 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
                         "status": "blocked",
                     },
                     {"id": "broken", "status": "done"},
-                    {"id": "invalid_status", "title": "Invalid status becomes pending", "status": "surprise"},
+                    {
+                        "id": "invalid_status",
+                        "title": "Invalid status becomes pending",
+                        "phase": "modeling",
+                        "status": "surprise",
+                    },
                 ],
             },
         )
@@ -1906,6 +1911,7 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert timeline["blocks"][0]["subtasks"][0]["target_tab"] == "Insight"
     assert timeline["blocks"][1]["status"] == "blocked"
     assert timeline["blocks"][2]["status"] == "pending"
+    assert timeline["blocks"][2]["evidence"] == "modeling"
 
     localized_response = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
     assert localized_response.status_code == 200
@@ -1930,6 +1936,7 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized["blocks"][1]["blockers"] == []
     assert localized["blocks"][2]["status"] == "pending"
     assert localized["blocks"][2]["localization_status"] == "needs_locale_refresh"
+    assert localized["blocks"][2]["evidence"] is None
 
 
 def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_path: Path) -> None:
