@@ -2668,6 +2668,93 @@ def test_research_plan_timeline_requests_locale_refresh_for_active_session(tmp_p
         assert event_count == 1
 
 
+def test_research_plan_timeline_wakes_between_turns_session_for_locale_refresh(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    supervisor_starts: list[dict[str, str]] = []
+
+    def fake_start_supervisor(*args: Any, **kwargs: Any) -> None:
+        supervisor_starts.append(
+            {
+                "project_id": str(kwargs["project_id"]),
+                "session_id": str(kwargs["session_id"]),
+            }
+        )
+
+    monkeypatch.setattr(routes_module, "start_main_agent_session_supervisor_thread", fake_start_supervisor)
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Plan locale wake"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    workspace = app.state.artifact_store.root / "agent_sessions" / project_id / "ags_plan_locale_wake"
+
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "AUTONOMOUS_LOOP"
+        project.autonomy_mode = "full_auto"
+        session = AgentSession(
+            id="ags_plan_locale_wake",
+            project_id=project_id,
+            org_id=project.org_id,
+            session_type="main_autonomous",
+            status="between_turns",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Continue when the plan display locale needs repair.",
+            workspace_path=str(workspace),
+            created_by="test",
+        )
+        db.add(session)
+        store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="research_plan",
+            name="codex_plan_needing_locale_wake",
+            filename="research_plan.json",
+            payload={
+                "schema_version": "research_plan.v1",
+                "timeline_blocks": [
+                    {
+                        "id": "post_eda_modeling",
+                        "title": "post-EDA modeling plan",
+                        "why_it_matters": "Pick the next model family after the notebook review.",
+                        "status": "active",
+                    }
+                ],
+            },
+            metadata={"source": "test"},
+        )
+        db.commit()
+
+    response = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
+
+    assert response.status_code == 200
+    assert supervisor_starts == [{"project_id": project_id, "session_id": "ags_plan_locale_wake"}]
+    with app.state.session_factory() as db:
+        wake_events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(
+                    AgentTranscriptEvent.session_id == "ags_plan_locale_wake",
+                    AgentTranscriptEvent.event_type == "research_plan_locale_refresh_wake_requested",
+                )
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            )
+        )
+        assert len(wake_events) == 1
+        payload = loads_json(wake_events[0].payload_json, {})
+        assert payload["locale"] == "ja-JP"
+        assert payload["issue_signature"]
+
+    repeated = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
+
+    assert repeated.status_code == 200
+    assert supervisor_starts == [{"project_id": project_id, "session_id": "ags_plan_locale_wake"}]
+
+
 def test_research_plan_timeline_uses_artifact_locale_and_codex_display_fields(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_response = client.post("/api/projects", json={"name": "Plan display locale"})

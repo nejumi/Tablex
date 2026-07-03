@@ -153,6 +153,7 @@ from tabular_harness.services.agent_sessions import (
     maybe_request_research_plan_locale_refresh,
     raw_codex_stderr_path,
     raw_codex_transcript_path,
+    research_plan_locale_issue_signature,
     run_main_agent_session_supervisor,
     session_to_dict,
     start_main_agent_session_supervisor_thread,
@@ -5144,7 +5145,9 @@ def compact_agent_chat_history_turns(
 @router.get("/api/projects/{project_id}/research-plan/timeline")
 def get_research_plan_timeline(
     project_id: str,
+    request: Request,
     db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
     locale: str | None = None,
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
@@ -5167,8 +5170,77 @@ def get_research_plan_timeline(
         if session is not None and artifact is not None:
             response_locale = response.get("response_locale") if isinstance(response.get("response_locale"), str) else locale
             maybe_request_research_plan_locale_refresh(db, session=session, artifact=artifact, locale=response_locale)
+            should_wake_main_session = maybe_mark_research_plan_locale_refresh_wake(
+                db,
+                session=session,
+                artifact_id=artifact.id,
+                locale=response_locale,
+                localization=localization,
+            )
             db.commit()
+            if should_wake_main_session:
+                start_main_agent_session_supervisor_thread(
+                    request.app.state.session_factory,
+                    store,
+                    project_id=project_id,
+                    session_id=session.id,
+                    supervisor_runner=run_main_agent_session_supervisor,
+                )
     return response
+
+
+def maybe_mark_research_plan_locale_refresh_wake(
+    db: Session,
+    *,
+    session: AgentSession,
+    artifact_id: str,
+    locale: str | None,
+    localization: dict[str, Any],
+) -> bool:
+    if session.status not in {"starting", "between_turns", "waiting_for_runner"}:
+        return False
+    if supervisor_slot_active(session.id):
+        return False
+    issue_signature = research_plan_locale_issue_signature(localization)
+    recent_events = list(
+        db.scalars(
+            select(AgentTranscriptEvent)
+            .where(
+                AgentTranscriptEvent.session_id == session.id,
+                AgentTranscriptEvent.source == "tablex_sidecar",
+                AgentTranscriptEvent.event_type == "research_plan_locale_refresh_wake_requested",
+            )
+            .order_by(AgentTranscriptEvent.event_index.desc())
+            .limit(50)
+        ).all()
+    )
+    for event in recent_events:
+        payload = loads_json(event.payload_json, {})
+        if (
+            payload.get("artifact_id") == artifact_id
+            and payload.get("locale") == locale
+            and payload.get("issue_signature") == issue_signature
+        ):
+            return False
+    append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="research_plan_locale_refresh_wake_requested",
+        role="harness",
+        title="ResearchPlan locale refresh wake requested",
+        content="A dormant main Codex session should continue so it can process the ResearchPlan display-locale inbox request.",
+        payload={
+            "artifact_id": artifact_id,
+            "locale": locale,
+            "issue_signature": issue_signature,
+            "missing_block_count": localization.get("missing_block_count", 0),
+            "missing_subtask_count": localization.get("missing_subtask_count", 0),
+        },
+        artifact_id=artifact_id,
+        update_heartbeat=False,
+    )
+    return True
 
 
 def explicit_project_response_locale(db: Session, project: Project) -> str | None:
