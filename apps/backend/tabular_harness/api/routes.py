@@ -278,6 +278,7 @@ from tabular_harness.services.research_plans import (
     ResearchPlanValidationError,
     attach_research_plan_artifact,
     commit_research_plan_revision,
+    record_harness_dataset_upload_in_research_plan,
     request_research_plan_human_attention,
     research_plan_current_work_payload,
     set_research_plan_current_work,
@@ -1751,6 +1752,13 @@ def upload_dataset(
         dataset = profile_dataset_artifact(db, store, project, dataset_artifact, effective_target)
         project.current_phase = "UNDERSTANDING_REVIEW"
         project.updated_at = utc_now()
+        record_harness_dataset_upload_in_research_plan(
+            db,
+            project_id=project_id,
+            artifact_ids=[dataset_artifact.id],
+            dataset_snapshot_id=dataset.id,
+            primary_artifact_id=dataset_artifact.id,
+        )
         mark_job_succeeded(job, {"dataset_snapshot_id": dataset.id})
     except Exception as exc:
         mark_job_failed(job, str(exc))
@@ -2099,6 +2107,14 @@ def ingest_uploaded_data_bundle(
         ]
         if artifact is not None
     ]
+    if artifact_ids:
+        record_harness_dataset_upload_in_research_plan(
+            db,
+            project_id=project.id,
+            artifact_ids=artifact_ids,
+            dataset_snapshot_id=dataset.id if dataset else None,
+            primary_artifact_id=dataset_artifact.id if dataset_artifact else None,
+        )
     return {
         "schema_version": "upload_data_bundle.v1",
         "dataset_snapshot_id": dataset.id if dataset else None,

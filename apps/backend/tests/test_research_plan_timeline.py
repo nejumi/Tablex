@@ -18,6 +18,8 @@ from tabular_harness.services.research_plan_timeline import (
 from tabular_harness.services.research_plans import (
     attach_research_plan_artifact,
     commit_research_plan_revision,
+    ensure_harness_initial_research_plan_revision,
+    record_harness_dataset_upload_in_research_plan,
     request_research_plan_human_attention,
     set_research_plan_current_work,
 )
@@ -45,6 +47,99 @@ def test_research_plan_timeline_preserves_codex_authored_text_without_locale_mas
     assert blocks[0]["next_action"] == "Use this matrix before the post-approval rebuild."
     assert blocks[0]["blockers"] == ["data owner approval is pending"]
     assert blocks[0]["localization_status"] == "localized"
+
+
+def test_harness_dataset_upload_records_canonical_initial_plan_progress() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_upload_plan", name="Upload Plan")
+        artifact = Artifact(
+            id="art_uploaded_dataset",
+            project_id=project.id,
+            asset_type="dataset_snapshot",
+            name="uploaded_dataset",
+            version=1,
+            uri="/tmp/uploaded.csv",
+            content_hash="hash",
+            size_bytes=12,
+            metadata_json="{}",
+        )
+        db.add_all([project, artifact])
+        db.commit()
+
+        ensure_harness_initial_research_plan_revision(db, project_id=project.id)
+        revision = record_harness_dataset_upload_in_research_plan(
+            db,
+            project_id=project.id,
+            artifact_ids=[artifact.id],
+            dataset_snapshot_id="ds_uploaded",
+            primary_artifact_id=artifact.id,
+        )
+        db.commit()
+
+        assert revision is not None
+        response = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+        blocks = {block["id"]: block for block in response["blocks"]}
+        assert blocks["data_upload"]["status"] == "done"
+        assert blocks["objective_framing"]["status"] == "active"
+        assert response["contract_validation"]["status"] == "ok"
+        assert any(link["artifact_id"] == artifact.id for link in blocks["data_upload"]["attached_artifacts"])
+
+
+def test_harness_dataset_upload_does_not_override_codex_authored_plan() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_upload_codex_plan", name="Upload Codex Plan")
+        artifact = Artifact(
+            id="art_uploaded_dataset_codex",
+            project_id=project.id,
+            asset_type="dataset_snapshot",
+            name="uploaded_dataset",
+            version=1,
+            uri="/tmp/uploaded.csv",
+            content_hash="hash",
+            size_bytes=12,
+            metadata_json="{}",
+        )
+        db.add_all([project, artifact])
+        db.commit()
+        codex_result = commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "codex_data_story",
+                        "title": "Codex data story",
+                        "granularity": "chapter",
+                        "status": "active",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Codex owns the project-specific plan.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        revision = record_harness_dataset_upload_in_research_plan(
+            db,
+            project_id=project.id,
+            artifact_ids=[artifact.id],
+            dataset_snapshot_id="ds_uploaded",
+            primary_artifact_id=artifact.id,
+        )
+        db.commit()
+
+        assert revision is None
+        response = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+        assert response["source_revision_id"] == codex_result.revision.id
+        assert [block["id"] for block in response["blocks"]] == ["codex_data_story"]
 
 
 def test_research_plan_timeline_uses_explicit_localized_display_when_codex_supplies_it() -> None:

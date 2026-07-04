@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 from dataclasses import dataclass
 from typing import Any
@@ -71,6 +72,10 @@ PLAN_REPORT_ASSET_TYPES = {
     "report",
 }
 PLAN_FIGURE_ASSET_TYPES = {"agent_session_figure", "visualization", "visualization_spec"}
+HARNESS_RESEARCH_PLAN_BOOTSTRAP_SOURCES = {
+    "harness_initial_research_plan",
+    "harness_dataset_upload",
+}
 
 
 def latest_research_plan_revision(db: Session, *, project_id: str) -> ResearchPlanRevision | None:
@@ -175,6 +180,110 @@ def harness_initial_research_plan_document(*, project_id: str) -> dict[str, Any]
             },
         ],
     }
+
+
+def record_harness_dataset_upload_in_research_plan(
+    db: Session,
+    *,
+    project_id: str,
+    artifact_ids: list[str],
+    dataset_snapshot_id: str | None = None,
+    primary_artifact_id: str | None = None,
+) -> ResearchPlanRevision | None:
+    revision = ensure_harness_initial_research_plan_revision(db, project_id=project_id)
+    if not research_plan_revision_is_harness_bootstrap(revision):
+        return None
+    verified_artifacts = research_plan_verified_project_artifacts(
+        db,
+        project_id=project_id,
+        artifact_ids=artifact_ids,
+    )
+    if not verified_artifacts:
+        return None
+
+    document = copy.deepcopy(research_plan_revision_document(revision))
+    raw_blocks = document.get("timeline_blocks")
+    if not isinstance(raw_blocks, list):
+        document = harness_initial_research_plan_document(project_id=project_id)
+        raw_blocks = document["timeline_blocks"]
+    blocks = [block for block in raw_blocks if isinstance(block, dict)]
+    block_by_id = {str(block.get("id") or "").strip(): block for block in blocks}
+    data_upload = block_by_id.get("data_upload")
+    if data_upload is None:
+        return None
+
+    data_upload["status"] = "done"
+    data_upload["subtitle"] = "Uploaded data is registered as Tablex artifacts."
+    data_upload["target_tab"] = "Data"
+    data_upload["target_anchor"] = "dataset-upload"
+    data_upload["deliverable_contract"] = {"expected_outputs": ["artifact"]}
+    data_upload["completion_evidence"] = [
+        {
+            "output_type": "artifact",
+            "artifact_id": artifact.id,
+            "role": "primary_dataset" if primary_artifact_id and artifact.id == primary_artifact_id else artifact.asset_type,
+        }
+        for artifact in verified_artifacts
+    ]
+    data_upload.setdefault("localizations", {})
+    localizations = data_upload["localizations"] if isinstance(data_upload["localizations"], dict) else {}
+    localizations["ja-JP"] = {
+        **(localizations.get("ja-JP") if isinstance(localizations.get("ja-JP"), dict) else {}),
+        "title": "データアップロード",
+        "subtitle": "アップロード済みデータはTablex artifactとして登録されています。",
+    }
+    data_upload["localizations"] = localizations
+
+    if not any(research_plan_block_status(block) in PLAN_CURRENT_STATUSES for block in blocks):
+        first_open = next((block for block in blocks if research_plan_block_status(block) not in PLAN_TERMINAL_STATUSES), None)
+        if first_open is not None:
+            first_open["status"] = "active"
+    elif research_plan_block_status(data_upload) in PLAN_CURRENT_STATUSES:
+        for block in blocks:
+            if block is data_upload:
+                continue
+            if research_plan_block_status(block) not in PLAN_TERMINAL_STATUSES:
+                block["status"] = "active"
+                break
+
+    result = commit_research_plan_revision(
+        db,
+        project_id=project_id,
+        document=document,
+        author_type="harness",
+        reason="Record uploaded dataset artifacts in the harness-owned ResearchPlan.",
+        metadata={
+            "source": "harness_dataset_upload",
+            "dataset_snapshot_id": dataset_snapshot_id,
+            "artifact_ids": [artifact.id for artifact in verified_artifacts],
+        },
+        strict_validation=True,
+    )
+    return result.revision
+
+
+def research_plan_revision_is_harness_bootstrap(revision: ResearchPlanRevision) -> bool:
+    metadata = loads_json(revision.metadata_json, {})
+    return revision.author_type == "harness" and metadata.get("source") in HARNESS_RESEARCH_PLAN_BOOTSTRAP_SOURCES
+
+
+def research_plan_verified_project_artifacts(
+    db: Session,
+    *,
+    project_id: str,
+    artifact_ids: list[str],
+) -> list[Artifact]:
+    verified: list[Artifact] = []
+    seen: set[str] = set()
+    for artifact_id in artifact_ids:
+        if not isinstance(artifact_id, str) or not artifact_id.strip() or artifact_id in seen:
+            continue
+        artifact = db.get(Artifact, artifact_id.strip())
+        if artifact is None or artifact.project_id != project_id:
+            continue
+        verified.append(artifact)
+        seen.add(artifact.id)
+    return verified
 
 
 def commit_research_plan_artifact_revision(

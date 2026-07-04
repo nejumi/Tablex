@@ -285,6 +285,30 @@ def test_project_autonomy_mode_persists(tmp_path: Path) -> None:
     assert read_response.json()["autonomy_mode"] == "full_auto"
 
 
+def test_dataset_upload_records_harness_research_plan_progress(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Upload plan progress"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("training.csv", b"feature,target\n1,0\n2,1\n3,0\n", "text/csv")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+    uploaded_artifact_id = upload_response.json()["artifact"]["id"]
+
+    timeline_response = client.get(f"/api/projects/{project_id}/research-plan/timeline")
+    assert timeline_response.status_code == 200
+    timeline = timeline_response.json()
+    blocks = {block["id"]: block for block in timeline["blocks"]}
+    assert blocks["data_upload"]["status"] == "done"
+    assert blocks["objective_framing"]["status"] == "active"
+    assert timeline["contract_validation"]["status"] == "ok"
+    assert any(link["artifact_id"] == uploaded_artifact_id for link in blocks["data_upload"]["attached_artifacts"])
+
+
 def test_project_artifacts_support_limit_and_asset_type_filters(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_response = client.post("/api/projects", json={"name": "Artifact filters"})
