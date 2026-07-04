@@ -327,6 +327,7 @@ const englishMessages = {
   agentReplyWaitMetaRequested: "sent",
   agentReplyWaitMetaRaw: "Raw",
   agentReplyWaitMetaAgo: "ago",
+  agentReplyWaitRawOutputPending: "Raw has new Codex output. Waiting for the human-facing update in this chat.",
   agentReplyFailed: "I could not complete that request. The error is recorded here so it does not disappear.",
   chatTurnStatus: "Status",
   earlierConversation: "Earlier conversation",
@@ -997,6 +998,7 @@ const japaneseMessages: LocaleMessages = {
   agentReplyWaitMetaRequested: "送信済み",
   agentReplyWaitMetaRaw: "Raw",
   agentReplyWaitMetaAgo: "前",
+  agentReplyWaitRawOutputPending: "Rawには新しいCodex出力があります。人間向けの説明がこのChatに届くのを待っています。",
   agentReplyFailed: "この依頼を完了できませんでした。消えないように、エラーをここに記録します。",
   chatTurnStatus: "状態",
   earlierConversation: "以前の会話",
@@ -8325,12 +8327,14 @@ function agentChatWaitLatestCodexMessage(brief: Record<string, unknown> | null |
 function AgentConversationTurnCard({
   turn,
   text,
+  locale,
   userAvatarSrc,
   tableeMotionState,
   onActionOpen
 }: {
   turn: AgentConversationTurn;
   text: LocaleMessages;
+  locale: string;
   userAvatarSrc: string | null;
   tableeMotionState: TableeMotionState;
   onActionOpen: (action: AgentChatAction) => void;
@@ -8344,6 +8348,9 @@ function AgentConversationTurnCard({
   const visibleActions = hasPrimaryNext ? [] : assistant?.actions?.slice(0, 2) ?? [];
   const waitObservationItems = active ? agentChatWaitObservationItems(assistant?.responseBrief, text) : [];
   const latestCodexMessage = active ? agentChatWaitLatestCodexMessage(assistant?.responseBrief) : null;
+  const visibleLatestCodexMessage =
+    latestCodexMessage && displayTextMatchesLocale(latestCodexMessage, locale) ? latestCodexMessage : null;
+  const hasRawOnlyCodexMessage = Boolean(latestCodexMessage && !visibleLatestCodexMessage);
   return (
     <article className={`agent-turn-card ${active ? "is-active" : ""}`}>
       {turn.user ? (
@@ -8380,10 +8387,15 @@ function AgentConversationTurnCard({
                 ))}
               </div>
             ) : null}
-            {latestCodexMessage ? (
+            {visibleLatestCodexMessage ? (
               <div className="agent-chat-wait-latest">
                 <span>{text.agentReplyWaitMetaOutput}</span>
-                <p>{latestCodexMessage}</p>
+                <p>{visibleLatestCodexMessage}</p>
+              </div>
+            ) : hasRawOnlyCodexMessage ? (
+              <div className="agent-chat-wait-latest">
+                <span>{text.agentReplyWaitMetaRaw}</span>
+                <p>{text.agentReplyWaitRawOutputPending}</p>
               </div>
             ) : null}
             {assistant.actionSummary ? (
@@ -8521,6 +8533,7 @@ function AgentChatDock({
                     key={turn.id}
                     turn={turn}
                     text={text}
+                    locale={locale}
                     userAvatarSrc={userAvatarSrc}
                     tableeMotionState={tableeMotionState}
                     onActionOpen={onActionOpen}
@@ -8534,6 +8547,7 @@ function AgentChatDock({
               key={turn.id}
               turn={turn}
               text={text}
+              locale={locale}
               userAvatarSrc={userAvatarSrc}
               tableeMotionState={tableeMotionState}
               onActionOpen={onActionOpen}
