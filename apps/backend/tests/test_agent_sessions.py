@@ -1766,6 +1766,145 @@ def test_experiment_result_file_request_registers_leaderboard_run_with_ack(tmp_p
         assert loads_json(run.metrics_json, {})["primary_metric_value"] == 42.0
 
 
+def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    request_dir = experiment_requests_dir(workspace)
+    request_dir.mkdir(parents=True)
+    (request_dir / "register_runs.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_experiment_result_request.v1",
+                "request_id": "exp_req_plan_link",
+                "operation": "register_runs",
+                "payload": {
+                    "research_plan_node_id": "modeling_and_diagnostics",
+                    "runs": [
+                        {
+                            "model_id": "xgb_candidate",
+                            "summary": "A fold-safe boosted candidate.",
+                            "primary_metric_name": "mae",
+                            "metrics": {"mae": 40.0, "rmse": 59.0},
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_exp_plan_link", name="Experiment Plan Link")
+        session = AgentSession(
+            id="as_exp_plan_link",
+            project_id=project.id,
+            goal_text="Register requested runs with plan links.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+        revision = commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "modeling_and_diagnostics",
+                        "title": "Modeling and diagnostics",
+                        "granularity": "chapter",
+                        "status": "active",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Declare modeling work.",
+        ).revision
+        set_research_plan_current_work(
+            db,
+            project_id=project.id,
+            node_id="modeling_and_diagnostics",
+            summary="Register model runs.",
+            expected_outputs=["experiment_run", "leaderboard_entry"],
+            revision_id=revision.id,
+        )
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        run = db.scalar(select(ExperimentRun).where(ExperimentRun.project_id == project.id))
+        assert run is not None
+        params = loads_json(run.params_json, {})
+        assert params["research_plan_node_id"] == "modeling_and_diagnostics"
+        edge = db.scalar(
+            select(LineageEdge).where(
+                LineageEdge.project_id == project.id,
+                LineageEdge.from_asset_type == "research_plan_revision",
+                LineageEdge.to_asset_type == "experiment_run",
+                LineageEdge.to_asset_id == run.id,
+                LineageEdge.relation_type == "supports_plan_node",
+            )
+        )
+        assert edge is not None
+        assert loads_json(edge.metadata_json, {})["node_id"] == "modeling_and_diagnostics"
+        chat_artifact = db.scalar(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+            .order_by(Artifact.created_at.desc())
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["intent"]["type"] == "experiment_results_registered"
+        assert chat_payload["response_brief"]["research_plan_node_ids"] == ["modeling_and_diagnostics"]
+
+
+def test_failed_experiment_result_file_request_is_announced_in_agent_chat(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    request_dir = experiment_requests_dir(workspace)
+    request_dir.mkdir(parents=True)
+    (request_dir / "bad_register_runs.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_experiment_result_request.v1",
+                "request_id": "bad_exp_req",
+                "operation": "register_runs",
+                "payload": {"runs": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_bad_exp_request", name="Bad Experiment Request")
+        session = AgentSession(
+            id="as_bad_exp_request",
+            project_id=project.id,
+            goal_text="Announce failed model result registration.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        ack = loads_json((experiment_acks_dir(workspace) / "bad_register_runs.ack.json").read_text(encoding="utf-8"), {})
+        assert ack["status"] == "failed"
+        chat_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["intent"]["type"] == "experiment_results_registration_failed"
+        assert chat_payload["intent"]["status"] == "needs_attention"
+
+
 def test_research_plan_tool_rejects_later_done_node_before_open_predecessor(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
@@ -1812,6 +1951,62 @@ def test_research_plan_tool_rejects_later_done_node_before_open_predecessor(tmp_
         assert ack["status"] == "failed"
         issue_codes = {issue["code"] for issue in ack["error"]["issues"]}
         assert "completed_after_open_predecessor" in issue_codes
+        assert db.scalar(select(func.count()).select_from(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project.id)) == 0
+
+
+def test_research_plan_tool_rejects_done_node_without_deliverable_contract(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    request_dir = research_plan_requests_dir(workspace)
+    request_dir.mkdir(parents=True)
+    (request_dir / "missing_contract.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_research_plan_request.v1",
+                "request_id": "missing_contract",
+                "operation": "commit_revision",
+                "payload": {
+                    "document": {
+                        "schema_version": "research_plan.v2",
+                        "timeline_blocks": [
+                            {
+                                "id": "data_understanding",
+                                "title": "Data understanding",
+                                "granularity": "chapter",
+                                "status": "done",
+                                "completion_evidence": [
+                                    {"output_type": "notebook", "workspace_path": "notebooks/data_understanding.py"}
+                                ],
+                            }
+                        ],
+                    },
+                    "reason": "This should be rejected because output-producing done nodes need a contract.",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_missing_contract", name="Missing Contract")
+        session = AgentSession(
+            id="as_missing_contract",
+            project_id=project.id,
+            goal_text="Reject missing deliverable contracts.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        ack = loads_json((research_plan_acks_dir(workspace) / "missing_contract.ack.json").read_text(encoding="utf-8"), {})
+        assert ack["status"] == "failed"
+        issue_codes = {issue["code"] for issue in ack["error"]["issues"]}
+        assert "done_node_missing_deliverable_contract" in issue_codes
         assert db.scalar(select(func.count()).select_from(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project.id)) == 0
 
 

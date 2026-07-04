@@ -1488,6 +1488,33 @@ def build_session_context(
                     "current plan node, link an output artifact to a node, or create a human-attention question. "
                     "Use a new request_id and file for each operation, then read the matching ack JSON."
                 ),
+                "commit_revision_contract": {
+                    "top_level_granularity": ["chapter", "phase", "milestone"],
+                    "current_rule": "If any top-level work remains open, exactly one top-level node should be active, waiting, or blocked.",
+                    "done_rule": (
+                        "A done node must include completion_evidence/supporting_artifacts or no_output_required with rationale. "
+                        "If it produced output, include deliverable_contract.expected_outputs and matching evidence output_type values."
+                    ),
+                    "known_output_types": [
+                        "notebook",
+                        "report",
+                        "experiment_run",
+                        "leaderboard_entry",
+                        "artifact",
+                        "question",
+                    ],
+                    "example_done_node": {
+                        "id": "data_understanding",
+                        "title": "Data understanding and relational map",
+                        "granularity": "chapter",
+                        "status": "done",
+                        "deliverable_contract": {"expected_outputs": ["notebook", "report"]},
+                        "completion_evidence": [
+                            {"output_type": "notebook", "workspace_path": "notebooks/data_understanding.py"},
+                            {"output_type": "report", "workspace_path": "reports/data_understanding.md"},
+                        ],
+                    },
+                },
             },
             "experiment_result_tool_requests": {
                 "request_dir": ".tablex/requests/experiments",
@@ -1499,6 +1526,28 @@ def build_session_context(
                     "Tablex ExperimentRun records and appear in the Leaderboard. Each run must include a stable "
                     "model_id and numeric metrics. Prefer one comparable primary metric across runs in the same result set."
                 ),
+                "register_runs_contract": {
+                    "optional_project_link": "Set payload.research_plan_node_id or per-run research_plan_node_id to link the run to a ResearchPlan node.",
+                    "required_run_fields": ["model_id", "metrics"],
+                    "recommended_run_fields": ["summary", "primary_metric_name", "source_workspace_path"],
+                    "example_request": {
+                        "schema_version": "tablex_experiment_result_request.v1",
+                        "request_id": "register_model_runs_001",
+                        "operation": "register_runs",
+                        "payload": {
+                            "research_plan_node_id": "modeling_and_diagnostics",
+                            "runs": [
+                                {
+                                    "model_id": "xgboost_structured_text_v1",
+                                    "summary": "Fold-safe boosted baseline with structured and text features.",
+                                    "primary_metric_name": "mae",
+                                    "metrics": {"mae": 123.4, "rmse": 180.0},
+                                    "source_workspace_path": "artifacts/model_results.json",
+                                }
+                            ],
+                        },
+                    },
+                },
             },
             "progress": "Explain progress naturally in Codex messages. Tablex stores the raw transcript and Chat explains it to humans.",
             "chat_update": (
@@ -1637,8 +1686,8 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Do not destructively modify EvaluationSpec or SplitManifest.",
         "- Register important outputs by writing files under outputs/, reports/, notebooks/, or artifacts/.",
         "- Keep a living plan when it helps the user follow the work: write `outputs/research_plan.json` with `schema_version: \"research_plan.v1\"` and optional `timeline_blocks`. Use `timeline_blocks` as an execution ledger: after data upload, objective/task framing, data understanding, and prior-knowledge research anchors, add, refine, supersede, or branch project-specific blocks. Top-level timeline blocks should be coarse chapters/phases/milestones with `granularity: \"chapter\"`, `\"phase\"`, or `\"milestone\"`; put individual analyses, model attempts, diagnostics, notebook sections, and reports in `subtasks`, ExperimentRuns, artifacts, or completion evidence rather than as top-level blocks. Do not remove or reopen completed nodes; add follow-up nodes instead. Mark a block done only when completion_evidence/supporting_artifacts exist or you explicitly record that no useful output is needed.",
-        "- For acknowledged ResearchPlan operations, write fixed JSON requests under `.tablex/requests/research_plan/` using `schema_version: \"tablex_research_plan_request.v1\"`; Tablex writes matching acks under `.tablex/acks/research_plan/`. Use this for `commit_revision`, `set_current_work`, `attach_artifact`, and `request_human_attention` when you need a validated harness-side state update. Valid commits keep the visible plan left-to-right, keep exactly one open top-level node active/waiting/blocked, and keep detailed work below chapter-level nodes. Invalid plan transitions are returned as actionable ack errors; revise and resubmit instead of continuing with an inconsistent visible plan.",
-        "- For model comparison or evaluation results that should appear in Leaderboard, write fixed JSON requests under `.tablex/requests/experiments/` using `schema_version: \"tablex_experiment_result_request.v1\"` and operation `register_runs`, or save structured result JSON such as `model_results.v1` under artifacts/.",
+        "- For acknowledged ResearchPlan operations, write fixed JSON requests under `.tablex/requests/research_plan/` using `schema_version: \"tablex_research_plan_request.v1\"`; Tablex writes matching acks under `.tablex/acks/research_plan/`. Use this for `commit_revision`, `set_current_work`, `attach_artifact`, and `request_human_attention` when you need a validated harness-side state update. Valid commits keep the visible plan left-to-right, keep exactly one open top-level node active/waiting/blocked, keep detailed work below chapter-level nodes, and give done nodes a deliverable_contract plus matching completion evidence unless no output is intentionally required. Invalid plan transitions are returned as actionable ack errors; revise and resubmit instead of continuing with an inconsistent visible plan.",
+        "- For model comparison or evaluation results that should appear in Leaderboard, write fixed JSON requests under `.tablex/requests/experiments/` using `schema_version: \"tablex_experiment_result_request.v1\"` and operation `register_runs`, or save structured result JSON such as `model_results.v1` under artifacts/. Include `research_plan_node_id` when the runs belong to a visible plan node.",
         "- For `outputs/research_plan.json` timeline_blocks, write human-facing strings in `.tablex/context.json` `human_interface.response_locale` when practical. Keep identifiers and source column names exact.",
         "- Keep human-facing accountability continuous: when you make meaningful progress, hit uncertainty, start or finish a long-running step, recover from an error, change the plan, or need the user to know what changed, overwrite `reports/chat_update.md` with only the latest concise update in the user's locale. Keep it under 1200 characters. Use separate report files for long history. Do not wait for Tablex to infer this from logs.",
         "- Treat `reports/chat_update.md` as a user-facing explanation, not an internal changelog: say what you are doing now, why it matters, what changed, what uncertainty remains, and where the user should look next. Avoid raw artifact IDs, hashes, filenames, internal schema names, and implementation vocabulary unless they are necessary for a user decision.",

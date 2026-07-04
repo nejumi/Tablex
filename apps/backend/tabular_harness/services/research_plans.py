@@ -558,14 +558,18 @@ def validate_research_plan_document(
                 )
             )
         if status in PLAN_TERMINAL_STATUSES:
-            if strict and status == "done" and not isinstance(block.get("deliverable_contract"), dict):
+            if (
+                strict
+                and status == "done"
+                and block.get("no_output_required") is not True
+                and not isinstance(block.get("deliverable_contract"), dict)
+            ):
                 issues.append(
                     research_plan_issue(
                         "done_node_missing_deliverable_contract",
                         f"{path}/deliverable_contract",
                         f"Node `{block_id}` is done without a deliverable_contract.",
                         "Declare the expected output classes in deliverable_contract.expected_outputs so Tablex can verify notebook, report, experiment, leaderboard, or no-output decisions without reading the title.",
-                        severity="warning",
                     )
                 )
             if status == "done" and not research_plan_block_has_completion_evidence(block):
@@ -743,7 +747,18 @@ def research_plan_block_has_completion_evidence(block: dict[str, Any]) -> bool:
         for item in completion_evidence:
             if not isinstance(item, dict):
                 continue
-            if any(isinstance(item.get(key), str) and item.get(key).strip() for key in ("artifact_id", "run_id", "report_id", "notebook_artifact_id", "lineage_edge_id", "workspace_path")):
+            if any(
+                isinstance(item.get(key), str) and item.get(key).strip()
+                for key in (
+                    "artifact_id",
+                    "run_id",
+                    "experiment_run_id",
+                    "report_id",
+                    "notebook_artifact_id",
+                    "lineage_edge_id",
+                    "workspace_path",
+                )
+            ):
                 return True
     supporting_artifacts = block.get("supporting_artifacts")
     if isinstance(supporting_artifacts, list):

@@ -15,7 +15,10 @@ from tabular_harness.models.entities import (
     AgentSession,
     Artifact,
     ExperimentRun,
+    LineageEdge,
     Project,
+    ResearchPlan,
+    ResearchPlanRevision,
     User,
     utc_now,
 )
@@ -57,6 +60,7 @@ class RunSpec:
     primary_metric_value: float
     source_artifact_id: str | None = None
     source_workspace_path: str | None = None
+    research_plan_node_id: str | None = None
 
 
 def experiment_requests_dir(workspace: Path) -> Path:
@@ -145,6 +149,16 @@ def process_experiment_result_requests(
                 "error": {"type": type(exc).__name__, "message": str(exc)},
             }
             write_experiment_result_ack(ack_path, ack)
+            register_experiment_result_failure_chat_turn(
+                db,
+                store=store,
+                project=project,
+                session=session,
+                request_id=request_id,
+                operation=operation,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
             if append_event is not None:
                 append_event(
                     db,
@@ -236,6 +250,7 @@ def run_specs_from_experiment_request(payload: dict[str, Any], *, request_id: st
     if not isinstance(raw_runs, list) or not raw_runs:
         raise ValueError("payload.runs must contain at least one run")
     specs: list[RunSpec] = []
+    default_plan_node_id = str(payload.get("research_plan_node_id") or "").strip() or None
     for index, item in enumerate(raw_runs):
         if not isinstance(item, dict):
             raise ValueError(f"payload.runs/{index} must be an object")
@@ -261,6 +276,7 @@ def run_specs_from_experiment_request(payload: dict[str, Any], *, request_id: st
                 primary_metric_value=primary_metric_value,
                 source_artifact_id=str(item.get("source_artifact_id")) if item.get("source_artifact_id") else None,
                 source_workspace_path=str(item.get("source_workspace_path")) if item.get("source_workspace_path") else None,
+                research_plan_node_id=str(item.get("research_plan_node_id") or "").strip() or default_plan_node_id,
             )
         )
     return specs
@@ -285,6 +301,10 @@ def run_specs_from_structured_result_payload(payload: dict[str, Any], *, source_
             continue
         source_key = f"{source_artifact.id}:{schema_version}:{model_id}:{index}"
         summary = str(item.get("interpretation") or item.get("summary") or model_id).strip()[:4000]
+        plan_node_id = (
+            str(item.get("research_plan_node_id") or payload.get("research_plan_node_id") or "").strip()
+            or None
+        )
         specs.append(
             RunSpec(
                 source_key=source_key,
@@ -304,6 +324,7 @@ def run_specs_from_structured_result_payload(payload: dict[str, Any], *, source_
                 primary_metric_value=primary_metric_value,
                 source_artifact_id=source_artifact.id,
                 source_workspace_path=str(loads_json(source_artifact.metadata_json, {}).get("workspace_relative_path") or ""),
+                research_plan_node_id=plan_node_id,
             )
         )
     return specs
@@ -374,6 +395,7 @@ def register_experiment_run_specs(
                     "source_key": spec.source_key,
                     "result_signature": result_signature,
                     "model_id": spec.model_id,
+                    "research_plan_node_id": spec.research_plan_node_id,
                 }
             ),
             metrics_json=dumps_json(spec.metrics),
@@ -401,6 +423,7 @@ def register_experiment_run_specs(
             project=project,
             source_artifact_id=source_artifact_id,
             run=run,
+            node_id=spec.research_plan_node_id,
         )
     db.flush()
     return created
@@ -466,24 +489,175 @@ def attach_experiment_artifact_to_current_plan_node(
     project: Project,
     source_artifact_id: str | None,
     run: ExperimentRun,
+    node_id: str | None = None,
 ) -> None:
-    if not source_artifact_id:
-        return
     current = latest_research_plan_current_work(db, project_id=project.id)
-    if current is None or not current.node_id:
+    target_node_id = node_id.strip() if isinstance(node_id, str) and node_id.strip() else None
+    revision_id = current.revision_id if current is not None else None
+    if target_node_id is None:
+        target_node_id = current.node_id if current is not None and current.node_id else None
+    if target_node_id is None:
+        return
+    if source_artifact_id:
+        try:
+            attach_research_plan_artifact(
+                db,
+                project_id=project.id,
+                node_id=target_node_id,
+                artifact_id=source_artifact_id,
+                role="experiment_evidence",
+                revision_id=revision_id,
+                metadata={"experiment_run_id": run.id},
+            )
+        except ValueError:
+            pass
+    attach_experiment_run_to_plan_node(
+        db,
+        project=project,
+        node_id=target_node_id,
+        run=run,
+        revision_id=revision_id,
+    )
+
+
+def attach_experiment_run_to_plan_node(
+    db: Session,
+    *,
+    project: Project,
+    node_id: str,
+    run: ExperimentRun,
+    revision_id: str | None,
+) -> None:
+    plan = db.scalar(select(ResearchPlan).where(ResearchPlan.project_id == project.id))
+    if plan is None:
+        return
+    revision = db.get(ResearchPlanRevision, revision_id) if revision_id else None
+    if revision is None and plan.active_revision_id:
+        revision = db.get(ResearchPlanRevision, plan.active_revision_id)
+    if revision is None:
+        return
+    existing = db.scalar(
+        select(LineageEdge).where(
+            LineageEdge.project_id == project.id,
+            LineageEdge.from_asset_type == "research_plan_revision",
+            LineageEdge.from_asset_id == revision.id,
+            LineageEdge.to_asset_type == "experiment_run",
+            LineageEdge.to_asset_id == run.id,
+            LineageEdge.relation_type == "supports_plan_node",
+        )
+    )
+    if existing is not None:
         return
     try:
-        attach_research_plan_artifact(
-            db,
+        create_lineage_edge(
+            db=db,
             project_id=project.id,
-            node_id=current.node_id,
-            artifact_id=source_artifact_id,
-            role="experiment_evidence",
-            revision_id=current.revision_id,
-            metadata={"experiment_run_id": run.id},
+            from_asset_type="research_plan_revision",
+            from_asset_id=revision.id,
+            to_asset_type="experiment_run",
+            to_asset_id=run.id,
+            relation_type="supports_plan_node",
+            metadata={
+                "research_plan_id": plan.id,
+                "revision_id": revision.id,
+                "node_id": node_id[:160],
+                "role": "experiment_run",
+                "experiment_run_id": run.id,
+            },
+            org_id=project.org_id,
         )
     except ValueError:
         return
+
+
+def register_experiment_result_failure_chat_turn(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    session: AgentSession,
+    request_id: str,
+    operation: str,
+    error_type: str,
+    error_message: str,
+) -> Artifact | None:
+    source_key = f"{request_id}:{operation}:{error_type}:{hashlib.sha1(error_message.encode('utf-8')).hexdigest()[:12]}"
+    if experiment_registration_chat_turn_exists(db, project=project, session=session, source_key=source_key):
+        return None
+    response_locale = latest_project_response_locale(db, project)
+    japanese = locale_is_japanese(response_locale)
+    if japanese:
+        assistant_message = (
+            "モデル評価結果をLeaderboardに登録できませんでした。結果ファイルは処理されましたが、"
+            f"{error_type}: {error_message[:300]}"
+        )
+        action_label = "Agent workspaceを開く"
+        action_detail = "失敗した登録リクエストのackとRaw transcriptを確認できます。"
+        next_label = "Agent workspace"
+    else:
+        assistant_message = (
+            "Tablex could not register the model evaluation results on the leaderboard. "
+            f"{error_type}: {error_message[:300]}"
+        )
+        action_label = "Open Agent workspace"
+        action_detail = "Inspect the failed ack and Raw transcript for the registration request."
+        next_label = "Agent workspace"
+    response = {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": project.id,
+        "user_message": "",
+        "assistant_message": assistant_message,
+        "intent": {
+            "type": "experiment_results_registration_failed",
+            "source": "main_agent_session_workspace",
+            "status": "needs_attention",
+        },
+        "actions": [
+            {
+                "type": "open_surface",
+                "status": "needs_attention",
+                "label": action_label,
+                "target_tab": "Home",
+                "target_anchor": "agent-workspace",
+                "detail": action_detail,
+            }
+        ],
+        "action_summary": {},
+        "response_brief": {
+            "schema_version": "experiment_results_registration_failed.v1",
+            "agent_session_id": session.id,
+            "request_id": request_id,
+            "operation": operation,
+            "error_type": error_type,
+            "error_message": error_message[:1200],
+        },
+        "response_composer": {
+            "schema_version": "agent_response_composer.v1",
+            "mode": "main_agent_session",
+            "status": "harness_fact",
+        },
+        "worker_events": [],
+        "token_usage": {"source": "not_applicable", "is_estimate": False, "series": []},
+        "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": next_label},
+    }
+    return store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="agent_chat_turn",
+        name=f"agent_session_experiment_result_failure_{session.id}_{hashlib.sha1(source_key.encode('utf-8')).hexdigest()[:12]}",
+        filename="agent_chat_turn.json",
+        payload=response,
+        metadata={
+            "project_id": project.id,
+            "agent_session_id": session.id,
+            "source": "main_agent_session_experiment_registration",
+            "source_key": source_key,
+            "request_id": request_id,
+            "operation": operation,
+            "status": "failed",
+        },
+    )
 
 
 def register_experiment_registration_chat_turn(
@@ -558,6 +732,13 @@ def register_experiment_registration_chat_turn(
             "run_ids": [run.id for run in runs],
             "source_artifact_id": source_artifact.id if source_artifact is not None else None,
             "source_request_id": source_request_id,
+            "research_plan_node_ids": sorted(
+                {
+                    str(loads_json(run.params_json, {}).get("research_plan_node_id"))
+                    for run in runs
+                    if loads_json(run.params_json, {}).get("research_plan_node_id")
+                }
+            ),
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",

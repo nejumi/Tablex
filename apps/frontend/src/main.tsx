@@ -6657,7 +6657,7 @@ function researchPlanBlocksFromTimeline(
         onClick: subtaskTab ? () => onNavigateToTarget(subtaskTab, subtask.target_anchor) : undefined
       };
     });
-    subtasks.push(...derivedResearchPlanSubtasks(block, text, displayLocale));
+    subtasks.push(...derivedResearchPlanSubtasks(block, text, displayLocale, onNavigateToTarget));
     return {
       id: block.id,
       title: displayTextOrFallback(block.title, displayLocale, text.researchPlanSummaryBlock),
@@ -6675,7 +6675,8 @@ function researchPlanBlocksFromTimeline(
 function derivedResearchPlanSubtasks(
   block: ResearchPlanTimelineBlock,
   text: LocaleMessages,
-  locale: string
+  locale: string,
+  onNavigateToTarget: (tab: Tab, anchor?: string | null) => void
 ): ResearchPlanSubtask[] {
   const derived: ResearchPlanSubtask[] = [];
   if (block.next_action) {
@@ -6730,6 +6731,25 @@ function derivedResearchPlanSubtasks(
         .join(" / "),
       status: block.status === "blocked" ? "pending" : block.status,
       evidence: `${existingArtifacts.length}`
+    });
+  }
+  const attachedArtifacts = block.attached_artifacts ?? [];
+  if (attachedArtifacts.length) {
+    const notebookLike = attachedArtifacts.some((artifact) => artifact.asset_type?.includes("notebook"));
+    const targetTab: Tab = notebookLike ? "Notebooks" : "Assets";
+    const targetAnchor = notebookLike ? "notebook-preview-top" : null;
+    derived.push({
+      id: `${block.id}:attached_artifacts`,
+      title: text.researchPlanDetailEvidence,
+      detail: attachedArtifacts
+        .slice(0, 4)
+        .map((artifact) => artifact.artifact_name || artifact.artifact_id)
+        .join(" / "),
+      status: block.status === "blocked" ? "pending" : block.status,
+      evidence: `${attachedArtifacts.length}`,
+      targetTab,
+      targetAnchor,
+      onClick: () => onNavigateToTarget(targetTab, targetAnchor)
     });
   }
   return derived;
