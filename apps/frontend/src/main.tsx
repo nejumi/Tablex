@@ -6537,8 +6537,8 @@ function buildResearchPlanBlocks({
       onClick: () => onNavigateToTarget("Notebooks", "notebook-preview-top")
     }
   ];
-  const mergedBlocks = mergeInitialAnchorsWithCodexPlanBlocks(blocks, codexAuthoredBlocks);
-  const blocksWithCurrentWork = applyResearchPlanCurrentWork(mergedBlocks, researchPlanTimeline?.current_work ?? null);
+  const canonicalBlocks = codexAuthoredBlocks.length ? codexAuthoredBlocks : blocks;
+  const blocksWithCurrentWork = applyResearchPlanCurrentWork(canonicalBlocks, researchPlanTimeline?.current_work ?? null);
 
   return attachResearchPlanSubtasks(renumberResearchPlanBlocks(blocksWithCurrentWork), jobs, text, locale, onTabChange);
 }
@@ -6575,39 +6575,6 @@ function applyResearchPlanCurrentWork(
       isCurrentWork: true
     }
   ];
-}
-
-function mergeInitialAnchorsWithCodexPlanBlocks(
-  initialAnchors: ResearchPlanBlock[],
-  codexBlocks: ResearchPlanBlock[]
-): ResearchPlanBlock[] {
-  if (!codexBlocks.length) return [...initialAnchors];
-  const anchorIds = new Set([
-    "data_upload",
-    "data-upload",
-    "dataset_upload",
-    "data_upload_project_context",
-    "project_context",
-    "upload_data",
-    "objective",
-    "objective_setting",
-    "objective_task_framing",
-    "purpose_setting",
-    "goal_setting",
-    "task_framing",
-    "target_definition",
-    "understanding",
-    "data_understanding",
-    "prior_research",
-    "prior_knowledge_research",
-    "prior_knowledge_research_anchor",
-    "prior_knowledge_research_anchors",
-    "prior_research_anchor",
-    "prior_research_anchors",
-    "research"
-  ]);
-  const codexProjectBlocks = codexBlocks.filter((block) => !anchorIds.has(block.id));
-  return [...initialAnchors, ...codexProjectBlocks];
 }
 
 function renumberResearchPlanBlocks(blocks: ResearchPlanBlock[]): ResearchPlanBlock[] {
