@@ -43,6 +43,7 @@ from tabular_harness.services.approach import (
 )
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
+    artifact_primary_path,
     create_lineage_edge,
     next_artifact_version,
     register_artifact,
@@ -62,6 +63,8 @@ from tabular_harness.services.baseline import (
     run_baseline,
     run_model_candidate,
 )
+from tabular_harness.services.benchmark_collection import create_benchmark_collection_plan
+from tabular_harness.services.benchmark_evidence import create_benchmark_evidence_pack
 from tabular_harness.services.benchmarks import (
     benchmark_import_readiness,
     build_import_manifest,
@@ -116,6 +119,11 @@ from tabular_harness.services.planned_agent_workspace import (
     load_contract_payload,
     prepare_workspace_from_contract_artifact,
 )
+from tabular_harness.services.relational_feature_diagnostics import (
+    diagnose_relational_feature_scenarios,
+)
+from tabular_harness.services.relational_feature_planning import create_relational_feature_plan
+from tabular_harness.services.relational_feature_recipe import build_relational_feature_recipe
 from tabular_harness.services.reporting import (
     create_project_visualization_dashboard,
     generate_project_insights,
@@ -598,6 +606,186 @@ def run_public_benchmark_workflow_handler(db: Session, job: Job, store: LocalArt
                 },
             }
         ],
+    }
+
+
+def latest_benchmark_import_local_status_for_worker(
+    db: Session,
+    *,
+    project_id: str,
+    benchmark_id: str,
+) -> dict[str, Any] | None:
+    artifact = db.scalar(
+        select(Artifact)
+        .where(
+            Artifact.project_id == project_id,
+            Artifact.asset_type == "benchmark_import_manifest",
+            Artifact.metadata_json.contains(benchmark_id),
+        )
+        .order_by(Artifact.created_at.desc())
+    )
+    if artifact is None:
+        return None
+    try:
+        payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+    except OSError:
+        return None
+    local_status = payload.get("local_status")
+    return cast(dict[str, Any], local_status) if isinstance(local_status, dict) else None
+
+
+def create_benchmark_scenario_pack_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "create_benchmark_scenario_pack")
+    benchmark_id = benchmark_id_for_job(job, "create_benchmark_scenario_pack")
+    settings = settings_for_job_payload(job, store)
+    benchmark = raw_benchmark_dataset(benchmark_id)
+    root = default_benchmark_root(settings, benchmark_id)
+    local_status = latest_benchmark_import_local_status_for_worker(
+        db,
+        project_id=project.id,
+        benchmark_id=benchmark_id,
+    ) or inspect_benchmark_local_files(benchmark, root)
+    result = create_benchmark_scenario_pack(
+        db,
+        store=store,
+        project=project,
+        benchmark=benchmark,
+        local_status=local_status,
+    )
+    return {
+        "benchmark_id": benchmark_id,
+        "schema_version": result.pack["schema_version"],
+        "scenario_kind": result.pack["scenario"]["kind"],
+        "benchmark_scenario_pack_artifact_id": result.pack_artifact.id,
+        "benchmark_scenario_report_artifact_id": result.report_artifact.id,
+        "dataset_snapshot_id": result.pack["dataset"].get("dataset_snapshot_id"),
+        "supporting_table_artifact_count": len(result.pack["supporting_table_artifacts"]),
+        "artifact_id": result.pack_artifact.id,
+        "artifact_ids": [result.pack_artifact.id, result.report_artifact.id],
+    }
+
+
+def create_benchmark_collection_plan_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "create_benchmark_collection_plan")
+    settings = settings_for_job_payload(job, store)
+    result = create_benchmark_collection_plan(
+        db,
+        store=store,
+        project=project,
+        settings=settings,
+        job=job,
+    )
+    return {
+        "schema_version": result.plan["schema_version"],
+        "benchmark_count": result.plan["summary"]["benchmark_count"],
+        "credentialed_count": result.plan["summary"]["credentialed_count"],
+        "public_direct_count": result.plan["summary"]["public_direct_count"],
+        "fixture_available_count": result.plan["summary"]["fixture_available_count"],
+        "local_ready_count": result.plan["summary"]["local_ready_count"],
+        "multitable_count": result.plan["summary"]["multitable_count"],
+        "time_series_count": result.plan["summary"]["time_series_count"],
+        "benchmark_collection_plan_artifact_id": result.plan_artifact.id,
+        "benchmark_collection_report_id": result.report.id,
+        "benchmark_collection_report_artifact_id": result.report_artifact.id,
+        "visualization_id": result.visualization.id,
+        "visualization_artifact_id": result.visualization_artifact.id,
+        "evidence_id": result.evidence.id,
+        "artifact_id": result.plan_artifact.id,
+        "artifact_ids": result.artifact_ids,
+    }
+
+
+def create_relational_feature_plan_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "create_relational_feature_plan")
+    result = create_relational_feature_plan(db, store=store, project=project, job=job)
+    return {
+        "schema_version": result.plan["schema_version"],
+        "benchmark_id": result.plan["source_summary"].get("benchmark_id"),
+        "relational_feature_plan_artifact_id": result.plan_artifact.id,
+        "relational_feature_report_id": result.report.id,
+        "relational_feature_report_artifact_id": result.report_artifact.id,
+        "visualization_id": result.visualization.id,
+        "visualization_artifact_id": result.visualization_artifact.id,
+        "evidence_id": result.evidence.id,
+        "artifact_id": result.plan_artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "table_count": result.plan["table_coverage"]["table_count"],
+        "supporting_table_count": result.plan["table_coverage"]["supporting_table_count"],
+        "relationship_count": result.plan["table_coverage"]["relationship_count"],
+        "aggregation_candidate_count": len(result.plan["aggregation_candidates"]),
+        "high_risk_count": len([item for item in result.plan["risk_register"] if item["risk_level"] == "high"]),
+    }
+
+
+def build_relational_feature_recipe_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "build_relational_feature_recipe")
+    result = build_relational_feature_recipe(db, store=store, project=project, job=job)
+    return {
+        "schema_version": result.recipe["schema_version"],
+        "benchmark_id": result.recipe["source_summary"].get("benchmark_id"),
+        "relational_feature_recipe_artifact_id": result.recipe_artifact.id,
+        "relational_feature_preview_artifact_id": result.preview_artifact.id,
+        "relational_feature_preview_profile_artifact_id": result.preview_profile_artifact.id,
+        "relational_feature_recipe_report_id": result.report.id,
+        "relational_feature_recipe_report_artifact_id": result.report_artifact.id,
+        "visualization_id": result.visualization.id,
+        "visualization_artifact_id": result.visualization_artifact.id,
+        "evidence_id": result.evidence.id,
+        "artifact_id": result.recipe_artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "generated_feature_count": len(result.preview_profile["generated_feature_columns"]),
+        "executed_step_count": len(result.recipe["steps"]),
+        "deferred_step_count": len(result.recipe["deferred_steps"]),
+        "preview_row_count": result.preview_profile["preview_row_count"],
+    }
+
+
+def diagnose_relational_feature_scenarios_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "diagnose_relational_feature_scenarios")
+    result = diagnose_relational_feature_scenarios(db, store=store, project=project, job=job)
+    summary = result.diagnostics["preview_summary"]
+    deferred = result.diagnostics["deferred_reason_summary"]
+    return {
+        "schema_version": result.diagnostics["schema_version"],
+        "benchmark_id": result.diagnostics["source_summary"].get("benchmark_id"),
+        "relational_feature_scenario_diagnostics_artifact_id": result.diagnostics_artifact.id,
+        "relational_feature_scenario_report_id": result.report.id,
+        "relational_feature_scenario_report_artifact_id": result.report_artifact.id,
+        "visualization_id": result.visualization.id,
+        "visualization_artifact_id": result.visualization_artifact.id,
+        "evidence_id": result.evidence.id,
+        "artifact_id": result.diagnostics_artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "generated_feature_count": summary["generated_feature_count"],
+        "usable_feature_count": summary["usable_feature_count"],
+        "constant_feature_count": summary["constant_feature_count"],
+        "high_missing_feature_count": summary["high_missing_feature_count"],
+        "deferred_step_count": deferred["total_deferred_step_count"],
+        "scenario_count": len(result.diagnostics["scenario_comparison"]),
+    }
+
+
+def create_benchmark_evidence_pack_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "create_benchmark_evidence_pack")
+    settings = settings_for_job_payload(job, store)
+    result = create_benchmark_evidence_pack(
+        db,
+        store=store,
+        project=project,
+        settings=settings,
+        job=job,
+    )
+    return {
+        "benchmark_count": result.pack["benchmark_count"],
+        "benchmark_ids": [entry["benchmark_id"] for entry in result.pack["benchmarks"]],
+        "benchmark_evidence_pack_artifact_id": result.pack_artifact.id,
+        "benchmark_evidence_report_id": result.report.id,
+        "benchmark_evidence_report_artifact_id": result.report_artifact.id,
+        "visualization_id": result.visualization.id,
+        "visualization_artifact_id": result.visualization_artifact.id,
+        "evidence_id": result.evidence.id,
+        "artifact_id": result.pack_artifact.id,
+        "artifact_ids": result.artifact_ids,
     }
 
 
@@ -2559,6 +2747,12 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["infer_assumptions"] = infer_assumptions_handler
     handlers["download_public_benchmark_archive"] = download_public_benchmark_archive_handler
     handlers["run_public_benchmark_workflow"] = run_public_benchmark_workflow_handler
+    handlers["create_benchmark_scenario_pack"] = create_benchmark_scenario_pack_handler
+    handlers["create_benchmark_collection_plan"] = create_benchmark_collection_plan_handler
+    handlers["create_relational_feature_plan"] = create_relational_feature_plan_handler
+    handlers["build_relational_feature_recipe"] = build_relational_feature_recipe_handler
+    handlers["diagnose_relational_feature_scenarios"] = diagnose_relational_feature_scenarios_handler
+    handlers["create_benchmark_evidence_pack"] = create_benchmark_evidence_pack_handler
     handlers["probe_kaggle_benchmark_access"] = probe_kaggle_benchmark_access_handler
     handlers["fetch_kaggle_competition_inventory"] = fetch_kaggle_competition_inventory_handler
     handlers["download_kaggle_selected_files"] = download_kaggle_selected_files_handler

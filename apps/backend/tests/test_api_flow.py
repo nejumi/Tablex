@@ -5057,16 +5057,18 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     collection_response = client.post(f"/api/projects/{project_id}/benchmarks/collection-plan")
     assert collection_response.status_code == 200, collection_response.text
     collection_job = collection_response.json()
-    assert collection_job["status"] == "succeeded"
-    assert collection_job["output"]["schema_version"] == "benchmark_collection_plan.v1"
-    assert collection_job["output"]["benchmark_collection_plan_artifact_id"]
-    assert collection_job["output"]["benchmark_collection_report_artifact_id"]
-    assert collection_job["output"]["credentialed_count"] >= 1
-    assert collection_job["output"]["public_direct_count"] >= 1
-    assert collection_job["output"]["multitable_count"] >= 1
+    assert collection_job["status"] == "queued"
+    assert collection_job["policy"]["execution"] == "queued_worker"
+    collection_output = run_queued_job(client, collection_job["id"])
+    assert collection_output["schema_version"] == "benchmark_collection_plan.v1"
+    assert collection_output["benchmark_collection_plan_artifact_id"]
+    assert collection_output["benchmark_collection_report_artifact_id"]
+    assert collection_output["credentialed_count"] >= 1
+    assert collection_output["public_direct_count"] >= 1
+    assert collection_output["multitable_count"] >= 1
 
     collection_plan_response = client.get(
-        f"/api/artifacts/{collection_job['output']['benchmark_collection_plan_artifact_id']}/download"
+        f"/api/artifacts/{collection_output['benchmark_collection_plan_artifact_id']}/download"
     )
     assert collection_plan_response.status_code == 200
     collection_plan = collection_plan_response.json()
@@ -5079,7 +5081,7 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     assert "public_workflow_available" in openml_plan["collection_status"]
 
     collection_report_response = client.get(
-        f"/api/artifacts/{collection_job['output']['benchmark_collection_report_artifact_id']}/preview"
+        f"/api/artifacts/{collection_output['benchmark_collection_report_artifact_id']}/preview"
     )
     assert collection_report_response.status_code == 200
     collection_report = collection_report_response.json()["preview"]
@@ -5130,11 +5132,13 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     scenario_response = client.post(f"/api/projects/{project_id}/benchmarks/uci_bank_marketing/scenario-pack")
     assert scenario_response.status_code == 200, scenario_response.text
     scenario_job = scenario_response.json()
-    assert scenario_job["status"] == "succeeded"
-    assert scenario_job["output"]["scenario_kind"] == "single_table_categorical_smoke"
-    assert scenario_job["output"]["benchmark_scenario_pack_artifact_id"]
+    assert scenario_job["status"] == "queued"
+    assert scenario_job["policy"]["execution"] == "queued_worker"
+    scenario_output = run_queued_job(client, scenario_job["id"])
+    assert scenario_output["scenario_kind"] == "single_table_categorical_smoke"
+    assert scenario_output["benchmark_scenario_pack_artifact_id"]
     scenario_preview_response = client.get(
-        f"/api/artifacts/{scenario_job['output']['benchmark_scenario_report_artifact_id']}/preview"
+        f"/api/artifacts/{scenario_output['benchmark_scenario_report_artifact_id']}/preview"
     )
     assert scenario_preview_response.status_code == 200
     assert "Benchmark Scenario Report" in scenario_preview_response.json()["preview"]
@@ -5516,15 +5520,17 @@ def test_benchmark_evidence_pack_empty_project(tmp_path: Path) -> None:
     evidence_response = client.post(f"/api/projects/{project_id}/benchmarks/evidence-pack")
     assert evidence_response.status_code == 200, evidence_response.text
     evidence_job = evidence_response.json()
-    assert evidence_job["status"] == "succeeded"
-    assert evidence_job["output"]["benchmark_count"] == 0
-    assert evidence_job["output"]["benchmark_evidence_pack_artifact_id"]
-    assert evidence_job["output"]["benchmark_evidence_report_artifact_id"]
-    assert evidence_job["output"]["visualization_artifact_id"]
-    assert evidence_job["output"]["evidence_id"]
+    assert evidence_job["status"] == "queued"
+    assert evidence_job["policy"]["execution"] == "queued_worker"
+    evidence_output = run_queued_job(client, evidence_job["id"])
+    assert evidence_output["benchmark_count"] == 0
+    assert evidence_output["benchmark_evidence_pack_artifact_id"]
+    assert evidence_output["benchmark_evidence_report_artifact_id"]
+    assert evidence_output["visualization_artifact_id"]
+    assert evidence_output["evidence_id"]
 
     report_preview_response = client.get(
-        f"/api/artifacts/{evidence_job['output']['benchmark_evidence_report_artifact_id']}/preview"
+        f"/api/artifacts/{evidence_output['benchmark_evidence_report_artifact_id']}/preview"
     )
     assert report_preview_response.status_code == 200
     assert "No benchmark evidence exists yet" in report_preview_response.json()["preview"]
@@ -5593,8 +5599,9 @@ def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:
     evidence_response = client.post(f"/api/projects/{project_id}/benchmarks/evidence-pack")
     assert evidence_response.status_code == 200, evidence_response.text
     evidence_job = evidence_response.json()
-    assert evidence_job["status"] == "succeeded"
-    evidence_output = evidence_job["output"]
+    assert evidence_job["status"] == "queued"
+    assert evidence_job["policy"]["execution"] == "queued_worker"
+    evidence_output = run_queued_job(client, evidence_job["id"])
     assert evidence_output["benchmark_count"] == 1
     assert evidence_output["benchmark_ids"] == ["kaggle_home_credit_default_risk"]
     assert evidence_output["benchmark_evidence_pack_artifact_id"]
@@ -5683,35 +5690,41 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert seed_assets_response.status_code == 200
     collection_response = client.post(f"/api/projects/{project_id}/benchmarks/collection-plan")
     assert collection_response.status_code == 200, collection_response.text
+    collection_job = collection_response.json()
+    assert collection_job["status"] == "queued"
+    assert collection_job["policy"]["execution"] == "queued_worker"
+    collection_output = run_queued_job(client, collection_job["id"])
 
     relational_plan_response = client.post(f"/api/projects/{project_id}/features/relational-plan")
     assert relational_plan_response.status_code == 200, relational_plan_response.text
     relational_plan_job = relational_plan_response.json()
-    assert relational_plan_job["status"] == "succeeded"
-    assert relational_plan_job["output"]["schema_version"] == "relational_feature_plan.v1"
-    assert relational_plan_job["output"]["relational_feature_plan_artifact_id"]
-    assert relational_plan_job["output"]["relational_feature_report_artifact_id"]
-    assert relational_plan_job["output"]["visualization_id"]
-    assert relational_plan_job["output"]["evidence_id"]
-    assert relational_plan_job["output"]["supporting_table_count"] == 1
-    assert relational_plan_job["output"]["relationship_count"] >= 1
-    assert relational_plan_job["output"]["aggregation_candidate_count"] >= 1
+    assert relational_plan_job["status"] == "queued"
+    assert relational_plan_job["policy"]["execution"] == "queued_worker"
+    relational_plan_output = run_queued_job(client, relational_plan_job["id"])
+    assert relational_plan_output["schema_version"] == "relational_feature_plan.v1"
+    assert relational_plan_output["relational_feature_plan_artifact_id"]
+    assert relational_plan_output["relational_feature_report_artifact_id"]
+    assert relational_plan_output["visualization_id"]
+    assert relational_plan_output["evidence_id"]
+    assert relational_plan_output["supporting_table_count"] == 1
+    assert relational_plan_output["relationship_count"] >= 1
+    assert relational_plan_output["aggregation_candidate_count"] >= 1
 
     relational_plan_download_response = client.get(
-        f"/api/artifacts/{relational_plan_job['output']['relational_feature_plan_artifact_id']}/download"
+        f"/api/artifacts/{relational_plan_output['relational_feature_plan_artifact_id']}/download"
     )
     assert relational_plan_download_response.status_code == 200
     relational_plan = relational_plan_download_response.json()
     assert relational_plan["schema_version"] == "relational_feature_plan.v1"
     assert relational_plan["source_summary"]["benchmark_id"] == "kaggle_home_credit_default_risk"
-    assert relational_plan["source_summary"]["benchmark_collection_plan_artifact_id"] == collection_response.json()[
-        "output"
-    ]["benchmark_collection_plan_artifact_id"]
+    assert relational_plan["source_summary"]["benchmark_collection_plan_artifact_id"] == collection_output[
+        "benchmark_collection_plan_artifact_id"
+    ]
     assert relational_plan["agent_task_handoff"]["fit_aggregations_on_training_folds_only"] is True
     assert any(item["risk_level"] == "high" for item in relational_plan["risk_register"])
 
     relational_report_response = client.get(
-        f"/api/artifacts/{relational_plan_job['output']['relational_feature_report_artifact_id']}/preview"
+        f"/api/artifacts/{relational_plan_output['relational_feature_report_artifact_id']}/preview"
     )
     assert relational_report_response.status_code == 200
     assert "Relational Feature Plan" in relational_report_response.json()["preview"]
@@ -5719,39 +5732,42 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     relational_recipe_response = client.post(f"/api/projects/{project_id}/features/relational-recipe/build")
     assert relational_recipe_response.status_code == 200, relational_recipe_response.text
     relational_recipe_job = relational_recipe_response.json()
-    assert relational_recipe_job["status"] == "succeeded"
-    assert relational_recipe_job["output"]["schema_version"] == "relational_feature_recipe.v1"
-    assert relational_recipe_job["output"]["relational_feature_recipe_artifact_id"]
-    assert relational_recipe_job["output"]["relational_feature_preview_artifact_id"]
-    assert relational_recipe_job["output"]["relational_feature_preview_profile_artifact_id"]
-    assert relational_recipe_job["output"]["relational_feature_recipe_report_artifact_id"]
-    assert relational_recipe_job["output"]["generated_feature_count"] >= 1
-    assert relational_recipe_job["output"]["executed_step_count"] >= 1
-    assert relational_recipe_job["output"]["preview_row_count"] > 0
+    assert relational_recipe_job["status"] == "queued"
+    assert relational_recipe_job["policy"]["execution"] == "queued_worker"
+    relational_recipe_output = run_queued_job(client, relational_recipe_job["id"])
+    assert relational_recipe_output["schema_version"] == "relational_feature_recipe.v1"
+    assert relational_recipe_output["relational_feature_recipe_artifact_id"]
+    assert relational_recipe_output["relational_feature_preview_artifact_id"]
+    assert relational_recipe_output["relational_feature_preview_profile_artifact_id"]
+    assert relational_recipe_output["relational_feature_recipe_report_artifact_id"]
+    assert relational_recipe_output["generated_feature_count"] >= 1
+    assert relational_recipe_output["executed_step_count"] >= 1
+    assert relational_recipe_output["preview_row_count"] > 0
 
     relational_recipe_download_response = client.get(
-        f"/api/artifacts/{relational_recipe_job['output']['relational_feature_recipe_artifact_id']}/download"
+        f"/api/artifacts/{relational_recipe_output['relational_feature_recipe_artifact_id']}/download"
     )
     assert relational_recipe_download_response.status_code == 200
     relational_recipe = relational_recipe_download_response.json()
     assert relational_recipe["schema_version"] == "relational_feature_recipe.v1"
     assert relational_recipe["source_summary"]["benchmark_id"] == "kaggle_home_credit_default_risk"
-    assert relational_recipe["source_summary"]["relational_feature_plan_artifact_id"] == relational_plan_job[
-        "output"
-    ]["relational_feature_plan_artifact_id"]
+    assert (
+        relational_recipe["source_summary"]["relational_feature_plan_artifact_id"]
+        == relational_plan_output["relational_feature_plan_artifact_id"]
+    )
     assert relational_recipe["execution_scope"]["mode"] == "preview_only"
     assert relational_recipe["safety"]["target_column_excluded"] == "TARGET"
     assert relational_recipe["safety"]["fit_on_training_folds_only"] is True
     assert all("TARGET" not in item.get("columns", []) for item in relational_recipe["steps"])
 
     relational_recipe_preview_response = client.get(
-        f"/api/artifacts/{relational_recipe_job['output']['relational_feature_preview_artifact_id']}/download"
+        f"/api/artifacts/{relational_recipe_output['relational_feature_preview_artifact_id']}/download"
     )
     assert relational_recipe_preview_response.status_code == 200
     assert "bureau_categorical_summaries__row_count" in relational_recipe_preview_response.text
 
     relational_recipe_report_response = client.get(
-        f"/api/artifacts/{relational_recipe_job['output']['relational_feature_recipe_report_artifact_id']}/preview"
+        f"/api/artifacts/{relational_recipe_output['relational_feature_recipe_report_artifact_id']}/preview"
     )
     assert relational_recipe_report_response.status_code == 200
     assert "Relational Feature Recipe" in relational_recipe_report_response.json()["preview"]
@@ -5761,19 +5777,19 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     )
     assert relational_diagnostics_response.status_code == 200, relational_diagnostics_response.text
     relational_diagnostics_job = relational_diagnostics_response.json()
-    assert relational_diagnostics_job["status"] == "succeeded"
-    assert relational_diagnostics_job["output"]["schema_version"] == (
-        "relational_feature_scenario_diagnostics.v1"
-    )
-    assert relational_diagnostics_job["output"]["relational_feature_scenario_diagnostics_artifact_id"]
-    assert relational_diagnostics_job["output"]["relational_feature_scenario_report_artifact_id"]
-    assert relational_diagnostics_job["output"]["generated_feature_count"] >= 1
-    assert relational_diagnostics_job["output"]["usable_feature_count"] >= 1
-    assert relational_diagnostics_job["output"]["scenario_count"] >= 3
+    assert relational_diagnostics_job["status"] == "queued"
+    assert relational_diagnostics_job["policy"]["execution"] == "queued_worker"
+    relational_diagnostics_output = run_queued_job(client, relational_diagnostics_job["id"])
+    assert relational_diagnostics_output["schema_version"] == "relational_feature_scenario_diagnostics.v1"
+    assert relational_diagnostics_output["relational_feature_scenario_diagnostics_artifact_id"]
+    assert relational_diagnostics_output["relational_feature_scenario_report_artifact_id"]
+    assert relational_diagnostics_output["generated_feature_count"] >= 1
+    assert relational_diagnostics_output["usable_feature_count"] >= 1
+    assert relational_diagnostics_output["scenario_count"] >= 3
 
     relational_diagnostics_download_response = client.get(
         "/api/artifacts/"
-        f"{relational_diagnostics_job['output']['relational_feature_scenario_diagnostics_artifact_id']}/download"
+        f"{relational_diagnostics_output['relational_feature_scenario_diagnostics_artifact_id']}/download"
     )
     assert relational_diagnostics_download_response.status_code == 200
     relational_diagnostics = relational_diagnostics_download_response.json()
@@ -5784,7 +5800,7 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert any(item["scenario"] == "safe_relational_preview" for item in relational_diagnostics["scenario_comparison"])
 
     relational_diagnostics_report_response = client.get(
-        f"/api/artifacts/{relational_diagnostics_job['output']['relational_feature_scenario_report_artifact_id']}/preview"
+        f"/api/artifacts/{relational_diagnostics_output['relational_feature_scenario_report_artifact_id']}/preview"
     )
     assert relational_diagnostics_report_response.status_code == 200
     assert "Relational Feature Scenario Diagnostics" in relational_diagnostics_report_response.json()["preview"]
@@ -5792,21 +5808,24 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     evidence_pack_response = client.post(f"/api/projects/{project_id}/benchmarks/evidence-pack")
     assert evidence_pack_response.status_code == 200, evidence_pack_response.text
     evidence_pack_job = evidence_pack_response.json()
-    assert evidence_pack_job["status"] == "succeeded"
+    assert evidence_pack_job["status"] == "queued"
+    assert evidence_pack_job["policy"]["execution"] == "queued_worker"
+    evidence_pack_output = run_queued_job(client, evidence_pack_job["id"])
     evidence_pack_download_response = client.get(
-        f"/api/artifacts/{evidence_pack_job['output']['benchmark_evidence_pack_artifact_id']}/download"
+        f"/api/artifacts/{evidence_pack_output['benchmark_evidence_pack_artifact_id']}/download"
     )
     assert evidence_pack_download_response.status_code == 200
     evidence_pack = evidence_pack_download_response.json()
     assert evidence_pack["summary"]["relational_recipe_count"] >= 1
     assert evidence_pack["summary"]["relational_diagnostics_count"] >= 1
     evidence_entry = evidence_pack["benchmarks"][0]
-    assert evidence_entry["relational_features"]["diagnostics_artifact_id"] == relational_diagnostics_job[
-        "output"
-    ]["relational_feature_scenario_diagnostics_artifact_id"]
+    assert (
+        evidence_entry["relational_features"]["diagnostics_artifact_id"]
+        == relational_diagnostics_output["relational_feature_scenario_diagnostics_artifact_id"]
+    )
     assert any(stage["stage"] == "Relational diagnostics" for stage in evidence_entry["stages"])
     evidence_report_response = client.get(
-        f"/api/artifacts/{evidence_pack_job['output']['benchmark_evidence_report_artifact_id']}/preview"
+        f"/api/artifacts/{evidence_pack_output['benchmark_evidence_report_artifact_id']}/preview"
     )
     assert evidence_report_response.status_code == 200
     assert "Relational scenarios" in evidence_report_response.json()["preview"]
@@ -5823,9 +5842,10 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     )
     assert decision_download_response.status_code == 200
     decision_dashboard = decision_download_response.json()
-    assert decision_dashboard["relational_context"]["diagnostics_artifact_id"] == relational_diagnostics_job[
-        "output"
-    ]["relational_feature_scenario_diagnostics_artifact_id"]
+    assert (
+        decision_dashboard["relational_context"]["diagnostics_artifact_id"]
+        == relational_diagnostics_output["relational_feature_scenario_diagnostics_artifact_id"]
+    )
     assert any(stage["stage"] == "Relational" for stage in decision_dashboard["readiness_stages"])
     decision_report_response = client.get(f"/api/reports/{decision_output['report_id']}/preview")
     assert decision_report_response.status_code == 200
@@ -5866,14 +5886,15 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
         f"/api/artifacts/{agent_task_plan_output['agent_task_contract_artifact_id']}/download"
     )
     assert agent_contract_response.status_code == 200
-    assert agent_contract_response.json()["inputs"]["relational_feature_plan"]["artifact_id"] == relational_plan_job[
-        "output"
-    ]["relational_feature_plan_artifact_id"]
+    assert (
+        agent_contract_response.json()["inputs"]["relational_feature_plan"]["artifact_id"]
+        == relational_plan_output["relational_feature_plan_artifact_id"]
+    )
     assert agent_contract_response.json()["inputs"]["relational_feature_recipe"]["artifact_id"] == (
-        relational_recipe_job["output"]["relational_feature_recipe_artifact_id"]
+        relational_recipe_output["relational_feature_recipe_artifact_id"]
     )
     assert agent_contract_response.json()["inputs"]["relational_feature_scenario_diagnostics"]["artifact_id"] == (
-        relational_diagnostics_job["output"]["relational_feature_scenario_diagnostics_artifact_id"]
+        relational_diagnostics_output["relational_feature_scenario_diagnostics_artifact_id"]
     )
 
     contract_artifact_id = agent_task_plan_output["agent_task_contract_artifact_id"]
@@ -5912,8 +5933,7 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert all(item["artifact_id"] and item["content_hash"] for item in relational_sources)
     assert all(isinstance(item["size_bytes"], int) for item in relational_sources)
     assert any(
-        item["artifact_id"]
-        == relational_diagnostics_job["output"]["relational_feature_scenario_diagnostics_artifact_id"]
+        item["artifact_id"] == relational_diagnostics_output["relational_feature_scenario_diagnostics_artifact_id"]
         for item in relational_sources
     )
 
@@ -6007,12 +6027,13 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     context_output = run_queued_job(client, context_job["id"])
     context_payload_response = client.get(f"/api/artifacts/{context_output['artifact_id']}/download")
     assert context_payload_response.status_code == 200
-    assert context_payload_response.json()["relational_feature_plan_context"]["artifact_id"] == relational_plan_job[
-        "output"
-    ]["relational_feature_plan_artifact_id"]
+    assert (
+        context_payload_response.json()["relational_feature_plan_context"]["artifact_id"]
+        == relational_plan_output["relational_feature_plan_artifact_id"]
+    )
     assert context_payload_response.json()["relational_feature_recipe_context"]["artifact_id"] == (
-        relational_recipe_job["output"]["relational_feature_recipe_artifact_id"]
+        relational_recipe_output["relational_feature_recipe_artifact_id"]
     )
     assert context_payload_response.json()["relational_feature_scenario_diagnostics_context"]["artifact_id"] == (
-        relational_diagnostics_job["output"]["relational_feature_scenario_diagnostics_artifact_id"]
+        relational_diagnostics_output["relational_feature_scenario_diagnostics_artifact_id"]
     )

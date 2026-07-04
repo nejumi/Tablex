@@ -208,15 +208,12 @@ from tabular_harness.services.baseline import (
     create_baseline_strategy_plan,
     normalize_model_candidate_name,
 )
-from tabular_harness.services.benchmark_collection import create_benchmark_collection_plan
-from tabular_harness.services.benchmark_evidence import create_benchmark_evidence_pack
 from tabular_harness.services.benchmarks import (
     benchmark_source_card,
     benchmark_to_dict,
     build_import_manifest,
     build_relational_catalog,
     create_benchmark_scenario_pack,
-    default_benchmark_root,
     generate_benchmark_fixture,
     get_benchmark_dataset,
     infer_relationships,
@@ -290,11 +287,6 @@ from tabular_harness.services.relational_evidence import (
     MAX_SCHEMA_HINT_BYTES,
     create_relational_schema_hint,
 )
-from tabular_harness.services.relational_feature_diagnostics import (
-    diagnose_relational_feature_scenarios,
-)
-from tabular_harness.services.relational_feature_planning import create_relational_feature_plan
-from tabular_harness.services.relational_feature_recipe import build_relational_feature_recipe
 from tabular_harness.services.research_plan_timeline import build_research_plan_timeline_response
 from tabular_harness.services.result_readout import build_result_readout
 from tabular_harness.services.translation import TranslationResult
@@ -2823,53 +2815,28 @@ def create_project_benchmark_scenario_pack(
     benchmark_id: str,
     request: Request,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
-    settings = request.app.state.settings
+    require_project(db, project_id)
     try:
-        benchmark = raw_benchmark_dataset(benchmark_id)
-        root = default_benchmark_root(settings, benchmark_id)
-        local_status = latest_benchmark_import_local_status(db, project_id, benchmark_id) or inspect_benchmark_local_files(
-            benchmark, root
-        )
+        raw_benchmark_dataset(benchmark_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
     job = create_job(
         db,
         job_type="create_benchmark_scenario_pack",
         project_id=project_id,
-        input_payload={"benchmark_id": benchmark_id},
+        input_payload={
+            "benchmark_id": benchmark_id,
+            "data_dir": str(request.app.state.settings.data_dir),
+            "artifact_root": str(request.app.state.settings.artifact_root),
+        },
         policy={
+            "execution": "queued_worker",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "external_download": "not_performed",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_benchmark_scenario_pack(
-            db,
-            store=store,
-            project=project,
-            benchmark=benchmark,
-            local_status=local_status,
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "benchmark_id": benchmark_id,
-                "schema_version": result.pack["schema_version"],
-                "scenario_kind": result.pack["scenario"]["kind"],
-                "benchmark_scenario_pack_artifact_id": result.pack_artifact.id,
-                "benchmark_scenario_report_artifact_id": result.report_artifact.id,
-                "dataset_snapshot_id": result.pack["dataset"].get("dataset_snapshot_id"),
-                "supporting_table_artifact_count": len(result.pack["supporting_table_artifacts"]),
-            },
-        )
-    except Exception as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -2878,52 +2845,24 @@ def create_project_benchmark_collection_plan(
     project_id: str,
     request: Request,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     job = create_job(
         db,
         job_type="create_benchmark_collection_plan",
         project_id=project_id,
-        input_payload={"project_id": project_id},
+        input_payload={
+            "project_id": project_id,
+            "data_dir": str(request.app.state.settings.data_dir),
+            "artifact_root": str(request.app.state.settings.artifact_root),
+        },
         policy={
+            "execution": "queued_worker",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "external_download": "not_performed",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_benchmark_collection_plan(
-            db,
-            store=store,
-            project=project,
-            settings=request.app.state.settings,
-            job=job,
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.plan["schema_version"],
-                "benchmark_count": result.plan["summary"]["benchmark_count"],
-                "credentialed_count": result.plan["summary"]["credentialed_count"],
-                "public_direct_count": result.plan["summary"]["public_direct_count"],
-                "fixture_available_count": result.plan["summary"]["fixture_available_count"],
-                "local_ready_count": result.plan["summary"]["local_ready_count"],
-                "multitable_count": result.plan["summary"]["multitable_count"],
-                "time_series_count": result.plan["summary"]["time_series_count"],
-                "benchmark_collection_plan_artifact_id": result.plan_artifact.id,
-                "benchmark_collection_report_id": result.report.id,
-                "benchmark_collection_report_artifact_id": result.report_artifact.id,
-                "visualization_id": result.visualization.id,
-                "visualization_artifact_id": result.visualization_artifact.id,
-                "evidence_id": result.evidence.id,
-                "artifact_ids": result.artifact_ids,
-            },
-        )
-    except Exception as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -2931,47 +2870,20 @@ def create_project_benchmark_collection_plan(
 def create_project_relational_feature_plan(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     job = create_job(
         db,
         job_type="create_relational_feature_plan",
         project_id=project_id,
         input_payload={"project_id": project_id},
         policy={
+            "execution": "queued_worker",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "external_download": "not_performed",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_relational_feature_plan(db, store=store, project=project, job=job)
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.plan["schema_version"],
-                "benchmark_id": result.plan["source_summary"].get("benchmark_id"),
-                "relational_feature_plan_artifact_id": result.plan_artifact.id,
-                "relational_feature_report_id": result.report.id,
-                "relational_feature_report_artifact_id": result.report_artifact.id,
-                "visualization_id": result.visualization.id,
-                "visualization_artifact_id": result.visualization_artifact.id,
-                "evidence_id": result.evidence.id,
-                "artifact_ids": result.artifact_ids,
-                "table_count": result.plan["table_coverage"]["table_count"],
-                "supporting_table_count": result.plan["table_coverage"]["supporting_table_count"],
-                "relationship_count": result.plan["table_coverage"]["relationship_count"],
-                "aggregation_candidate_count": len(result.plan["aggregation_candidates"]),
-                "high_risk_count": len(
-                    [item for item in result.plan["risk_register"] if item["risk_level"] == "high"]
-                ),
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -2979,47 +2891,21 @@ def create_project_relational_feature_plan(
 def build_project_relational_feature_recipe(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     job = create_job(
         db,
         job_type="build_relational_feature_recipe",
         project_id=project_id,
         input_payload={"project_id": project_id},
         policy={
+            "execution": "queued_worker",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "external_download": "not_performed",
             "model_training": "not_performed_preview_only",
         },
     )
-    try:
-        mark_job_running(job)
-        result = build_relational_feature_recipe(db, store=store, project=project, job=job)
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.recipe["schema_version"],
-                "benchmark_id": result.recipe["source_summary"].get("benchmark_id"),
-                "relational_feature_recipe_artifact_id": result.recipe_artifact.id,
-                "relational_feature_preview_artifact_id": result.preview_artifact.id,
-                "relational_feature_preview_profile_artifact_id": result.preview_profile_artifact.id,
-                "relational_feature_recipe_report_id": result.report.id,
-                "relational_feature_recipe_report_artifact_id": result.report_artifact.id,
-                "visualization_id": result.visualization.id,
-                "visualization_artifact_id": result.visualization_artifact.id,
-                "evidence_id": result.evidence.id,
-                "artifact_ids": result.artifact_ids,
-                "generated_feature_count": len(result.preview_profile["generated_feature_columns"]),
-                "executed_step_count": len(result.recipe["steps"]),
-                "deferred_step_count": len(result.recipe["deferred_steps"]),
-                "preview_row_count": result.preview_profile["preview_row_count"],
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -3027,49 +2913,21 @@ def build_project_relational_feature_recipe(
 def diagnose_project_relational_feature_scenarios(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     job = create_job(
         db,
         job_type="diagnose_relational_feature_scenarios",
         project_id=project_id,
         input_payload={"project_id": project_id},
         policy={
+            "execution": "queued_worker",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "external_download": "not_performed",
             "model_training": "not_performed_diagnostics_only",
         },
     )
-    try:
-        mark_job_running(job)
-        result = diagnose_relational_feature_scenarios(db, store=store, project=project, job=job)
-        summary = result.diagnostics["preview_summary"]
-        deferred = result.diagnostics["deferred_reason_summary"]
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.diagnostics["schema_version"],
-                "benchmark_id": result.diagnostics["source_summary"].get("benchmark_id"),
-                "relational_feature_scenario_diagnostics_artifact_id": result.diagnostics_artifact.id,
-                "relational_feature_scenario_report_id": result.report.id,
-                "relational_feature_scenario_report_artifact_id": result.report_artifact.id,
-                "visualization_id": result.visualization.id,
-                "visualization_artifact_id": result.visualization_artifact.id,
-                "evidence_id": result.evidence.id,
-                "artifact_ids": result.artifact_ids,
-                "generated_feature_count": summary["generated_feature_count"],
-                "usable_feature_count": summary["usable_feature_count"],
-                "constant_feature_count": summary["constant_feature_count"],
-                "high_missing_feature_count": summary["high_missing_feature_count"],
-                "deferred_step_count": deferred["total_deferred_step_count"],
-                "scenario_count": len(result.diagnostics["scenario_comparison"]),
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -3078,46 +2936,24 @@ def create_project_benchmark_evidence_pack(
     project_id: str,
     request: Request,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     job = create_job(
         db,
         job_type="create_benchmark_evidence_pack",
         project_id=project_id,
-        input_payload={"project_id": project_id},
+        input_payload={
+            "project_id": project_id,
+            "data_dir": str(request.app.state.settings.data_dir),
+            "artifact_root": str(request.app.state.settings.artifact_root),
+        },
         policy={
+            "execution": "queued_worker",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "external_download": "not_performed",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_benchmark_evidence_pack(
-            db,
-            store=store,
-            project=project,
-            settings=request.app.state.settings,
-            job=job,
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "benchmark_count": result.pack["benchmark_count"],
-                "benchmark_ids": [entry["benchmark_id"] for entry in result.pack["benchmarks"]],
-                "benchmark_evidence_pack_artifact_id": result.pack_artifact.id,
-                "benchmark_evidence_report_id": result.report.id,
-                "benchmark_evidence_report_artifact_id": result.report_artifact.id,
-                "visualization_id": result.visualization.id,
-                "visualization_artifact_id": result.visualization_artifact.id,
-                "evidence_id": result.evidence.id,
-                "artifact_ids": result.artifact_ids,
-            },
-        )
-    except Exception as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
