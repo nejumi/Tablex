@@ -862,7 +862,7 @@ def test_agent_activity_uses_experiment_registration_chat_turn_as_human_summary(
                 "schema_version": "agent_chat_turn.v1",
                 "assistant_message": registration_message,
                 "intent": {"type": "experiment_results_registered", "status": "ready"},
-                "actions": [{"type": "open_surface", "target_tab": "Leaderboard"}],
+                "actions": [{"type": "open_surface", "target_tab": "Leaderboard", "target_anchor": "result-readout"}],
                 "worker_events": [],
             },
             metadata={
@@ -878,6 +878,79 @@ def test_agent_activity_uses_experiment_registration_chat_turn_as_human_summary(
     activity = activity_response.json()
     assert activity["workers"][0]["human_description"]["summary"] == registration_message
     assert activity["workers"][0]["detail"] == registration_message
+    assert activity["workers"][0]["target_tab"] == "Leaderboard"
+    assert activity["workers"][0]["target_anchor"] == "result-readout"
+
+
+def test_agent_activity_uses_notebook_update_chat_turn_as_target(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Notebook update activity target"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    notebook_message = "A readable marimo preview is ready for the latest data understanding notebook."
+
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.autonomy_mode = "full_auto"
+        project.current_phase = "AUTONOMOUS_LOOP"
+        session = AgentSession(
+            id="ags_notebook_update_activity",
+            project_id=project_id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Keep working.",
+            last_heartbeat_at=utc_now(),
+        )
+        db.add(session)
+        db.flush()
+        store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="agent_chat_turn",
+            name="agent_session_notebook_update_summary",
+            filename="agent_chat_turn.json",
+            payload={
+                "schema_version": "agent_chat_turn.v1",
+                "assistant_message": notebook_message,
+                "intent": {"type": "notebook_preview_registered", "status": "ready"},
+                "actions": [
+                    {
+                        "type": "open_artifact",
+                        "target_tab": "Notebooks",
+                        "target_anchor": "notebook-preview-top",
+                        "artifact_id": "art_notebook_preview",
+                    }
+                ],
+                "worker_events": [],
+            },
+            metadata={
+                "project_id": project_id,
+                "agent_session_id": session.id,
+                "source": "main_agent_session_notebook_update",
+            },
+        )
+        db.commit()
+
+    activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
+    assert activity_response.status_code == 200
+    activity = activity_response.json()
+    assert activity["workers"][0]["human_description"]["summary"] == notebook_message
+    assert activity["workers"][0]["detail"] == notebook_message
+    assert activity["workers"][0]["target_tab"] == "Notebooks"
+    assert activity["workers"][0]["target_anchor"] == "notebook-preview-top"
 
 
 def test_agent_activity_surfaces_runner_retry_state(tmp_path: Path, monkeypatch: Any) -> None:

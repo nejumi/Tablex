@@ -5677,7 +5677,10 @@ def get_project_agent_activity(
                 else "Codex runner is not ready; Tablex will keep retrying this same session."
             )
         )
-        current_focus = latest_agent_session_activity_summary(db, project_id=project_id, session_id=session.id)
+        current_focus = latest_agent_session_activity_focus(db, project_id=project_id, session_id=session.id)
+        current_summary = current_focus.get("summary") if current_focus else None
+        current_target_tab = current_focus.get("target_tab") if current_focus else None
+        current_target_anchor = current_focus.get("target_anchor") if current_focus else None
         display_name = "自律分析" if japanese else "Autonomous Analyst"
         running_detail = "CodexがProject workspaceで作業中です。" if japanese else "Codex is running in the project workspace now."
         preparing_detail = (
@@ -5709,14 +5712,14 @@ def get_project_agent_activity(
             else continue_headline
         )
         if session_has_process:
-            session_detail = f"{current_focus or running_detail}{heartbeat_phrase}"
+            session_detail = f"{current_summary or running_detail}{heartbeat_phrase}"
         elif session.status == "waiting_for_runner":
             session_detail = retry_detail
         elif session.status == "running":
             session_detail = preparing_detail
         else:
             session_detail = (
-                current_focus
+                current_summary
                 or session.last_error
                 or fallback_detail
             )
@@ -5739,8 +5742,8 @@ def get_project_agent_activity(
                 "project_id": project_id,
                 "project_name": project.name,
                 "agent_session_id": session.id,
-                "target_tab": "Home",
-                "target_anchor": "agent-workspace",
+                "target_tab": current_target_tab or "Home",
+                "target_anchor": current_target_anchor or "agent-workspace",
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
                 "started_at": session.started_at.isoformat() if session.started_at else None,
@@ -5753,7 +5756,7 @@ def get_project_agent_activity(
                 "human_description": {
                     "source": "agent_session",
                     "title": display_name,
-                    "summary": current_focus or session_detail,
+                    "summary": current_summary or session_detail,
                 },
                 "token_usage": {
                     "source": "codex_cli_transcript",
@@ -5777,14 +5780,14 @@ def get_project_agent_activity(
         heartbeat_phrase = heartbeat_phrase_for_locale(heartbeat_age_seconds, locale=response_locale)
         running_quietly = session_has_process and heartbeat_age_seconds is not None and heartbeat_age_seconds >= 120
         if session_has_process:
-            turn_detail = f"{current_focus or running_detail}{heartbeat_phrase}"
+            turn_detail = f"{current_summary or running_detail}{heartbeat_phrase}"
         elif session.status == "waiting_for_runner":
             turn_detail = session_detail
         elif session.status == "running":
             turn_detail = preparing_detail
         else:
             turn_detail = (
-                current_focus
+                current_summary
                 or session.last_error
                 or progress_wait_detail
             )
@@ -5822,7 +5825,7 @@ def seconds_since_timestamp(value: datetime | None, *, now: datetime) -> int | N
     return max(0, int((now.astimezone(timezone.utc) - value.astimezone(timezone.utc)).total_seconds()))
 
 
-def latest_agent_session_activity_summary(db: Session, *, project_id: str, session_id: str, limit: int = 280) -> str | None:
+def latest_agent_session_activity_focus(db: Session, *, project_id: str, session_id: str, limit: int = 280) -> dict[str, str | None] | None:
     accepted_chat_sources = {
         "main_codex_session_chat_update",
         "main_agent_session_attention",
@@ -5847,7 +5850,12 @@ def latest_agent_session_activity_summary(db: Session, *, project_id: str, sessi
             continue
         message = payload.get("assistant_message")
         if isinstance(message, str) and message.strip():
-            return compact_activity_summary(message, limit=limit)
+            target_tab, target_anchor = activity_target_from_chat_payload(payload)
+            return {
+                "summary": compact_activity_summary(message, limit=limit),
+                "target_tab": target_tab,
+                "target_anchor": target_anchor,
+            }
 
     events = list(
         db.scalars(
@@ -5863,8 +5871,37 @@ def latest_agent_session_activity_summary(db: Session, *, project_id: str, sessi
     )
     for event in events:
         if event.content and event.content.strip() and not event.content.strip().startswith("usage:"):
-            return compact_activity_summary(event.content, limit=limit)
+            return {
+                "summary": compact_activity_summary(event.content, limit=limit),
+                "target_tab": None,
+                "target_anchor": None,
+            }
     return None
+
+
+def latest_agent_session_activity_summary(db: Session, *, project_id: str, session_id: str, limit: int = 280) -> str | None:
+    focus = latest_agent_session_activity_focus(db, project_id=project_id, session_id=session_id, limit=limit)
+    return focus.get("summary") if focus else None
+
+
+def activity_target_from_chat_payload(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+    actions = payload.get("actions")
+    if isinstance(actions, list):
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            target_tab = action.get("target_tab")
+            if not isinstance(target_tab, str) or not target_tab.strip():
+                continue
+            target_anchor = action.get("target_anchor")
+            return target_tab.strip(), target_anchor.strip() if isinstance(target_anchor, str) and target_anchor.strip() else None
+    next_focus = payload.get("next_focus")
+    if isinstance(next_focus, dict):
+        target_tab = next_focus.get("target_tab")
+        if isinstance(target_tab, str) and target_tab.strip():
+            target_anchor = next_focus.get("target_anchor")
+            return target_tab.strip(), target_anchor.strip() if isinstance(target_anchor, str) and target_anchor.strip() else None
+    return None, None
 
 
 def compact_activity_summary(message: str, *, limit: int = 280) -> str:
