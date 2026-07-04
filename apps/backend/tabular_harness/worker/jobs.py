@@ -11,7 +11,9 @@ from tabular_harness.models.entities import (
     Artifact,
     DatasetSnapshot,
     EvaluationSpec,
+    ExperimentRun,
     Job,
+    ModelVersion,
     Project,
     SplitManifest,
     utc_now,
@@ -23,7 +25,7 @@ from tabular_harness.services.analysis_notebooks import (
     create_notebook_execution_capture,
     create_notebook_execution_plan,
 )
-from tabular_harness.services.approach import create_research_plan
+from tabular_harness.services.approach import create_decision_dashboard, create_research_plan
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.autonomy import (
     RUNNER_MODE_CODEX_IF_AVAILABLE,
@@ -40,10 +42,23 @@ from tabular_harness.services.baseline import (
     run_model_candidate,
 )
 from tabular_harness.services.decision_reporting import create_decision_report_v1
+from tabular_harness.services.diagnostics import analyze_run_diagnostics
 from tabular_harness.services.evaluation import generate_split_manifest
+from tabular_harness.services.experiment_lifecycle import (
+    compare_project_experiments,
+    draft_run_report,
+)
 from tabular_harness.services.jobs import JOB_TYPES, create_job
+from tabular_harness.services.model_diagnostics_artifacts import (
+    materialize_model_diagnostics_artifacts,
+)
+from tabular_harness.services.model_versions import validate_model_version_package
 from tabular_harness.services.planned_agent_execution import run_planned_agent_task_codex_cli
 from tabular_harness.services.planned_agent_workspace import load_contract_payload
+from tabular_harness.services.reporting import (
+    create_project_visualization_dashboard,
+    generate_project_insights,
+)
 from tabular_harness.services.result_notebook_evidence import (
     prepare_result_notebook_evidence,
     result_notebook_evidence_job_output,
@@ -310,6 +325,206 @@ def generate_decision_report_handler(db: Session, job: Job, store: LocalArtifact
     }
 
 
+def create_visualization_spec_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "create_visualization_spec")
+    result = create_project_visualization_dashboard(db, store=store, project=project)
+    return {
+        "visualization_id": result.visualizations[0].id if result.visualizations else None,
+        "visualization_ids": [visualization.id for visualization in result.visualizations],
+        "artifact_ids": result.artifact_ids,
+        "worker_events": [
+            project_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Visualization dashboard generated",
+                detail="Registered in-product visualization specs from current project evidence.",
+                target_tab="Insight",
+                target_anchor="visualization-dashboard",
+            )
+        ],
+    }
+
+
+def generate_insights_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "generate_insights")
+    result = generate_project_insights(db, store=store, project=project)
+    return {
+        "insight_ids": [insight.id for insight in result.insights],
+        "artifact_id": result.artifact.id,
+        "artifact_ids": [result.artifact.id],
+        "evidence_ids": result.evidence_ids,
+        "worker_events": [
+            project_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Project insights generated",
+                detail="Registered insight and evidence records from current project artifacts.",
+                target_tab="Insight",
+                target_anchor="ideas-findings",
+            )
+        ],
+    }
+
+
+def generate_decision_dashboard_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "generate_decision_dashboard")
+    result = create_decision_dashboard(db, store=store, project=project)
+    dashboard_metadata = loads_json(result.dashboard_artifact.metadata_json, {})
+    return {
+        "schema_version": result.dashboard["schema_version"],
+        "readiness_status": dashboard_metadata.get("readiness_status"),
+        "report_id": result.report.id,
+        "decision_dashboard_artifact_id": result.dashboard_artifact.id,
+        "decision_report_artifact_id": result.report_artifact.id,
+        "visualization_ids": [visualization.id for visualization in result.visualizations],
+        "artifact_ids": result.artifact_ids,
+        "next_action_count": len(result.dashboard["next_actions"]),
+        "risk_count": len(result.dashboard["risk_register"]),
+        "worker_events": [
+            project_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Decision dashboard generated",
+                detail="Registered the decision dashboard, report, and readiness visualizations.",
+                target_tab="Insight",
+                target_anchor="decision-report",
+            )
+        ],
+    }
+
+
+def compare_experiments_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "compare_experiments")
+    result = compare_project_experiments(db, store=store, project=project)
+    return {
+        "artifact_ids": result.artifact_ids,
+        "comparison": result.comparison,
+        "visualization_id": result.visualization_id,
+        "report_id": result.report_id,
+        "evidence_id": result.evidence_id,
+        "insight_id": result.insight_id,
+        "worker_events": [
+            project_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Experiment comparison generated",
+                detail="Registered comparable run evidence for the current leaderboard context.",
+                target_tab="Leaderboard",
+                target_anchor="result-readout",
+            )
+        ],
+    }
+
+
+def draft_run_report_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    run = run_for_job(db, job, "draft_run_report")
+    result = draft_run_report(db, store=store, run=run)
+    return {
+        "run_id": run.id,
+        "report_id": result.report.id,
+        "artifact_id": result.artifact.id,
+        "artifact_ids": [result.artifact.id],
+        "evidence_id": result.evidence_id,
+        "insight_id": result.insight_id,
+        "worker_events": [
+            run_worker_event(
+                job,
+                run,
+                status="succeeded",
+                headline="Run report drafted",
+                detail="Registered the run-level report, insight, and evidence records.",
+                target_tab="Leaderboard",
+                target_anchor="result-readout",
+            )
+        ],
+    }
+
+
+def analyze_evaluation_diagnostics_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    run = run_for_job(db, job, "analyze_evaluation_diagnostics")
+    result = analyze_run_diagnostics(db, store=store, run=run)
+    return {
+        "run_id": run.id,
+        "artifact_ids": result.artifact_ids,
+        "diagnostics": result.diagnostics,
+        "insight_id": result.insight_id,
+        "evidence_id": result.evidence_id,
+        "worker_events": [
+            run_worker_event(
+                job,
+                run,
+                status="succeeded",
+                headline="Evaluation diagnostics analyzed",
+                detail="Registered error, metric, and evaluation diagnostics artifacts for the run.",
+                target_tab="Leaderboard",
+                target_anchor="result-readout",
+            )
+        ],
+    }
+
+
+def materialize_model_diagnostics_artifacts_handler(
+    db: Session, job: Job, store: LocalArtifactStore
+) -> dict[str, Any]:
+    run = run_for_job(db, job, "materialize_model_diagnostics_artifacts")
+    result = materialize_model_diagnostics_artifacts(db, store=store, run=run)
+    return {
+        "run_id": run.id,
+        "model_version_id": run.model_version_id,
+        "artifact_ids": result.artifact_ids,
+        "model_diagnostics_artifact_pack_id": result.artifact_ids[2],
+        "model_diagnostics_report_artifact_id": result.artifact_ids[3],
+        "feature_importance_artifact_id": result.artifact_ids[0],
+        "permutation_importance_artifact_id": result.artifact_ids[1],
+        "visualization_artifact_id": result.artifact_ids[4],
+        "availability": result.diagnostics.get("availability", {}),
+        "insight_id": result.insight_id,
+        "evidence_id": result.evidence_id,
+        "worker_events": [
+            run_worker_event(
+                job,
+                run,
+                status="succeeded",
+                headline="Model diagnostics artifacts materialized",
+                detail="Registered feature importance, permutation importance, report, and visualization artifacts.",
+                target_tab="Leaderboard",
+                target_anchor="result-readout",
+            )
+        ],
+    }
+
+
+def validate_model_package_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    model_version_id = payload.get("model_version_id")
+    model_version = db.get(ModelVersion, model_version_id) if isinstance(model_version_id, str) else None
+    if model_version is None:
+        raise ValueError("ModelVersion not found")
+    if job.project_id is not None and model_version.project_id != job.project_id:
+        raise ValueError("validate_model_package project does not match the model version")
+    result = validate_model_version_package(db, store=store, model_version=model_version)
+    return {
+        "model_version_id": result.model_version.id,
+        "artifact_ids": result.artifact_ids,
+        "metrics": result.metrics,
+        "worker_events": [
+            project_worker_event(
+                job,
+                project_for_job(db, job, "validate_model_package"),
+                status="succeeded",
+                headline="Model package validated",
+                detail="Replayed the model package and registered validation metrics.",
+                target_tab="Assets",
+                target_anchor="model-versions",
+            )
+        ],
+    }
+
+
 def project_for_job(db: Session, job: Job, job_type: str) -> Project:
     if job.project_id is None:
         raise ValueError(f"{job_type} requires a project_id")
@@ -317,6 +532,17 @@ def project_for_job(db: Session, job: Job, job_type: str) -> Project:
     if project is None:
         raise ValueError("Project not found")
     return project
+
+
+def run_for_job(db: Session, job: Job, job_type: str) -> ExperimentRun:
+    payload = loads_json(job.input_json, {})
+    run_id = payload.get("run_id")
+    run = db.get(ExperimentRun, run_id) if isinstance(run_id, str) else None
+    if run is None:
+        raise ValueError("ExperimentRun not found")
+    if job.project_id is not None and run.project_id != job.project_id:
+        raise ValueError(f"{job_type} project does not match the ExperimentRun")
+    return run
 
 
 def notebook_artifact_for_job(db: Session, job: Job, job_type: str) -> Artifact:
@@ -445,6 +671,41 @@ def project_worker_event(
                 {"step": "load evidence", "tokens": 80},
                 {"step": "compose report", "tokens": 160},
                 {"step": "register artifacts", "tokens": 90},
+            ],
+        },
+    }
+
+
+def run_worker_event(
+    job: Job,
+    run: ExperimentRun,
+    *,
+    status: str,
+    headline: str,
+    detail: str,
+    target_tab: str,
+    target_anchor: str,
+) -> dict[str, Any]:
+    return {
+        "worker_id": "run-reporting",
+        "display_name": "Reporting Worker",
+        "status": status,
+        "headline": headline,
+        "detail": detail,
+        "job_id": job.id,
+        "project_id": run.project_id,
+        "target_tab": target_tab,
+        "target_anchor": target_anchor,
+        "created_at": job.created_at.isoformat(),
+        "updated_at": utc_now().isoformat(),
+        "active": status in {"queued", "running"},
+        "token_usage": {
+            "source": "run_reporting_worker_estimate",
+            "is_estimate": True,
+            "series": [
+                {"step": "load run", "tokens": 60},
+                {"step": "analyze evidence", "tokens": 180},
+                {"step": "register artifacts", "tokens": 100},
             ],
         },
     }
@@ -1004,6 +1265,14 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["capture_notebook_execution"] = capture_notebook_execution_handler
     handlers["prepare_result_notebook_evidence"] = prepare_result_notebook_evidence_handler
     handlers["generate_decision_report"] = generate_decision_report_handler
+    handlers["create_visualization_spec"] = create_visualization_spec_handler
+    handlers["generate_insights"] = generate_insights_handler
+    handlers["generate_decision_dashboard"] = generate_decision_dashboard_handler
+    handlers["compare_experiments"] = compare_experiments_handler
+    handlers["draft_run_report"] = draft_run_report_handler
+    handlers["analyze_evaluation_diagnostics"] = analyze_evaluation_diagnostics_handler
+    handlers["materialize_model_diagnostics_artifacts"] = materialize_model_diagnostics_artifacts_handler
+    handlers["validate_model_package"] = validate_model_package_handler
     handlers["run_baseline"] = run_baseline_handler
     handlers["build_split_manifest"] = build_split_manifest_handler
     handlers["train_model_candidates"] = train_model_candidates_handler

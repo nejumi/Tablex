@@ -3711,8 +3711,11 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     compare_runs_response = client.post(f"/api/projects/{project_id}/experiments/compare")
     assert compare_runs_response.status_code == 200, compare_runs_response.text
     compare_runs_job = compare_runs_response.json()
-    assert compare_runs_job["status"] == "succeeded"
-    assert compare_runs_job["output"]["artifact_ids"]
+    assert compare_runs_job["status"] == "queued"
+    assert compare_runs_job["job_type"] == "compare_experiments"
+    assert compare_runs_job["policy"]["execution"] == "queued_worker"
+    compare_runs_output = run_queued_job(client, compare_runs_job["id"])
+    assert compare_runs_output["artifact_ids"]
 
     comparison_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
     assert comparison_readout_response.status_code == 200, comparison_readout_response.text
@@ -3735,10 +3738,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     validate_response = client.post(f"/api/model-versions/{model_version['id']}/validate")
     assert validate_response.status_code == 200, validate_response.text
     validate_job = validate_response.json()
-    assert validate_job["status"] == "succeeded"
-    assert validate_job["output"]["model_version_id"] == model_version["id"]
-    assert validate_job["output"]["metrics"]["max_abs_metric_delta"] <= 1e-9
-    assert len(validate_job["output"]["artifact_ids"]) == 3
+    assert validate_job["status"] == "queued"
+    assert validate_job["job_type"] == "validate_model_package"
+    assert validate_job["policy"]["execution"] == "queued_worker"
+    validate_output = run_queued_job(client, validate_job["id"])
+    assert validate_output["model_version_id"] == model_version["id"]
+    assert validate_output["metrics"]["max_abs_metric_delta"] <= 1e-9
+    assert len(validate_output["artifact_ids"]) == 3
 
     validation_history_response = client.get(f"/api/model-versions/{model_version['id']}/validations")
     assert validation_history_response.status_code == 200
@@ -4398,8 +4404,11 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     visualization_response = client.post(f"/api/projects/{project_id}/visualizations/generate")
     assert visualization_response.status_code == 200, visualization_response.text
     visualization_job = visualization_response.json()
-    assert visualization_job["status"] == "succeeded"
-    assert len(visualization_job["output"]["visualization_ids"]) >= 4
+    assert visualization_job["status"] == "queued"
+    assert visualization_job["job_type"] == "create_visualization_spec"
+    assert visualization_job["policy"]["execution"] == "queued_worker"
+    visualization_output = run_queued_job(client, visualization_job["id"])
+    assert len(visualization_output["visualization_ids"]) >= 4
 
     visualizations_response = client.get(f"/api/projects/{project_id}/visualizations")
     assert visualizations_response.status_code == 200
@@ -4412,14 +4421,17 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     insights_response = client.post(f"/api/projects/{project_id}/insights/generate")
     assert insights_response.status_code == 200, insights_response.text
     insights_job = insights_response.json()
-    assert insights_job["status"] == "succeeded"
-    assert len(insights_job["output"]["insight_ids"]) >= 5
-    assert len(insights_job["output"]["evidence_ids"]) >= 5
+    assert insights_job["status"] == "queued"
+    assert insights_job["job_type"] == "generate_insights"
+    assert insights_job["policy"]["execution"] == "queued_worker"
+    insights_output = run_queued_job(client, insights_job["id"])
+    assert len(insights_output["insight_ids"]) >= 5
+    assert len(insights_output["evidence_ids"]) >= 5
 
     insights_list_response = client.get(f"/api/projects/{project_id}/insights")
     assert insights_list_response.status_code == 200
     insight = insights_list_response.json()[0]
-    assert insight["artifact_id"] == insights_job["output"]["artifact_id"]
+    assert insight["artifact_id"] == insights_output["artifact_id"]
     assert insight["evidence_ids"]
 
     insight_preview_response = client.get(f"/api/artifacts/{insight['artifact_id']}/preview")
@@ -4475,27 +4487,30 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     decision_response = client.post(f"/api/projects/{project_id}/decision-dashboard/generate")
     assert decision_response.status_code == 200, decision_response.text
     decision_job = decision_response.json()
-    assert decision_job["status"] == "succeeded"
-    assert decision_job["output"]["schema_version"] == "decision_dashboard.v1"
-    assert decision_job["output"]["decision_dashboard_artifact_id"]
-    assert decision_job["output"]["decision_report_artifact_id"]
-    assert decision_job["output"]["report_id"]
-    assert len(decision_job["output"]["visualization_ids"]) == 3
+    assert decision_job["status"] == "queued"
+    assert decision_job["job_type"] == "generate_decision_dashboard"
+    assert decision_job["policy"]["execution"] == "queued_worker"
+    decision_output = run_queued_job(client, decision_job["id"])
+    assert decision_output["schema_version"] == "decision_dashboard.v1"
+    assert decision_output["decision_dashboard_artifact_id"]
+    assert decision_output["decision_report_artifact_id"]
+    assert decision_output["report_id"]
+    assert len(decision_output["visualization_ids"]) == 3
 
     decision_dashboard_preview_response = client.get(
-        f"/api/artifacts/{decision_job['output']['decision_dashboard_artifact_id']}/preview"
+        f"/api/artifacts/{decision_output['decision_dashboard_artifact_id']}/preview"
     )
     assert decision_dashboard_preview_response.status_code == 200
     assert decision_dashboard_preview_response.json()["preview_available"] is True
     decision_dashboard_download_response = client.get(
-        f"/api/artifacts/{decision_job['output']['decision_dashboard_artifact_id']}/download"
+        f"/api/artifacts/{decision_output['decision_dashboard_artifact_id']}/download"
     )
     assert decision_dashboard_download_response.status_code == 200
     decision_dashboard_payload = decision_dashboard_download_response.json()
     assert decision_dashboard_payload["schema_version"] == "decision_dashboard.v1"
     assert "readiness_stages" in decision_dashboard_payload
 
-    decision_report_preview_response = client.get(f"/api/reports/{decision_job['output']['report_id']}/preview")
+    decision_report_preview_response = client.get(f"/api/reports/{decision_output['report_id']}/preview")
     assert decision_report_preview_response.status_code == 200
     decision_report_preview = decision_report_preview_response.json()["preview"]
     assert "Decision Report" in decision_report_preview
@@ -4574,28 +4589,33 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     diagnostics_response = client.post(f"/api/runs/{baseline_run['id']}/diagnostics")
     assert diagnostics_response.status_code == 200, diagnostics_response.text
     diagnostics_job = diagnostics_response.json()
-    assert diagnostics_job["status"] == "succeeded"
-    assert len(diagnostics_job["output"]["artifact_ids"]) == 3
-    diagnostics_payload = diagnostics_job["output"]["diagnostics"]
+    assert diagnostics_job["status"] == "queued"
+    assert diagnostics_job["job_type"] == "analyze_evaluation_diagnostics"
+    assert diagnostics_job["policy"]["execution"] == "queued_worker"
+    diagnostics_output = run_queued_job(client, diagnostics_job["id"])
+    assert len(diagnostics_output["artifact_ids"]) == 3
+    diagnostics_payload = diagnostics_output["diagnostics"]
     assert diagnostics_payload["schema_version"] == "evaluation_diagnostics.v1"
     assert diagnostics_payload["task_kind"] == "classification"
     assert diagnostics_payload["summary"]["count"] > 0
-    assert diagnostics_job["output"]["insight_id"]
-    assert diagnostics_job["output"]["evidence_id"]
+    assert diagnostics_output["insight_id"]
+    assert diagnostics_output["evidence_id"]
 
     model_evidence_response = client.post(f"/api/runs/{baseline_run['id']}/model-diagnostics-artifacts")
     assert model_evidence_response.status_code == 200, model_evidence_response.text
     model_evidence_job = model_evidence_response.json()
-    assert model_evidence_job["status"] == "succeeded"
+    assert model_evidence_job["status"] == "queued"
     assert model_evidence_job["job_type"] == "materialize_model_diagnostics_artifacts"
-    assert model_evidence_job["output"]["feature_importance_artifact_id"]
-    assert model_evidence_job["output"]["permutation_importance_artifact_id"]
-    assert model_evidence_job["output"]["model_diagnostics_artifact_pack_id"]
-    assert model_evidence_job["output"]["model_diagnostics_report_artifact_id"]
-    assert model_evidence_job["output"]["availability"]["native_feature_importance"] == "ready"
-    assert model_evidence_job["output"]["availability"]["prediction_review"] == "ready"
+    assert model_evidence_job["policy"]["execution"] == "queued_worker"
+    model_evidence_output = run_queued_job(client, model_evidence_job["id"])
+    assert model_evidence_output["feature_importance_artifact_id"]
+    assert model_evidence_output["permutation_importance_artifact_id"]
+    assert model_evidence_output["model_diagnostics_artifact_pack_id"]
+    assert model_evidence_output["model_diagnostics_report_artifact_id"]
+    assert model_evidence_output["availability"]["native_feature_importance"] == "ready"
+    assert model_evidence_output["availability"]["prediction_review"] == "ready"
     model_evidence_report_response = client.get(
-        f"/api/artifacts/{model_evidence_job['output']['model_diagnostics_report_artifact_id']}/preview"
+        f"/api/artifacts/{model_evidence_output['model_diagnostics_report_artifact_id']}/preview"
     )
     assert model_evidence_report_response.status_code == 200
     model_evidence_report = model_evidence_report_response.json()["preview"]
@@ -4635,19 +4655,25 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     run_report_response = client.post(f"/api/runs/{baseline_run['id']}/report")
     assert run_report_response.status_code == 200, run_report_response.text
     run_report_job = run_report_response.json()
-    assert run_report_job["status"] == "succeeded"
-    assert run_report_job["output"]["report_id"]
-    assert run_report_job["output"]["artifact_id"]
+    assert run_report_job["status"] == "queued"
+    assert run_report_job["job_type"] == "draft_run_report"
+    assert run_report_job["policy"]["execution"] == "queued_worker"
+    run_report_output = run_queued_job(client, run_report_job["id"])
+    assert run_report_output["report_id"]
+    assert run_report_output["artifact_id"]
 
     comparison_response = client.post(f"/api/projects/{project_id}/experiments/compare")
     assert comparison_response.status_code == 200, comparison_response.text
     comparison_job = comparison_response.json()
-    assert comparison_job["status"] == "succeeded"
-    assert comparison_job["output"]["comparison"]["schema_version"] == "experiment_comparison.v1"
-    assert comparison_job["output"]["comparison"]["decision"]["best_run_id"] == baseline_run["id"]
-    assert len(comparison_job["output"]["artifact_ids"]) >= 2
-    assert comparison_job["output"]["report_id"]
-    assert comparison_job["output"]["insight_id"]
+    assert comparison_job["status"] == "queued"
+    assert comparison_job["job_type"] == "compare_experiments"
+    assert comparison_job["policy"]["execution"] == "queued_worker"
+    comparison_output = run_queued_job(client, comparison_job["id"])
+    assert comparison_output["comparison"]["schema_version"] == "experiment_comparison.v1"
+    assert comparison_output["comparison"]["decision"]["best_run_id"] == baseline_run["id"]
+    assert len(comparison_output["artifact_ids"]) >= 2
+    assert comparison_output["report_id"]
+    assert comparison_output["insight_id"]
 
     artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
     assert artifacts_response.status_code == 200
@@ -5671,9 +5697,12 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     decision_response = client.post(f"/api/projects/{project_id}/decision-dashboard/generate")
     assert decision_response.status_code == 200, decision_response.text
     decision_job = decision_response.json()
-    assert decision_job["status"] == "succeeded"
+    assert decision_job["status"] == "queued"
+    assert decision_job["job_type"] == "generate_decision_dashboard"
+    assert decision_job["policy"]["execution"] == "queued_worker"
+    decision_output = run_queued_job(client, decision_job["id"])
     decision_download_response = client.get(
-        f"/api/artifacts/{decision_job['output']['decision_dashboard_artifact_id']}/download"
+        f"/api/artifacts/{decision_output['decision_dashboard_artifact_id']}/download"
     )
     assert decision_download_response.status_code == 200
     decision_dashboard = decision_download_response.json()
@@ -5681,7 +5710,7 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
         "output"
     ]["relational_feature_scenario_diagnostics_artifact_id"]
     assert any(stage["stage"] == "Relational" for stage in decision_dashboard["readiness_stages"])
-    decision_report_response = client.get(f"/api/reports/{decision_job['output']['report_id']}/preview")
+    decision_report_response = client.get(f"/api/reports/{decision_output['report_id']}/preview")
     assert decision_report_response.status_code == 200
     assert "Relational Feature Context" in decision_report_response.json()["preview"]
 

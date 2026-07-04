@@ -257,7 +257,6 @@ from tabular_harness.services.evaluation import (
     write_spec_artifact,
 )
 from tabular_harness.services.experiment_lifecycle import (
-    compare_project_experiments,
     create_experiment_plan_for_idea,
     draft_run_report,
 )
@@ -291,10 +290,6 @@ from tabular_harness.services.metric_preferences import (
 from tabular_harness.services.metric_preferences import (
     metric_value as preferred_metric_value,
 )
-from tabular_harness.services.model_diagnostics_artifacts import (
-    materialize_model_diagnostics_artifacts,
-)
-from tabular_harness.services.model_versions import validate_model_version_package
 from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.planned_agent_execution import (
     PlannedAgentTaskExecutionResult,
@@ -6231,24 +6226,15 @@ def translate_report_endpoint(
 def generate_visualization_endpoint(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
-    job = create_job(db, job_type="create_visualization_spec", project_id=project_id, input_payload={})
-    try:
-        mark_job_running(job)
-        result = create_project_visualization_dashboard(db, store=store, project=project)
-        mark_job_succeeded(
-            job,
-            {
-                "visualization_id": result.visualizations[0].id if result.visualizations else None,
-                "visualization_ids": [visualization.id for visualization in result.visualizations],
-                "artifact_ids": result.artifact_ids,
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="create_visualization_spec",
+        project_id=project_id,
+        input_payload={},
+        policy={"execution": "queued_worker"},
+    )
     return job_to_dict(job)
 
 
@@ -6265,24 +6251,15 @@ def list_project_visualizations(project_id: str, db: Annotated[Session, Depends(
 def generate_insights_endpoint(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
-    job = create_job(db, job_type="generate_insights", project_id=project_id, input_payload={})
-    try:
-        mark_job_running(job)
-        result = generate_project_insights(db, store=store, project=project)
-        mark_job_succeeded(
-            job,
-            {
-                "insight_ids": [insight.id for insight in result.insights],
-                "artifact_id": result.artifact.id,
-                "evidence_ids": result.evidence_ids,
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="generate_insights",
+        project_id=project_id,
+        input_payload={},
+        policy={"execution": "queued_worker"},
+    )
     return job_to_dict(job)
 
 
@@ -6290,31 +6267,15 @@ def generate_insights_endpoint(
 def generate_decision_dashboard_endpoint(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
-    job = create_job(db, job_type="generate_decision_dashboard", project_id=project_id, input_payload={})
-    try:
-        mark_job_running(job)
-        result = create_decision_dashboard(db, store=store, project=project)
-        dashboard_metadata = loads_json(result.dashboard_artifact.metadata_json, {})
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.dashboard["schema_version"],
-                "readiness_status": dashboard_metadata.get("readiness_status"),
-                "report_id": result.report.id,
-                "decision_dashboard_artifact_id": result.dashboard_artifact.id,
-                "decision_report_artifact_id": result.report_artifact.id,
-                "visualization_ids": [visualization.id for visualization in result.visualizations],
-                "artifact_ids": result.artifact_ids,
-                "next_action_count": len(result.dashboard["next_actions"]),
-                "risk_count": len(result.dashboard["risk_register"]),
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="generate_decision_dashboard",
+        project_id=project_id,
+        input_payload={},
+        policy={"execution": "queued_worker"},
+    )
     return job_to_dict(job)
 
 
@@ -6613,27 +6574,15 @@ def list_runs(project_id: str, db: Annotated[Session, Depends(get_session)]) -> 
 def compare_project_experiments_endpoint(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
-    job = create_job(db, job_type="compare_experiments", project_id=project_id, input_payload={})
-    try:
-        mark_job_running(job)
-        result = compare_project_experiments(db, store=store, project=project)
-        mark_job_succeeded(
-            job,
-            {
-                "artifact_ids": result.artifact_ids,
-                "comparison": result.comparison,
-                "visualization_id": result.visualization_id,
-                "report_id": result.report_id,
-                "evidence_id": result.evidence_id,
-                "insight_id": result.insight_id,
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    require_project(db, project_id)
+    job = create_job(
+        db,
+        job_type="compare_experiments",
+        project_id=project_id,
+        input_payload={},
+        policy={"execution": "queued_worker"},
+    )
     return job_to_dict(job)
 
 
@@ -6641,28 +6590,17 @@ def compare_project_experiments_endpoint(
 def draft_run_report_endpoint(
     run_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     run = db.get(ExperimentRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="ExperimentRun not found")
-    job = create_job(db, job_type="draft_run_report", project_id=run.project_id, input_payload={"run_id": run.id})
-    try:
-        mark_job_running(job)
-        result = draft_run_report(db, store=store, run=run)
-        mark_job_succeeded(
-            job,
-            {
-                "run_id": run.id,
-                "report_id": result.report.id,
-                "artifact_id": result.artifact.id,
-                "evidence_id": result.evidence_id,
-                "insight_id": result.insight_id,
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    job = create_job(
+        db,
+        job_type="draft_run_report",
+        project_id=run.project_id,
+        input_payload={"run_id": run.id},
+        policy={"execution": "queued_worker"},
+    )
     return job_to_dict(job)
 
 
@@ -6670,7 +6608,6 @@ def draft_run_report_endpoint(
 def analyze_run_diagnostics_endpoint(
     run_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     run = db.get(ExperimentRun, run_id)
     if run is None:
@@ -6680,23 +6617,8 @@ def analyze_run_diagnostics_endpoint(
         job_type="analyze_evaluation_diagnostics",
         project_id=run.project_id,
         input_payload={"run_id": run.id},
+        policy={"execution": "queued_worker"},
     )
-    try:
-        mark_job_running(job)
-        result = analyze_run_diagnostics(db, store=store, run=run)
-        mark_job_succeeded(
-            job,
-            {
-                "run_id": run.id,
-                "artifact_ids": result.artifact_ids,
-                "diagnostics": result.diagnostics,
-                "insight_id": result.insight_id,
-                "evidence_id": result.evidence_id,
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -6704,7 +6626,6 @@ def analyze_run_diagnostics_endpoint(
 def materialize_model_diagnostics_artifacts_endpoint(
     run_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     run = db.get(ExperimentRun, run_id)
     if run is None:
@@ -6720,30 +6641,9 @@ def materialize_model_diagnostics_artifacts_endpoint(
             "secrets_materialized": False,
             "evaluation_spec_modified": False,
             "split_manifest_required": True,
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        result = materialize_model_diagnostics_artifacts(db, store=store, run=run)
-        mark_job_succeeded(
-            job,
-            {
-                "run_id": run.id,
-                "model_version_id": run.model_version_id,
-                "artifact_ids": result.artifact_ids,
-                "model_diagnostics_artifact_pack_id": result.artifact_ids[2],
-                "model_diagnostics_report_artifact_id": result.artifact_ids[3],
-                "feature_importance_artifact_id": result.artifact_ids[0],
-                "permutation_importance_artifact_id": result.artifact_ids[1],
-                "visualization_artifact_id": result.artifact_ids[4],
-                "availability": result.diagnostics.get("availability", {}),
-                "insight_id": result.insight_id,
-                "evidence_id": result.evidence_id,
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -6888,7 +6788,6 @@ def get_model_version(model_version_id: str, db: Annotated[Session, Depends(get_
 def validate_model_version(
     model_version_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     model_version = db.get(ModelVersion, model_version_id)
     if model_version is None:
@@ -6898,21 +6797,8 @@ def validate_model_version(
         job_type="validate_model_package",
         project_id=model_version.project_id,
         input_payload={"model_version_id": model_version.id},
+        policy={"execution": "queued_worker"},
     )
-    try:
-        mark_job_running(job)
-        result = validate_model_version_package(db, store=store, model_version=model_version)
-        mark_job_succeeded(
-            job,
-            {
-                "model_version_id": result.model_version.id,
-                "artifact_ids": result.artifact_ids,
-                "metrics": result.metrics,
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
