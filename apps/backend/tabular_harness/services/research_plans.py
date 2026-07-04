@@ -97,6 +97,7 @@ def commit_research_plan_artifact_revision(
     *,
     artifact: Artifact,
     reason: str | None = None,
+    strict_validation: bool = False,
 ) -> ResearchPlanCommitResult | None:
     if artifact.project_id is None or artifact.asset_type != "research_plan":
         return None
@@ -117,6 +118,7 @@ def commit_research_plan_artifact_revision(
         reason=reason or f"Committed research_plan artifact {artifact.id}.",
         source_artifact_id=artifact.id,
         metadata={"artifact_name": artifact.name, "artifact_version": artifact.version, "source": source},
+        strict_validation=strict_validation,
     )
 
 

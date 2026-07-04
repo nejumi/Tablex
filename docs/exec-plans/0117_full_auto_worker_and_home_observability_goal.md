@@ -14,9 +14,9 @@ Claude Fable's review identified structural reasons Full Auto felt like whack-a-
   - The history must not stay stuck at the pending "preparing response" copy.
 - Added Alembic migration `0002_agent_transcript_event_indexes`.
   - Ensures existing SQLite DBs get transcript indexes used by long-running Raw/Codex transcript polling.
-- Home Research Plan now shows an observed active Codex block when Codex is running but the Codex-authored plan has no active block.
-  - This does not mutate Codex's plan artifact.
-  - It is a UI overlay sourced from observed Agent Activity state.
+- Home Research Plan no longer invents observed Codex blocks inside the plan.
+  - Codex-authored or ResearchPlan-tool-authored nodes are the canonical timeline once a plan exists.
+  - Runner/process presence is shown in Agent Activity and turn-state surfaces, not as a synthetic plan node.
 - Project selection is persisted in the URL hash.
   - `#/projects/{project_id}` opens the project Home directly.
   - Reloading or sharing the URL no longer drops the user back to the portal.
@@ -33,7 +33,7 @@ Claude Fable's review identified structural reasons Full Auto felt like whack-a-
 - Playwright CLI manual checks:
   - Direct `#/projects/p_9f25dd620d8c` route opens project Home.
   - F5 keeps the same project selected.
-  - Research Plan shows an observed "Codex is working" block when the main Codex session is active.
+  - Research Plan shows only authored/canonical plan nodes, while Agent Activity shows whether the main Codex session is active.
   - Mission Control headline switches to active work.
   - Ideas & Findings top cards prioritize evaluation readiness, assumption risk, and concrete ideas.
 

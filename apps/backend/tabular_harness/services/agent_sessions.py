@@ -3248,11 +3248,47 @@ def ingest_session_workspace_outputs(
                 artifact=artifact,
             )
             if asset_type == "research_plan":
-                commit_research_plan_artifact_revision(
-                    db,
-                    artifact=artifact,
-                    reason=f"Committed Codex-authored workspace ResearchPlan from {path.relative_to(workspace)}.",
-                )
+                try:
+                    commit_research_plan_artifact_revision(
+                        db,
+                        artifact=artifact,
+                        reason=f"Committed Codex-authored workspace ResearchPlan from {path.relative_to(workspace)}.",
+                        strict_validation=True,
+                    )
+                except ResearchPlanValidationError as exc:
+                    append_session_event(
+                        db,
+                        session,
+                        source="tablex_sidecar",
+                        event_type="research_plan_artifact_rejected",
+                        role="harness",
+                        title="ResearchPlan artifact rejected",
+                        content=str(exc),
+                        payload={
+                            "artifact_id": artifact.id,
+                            "workspace_relative_path": str(path.relative_to(workspace)),
+                            "issues": exc.issues[:12],
+                        },
+                        artifact_id=artifact.id,
+                        update_heartbeat=False,
+                    )
+                    register_agent_session_attention_chat_turn(
+                        db,
+                        store=store,
+                        project=project,
+                        session=session,
+                        attention_key=f"research_plan_artifact_rejected:{artifact.id}",
+                        status="needs_attention",
+                        message_kind="research_plan_request_failed",
+                        details={
+                            "request_id": artifact.name,
+                            "operation": "commit_revision",
+                            "error_type": type(exc).__name__,
+                            "error_message": str(exc)[:1200],
+                            "issues": exc.issues[:8],
+                            "workspace_relative_path": str(path.relative_to(workspace)),
+                        },
+                    )
             if allow_notebook_auto_capture:
                 maybe_capture_agent_session_notebook_output(
                     db,

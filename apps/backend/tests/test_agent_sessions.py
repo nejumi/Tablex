@@ -3610,7 +3610,7 @@ def test_failed_notebook_auto_capture_retries_after_cooldown(
         assert [payload["intent"]["status"] for payload in chat_payloads] == ["preview_failed", "ready"]
 
 
-def test_research_plan_ingest_preserves_text_and_requests_contract_revision(tmp_path: Path) -> None:
+def test_research_plan_ingest_commits_contract_valid_workspace_plan(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
     store = LocalArtifactStore(tmp_path / "artifacts")
@@ -3625,6 +3625,7 @@ def test_research_plan_ingest_preserves_text_and_requests_contract_revision(tmp_
                     {
                         "id": "modeling_review",
                         "title": "Modeling review",
+                        "granularity": "chapter",
                         "why_it_matters": "Compare candidate models after EDA.",
                         "status": "active",
                     }
@@ -3670,27 +3671,102 @@ def test_research_plan_ingest_preserves_text_and_requests_contract_revision(tmp_
         assert loads_json(revision.document_json, {})["timeline_blocks"][0]["title"] == "Modeling review"
 
         events = list(db.scalars(select(AgentTranscriptEvent).where(AgentTranscriptEvent.session_id == session.id)))
-        assert [event.event_type for event in events] == [
-            "artifact_registered",
-            "research_plan_contract_revision_requested",
-            "attention_chat_turn_registered",
-        ]
-        assert research_plan_contract_request_path(workspace).exists()
+        assert [event.event_type for event in events] == ["artifact_registered"]
+        assert not research_plan_contract_request_path(workspace).exists()
 
         ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
         db.commit()
         repeated_events = list(db.scalars(select(AgentTranscriptEvent).where(AgentTranscriptEvent.session_id == session.id)))
-        assert [event.event_type for event in repeated_events] == [
-            "artifact_registered",
-            "research_plan_contract_revision_requested",
-            "attention_chat_turn_registered",
-        ]
+        assert [event.event_type for event in repeated_events] == ["artifact_registered"]
         revision_count = db.scalar(
             select(func.count())
             .select_from(ResearchPlanRevision)
             .where(ResearchPlanRevision.project_id == project.id)
         )
         assert revision_count == 1
+
+
+def test_research_plan_ingest_rejects_invalid_workspace_plan_without_canonical_revision(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    outputs_dir = workspace / "outputs"
+    outputs_dir.mkdir(parents=True)
+    (outputs_dir / "research_plan.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "granularity": "chapter",
+                        "status": "pending",
+                    },
+                    {
+                        "id": "modeling",
+                        "title": "Modeling",
+                        "granularity": "chapter",
+                        "status": "done",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(
+            id="p_plan_invalid_artifact",
+            name="Invalid Plan Artifact",
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+        )
+        session = AgentSession(
+            id="as_plan_invalid_artifact",
+            project_id=project.id,
+            goal_text="Reject invalid plan artifacts.",
+            workspace_path=str(workspace),
+            status="running",
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "research_plan")
+        )
+        assert artifact is not None
+        assert db.scalar(
+            select(func.count())
+            .select_from(ResearchPlanRevision)
+            .where(ResearchPlanRevision.project_id == project.id)
+        ) == 0
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent)
+                .where(AgentTranscriptEvent.session_id == session.id)
+                .order_by(AgentTranscriptEvent.event_index.asc())
+            )
+        )
+        assert [event.event_type for event in events] == [
+            "artifact_registered",
+            "research_plan_artifact_rejected",
+            "attention_chat_turn_registered",
+        ]
+        rejection_payload = loads_json(events[1].payload_json, {})
+        issue_codes = {issue["code"] for issue in rejection_payload["issues"]}
+        assert "completed_after_open_predecessor" in issue_codes
+        chat_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["intent"]["message_kind"] == "research_plan_request_failed"
+        assert chat_payload["actions"][0]["target_tab"] == "Home"
 
 
 def test_research_plan_file_requests_commit_presence_links_and_attention(tmp_path: Path) -> None:

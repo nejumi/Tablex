@@ -6677,19 +6677,7 @@ function applyResearchPlanCurrentWork(
     };
   });
   if (matched) return nextBlocks;
-  return [
-    ...nextBlocks,
-    {
-      id: currentWork.node_id,
-      title: currentWork.node_id.replace(/[_-]+/g, " "),
-      subtitle: currentWork.summary,
-      status: currentWork.status,
-      eyebrow: "",
-      evidence: expectedOutputs || null,
-      subtasks: [],
-      isCurrentWork: true
-    }
-  ];
+  return nextBlocks;
 }
 
 function renumberResearchPlanBlocks(blocks: ResearchPlanBlock[]): ResearchPlanBlock[] {
