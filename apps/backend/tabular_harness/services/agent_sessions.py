@@ -2606,6 +2606,26 @@ def process_research_plan_tool_requests(
                 payload=ack,
                 update_heartbeat=False,
             )
+            if operation == "request_human_attention":
+                result_payload = result if isinstance(result, dict) else {}
+                register_agent_session_attention_chat_turn(
+                    db,
+                    store=store,
+                    project=project,
+                    session=session,
+                    attention_key=f"research_plan_human_attention:{result_payload.get('question_id') or request_id}",
+                    status="needs_attention",
+                    message_kind="research_plan_human_attention_requested",
+                    details={
+                        "request_id": request_id,
+                        "operation": operation,
+                        "question_id": result_payload.get("question_id"),
+                        "question": body.get("question") if isinstance(body.get("question"), str) else "",
+                        "why_it_matters": body.get("why_it_matters") if isinstance(body.get("why_it_matters"), str) else "",
+                        "node_id": body.get("node_id") if isinstance(body.get("node_id"), str) else "",
+                        "can_proceed_without_answer": result_payload.get("can_proceed_without_answer"),
+                    },
+                )
         except ResearchPlanValidationError as exc:
             ack = {
                 "schema_version": "tablex_research_plan_ack.v1",
@@ -3910,6 +3930,22 @@ def attention_chat_message(message_kind: str, *, details: dict[str, Any], japane
         if japanese:
             return f"ResearchPlanの更新要求 `{operation}` を保存できませんでした。Codexにはackで理由を返しているため、修正した要求を出し直せます。"
         return f"ResearchPlan update `{operation}` could not be saved. The ack includes the reason so Codex can submit a corrected request."
+    if message_kind == "research_plan_human_attention_requested":
+        question = str(details.get("question") or "").strip()
+        can_proceed = details.get("can_proceed_without_answer")
+        if japanese:
+            suffix = (
+                "回答がなくても仮定を置いて進めます。"
+                if can_proceed is True
+                else "この確認は次の判断に影響します。"
+            )
+            return f"Codexから確認したい点があります。{question} {suffix}".strip()
+        suffix = (
+            "If no answer arrives, Codex can continue with an explicit assumption."
+            if can_proceed is True
+            else "This answer affects the next decision."
+        )
+        return f"Codex has a question for you. {question} {suffix}".strip()
     if message_kind == "research_plan_contract_needs_revision":
         if japanese:
             return (

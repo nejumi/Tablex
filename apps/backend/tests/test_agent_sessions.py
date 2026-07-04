@@ -3584,6 +3584,15 @@ def test_research_plan_file_requests_commit_presence_links_and_attention(tmp_pat
         question = db.scalar(select(Question).where(Question.project_id == project.id, Question.topic == "research_plan"))
         assert question is not None
         assert question.can_proceed_without_answer is True
+        chat_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["intent"]["type"] == "agent_attention_event"
+        assert chat_payload["intent"]["message_kind"] == "research_plan_human_attention_requested"
+        assert chat_payload["response_brief"]["details"]["question_id"] == question.id
+        assert chat_payload["actions"][0]["target_tab"] == "Home"
 
 
 def test_failed_research_plan_file_request_is_announced_in_agent_chat(tmp_path: Path) -> None:
