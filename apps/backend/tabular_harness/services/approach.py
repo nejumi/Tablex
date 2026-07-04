@@ -1412,19 +1412,7 @@ def build_research_sources(
             "title": "Project metadata",
             "ref": project.id,
             "summary": "Task type, objective context, current phase, and local harness context.",
-        },
-        {
-            "source_type": "skill_placeholder",
-            "title": "Tabular modeling and evaluation skills",
-            "ref": "future_skill_library:tabular_modeling",
-            "summary": "Future AgentRunner tasks may attach reusable Skills for feature engineering, modeling, diagnostics, and reporting.",
-        },
-        {
-            "source_type": "external_research_placeholder",
-            "title": "Timely literature and web research",
-            "ref": "future_agent_research:web_search",
-            "summary": "Future Codex runner may perform controlled web or literature search and return citations as Evidence.",
-        },
+        }
     ]
     if dataset:
         sources.append(

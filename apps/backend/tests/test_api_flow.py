@@ -4601,6 +4601,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert len(brief["recommended_approaches"]) >= 2
     assert any(source["source_type"] == "research_plan" for source in brief["sources"])
     assert any(source["source_type"] == "research_finding_synthesis" for source in brief["sources"])
+    assert not any(str(source["source_type"]).endswith("_placeholder") for source in brief["sources"])
 
     ideas_response = client.post(f"/api/projects/{project_id}/approach/ideas/generate")
     assert ideas_response.status_code == 200, ideas_response.text
