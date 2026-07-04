@@ -148,6 +148,7 @@ from tabular_harness.services.agent_sessions import (
     active_main_session,
     append_session_event,
     append_user_instruction_to_workspace_inbox,
+    chat_update_actions_from_research_plan_evidence,
     chat_update_message_from_text,
     latest_codex_chat_update_at,
     latest_codex_transcript_output_at,
@@ -3700,7 +3701,13 @@ def utc_datetime_or_none(value: datetime | None) -> datetime | None:
 
 @router.get("/api/projects/{project_id}/agent-chat/history", response_model=list[AgentChatHistoryTurnRead])
 def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
-    require_project(db, project_id)
+    project = require_project(db, project_id)
+    response_locale = latest_project_response_locale(db, project)
+    plan_actions, plan_next_focus = chat_update_actions_from_research_plan_evidence(
+        db,
+        project=project,
+        japanese=locale_is_japanese(response_locale),
+    )
     artifacts = list(
         db.scalars(
             select(Artifact)
@@ -3834,6 +3841,16 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
                 paired_update_ids.add(progress_artifact_id)
         else:
             turns.append(pending_agent_chat_turn_from_job(db, project_id, job, payload))
+    latest_unlinked_update = next((turn for turn in reversed(main_session_update_turns) if not turn.get("actions")), None)
+    if latest_unlinked_update is not None and plan_actions:
+        latest_unlinked_update["actions"] = plan_actions
+        response_brief = latest_unlinked_update["response_brief"] if isinstance(latest_unlinked_update["response_brief"], dict) else {}
+        latest_unlinked_update["response_brief"] = {
+            **response_brief,
+            "linked_action_count": len(plan_actions),
+            "linked_action_source": "research_plan_completion_evidence",
+        }
+        latest_unlinked_update["next_focus"] = plan_next_focus
     paired_update_ids.update({
         str(turn.get("paired_progress_artifact_id"))
         for turn in turns

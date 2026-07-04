@@ -1289,6 +1289,132 @@ def test_chat_update_marks_delivered_agent_chat_job_succeeded(tmp_path: Path) ->
         assert metadata["source"] == "main_codex_session_chat_update"
 
 
+def test_chat_update_links_registered_plan_evidence_without_parsing_message(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    report_path = workspace / "reports" / "chat_update.md"
+    report_path.parent.mkdir(parents=True)
+    message = "分析結果を保存しました。次に確認する成果物があります。"
+    report_path.write_text(message, encoding="utf-8")
+
+    with sessionmaker(engine)() as db:
+        project = Project(
+            id="p_chat_links",
+            name="Chat Links",
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+        )
+        session = AgentSession(
+            id="as_chat_links",
+            project_id=project.id,
+            session_type="main_autonomous",
+            status="running",
+            goal_text="Keep the user informed.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.flush()
+        notebook_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="analysis_notebook",
+            name="agent_session_notebooks_grandmaster_eda",
+            filename="grandmaster_eda.py",
+            text="import marimo\napp = marimo.App()\n",
+            metadata={"project_id": project.id, "workspace_relative_path": "notebooks/grandmaster_eda.py"},
+        )
+        report_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="agent_session_report",
+            name="agent_session_reports_modeling_report",
+            filename="modeling_report.md",
+            text="# Modeling report\n",
+            metadata={"project_id": project.id, "workspace_relative_path": "reports/modeling_report.md"},
+        )
+        run = ExperimentRun(
+            id="run_chat_linked",
+            project_id=project.id,
+            runner_type="codex_main_session",
+            status="succeeded",
+            params_json=dumps_json({"model_id": "ridge_text_masked"}),
+            metrics_json=dumps_json({"mae": 123.4}),
+        )
+        db.add(run)
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "analysis_outputs",
+                        "title": "Analysis outputs",
+                        "granularity": "chapter",
+                        "status": "done",
+                        "deliverable_contract": {"expected_outputs": ["notebook", "experiment_run", "report"]},
+                        "completion_evidence": [
+                            {
+                                "output_type": "notebook",
+                                "artifact_id": notebook_artifact.id,
+                                "workspace_path": "notebooks/grandmaster_eda.py",
+                            },
+                            {"output_type": "experiment_run", "experiment_run_id": run.id},
+                            {
+                                "output_type": "report",
+                                "artifact_id": report_artifact.id,
+                                "workspace_path": "reports/modeling_report.md",
+                            },
+                        ],
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Registered notebook, run, and report evidence.",
+        )
+        source_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="agent_session_report",
+            name="agent_session_reports_chat_update_md",
+            filename="chat_update.md",
+            text=message,
+            metadata={"project_id": project.id, "agent_session_id": session.id},
+        )
+
+        maybe_register_chat_update_from_workspace_output(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            path=report_path,
+            artifact=source_artifact,
+        )
+        db.commit()
+
+        chat_artifact = db.scalar(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+            .order_by(Artifact.created_at.desc())
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["assistant_message"] == message
+        assert chat_payload["response_brief"]["linked_action_count"] == 3
+        assert chat_payload["actions"][0]["target_tab"] == "Notebooks"
+        assert chat_payload["actions"][0]["artifact_id"] == notebook_artifact.id
+        assert chat_payload["actions"][1]["target_tab"] == "Leaderboard"
+        assert chat_payload["actions"][1]["run_id"] == run.id
+        assert chat_payload["actions"][2]["target_tab"] == "Assets"
+        assert chat_payload["actions"][2]["artifact_id"] == report_artifact.id
+        assert chat_payload["next_focus"]["target_tab"] == "Notebooks"
+
+
 def test_turn_prompt_includes_living_research_plan_contract(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)

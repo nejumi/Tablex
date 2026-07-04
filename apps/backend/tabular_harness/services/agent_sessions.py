@@ -57,6 +57,7 @@ from tabular_harness.services.jobs import mark_job_succeeded
 from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.research_plan_timeline import (
     research_plan_contract_validation_summary,
+    research_plan_evidence_links,
     research_plan_localization_summary,
 )
 from tabular_harness.services.research_plans import (
@@ -3677,6 +3678,129 @@ def agent_session_attention_chat_turn_exists(
     return False
 
 
+NOTEBOOK_EVIDENCE_ASSET_TYPES = {
+    "analysis_notebook",
+    "notebook_evidence_html",
+    "notebook_execution_html",
+    "notebook_static_html",
+}
+REPORT_EVIDENCE_ASSET_TYPES = {
+    "agent_session_report",
+    "notebook_execution_report",
+    "understanding_report",
+    "experiment_report",
+    "report",
+}
+
+
+def chat_update_actions_from_research_plan_evidence(
+    db: Session,
+    *,
+    project: Project,
+    japanese: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    revision = latest_research_plan_revision(db, project_id=project.id)
+    if revision is None:
+        return [], {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent workspace"}
+    document = research_plan_revision_document(revision)
+    raw_blocks = document.get("timeline_blocks") if isinstance(document, dict) else None
+    links = research_plan_evidence_links(db, revision=revision, raw_blocks=raw_blocks)
+    if not links:
+        return [], {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent workspace"}
+
+    notebook_link = first_evidence_link(links, link_types={"artifact"}, asset_types=NOTEBOOK_EVIDENCE_ASSET_TYPES)
+    run_link = first_evidence_link(links, link_types={"experiment_run"})
+    report_link = first_evidence_link(links, link_types={"artifact"}, asset_types=REPORT_EVIDENCE_ASSET_TYPES)
+
+    actions: list[dict[str, Any]] = []
+    if notebook_link is not None:
+        artifact_id = notebook_link.get("artifact_id")
+        if isinstance(artifact_id, str) and artifact_id:
+            actions.append(
+                {
+                    "type": "open_artifact",
+                    "status": "ready",
+                    "label": "ノートブックを開く" if japanese else "Open notebook",
+                    "target_tab": "Notebooks",
+                    "target_anchor": "notebook-preview-top",
+                    "detail": evidence_link_detail(notebook_link),
+                    "artifact_id": artifact_id,
+                    "artifact_ids": [artifact_id],
+                    "research_plan_node_id": notebook_link.get("node_id"),
+                    "source": "research_plan_completion_evidence",
+                }
+            )
+    if run_link is not None:
+        run_id = run_link.get("run_id")
+        if isinstance(run_id, str) and run_id:
+            actions.append(
+                {
+                    "type": "open_surface",
+                    "status": "ready",
+                    "label": "リーダーボードを見る" if japanese else "Open leaderboard",
+                    "target_tab": "Leaderboard",
+                    "target_anchor": "result-readout",
+                    "detail": evidence_link_detail(run_link),
+                    "entity_ids": [run_id],
+                    "run_id": run_id,
+                    "research_plan_node_id": run_link.get("node_id"),
+                    "source": "research_plan_completion_evidence",
+                }
+            )
+    if report_link is not None:
+        artifact_id = report_link.get("artifact_id")
+        if isinstance(artifact_id, str) and artifact_id:
+            actions.append(
+                {
+                    "type": "open_artifact",
+                    "status": "ready",
+                    "label": "レポートを開く" if japanese else "Open report",
+                    "target_tab": "Assets",
+                    "target_anchor": "assets-library",
+                    "detail": evidence_link_detail(report_link),
+                    "artifact_id": artifact_id,
+                    "artifact_ids": [artifact_id],
+                    "research_plan_node_id": report_link.get("node_id"),
+                    "source": "research_plan_completion_evidence",
+                }
+            )
+    if not actions:
+        return [], {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent workspace"}
+    first = actions[0]
+    next_focus = {
+        "target_tab": first.get("target_tab") or "Home",
+        "target_anchor": first.get("target_anchor") or "agent-workspace",
+        "label": first.get("label") or ("Agent workspace"),
+    }
+    return actions, next_focus
+
+
+def first_evidence_link(
+    links: list[dict[str, Any]],
+    *,
+    link_types: set[str],
+    asset_types: set[str] | None = None,
+) -> dict[str, Any] | None:
+    for link in reversed(links):
+        link_type = link.get("link_type")
+        if not isinstance(link_type, str) or link_type not in link_types:
+            continue
+        if asset_types is not None:
+            asset_type = link.get("asset_type")
+            if not isinstance(asset_type, str) or asset_type not in asset_types:
+                continue
+        return link
+    return None
+
+
+def evidence_link_detail(link: dict[str, Any]) -> str:
+    for key in ("artifact_name", "role", "run_id", "artifact_id"):
+        value = link.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "ResearchPlan evidence"
+
+
 def maybe_register_chat_update_from_workspace_output(
     db: Session,
     *,
@@ -3694,6 +3818,9 @@ def maybe_register_chat_update_from_workspace_output(
         return
     if not message:
         return
+    response_locale = latest_project_response_locale(db, project)
+    japanese = locale_is_japanese(response_locale)
+    actions, next_focus = chat_update_actions_from_research_plan_evidence(db, project=project, japanese=japanese)
     response = {
         "schema_version": "agent_chat_turn.v1",
         "project_id": project.id,
@@ -3704,13 +3831,14 @@ def maybe_register_chat_update_from_workspace_output(
             "source": "main_codex_session",
             "routing_policy": "codex_authored_human_update",
         },
-        "actions": [],
+        "actions": actions,
         "action_summary": {},
         "response_brief": {
             "schema_version": "agent_progress_report_brief.v1",
             "agent_session_id": session.id,
             "source_artifact_id": artifact.id,
             "workspace_relative_path": str(path.relative_to(Path(session.workspace_path or path.parent))),
+            "linked_action_count": len(actions),
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",
@@ -3719,7 +3847,7 @@ def maybe_register_chat_update_from_workspace_output(
         },
         "worker_events": [],
         "token_usage": {"source": "codex_cli_transcript", "is_estimate": True, "series": []},
-        "next_focus": {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent workspace"},
+        "next_focus": next_focus,
     }
     chat_artifact = store_json_artifact(
         db,
