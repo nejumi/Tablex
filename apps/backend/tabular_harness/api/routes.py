@@ -171,7 +171,6 @@ from tabular_harness.services.analysis_notebooks import (
 from tabular_harness.services.approach import (
     create_decision_dashboard,
     create_research_plan,
-    draft_project_report,
     generate_approach_candidates,
     generate_research_brief,
     store_json_artifact,
@@ -2790,9 +2789,8 @@ def run_dataset_eda_review(
 def create_notebook_authoring_brief_endpoint(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     job = create_job(
         db,
         job_type="create_notebook_authoring_brief",
@@ -2803,28 +2801,9 @@ def create_notebook_authoring_brief_endpoint(
             "connector_credentials_materialized": False,
             "secrets_materialized": False,
             "execution_mode": "authoring_brief_only",
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_notebook_authoring_brief(db, store=store, project=project)
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.brief["schema_version"],
-                "notebook_authoring_brief_artifact_id": result.brief_artifact.id,
-                "notebook_authoring_report_id": result.report.id,
-                "notebook_authoring_report_artifact_id": result.report_artifact.id,
-                "source_card_count": len(result.brief["source_inspirations"]),
-                "principle_count": len(result.brief["authoring_principles"]),
-                "context_artifact_count": len(result.brief["context_artifacts"]),
-                "artifact_id": result.brief_artifact.id,
-                "artifact_ids": result.artifact_ids,
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -6067,28 +6046,15 @@ def draft_report_endpoint(
     project_id: str,
     payload: ReportCreate,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     job = create_job(
         db,
         job_type="draft_project_report",
         project_id=project_id,
         input_payload={"title": payload.title, "report_type": payload.report_type},
+        policy={"execution": "queued_worker", "network": "disabled", "secret_access": "forbidden"},
     )
-    try:
-        mark_job_running(job)
-        result = draft_project_report(
-            db,
-            store=store,
-            project=project,
-            title=payload.title,
-            report_type=payload.report_type,
-        )
-        mark_job_succeeded(job, {"report_id": result.report.id, "artifact_id": result.artifact.id})
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -6291,10 +6257,9 @@ def generate_decision_dashboard_endpoint(
 def generate_data_understanding_notebook_endpoint(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
     payload: DataUnderstandingNotebookCreate | None = None,
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     response_locale = payload.locale if payload else None
     job = create_job(
         db,
@@ -6305,40 +6270,9 @@ def generate_data_understanding_notebook_endpoint(
             "external_network_access": "disabled",
             "connector_credentials_materialized": False,
             "execution_mode": "prepare_authoring_context_only",
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_notebook_authoring_brief(
-            db,
-            store=store,
-            project=project,
-            objective=(
-                "Author the project data-understanding marimo notebook from current artifacts and equipped Skills. "
-                "Do not use harness-authored notebook prose."
-            ),
-            response_locale=response_locale,
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": "notebook_authoring_preparation.v1",
-                "notebook_kind": "data_understanding",
-                "response_locale": response_locale,
-                "analysis_notebook_artifact_id": None,
-                "notebook_html_artifact_id": None,
-                "notebook_authoring_brief_artifact_id": result.brief_artifact.id,
-                "notebook_authoring_report_artifact_id": result.report_artifact.id,
-                "notebook_run_manifest_artifact_id": None,
-                "notebook_report_id": None,
-                "notebook_report_artifact_id": None,
-                "artifact_ids": result.artifact_ids,
-                "execution_status": "awaiting_agent_authored_notebook",
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -6504,9 +6438,8 @@ def run_model_candidates_endpoint(
 def plan_baseline_strategy_endpoint(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     spec = latest_approved_spec(db, project_id)
     if spec is None:
         raise HTTPException(status_code=400, detail="Approve an EvaluationSpec before planning baseline strategy")
@@ -6518,40 +6451,14 @@ def plan_baseline_strategy_endpoint(
         job_type="plan_baseline_strategy",
         project_id=project_id,
         input_payload={"evaluation_spec_id": spec.id, "split_manifest_id": split.id},
+        policy={
+            "execution": "queued_worker",
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "dependency_changes": "approval_required_when_missing",
+        },
     )
-    try:
-        mark_job_running(job)
-        result = create_baseline_strategy_plan(
-            db,
-            store=store,
-            project=project,
-            evaluation_spec=spec,
-            split_manifest=split,
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "baseline_strategy_plan_artifact_id": result.artifact.id,
-                "strategy_count": len(result.plan.get("candidate_strategies", [])),
-                "next_agent_task_count": len(result.plan.get("next_agent_tasks", [])),
-                "selected_baseline_type": result.plan["selected_execution"].get("baseline_type"),
-                "strategy_mode": result.plan.get("context", {}).get("strategy_mode"),
-                "planning_source": result.plan.get("context", {}).get("current_baseline_plan", {}).get("planning_source"),
-                "resource_guard_level": result.plan.get("context", {})
-                .get("current_baseline_plan", {})
-                .get("resource_guard", {})
-                .get("level"),
-                "matched_asset_count": result.plan.get("context", {})
-                .get("library_context", {})
-                .get("matched_asset_count"),
-                "reporting_visualization_count": len(
-                    result.plan.get("reporting_plan", {}).get("visualization_specs", [])
-                ),
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -6659,12 +6566,11 @@ def materialize_model_diagnostics_artifacts_endpoint(
 def generate_run_analysis_notebook_endpoint(
     run_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     run = db.get(ExperimentRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="ExperimentRun not found")
-    project = require_project(db, run.project_id)
+    require_project(db, run.project_id)
     job = create_job(
         db,
         job_type="prepare_model_diagnostics_notebook_authoring",
@@ -6674,39 +6580,9 @@ def generate_run_analysis_notebook_endpoint(
             "external_network_access": "disabled",
             "connector_credentials_materialized": False,
             "execution_mode": "prepare_authoring_context_only",
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_notebook_authoring_brief(
-            db,
-            store=store,
-            project=project,
-            objective=f"Author the model-diagnostics marimo notebook for ExperimentRun {run.id}.",
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": "notebook_authoring_preparation.v1",
-                "notebook_kind": "model_diagnostics",
-                "run_id": run.id,
-                "model_version_id": run.model_version_id,
-                "analysis_notebook_artifact_id": None,
-                "notebook_html_artifact_id": None,
-                "notebook_run_manifest_artifact_id": None,
-                "notebook_report_id": None,
-                "notebook_report_artifact_id": None,
-                "visualization_id": None,
-                "visualization_artifact_id": None,
-                "notebook_authoring_brief_artifact_id": result.brief_artifact.id,
-                "notebook_authoring_report_artifact_id": result.report_artifact.id,
-                "artifact_ids": result.artifact_ids,
-                "execution_status": "awaiting_agent_authored_notebook",
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 

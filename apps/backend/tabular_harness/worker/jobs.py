@@ -25,7 +25,11 @@ from tabular_harness.services.analysis_notebooks import (
     create_notebook_execution_capture,
     create_notebook_execution_plan,
 )
-from tabular_harness.services.approach import create_decision_dashboard, create_research_plan
+from tabular_harness.services.approach import (
+    create_decision_dashboard,
+    create_research_plan,
+    draft_project_report,
+)
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.autonomy import (
     RUNNER_MODE_CODEX_IF_AVAILABLE,
@@ -37,6 +41,7 @@ from tabular_harness.services.autonomy import (
 )
 from tabular_harness.services.baseline import (
     ModelDependencyRequiredError,
+    create_baseline_strategy_plan,
     normalize_model_candidate_name,
     run_baseline,
     run_model_candidate,
@@ -53,6 +58,7 @@ from tabular_harness.services.model_diagnostics_artifacts import (
     materialize_model_diagnostics_artifacts,
 )
 from tabular_harness.services.model_versions import validate_model_version_package
+from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.planned_agent_execution import run_planned_agent_task_codex_cli
 from tabular_harness.services.planned_agent_workspace import load_contract_payload
 from tabular_harness.services.reporting import (
@@ -179,6 +185,86 @@ def plan_research_handler(db: Session, job: Job, store: LocalArtifactStore) -> d
                 headline="Research plan created",
                 detail="Registered the controlled research handoff as an artifact.",
                 target_anchor="approach-handoff",
+            )
+        ],
+    }
+
+
+def create_notebook_authoring_brief_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "create_notebook_authoring_brief")
+    objective = payload.get("objective") if isinstance(payload.get("objective"), str) else None
+    response_locale = payload.get("response_locale") if isinstance(payload.get("response_locale"), str) else None
+    result = create_notebook_authoring_brief(
+        db,
+        store=store,
+        project=project,
+        objective=objective,
+        response_locale=response_locale,
+    )
+    return {
+        "schema_version": result.brief["schema_version"],
+        "response_locale": result.brief.get("response_locale"),
+        "notebook_authoring_brief_artifact_id": result.brief_artifact.id,
+        "notebook_authoring_report_id": result.report.id,
+        "notebook_authoring_report_artifact_id": result.report_artifact.id,
+        "source_card_count": len(result.brief["source_inspirations"]),
+        "principle_count": len(result.brief["authoring_principles"]),
+        "context_artifact_count": len(result.brief["context_artifacts"]),
+        "artifact_id": result.brief_artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "worker_events": [
+            project_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Notebook authoring brief prepared",
+                detail="Registered source-backed guidance for Codex-authored notebook work.",
+                target_tab="Assets",
+                target_anchor="notebooks",
+            )
+        ],
+    }
+
+
+def prepare_data_understanding_notebook_authoring_handler(
+    db: Session, job: Job, store: LocalArtifactStore
+) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "prepare_data_understanding_notebook_authoring")
+    response_locale = payload.get("response_locale") if isinstance(payload.get("response_locale"), str) else None
+    result = create_notebook_authoring_brief(
+        db,
+        store=store,
+        project=project,
+        objective=(
+            "Author the project data-understanding marimo notebook from current artifacts and equipped Skills. "
+            "Do not use harness-authored notebook prose."
+        ),
+        response_locale=response_locale,
+    )
+    return {
+        "schema_version": "notebook_authoring_preparation.v1",
+        "notebook_kind": "data_understanding",
+        "response_locale": response_locale,
+        "analysis_notebook_artifact_id": None,
+        "notebook_html_artifact_id": None,
+        "notebook_authoring_brief_artifact_id": result.brief_artifact.id,
+        "notebook_authoring_report_artifact_id": result.report_artifact.id,
+        "notebook_run_manifest_artifact_id": None,
+        "notebook_report_id": None,
+        "notebook_report_artifact_id": None,
+        "artifact_ids": result.artifact_ids,
+        "execution_status": "awaiting_agent_authored_notebook",
+        "worker_events": [
+            project_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Data-understanding notebook context prepared",
+                detail="Registered the Codex authoring brief; the notebook itself remains Codex-authored.",
+                target_tab="Assets",
+                target_anchor="notebooks",
             )
         ],
     }
@@ -328,6 +414,36 @@ def generate_decision_report_handler(db: Session, job: Job, store: LocalArtifact
     }
 
 
+def draft_project_report_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "draft_project_report")
+    title = payload.get("title") if isinstance(payload.get("title"), str) else None
+    report_type = payload.get("report_type") if isinstance(payload.get("report_type"), str) else "project_summary"
+    result = draft_project_report(
+        db,
+        store=store,
+        project=project,
+        title=title,
+        report_type=report_type,
+    )
+    return {
+        "report_id": result.report.id,
+        "artifact_id": result.artifact.id,
+        "artifact_ids": [result.artifact.id],
+        "worker_events": [
+            project_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Project report drafted",
+                detail="Registered the project report from current datasets, runs, insights, and artifacts.",
+                target_tab="Insight",
+                target_anchor="reports",
+            )
+        ],
+    }
+
+
 def create_visualization_spec_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
     project = project_for_job(db, job, "create_visualization_spec")
     result = create_project_visualization_dashboard(db, store=store, project=project)
@@ -442,6 +558,49 @@ def draft_run_report_handler(db: Session, job: Job, store: LocalArtifactStore) -
                 detail="Registered the run-level report, insight, and evidence records.",
                 target_tab="Leaderboard",
                 target_anchor="result-readout",
+            )
+        ],
+    }
+
+
+def prepare_model_diagnostics_notebook_authoring_handler(
+    db: Session, job: Job, store: LocalArtifactStore
+) -> dict[str, Any]:
+    run = run_for_job(db, job, "prepare_model_diagnostics_notebook_authoring")
+    project = db.get(Project, run.project_id)
+    if project is None:
+        raise ValueError("Project not found")
+    result = create_notebook_authoring_brief(
+        db,
+        store=store,
+        project=project,
+        objective=f"Author the model-diagnostics marimo notebook for ExperimentRun {run.id}.",
+    )
+    return {
+        "schema_version": "notebook_authoring_preparation.v1",
+        "notebook_kind": "model_diagnostics",
+        "run_id": run.id,
+        "model_version_id": run.model_version_id,
+        "analysis_notebook_artifact_id": None,
+        "notebook_html_artifact_id": None,
+        "notebook_run_manifest_artifact_id": None,
+        "notebook_report_id": None,
+        "notebook_report_artifact_id": None,
+        "visualization_id": None,
+        "visualization_artifact_id": None,
+        "notebook_authoring_brief_artifact_id": result.brief_artifact.id,
+        "notebook_authoring_report_artifact_id": result.report_artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "execution_status": "awaiting_agent_authored_notebook",
+        "worker_events": [
+            run_worker_event(
+                job,
+                run,
+                status="succeeded",
+                headline="Model diagnostics notebook context prepared",
+                detail="Registered the Codex authoring brief for this run's diagnostics notebook.",
+                target_tab="Assets",
+                target_anchor="notebooks",
             )
         ],
     }
@@ -574,6 +733,12 @@ def latest_approved_spec(db: Session, project_id: str) -> EvaluationSpec | None:
         select(EvaluationSpec)
         .where(EvaluationSpec.project_id == project_id, EvaluationSpec.status == "approved")
         .order_by(EvaluationSpec.created_at.desc())
+    )
+
+
+def latest_split_for_spec(db: Session, spec_id: str) -> SplitManifest | None:
+    return db.scalar(
+        select(SplitManifest).where(SplitManifest.evaluation_spec_id == spec_id).order_by(SplitManifest.created_at.desc())
     )
 
 
@@ -711,6 +876,54 @@ def run_worker_event(
                 {"step": "register artifacts", "tokens": 100},
             ],
         },
+    }
+
+
+def plan_baseline_strategy_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "plan_baseline_strategy")
+    spec_id = payload.get("evaluation_spec_id")
+    split_id = payload.get("split_manifest_id")
+    spec = db.get(EvaluationSpec, spec_id) if isinstance(spec_id, str) else latest_approved_spec(db, project.id)
+    split = db.get(SplitManifest, split_id) if isinstance(split_id, str) else None
+    if spec is None:
+        raise ValueError("Approve an EvaluationSpec before planning baseline strategy")
+    if split is None:
+        split = latest_split_for_spec(db, spec.id)
+    if split is None:
+        raise ValueError("Generate a SplitManifest before planning baseline strategy")
+    result = create_baseline_strategy_plan(
+        db,
+        store=store,
+        project=project,
+        evaluation_spec=spec,
+        split_manifest=split,
+    )
+    return {
+        "baseline_strategy_plan_artifact_id": result.artifact.id,
+        "artifact_id": result.artifact.id,
+        "artifact_ids": [result.artifact.id],
+        "strategy_count": len(result.plan.get("candidate_strategies", [])),
+        "next_agent_task_count": len(result.plan.get("next_agent_tasks", [])),
+        "selected_baseline_type": result.plan["selected_execution"].get("baseline_type"),
+        "strategy_mode": result.plan.get("context", {}).get("strategy_mode"),
+        "planning_source": result.plan.get("context", {}).get("current_baseline_plan", {}).get("planning_source"),
+        "resource_guard_level": result.plan.get("context", {})
+        .get("current_baseline_plan", {})
+        .get("resource_guard", {})
+        .get("level"),
+        "matched_asset_count": result.plan.get("context", {}).get("library_context", {}).get("matched_asset_count"),
+        "reporting_visualization_count": len(result.plan.get("reporting_plan", {}).get("visualization_specs", [])),
+        "worker_events": [
+            approach_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Baseline strategy planned",
+                detail="Registered an advisory baseline strategy without constraining Codex to a fixed recipe.",
+                target_anchor="strategy-brief-focus",
+            )
+        ],
     }
 
 
@@ -1263,11 +1476,14 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers: dict[str, JobHandler] = {}
     handlers["create_adaptive_strategy_brief"] = create_adaptive_strategy_brief_handler
     handlers["plan_research"] = plan_research_handler
+    handlers["create_notebook_authoring_brief"] = create_notebook_authoring_brief_handler
+    handlers["prepare_data_understanding_notebook_authoring"] = prepare_data_understanding_notebook_authoring_handler
     handlers["plan_agent_task"] = plan_agent_task_handler
     handlers["plan_notebook_execution"] = plan_notebook_execution_handler
     handlers["capture_notebook_execution"] = capture_notebook_execution_handler
     handlers["prepare_result_notebook_evidence"] = prepare_result_notebook_evidence_handler
     handlers["generate_decision_report"] = generate_decision_report_handler
+    handlers["draft_project_report"] = draft_project_report_handler
     handlers["create_visualization_spec"] = create_visualization_spec_handler
     handlers["generate_insights"] = generate_insights_handler
     handlers["generate_decision_dashboard"] = generate_decision_dashboard_handler
@@ -1276,6 +1492,8 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["analyze_evaluation_diagnostics"] = analyze_evaluation_diagnostics_handler
     handlers["materialize_model_diagnostics_artifacts"] = materialize_model_diagnostics_artifacts_handler
     handlers["validate_model_package"] = validate_model_package_handler
+    handlers["prepare_model_diagnostics_notebook_authoring"] = prepare_model_diagnostics_notebook_authoring_handler
+    handlers["plan_baseline_strategy"] = plan_baseline_strategy_handler
     handlers["run_baseline"] = run_baseline_handler
     handlers["build_split_manifest"] = build_split_manifest_handler
     handlers["train_model_candidates"] = train_model_candidates_handler

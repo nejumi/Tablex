@@ -3375,10 +3375,11 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path, monkeypatch: A
     notebook_response = client.post(f"/api/projects/{project_id}/analysis-notebooks/data-understanding")
     assert notebook_response.status_code == 200, notebook_response.text
     notebook_job = notebook_response.json()
-    assert notebook_job["status"] == "succeeded"
+    assert notebook_job["status"] == "queued"
     assert notebook_job["job_type"] == "prepare_data_understanding_notebook_authoring"
-    assert notebook_job["output"]["analysis_notebook_artifact_id"] is None
-    assert notebook_job["output"]["notebook_authoring_brief_artifact_id"]
+    notebook_output = run_queued_job(client, notebook_job["id"])
+    assert notebook_output["analysis_notebook_artifact_id"] is None
+    assert notebook_output["notebook_authoring_brief_artifact_id"]
 
     eda_response = client.post(f"/api/datasets/{dataset_id}/eda-review")
     assert eda_response.status_code == 200, eda_response.text
@@ -3389,8 +3390,9 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path, monkeypatch: A
     author_response = client.post(f"/api/projects/{project_id}/notebook-authoring/brief")
     assert author_response.status_code == 200, author_response.text
     author_job = author_response.json()
-    assert author_job["status"] == "succeeded"
-    assert author_job["output"]["notebook_authoring_brief_artifact_id"]
+    assert author_job["status"] == "queued"
+    author_output = run_queued_job(client, author_job["id"])
+    assert author_output["notebook_authoring_brief_artifact_id"]
 
     chat_response = client.post(
         f"/api/projects/{project_id}/agent-chat",
@@ -3551,18 +3553,19 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     notebook_response = client.post(f"/api/projects/{project_id}/analysis-notebooks/data-understanding")
     assert notebook_response.status_code == 200, notebook_response.text
     notebook_job = notebook_response.json()
-    assert notebook_job["status"] == "succeeded"
+    assert notebook_job["status"] == "queued"
     assert notebook_job["job_type"] == "prepare_data_understanding_notebook_authoring"
-    assert notebook_job["output"]["schema_version"] == "notebook_authoring_preparation.v1"
-    assert notebook_job["output"]["execution_status"] == "awaiting_agent_authored_notebook"
-    assert notebook_job["output"]["analysis_notebook_artifact_id"] is None
-    assert notebook_job["output"]["notebook_html_artifact_id"] is None
-    assert notebook_job["output"]["notebook_run_manifest_artifact_id"] is None
-    assert notebook_job["output"]["notebook_report_id"] is None
-    assert notebook_job["output"]["notebook_authoring_brief_artifact_id"]
+    notebook_output = run_queued_job(client, notebook_job["id"])
+    assert notebook_output["schema_version"] == "notebook_authoring_preparation.v1"
+    assert notebook_output["execution_status"] == "awaiting_agent_authored_notebook"
+    assert notebook_output["analysis_notebook_artifact_id"] is None
+    assert notebook_output["notebook_html_artifact_id"] is None
+    assert notebook_output["notebook_run_manifest_artifact_id"] is None
+    assert notebook_output["notebook_report_id"] is None
+    assert notebook_output["notebook_authoring_brief_artifact_id"]
 
     authoring_preview_response = client.get(
-        f"/api/artifacts/{notebook_job['output']['notebook_authoring_brief_artifact_id']}/preview"
+        f"/api/artifacts/{notebook_output['notebook_authoring_brief_artifact_id']}/preview"
     )
     assert authoring_preview_response.status_code == 200
     authoring_preview = authoring_preview_response.json()
@@ -3642,10 +3645,11 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     strategy_plan_response = client.post(f"/api/projects/{project_id}/baseline/strategy-plan")
     assert strategy_plan_response.status_code == 200, strategy_plan_response.text
     strategy_plan_job = strategy_plan_response.json()
-    assert strategy_plan_job["status"] == "succeeded"
-    assert strategy_plan_job["output"]["baseline_strategy_plan_artifact_id"]
+    assert strategy_plan_job["status"] == "queued"
+    strategy_plan_output = run_queued_job(client, strategy_plan_job["id"])
+    assert strategy_plan_output["baseline_strategy_plan_artifact_id"]
     strategy_preview_response = client.get(
-        f"/api/artifacts/{strategy_plan_job['output']['baseline_strategy_plan_artifact_id']}/preview"
+        f"/api/artifacts/{strategy_plan_output['baseline_strategy_plan_artifact_id']}/preview"
     )
     assert strategy_preview_response.status_code == 200
     strategy_preview = strategy_preview_response.json()["preview"]
@@ -4479,12 +4483,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     )
     assert report_response.status_code == 200, report_response.text
     report_job = report_response.json()
-    assert report_job["status"] == "succeeded"
+    assert report_job["status"] == "queued"
+    report_output = run_queued_job(client, report_job["id"])
 
     reports_response = client.get(f"/api/projects/{project_id}/reports")
     assert reports_response.status_code == 200
     report = reports_response.json()[0]
-    assert report["artifact_id"] == report_job["output"]["artifact_id"]
+    assert report["artifact_id"] == report_output["artifact_id"]
 
     report_preview_response = client.get(f"/api/artifacts/{report['artifact_id']}/preview")
     assert report_preview_response.status_code == 200
@@ -4660,17 +4665,18 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     model_notebook_response = client.post(f"/api/runs/{baseline_run['id']}/analysis-notebook")
     assert model_notebook_response.status_code == 200, model_notebook_response.text
     model_notebook_job = model_notebook_response.json()
-    assert model_notebook_job["status"] == "succeeded"
+    assert model_notebook_job["status"] == "queued"
     assert model_notebook_job["job_type"] == "prepare_model_diagnostics_notebook_authoring"
-    assert model_notebook_job["output"]["notebook_kind"] == "model_diagnostics"
-    assert model_notebook_job["output"]["run_id"] == baseline_run["id"]
-    assert model_notebook_job["output"]["analysis_notebook_artifact_id"] is None
-    assert model_notebook_job["output"]["notebook_html_artifact_id"] is None
-    assert model_notebook_job["output"]["notebook_report_id"] is None
-    assert model_notebook_job["output"]["visualization_id"] is None
-    assert model_notebook_job["output"]["visualization_artifact_id"] is None
-    assert model_notebook_job["output"]["execution_status"] == "awaiting_agent_authored_notebook"
-    assert model_notebook_job["output"]["notebook_authoring_brief_artifact_id"]
+    model_notebook_output = run_queued_job(client, model_notebook_job["id"])
+    assert model_notebook_output["notebook_kind"] == "model_diagnostics"
+    assert model_notebook_output["run_id"] == baseline_run["id"]
+    assert model_notebook_output["analysis_notebook_artifact_id"] is None
+    assert model_notebook_output["notebook_html_artifact_id"] is None
+    assert model_notebook_output["notebook_report_id"] is None
+    assert model_notebook_output["visualization_id"] is None
+    assert model_notebook_output["visualization_artifact_id"] is None
+    assert model_notebook_output["execution_status"] == "awaiting_agent_authored_notebook"
+    assert model_notebook_output["notebook_authoring_brief_artifact_id"]
 
     notebook_index_response = client.get(f"/api/projects/{project_id}/analysis-notebooks")
     assert notebook_index_response.status_code == 200, notebook_index_response.text
@@ -5752,7 +5758,9 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     project_report_response = client.post(f"/api/projects/{project_id}/reports/draft", json={})
     assert project_report_response.status_code == 200, project_report_response.text
     project_report_job = project_report_response.json()
-    project_report_preview_response = client.get(f"/api/reports/{project_report_job['output']['report_id']}/preview")
+    assert project_report_job["status"] == "queued"
+    project_report_output = run_queued_job(client, project_report_job["id"])
+    project_report_preview_response = client.get(f"/api/reports/{project_report_output['report_id']}/preview")
     assert project_report_preview_response.status_code == 200
     assert "Relational Feature Context" in project_report_preview_response.json()["preview"]
 
