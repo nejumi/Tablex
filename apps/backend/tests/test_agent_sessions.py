@@ -35,6 +35,7 @@ from tabular_harness.models.entities import (
 )
 from tabular_harness.services.agent_session_results import (
     experiment_acks_dir,
+    experiment_request_rejection_path,
     experiment_requests_dir,
 )
 from tabular_harness.services.agent_sessions import (
@@ -60,6 +61,7 @@ from tabular_harness.services.agent_sessions import (
     maybe_request_research_plan_contract_revision,
     metadata_for_session_output,
     notebook_acks_dir,
+    notebook_request_rejection_path,
     notebook_requests_dir,
     prepare_session_workspace,
     progress_request_path,
@@ -1542,6 +1544,8 @@ def test_turn_prompt_keeps_chat_update_human_facing_not_internal_changelog(tmp_p
         assert ".tablex/inbox/progress_request.md" in prompt.text
         assert ".tablex/inbox/research_plan_artifact_rejection.md" in prompt.text
         assert ".tablex/inbox/research_plan_request_rejection.md" in prompt.text
+        assert ".tablex/inbox/notebook_request_rejection.md" in prompt.text
+        assert ".tablex/inbox/experiment_result_request_rejection.md" in prompt.text
         assert "user-facing explanation, not an internal changelog" in prompt.text
         assert "Avoid raw artifact IDs" in prompt.text
         assert "do not make approval-waiting the dominant status" in prompt.text
@@ -2300,6 +2304,13 @@ def test_failed_experiment_result_file_request_is_announced_in_agent_chat(tmp_pa
 
         ack = loads_json((experiment_acks_dir(workspace) / "bad_register_runs.ack.json").read_text(encoding="utf-8"), {})
         assert ack["status"] == "failed"
+        rejection = experiment_request_rejection_path(workspace)
+        assert rejection.exists()
+        rejection_text = rejection.read_text(encoding="utf-8")
+        assert "tablex_experiment_result_request_rejection.v1" in rejection_text
+        assert "bad_exp_req" in rejection_text
+        assert ".tablex/acks/experiments/bad_register_runs.ack.json" in rejection_text
+        assert "did not create ExperimentRun records" in rejection_text
         chat_artifact = db.scalar(
             select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
         )
@@ -3504,6 +3515,13 @@ def test_notebook_file_request_failure_writes_ack_and_chat_attention(tmp_path: P
         assert ack["schema_version"] == "tablex_notebook_ack.v1"
         assert ack["status"] == "failed"
         assert "not registered yet" in ack["error"]["message"]
+        rejection = notebook_request_rejection_path(workspace)
+        assert rejection.exists()
+        rejection_text = rejection.read_text(encoding="utf-8")
+        assert "tablex_notebook_request_rejection.v1" in rejection_text
+        assert "capture_missing" in rejection_text
+        assert ".tablex/acks/notebooks/capture_missing.ack.json" in rejection_text
+        assert "did not update Notebook previews" in rejection_text
         chat_artifact = db.scalar(
             select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
         )

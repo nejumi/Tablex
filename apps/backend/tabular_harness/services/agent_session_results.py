@@ -45,6 +45,7 @@ from tabular_harness.services.research_plans import (
 EXPERIMENT_REQUESTS_DIR = "experiments"
 EXPERIMENT_ACK_SCHEMA_VERSION = "tablex_experiment_result_ack.v1"
 EXPERIMENT_REQUEST_SCHEMA_VERSION = "tablex_experiment_result_request.v1"
+EXPERIMENT_REQUEST_REJECTION_FILENAME = "experiment_result_request_rejection.md"
 SUPPORTED_RESULT_SCHEMAS = {
     "model_results.v1",
     "text_ablation_model_comparison.v1",
@@ -84,6 +85,10 @@ def experiment_requests_dir(workspace: Path) -> Path:
 
 def experiment_acks_dir(workspace: Path) -> Path:
     return workspace / ".tablex" / "acks" / EXPERIMENT_REQUESTS_DIR
+
+
+def experiment_request_rejection_path(workspace: Path) -> Path:
+    return workspace / ".tablex" / "inbox" / EXPERIMENT_REQUEST_REJECTION_FILENAME
 
 
 def process_experiment_result_requests(
@@ -171,6 +176,15 @@ def process_experiment_result_requests(
                 "error": {"type": type(exc).__name__, "message": str(exc)},
             }
             write_experiment_result_ack(ack_path, ack)
+            write_experiment_result_request_rejection_to_workspace_inbox(
+                workspace,
+                request_id=request_id,
+                operation=operation,
+                request_relative_path=str(path.relative_to(workspace)),
+                ack_relative_path=str(ack_path.relative_to(workspace)),
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
             register_experiment_result_failure_chat_turn(
                 db,
                 store=store,
@@ -1000,6 +1014,41 @@ def write_experiment_result_ack(path: Path, payload: dict[str, Any]) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
     tmp_path.replace(path)
+
+
+def write_experiment_result_request_rejection_to_workspace_inbox(
+    workspace: Path,
+    *,
+    request_id: str,
+    operation: str,
+    request_relative_path: str,
+    ack_relative_path: str,
+    error_type: str,
+    error_message: str,
+) -> None:
+    path = experiment_request_rejection_path(workspace)
+    lines = [
+        "schema_version: tablex_experiment_result_request_rejection.v1",
+        f"request_id: {request_id}",
+        f"operation: {operation or '<unknown>'}",
+        f"created_at: {utc_now().isoformat()}",
+        f"request_path: {request_relative_path}",
+        f"ack_path: {ack_relative_path}",
+        f"error_type: {error_type}",
+        "",
+        "The Experiment result request was rejected by Tablex validation and did not create ExperimentRun records, Leaderboard rows, ResearchPlan evidence, or model/run contextual links.",
+        "Read the ack JSON, repair the fixed request payload, and resubmit under `.tablex/requests/experiments/` with a new request_id.",
+        "",
+        "Valid result requests should keep rows comparable within the same request, use one primary metric for ranked rows, include available dataset/evaluation/split context, and reference a valid ResearchPlan node when the work belongs to a visible plan node.",
+        "",
+        "Error:",
+        error_message,
+    ]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    except OSError:
+        return
 
 
 def json_safe_object(value: Any) -> Any:

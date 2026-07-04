@@ -102,6 +102,7 @@ PROGRESS_REQUEST_FILENAME = "progress_request.md"
 RESEARCH_PLAN_CONTRACT_REQUEST_FILENAME = "research_plan_contract_request.md"
 RESEARCH_PLAN_ARTIFACT_REJECTION_FILENAME = "research_plan_artifact_rejection.md"
 RESEARCH_PLAN_REQUEST_REJECTION_FILENAME = "research_plan_request_rejection.md"
+NOTEBOOK_REQUEST_REJECTION_FILENAME = "notebook_request_rejection.md"
 CODEX_RAW_TRANSCRIPT_FILENAME = "codex_raw_transcript.jsonl"
 CODEX_STDERR_LOG_FILENAME = "codex_stderr.log"
 PROGRESS_UPDATE_NUDGE_AFTER_SECONDS = 180
@@ -254,6 +255,10 @@ def research_plan_artifact_rejection_path(workspace: Path) -> Path:
 
 def research_plan_request_rejection_path(workspace: Path) -> Path:
     return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / RESEARCH_PLAN_REQUEST_REJECTION_FILENAME
+
+
+def notebook_request_rejection_path(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / NOTEBOOK_REQUEST_REJECTION_FILENAME
 
 
 def research_plan_requests_dir(workspace: Path) -> Path:
@@ -761,6 +766,41 @@ def write_research_plan_request_rejection_to_workspace_inbox(
                 f"  fix: {issue.get('fix')}",
             ]
         )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
+def write_notebook_request_rejection_to_workspace_inbox(
+    workspace: Path,
+    *,
+    request_id: str,
+    operation: str,
+    request_relative_path: str,
+    ack_relative_path: str,
+    error_type: str,
+    error_message: str,
+) -> None:
+    path = notebook_request_rejection_path(workspace)
+    lines = [
+        "schema_version: tablex_notebook_request_rejection.v1",
+        f"request_id: {request_id}",
+        f"operation: {operation or '<unknown>'}",
+        f"created_at: {utc_now().isoformat()}",
+        f"request_path: {request_relative_path}",
+        f"ack_path: {ack_relative_path}",
+        f"error_type: {error_type}",
+        "",
+        "The Notebook request was rejected by Tablex validation or rendering and did not update Notebook previews, Chat links, ResearchPlan evidence, or contextual Data/Leaderboard/Assets links.",
+        "Read the ack JSON, repair the fixed request payload or the notebook source, and resubmit under `.tablex/requests/notebooks/` with a new request_id.",
+        "",
+        "Use this request channel after saving a marimo notebook so Tablex can register it as an asset, render the preview, attach lineage, and make it visible from the related Chat, ResearchPlan node, Dataset, Run, Model, and Assets views.",
+        "",
+        "Error:",
+        error_message,
+    ]
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
@@ -2116,7 +2156,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Prefer marimo notebooks for data understanding, modeling diagnostics, and reports.",
         "- Read `.tablex/context.json` for `human_interface.response_locale` and write human-facing notebooks/reports/chat in that language.",
         "- Read equipped Skill paths in `.tablex/context.json` before EDA, prior research, notebook authoring, or modeling strategy work.",
-        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, `.tablex/inbox/progress_request.md`, `.tablex/inbox/research_plan_contract_request.md`, `.tablex/inbox/research_plan_artifact_rejection.md`, and `.tablex/inbox/research_plan_request_rejection.md`; incorporate user messages, publish progress updates, and repair rejected ResearchPlan contract state without waiting for a new Codex turn when practical.",
+        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, `.tablex/inbox/progress_request.md`, `.tablex/inbox/research_plan_contract_request.md`, `.tablex/inbox/research_plan_artifact_rejection.md`, `.tablex/inbox/research_plan_request_rejection.md`, `.tablex/inbox/notebook_request_rejection.md`, and `.tablex/inbox/experiment_result_request_rejection.md`; incorporate user messages, publish progress updates, and repair rejected ResearchPlan, Notebook, or Leaderboard result request state without waiting for a new Codex turn when practical.",
         "- If you need user input in Full Auto, state the question and your provisional assumption, then continue unless a true hard safety boundary makes all useful work impossible.",
         "- Treat formal approval, data-owner confirmation, deployment permission, or production-write clearance as future evidence unless the current action would write to production, expose secrets, or violate evaluation integrity. Keep doing reversible local analysis and artifact generation while waiting.",
         "- Do not present Full Auto as stopped on approval unless no useful reversible work remains. If a destructive or deployment-grade action is deferred, say which reversible analysis, modeling, diagnostics, notebook/report work, or research you are continuing now.",
@@ -3075,6 +3115,15 @@ def process_notebook_tool_requests(
                 "error": {"type": type(exc).__name__, "message": str(exc)},
             }
             write_notebook_tool_ack(ack_path, ack)
+            write_notebook_request_rejection_to_workspace_inbox(
+                workspace,
+                request_id=request_id,
+                operation=operation,
+                request_relative_path=str(path.relative_to(workspace)),
+                ack_relative_path=str(ack_path.relative_to(workspace)),
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
             append_session_event(
                 db,
                 session,
