@@ -89,6 +89,7 @@ from tabular_harness.services.analysis_notebooks import build_project_notebook_i
 from tabular_harness.services.approach import store_text_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
 from tabular_harness.services.jobs import create_job
+from tabular_harness.services.research_plan_timeline import build_research_plan_timeline_response
 from tabular_harness.services.research_plans import (
     ResearchPlanValidationError,
     commit_research_plan_revision,
@@ -2260,6 +2261,17 @@ def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Pa
         )
         assert source_plan_edge is not None
         assert loads_json(source_plan_edge.metadata_json, {})["role"] == "experiment_evidence"
+        timeline = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+        block_links = timeline["blocks"][0]["attached_artifacts"]
+        timeline_run_link = next(link for link in block_links if link["link_type"] == "experiment_run")
+        timeline_source_link = next(
+            link
+            for link in block_links
+            if link["link_type"] == "artifact" and link["artifact_id"] == source_artifact.id
+        )
+        assert timeline_run_link["run_id"] == run.id
+        assert timeline_run_link["target_tab"] == "Leaderboard"
+        assert timeline_source_link["role"] == "experiment_evidence"
         chat_artifact = db.scalar(
             select(Artifact)
             .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")

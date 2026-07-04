@@ -337,35 +337,64 @@ def research_plan_artifact_links(
                 LineageEdge.project_id == revision.project_id,
                 LineageEdge.from_asset_type == "research_plan_revision",
                 LineageEdge.from_asset_id == revision.id,
-                LineageEdge.to_asset_type == "artifact",
+                LineageEdge.to_asset_type.in_(("artifact", "experiment_run")),
                 LineageEdge.relation_type == "supports_plan_node",
             )
             .order_by(LineageEdge.created_at.asc())
         ).all()
     )
-    artifact_ids = [edge.to_asset_id for edge in edges]
+    artifact_ids = [edge.to_asset_id for edge in edges if edge.to_asset_type == "artifact"]
     artifacts = {
         artifact.id: artifact
         for artifact in db.scalars(select(Artifact).where(Artifact.id.in_(artifact_ids))).all()
     } if artifact_ids else {}
+    run_ids = [edge.to_asset_id for edge in edges if edge.to_asset_type == "experiment_run"]
+    runs = {
+        run.id: run
+        for run in db.scalars(select(ExperimentRun).where(ExperimentRun.id.in_(run_ids))).all()
+    } if run_ids else {}
     links: list[dict[str, Any]] = []
     for edge in edges:
         metadata = loads_json(edge.metadata_json, {})
-        artifact = artifacts.get(edge.to_asset_id)
-        links.append(
-            {
-                "id": edge.id,
-                "revision_id": revision.id,
-                "node_id": str(metadata.get("node_id") or ""),
-                "role": str(metadata.get("role") or "evidence"),
-                "artifact_id": edge.to_asset_id,
-                "artifact_name": artifact.name if artifact is not None else None,
-                "asset_type": artifact.asset_type if artifact is not None else None,
-                "artifact_version": artifact.version if artifact is not None else None,
-                "metadata": metadata if isinstance(metadata, dict) else {},
-                "created_at": edge.created_at.isoformat(),
-            }
-        )
+        if edge.to_asset_type == "experiment_run":
+            run = runs.get(edge.to_asset_id)
+            params = loads_json(run.params_json, {}) if run is not None else {}
+            model_id = params.get("model_id") if isinstance(params, dict) else None
+            links.append(
+                {
+                    "id": edge.id,
+                    "link_type": "experiment_run",
+                    "revision_id": revision.id,
+                    "node_id": str(metadata.get("node_id") or ""),
+                    "role": str(metadata.get("role") or "experiment_run"),
+                    "run_id": edge.to_asset_id,
+                    "artifact_id": None,
+                    "artifact_name": f"{model_id} · {edge.to_asset_id}" if isinstance(model_id, str) and model_id.strip() else edge.to_asset_id,
+                    "asset_type": "experiment_run",
+                    "artifact_version": None,
+                    "target_tab": "Leaderboard",
+                    "target_anchor": "result-readout",
+                    "metadata": metadata if isinstance(metadata, dict) else {},
+                    "created_at": edge.created_at.isoformat(),
+                }
+            )
+        else:
+            artifact = artifacts.get(edge.to_asset_id)
+            links.append(
+                {
+                    "id": edge.id,
+                    "link_type": "artifact",
+                    "revision_id": revision.id,
+                    "node_id": str(metadata.get("node_id") or ""),
+                    "role": str(metadata.get("role") or "evidence"),
+                    "artifact_id": edge.to_asset_id,
+                    "artifact_name": artifact.name if artifact is not None else None,
+                    "asset_type": artifact.asset_type if artifact is not None else None,
+                    "artifact_version": artifact.version if artifact is not None else None,
+                    "metadata": metadata if isinstance(metadata, dict) else {},
+                    "created_at": edge.created_at.isoformat(),
+                }
+            )
     return links
 
 
