@@ -2929,6 +2929,28 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert japanese_alias["blocks"][1]["localization_status"] == "localized"
 
 
+def test_research_plan_timeline_initializes_harness_anchors_when_empty(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Initial plan anchors"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    response = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["revision_author_type"] == "harness"
+    assert payload["contract_validation"]["status"] == "ok"
+    assert [block["id"] for block in payload["blocks"][:4]] == [
+        "data_upload",
+        "objective_framing",
+        "data_understanding",
+        "prior_knowledge_research",
+    ]
+    assert payload["blocks"][0]["status"] == "active"
+    assert payload["blocks"][0]["title"] == "データアップロード"
+    assert payload["blocks"][1]["status"] == "pending"
+
+
 def test_research_plan_tool_substrate_endpoints_expose_codex_owned_progress(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_response = client.post("/api/projects", json={"name": "Plan substrate API"})
@@ -3056,8 +3078,10 @@ def test_research_plan_tool_endpoint_rejects_invalid_done_payload_with_issues(tm
 
     timeline_response = client.get(f"/api/projects/{project_id}/research-plan/timeline")
     assert timeline_response.status_code == 200
-    assert timeline_response.json().get("source_revision_id") is None
-    assert timeline_response.json()["blocks"] == []
+    timeline_payload = timeline_response.json()
+    assert timeline_payload["revision_author_type"] == "harness"
+    assert timeline_payload["blocks"][0]["id"] == "data_upload"
+    assert timeline_payload["blocks"][0]["status"] == "active"
 
 
 def test_research_plan_timeline_uses_artifact_locale_and_codex_display_fields(tmp_path: Path) -> None:

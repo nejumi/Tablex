@@ -92,6 +92,91 @@ def get_or_create_research_plan(db: Session, *, project_id: str) -> ResearchPlan
     return plan
 
 
+def ensure_harness_initial_research_plan_revision(db: Session, *, project_id: str) -> ResearchPlanRevision:
+    existing = latest_research_plan_revision(db, project_id=project_id)
+    if existing is not None:
+        return existing
+    result = commit_research_plan_revision(
+        db,
+        project_id=project_id,
+        document=harness_initial_research_plan_document(project_id=project_id),
+        author_type="harness",
+        reason="Initialize the harness-owned ResearchPlan anchors.",
+        metadata={"source": "harness_initial_research_plan"},
+        strict_validation=True,
+    )
+    return result.revision
+
+
+def harness_initial_research_plan_document(*, project_id: str) -> dict[str, Any]:
+    return {
+        "schema_version": "research_plan.v2",
+        "project_id": project_id,
+        "timeline_blocks": [
+            {
+                "id": "data_upload",
+                "title": "Data upload",
+                "subtitle": "Upload one or more tables and optional relationship evidence.",
+                "granularity": "chapter",
+                "status": "active",
+                "target_tab": "Data",
+                "target_anchor": "dataset-upload",
+                "localizations": {
+                    "ja-JP": {
+                        "title": "データアップロード",
+                        "subtitle": "1つ以上のテーブルと、必要に応じて関係性の根拠をアップロードします。",
+                    }
+                },
+            },
+            {
+                "id": "objective_framing",
+                "title": "Objective and task framing",
+                "subtitle": "Define the prediction, optimization, or analysis objective after seeing the data when needed.",
+                "granularity": "chapter",
+                "status": "pending",
+                "target_tab": "Assumptions",
+                "target_anchor": "assumption-review",
+                "localizations": {
+                    "ja-JP": {
+                        "title": "目的設定",
+                        "subtitle": "必要ならデータを見た後で、予測・最適化・分析の目的を定義します。",
+                    }
+                },
+            },
+            {
+                "id": "data_understanding",
+                "title": "Data understanding",
+                "subtitle": "Understand row semantics, relationships, missingness, leakage risk, and useful hypotheses before modeling.",
+                "granularity": "chapter",
+                "status": "pending",
+                "target_tab": "Data",
+                "target_anchor": "data-focus",
+                "localizations": {
+                    "ja-JP": {
+                        "title": "データ理解",
+                        "subtitle": "モデリング前に、行の意味、関係構造、欠損、漏洩リスク、有用な仮説を理解します。",
+                    }
+                },
+            },
+            {
+                "id": "prior_knowledge_research",
+                "title": "Prior knowledge research",
+                "subtitle": "Collect relevant domain, Kaggle, literature, and Skill context when it can improve the project.",
+                "granularity": "chapter",
+                "status": "pending",
+                "target_tab": "Insight",
+                "target_anchor": "insights",
+                "localizations": {
+                    "ja-JP": {
+                        "title": "従来知見の調査",
+                        "subtitle": "プロジェクトに役立つ場合、ドメイン、Kaggle、文献、Skillの文脈を集めます。",
+                    }
+                },
+            },
+        ],
+    }
+
+
 def commit_research_plan_artifact_revision(
     db: Session,
     *,

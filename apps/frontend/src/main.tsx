@@ -6490,17 +6490,10 @@ function ResearchPlanTimeline({
 }
 
 function buildResearchPlanBlocks({
-  project,
-  datasetCount,
-  artifacts,
-  researchBriefs,
   researchPlanTimeline,
   notebookIndex,
-  equippedSkills,
-  jobs,
   text,
   locale,
-  onTabChange,
   onNavigateToTarget,
   onOpenArtifact
 }: {
@@ -6526,151 +6519,8 @@ function buildResearchPlanBlocks({
     onOpenArtifact,
     notebookIndex
   );
-  const hasObjectiveEvidence = Boolean(project.target_column) || hasAnyArtifactType(artifacts, ["target_definition_proposal"]);
-  const hasUnderstandingCompletionEvidence =
-    hasAnyArtifactType(artifacts, ["data_understanding_complete"]) ||
-    hasReviewableDataUnderstandingNotebook(notebookIndex);
-  const hasUnderstandingWorkEvidence =
-    hasUnderstandingCompletionEvidence ||
-    hasAnyArtifactType(artifacts, ["agent_session_report", "agent_session_research_notebook", "eda_review_report", "understanding_report", "eda_profile"]) ||
-    Boolean(latestAgentAuthoredDataUnderstandingName(artifacts));
-  const hasDataUnderstandingNotebook = artifacts.some(isDataUnderstandingNotebookArtifact);
-  const hasPriorResearchPreparation =
-    researchBriefs.length > 0 ||
-    equippedSkills.length > 0 ||
-    hasAnyArtifactType(artifacts, ["research_plan", "research_source_pack", "research_source_report", "notebook_authoring_brief"]);
-  const noFindingsResearchArtifact = researchNoFindingsArtifact(artifacts);
-  const hasPriorResearchEvidence = hasAnyResolvedResearchArtifact(artifacts);
-  const agentPowerOn = project.current_phase === "AUTONOMOUS_LOOP";
-  const primaryPlanJob = jobs.find((job) => jobActiveForActivity(job)) ?? jobs.find((job) => !isTerminalJob(job)) ?? null;
-  const activeInitialBlockId = agentPowerOn ? activeInitialResearchPlanBlockId(primaryPlanJob) : null;
-  const objectiveDelegatedToCodex =
-    !hasObjectiveEvidence &&
-    datasetCount > 0 &&
-    project.autonomy_mode === "full_auto" &&
-    project.current_phase === "AUTONOMOUS_LOOP";
-  const dataUploadStatus = datasetCount > 0 ? "done" : "pending";
-  const objectiveStatus = hasObjectiveEvidence
-    ? "done"
-    : objectiveDelegatedToCodex
-      ? "skipped"
-    : activeInitialBlockId === "objective"
-      ? "active"
-      : datasetCount > 0
-        ? "pending"
-        : "waiting";
-  const understandingStatus = hasUnderstandingCompletionEvidence
-    ? "done"
-    : activeInitialBlockId === "understanding"
-      ? "active"
-      : datasetCount > 0
-        ? "pending"
-        : "waiting";
-  const priorResearchStatus = hasPriorResearchEvidence
-    ? "done"
-    : activeInitialBlockId === "prior_research"
-      ? "active"
-    : hasPriorResearchPreparation || hasUnderstandingCompletionEvidence
-      ? "pending"
-      : "waiting";
-  const targetDefinitionEvidence = optionalDisplayText(
-    latestArtifactName(artifacts, "target_definition_proposal"),
-    locale,
-    text.planEvidenceObjective
-  );
-  const understandingArtifactEvidence = optionalDisplayText(
-    latestDataUnderstandingNotebookName(artifacts) ??
-      latestAgentAuthoredDataUnderstandingName(artifacts) ??
-      latestArtifactName(artifacts, "understanding_report") ??
-      latestArtifactName(artifacts, "eda_profile") ??
-      latestArtifactName(artifacts, "eda_review_report"),
-    locale,
-    text.planEvidenceUnderstanding
-  );
-  const priorResearchArtifactEvidence = optionalDisplayText(
-    latestArtifactName(artifacts, "research_finding_synthesis") ??
-      latestArtifactName(artifacts, "research_findings_report") ??
-      noFindingsResearchArtifact?.name ??
-      latestArtifactName(artifacts, "research_source_pack"),
-    locale,
-    text.planEvidencePriorResearch
-  );
-
-  const blocks: ResearchPlanBlock[] = [
-    {
-      id: "data_upload",
-      title: text.planBlockDataUpload,
-      subtitle: datasetCount > 0 ? text.planBlockDataUploadDone : text.planBlockDataUploadPending,
-      status: dataUploadStatus,
-      eyebrow: "01",
-      evidence:
-        datasetCount > 0
-          ? localizedObjectCount(datasetCount, "DatasetSnapshot", "DatasetSnapshots", "データスナップショット", locale)
-          : null,
-      onClick: () => onTabChange("Data")
-    },
-    {
-      id: "objective",
-      title: text.planBlockObjective,
-      subtitle: hasObjectiveEvidence
-        ? text.planBlockObjectiveDone
-        : objectiveDelegatedToCodex
-          ? text.planBlockObjectiveSkipped
-          : text.planBlockObjectivePending,
-      status: objectiveStatus,
-      eyebrow: "02",
-      evidence: project.target_column
-        ? `${text.targetLabelShort}: ${project.target_column}`
-        : objectiveDelegatedToCodex
-          ? text.planBlockObjectiveDelegated
-          : targetDefinitionEvidence,
-      onClick: () => onTabChange("Assumptions")
-    },
-    {
-      id: "understanding",
-      title: text.planBlockUnderstanding,
-      subtitle: hasUnderstandingCompletionEvidence
-        ? text.planBlockUnderstandingDone
-        : hasUnderstandingWorkEvidence
-          ? text.planBlockUnderstandingNeedsNotebook
-          : text.planBlockUnderstandingPending,
-      status: understandingStatus,
-      eyebrow: "03",
-      evidence: understandingArtifactEvidence,
-      onClick: () => {
-        if (hasDataUnderstandingNotebook) {
-          onNavigateToTarget("Notebooks", "notebook-preview-top");
-        } else {
-          onTabChange("Data");
-        }
-      }
-    },
-    {
-      id: "prior_research",
-      title: text.planBlockPriorResearch,
-      subtitle: hasPriorResearchEvidence
-        ? noFindingsResearchArtifact
-          ? text.planBlockPriorResearchNoFindings
-          : text.planBlockPriorResearchDone
-        : priorResearchStatus === "active"
-          ? text.planBlockPriorResearchActive
-        : hasPriorResearchPreparation
-          ? text.planBlockPriorResearchPrepared
-          : text.planBlockPriorResearchPending,
-      status: priorResearchStatus,
-      eyebrow: "04",
-      evidence:
-        priorResearchArtifactEvidence ??
-        (equippedSkills.length ? localizedObjectCount(equippedSkills.length, "Skill", "Skills", "スキル", locale) : null) ??
-        (researchBriefs.length ? localizedObjectCount(researchBriefs.length, "brief", "briefs", "ブリーフ", locale) : null),
-      onClick: () => onNavigateToTarget("Notebooks", "notebook-preview-top")
-    }
-  ];
-  const canonicalBlocks = codexAuthoredBlocks.length ? codexAuthoredBlocks : blocks;
-  const blocksWithCurrentWork = applyResearchPlanCurrentWork(canonicalBlocks, researchPlanTimeline?.current_work ?? null);
-  const numberedBlocks = renumberResearchPlanBlocks(blocksWithCurrentWork);
-  if (codexAuthoredBlocks.length) return numberedBlocks;
-  return attachResearchPlanSubtasks(numberedBlocks, jobs, text, locale, onTabChange);
+  const blocksWithCurrentWork = applyResearchPlanCurrentWork(codexAuthoredBlocks, researchPlanTimeline?.current_work ?? null);
+  return renumberResearchPlanBlocks(blocksWithCurrentWork);
 }
 
 function applyResearchPlanCurrentWork(

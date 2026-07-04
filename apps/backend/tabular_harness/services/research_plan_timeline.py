@@ -6,10 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.json import loads_json
-from tabular_harness.models.entities import Artifact, ExperimentRun, utc_now
+from tabular_harness.models.entities import Artifact, ExperimentRun
 from tabular_harness.services.artifacts import artifact_primary_path
 from tabular_harness.services.locales import locale_language
 from tabular_harness.services.research_plans import (
+    ensure_harness_initial_research_plan_revision,
     latest_research_plan_current_work,
     latest_research_plan_revision,
     research_plan_artifact_links,
@@ -67,24 +68,8 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
         .limit(1)
     )
     if artifact is None:
-        return {
-            "schema_version": "research_plan_timeline.v1",
-            "project_id": project_id,
-            "source_artifact_id": None,
-            "response_locale": locale,
-            "generated_at": utc_now().isoformat(),
-            "localization": research_plan_localization_summary([], locale=locale),
-            "contract_validation": research_plan_contract_validation_summary(
-                db,
-                project_id=project_id,
-                payload={"timeline_blocks": []},
-            ),
-            "current_work": research_plan_current_work_payload(
-                latest_research_plan_current_work(db, project_id=project_id)
-            ),
-            "artifact_links": [],
-            "blocks": [],
-        }
+        ensure_harness_initial_research_plan_revision(db, project_id=project_id)
+        return build_research_plan_timeline_response(db, project_id=project_id, locale=locale)
     try:
         payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
     except OSError:
