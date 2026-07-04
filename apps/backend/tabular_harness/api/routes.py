@@ -5681,6 +5681,8 @@ def get_project_agent_activity(
         current_summary = current_focus.get("summary") if current_focus else None
         current_target_tab = current_focus.get("target_tab") if current_focus else None
         current_target_anchor = current_focus.get("target_anchor") if current_focus else None
+        current_artifact_id = current_focus.get("artifact_id") if current_focus else None
+        current_artifact_ids = current_focus.get("artifact_ids") if current_focus else []
         display_name = "自律分析" if japanese else "Autonomous Analyst"
         running_detail = "CodexがProject workspaceで作業中です。" if japanese else "Codex is running in the project workspace now."
         preparing_detail = (
@@ -5744,6 +5746,8 @@ def get_project_agent_activity(
                 "agent_session_id": session.id,
                 "target_tab": current_target_tab or "Home",
                 "target_anchor": current_target_anchor or "agent-workspace",
+                "artifact_id": current_artifact_id,
+                "artifact_ids": current_artifact_ids if isinstance(current_artifact_ids, list) else [],
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
                 "started_at": session.started_at.isoformat() if session.started_at else None,
@@ -5850,11 +5854,10 @@ def latest_agent_session_activity_focus(db: Session, *, project_id: str, session
             continue
         message = payload.get("assistant_message")
         if isinstance(message, str) and message.strip():
-            target_tab, target_anchor = activity_target_from_chat_payload(payload)
+            target = activity_target_from_chat_payload(payload)
             return {
                 "summary": compact_activity_summary(message, limit=limit),
-                "target_tab": target_tab,
-                "target_anchor": target_anchor,
+                **target,
             }
 
     events = list(
@@ -5884,7 +5887,7 @@ def latest_agent_session_activity_summary(db: Session, *, project_id: str, sessi
     return focus.get("summary") if focus else None
 
 
-def activity_target_from_chat_payload(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+def activity_target_from_chat_payload(payload: dict[str, Any]) -> dict[str, Any]:
     actions = payload.get("actions")
     if isinstance(actions, list):
         for action in actions:
@@ -5894,14 +5897,28 @@ def activity_target_from_chat_payload(payload: dict[str, Any]) -> tuple[str | No
             if not isinstance(target_tab, str) or not target_tab.strip():
                 continue
             target_anchor = action.get("target_anchor")
-            return target_tab.strip(), target_anchor.strip() if isinstance(target_anchor, str) and target_anchor.strip() else None
+            artifact_id = action.get("artifact_id")
+            artifact_ids = action.get("artifact_ids")
+            return {
+                "target_tab": target_tab.strip(),
+                "target_anchor": target_anchor.strip() if isinstance(target_anchor, str) and target_anchor.strip() else None,
+                "artifact_id": artifact_id.strip() if isinstance(artifact_id, str) and artifact_id.strip() else None,
+                "artifact_ids": [item for item in artifact_ids if isinstance(item, str) and item.strip()]
+                if isinstance(artifact_ids, list)
+                else [],
+            }
     next_focus = payload.get("next_focus")
     if isinstance(next_focus, dict):
         target_tab = next_focus.get("target_tab")
         if isinstance(target_tab, str) and target_tab.strip():
             target_anchor = next_focus.get("target_anchor")
-            return target_tab.strip(), target_anchor.strip() if isinstance(target_anchor, str) and target_anchor.strip() else None
-    return None, None
+            return {
+                "target_tab": target_tab.strip(),
+                "target_anchor": target_anchor.strip() if isinstance(target_anchor, str) and target_anchor.strip() else None,
+                "artifact_id": None,
+                "artifact_ids": [],
+            }
+    return {"target_tab": None, "target_anchor": None, "artifact_id": None, "artifact_ids": []}
 
 
 def compact_activity_summary(message: str, *, limit: int = 280) -> str:

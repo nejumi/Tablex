@@ -2225,6 +2225,9 @@ type AgentWorkerEvent = {
   project_name?: string | null;
   agent_session_id?: string | null;
   target_tab: string | null;
+  target_anchor?: string | null;
+  artifact_id?: string | null;
+  artifact_ids?: string[];
   created_at?: string;
   updated_at?: string;
   started_at?: string | null;
@@ -5346,6 +5349,16 @@ function ProjectDetail({
           tick={activityTick}
           onWorkerMessage={submitAgentChatWithoutResponse}
           onCancelWorker={cancelWorkerJob}
+          onNavigateToTarget={navigateToTarget}
+          onOpenArtifact={(artifactId, targetTab, anchor) => {
+            setArtifactPreviewRequest({
+              artifactId,
+              targetTab,
+              anchor: anchor ?? null,
+              nonce: Date.now()
+            });
+            navigateToTarget(targetTab, anchor ?? null);
+          }}
         />
       {tab === "Home" && (
         <HomeTab
@@ -8770,7 +8783,9 @@ function AgentActivityRail({
   activity,
   tick,
   onWorkerMessage,
-  onCancelWorker
+  onCancelWorker,
+  onNavigateToTarget,
+  onOpenArtifact
 }: {
   text: LocaleMessages;
   projectName: string;
@@ -8780,6 +8795,8 @@ function AgentActivityRail({
   tick: number;
   onWorkerMessage: (message: string) => Promise<void>;
   onCancelWorker: (jobId: string) => Promise<void>;
+  onNavigateToTarget: (tab: Tab, anchor?: string | null) => void;
+  onOpenArtifact: (artifactId: string, targetTab: Tab, anchor?: string | null) => void;
 }) {
   const [position, setPosition] = React.useState(() => loadAgentActivityPosition());
   const [minimized, setMinimized] = React.useState(() => loadAgentActivityMinimized());
@@ -8909,6 +8926,8 @@ function AgentActivityRail({
               tick={tick}
               onWorkerMessage={onWorkerMessage}
               onCancelWorker={onCancelWorker}
+              onNavigateToTarget={onNavigateToTarget}
+              onOpenArtifact={onOpenArtifact}
             />
           ))}
         </div>
@@ -8960,13 +8979,17 @@ function AgentWorkerCard({
   text,
   tick,
   onWorkerMessage,
-  onCancelWorker
+  onCancelWorker,
+  onNavigateToTarget,
+  onOpenArtifact
 }: {
   event: AgentWorkerEvent;
   text: LocaleMessages;
   tick: number;
   onWorkerMessage: (message: string) => Promise<void>;
   onCancelWorker: (jobId: string) => Promise<void>;
+  onNavigateToTarget: (tab: Tab, anchor?: string | null) => void;
+  onOpenArtifact: (artifactId: string, targetTab: Tab, anchor?: string | null) => void;
 }) {
   const [draft, setDraft] = React.useState("");
   const [cancelling, setCancelling] = React.useState(false);
@@ -8982,6 +9005,20 @@ function AgentWorkerCard({
   const elapsedFrom = event.started_at ?? event.created_at ?? event.updated_at ?? null;
   const elapsed = elapsedFrom ? formatElapsed(Date.parse(elapsedFrom), Date.now() + tick) : "-";
   const canCancel = canCancelWorkerEvent(event);
+  const artifactId = event.artifact_id ?? event.artifact_ids?.[0] ?? null;
+  const explicitNotebookViewer = artifactId && event.target_tab === "Notebooks";
+  const targetTab = explicitNotebookViewer ? "Notebooks" : event.target_tab ? tabFromString(event.target_tab, "Home") : null;
+  const targetLabel = targetTab
+    ? `${text.openSurface} ${tabLabel(targetTab, text)}${event.target_anchor ? ` · ${surfaceLabel(event.target_anchor)}` : ""}`
+    : text.openSurface;
+  function openTarget() {
+    if (!targetTab) return;
+    if (artifactId) {
+      onOpenArtifact(artifactId, targetTab, event.target_anchor ?? null);
+      return;
+    }
+    onNavigateToTarget(targetTab, event.target_anchor ?? null);
+  }
 
   async function submit(eventSubmit: React.FormEvent) {
     eventSubmit.preventDefault();
@@ -9007,6 +9044,16 @@ function AgentWorkerCard({
         <strong>{event.display_name}</strong>
         <div className="agent-worker-actions">
           <span className={isLive ? "live" : isWaiting ? "waiting" : ""}>{workerStatusLabel(event.status, text)}</span>
+          {targetTab ? (
+            <button
+              className="icon-button agent-worker-open"
+              onClick={openTarget}
+              title={targetLabel}
+              type="button"
+            >
+              <Eye size={14} />
+            </button>
+          ) : null}
           {canCancel ? (
             <button
               className="agent-worker-cancel"
