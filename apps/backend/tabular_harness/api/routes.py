@@ -5814,6 +5814,7 @@ def latest_agent_session_activity_summary(db: Session, *, project_id: str, sessi
     accepted_chat_sources = {
         "main_codex_session_chat_update",
         "main_agent_session_attention",
+        "main_agent_session_experiment_registration",
         "main_agent_session_notebook_update",
     }
     chat_artifacts = list(
