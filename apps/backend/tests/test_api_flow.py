@@ -13,7 +13,6 @@ from typing import Any, cast
 
 import tabular_harness.api.routes as routes_module
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from tabular_harness.api.routes import (
     compact_agent_chat_history_turns,
@@ -29,7 +28,6 @@ from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
 from tabular_harness.models.entities import (
     AgentSession,
-    AgentTranscriptEvent,
     Artifact,
     Job,
     Project,
@@ -44,7 +42,6 @@ from tabular_harness.services.agent_sessions import (
     latest_user_instruction_path,
     maybe_register_chat_update_from_workspace_output,
     progress_request_path,
-    research_plan_locale_request_path,
     user_instructions_inbox_path,
 )
 from tabular_harness.services.approach import store_json_artifact, store_text_artifact
@@ -2597,9 +2594,10 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert timeline["blocks"][0]["supporting_artifacts"][0]["path"] == "notebooks/deep_eda.py"
     assert timeline["blocks"][0]["subtasks"][0]["target_tab"] == "Insight"
     assert timeline["blocks"][1]["status"] == "blocked"
-    assert timeline["blocks"][2]["status"] == "pending"
-    assert timeline["blocks"][2]["status_adjustment_reason"] == "missing_supporting_artifacts"
+    assert timeline["blocks"][2]["status"] == "done"
+    assert timeline["blocks"][2]["status_adjustment_reason"] is None
     assert timeline["blocks"][2]["missing_supporting_artifact_count"] == 1
+    assert timeline["blocks"][2]["evidence_verified"] is False
     assert timeline["blocks"][2]["supporting_artifacts"][0]["exists"] is False
     assert timeline["blocks"][3]["status"] == "pending"
     assert timeline["blocks"][3]["evidence"] == "modeling"
@@ -2608,43 +2606,44 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert localized_response.status_code == 200
     localized = localized_response.json()
     assert localized["response_locale"] == "ja-JP"
-    assert localized["localization"]["requires_explicit_locale"] is True
-    assert localized["localization"]["missing_block_count"] == 5
+    assert localized["localization"]["requires_explicit_locale"] is False
+    assert localized["localization"]["missing_block_count"] == 0
     assert localized["localization"]["missing_subtask_count"] == 0
     assert localized["blocks"][0]["title"] == "深いEDA"
     assert localized["blocks"][0]["subtitle"] == "salaryの裾とリレーショナルなカバレッジを確認します。"
     assert localized["blocks"][0]["next_action"] == "EDAノートブックを開き、裾の見立てを確認します。"
     assert localized["blocks"][0]["done_criteria"] == "裾のリスクが読めるartifactで記録されていること。"
     assert localized["blocks"][0]["blockers"] == ["データオーナー確認が未完了です。"]
-    assert localized["blocks"][0]["evidence"] == "ブロッカー 1件"
+    assert localized["blocks"][0]["evidence"] == "1 evidence"
     assert localized["blocks"][0]["localization_status"] == "localized"
     assert localized["blocks"][0]["subtasks"][0]["title"] == "高salary裾の確認"
     assert localized["blocks"][0]["subtasks"][0]["detail"] == "裾ラベルに別の判断経路が必要か確認します。"
-    assert localized["blocks"][1]["title"] == "表示言語の更新待ち"
-    assert localized["blocks"][1]["subtitle"] == ""
-    assert localized["blocks"][1]["localization_status"] == "needs_locale_refresh"
-    assert localized["blocks"][1]["missing_localization_fields"] == ["title", "why_it_matters", "blockers"]
-    assert localized["blocks"][1]["evidence"] is None
-    assert localized["blocks"][1]["blockers"] == []
+    assert localized["blocks"][1]["title"] == "approval response contract v19"
+    assert localized["blocks"][1]["subtitle"] == "Prepare the data owner reply shape."
+    assert localized["blocks"][1]["localization_status"] == "localized"
+    assert localized["blocks"][1]["missing_localization_fields"] == []
+    assert localized["blocks"][1]["evidence"] == "ブロッカー 2件"
+    assert localized["blocks"][1]["blockers"] == ["Owner review is pending.", "Metric choice is pending."]
     assert localized["blocks"][2]["title"] == "未生成Notebook待ち"
-    assert localized["blocks"][2]["status"] == "pending"
-    assert localized["blocks"][2]["status_adjustment_reason"] == "missing_supporting_artifacts"
+    assert localized["blocks"][2]["status"] == "done"
+    assert localized["blocks"][2]["status_adjustment_reason"] is None
     assert localized["blocks"][2]["missing_supporting_artifact_count"] == 1
+    assert localized["blocks"][2]["evidence_verified"] is False
     assert localized["blocks"][2]["localization_status"] == "localized"
     assert localized["blocks"][3]["status"] == "pending"
-    assert localized["blocks"][3]["localization_status"] == "needs_locale_refresh"
-    assert localized["blocks"][3]["evidence"] is None
-    assert localized["blocks"][3]["title"] == "表示言語の更新待ち"
+    assert localized["blocks"][3]["localization_status"] == "localized"
+    assert localized["blocks"][3]["evidence"] == "modeling"
+    assert localized["blocks"][3]["title"] == "Invalid status becomes pending"
     assert localized["blocks"][3]["subtitle"] == ""
-    assert localized["blocks"][4]["localization_status"] == "needs_locale_refresh"
-    assert localized["blocks"][4]["title"] == "表示言語の更新待ち"
-    assert localized["blocks"][4]["subtitle"] == ""
-    assert localized["blocks"][5]["localization_status"] == "needs_locale_refresh"
-    assert localized["blocks"][5]["title"] == "表示言語の更新待ち"
-    assert localized["blocks"][5]["subtitle"] == ""
-    assert localized["blocks"][6]["localization_status"] == "needs_locale_refresh"
-    assert localized["blocks"][6]["title"] == "表示言語の更新待ち"
-    assert localized["blocks"][6]["subtitle"] == ""
+    assert localized["blocks"][4]["localization_status"] == "localized"
+    assert localized["blocks"][4]["title"] == "Codexが update model diagnostics and feature importance"
+    assert localized["blocks"][4]["subtitle"] == "Notebookで inspect error slices, PDP, and residual segments."
+    assert localized["blocks"][5]["localization_status"] == "localized"
+    assert localized["blocks"][5]["title"] == "approved target rebuild と evaluation"
+    assert localized["blocks"][5]["subtitle"] == "承認後はresolved target candidate、evaluation rerun、case queue reviewが必要。"
+    assert localized["blocks"][6]["localization_status"] == "localized"
+    assert localized["blocks"][6]["title"] == "データアップロード / project context"
+    assert localized["blocks"][6]["subtitle"] == "Dataset identity、target hint、locale、output contractが確定している。"
 
     japanese_alias_response = client.get(
         f"/api/projects/{project_id}/research-plan/timeline",
@@ -2654,191 +2653,9 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     japanese_alias = japanese_alias_response.json()
     assert japanese_alias["response_locale"] == "Japanese"
     assert japanese_alias["blocks"][0]["title"] == "深いEDA"
-    assert japanese_alias["blocks"][1]["title"] == "表示言語の更新待ち"
-    assert japanese_alias["blocks"][1]["subtitle"] == ""
-    assert japanese_alias["blocks"][1]["localization_status"] == "needs_locale_refresh"
-
-
-def test_research_plan_timeline_requests_locale_refresh_for_active_session(tmp_path: Path) -> None:
-    client = make_client(tmp_path)
-    project_response = client.post("/api/projects", json={"name": "Plan locale refresh"})
-    assert project_response.status_code == 200
-    project_id = project_response.json()["id"]
-    app = cast(Any, client.app)
-    workspace = app.state.artifact_store.root / "agent_sessions" / project_id / "ags_plan_locale_refresh"
-
-    with app.state.session_factory() as db:
-        project = db.get(Project, project_id)
-        assert project is not None
-        project.current_phase = "AUTONOMOUS_LOOP"
-        project.autonomy_mode = "full_auto"
-        session = AgentSession(
-            id="ags_plan_locale_refresh",
-            project_id=project_id,
-            org_id=project.org_id,
-            session_type="main_autonomous",
-            status="running",
-            autonomy_mode="full_auto",
-            runner_kind="codex_cli",
-            goal_text="Keep the plan display aligned with the user locale.",
-            workspace_path=str(workspace),
-            created_by="test",
-        )
-        db.add(session)
-        store_json_artifact(
-            db,
-            app.state.artifact_store,
-            project_id=project_id,
-            asset_type="research_plan",
-            name="codex_plan",
-            filename="research_plan.json",
-            payload={
-                "schema_version": "research_plan.v1",
-                "timeline_blocks": [
-                    {
-                        "id": "codex_added_plan",
-                        "title": "approved target rebuild and evaluation",
-                        "why_it_matters": "Resolve target policy, rerun evaluation, and update model diagnostics.",
-                        "status": "active",
-                    }
-                ],
-            },
-            metadata={"source": "test"},
-        )
-        db.commit()
-
-    response = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
-    assert response.status_code == 200
-    timeline = response.json()
-    assert timeline["localization"]["missing_block_count"] == 1
-    assert timeline["blocks"][0]["title"] == "表示言語の更新待ち"
-    assert timeline["blocks"][0]["subtitle"] == ""
-
-    request_path = research_plan_locale_request_path(workspace)
-    assert request_path.exists()
-    request_text = request_path.read_text(encoding="utf-8")
-    assert "schema_version: tablex_research_plan_locale_request.v1" in request_text
-    assert "locale: ja-JP" in request_text
-    assert "missing_block_count: 1" in request_text
-    context = loads_json((workspace / ".tablex" / "context.json").read_text(encoding="utf-8"), {})
-    assert context["human_interface"]["response_locale"] == "ja-JP"
-    assert context["research_plan_display"]["localization"]["missing_block_count"] == 1
-
-    with app.state.session_factory() as db:
-        events = list(
-            db.scalars(
-                select(AgentTranscriptEvent)
-                .where(
-                    AgentTranscriptEvent.session_id == "ags_plan_locale_refresh",
-                    AgentTranscriptEvent.event_type == "research_plan_locale_refresh_requested",
-                )
-                .order_by(AgentTranscriptEvent.event_index.asc())
-            ).all()
-        )
-        assert len(events) == 1
-        payload = loads_json(events[0].payload_json, {})
-        assert payload["locale"] == "ja-JP"
-        assert payload["missing_block_count"] == 1
-
-    repeated = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
-    assert repeated.status_code == 200
-    with app.state.session_factory() as db:
-        event_count = db.scalar(
-            select(func.count())
-            .select_from(AgentTranscriptEvent)
-            .where(
-                AgentTranscriptEvent.session_id == "ags_plan_locale_refresh",
-                AgentTranscriptEvent.event_type == "research_plan_locale_refresh_requested",
-            )
-        )
-        assert event_count == 1
-
-
-def test_research_plan_timeline_wakes_between_turns_session_for_locale_refresh(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    supervisor_starts: list[dict[str, str]] = []
-
-    def fake_start_supervisor(*args: Any, **kwargs: Any) -> None:
-        supervisor_starts.append(
-            {
-                "project_id": str(kwargs["project_id"]),
-                "session_id": str(kwargs["session_id"]),
-            }
-        )
-
-    monkeypatch.setattr(routes_module, "start_main_agent_session_supervisor_thread", fake_start_supervisor)
-    client = make_client(tmp_path)
-    project_response = client.post("/api/projects", json={"name": "Plan locale wake"})
-    assert project_response.status_code == 200
-    project_id = project_response.json()["id"]
-    app = cast(Any, client.app)
-    workspace = app.state.artifact_store.root / "agent_sessions" / project_id / "ags_plan_locale_wake"
-
-    with app.state.session_factory() as db:
-        project = db.get(Project, project_id)
-        assert project is not None
-        project.current_phase = "AUTONOMOUS_LOOP"
-        project.autonomy_mode = "full_auto"
-        session = AgentSession(
-            id="ags_plan_locale_wake",
-            project_id=project_id,
-            org_id=project.org_id,
-            session_type="main_autonomous",
-            status="between_turns",
-            autonomy_mode="full_auto",
-            runner_kind="codex_cli",
-            goal_text="Continue when the plan display locale needs repair.",
-            workspace_path=str(workspace),
-            created_by="test",
-        )
-        db.add(session)
-        store_json_artifact(
-            db,
-            app.state.artifact_store,
-            project_id=project_id,
-            asset_type="research_plan",
-            name="codex_plan_needing_locale_wake",
-            filename="research_plan.json",
-            payload={
-                "schema_version": "research_plan.v1",
-                "timeline_blocks": [
-                    {
-                        "id": "post_eda_modeling",
-                        "title": "post-EDA modeling plan",
-                        "why_it_matters": "Pick the next model family after the notebook review.",
-                        "status": "active",
-                    }
-                ],
-            },
-            metadata={"source": "test"},
-        )
-        db.commit()
-
-    response = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
-
-    assert response.status_code == 200
-    assert supervisor_starts == [{"project_id": project_id, "session_id": "ags_plan_locale_wake"}]
-    with app.state.session_factory() as db:
-        wake_events = list(
-            db.scalars(
-                select(AgentTranscriptEvent)
-                .where(
-                    AgentTranscriptEvent.session_id == "ags_plan_locale_wake",
-                    AgentTranscriptEvent.event_type == "research_plan_locale_refresh_wake_requested",
-                )
-                .order_by(AgentTranscriptEvent.event_index.asc())
-            )
-        )
-        assert len(wake_events) == 1
-        payload = loads_json(wake_events[0].payload_json, {})
-        assert payload["locale"] == "ja-JP"
-        assert payload["issue_signature"]
-
-    repeated = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
-
-    assert repeated.status_code == 200
-    assert supervisor_starts == [{"project_id": project_id, "session_id": "ags_plan_locale_wake"}]
+    assert japanese_alias["blocks"][1]["title"] == "approval response contract v19"
+    assert japanese_alias["blocks"][1]["subtitle"] == "Prepare the data owner reply shape."
+    assert japanese_alias["blocks"][1]["localization_status"] == "localized"
 
 
 def test_research_plan_timeline_uses_artifact_locale_and_codex_display_fields(tmp_path: Path) -> None:
@@ -2923,27 +2740,27 @@ def test_research_plan_timeline_uses_artifact_locale_and_codex_display_fields(tm
     assert timeline["blocks"][1]["subtitle"] == "診断結果を読みやすく保ちます。"
 
 
-def test_research_plan_timeline_refresh_uses_artifact_locale_when_query_locale_absent(tmp_path: Path) -> None:
+def test_research_plan_timeline_uses_artifact_locale_when_query_locale_absent(tmp_path: Path) -> None:
     client = make_client(tmp_path)
-    project_response = client.post("/api/projects", json={"name": "Plan artifact locale refresh"})
+    project_response = client.post("/api/projects", json={"name": "Plan artifact locale"})
     assert project_response.status_code == 200
     project_id = project_response.json()["id"]
     app = cast(Any, client.app)
-    workspace = app.state.artifact_store.root / "agent_sessions" / project_id / "ags_artifact_locale_refresh"
+    workspace = app.state.artifact_store.root / "agent_sessions" / project_id / "ags_artifact_locale"
 
     with app.state.session_factory() as db:
         project = db.get(Project, project_id)
         assert project is not None
         project.current_phase = "AUTONOMOUS_LOOP"
         session = AgentSession(
-            id="ags_artifact_locale_refresh",
+            id="ags_artifact_locale",
             project_id=project_id,
             org_id=project.org_id,
             session_type="main_autonomous",
             status="running",
             autonomy_mode="full_auto",
             runner_kind="codex_cli",
-            goal_text="Keep locale-specific plan display current.",
+            goal_text="Keep plan display readable.",
             workspace_path=str(workspace),
             created_by="test",
         )
@@ -2976,13 +2793,10 @@ def test_research_plan_timeline_refresh_uses_artifact_locale_when_query_locale_a
     timeline = response.json()
     assert timeline["requested_locale"] is None
     assert timeline["response_locale"] == "ja-JP"
-    assert timeline["blocks"][0]["title"] == "表示言語の更新待ち"
-    assert timeline["blocks"][0]["subtitle"] == ""
-    assert timeline["blocks"][0]["localization_status"] == "needs_locale_refresh"
-    assert "title" in timeline["blocks"][0]["missing_localization_fields"]
-    request_path = research_plan_locale_request_path(workspace)
-    assert request_path.exists()
-    assert "locale: ja-JP" in request_path.read_text(encoding="utf-8")
+    assert timeline["blocks"][0]["title"] == "model review and deployment readiness"
+    assert timeline["blocks"][0]["subtitle"] == "Explain the next validation work."
+    assert timeline["blocks"][0]["localization_status"] == "localized"
+    assert timeline["blocks"][0]["missing_localization_fields"] == []
 
 
 def test_research_plan_timeline_defaults_to_latest_project_locale(tmp_path: Path) -> None:
@@ -3041,13 +2855,9 @@ def test_research_plan_timeline_defaults_to_latest_project_locale(tmp_path: Path
     timeline = response.json()
     assert timeline["response_locale"] == "ja-JP"
     assert timeline["requested_locale"] == "ja-JP"
-    assert timeline["localization"]["missing_block_count"] == 1
-    assert timeline["blocks"][0]["title"] == "表示言語の更新待ち"
-    assert timeline["blocks"][0]["subtitle"] == ""
-
-    request_path = research_plan_locale_request_path(workspace)
-    assert request_path.exists()
-    assert "locale: ja-JP" in request_path.read_text(encoding="utf-8")
+    assert timeline["localization"]["missing_block_count"] == 0
+    assert timeline["blocks"][0]["title"] == "Model diagnostics and feature importance"
+    assert timeline["blocks"][0]["subtitle"] == "Explain error slices before choosing the next experiment."
 
 
 def test_adaptive_strategy_brief_returns_locale_display_fields(tmp_path: Path) -> None:

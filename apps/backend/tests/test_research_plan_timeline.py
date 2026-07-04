@@ -6,7 +6,7 @@ from tabular_harness.services.research_plan_timeline import (
 )
 
 
-def test_research_plan_timeline_masks_partially_localized_blocks() -> None:
+def test_research_plan_timeline_preserves_codex_authored_text_without_locale_masking() -> None:
     raw_blocks = [
         {
             "id": "feature_availability_audit_v22",
@@ -21,15 +21,16 @@ def test_research_plan_timeline_masks_partially_localized_blocks() -> None:
     summary = research_plan_localization_summary(raw_blocks, locale="ja-JP")
     blocks = clean_research_plan_timeline_blocks(raw_blocks, locale="ja-JP")
 
-    assert summary["missing_block_count"] == 1
-    assert blocks[0]["title"] == "表示言語の更新待ち"
-    assert blocks[0]["subtitle"] == ""
-    assert blocks[0]["next_action"] is None
-    assert blocks[0]["blockers"] == []
-    assert blocks[0]["localization_status"] == "needs_locale_refresh"
+    assert summary["requires_explicit_locale"] is False
+    assert summary["missing_block_count"] == 0
+    assert blocks[0]["title"] == "feature availability and leakage surface audit v22"
+    assert blocks[0]["subtitle"] == "target policy承認待ちの間に、安全に使える入力列を整理する。"
+    assert blocks[0]["next_action"] == "Use this matrix before the post-approval rebuild."
+    assert blocks[0]["blockers"] == ["data owner approval is pending"]
+    assert blocks[0]["localization_status"] == "localized"
 
 
-def test_research_plan_timeline_uses_explicit_localized_display() -> None:
+def test_research_plan_timeline_uses_explicit_localized_display_when_codex_supplies_it() -> None:
     raw_blocks = [
         {
             "id": "feature_availability_audit_v22",
@@ -95,7 +96,7 @@ def test_research_plan_timeline_accepts_human_locale_alias_keys() -> None:
     assert blocks[0]["subtasks"][0]["detail"] == "高salaryセグメントを確認します。"
 
 
-def test_research_plan_timeline_masks_codex_added_mixed_english_blocks() -> None:
+def test_research_plan_timeline_keeps_mixed_language_blocks_visible() -> None:
     raw_blocks = [
         {
             "id": "data_upload",
@@ -112,76 +113,32 @@ def test_research_plan_timeline_masks_codex_added_mixed_english_blocks() -> None
             "done_criteria": "approval response schema/template/options exist.",
             "status": "active",
         },
-        {
-            "id": "registration_packet_supplement_v44",
-            "title": "registration packet supplement v44",
-            "why_it_matters": "登録候補の追加根拠をまとめる。",
-            "status": "pending",
-        },
     ]
 
     summary = research_plan_localization_summary(raw_blocks, locale="ja-JP")
     blocks = clean_research_plan_timeline_blocks(raw_blocks, locale="ja-JP")
 
-    assert summary["missing_block_count"] == 3
-    assert {block["title"] for block in blocks} == {"表示言語の更新待ち"}
-    assert all(block["subtitle"] == "" for block in blocks)
-    assert all(block["localization_status"] == "needs_locale_refresh" for block in blocks)
-    assert all(block["next_action"] is None for block in blocks)
+    assert summary["missing_block_count"] == 0
+    assert blocks[0]["title"] == "データアップロード / project context"
+    assert blocks[0]["subtitle"] == "Dataset identity、target hint、locale、output contractが確定している。"
+    assert blocks[0]["done_criteria"] == "context and GOAL are available."
+    assert blocks[1]["title"] == "approval response contract v19"
+    assert blocks[1]["next_action"] == "Apply the response after owner approval."
 
 
-def test_research_plan_timeline_treats_human_japanese_locale_labels_as_japanese() -> None:
+def test_research_plan_timeline_does_not_rewrite_done_status_for_missing_supporting_artifacts() -> None:
     raw_blocks = [
         {
-            "id": "codex_added_modeling",
-            "title": "Model diagnostics and feature importance",
-            "why_it_matters": "Explain error slices before choosing the next experiment.",
-            "status": "active",
-        },
-        {
-            "id": "localized_modeling",
-            "title": "モデル診断を深掘りする",
-            "why_it_matters": "次の実験を選ぶ前に誤差スライスを確認します。",
-            "status": "pending",
-        },
+            "id": "data_understanding",
+            "title": "Data understanding",
+            "status": "done",
+            "supporting_artifacts": [{"path": "notebooks/grandmaster_eda.py", "exists": False}],
+        }
     ]
 
-    summary = research_plan_localization_summary(raw_blocks, locale="Japanese / 日本語")
-    blocks = clean_research_plan_timeline_blocks(raw_blocks, locale="Japanese / 日本語")
-
-    assert summary["requires_explicit_locale"] is True
-    assert summary["missing_block_count"] == 1
-    assert blocks[0]["title"] == "表示言語の更新待ち"
-    assert blocks[0]["subtitle"] == ""
-    assert blocks[0]["localization_status"] == "needs_locale_refresh"
-    assert blocks[1]["title"] == "モデル診断を深掘りする"
-    assert blocks[1]["subtitle"] == "次の実験を選ぶ前に誤差スライスを確認します。"
-    assert blocks[1]["localization_status"] == "localized"
-
-
-def test_research_plan_timeline_masks_japanese_blocks_for_english_display() -> None:
-    raw_blocks = [
-        {
-            "id": "objective_task_framing",
-            "title": "目的・タスク定義",
-            "why_it_matters": "salary予測の目的を確認します。",
-            "status": "active",
-        },
-        {
-            "id": "model_review",
-            "title": "Model review",
-            "why_it_matters": "Compare the current run evidence.",
-            "status": "pending",
-        },
-    ]
-
-    summary = research_plan_localization_summary(raw_blocks, locale="en-US")
     blocks = clean_research_plan_timeline_blocks(raw_blocks, locale="en-US")
 
-    assert summary["missing_block_count"] == 1
-    assert blocks[0]["title"] == "Display language refresh pending"
-    assert blocks[0]["subtitle"] == ""
-    assert blocks[0]["localization_status"] == "needs_locale_refresh"
-    assert blocks[1]["title"] == "Model review"
-    assert blocks[1]["subtitle"] == "Compare the current run evidence."
-    assert blocks[1]["localization_status"] == "localized"
+    assert blocks[0]["status"] == "done"
+    assert blocks[0]["missing_supporting_artifact_count"] == 1
+    assert blocks[0]["evidence_verified"] is False
+    assert blocks[0]["status_adjustment_reason"] is None

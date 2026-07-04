@@ -438,9 +438,9 @@ const englishMessages = {
   researchPlanDetailDoneCriteria: "Done criteria",
   researchPlanDetailBlockers: "Blockers",
   researchPlanDetailEvidence: "Evidence",
-  researchPlanDetailLocaleRefresh: "Display language",
-  researchPlanLocaleRefreshDetail: "Codex needs to refresh this plan block in the selected locale.",
-  researchPlanBlockLocaleRefreshTitle: "Display language refresh pending",
+  researchPlanDetailFallback: "Detail",
+  researchPlanFallbackDetail: "",
+  researchPlanUntitledBlockTitle: "Untitled block",
   researchPlanSummaryBlock: "block",
   researchPlanSummaryBlocks: "blocks",
   planEvidenceObjective: "objective evidence",
@@ -464,9 +464,6 @@ const englishMessages = {
   planBlockPriorResearchPrepared: "Research context is prepared, but retrieved findings and a readable notebook are not registered yet.",
   planBlockPriorResearchDone: "Research or Skill evidence is available.",
   planBlockPriorResearchNoFindings: "Codex researched or reviewed this step and found no additional external findings worth adding.",
-  planBlockCodexLane: "Codex work",
-  planBlockCodexRunning: "Codex is working in this project workspace.",
-  planBlockCodexWaiting: "Codex session is ready; the next live turn will appear here.",
   strategyActionUploadData: "Upload data",
   strategyActionUploadDataReason: "A project-specific strategy needs at least one DatasetSnapshot.",
   strategyActionExploreObjective: "Explore objective candidates",
@@ -507,8 +504,8 @@ const englishMessages = {
   ideasAndFindingsReady: "signals worth opening",
   memoryKindIdea: "Idea",
   memoryKindFinding: "Finding",
-  memoryLocaleRefreshTitle: "Display language refresh pending",
-  memoryLocaleRefreshSummary: "Codex needs to refresh these signals in the selected language before they are shown on Home.",
+  memoryUntitledSignalTitle: "Untitled signal",
+  memoryNoSummary: "No summary is available yet.",
   memoryOpenIdea: "Open this exact idea",
   memoryOpenFinding: "Open this exact finding",
   memoryOpenNotebookEvidence: "Open notebook evidence",
@@ -1108,9 +1105,9 @@ const japaneseMessages: LocaleMessages = {
   researchPlanDetailDoneCriteria: "完了条件",
   researchPlanDetailBlockers: "止めているもの",
   researchPlanDetailEvidence: "根拠",
-  researchPlanDetailLocaleRefresh: "表示言語",
-  researchPlanLocaleRefreshDetail: "Codexがこの計画ブロックを選択中の言語で更新する必要があります。",
-  researchPlanBlockLocaleRefreshTitle: "表示言語の更新待ち",
+  researchPlanDetailFallback: "詳細",
+  researchPlanFallbackDetail: "",
+  researchPlanUntitledBlockTitle: "無題のブロック",
   researchPlanSummaryBlock: "ブロック",
   researchPlanSummaryBlocks: "ブロック",
   planEvidenceObjective: "目的根拠",
@@ -1134,9 +1131,6 @@ const japaneseMessages: LocaleMessages = {
   planBlockPriorResearchPrepared: "調査コンテキストは準備済みですが、取得済みの知見と読めるNotebookはまだ登録されていません。",
   planBlockPriorResearchDone: "取得済みの調査知見と根拠があります。",
   planBlockPriorResearchNoFindings: "Codexが調査または確認し、追加すべき外部知見はないと判断しました。",
-  planBlockCodexLane: "Codex作業",
-  planBlockCodexRunning: "Codexがこのプロジェクトのworkspaceで作業中です。",
-  planBlockCodexWaiting: "Codex sessionは準備済みです。次の実行ターンがここに表示されます。",
   strategyActionUploadData: "データをアップロード",
   strategyActionUploadDataReason: "Project固有のstrategyには少なくとも1つのDatasetSnapshotが必要です。",
   strategyActionExploreObjective: "目的候補を探索",
@@ -1177,8 +1171,8 @@ const japaneseMessages: LocaleMessages = {
   ideasAndFindingsReady: "件の開くべきシグナル",
   memoryKindIdea: "アイデア",
   memoryKindFinding: "発見",
-  memoryLocaleRefreshTitle: "表示言語の更新待ち",
-  memoryLocaleRefreshSummary: "Homeに表示する前に、Codexがこのシグナルを選択中の言語で更新する必要があります。",
+  memoryUntitledSignalTitle: "無題のシグナル",
+  memoryNoSummary: "要約はまだありません。",
   memoryOpenIdea: "このアイデアを開く",
   memoryOpenFinding: "この発見を開く",
   memoryOpenNotebookEvidence: "Notebook根拠を開く",
@@ -1645,36 +1639,10 @@ function localeRequiresLocalizedDisplay(locale: string | null | undefined): bool
   return Boolean(language);
 }
 
-const allowedInlineLatinTermsPattern =
-  /\b(?:AI|API|CSV|DB|EDA|ER|HTML|ID|IME|JSON|JSONL|ML|PDP|QA|Raw|SQL|TFIDF|TF-IDF|UI|UX|XGBoost|arXiv|artifact|asset|band|baseline|boundary|case|catalog|chat|dataset|diagnostics|dry-run|evidence|fallback|feature|gate|hash|high-tail|interval|job|join|leakage|locale|log|marimo|metric|monitoring|notebook|override|policy|profile|rebuild|registration|report|risk|runner|salary|schema|skill|split|target|text|workflow|workspace)\b/gi;
-
 function displayTextMatchesLocale(value: string | null | undefined, locale: string | null | undefined): boolean {
+  void locale;
   const text = (value ?? "").trim();
-  if (!text) return false;
-  if (!localeRequiresLocalizedDisplay(locale)) return true;
-  if (localeLanguage(locale) === "en") {
-    return !/[\u3040-\u30ff\u3400-\u9fff]/.test(text);
-  }
-  if (localeLooksJapanese(locale)) {
-    const japaneseCharCount = text.match(/[\u3040-\u30ff\u3400-\u9fff]/g)?.length ?? 0;
-    const latinSafeText = text.replace(allowedInlineLatinTermsPattern, " ");
-    const latinLetterCount = latinSafeText.match(/[A-Za-z]/g)?.length ?? 0;
-    if (hasUnlocalizedLatinPhrase(text)) return false;
-    return japaneseCharCount >= 2 && latinLetterCount <= Math.max(18, Math.floor(japaneseCharCount * 1.5));
-  }
-  return false;
-}
-
-function hasUnlocalizedLatinPhrase(value: string): boolean {
-  const stripped = value.replace(/`[^`]*`/g, " ").replace(/https?:\/\/\S+/g, " ");
-  return stripped
-    .split(/[\u3040-\u30ff\u3400-\u9fff]+/)
-    .some((fragment) => {
-      const words = fragment.match(/\b[A-Za-z][A-Za-z-]{2,}\b/g) ?? [];
-      if (words.length < 2) return false;
-      const remainingWords = fragment.replace(allowedInlineLatinTermsPattern, " ").match(/\b[A-Za-z][A-Za-z-]{2,}\b/g) ?? [];
-      return remainingWords.length >= 2;
-    });
+  return Boolean(text);
 }
 
 function localeSafeDisplayText(value: string | null | undefined, locale: string | null | undefined, fallback: string): string {
@@ -2711,7 +2679,7 @@ type ResearchPlanTimelineBlock = {
   }>;
   missing_supporting_artifact_count?: number;
   status_adjustment_reason?: string | null;
-  localization_status?: "localized" | "needs_locale_refresh";
+  localization_status?: "localized";
   missing_localization_fields?: string[];
   subtasks: Array<{
     id: string;
@@ -2721,7 +2689,7 @@ type ResearchPlanTimelineBlock = {
     evidence: string | null;
     target_tab: string | null;
     target_anchor: string | null;
-    localization_status?: "localized" | "needs_locale_refresh";
+    localization_status?: "localized";
     missing_localization_fields?: string[];
   }>;
 };
@@ -5914,12 +5882,12 @@ function HomeTab({
           {latestBrief ? (
             <div className="mission-note">
               <span>{text.latestBriefLabel}</span>
-              <strong>{localeSafeDisplayText(latestBrief.title, locale, text.memoryLocaleRefreshTitle)}</strong>
+              <strong>{localeSafeDisplayText(latestBrief.title, locale, text.memoryUntitledSignalTitle)}</strong>
               <small>
                 {localeSafeDisplayText(
                   latestBrief.key_findings.slice(0, 2).join(" / ") || latestBrief.status,
                   locale,
-                  text.memoryLocaleRefreshSummary
+                  text.memoryNoSummary
                 )}
               </small>
             </div>
@@ -5927,8 +5895,8 @@ function HomeTab({
           {latestIdea ? (
             <div className="mission-note">
               <span>{text.latestIdeaLabel}</span>
-              <strong>{localeSafeDisplayText(latestIdea.title, locale, text.memoryLocaleRefreshTitle)}</strong>
-              <small>{localeSafeDisplayText(latestIdea.hypothesis, locale, text.memoryLocaleRefreshSummary)}</small>
+              <strong>{localeSafeDisplayText(latestIdea.title, locale, text.memoryUntitledSignalTitle)}</strong>
+              <small>{localeSafeDisplayText(latestIdea.hypothesis, locale, text.memoryNoSummary)}</small>
             </div>
           ) : null}
           <SkillManagerPanel
@@ -6292,7 +6260,7 @@ function ResearchPlanTimeline({
     <div className="research-plan-timeline-wrap">
       <div className="research-plan-timeline" aria-label={text.researchPlanTitle} ref={timelineRef}>
         {blocks.map((block, index) => {
-          const displayTitle = localeSafeDisplayText(block.title, locale, text.researchPlanBlockLocaleRefreshTitle);
+          const displayTitle = localeSafeDisplayText(block.title, locale, text.researchPlanSummaryBlock);
           const displaySubtitle = block.subtitle ? localeSafeDisplayText(block.subtitle, locale, "") : "";
           return (
             <React.Fragment key={block.id}>
@@ -6330,7 +6298,7 @@ function ResearchPlanTimeline({
       {expandedBlock ? (
         <div className="research-plan-subtasks">
           <div className="research-plan-subtasks-head">
-            <strong>{localeSafeDisplayText(expandedBlock.title, locale, text.researchPlanBlockLocaleRefreshTitle)}</strong>
+            <strong>{localeSafeDisplayText(expandedBlock.title, locale, text.researchPlanSummaryBlock)}</strong>
             <span>
               {expandedBlock.subtasks?.length ?? 0}{" "}
               {(expandedBlock.subtasks?.length ?? 0) === 1 ? text.planSubtaskSingular : text.planSubtaskPlural}
@@ -6347,8 +6315,8 @@ function ResearchPlanTimeline({
               >
                 <span className={navigatorStatusClass(subtask.status)}>{researchPlanStatusLabel(subtask.status, text)}</span>
                 <div>
-                  <strong>{localeSafeDisplayText(subtask.title, locale, text.researchPlanDetailLocaleRefresh)}</strong>
-                  <p>{localeSafeDisplayText(subtask.detail, locale, text.researchPlanLocaleRefreshDetail)}</p>
+                  <strong>{localeSafeDisplayText(subtask.title, locale, text.researchPlanDetailEvidence)}</strong>
+                  <p>{localeSafeDisplayText(subtask.detail, locale, "")}</p>
                   {subtask.evidence ? <small>{subtask.evidence}</small> : null}
                 </div>
               </button>
@@ -6421,10 +6389,6 @@ function buildResearchPlanBlocks({
     hasAnyArtifactType(artifacts, ["research_plan", "research_source_pack", "research_source_report", "notebook_authoring_brief"]);
   const noFindingsResearchArtifact = researchNoFindingsArtifact(artifacts);
   const hasPriorResearchEvidence = hasAnyResolvedResearchArtifact(artifacts);
-  const latestCodexMessage = latestCodexTranscriptMessage(agentTranscriptEvents, locale);
-  const activeAgentSession = agentSessionShouldRemainVisible(agentSession) ? agentSession : null;
-  const activeCodexTurn = agentSessionHasObservedCodexProcess(activeAgentSession);
-
   const primaryPlanJob = jobs.find((job) => jobActiveForActivity(job)) ?? jobs.find((job) => !isTerminalJob(job)) ?? null;
   const activeInitialBlockId = activeInitialResearchPlanBlockId(primaryPlanJob);
   const objectiveDelegatedToCodex =
@@ -6553,26 +6517,7 @@ function buildResearchPlanBlocks({
   ];
   const mergedBlocks = mergeInitialAnchorsWithCodexPlanBlocks(blocks, codexAuthoredBlocks);
 
-  if (activeAgentSession && !codexAuthoredBlocks.length) {
-    const planStatus = activeCodexTurn ? "active" : agentSessionPlanWaitingStatus(activeAgentSession);
-    mergedBlocks.push({
-      id: "agent_session",
-      title: text.planBlockCodexLane,
-      subtitle: latestCodexMessage ?? (activeCodexTurn ? text.planBlockCodexRunning : text.planBlockCodexWaiting),
-      status: planStatus,
-      eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
-      evidence: agentSessionPlanEvidence(activeAgentSession, text),
-      onClick: () => onTabChange("Jobs")
-    });
-  }
-
-  return appendObservedAgentPlanBlock(
-    attachResearchPlanSubtasks(renumberResearchPlanBlocks(mergedBlocks), jobs, text, locale, onTabChange, { appendUnassigned: true }),
-    turnState,
-    text,
-    locale,
-    onTabChange
-  );
+  return attachResearchPlanSubtasks(renumberResearchPlanBlocks(mergedBlocks), jobs, text, locale, onTabChange);
 }
 
 function mergeInitialAnchorsWithCodexPlanBlocks(
@@ -6633,35 +6578,6 @@ function primaryResearchPlanFocusBlock(blocks: ResearchPlanBlock[]): ResearchPla
   );
 }
 
-function appendObservedAgentPlanBlock(
-  blocks: ResearchPlanBlock[],
-  turnState: TurnState,
-  text: LocaleMessages,
-  locale: string,
-  onTabChange: (tab: Tab) => void
-): ResearchPlanBlock[] {
-  const agentOwnsTurn = turnState.owner === "agent" && ["agent_running", "agent_scheduled"].includes(turnState.state);
-  if (!agentOwnsTurn) return blocks;
-  const hasLiveBlock = blocks.some((block) => block.status === "active");
-  if (hasLiveBlock) return blocks;
-  const detail = localeSafeDisplayText(turnState.detail || turnState.label, locale, text.planBlockCodexRunning);
-  return [
-    ...blocks,
-    {
-      id: "observed_main_agent_session",
-      title: turnStateLabel(turnState, text, locale),
-      subtitle: detail,
-      status: turnState.state === "agent_running" ? "active" : "pending",
-      eyebrow: `${blocks.length + 1}`.padStart(2, "0"),
-      evidence:
-        typeof turnState.last_output_seconds_ago === "number"
-          ? `${text.turnStateObserved} · ${formatElapsedSeconds(turnState.last_output_seconds_ago)}`
-          : text.turnStateObserved,
-      onClick: () => onTabChange("Home")
-    }
-  ];
-}
-
 function researchPlanBlocksFromTimeline(
   timeline: ResearchPlanTimelineResponse | null,
   text: LocaleMessages,
@@ -6674,40 +6590,30 @@ function researchPlanBlocksFromTimeline(
     const targetTab = block.target_tab ? tabFromString(block.target_tab, "Home") : null;
     const subtasks: ResearchPlanSubtask[] = block.subtasks.map((subtask) => {
       const subtaskTab = subtask.target_tab ? tabFromString(subtask.target_tab, targetTab ?? "Home") : targetTab;
-      const subtaskNeedsLocaleRefresh = subtask.localization_status === "needs_locale_refresh";
       return {
         id: subtask.id,
-        title: subtaskNeedsLocaleRefresh
-          ? text.researchPlanDetailLocaleRefresh
-          : localeSafeDisplayText(subtask.title, displayLocale, text.researchPlanDetailLocaleRefresh),
-        detail: subtaskNeedsLocaleRefresh
-          ? text.researchPlanLocaleRefreshDetail
-          : localeSafeDisplayText(subtask.detail, displayLocale, text.researchPlanLocaleRefreshDetail),
+        title: localeSafeDisplayText(subtask.title, displayLocale, text.researchPlanDetailEvidence),
+        detail: localeSafeDisplayText(subtask.detail, displayLocale, ""),
         status: subtask.status,
-        evidence: subtaskNeedsLocaleRefresh ? null : subtask.evidence,
+        evidence: subtask.evidence,
         targetTab: subtaskTab,
         targetAnchor: subtask.target_anchor,
         onClick: subtaskTab ? () => onNavigateToTarget(subtaskTab, subtask.target_anchor) : undefined
       };
     });
     subtasks.push(...derivedResearchPlanSubtasks(block, text, displayLocale));
-    const blockNeedsLocaleRefresh = block.localization_status === "needs_locale_refresh";
     return {
       id: block.id,
-      title: blockNeedsLocaleRefresh
-        ? text.researchPlanBlockLocaleRefreshTitle
-        : localeSafeDisplayText(block.title, displayLocale, text.researchPlanBlockLocaleRefreshTitle),
-      subtitle: blockNeedsLocaleRefresh
-        ? text.researchPlanLocaleRefreshDetail
-        : localeSafeDisplayText(block.subtitle, displayLocale, ""),
+      title: localeSafeDisplayText(block.title, displayLocale, text.researchPlanSummaryBlock),
+      subtitle: localeSafeDisplayText(block.subtitle, displayLocale, ""),
       status: block.status,
       eyebrow: `${index + 1}`.padStart(2, "0"),
-      evidence: blockNeedsLocaleRefresh ? null : displayTextMatchesLocale(block.evidence, displayLocale) ? block.evidence : null,
+      evidence: block.evidence,
       subtasks,
       onClick: targetTab ? () => onNavigateToTarget(targetTab, block.target_anchor) : undefined
     };
   });
-  return collapseUnlocalizedResearchPlanBlocks(blocks, text, displayLocale);
+  return blocks;
 }
 
 function derivedResearchPlanSubtasks(
@@ -6716,20 +6622,11 @@ function derivedResearchPlanSubtasks(
   locale: string
 ): ResearchPlanSubtask[] {
   const derived: ResearchPlanSubtask[] = [];
-  if (block.localization_status === "needs_locale_refresh") {
-    derived.push({
-      id: `${block.id}:locale_refresh`,
-      title: text.researchPlanDetailLocaleRefresh,
-      detail: text.researchPlanLocaleRefreshDetail,
-      status: block.status === "done" ? "pending" : block.status,
-      evidence: block.missing_localization_fields?.length ? `${block.missing_localization_fields.length}` : null
-    });
-  }
   if (block.next_action) {
     derived.push({
       id: `${block.id}:next_action`,
       title: text.researchPlanDetailNextAction,
-      detail: localeSafeDisplayText(block.next_action, locale, text.researchPlanLocaleRefreshDetail),
+      detail: localeSafeDisplayText(block.next_action, locale, text.researchPlanFallbackDetail),
       status: block.status,
       evidence: displayTextMatchesLocale(block.phase, locale) ? block.phase ?? null : null
     });
@@ -6738,13 +6635,13 @@ function derivedResearchPlanSubtasks(
     derived.push({
       id: `${block.id}:done_criteria`,
       title: text.researchPlanDetailDoneCriteria,
-      detail: localeSafeDisplayText(block.done_criteria, locale, text.researchPlanLocaleRefreshDetail),
+      detail: localeSafeDisplayText(block.done_criteria, locale, text.researchPlanFallbackDetail),
       status: block.status,
       evidence: null
     });
   }
   if (block.blockers?.length) {
-    const blockerDetail = localeSafeDisplayText(block.blockers.join(" / "), locale, text.researchPlanLocaleRefreshDetail);
+    const blockerDetail = localeSafeDisplayText(block.blockers.join(" / "), locale, text.researchPlanFallbackDetail);
     derived.push({
       id: `${block.id}:blockers`,
       title: text.researchPlanDetailBlockers,
@@ -6782,36 +6679,6 @@ function derivedResearchPlanSubtasks(
   return derived;
 }
 
-function collapseUnlocalizedResearchPlanBlocks(
-  blocks: ResearchPlanBlock[],
-  text: LocaleMessages,
-  locale: string
-): ResearchPlanBlock[] {
-  const refreshTitle = text.researchPlanBlockLocaleRefreshTitle;
-  const stableBlocks: ResearchPlanBlock[] = [];
-  const refreshBlocks: ResearchPlanBlock[] = [];
-  for (const block of blocks) {
-    const titleMatchesLocale = displayTextMatchesLocale(block.title, locale);
-    const subtitleMatchesLocale = !block.subtitle || displayTextMatchesLocale(block.subtitle, locale);
-    if (block.title === refreshTitle || !titleMatchesLocale || !subtitleMatchesLocale) {
-      refreshBlocks.push(block);
-    } else {
-      stableBlocks.push(block);
-    }
-  }
-  if (refreshBlocks.length <= 1) return blocks;
-  const status: ResearchPlanBlockStatus = refreshBlocks.some((block) => block.status === "active") ? "active" : "pending";
-  const refreshSummary: ResearchPlanBlock = {
-    id: "research_plan_locale_refresh_group",
-    title: refreshTitle,
-    subtitle: text.researchPlanLocaleRefreshDetail,
-    status,
-    eyebrow: "",
-    evidence: `${refreshBlocks.length} ${text.researchPlanSummaryBlocks}`
-  };
-  return [...stableBlocks, refreshSummary];
-}
-
 function researchPlanCompactSummary(blocks: ResearchPlanBlock[], text: LocaleMessages): string {
   if (!blocks.length) return "";
   const counts = blocks.reduce<Record<ResearchPlanBlockStatus, number>>(
@@ -6833,13 +6700,11 @@ function attachResearchPlanSubtasks(
   jobs: Job[],
   text: LocaleMessages,
   locale: string,
-  onTabChange: (tab: Tab) => void,
-  options: { appendUnassigned: boolean } = { appendUnassigned: true }
+  onTabChange: (tab: Tab) => void
 ): ResearchPlanBlock[] {
   if (!jobs.length) return blocks;
   const blockIds = new Set(blocks.map((block) => block.id));
   const byBlock = new Map<string, ResearchPlanSubtask[]>();
-  const unassigned: ResearchPlanSubtask[] = [];
   for (const job of jobs) {
     if (isMainAgentReplyWaitJob(job)) continue;
     const subtask = researchPlanSubtaskFromJob(job, text, locale, onTabChange);
@@ -6848,11 +6713,9 @@ function attachResearchPlanSubtasks(
       const existing = byBlock.get(blockId) ?? [];
       existing.push(subtask);
       byBlock.set(blockId, existing);
-    } else if (!isTerminalJob(job)) {
-      unassigned.push(subtask);
     }
   }
-  const nextBlocks = blocks.map((block) => {
+  return blocks.map((block) => {
     const subtasks = byBlock.get(block.id) ?? [];
     if (!subtasks.length) return block;
     return {
@@ -6862,19 +6725,6 @@ function attachResearchPlanSubtasks(
       evidence: block.evidence ?? subtaskEvidenceSummary(subtasks, text)
     };
   });
-  if (unassigned.length && options.appendUnassigned) {
-    nextBlocks.push({
-      id: "agent_work",
-      title: text.planBlockCodexLane,
-      subtitle: unassigned[0]?.detail ?? text.researchPlanTimelineHint,
-      status: researchPlanStatusWithSubtasks("pending", unassigned),
-      eyebrow: `${nextBlocks.length + 1}`.padStart(2, "0"),
-      evidence: subtaskEvidenceSummary(unassigned, text),
-      subtasks: unassigned,
-      onClick: () => onTabChange("Jobs")
-    });
-  }
-  return nextBlocks;
 }
 
 function latestCodexTranscriptMessage(events: AgentTranscriptEvent[], locale: string): string | null {
@@ -7146,11 +6996,11 @@ function buildIdeaFindingItems(ideas: Idea[], insights: Insight[], text: LocaleM
     ...ideas.map((idea) => ({
       id: idea.id,
       kind: "idea" as const,
-      title: localeSafeMemoryText(idea.title, locale, text.memoryLocaleRefreshTitle, 90),
+      title: localeSafeMemoryText(idea.title, locale, text.memoryUntitledSignalTitle, 90),
       summary: localeSafeMemoryText(
         idea.hypothesis || idea.rationale_md,
         locale,
-        text.memoryLocaleRefreshSummary
+        text.memoryNoSummary
       ),
       meta: text.memoryKindIdea,
       cta: text.memoryOpenIdea,
@@ -7162,8 +7012,8 @@ function buildIdeaFindingItems(ideas: Idea[], insights: Insight[], text: LocaleM
     ...insights.map((insight) => ({
       id: insight.id,
       kind: "finding" as const,
-      title: localeSafeMemoryText(insight.title, locale, text.memoryLocaleRefreshTitle, 90),
-      summary: localeSafeMemoryText(insight.summary, locale, text.memoryLocaleRefreshSummary),
+      title: localeSafeMemoryText(insight.title, locale, text.memoryUntitledSignalTitle, 90),
+      summary: localeSafeMemoryText(insight.summary, locale, text.memoryNoSummary),
       meta: `${text.memoryKindFinding} · ${confidenceLabel(insight.confidence, text, locale)}`,
       cta: insightDeepDiveAnchor(insight) === "notebook-focus" ? text.memoryOpenNotebookEvidence : text.memoryOpenFinding,
       target_tab: "Insight",
@@ -7176,33 +7026,7 @@ function buildIdeaFindingItems(ideas: Idea[], insights: Insight[], text: LocaleM
     if (priorityDelta !== 0) return priorityDelta;
     return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
   });
-  return collapseUnlocalizedMemoryItems(items, text);
-}
-
-function collapseUnlocalizedMemoryItems(items: HomeMemoryItem[], text: LocaleMessages): HomeMemoryItem[] {
-  const visible: HomeMemoryItem[] = [];
-  const hidden: HomeMemoryItem[] = [];
-  for (const item of items) {
-    if (item.title === text.memoryLocaleRefreshTitle) {
-      hidden.push(item);
-    } else {
-      visible.push(item);
-    }
-  }
-  if (hidden.length <= 1) return items;
-  const summary: HomeMemoryItem = {
-    id: "memory_locale_refresh_group",
-    kind: "finding",
-    title: text.memoryLocaleRefreshTitle,
-    summary: text.memoryLocaleRefreshSummary,
-    meta: `${hidden.length} ${text.ideasAndFindingsReady}`,
-    cta: text.openDeepDive,
-    target_tab: "Insight",
-    target_anchor: "insights",
-    created_at: hidden[0]?.created_at ?? new Date().toISOString(),
-    signal_priority: 1
-  };
-  return [...visible, summary];
+  return items;
 }
 
 function homeInsightSignalPriority(insight: Insight): number {
@@ -12512,13 +12336,13 @@ function strategyActionDisplayReason(action: StrategyAction, locale: string, tex
 function strategyLaneDisplayTitle(lane: StrategyLane, locale: string, text: LocaleMessages): string {
   const display = lane.display?.title ?? lane.display_title;
   if (displayTextMatchesLocale(display, locale)) return display as string;
-  return localeSafeDisplayText(lane.title, locale, text.researchPlanBlockLocaleRefreshTitle);
+  return localeSafeDisplayText(lane.title, locale, text.strategyRecommendedAction);
 }
 
 function strategyLaneDisplayWhy(lane: StrategyLane, locale: string, text: LocaleMessages): string {
   const display = lane.display?.why ?? lane.display_why;
   if (displayTextMatchesLocale(display, locale)) return display as string;
-  return localeSafeDisplayText(lane.why, locale, text.researchPlanLocaleRefreshDetail);
+  return localeSafeDisplayText(lane.why, locale, text.strategyBriefSubtitle);
 }
 
 function strategyActionLabelFallback(action: StrategyAction, text: LocaleMessages): string {

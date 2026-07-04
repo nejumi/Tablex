@@ -49,7 +49,6 @@ from tabular_harness.services.agent_sessions import (
     raw_codex_transcript_path,
     release_supervisor_lease,
     renew_supervisor_lease,
-    research_plan_locale_request_path,
     reserve_transcript_event_indexes,
     run_codex_cli_turn_streaming,
     session_output_artifact_name,
@@ -1261,7 +1260,6 @@ def test_turn_prompt_includes_living_research_plan_contract(tmp_path: Path) -> N
         assert "outputs/research_plan.json" in prompt.text
         assert "timeline_blocks" in prompt.text
         assert "freely add, remove, reorder, branch, or revise" in prompt.text
-        assert ".tablex/inbox/research_plan_locale_request.md" in prompt.text
 
 
 def test_runner_failure_backoff_counts_attempts_not_sidecar_events(tmp_path: Path) -> None:
@@ -1820,7 +1818,7 @@ def test_failed_notebook_auto_capture_retries_after_cooldown(
         assert success_payload["notebook_execution_html_artifact_id"] == "art_retry_html"
 
 
-def test_research_plan_ingest_requests_locale_refresh_for_mixed_language_timeline(tmp_path: Path) -> None:
+def test_research_plan_ingest_preserves_mixed_language_timeline_without_repair_event(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
     store = LocalArtifactStore(tmp_path / "artifacts")
@@ -1845,16 +1843,16 @@ def test_research_plan_ingest_requests_locale_refresh_for_mixed_language_timelin
     )
 
     with sessionmaker(engine)() as db:
-        user = User(id="u_plan_locale", email="plan-locale@example.com", locale="ja-JP")
+        user = User(id="u_plan_display", email="plan-display@example.com", locale="ja-JP")
         project = Project(
-            id="p_plan_locale",
-            name="Plan Locale",
+            id="p_plan_display",
+            name="Plan Display",
             created_by=user.id,
             current_phase="AUTONOMOUS_LOOP",
             autonomy_mode="full_auto",
         )
         session = AgentSession(
-            id="as_plan_locale",
+            id="as_plan_display",
             project_id=project.id,
             goal_text="Keep the plan readable.",
             workspace_path=str(workspace),
@@ -1866,166 +1864,21 @@ def test_research_plan_ingest_requests_locale_refresh_for_mixed_language_timelin
         ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
         db.commit()
 
-        request_path = research_plan_locale_request_path(workspace)
-        assert request_path.exists()
-        request_text = request_path.read_text(encoding="utf-8")
-        assert "locale: ja-JP" in request_text
-        assert "outputs/research_plan.json" in request_text
-        assert "missing_blocks:" in request_text
-        assert "id: modeling_review | missing_fields: title, why_it_matters" in request_text
-        context = loads_json((workspace / ".tablex" / "context.json").read_text(encoding="utf-8"), {})
-        assert context["human_interface"]["response_locale"] == "ja-JP"
-        assert context["research_plan_display"]["localization"]["missing_block_count"] == 1
-
-        events = list(
-            db.scalars(
-                select(AgentTranscriptEvent)
-                .where(
-                    AgentTranscriptEvent.session_id == session.id,
-                    AgentTranscriptEvent.event_type == "research_plan_locale_refresh_requested",
-                )
-                .order_by(AgentTranscriptEvent.event_index.asc())
-            )
+        artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "research_plan")
         )
-        assert len(events) == 1
-        payload = loads_json(events[0].payload_json, {})
-        assert payload["locale"] == "ja-JP"
-        assert payload["missing_block_count"] == 1
+        assert artifact is not None
+        plan_payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+        assert plan_payload["timeline_blocks"][0]["title"] == "Modeling review"
+        assert plan_payload["timeline_blocks"][0]["why_it_matters"] == "Compare candidate models after EDA."
+
+        events = list(db.scalars(select(AgentTranscriptEvent).where(AgentTranscriptEvent.session_id == session.id)))
+        assert [event.event_type for event in events] == ["artifact_registered"]
 
         ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
         db.commit()
-        repeated_events = list(
-            db.scalars(
-                select(AgentTranscriptEvent).where(
-                    AgentTranscriptEvent.session_id == session.id,
-                    AgentTranscriptEvent.event_type == "research_plan_locale_refresh_requested",
-                )
-            )
-        )
-        assert len(repeated_events) == 1
-
-
-def test_research_plan_locale_refresh_reissues_when_issue_signature_changes(tmp_path: Path) -> None:
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
-    workspace = tmp_path / "workspace"
-    workspace.mkdir(parents=True)
-    research_plan_path = tmp_path / "research_plan.json"
-    research_plan_path.write_text(
-        dumps_json(
-            {
-                "schema_version": "research_plan.v1",
-                "timeline_blocks": [
-                    {
-                        "id": "modeling_review",
-                        "title": "Modeling review",
-                        "why_it_matters": "Compare candidate models after EDA.",
-                        "status": "active",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with sessionmaker(engine)() as db:
-        user = User(id="u_plan_signature", email="plan-signature@example.com", locale="ja-JP")
-        project = Project(
-            id="p_plan_signature",
-            name="Plan Signature",
-            created_by=user.id,
-            current_phase="AUTONOMOUS_LOOP",
-            autonomy_mode="full_auto",
-        )
-        session = AgentSession(
-            id="as_plan_signature",
-            project_id=project.id,
-            goal_text="Keep the plan readable.",
-            workspace_path=str(workspace),
-            status="running",
-        )
-        artifact = Artifact(
-            id="art_plan_signature",
-            project_id=project.id,
-            asset_type="research_plan",
-            name="agent_session_outputs_research_plan",
-            version=1,
-            uri=str(tmp_path),
-            content_hash="hash-one",
-            size_bytes=research_plan_path.stat().st_size,
-            metadata_json=dumps_json({"primary_path": str(research_plan_path)}),
-        )
-        db.add_all([user, project, session, artifact])
-        db.commit()
-
-        agent_sessions_module.maybe_request_research_plan_locale_refresh(
-            db,
-            session=session,
-            artifact=artifact,
-            locale="ja-JP",
-        )
-        db.commit()
-
-        first_events = list(
-            db.scalars(
-                select(AgentTranscriptEvent).where(
-                    AgentTranscriptEvent.session_id == session.id,
-                    AgentTranscriptEvent.event_type == "research_plan_locale_refresh_requested",
-                )
-            )
-        )
-        assert len(first_events) == 1
-        first_payload = loads_json(first_events[0].payload_json, {})
-        assert first_payload["issue_signature"]
-
-        research_plan_path.write_text(
-            dumps_json(
-                {
-                    "schema_version": "research_plan.v1",
-                    "timeline_blocks": [
-                        {
-                            "id": "modeling_review",
-                            "title": "Modeling review",
-                            "why_it_matters": "Compare candidate models after EDA.",
-                            "status": "active",
-                        },
-                        {
-                            "id": "feature_availability_audit",
-                            "title": "Feature availability audit",
-                            "why_it_matters": "Check leakage before rebuilding.",
-                            "status": "pending",
-                        },
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        agent_sessions_module.maybe_request_research_plan_locale_refresh(
-            db,
-            session=session,
-            artifact=artifact,
-            locale="ja-JP",
-        )
-        db.commit()
-
-        repeated_events = list(
-            db.scalars(
-                select(AgentTranscriptEvent)
-                .where(
-                    AgentTranscriptEvent.session_id == session.id,
-                    AgentTranscriptEvent.event_type == "research_plan_locale_refresh_requested",
-                )
-                .order_by(AgentTranscriptEvent.event_index.asc())
-            )
-        )
-        assert len(repeated_events) == 2
-        second_payload = loads_json(repeated_events[1].payload_json, {})
-        assert second_payload["issue_signature"] != first_payload["issue_signature"]
-        assert second_payload["missing_block_count"] == 2
-        request_text = research_plan_locale_request_path(workspace).read_text(encoding="utf-8")
-        assert f"issue_signature: {second_payload['issue_signature']}" in request_text
-        assert "missing_block_count: 2" in request_text
+        repeated_events = list(db.scalars(select(AgentTranscriptEvent).where(AgentTranscriptEvent.session_id == session.id)))
+        assert [event.event_type for event in repeated_events] == ["artifact_registered"]
 
 
 def test_published_raw_codex_transcript_is_ingested_as_session_artifact(tmp_path: Path) -> None:

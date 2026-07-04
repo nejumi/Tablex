@@ -63,7 +63,6 @@ SESSION_INBOX_DIR = "inbox"
 USER_INSTRUCTIONS_INBOX_FILENAME = "user_instructions.jsonl"
 USER_INSTRUCTIONS_LATEST_FILENAME = "latest_user_instruction.md"
 PROGRESS_REQUEST_FILENAME = "progress_request.md"
-RESEARCH_PLAN_LOCALE_REQUEST_FILENAME = "research_plan_locale_request.md"
 CODEX_RAW_TRANSCRIPT_FILENAME = "codex_raw_transcript.jsonl"
 CODEX_STDERR_LOG_FILENAME = "codex_stderr.log"
 PROGRESS_UPDATE_NUDGE_AFTER_SECONDS = 180
@@ -204,10 +203,6 @@ def latest_user_instruction_path(workspace: Path) -> Path:
 
 def progress_request_path(workspace: Path) -> Path:
     return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / PROGRESS_REQUEST_FILENAME
-
-
-def research_plan_locale_request_path(workspace: Path) -> Path:
-    return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / RESEARCH_PLAN_LOCALE_REQUEST_FILENAME
 
 
 def build_default_goal_text(db: Session, project: Project) -> str:
@@ -488,57 +483,6 @@ def write_progress_request_to_workspace_inbox(
                         if user_message_excerpt
                         else []
                     ),
-                ]
-            ),
-            encoding="utf-8",
-        )
-    except OSError:
-        return
-
-
-def write_research_plan_locale_request_to_workspace_inbox(
-    session: AgentSession,
-    *,
-    event: AgentTranscriptEvent,
-    artifact: Artifact,
-    locale: str,
-    summary: dict[str, Any],
-) -> None:
-    if not session.workspace_path:
-        return
-    workspace = Path(session.workspace_path)
-    path = research_plan_locale_request_path(workspace)
-    missing_blocks = [
-        item
-        for item in summary.get("blocks", [])
-        if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("missing_fields")
-    ][:20]
-    missing_block_lines = [
-        f"- id: {item['id']} | missing_fields: {', '.join(str(field) for field in item.get('missing_fields', []))}"
-        for item in missing_blocks
-    ]
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            "\n".join(
-                [
-                    "schema_version: tablex_research_plan_locale_request.v1",
-                    f"event_index: {event.event_index}",
-                    f"created_at: {event.created_at.isoformat()}",
-                    f"locale: {locale}",
-                    f"artifact_id: {artifact.id}",
-                    f"artifact_path: {artifact_primary_path(artifact)}",
-                    f"issue_signature: {research_plan_locale_issue_signature(summary)}",
-                    f"missing_block_count: {summary.get('missing_block_count', 0)}",
-                    f"missing_subtask_count: {summary.get('missing_subtask_count', 0)}",
-                    "",
-                    "missing_blocks:",
-                    *(missing_block_lines or ["- none"]),
-                    "",
-                    "Update `outputs/research_plan.json` so every human-visible `timeline_blocks` string is in the requested locale.",
-                    "Preserve the project-specific plan structure and Codex-authored intent; do not replace it with a fixed template.",
-                    "If a canonical English copy is useful, keep it under `localizations` while making the requested locale complete.",
-                    "",
                 ]
             ),
             encoding="utf-8",
@@ -1474,10 +1418,6 @@ def research_plan_display_context(artifact: Artifact | None, *, response_locale:
         "path": str(artifact_primary_path(artifact)),
         "response_locale": response_locale,
         "localization": localization,
-        "instruction": (
-            "If missing_block_count or missing_subtask_count is nonzero, update outputs/research_plan.json "
-            "so every human-visible timeline string is in response_locale or has an explicit localization entry."
-        ),
     }
 
 
@@ -1545,16 +1485,14 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Do not destructively modify EvaluationSpec or SplitManifest.",
         "- Register important outputs by writing files under outputs/, reports/, notebooks/, or artifacts/.",
         "- Keep a living plan when it helps the user follow the work: write `outputs/research_plan.json` with `schema_version: \"research_plan.v1\"` and optional `timeline_blocks`. Use `timeline_blocks` only as a display contract: after data upload, objective/task framing, data understanding, and prior-knowledge research anchors, freely add, remove, reorder, branch, or revise project-specific blocks. Mark a block done only when the supporting artifact exists or you explicitly record that no useful output is needed.",
-        "- For `outputs/research_plan.json` timeline_blocks, write every human-visible string in `.tablex/context.json` `human_interface.response_locale`. If you need a canonical English copy, put localized display fields under `localizations` and keep the active locale complete.",
-        "- Do not write bilingual ResearchPlan display strings such as Japanese headings followed by `/ project context` or English phrase titles. Use the active locale for the sentence, and keep English only for identifiers that are genuinely identifiers.",
-        "- If `.tablex/context.json` `research_plan_display.localization` reports missing locale fields, repair the ResearchPlan display fields or add `localizations` for the active locale before extending the plan. Do not leave mixed-language plan titles, subtitles, next actions, blockers, or done criteria in the user-facing timeline.",
+        "- For `outputs/research_plan.json` timeline_blocks, write human-facing strings in `.tablex/context.json` `human_interface.response_locale` when practical. Keep identifiers and source column names exact.",
         "- Keep human-facing accountability continuous: when you make meaningful progress, hit uncertainty, start or finish a long-running step, recover from an error, change the plan, or need the user to know what changed, overwrite `reports/chat_update.md` with only the latest concise update in the user's locale. Keep it under 1200 characters. Use separate report files for long history. Do not wait for Tablex to infer this from logs.",
         "- Treat `reports/chat_update.md` as a user-facing explanation, not an internal changelog: say what you are doing now, why it matters, what changed, what uncertainty remains, and where the user should look next. Avoid raw artifact IDs, hashes, filenames, internal schema names, and implementation vocabulary unless they are necessary for a user decision.",
         "- In Full Auto progress reports, do not make approval-waiting the dominant status. If an unconfirmed decision exists, pair it with the concrete reversible work that is continuing now, and make that active work the headline.",
         "- Prefer marimo notebooks for data understanding, modeling diagnostics, and reports.",
         "- Read `.tablex/context.json` for `human_interface.response_locale` and write human-facing notebooks/reports/chat in that language.",
         "- Read equipped Skill paths in `.tablex/context.json` before EDA, prior research, notebook authoring, or modeling strategy work.",
-        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, `.tablex/inbox/progress_request.md`, and `.tablex/inbox/research_plan_locale_request.md`; incorporate user messages and publish progress updates without waiting for a new Codex turn when practical.",
+        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, and `.tablex/inbox/progress_request.md`; incorporate user messages and publish progress updates without waiting for a new Codex turn when practical.",
         "- If you need user input in Full Auto, state the question and your provisional assumption, then continue unless a true hard safety boundary makes all useful work impossible.",
         "- Treat formal approval, data-owner confirmation, deployment permission, or production-write clearance as future evidence unless the current action would write to production, expose secrets, or violate evaluation integrity. Keep doing reversible local analysis and artifact generation while waiting.",
         "- Do not present Full Auto as stopped on approval unless no useful reversible work remains. If a destructive or deployment-grade action is deferred, say which reversible analysis, modeling, diagnostics, notebook/report work, or research you are continuing now.",
@@ -2133,7 +2071,6 @@ def ingest_session_workspace_outputs(
     allow_notebook_auto_capture: bool = True,
 ) -> None:
     output_roots = [workspace / "outputs", workspace / "reports", workspace / "notebooks", workspace / "artifacts"]
-    response_locale: str | None = None
     for root in output_roots:
         if not root.exists():
             continue
@@ -2200,9 +2137,6 @@ def ingest_session_workspace_outputs(
                 path=path,
                 artifact=artifact,
             )
-            if asset_type == "research_plan":
-                response_locale = response_locale or latest_project_response_locale(db, project)
-                maybe_request_research_plan_locale_refresh(db, session=session, artifact=artifact, locale=response_locale)
             if allow_notebook_auto_capture:
                 maybe_capture_agent_session_notebook_output(
                     db,
@@ -2454,90 +2388,6 @@ def latest_agent_session_notebook_capture_event(
         if payload.get("notebook_artifact_id") == artifact.id:
             return event
     return None
-
-
-def maybe_request_research_plan_locale_refresh(
-    db: Session,
-    *,
-    session: AgentSession,
-    artifact: Artifact,
-    locale: str | None,
-) -> None:
-    if artifact.asset_type != "research_plan" or artifact.project_id is None or not session.workspace_path:
-        return
-    if not locale or locale.lower().startswith("en"):
-        return
-    try:
-        payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
-    except OSError:
-        return
-    raw_blocks = payload.get("timeline_blocks") if isinstance(payload, dict) else None
-    summary = research_plan_localization_summary(raw_blocks, locale=locale)
-    if not summary.get("requires_explicit_locale"):
-        return
-    if not summary.get("missing_block_count") and not summary.get("missing_subtask_count"):
-        return
-    issue_signature = research_plan_locale_issue_signature(summary)
-    project = db.get(Project, artifact.project_id)
-    if project is not None:
-        write_session_context_file(db, project=project, session=session, response_locale=locale)
-    recent_events = list(
-        db.scalars(
-            select(AgentTranscriptEvent)
-            .where(
-                AgentTranscriptEvent.session_id == session.id,
-                AgentTranscriptEvent.source == "tablex_sidecar",
-                AgentTranscriptEvent.event_type == "research_plan_locale_refresh_requested",
-            )
-            .order_by(AgentTranscriptEvent.event_index.desc())
-            .limit(50)
-        ).all()
-    )
-    for event in recent_events:
-        event_payload = loads_json(event.payload_json, {})
-        if (
-            event_payload.get("artifact_id") == artifact.id
-            and event_payload.get("locale") == locale
-            and event_payload.get("issue_signature") == issue_signature
-        ):
-            return
-    event = append_session_event(
-        db,
-        session,
-        source="tablex_sidecar",
-        event_type="research_plan_locale_refresh_requested",
-        role="harness",
-        title="ResearchPlan display-language refresh requested",
-        content="Tablex asked Codex to refresh the ResearchPlan display fields in the user's selected locale.",
-        payload={
-            "artifact_id": artifact.id,
-            "locale": locale,
-            "issue_signature": issue_signature,
-            "missing_block_count": summary.get("missing_block_count", 0),
-            "missing_subtask_count": summary.get("missing_subtask_count", 0),
-            "blocks": summary.get("blocks", []),
-        },
-        artifact_id=artifact.id,
-        update_heartbeat=False,
-    )
-    write_research_plan_locale_request_to_workspace_inbox(session, event=event, artifact=artifact, locale=locale, summary=summary)
-
-
-def research_plan_locale_issue_signature(summary: dict[str, Any]) -> str:
-    issue_payload = {
-        "locale": summary.get("requested_locale"),
-        "missing_block_count": summary.get("missing_block_count", 0),
-        "missing_subtask_count": summary.get("missing_subtask_count", 0),
-        "blocks": [
-            {
-                "id": item.get("id"),
-                "missing_fields": item.get("missing_fields", []),
-            }
-            for item in summary.get("blocks", [])
-            if isinstance(item, dict)
-        ],
-    }
-    return hashlib.sha256(dumps_json(issue_payload).encode("utf-8")).hexdigest()
 
 
 def maybe_register_chat_update_from_workspace_output(
