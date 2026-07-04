@@ -69,6 +69,7 @@ from tabular_harness.services.agent_sessions import (
     release_supervisor_lease,
     renew_supervisor_lease,
     research_plan_acks_dir,
+    research_plan_artifact_rejection_path,
     research_plan_contract_request_path,
     research_plan_requests_dir,
     reserve_transcript_event_indexes,
@@ -1538,6 +1539,7 @@ def test_turn_prompt_keeps_chat_update_human_facing_not_internal_changelog(tmp_p
 
         assert "reports/chat_update.md" in prompt.text
         assert ".tablex/inbox/progress_request.md" in prompt.text
+        assert ".tablex/inbox/research_plan_artifact_rejection.md" in prompt.text
         assert "user-facing explanation, not an internal changelog" in prompt.text
         assert "Avoid raw artifact IDs" in prompt.text
         assert "do not make approval-waiting the dominant status" in prompt.text
@@ -3760,6 +3762,12 @@ def test_research_plan_ingest_rejects_invalid_workspace_plan_without_canonical_r
         rejection_payload = loads_json(events[1].payload_json, {})
         issue_codes = {issue["code"] for issue in rejection_payload["issues"]}
         assert "completed_after_open_predecessor" in issue_codes
+        rejection_path = research_plan_artifact_rejection_path(workspace)
+        assert rejection_path.exists()
+        rejection_text = rejection_path.read_text(encoding="utf-8")
+        assert "tablex_research_plan_artifact_rejection.v1" in rejection_text
+        assert "completed_after_open_predecessor" in rejection_text
+        assert ".tablex/requests/research_plan/<new_request_id>.json" in rejection_text
         chat_artifact = db.scalar(
             select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
         )
