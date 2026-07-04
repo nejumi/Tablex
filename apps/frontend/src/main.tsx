@@ -1623,7 +1623,7 @@ function localePrefersShiftEnter(locale: string): boolean {
 function localeLanguage(locale: string | null | undefined): string {
   const normalized = (locale ?? "").trim().toLowerCase().replace("_", "-");
   if (!normalized) return "";
-  if (normalized === "japanese" || normalized === "日本語" || normalized.startsWith("日本語")) return "ja";
+  if (normalized.includes("japanese") || normalized.includes("日本語")) return "ja";
   return normalized.split("-", 1)[0];
 }
 
@@ -1631,7 +1631,7 @@ function localeLooksJapanese(locale: string | null | undefined): boolean {
   const normalized = (locale ?? "").trim().toLowerCase().replace("_", "-");
   if (!normalized) return false;
   const language = normalized.split("-", 1)[0];
-  return language === "ja" || normalized === "japanese" || normalized === "日本語" || normalized.startsWith("日本語");
+  return language === "ja" || normalized.includes("japanese") || normalized.includes("日本語");
 }
 
 function localeRequiresLocalizedDisplay(locale: string | null | undefined): boolean {
@@ -4504,6 +4504,7 @@ function ProjectDetail({
   onTabChange: (tab: Tab) => void;
   onProjectChanged: () => Promise<void>;
 }) {
+  const { locale: displayLocale } = useLocale();
   const [overview, setOverview] = React.useState<Overview | null>(null);
   const [guidance, setGuidance] = React.useState<ProjectGuidance | null>(null);
   const [datasets, setDatasets] = React.useState<DatasetSnapshot[]>([]);
@@ -4544,7 +4545,7 @@ function ProjectDetail({
   const [agentSession, setAgentSession] = React.useState<AgentSession | null>(null);
   const [agentTranscriptEvents, setAgentTranscriptEvents] = React.useState<AgentTranscriptEvent[]>([]);
   const [agentRawTranscript, setAgentRawTranscript] = React.useState<AgentRawTranscript | null>(null);
-  const userSettingsLocaleRef = React.useRef(userSettings.locale);
+  const userSettingsLocaleRef = React.useRef(displayLocale);
   const transcriptSinceIndexRef = React.useRef<number | null>(null);
   const transcriptSessionIdRef = React.useRef<string | null>(null);
   const [activityTick, setActivityTick] = React.useState(0);
@@ -4564,8 +4565,8 @@ function ProjectDetail({
       : "idle";
 
   React.useEffect(() => {
-    userSettingsLocaleRef.current = userSettings.locale;
-  }, [userSettings.locale]);
+    userSettingsLocaleRef.current = displayLocale;
+  }, [displayLocale]);
 
   const setResearchPlanTimelineForCurrentLocale = React.useCallback((timeline: ResearchPlanTimelineResponse | null) => {
     if (!timeline) {
@@ -4579,7 +4580,7 @@ function ProjectDetail({
 
   React.useEffect(() => {
     setResearchPlanTimeline(null);
-  }, [project.id, setResearchPlanTimelineForCurrentLocale, userSettings.locale]);
+  }, [project.id, setResearchPlanTimelineForCurrentLocale, displayLocale]);
   const turnState = agentActivity?.turn_state ?? fallbackTurnState(project);
   const focusRecommendation = React.useMemo(
     () => {
@@ -4656,7 +4657,7 @@ function ProjectDetail({
         api<LeaderboardEntry[]>(`/api/projects/${project.id}/leaderboard`),
         api<ModelVersion[]>(`/api/projects/${project.id}/model-versions`),
         api<AdaptiveStrategyBrief>(
-          `/api/projects/${project.id}/approach/strategy-brief?locale=${encodeURIComponent(userSettings.locale)}`
+          `/api/projects/${project.id}/approach/strategy-brief?locale=${encodeURIComponent(displayLocale)}`
         ).catch(() => null),
         api<ResearchBrief[]>(`/api/projects/${project.id}/approach/research-briefs`),
         api<Idea[]>(`/api/projects/${project.id}/approach/ideas`),
@@ -4677,7 +4678,7 @@ function ProjectDetail({
         api<AgentTranscriptEvent[]>(`/api/projects/${project.id}/agent-session/transcript`).catch(() => []),
         api<AgentRawTranscript>(`/api/projects/${project.id}/agent-session/raw-transcript`).catch(() => null),
         api<ResearchPlanTimelineResponse>(
-          `/api/projects/${project.id}/research-plan/timeline?locale=${encodeURIComponent(userSettings.locale)}`
+          `/api/projects/${project.id}/research-plan/timeline?locale=${encodeURIComponent(displayLocale)}`
         ).catch(() => null),
         api<{ markdown: string | null }>(`/api/projects/${project.id}/understanding/latest`)
       ]);
@@ -4728,7 +4729,7 @@ function ProjectDetail({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [project.id, setResearchPlanTimelineForCurrentLocale, userSettings.locale]);
+  }, [project.id, setResearchPlanTimelineForCurrentLocale, displayLocale]);
 
   const refreshAgentActivity = React.useCallback(async () => {
     try {
@@ -4738,7 +4739,7 @@ function ProjectDetail({
         api<AgentRawTranscript>(`/api/projects/${project.id}/agent-session/raw-transcript?limit=8`).catch(() => null),
         api<AgentChatHistoryTurn[]>(`/api/projects/${project.id}/agent-chat/history`).catch(() => []),
         api<ResearchPlanTimelineResponse>(
-          `/api/projects/${project.id}/research-plan/timeline?locale=${encodeURIComponent(userSettings.locale)}`
+          `/api/projects/${project.id}/research-plan/timeline?locale=${encodeURIComponent(displayLocale)}`
         ).catch(() => null)
       ]);
       const sessionId = sessionData?.id ?? null;
@@ -4765,7 +4766,7 @@ function ProjectDetail({
     } catch {
       // The activity overlay is opportunistic; project refresh still surfaces hard errors.
     }
-  }, [project.id, setResearchPlanTimelineForCurrentLocale, userSettings.locale]);
+  }, [project.id, setResearchPlanTimelineForCurrentLocale, displayLocale]);
 
   React.useEffect(() => {
     void refresh();
@@ -4896,7 +4897,7 @@ function ProjectDetail({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: trimmed,
-          locale: userSettings.locale,
+          locale: displayLocale,
           agent_model: userSettings.agentModel,
           utility_model: userSettings.utilityModel
         })
@@ -5017,7 +5018,7 @@ function ProjectDetail({
       await api<Project>(`/api/projects/${project.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ autonomy_mode: nextMode, locale: userSettings.locale })
+        body: JSON.stringify({ autonomy_mode: nextMode, locale: displayLocale })
       });
       setPendingAgentChatMessages([]);
       await refreshAgentActivity();
@@ -5054,11 +5055,11 @@ function ProjectDetail({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: poweredOn
-          ? JSON.stringify({ locale: userSettings.locale })
+          ? JSON.stringify({ locale: displayLocale })
           : JSON.stringify({
               autonomy_mode: project.autonomy_mode,
               runner_mode: project.autonomy_mode === "full_auto" ? "codex_cli_if_available" : "harness_only",
-              locale: userSettings.locale,
+              locale: displayLocale,
               agent_model: userSettings.agentModel,
               utility_model: userSettings.utilityModel
             })
@@ -5272,7 +5273,7 @@ function ProjectDetail({
           projectAssetReferences={projectAssetReferences}
           busy={busy}
           text={text}
-          locale={userSettings.locale}
+          locale={displayLocale}
           messages={visibleAgentChatMessages}
           submitShortcut={resolveChatSubmitShortcut(userSettings)}
           userAvatarSrc={userSettings.userAvatarDataUrl}
@@ -5314,7 +5315,7 @@ function ProjectDetail({
           ideas={ideas}
           insights={insights}
           busy={busy}
-          locale={userSettings.locale}
+          locale={displayLocale}
           text={text}
           runAction={runAction}
         />
@@ -5329,7 +5330,7 @@ function ProjectDetail({
           jobs={jobs}
           busy={busy}
           text={text}
-          locale={userSettings.locale}
+          locale={displayLocale}
           runAction={runAction}
           onOpenNotebookArtifact={(artifactId) => {
             setArtifactPreviewRequest({
@@ -5400,7 +5401,7 @@ function ProjectDetail({
           ideas={ideas}
           artifacts={artifacts}
           busy={busy}
-          locale={userSettings.locale}
+          locale={displayLocale}
           text={text}
           runAction={runAction}
           onStrategyAction={(action) => void runStrategyAction(action)}
@@ -5429,7 +5430,7 @@ function ProjectDetail({
           analysisStory={analysisStory}
           previewRequest={artifactPreviewRequest}
           busy={busy}
-          locale={userSettings.locale}
+          locale={displayLocale}
           runAction={runAction}
           onAskAgent={submitAgentChat}
         />
@@ -5459,7 +5460,7 @@ function ProjectDetail({
           ideas={ideas}
           insights={insights}
           busy={busy}
-          locale={userSettings.locale}
+          locale={displayLocale}
           text={text}
           runAction={runAction}
         />

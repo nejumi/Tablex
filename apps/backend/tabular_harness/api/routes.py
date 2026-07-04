@@ -241,7 +241,6 @@ from tabular_harness.services.benchmarks import (
 from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.decision_reporting import current_decision_report_payload
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
-from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
     approve_spec,
     candidate_to_dict,
@@ -2523,7 +2522,6 @@ def update_artifact_metadata(artifact: Artifact, updates: dict[str, Any]) -> Non
 def run_dataset_eda_review(
     dataset_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     dataset = db.get(DatasetSnapshot, dataset_id)
     if dataset is None:
@@ -2539,34 +2537,9 @@ def run_dataset_eda_review(
             "secrets_materialized": False,
             "execution_mode": "harness_controlled_duckdb_analysis",
             "executes_user_code": False,
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_dataset_eda_review(db, store=store, dataset=dataset)
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.review["schema_version"],
-                "dataset_snapshot_id": dataset.id,
-                "eda_review_bundle_artifact_id": result.bundle_artifact.id,
-                "eda_review_html_artifact_id": result.html_artifact.id,
-                "eda_review_report_id": result.report.id,
-                "eda_review_report_artifact_id": result.report_artifact.id,
-                "visualization_id": result.visualization.id,
-                "visualization_artifact_id": result.visualization_artifact.id,
-                "eda_review_figure_artifact_ids": [artifact.id for artifact in result.figure_artifacts],
-                "evidence_id": result.evidence.id,
-                "insight_id": result.insight.id,
-                "artifact_id": result.bundle_artifact.id,
-                "artifact_ids": result.artifact_ids,
-                "quality_score": result.review["summary"]["quality_score"],
-                "target_column": result.review["summary"].get("target_column"),
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -3556,7 +3529,6 @@ def get_dataset_sample(dataset_id: str, db: Annotated[Session, Depends(get_sessi
 def run_dataset_quality(
     dataset_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     dataset = require_dataset(db, dataset_id)
     project = require_project(db, dataset.project_id)
@@ -3565,25 +3537,8 @@ def run_dataset_quality(
         job_type="analyze_data_quality",
         project_id=project.id,
         input_payload={"dataset_snapshot_id": dataset.id},
+        policy={"execution": "queued_worker", "network": "disabled", "secret_access": "forbidden"},
     )
-    try:
-        mark_job_running(job)
-        result = analyze_dataset_quality(db, store=store, project=project, dataset=dataset)
-        mark_job_succeeded(
-            job,
-            {
-                "dataset_snapshot_id": dataset.id,
-                "artifact_ids": result.artifact_ids,
-                "gate": result.gate,
-                "evidence_ids": result.evidence_ids,
-                "assumption_ids": result.assumption_ids,
-                "question_ids": result.question_ids,
-                "insight_id": result.insight_id,
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 

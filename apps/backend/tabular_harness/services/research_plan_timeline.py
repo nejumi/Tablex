@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from tabular_harness.core.json import loads_json
 from tabular_harness.models.entities import Artifact, utc_now
 from tabular_harness.services.artifacts import artifact_primary_path
+from tabular_harness.services.locales import locale_language
 
 _MISSING = object()
 
@@ -490,14 +491,7 @@ def _research_plan_missing_title_label(locale: str | None) -> str:
 
 
 def _research_plan_locale_language(locale: str | None) -> str:
-    if not isinstance(locale, str):
-        return ""
-    normalized = locale.strip().lower().replace("_", "-")
-    if not normalized:
-        return ""
-    if normalized in {"japanese", "日本語"} or normalized.startswith("日本語"):
-        return "ja"
-    return normalized.split("-", 1)[0]
+    return locale_language(locale)
 
 
 def _research_plan_locale_is_japanese(locale: str | None) -> bool:

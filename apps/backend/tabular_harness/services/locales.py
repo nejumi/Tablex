@@ -9,7 +9,7 @@ def locale_language(locale: str | None) -> str:
     normalized = normalized_locale(locale)
     if not normalized:
         return ""
-    if normalized == "japanese" or normalized == "日本語" or normalized.startswith("日本語"):
+    if "japanese" in normalized or "日本語" in normalized:
         return "ja"
     return normalized.split("-", 1)[0]
 

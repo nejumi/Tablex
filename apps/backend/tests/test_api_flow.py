@@ -3187,8 +3187,9 @@ def test_core_harness_actions_use_explicit_endpoints(tmp_path: Path) -> None:
     quality_response = client.post(f"/api/datasets/{dataset_id}/quality/run")
     assert quality_response.status_code == 200, quality_response.text
     quality_job = quality_response.json()
-    assert quality_job["status"] == "succeeded"
-    assert quality_job["output"]["artifact_ids"]
+    assert quality_job["status"] == "queued"
+    quality_output = run_queued_job(client, quality_job["id"])
+    assert quality_output["artifact_ids"]
 
     evaluation_response = client.post(f"/api/projects/{project_id}/evaluation/compare")
     assert evaluation_response.status_code == 200, evaluation_response.text
@@ -3402,8 +3403,9 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path, monkeypatch: A
     eda_response = client.post(f"/api/datasets/{dataset_id}/eda-review")
     assert eda_response.status_code == 200, eda_response.text
     eda_job = eda_response.json()
-    assert eda_job["status"] == "succeeded"
-    assert eda_job["output"]["eda_review_html_artifact_id"]
+    assert eda_job["status"] == "queued"
+    eda_output = run_queued_job(client, eda_job["id"])
+    assert eda_output["eda_review_html_artifact_id"]
 
     author_response = client.post(f"/api/projects/{project_id}/notebook-authoring/brief")
     assert author_response.status_code == 200, author_response.text
@@ -3473,13 +3475,14 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     quality_response = client.post(f"/api/datasets/{dataset_id}/quality/run")
     assert quality_response.status_code == 200, quality_response.text
     quality_job = quality_response.json()
-    assert quality_job["status"] == "succeeded"
-    assert len(quality_job["output"]["artifact_ids"]) == 3
-    quality_gate = quality_job["output"]["gate"]
+    assert quality_job["status"] == "queued"
+    quality_output = run_queued_job(client, quality_job["id"])
+    assert len(quality_output["artifact_ids"]) == 3
+    quality_gate = quality_output["gate"]
     assert quality_gate["schema_version"] == "data_quality_gate.v1"
     assert quality_gate["summary"]["severity"] in {"warning", "pass"}
     assert "final_status" in quality_gate["evaluation_guidance"]["excluded_columns"]
-    assert quality_job["output"]["insight_id"]
+    assert quality_output["insight_id"]
 
     latest_quality_response = client.get(f"/api/datasets/{dataset_id}/quality/latest")
     assert latest_quality_response.status_code == 200
@@ -3491,15 +3494,16 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     eda_review_response = client.post(f"/api/datasets/{dataset_id}/eda-review")
     assert eda_review_response.status_code == 200, eda_review_response.text
     eda_review_job = eda_review_response.json()
-    assert eda_review_job["status"] == "succeeded"
+    assert eda_review_job["status"] == "queued"
     assert eda_review_job["job_type"] == "run_eda_review"
-    assert eda_review_job["output"]["schema_version"] == "eda_review.v1"
-    assert eda_review_job["output"]["eda_review_bundle_artifact_id"]
-    assert eda_review_job["output"]["eda_review_html_artifact_id"]
-    assert eda_review_job["output"]["eda_review_report_id"]
-    assert len(eda_review_job["output"]["eda_review_figure_artifact_ids"]) >= 4
+    eda_review_output = run_queued_job(client, eda_review_job["id"])
+    assert eda_review_output["schema_version"] == "eda_review.v1"
+    assert eda_review_output["eda_review_bundle_artifact_id"]
+    assert eda_review_output["eda_review_html_artifact_id"]
+    assert eda_review_output["eda_review_report_id"]
+    assert len(eda_review_output["eda_review_figure_artifact_ids"]) >= 4
     eda_bundle_response = client.get(
-        f"/api/artifacts/{eda_review_job['output']['eda_review_bundle_artifact_id']}/download"
+        f"/api/artifacts/{eda_review_output['eda_review_bundle_artifact_id']}/download"
     )
     assert eda_bundle_response.status_code == 200
     eda_bundle = eda_bundle_response.json()
@@ -3511,7 +3515,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert eda_bundle["playbook"]
     assert eda_bundle["codex_next_prompts"]
     eda_html_response = client.get(
-        f"/api/artifacts/{eda_review_job['output']['eda_review_html_artifact_id']}/preview"
+        f"/api/artifacts/{eda_review_output['eda_review_html_artifact_id']}/preview"
     )
     assert eda_html_response.status_code == 200
     eda_html = eda_html_response.json()
@@ -3521,14 +3525,14 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert "Visual story cards" in eda_html["preview"]
     assert "Ask Codex next" in eda_html["preview"]
     eda_inline_response = client.get(
-        f"/api/artifacts/{eda_review_job['output']['eda_review_html_artifact_id']}/inline-preview"
+        f"/api/artifacts/{eda_review_output['eda_review_html_artifact_id']}/inline-preview"
     )
     assert eda_inline_response.status_code == 200
     assert eda_inline_response.headers["content-type"].startswith("text/html")
     assert "content-disposition" not in eda_inline_response.headers
     assert "Tablex Data Review" in eda_inline_response.text
     eda_svg_response = client.get(
-        f"/api/artifacts/{eda_review_job['output']['eda_review_figure_artifact_ids'][0]}/preview"
+        f"/api/artifacts/{eda_review_output['eda_review_figure_artifact_ids'][0]}/preview"
     )
     assert eda_svg_response.status_code == 200
     assert eda_svg_response.json()["content_type"] == "image/svg+xml"
@@ -3539,7 +3543,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert eda_story["schema_version"] == "analysis_story_surface.v1"
     assert eda_story["available"] is True
     assert eda_story["story"]["source_type"] == "eda_review"
-    assert eda_story["story"]["selected_source"]["preview_artifact_id"] == eda_review_job["output"]["eda_review_html_artifact_id"]
+    assert eda_story["story"]["selected_source"]["preview_artifact_id"] == eda_review_output["eda_review_html_artifact_id"]
     assert eda_story["story"]["read_order"]
     assert eda_story["story"]["visual_story_cards"]
     assert eda_story["story"]["codex_prompts"]
@@ -4883,7 +4887,9 @@ def test_bounded_profile_quality_gate_uses_sample_scope(tmp_path: Path) -> None:
 
     quality_response = client.post(f"/api/datasets/{dataset_id}/quality/run")
     assert quality_response.status_code == 200, quality_response.text
-    gate = quality_response.json()["output"]["gate"]
+    quality_job = quality_response.json()
+    assert quality_job["status"] == "queued"
+    gate = run_queued_job(client, quality_job["id"])["gate"]
     assert gate["profile_boundary"]["quality_check_scope"] == "sample"
     assert any(check["check_id"] == "profile_statistics_sampled" for check in gate["checks"])
     duplicate_check = next(check for check in gate["checks"] if check["check_id"] == "duplicate_rows")

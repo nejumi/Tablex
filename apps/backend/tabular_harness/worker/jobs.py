@@ -57,8 +57,10 @@ from tabular_harness.services.benchmarks import (
     inspect_benchmark_local_files,
     raw_benchmark_dataset,
 )
+from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.decision_reporting import create_decision_report_v1
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
+from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
     create_default_evaluation_candidates,
     create_evaluation_approval_review,
@@ -433,6 +435,45 @@ def review_evaluation_approval_handler(db: Session, job: Job, store: LocalArtifa
         "blocked": decision["blocked"],
         "blocker_count": decision["blocker_count"],
         "warning_count": decision["warning_count"],
+    }
+
+
+def analyze_data_quality_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    dataset = dataset_for_job_payload(db, job, "analyze_data_quality")
+    project = db.get(Project, dataset.project_id)
+    if project is None:
+        raise ValueError("Project not found")
+    result = analyze_dataset_quality(db, store=store, project=project, dataset=dataset)
+    return {
+        "dataset_snapshot_id": dataset.id,
+        "artifact_ids": result.artifact_ids,
+        "gate": result.gate,
+        "evidence_ids": result.evidence_ids,
+        "assumption_ids": result.assumption_ids,
+        "question_ids": result.question_ids,
+        "insight_id": result.insight_id,
+    }
+
+
+def run_eda_review_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    dataset = dataset_for_job_payload(db, job, "run_eda_review")
+    result = create_dataset_eda_review(db, store=store, dataset=dataset)
+    return {
+        "schema_version": result.review["schema_version"],
+        "dataset_snapshot_id": dataset.id,
+        "eda_review_bundle_artifact_id": result.bundle_artifact.id,
+        "eda_review_html_artifact_id": result.html_artifact.id,
+        "eda_review_report_id": result.report.id,
+        "eda_review_report_artifact_id": result.report_artifact.id,
+        "visualization_id": result.visualization.id,
+        "visualization_artifact_id": result.visualization_artifact.id,
+        "eda_review_figure_artifact_ids": [artifact.id for artifact in result.figure_artifacts],
+        "evidence_id": result.evidence.id,
+        "insight_id": result.insight.id,
+        "artifact_id": result.bundle_artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "quality_score": result.review["summary"]["quality_score"],
+        "target_column": result.review["summary"].get("target_column"),
     }
 
 
@@ -1904,6 +1945,8 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["design_evaluation_candidates"] = design_evaluation_candidates_handler
     handlers["compare_evaluation_scenarios"] = compare_evaluation_scenarios_handler
     handlers["review_evaluation_approval"] = review_evaluation_approval_handler
+    handlers["analyze_data_quality"] = analyze_data_quality_handler
+    handlers["run_eda_review"] = run_eda_review_handler
     handlers["create_adaptive_strategy_brief"] = create_adaptive_strategy_brief_handler
     handlers["plan_research"] = plan_research_handler
     handlers["create_notebook_authoring_brief"] = create_notebook_authoring_brief_handler

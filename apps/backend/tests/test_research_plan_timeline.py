@@ -89,6 +89,35 @@ def test_research_plan_timeline_masks_codex_added_mixed_english_blocks() -> None
     assert all(block["next_action"] is None for block in blocks)
 
 
+def test_research_plan_timeline_treats_human_japanese_locale_labels_as_japanese() -> None:
+    raw_blocks = [
+        {
+            "id": "codex_added_modeling",
+            "title": "Model diagnostics and feature importance",
+            "why_it_matters": "Explain error slices before choosing the next experiment.",
+            "status": "active",
+        },
+        {
+            "id": "localized_modeling",
+            "title": "モデル診断を深掘りする",
+            "why_it_matters": "次の実験を選ぶ前に誤差スライスを確認します。",
+            "status": "pending",
+        },
+    ]
+
+    summary = research_plan_localization_summary(raw_blocks, locale="Japanese / 日本語")
+    blocks = clean_research_plan_timeline_blocks(raw_blocks, locale="Japanese / 日本語")
+
+    assert summary["requires_explicit_locale"] is True
+    assert summary["missing_block_count"] == 1
+    assert blocks[0]["title"] == "表示言語の更新待ち"
+    assert blocks[0]["subtitle"] == ""
+    assert blocks[0]["localization_status"] == "needs_locale_refresh"
+    assert blocks[1]["title"] == "モデル診断を深掘りする"
+    assert blocks[1]["subtitle"] == "次の実験を選ぶ前に誤差スライスを確認します。"
+    assert blocks[1]["localization_status"] == "localized"
+
+
 def test_research_plan_timeline_masks_japanese_blocks_for_english_display() -> None:
     raw_blocks = [
         {
