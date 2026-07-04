@@ -1634,31 +1634,26 @@ function localeLooksJapanese(locale: string | null | undefined): boolean {
   return language === "ja" || normalized.includes("japanese") || normalized.includes("日本語");
 }
 
-function localeRequiresLocalizedDisplay(locale: string | null | undefined): boolean {
-  const language = localeLanguage(locale);
-  return Boolean(language);
-}
-
-function displayTextMatchesLocale(value: string | null | undefined, locale: string | null | undefined): boolean {
-  void locale;
+function hasNonEmptyDisplayText(value: string | null | undefined): boolean {
   const text = (value ?? "").trim();
   return Boolean(text);
 }
 
-function localeSafeDisplayText(value: string | null | undefined, locale: string | null | undefined, fallback: string): string {
+function displayTextOrFallback(value: string | null | undefined, locale: string | null | undefined, fallback: string): string {
+  void locale;
   const text = (value ?? "").trim();
-  if (displayTextMatchesLocale(text, locale)) return text;
+  if (hasNonEmptyDisplayText(text)) return text;
   return fallback;
 }
 
-function localeSafeOptionalDisplayText(
+function optionalDisplayText(
   value: string | null | undefined,
   locale: string | null | undefined,
   fallback: string
 ): string | null {
   const text = (value ?? "").trim();
   if (!text) return null;
-  return localeSafeDisplayText(text, locale, fallback);
+  return displayTextOrFallback(text, locale, fallback);
 }
 
 function localizedObjectCount(
@@ -1670,20 +1665,6 @@ function localizedObjectCount(
 ): string {
   if (localeLooksJapanese(locale)) return `${count}件の${japaneseLabel}`;
   return `${count} ${count === 1 ? englishSingular : englishPlural}`;
-}
-
-function researchPlanTimelineMatchesDisplayLocale(
-  timeline: ResearchPlanTimelineResponse | null,
-  locale: string | null | undefined
-): boolean {
-  if (!timeline) return true;
-  const responseLocale = timeline.response_locale ?? timeline.requested_locale ?? timeline.authored_locale ?? null;
-  if (!localeRequiresLocalizedDisplay(locale)) {
-    return !localeRequiresLocalizedDisplay(responseLocale);
-  }
-  if (!responseLocale) return false;
-  if (localeLooksJapanese(locale)) return localeLooksJapanese(responseLocale);
-  return localeLanguage(responseLocale) === localeLanguage(locale);
 }
 
 function shouldSubmitTextarea(
@@ -4604,7 +4585,6 @@ function ProjectDetail({
   const [agentSession, setAgentSession] = React.useState<AgentSession | null>(null);
   const [agentTranscriptEvents, setAgentTranscriptEvents] = React.useState<AgentTranscriptEvent[]>([]);
   const [agentRawTranscript, setAgentRawTranscript] = React.useState<AgentRawTranscript | null>(null);
-  const userSettingsLocaleRef = React.useRef(displayLocale);
   const transcriptSinceIndexRef = React.useRef<number | null>(null);
   const transcriptSessionIdRef = React.useRef<string | null>(null);
   const [activityTick, setActivityTick] = React.useState(0);
@@ -4623,25 +4603,13 @@ function ProjectDetail({
       ? "awake"
       : "idle";
 
-  React.useEffect(() => {
-    userSettingsLocaleRef.current = displayLocale;
-  }, [displayLocale]);
-
   const setResearchPlanTimelineForCurrentLocale = React.useCallback((timeline: ResearchPlanTimelineResponse | null) => {
-    if (!timeline) {
-      setResearchPlanTimeline(null);
-      return;
-    }
-    if (researchPlanTimelineMatchesDisplayLocale(timeline, userSettingsLocaleRef.current)) {
-      setResearchPlanTimeline(timeline);
-    } else {
-      setResearchPlanTimeline(null);
-    }
+    setResearchPlanTimeline(timeline);
   }, []);
 
   React.useEffect(() => {
     setResearchPlanTimeline(null);
-  }, [project.id, setResearchPlanTimelineForCurrentLocale, displayLocale]);
+  }, [project.id, setResearchPlanTimelineForCurrentLocale]);
   const turnState = agentActivity?.turn_state ?? fallbackTurnState(project);
   const focusRecommendation = React.useMemo(
     () => {
@@ -5670,15 +5638,12 @@ function HomeTab({
   const equippedSkills = equippedSkillItems(projectAssetReferences, libraryAssets);
   const rawAgentEvents = buildRawAgentEvents(messages, jobs, agentTranscriptEvents, agentSession);
   const agentWorkspaceScrollResetKey = `${project.id}:${agentSession?.id ?? "no-agent-session"}`;
-  const researchPlanTimelineForDisplay = researchPlanTimelineMatchesDisplayLocale(researchPlanTimeline, locale)
-    ? researchPlanTimeline
-    : null;
   const authoredResearchPlanBlocks = buildResearchPlanBlocks({
     project,
     datasetCount,
     artifacts,
     researchBriefs,
-    researchPlanTimeline: researchPlanTimelineForDisplay,
+    researchPlanTimeline,
     notebookIndex,
     equippedSkills,
     jobs: planJobs,
@@ -5755,7 +5720,7 @@ function HomeTab({
             <div>
               <span>{text.researchPlanTitle}</span>
               <strong>
-                {localeSafeDisplayText(
+                {displayTextOrFallback(
                   latestResearchPlan?.name ??
                     (strategyBrief ? strategyActionDisplayLabel(strategyBrief.recommended_next_action, locale, text) : undefined),
                   locale,
@@ -5912,9 +5877,9 @@ function HomeTab({
           {latestBrief ? (
             <div className="mission-note">
               <span>{text.latestBriefLabel}</span>
-              <strong>{localeSafeDisplayText(latestBrief.title, locale, text.memoryUntitledSignalTitle)}</strong>
+              <strong>{displayTextOrFallback(latestBrief.title, locale, text.memoryUntitledSignalTitle)}</strong>
               <small>
-                {localeSafeDisplayText(
+                {displayTextOrFallback(
                   latestBrief.key_findings.slice(0, 2).join(" / ") || latestBrief.status,
                   locale,
                   text.memoryNoSummary
@@ -5925,8 +5890,8 @@ function HomeTab({
           {latestIdea ? (
             <div className="mission-note">
               <span>{text.latestIdeaLabel}</span>
-              <strong>{localeSafeDisplayText(latestIdea.title, locale, text.memoryUntitledSignalTitle)}</strong>
-              <small>{localeSafeDisplayText(latestIdea.hypothesis, locale, text.memoryNoSummary)}</small>
+              <strong>{displayTextOrFallback(latestIdea.title, locale, text.memoryUntitledSignalTitle)}</strong>
+              <small>{displayTextOrFallback(latestIdea.hypothesis, locale, text.memoryNoSummary)}</small>
             </div>
           ) : null}
           <SkillManagerPanel
@@ -6299,8 +6264,8 @@ function ResearchPlanTimeline({
     <div className="research-plan-timeline-wrap">
       <div className="research-plan-timeline" aria-label={text.researchPlanTitle} ref={timelineRef}>
         {blocks.map((block, index) => {
-          const displayTitle = localeSafeDisplayText(block.title, locale, text.researchPlanSummaryBlock);
-          const displaySubtitle = block.subtitle ? localeSafeDisplayText(block.subtitle, locale, "") : "";
+          const displayTitle = displayTextOrFallback(block.title, locale, text.researchPlanSummaryBlock);
+          const displaySubtitle = block.subtitle ? displayTextOrFallback(block.subtitle, locale, "") : "";
           return (
             <React.Fragment key={block.id}>
               <button
@@ -6337,7 +6302,7 @@ function ResearchPlanTimeline({
       {expandedBlock ? (
         <div className="research-plan-subtasks">
           <div className="research-plan-subtasks-head">
-            <strong>{localeSafeDisplayText(expandedBlock.title, locale, text.researchPlanSummaryBlock)}</strong>
+            <strong>{displayTextOrFallback(expandedBlock.title, locale, text.researchPlanSummaryBlock)}</strong>
             <span>
               {expandedBlock.subtasks?.length ?? 0}{" "}
               {(expandedBlock.subtasks?.length ?? 0) === 1 ? text.planSubtaskSingular : text.planSubtaskPlural}
@@ -6354,8 +6319,8 @@ function ResearchPlanTimeline({
               >
                 <span className={navigatorStatusClass(subtask.status)}>{researchPlanStatusLabel(subtask.status, text)}</span>
                 <div>
-                  <strong>{localeSafeDisplayText(subtask.title, locale, text.researchPlanDetailEvidence)}</strong>
-                  <p>{localeSafeDisplayText(subtask.detail, locale, "")}</p>
+                  <strong>{displayTextOrFallback(subtask.title, locale, text.researchPlanDetailEvidence)}</strong>
+                  <p>{displayTextOrFallback(subtask.detail, locale, "")}</p>
                   {subtask.evidence ? <small>{subtask.evidence}</small> : null}
                 </div>
               </button>
@@ -6454,12 +6419,12 @@ function buildResearchPlanBlocks({
     : hasPriorResearchPreparation || hasUnderstandingCompletionEvidence
       ? "pending"
       : "waiting";
-  const targetDefinitionEvidence = localeSafeOptionalDisplayText(
+  const targetDefinitionEvidence = optionalDisplayText(
     latestArtifactName(artifacts, "target_definition_proposal"),
     locale,
     text.planEvidenceObjective
   );
-  const understandingArtifactEvidence = localeSafeOptionalDisplayText(
+  const understandingArtifactEvidence = optionalDisplayText(
     latestDataUnderstandingNotebookName(artifacts) ??
       latestAgentAuthoredDataUnderstandingName(artifacts) ??
       latestArtifactName(artifacts, "understanding_report") ??
@@ -6468,7 +6433,7 @@ function buildResearchPlanBlocks({
     locale,
     text.planEvidenceUnderstanding
   );
-  const priorResearchArtifactEvidence = localeSafeOptionalDisplayText(
+  const priorResearchArtifactEvidence = optionalDisplayText(
     latestArtifactName(artifacts, "research_finding_synthesis") ??
       latestArtifactName(artifacts, "research_findings_report") ??
       noFindingsResearchArtifact?.name ??
@@ -6645,8 +6610,8 @@ function researchPlanBlocksFromTimeline(
       const subtaskTab = subtask.target_tab ? tabFromString(subtask.target_tab, targetTab ?? "Home") : targetTab;
       return {
         id: subtask.id,
-        title: localeSafeDisplayText(subtask.title, displayLocale, text.researchPlanDetailEvidence),
-        detail: localeSafeDisplayText(subtask.detail, displayLocale, ""),
+        title: displayTextOrFallback(subtask.title, displayLocale, text.researchPlanDetailEvidence),
+        detail: displayTextOrFallback(subtask.detail, displayLocale, ""),
         status: subtask.status,
         evidence: subtask.evidence,
         targetTab: subtaskTab,
@@ -6657,8 +6622,8 @@ function researchPlanBlocksFromTimeline(
     subtasks.push(...derivedResearchPlanSubtasks(block, text, displayLocale));
     return {
       id: block.id,
-      title: localeSafeDisplayText(block.title, displayLocale, text.researchPlanSummaryBlock),
-      subtitle: localeSafeDisplayText(block.subtitle, displayLocale, ""),
+      title: displayTextOrFallback(block.title, displayLocale, text.researchPlanSummaryBlock),
+      subtitle: displayTextOrFallback(block.subtitle, displayLocale, ""),
       status: block.status,
       eyebrow: `${index + 1}`.padStart(2, "0"),
       evidence: block.evidence,
@@ -6679,22 +6644,22 @@ function derivedResearchPlanSubtasks(
     derived.push({
       id: `${block.id}:next_action`,
       title: text.researchPlanDetailNextAction,
-      detail: localeSafeDisplayText(block.next_action, locale, text.researchPlanFallbackDetail),
+      detail: displayTextOrFallback(block.next_action, locale, text.researchPlanFallbackDetail),
       status: block.status,
-      evidence: displayTextMatchesLocale(block.phase, locale) ? block.phase ?? null : null
+      evidence: hasNonEmptyDisplayText(block.phase) ? block.phase ?? null : null
     });
   }
   if (block.done_criteria) {
     derived.push({
       id: `${block.id}:done_criteria`,
       title: text.researchPlanDetailDoneCriteria,
-      detail: localeSafeDisplayText(block.done_criteria, locale, text.researchPlanFallbackDetail),
+      detail: displayTextOrFallback(block.done_criteria, locale, text.researchPlanFallbackDetail),
       status: block.status,
       evidence: null
     });
   }
   if (block.blockers?.length) {
-    const blockerDetail = localeSafeDisplayText(block.blockers.join(" / "), locale, text.researchPlanFallbackDetail);
+    const blockerDetail = displayTextOrFallback(block.blockers.join(" / "), locale, text.researchPlanFallbackDetail);
     derived.push({
       id: `${block.id}:blockers`,
       title: text.researchPlanDetailBlockers,
@@ -6796,8 +6761,8 @@ function researchPlanSubtaskFromJob(
   const humanDescription = jobHumanDescription(job, text);
   return {
     id: job.id,
-    title: localeSafeDisplayText(humanDescription.title, locale, workerDisplayName(job.job_type, text)),
-    detail: localeSafeDisplayText(job.error_message ?? humanDescription.summary ?? latestJobHeadline(job), locale, text.researchPlanTimelineHint),
+    title: displayTextOrFallback(humanDescription.title, locale, workerDisplayName(job.job_type, text)),
+    detail: displayTextOrFallback(job.error_message ?? humanDescription.summary ?? latestJobHeadline(job), locale, text.researchPlanTimelineHint),
     status: researchPlanStatusFromJob(job),
     evidence: `${workerStatusLabel(job.status, text)} · ${formatDate(job.updated_at ?? job.created_at)}`,
     onClick: () => onTabChange(tabForResearchPlanJob(job))
@@ -6989,9 +6954,10 @@ function conciseMemoryText(value: string | null | undefined, fallback: string, m
   return `${text.slice(0, maxLength - 1).trim()}...`;
 }
 
-function localeSafeMemoryText(value: string | null | undefined, locale: string, fallback: string, maxLength = 170) {
+function memoryDisplayText(value: string | null | undefined, locale: string, fallback: string, maxLength = 170) {
   const normalized = (value ?? "").replace(/\s+/g, " ").trim();
-  if (displayTextMatchesLocale(normalized, locale)) return conciseMemoryText(normalized, fallback, maxLength);
+  void locale;
+  if (hasNonEmptyDisplayText(normalized)) return conciseMemoryText(normalized, fallback, maxLength);
   return fallback;
 }
 
@@ -7018,8 +6984,8 @@ function buildIdeaFindingItems(ideas: Idea[], insights: Insight[], text: LocaleM
     ...ideas.map((idea) => ({
       id: idea.id,
       kind: "idea" as const,
-      title: localeSafeMemoryText(idea.title, locale, text.memoryUntitledSignalTitle, 90),
-      summary: localeSafeMemoryText(
+      title: memoryDisplayText(idea.title, locale, text.memoryUntitledSignalTitle, 90),
+      summary: memoryDisplayText(
         idea.hypothesis || idea.rationale_md,
         locale,
         text.memoryNoSummary
@@ -7034,8 +7000,8 @@ function buildIdeaFindingItems(ideas: Idea[], insights: Insight[], text: LocaleM
     ...insights.map((insight) => ({
       id: insight.id,
       kind: "finding" as const,
-      title: localeSafeMemoryText(insight.title, locale, text.memoryUntitledSignalTitle, 90),
-      summary: localeSafeMemoryText(insight.summary, locale, text.memoryNoSummary),
+      title: memoryDisplayText(insight.title, locale, text.memoryUntitledSignalTitle, 90),
+      summary: memoryDisplayText(insight.summary, locale, text.memoryNoSummary),
       meta: `${text.memoryKindFinding} · ${confidenceLabel(insight.confidence, text, locale)}`,
       cta: insightDeepDiveAnchor(insight) === "notebook-focus" ? text.memoryOpenNotebookEvidence : text.memoryOpenFinding,
       target_tab: "Insight",
@@ -7764,21 +7730,21 @@ function turnStateRawObservationText(turnState: TurnState, text: LocaleMessages)
 function turnStateDisplayDetail(turnState: TurnState, text: LocaleMessages, locale: string): string {
   if (turnState.state === "waiting_for_user") return text.turnStateUserTurnHint;
   if (turnState.state === "worker_pending") {
-    return localeSafeDisplayText(turnState.detail, locale, text.turnStateWorkerPendingHint);
+    return displayTextOrFallback(turnState.detail, locale, text.turnStateWorkerPendingHint);
   }
   if (turnState.state === "agent_scheduled") {
-    return localeSafeDisplayText(turnState.detail, locale, text.turnStateAgentScheduledHint);
+    return displayTextOrFallback(turnState.detail, locale, text.turnStateAgentScheduledHint);
   }
   if (turnState.state === "needs_attention") {
-    return localeSafeDisplayText(turnState.detail, locale, text.turnStateNeedsAttentionHint);
+    return displayTextOrFallback(turnState.detail, locale, text.turnStateNeedsAttentionHint);
   }
   if (turnState.state === "agent_running") {
-    return localeSafeDisplayText(turnState.detail, locale, text.turnStateAgentTurnHint);
+    return displayTextOrFallback(turnState.detail, locale, text.turnStateAgentTurnHint);
   }
   if (turnState.state === "stale_runner") {
-    return localeSafeDisplayText(turnState.detail, locale, text.turnStateNeedsAttentionHint);
+    return displayTextOrFallback(turnState.detail, locale, text.turnStateNeedsAttentionHint);
   }
-  return localeSafeDisplayText(
+  return displayTextOrFallback(
     turnState.detail,
     locale,
     turnState.input_attention ? text.turnStateUserTurnHint : text.turnStateAgentTurnHint
@@ -7810,7 +7776,7 @@ function turnStateLabel(turnState: TurnState, text: LocaleMessages, locale?: str
     case "waiting_for_user":
       return text.turnStateWaitingForUser;
     default:
-      return localeSafeDisplayText(turnState.label, locale, text.turnStateObserved);
+      return displayTextOrFallback(turnState.label, locale, text.turnStateObserved);
   }
 }
 
@@ -8250,7 +8216,7 @@ function AgentConversationTurnCard({
   const waitObservationItems = active ? agentChatWaitObservationItems(assistant?.responseBrief, text) : [];
   const latestCodexMessage = active ? agentChatWaitLatestCodexMessage(assistant?.responseBrief) : null;
   const visibleLatestCodexMessage =
-    latestCodexMessage && displayTextMatchesLocale(latestCodexMessage, locale) ? latestCodexMessage : null;
+    latestCodexMessage && hasNonEmptyDisplayText(latestCodexMessage) ? latestCodexMessage : null;
   const hasRawOnlyCodexMessage = Boolean(latestCodexMessage && !visibleLatestCodexMessage);
   return (
     <article className={`agent-turn-card ${active ? "is-active" : ""}`}>
@@ -12274,7 +12240,7 @@ function StrategyBriefPanel({
   const action = brief.recommended_next_action;
   const actionLabel = strategyActionDisplayLabel(action, locale, text);
   const actionReason = strategyActionDisplayReason(action, locale, text);
-  const handoffObjective = localeSafeDisplayText(
+  const handoffObjective = displayTextOrFallback(
     textField(brief.codex_handoff.suggested_objective) ?? action.prompt ?? action.reason,
     locale,
     actionReason
@@ -12347,28 +12313,28 @@ function StrategyBriefPanel({
 
 function strategyActionDisplayLabel(action: StrategyAction, locale: string, text: LocaleMessages): string {
   const display = action.display?.label ?? action.display_label;
-  if (displayTextMatchesLocale(display, locale)) return display as string;
+  if (hasNonEmptyDisplayText(display)) return display as string;
   const fallback = strategyActionLabelFallback(action, text);
-  return localeSafeDisplayText(action.label, locale, fallback);
+  return displayTextOrFallback(action.label, locale, fallback);
 }
 
 function strategyActionDisplayReason(action: StrategyAction, locale: string, text: LocaleMessages): string {
   const display = action.display?.reason ?? action.display_reason;
-  if (displayTextMatchesLocale(display, locale)) return display as string;
+  if (hasNonEmptyDisplayText(display)) return display as string;
   const fallback = strategyActionReasonFallback(action, text);
-  return localeSafeDisplayText(action.reason, locale, fallback);
+  return displayTextOrFallback(action.reason, locale, fallback);
 }
 
 function strategyLaneDisplayTitle(lane: StrategyLane, locale: string, text: LocaleMessages): string {
   const display = lane.display?.title ?? lane.display_title;
-  if (displayTextMatchesLocale(display, locale)) return display as string;
-  return localeSafeDisplayText(lane.title, locale, text.strategyRecommendedAction);
+  if (hasNonEmptyDisplayText(display)) return display as string;
+  return displayTextOrFallback(lane.title, locale, text.strategyRecommendedAction);
 }
 
 function strategyLaneDisplayWhy(lane: StrategyLane, locale: string, text: LocaleMessages): string {
   const display = lane.display?.why ?? lane.display_why;
-  if (displayTextMatchesLocale(display, locale)) return display as string;
-  return localeSafeDisplayText(lane.why, locale, text.strategyBriefSubtitle);
+  if (hasNonEmptyDisplayText(display)) return display as string;
+  return displayTextOrFallback(lane.why, locale, text.strategyBriefSubtitle);
 }
 
 function strategyActionLabelFallback(action: StrategyAction, text: LocaleMessages): string {
