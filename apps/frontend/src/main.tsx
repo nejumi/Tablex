@@ -7489,16 +7489,22 @@ function useStickyBottomScroll<T extends HTMLElement>(dependencyKey: string, res
     const element = ref.current;
     if (!element || event.deltaY === 0) return;
     const deltaY = normalizedWheelDeltaY(event, element);
-    const atTop = element.scrollTop <= 0;
-    const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 1;
-    if (!((deltaY < 0 && atTop) || (deltaY > 0 && atBottom))) return;
-    const parent = scrollableParentForWheel(element, deltaY);
+    const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    const currentScrollTop = element.scrollTop;
+    const nextScrollTop = Math.min(Math.max(currentScrollTop + deltaY, 0), maxScrollTop);
+    const consumedDeltaY = nextScrollTop - currentScrollTop;
+    const remainingDeltaY = deltaY - consumedDeltaY;
+    if (Math.abs(remainingDeltaY) < 0.5) return;
+    const parent = scrollableParentForWheel(element, remainingDeltaY);
     if (!parent) return;
     event.preventDefault();
+    if (consumedDeltaY !== 0) {
+      element.scrollTop = nextScrollTop;
+    }
     if (parent === window) {
-      window.scrollBy({ top: deltaY, behavior: "auto" });
+      window.scrollBy({ top: remainingDeltaY, behavior: "auto" });
     } else {
-      parent.scrollBy({ top: deltaY, behavior: "auto" });
+      parent.scrollBy({ top: remainingDeltaY, behavior: "auto" });
     }
   }, []);
 
@@ -7515,7 +7521,7 @@ function scrollableParentForWheel(element: HTMLElement, deltaY: number): HTMLEle
   let parent = element.parentElement;
   while (parent && parent !== document.body && parent !== document.documentElement) {
     const style = window.getComputedStyle(parent);
-    const scrollable = /(auto|scroll)/.test(style.overflowY) && parent.scrollHeight > parent.clientHeight;
+    const scrollable = /(auto|scroll|overlay)/.test(style.overflowY) && parent.scrollHeight > parent.clientHeight;
     if (scrollable && canScrollElementVertically(parent, deltaY)) return parent;
     parent = parent.parentElement;
   }
