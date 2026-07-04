@@ -3655,6 +3655,72 @@ def test_failed_research_plan_file_request_is_announced_in_agent_chat(tmp_path: 
         assert chat_count == 1
 
 
+def test_research_plan_file_request_rejects_missing_schema_version_before_state_change(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    requests_dir = research_plan_requests_dir(workspace)
+    requests_dir.mkdir(parents=True)
+    (requests_dir / "missing_schema.json").write_text(
+        dumps_json(
+            {
+                "request_id": "missing_schema",
+                "operation": "commit_revision",
+                "payload": {
+                    "document": {
+                        "schema_version": "research_plan.v2",
+                        "timeline_blocks": [
+                            {
+                                "id": "data_understanding",
+                                "title": "Data understanding",
+                                "granularity": "chapter",
+                                "status": "active",
+                            }
+                        ],
+                    },
+                    "reason": "This should not be processed without the fixed request schema.",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(
+            id="p_plan_request_missing_schema",
+            name="Plan Request Missing Schema",
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+        )
+        session = AgentSession(
+            id="as_plan_request_missing_schema",
+            project_id=project.id,
+            goal_text="Reject malformed plan tool payloads.",
+            workspace_path=str(workspace),
+            status="running",
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        ack = loads_json(
+            (research_plan_acks_dir(workspace) / "missing_schema.ack.json").read_text(encoding="utf-8"),
+            {},
+        )
+        assert ack["status"] == "failed"
+        assert "tablex_research_plan_request.v1" in ack["error"]["message"]
+        assert db.scalar(select(func.count()).select_from(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project.id)) == 0
+        chat_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["intent"]["message_kind"] == "research_plan_request_failed"
+
+
 def test_published_raw_codex_transcript_is_ingested_as_session_artifact(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)

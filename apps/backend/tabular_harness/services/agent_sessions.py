@@ -89,6 +89,8 @@ SESSION_BIN_DIR = "bin"
 SESSION_REQUESTS_DIR = "requests"
 SESSION_ACKS_DIR = "acks"
 RESEARCH_PLAN_REQUESTS_DIR = "research_plan"
+RESEARCH_PLAN_REQUEST_SCHEMA_VERSION = "tablex_research_plan_request.v1"
+RESEARCH_PLAN_ACK_SCHEMA_VERSION = "tablex_research_plan_ack.v1"
 NOTEBOOK_REQUESTS_DIR = "notebooks"
 NOTEBOOK_REQUEST_SCHEMA_VERSION = "tablex_notebook_request.v1"
 NOTEBOOK_ACK_SCHEMA_VERSION = "tablex_notebook_ack.v1"
@@ -2576,6 +2578,10 @@ def process_research_plan_tool_requests(
             if not isinstance(payload, dict):
                 raise ValueError("ResearchPlan request must be a JSON object")
             request_id = str(payload.get("request_id") or path.stem)
+            schema_version = str(payload.get("schema_version") or "")
+            if schema_version != RESEARCH_PLAN_REQUEST_SCHEMA_VERSION:
+                expected = RESEARCH_PLAN_REQUEST_SCHEMA_VERSION
+                raise ValueError(f"Unsupported ResearchPlan request schema_version: {schema_version or '<missing>'}; expected {expected}")
             operation = str(payload.get("operation") or payload.get("tool") or "").strip()
             body = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
             result = execute_research_plan_tool_request(
@@ -2586,7 +2592,7 @@ def process_research_plan_tool_requests(
                 payload=body,
             )
             ack = {
-                "schema_version": "tablex_research_plan_ack.v1",
+                "schema_version": RESEARCH_PLAN_ACK_SCHEMA_VERSION,
                 "request_id": request_id,
                 "operation": operation,
                 "status": "succeeded",
@@ -2628,7 +2634,7 @@ def process_research_plan_tool_requests(
                 )
         except ResearchPlanValidationError as exc:
             ack = {
-                "schema_version": "tablex_research_plan_ack.v1",
+                "schema_version": RESEARCH_PLAN_ACK_SCHEMA_VERSION,
                 "request_id": request_id,
                 "operation": operation,
                 "status": "failed",
@@ -2670,7 +2676,7 @@ def process_research_plan_tool_requests(
             )
         except Exception as exc:
             ack = {
-                "schema_version": "tablex_research_plan_ack.v1",
+                "schema_version": RESEARCH_PLAN_ACK_SCHEMA_VERSION,
                 "request_id": request_id,
                 "operation": operation,
                 "status": "failed",
