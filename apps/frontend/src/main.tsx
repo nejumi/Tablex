@@ -3152,17 +3152,35 @@ function formatElapsedSeconds(seconds: number) {
   return `${minutes}m ${String(remainder).padStart(2, "0")}s`;
 }
 
-async function waitForAvatarJob(jobId: string): Promise<Job> {
-  const deadline = Date.now() + 12 * 60_000;
+type JobWaitOptions = {
+  timeoutMs?: number;
+  pollMs?: number;
+  label?: string;
+};
+
+async function waitForJobCompletion(jobId: string, options: JobWaitOptions = {}): Promise<Job> {
+  const timeoutMs = options.timeoutMs ?? 10 * 60_000;
+  const pollMs = options.pollMs ?? 1000;
+  const label = options.label ?? "Job";
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const job = await api<Job>(`/api/jobs/${jobId}`);
     if (job.status === "succeeded") return job;
     if (["failed", "cancelled", "timed_out"].includes(job.status)) {
-      throw new Error(job.error_message ?? `Avatar generation job ${job.status}.`);
+      throw new Error(job.error_message ?? `${label} ${job.status}.`);
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    await new Promise((resolve) => window.setTimeout(resolve, pollMs));
   }
-  throw new Error("Avatar generation is still running. Check Jobs or try again shortly.");
+  throw new Error(`${label} is still running. Check Agent Activity or try again shortly.`);
+}
+
+async function runQueuedJobAndWait(job: Job, options: JobWaitOptions = {}): Promise<Job> {
+  await api<Job>(`/api/jobs/${job.id}/run`, { method: "POST" });
+  return waitForJobCompletion(job.id, options);
+}
+
+async function waitForAvatarJob(jobId: string): Promise<Job> {
+  return waitForJobCompletion(jobId, { timeoutMs: 12 * 60_000, label: "Avatar generation" });
 }
 
 function uploadFormData<T>(
@@ -6689,7 +6707,7 @@ function researchPlanBlocksFromTimeline(
       onClick: targetTab ? () => onNavigateToTarget(targetTab, block.target_anchor) : undefined
     };
   });
-  return collapseUnlocalizedResearchPlanBlocks(blocks, text);
+  return collapseUnlocalizedResearchPlanBlocks(blocks, text, displayLocale);
 }
 
 function derivedResearchPlanSubtasks(
@@ -6764,12 +6782,18 @@ function derivedResearchPlanSubtasks(
   return derived;
 }
 
-function collapseUnlocalizedResearchPlanBlocks(blocks: ResearchPlanBlock[], text: LocaleMessages): ResearchPlanBlock[] {
+function collapseUnlocalizedResearchPlanBlocks(
+  blocks: ResearchPlanBlock[],
+  text: LocaleMessages,
+  locale: string
+): ResearchPlanBlock[] {
   const refreshTitle = text.researchPlanBlockLocaleRefreshTitle;
   const stableBlocks: ResearchPlanBlock[] = [];
   const refreshBlocks: ResearchPlanBlock[] = [];
   for (const block of blocks) {
-    if (block.title === refreshTitle) {
+    const titleMatchesLocale = displayTextMatchesLocale(block.title, locale);
+    const subtitleMatchesLocale = !block.subtitle || displayTextMatchesLocale(block.subtitle, locale);
+    if (block.title === refreshTitle || !titleMatchesLocale || !subtitleMatchesLocale) {
       refreshBlocks.push(block);
     } else {
       stableBlocks.push(block);
@@ -9493,16 +9517,7 @@ function evidenceMetricCardClass(tone: EvidenceReaderMetric["tone"] = "muted") {
 }
 
 async function waitForJobTranslation(jobId: string): Promise<Job> {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    const job = await api<Job>(`/api/jobs/${jobId}`);
-    if (job.status === "succeeded") return job;
-    if (["failed", "cancelled", "timed_out"].includes(job.status)) {
-      throw new Error(job.error_message ?? `Translation job ${job.status}.`);
-    }
-    await new Promise((resolve) => window.setTimeout(resolve, 1000));
-  }
-  throw new Error("Translation job is still running. Check Agent Activity or try again shortly.");
+  return waitForJobCompletion(jobId, { timeoutMs: 60_000, label: "Translation job" });
 }
 
 function TranslatablePreview({
@@ -10034,11 +10049,12 @@ function DataTab({
         method: "POST",
         body
       });
-      const artifactId = textField(job.output.relational_schema_hint_artifact_id);
+      const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Relational schema hint job" });
+      const artifactId = textField(completedJob.output.relational_schema_hint_artifact_id);
       if (artifactId) {
         await loadRelationalPreview(artifactId);
       }
-      return job;
+      return completedJob;
     });
     setErHintFile(null);
     setErHintNote("");
@@ -10085,8 +10101,9 @@ function DataTab({
       const job = await api<Job>(`/api/benchmarks/${benchmark.id}/kaggle/probe`, {
         method: "POST"
       });
-      setKaggleProbeResults((current) => ({ ...current, [benchmark.id]: job.output }));
-      return job;
+      const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 5 * 60_000, label: "Kaggle probe job" });
+      setKaggleProbeResults((current) => ({ ...current, [benchmark.id]: completedJob.output }));
+      return completedJob;
     });
   }
 
@@ -10095,8 +10112,9 @@ function DataTab({
       const job = await api<Job>(`/api/benchmarks/${benchmark.id}/kaggle/inventory`, {
         method: "POST"
       });
-      setKaggleInventoryResults((current) => ({ ...current, [benchmark.id]: job.output }));
-      return job;
+      const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Kaggle inventory job" });
+      setKaggleInventoryResults((current) => ({ ...current, [benchmark.id]: completedJob.output }));
+      return completedJob;
     });
   }
 
@@ -10113,8 +10131,9 @@ function DataTab({
           max_total_bytes: 500 * 1024 * 1024
         })
       });
-      setKaggleDownloadResults((current) => ({ ...current, [benchmark.id]: job.output }));
-      return job;
+      const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 60 * 60_000, label: "Kaggle download job" });
+      setKaggleDownloadResults((current) => ({ ...current, [benchmark.id]: completedJob.output }));
+      return completedJob;
     });
   }
 
@@ -10143,11 +10162,12 @@ function DataTab({
       const job = await api<Job>(`/api/projects/${project.id}/benchmarks/${benchmark.id}/scenario-pack`, {
         method: "POST"
       });
-      const reportArtifactId = job.output.benchmark_scenario_report_artifact_id;
+      const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Benchmark scenario pack job" });
+      const reportArtifactId = completedJob.output.benchmark_scenario_report_artifact_id;
       if (typeof reportArtifactId === "string") {
         await loadScenarioPreview(reportArtifactId);
       }
-      return job;
+      return completedJob;
     });
   }
 
@@ -10156,11 +10176,12 @@ function DataTab({
       const job = await api<Job>(`/api/projects/${project.id}/benchmarks/evidence-pack`, {
         method: "POST"
       });
-      const reportArtifactId = textField(job.output.benchmark_evidence_report_artifact_id);
+      const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Benchmark evidence pack job" });
+      const reportArtifactId = textField(completedJob.output.benchmark_evidence_report_artifact_id);
       if (reportArtifactId) {
         await loadEvidencePreview(reportArtifactId);
       }
-      return job;
+      return completedJob;
     });
   }
 
@@ -10169,11 +10190,12 @@ function DataTab({
       const job = await api<Job>(`/api/projects/${project.id}/features/relational-plan`, {
         method: "POST"
       });
-      const reportArtifactId = textField(job.output.relational_feature_report_artifact_id);
+      const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Relational feature plan job" });
+      const reportArtifactId = textField(completedJob.output.relational_feature_report_artifact_id);
       if (reportArtifactId) {
         await loadRelationalPreview(reportArtifactId);
       }
-      return job;
+      return completedJob;
     });
   }
 
@@ -10182,14 +10204,15 @@ function DataTab({
       const job = await api<Job>(`/api/projects/${project.id}/features/relational-recipe/build`, {
         method: "POST"
       });
-      const reportArtifactId = textField(job.output.relational_feature_recipe_report_artifact_id);
-      const previewArtifactId = textField(job.output.relational_feature_preview_artifact_id);
+      const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 15 * 60_000, label: "Relational feature recipe job" });
+      const reportArtifactId = textField(completedJob.output.relational_feature_recipe_report_artifact_id);
+      const previewArtifactId = textField(completedJob.output.relational_feature_preview_artifact_id);
       if (reportArtifactId) {
         await loadRelationalPreview(reportArtifactId);
       } else if (previewArtifactId) {
         await loadRelationalPreview(previewArtifactId);
       }
-      return job;
+      return completedJob;
     });
   }
 
@@ -10198,14 +10221,15 @@ function DataTab({
       const job = await api<Job>(`/api/projects/${project.id}/features/relational-scenarios/diagnose`, {
         method: "POST"
       });
-      const reportArtifactId = textField(job.output.relational_feature_scenario_report_artifact_id);
-      const diagnosticsArtifactId = textField(job.output.relational_feature_scenario_diagnostics_artifact_id);
+      const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 15 * 60_000, label: "Relational feature scenario diagnostics job" });
+      const reportArtifactId = textField(completedJob.output.relational_feature_scenario_report_artifact_id);
+      const diagnosticsArtifactId = textField(completedJob.output.relational_feature_scenario_diagnostics_artifact_id);
       if (reportArtifactId) {
         await loadRelationalPreview(reportArtifactId);
       } else if (diagnosticsArtifactId) {
         await loadRelationalPreview(diagnosticsArtifactId);
       }
-      return job;
+      return completedJob;
     });
   }
 
@@ -10214,11 +10238,12 @@ function DataTab({
       const job = await api<Job>(`/api/projects/${project.id}/benchmarks/collection-plan`, {
         method: "POST"
       });
-      const reportArtifactId = textField(job.output.benchmark_collection_report_artifact_id);
+      const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Benchmark collection plan job" });
+      const reportArtifactId = textField(completedJob.output.benchmark_collection_report_artifact_id);
       if (reportArtifactId) {
         await loadCollectionPreview(reportArtifactId);
       }
-      return job;
+      return completedJob;
     });
   }
 
@@ -12109,11 +12134,12 @@ function EvaluationTab({
           if (!latestScenarioComparison) {
             void runAction(async () => {
               const job = await api<Job>(`/api/projects/${project.id}/evaluation/compare`, { method: "POST" });
-              const artifactId = job.output.artifact_id;
+              const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Evaluation comparison job" });
+              const artifactId = completedJob.output.artifact_id;
               if (typeof artifactId === "string") {
                 await loadScenarioPreview(artifactId);
               }
-              return job;
+              return completedJob;
             });
             return;
           }
@@ -12151,10 +12177,12 @@ function EvaluationTab({
           onClick={() =>
             void runAction(async () => {
               const job = await api<Job>(`/api/projects/${project.id}/evaluation/compare`, { method: "POST" });
-              const artifactId = job.output.artifact_id;
+              const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Evaluation comparison job" });
+              const artifactId = completedJob.output.artifact_id;
               if (typeof artifactId === "string") {
                 await loadScenarioPreview(artifactId);
               }
+              return completedJob;
             })
           }
         >
@@ -12284,10 +12312,12 @@ function EvaluationTab({
                   onClick={() =>
                     void runAction(async () => {
                       const job = await api<Job>(`/api/evaluation-specs/${spec.id}/approval-review`, { method: "POST" });
-                      const artifactId = job.output.artifact_id;
+                      const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Evaluation approval review job" });
+                      const artifactId = completedJob.output.artifact_id;
                       if (typeof artifactId === "string") {
                         await loadApprovalPreview(artifactId);
                       }
+                      return completedJob;
                     })
                   }
                   title="Create approval review"
@@ -12905,47 +12935,51 @@ function ApproachTab({
     const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/prepare-workspace`, {
       method: "POST"
     });
-    const workspaceArtifactId = job.output.agent_workspace_manifest_artifact_id ?? job.output.artifact_id;
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Agent workspace preparation job" });
+    const workspaceArtifactId = completedJob.output.agent_workspace_manifest_artifact_id ?? completedJob.output.artifact_id;
     if (typeof workspaceArtifactId === "string") {
       await loadWorkspacePreview(workspaceArtifactId);
     }
-    return job;
+    return completedJob;
   }
 
   async function reviewContractReadiness(artifact: Artifact) {
     const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/readiness-review`, {
       method: "POST"
     });
-    const reportArtifactId = job.output.agent_task_readiness_report_artifact_id ?? job.output.artifact_id;
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Agent readiness review job" });
+    const reportArtifactId = completedJob.output.agent_task_readiness_report_artifact_id ?? completedJob.output.artifact_id;
     if (typeof reportArtifactId === "string") {
       await loadTaskContractPreview(reportArtifactId);
     }
-    setRunnerReadinessFeedback(readinessFeedbackFromJob(job, artifact.id));
-    return job;
+    setRunnerReadinessFeedback(readinessFeedbackFromJob(completedJob, artifact.id));
+    return completedJob;
   }
 
   async function runContractLocalStub(artifact: Artifact) {
     const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/run-local-stub`, {
       method: "POST"
     });
-    const ingested = job.output.ingested_artifact_ids;
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Local stub runner job" });
+    const ingested = completedJob.output.ingested_artifact_ids;
     const reportArtifactId = Array.isArray(ingested) ? textField(ingested[0]) : null;
     if (reportArtifactId) {
       await loadTaskContractPreview(reportArtifactId);
     }
-    return job;
+    return completedJob;
   }
 
   async function runContractCodex(artifact: Artifact) {
     const job = await api<Job>(`/api/agent-task-contracts/${artifact.id}/run-codex`, {
       method: "POST"
     });
-    const ingested = job.output.ingested_artifact_ids;
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 30 * 60_000, label: "Codex runner job" });
+    const ingested = completedJob.output.ingested_artifact_ids;
     const reportArtifactId = Array.isArray(ingested) ? textField(ingested[0]) : null;
     if (reportArtifactId) {
       await loadTaskContractPreview(reportArtifactId);
     }
-    return job;
+    return completedJob;
   }
 
   return (
@@ -12984,11 +13018,12 @@ function ApproachTab({
           onClick={() =>
             void runAction(async () => {
               const job = await api<Job>(`/api/projects/${project.id}/approach/research-plan`, { method: "POST" });
-              const artifactId = job.output.artifact_id;
+              const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Research plan job" });
+              const artifactId = completedJob.output.artifact_id;
               if (typeof artifactId === "string") {
                 await loadResearchPlanPreview(artifactId);
               }
-              return job;
+              return completedJob;
             })
           }
         >
@@ -13001,11 +13036,13 @@ function ApproachTab({
           onClick={() =>
             void runAction(async () => {
               const job = await api<Job>(`/api/projects/${project.id}/approach/research-source-pack`, { method: "POST" });
-              const artifactId = job.output.research_source_report_artifact_id ?? job.output.research_source_pack_artifact_id;
+              const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Research source pack job" });
+              const artifactId =
+                completedJob.output.research_source_report_artifact_id ?? completedJob.output.research_source_pack_artifact_id;
               if (typeof artifactId === "string") {
                 await loadResearchSourcePreview(artifactId);
               }
-              return job;
+              return completedJob;
             })
           }
         >
@@ -13018,13 +13055,14 @@ function ApproachTab({
           onClick={() =>
             void runAction(async () => {
               const job = await api<Job>(`/api/projects/${project.id}/approach/research-synthesis`, { method: "POST" });
+              const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Research synthesis job" });
               const artifactId =
-                job.output.research_finding_synthesis_report_artifact_id ??
-                job.output.research_finding_synthesis_artifact_id;
+                completedJob.output.research_finding_synthesis_report_artifact_id ??
+                completedJob.output.research_finding_synthesis_artifact_id;
               if (typeof artifactId === "string") {
                 await loadResearchSynthesisPreview(artifactId);
               }
-              return job;
+              return completedJob;
             })
           }
         >
@@ -13041,11 +13079,12 @@ function ApproachTab({
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({})
               });
-              const artifactId = job.output.agent_task_contract_artifact_id ?? job.output.artifact_id;
+              const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Agent task planning job" });
+              const artifactId = completedJob.output.agent_task_contract_artifact_id ?? completedJob.output.artifact_id;
               if (typeof artifactId === "string") {
                 await loadTaskContractPreview(artifactId);
               }
-              return job;
+              return completedJob;
             })
           }
         >
@@ -13152,11 +13191,12 @@ function ApproachTab({
                       const job = await api<Job>(`/api/research-source-packs/${artifact.id}/run-local-stub`, {
                         method: "POST"
                       });
-                      const reportArtifactId = job.output.research_findings_report_artifact_id;
+                      const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Research source stub job" });
+                      const reportArtifactId = completedJob.output.research_findings_report_artifact_id;
                       if (typeof reportArtifactId === "string") {
                         await loadResearchSourcePreview(reportArtifactId);
                       }
-                      return job;
+                      return completedJob;
                     })
                   }
                   title="Run controlled research stub"
@@ -13563,11 +13603,12 @@ function ExperimentsTab({
           onClick={() =>
             void runAction(async () => {
               const job = await api<Job>(`/api/projects/${project.id}/baseline/strategy-plan`, { method: "POST" });
-              const artifactId = job.output.baseline_strategy_plan_artifact_id;
+              const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Baseline strategy plan job" });
+              const artifactId = completedJob.output.baseline_strategy_plan_artifact_id;
               if (typeof artifactId === "string") {
                 await loadPreview(artifactId);
               }
-              return job;
+              return completedJob;
             })
           }
         >
@@ -13584,11 +13625,12 @@ function ExperimentsTab({
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({})
               });
-              const artifactId = job.output.agent_task_contract_artifact_id ?? job.output.artifact_id;
+              const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Agent task planning job" });
+              const artifactId = completedJob.output.agent_task_contract_artifact_id ?? completedJob.output.artifact_id;
               if (typeof artifactId === "string") {
                 await loadPreview(artifactId);
               }
-              return job;
+              return completedJob;
             })
           }
         >
@@ -13656,11 +13698,17 @@ function ExperimentsTab({
                   onClick={() =>
                     void runAction(async () => {
                       const job = await api<Job>(`/api/runs/${run.id}/model-diagnostics-artifacts`, { method: "POST" });
-                      const artifactId = textField(job.output.model_diagnostics_report_artifact_id) ?? textField(job.output.model_diagnostics_artifact_pack_id);
+                      const completedJob = await runQueuedJobAndWait(job, {
+                        timeoutMs: 10 * 60_000,
+                        label: "Model diagnostics artifacts job"
+                      });
+                      const artifactId =
+                        textField(completedJob.output.model_diagnostics_report_artifact_id) ??
+                        textField(completedJob.output.model_diagnostics_artifact_pack_id);
                       if (artifactId) {
                         await loadPreview(artifactId);
                       }
-                      return job;
+                      return completedJob;
                     })
                   }
                   title="Materialize model evidence artifacts"
@@ -13673,11 +13721,15 @@ function ExperimentsTab({
                   onClick={() =>
                     void runAction(async () => {
                       const job = await api<Job>(`/api/runs/${run.id}/analysis-notebook`, { method: "POST" });
-                      const htmlArtifactId = job.output.notebook_html_artifact_id;
+                      const completedJob = await runQueuedJobAndWait(job, {
+                        timeoutMs: 15 * 60_000,
+                        label: "Model notebook job"
+                      });
+                      const htmlArtifactId = completedJob.output.notebook_html_artifact_id;
                       if (typeof htmlArtifactId === "string") {
                         await loadPreview(htmlArtifactId);
                       }
-                      return job;
+                      return completedJob;
                     })
                   }
                   title="Generate model diagnostics notebook"
@@ -13990,64 +14042,71 @@ function NotebooksTab({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ locale })
     });
-    const htmlArtifactId = job.output.notebook_html_artifact_id;
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 15 * 60_000, label: "Data notebook job" });
+    const htmlArtifactId = completedJob.output.notebook_html_artifact_id;
     if (typeof htmlArtifactId === "string") {
       await loadPreview(htmlArtifactId);
     }
-    return job;
+    return completedJob;
   }
 
   async function generateModelNotebook(run: Run) {
     const job = await api<Job>(`/api/runs/${run.id}/analysis-notebook`, { method: "POST" });
-    const htmlArtifactId = job.output.notebook_html_artifact_id;
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 15 * 60_000, label: "Model notebook job" });
+    const htmlArtifactId = completedJob.output.notebook_html_artifact_id;
     if (typeof htmlArtifactId === "string") {
       await loadPreview(htmlArtifactId);
     }
-    return job;
+    return completedJob;
   }
 
   async function prepareResultNotebookEvidence() {
     const job = await api<Job>(`/api/projects/${project.id}/results/notebook-evidence`, { method: "POST" });
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Result notebook evidence job" });
     const htmlArtifactId =
-      textField(job.output.notebook_evidence_html_artifact_id) ??
-      textField(job.output.notebook_execution_html_artifact_id) ??
-      textField(job.output.notebook_html_artifact_id) ??
-      textField(job.output.analysis_notebook_artifact_id);
+      textField(completedJob.output.notebook_evidence_html_artifact_id) ??
+      textField(completedJob.output.notebook_execution_html_artifact_id) ??
+      textField(completedJob.output.notebook_html_artifact_id) ??
+      textField(completedJob.output.analysis_notebook_artifact_id);
     if (htmlArtifactId) {
       await loadPreview(htmlArtifactId);
     }
-    return job;
+    return completedJob;
   }
 
   async function runEdaReview(dataset: DatasetSnapshot) {
     const job = await api<Job>(`/api/datasets/${dataset.id}/eda-review`, { method: "POST" });
-    const htmlArtifactId = job.output.eda_review_html_artifact_id;
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 15 * 60_000, label: "EDA review job" });
+    const htmlArtifactId = completedJob.output.eda_review_html_artifact_id;
     if (typeof htmlArtifactId === "string") {
       await loadPreview(htmlArtifactId);
     }
-    return job;
+    return completedJob;
   }
 
   async function planNotebookExecution(item: NotebookIndexItem) {
     const job = await api<Job>(`/api/analysis-notebooks/${item.artifact_ids.notebook}/execution-plan`, {
       method: "POST"
     });
-    const planArtifactId = job.output.notebook_execution_plan_artifact_id;
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 5 * 60_000, label: "Notebook execution plan job" });
+    const planArtifactId = completedJob.output.notebook_execution_plan_artifact_id;
     if (typeof planArtifactId === "string") {
       await loadPreview(planArtifactId);
     }
-    return job;
+    return completedJob;
   }
 
   async function captureNotebookExecution(item: NotebookIndexItem) {
     const job = await api<Job>(`/api/analysis-notebooks/${item.artifact_ids.notebook}/execution-capture`, {
       method: "POST"
     });
-    const htmlArtifactId = job.output.notebook_evidence_html_artifact_id ?? job.output.notebook_execution_html_artifact_id;
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 15 * 60_000, label: "Notebook execution capture job" });
+    const htmlArtifactId =
+      completedJob.output.notebook_evidence_html_artifact_id ?? completedJob.output.notebook_execution_html_artifact_id;
     if (typeof htmlArtifactId === "string") {
       await loadPreview(htmlArtifactId);
     }
-    return job;
+    return completedJob;
   }
 
   function artifactsForNotebook(item: NotebookIndexItem, assetTypes: string[]) {
@@ -14777,21 +14836,23 @@ function ReportsTab({
     const job = await api<Job>(`/api/analysis-notebooks/${item.artifact_ids.notebook}/execution-plan`, {
       method: "POST"
     });
-    const planArtifactId = job.output.notebook_execution_plan_artifact_id;
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 5 * 60_000, label: "Notebook execution plan job" });
+    const planArtifactId = completedJob.output.notebook_execution_plan_artifact_id;
     if (typeof planArtifactId === "string") {
       await loadArtifactPreview(planArtifactId);
     }
-    return job;
+    return completedJob;
   }
 
   async function generateDecisionReport() {
     const job = await api<Job>(`/api/projects/${project.id}/decision-report/generate`, { method: "POST" });
-    const reportId = textField(job.output.report_id);
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Decision report job" });
+    const reportId = textField(completedJob.output.report_id);
     if (reportId) {
       autoPreviewedReportRef.current = reportId;
       await loadReportPreview(reportId);
     }
-    return job;
+    return completedJob;
   }
 
   return (
@@ -14941,11 +15002,12 @@ function ReportsTab({
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ locale })
                 });
-              const htmlArtifactId = job.output.notebook_html_artifact_id;
+              const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 15 * 60_000, label: "Data notebook job" });
+              const htmlArtifactId = completedJob.output.notebook_html_artifact_id;
               if (typeof htmlArtifactId === "string") {
                 await loadArtifactPreview(htmlArtifactId);
               }
-              return job;
+              return completedJob;
             })
           }
         >
@@ -14968,11 +15030,12 @@ function ReportsTab({
           onClick={() =>
             void runAction(async () => {
               const job = await api<Job>(`/api/projects/${project.id}/decision-dashboard/generate`, { method: "POST" });
-              const reportId = job.output.report_id;
+              const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Decision dashboard job" });
+              const reportId = completedJob.output.report_id;
               if (typeof reportId === "string") {
                 await loadReportPreview(reportId);
               }
-              return job;
+              return completedJob;
             })
           }
         >
@@ -14985,11 +15048,12 @@ function ReportsTab({
           onClick={() =>
             void runAction(async () => {
               const job = await api<Job>(`/api/projects/${project.id}/guidance/snapshots/compare`, { method: "POST" });
-              const reportId = job.output.guided_journey_comparison_report_id;
+              const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Guidance snapshot comparison job" });
+              const reportId = completedJob.output.guided_journey_comparison_report_id;
               if (typeof reportId === "string") {
                 await loadReportPreview(reportId);
               }
-              return job;
+              return completedJob;
             })
           }
         >
@@ -15984,46 +16048,50 @@ function LeaderboardTab({
 
   async function analyzeTopRun(entry: LeaderboardEntry) {
     const job = await api<Job>(`/api/runs/${entry.run_id}/diagnostics`, { method: "POST" });
-    const artifactIds = Array.isArray(job.output.artifact_ids) ? job.output.artifact_ids : [];
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Run diagnostics job" });
+    const artifactIds = Array.isArray(completedJob.output.artifact_ids) ? completedJob.output.artifact_ids : [];
     const preferredArtifactId = typeof artifactIds[1] === "string" ? artifactIds[1] : typeof artifactIds[0] === "string" ? artifactIds[0] : null;
     if (preferredArtifactId) {
       await loadPreview(preferredArtifactId);
     }
-    return job;
+    return completedJob;
   }
 
   async function draftTopRunReport(entry: LeaderboardEntry) {
     const job = await api<Job>(`/api/runs/${entry.run_id}/report`, { method: "POST" });
-    const artifactId = textField(job.output.artifact_id);
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Run report job" });
+    const artifactId = textField(completedJob.output.artifact_id);
     if (artifactId) {
       await loadPreview(artifactId);
     }
-    return job;
+    return completedJob;
   }
 
   async function materializeTopRunModelEvidence(entry: LeaderboardEntry) {
     const job = await api<Job>(`/api/runs/${entry.run_id}/model-diagnostics-artifacts`, { method: "POST" });
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Model diagnostics artifacts job" });
     const artifactId =
-      textField(job.output.model_diagnostics_report_artifact_id) ??
-      textField(job.output.model_diagnostics_artifact_pack_id) ??
-      textField(job.output.feature_importance_artifact_id);
+      textField(completedJob.output.model_diagnostics_report_artifact_id) ??
+      textField(completedJob.output.model_diagnostics_artifact_pack_id) ??
+      textField(completedJob.output.feature_importance_artifact_id);
     if (artifactId) {
       await loadPreview(artifactId);
     }
-    return job;
+    return completedJob;
   }
 
   async function prepareResultNotebookEvidence() {
     const job = await api<Job>(`/api/projects/${project.id}/results/notebook-evidence`, { method: "POST" });
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Result notebook evidence job" });
     const htmlArtifactId =
-      textField(job.output.notebook_evidence_html_artifact_id) ??
-      textField(job.output.notebook_execution_html_artifact_id) ??
-      textField(job.output.notebook_html_artifact_id) ??
-      textField(job.output.analysis_notebook_artifact_id);
+      textField(completedJob.output.notebook_evidence_html_artifact_id) ??
+      textField(completedJob.output.notebook_execution_html_artifact_id) ??
+      textField(completedJob.output.notebook_html_artifact_id) ??
+      textField(completedJob.output.analysis_notebook_artifact_id);
     if (htmlArtifactId) {
       await loadPreview(htmlArtifactId);
     }
-    return job;
+    return completedJob;
   }
 
   const readoutStatus = resultReadout?.status ?? leaderboardStatus;
