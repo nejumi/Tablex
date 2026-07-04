@@ -78,6 +78,7 @@ from tabular_harness.services.approach import store_text_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
 from tabular_harness.services.jobs import create_job
 from tabular_harness.services.research_plans import (
+    ResearchPlanValidationError,
     commit_research_plan_revision,
     set_research_plan_current_work,
 )
@@ -2168,6 +2169,176 @@ def test_research_plan_tool_rejects_done_node_without_deliverable_contract(tmp_p
         issue_codes = {issue["code"] for issue in ack["error"]["issues"]}
         assert "done_node_missing_deliverable_contract" in issue_codes
         assert db.scalar(select(func.count()).select_from(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project.id)) == 0
+
+
+def test_strict_research_plan_rejects_done_notebook_without_registered_artifact(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_missing_notebook_asset", name="Missing Notebook Asset")
+        db.add(project)
+        db.commit()
+
+        try:
+            commit_research_plan_revision(
+                db,
+                project_id=project.id,
+                document={
+                    "schema_version": "research_plan.v2",
+                    "timeline_blocks": [
+                        {
+                            "id": "data_understanding",
+                            "title": "Data understanding",
+                            "granularity": "chapter",
+                            "status": "done",
+                            "deliverable_contract": {"expected_outputs": ["notebook"]},
+                            "completion_evidence": [
+                                {"output_type": "notebook", "workspace_path": "notebooks/data_understanding.py"}
+                            ],
+                        }
+                    ],
+                },
+                author_type="codex",
+                reason="This should be rejected because the notebook is not registered.",
+                strict_validation=True,
+            )
+        except ResearchPlanValidationError as exc:
+            issue_codes = {issue["code"] for issue in exc.issues}
+            assert "done_node_missing_registered_deliverables" in issue_codes
+        else:
+            raise AssertionError("Expected ResearchPlanValidationError")
+
+
+def test_strict_research_plan_accepts_done_notebook_with_registered_artifact(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_registered_notebook_asset", name="Registered Notebook Asset")
+        db.add(project)
+        db.commit()
+        notebook_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="analysis_notebook",
+            name="registered_eda_notebook",
+            filename="data_understanding.py",
+            text="import marimo\n\napp = marimo.App()\n",
+            metadata={"workspace_relative_path": "notebooks/data_understanding.py"},
+        )
+        db.commit()
+
+        result = commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "granularity": "chapter",
+                        "status": "done",
+                        "deliverable_contract": {"expected_outputs": ["notebook"]},
+                        "completion_evidence": [
+                            {"output_type": "notebook", "artifact_id": notebook_artifact.id},
+                        ],
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Registered notebook evidence should satisfy the contract.",
+            strict_validation=True,
+        )
+
+        assert result.created is True
+        assert result.revision.project_id == project.id
+
+
+def test_strict_research_plan_rejects_leaderboard_without_registered_run(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_missing_leaderboard_run", name="Missing Leaderboard Run")
+        db.add(project)
+        db.commit()
+
+        try:
+            commit_research_plan_revision(
+                db,
+                project_id=project.id,
+                document={
+                    "schema_version": "research_plan.v2",
+                    "timeline_blocks": [
+                        {
+                            "id": "modeling",
+                            "title": "Modeling",
+                            "granularity": "chapter",
+                            "status": "done",
+                            "deliverable_contract": {"expected_outputs": ["leaderboard_entry"]},
+                            "completion_evidence": [
+                                {"output_type": "leaderboard_entry", "experiment_run_id": "run_missing"}
+                            ],
+                        }
+                    ],
+                },
+                author_type="codex",
+                reason="This should be rejected because no registered ExperimentRun exists.",
+                strict_validation=True,
+            )
+        except ResearchPlanValidationError as exc:
+            issue_codes = {issue["code"] for issue in exc.issues}
+            assert "done_node_missing_registered_deliverables" in issue_codes
+        else:
+            raise AssertionError("Expected ResearchPlanValidationError")
+
+
+def test_strict_research_plan_accepts_leaderboard_with_registered_run(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_registered_leaderboard_run", name="Registered Leaderboard Run")
+        run = ExperimentRun(
+            id="run_registered_leaderboard",
+            project_id=project.id,
+            runner_type="codex_cli",
+            status="succeeded",
+            params_json=dumps_json({"model_id": "median_baseline"}),
+            metrics_json=dumps_json({"mae": 1.0, "primary_metric_name": "mae", "primary_metric_value": 1.0}),
+        )
+        db.add_all([project, run])
+        db.commit()
+
+        result = commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "modeling",
+                        "title": "Modeling",
+                        "granularity": "chapter",
+                        "status": "done",
+                        "deliverable_contract": {"expected_outputs": ["experiment_run", "leaderboard_entry"]},
+                        "completion_evidence": [
+                            {"output_type": "leaderboard_entry", "experiment_run_id": run.id}
+                        ],
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Registered run evidence should satisfy the leaderboard contract.",
+            strict_validation=True,
+        )
+
+        assert result.created is True
+        assert result.revision.project_id == project.id
 
 
 def test_research_plan_tool_rejects_open_plan_without_current_node(tmp_path: Path) -> None:

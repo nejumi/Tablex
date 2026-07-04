@@ -11,9 +11,11 @@ from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
     Artifact,
+    ExperimentRun,
     LineageEdge,
     Project,
     Question,
+    Report,
     ResearchPlan,
     ResearchPlanCurrentWork,
     ResearchPlanRevision,
@@ -56,6 +58,19 @@ PLAN_TOO_FINE_GRANULARITIES = {
     "subtask",
     "task",
 }
+PLAN_NOTEBOOK_ASSET_TYPES = {
+    "analysis_notebook",
+    "notebook_execution_html",
+    "notebook_evidence_html",
+}
+PLAN_REPORT_ASSET_TYPES = {
+    "agent_session_report",
+    "analysis_report",
+    "notebook_execution_html",
+    "notebook_evidence_html",
+    "report",
+}
+PLAN_FIGURE_ASSET_TYPES = {"agent_session_figure", "visualization", "visualization_spec"}
 
 
 def latest_research_plan_revision(db: Session, *, project_id: str) -> ResearchPlanRevision | None:
@@ -591,6 +606,21 @@ def validate_research_plan_document(
                             "Attach evidence with matching output_type/type/role/asset_type, or revise the deliverable_contract before marking the node done.",
                         )
                     )
+                if strict:
+                    missing_registered_deliverables = missing_registered_research_plan_deliverables(
+                        db,
+                        project_id=project_id,
+                        block=block,
+                    )
+                    if missing_registered_deliverables:
+                        issues.append(
+                            research_plan_issue(
+                                "done_node_missing_registered_deliverables",
+                                f"{path}/completion_evidence",
+                                f"Node `{block_id}` is done, but the expected output(s) are not linked to registered Tablex assets or runs: {', '.join(missing_registered_deliverables[:6])}.",
+                                "For notebooks/reports/artifacts, reference a registered artifact_id or a workspace_path that Tablex has already ingested. For model results/leaderboard entries, reference an experiment_run_id registered through the experiment result tool.",
+                            )
+                        )
             if status == "skipped" and not research_plan_block_has_skip_reason(block):
                 issues.append(
                     research_plan_issue(
@@ -798,6 +828,26 @@ def missing_research_plan_deliverables(block: dict[str, Any]) -> list[str]:
     return missing
 
 
+def missing_registered_research_plan_deliverables(
+    db: Session,
+    *,
+    project_id: str,
+    block: dict[str, Any],
+) -> list[str]:
+    contract = block.get("deliverable_contract")
+    if not isinstance(contract, dict):
+        return []
+    expected_outputs = contract.get("expected_outputs")
+    if not isinstance(expected_outputs, list):
+        return []
+    expected = [normalize_research_plan_output_type(item) for item in expected_outputs]
+    expected = [item for item in expected if item and item != "none"]
+    if not expected:
+        return []
+    verified_types = research_plan_verified_evidence_output_types(db, project_id=project_id, block=block)
+    return [output_type for output_type in expected if output_type not in verified_types]
+
+
 def normalize_research_plan_output_type(value: Any) -> str:
     if isinstance(value, dict):
         for key in ("output_type", "type", "asset_type", "kind", "role"):
@@ -808,6 +858,164 @@ def normalize_research_plan_output_type(value: Any) -> str:
     if isinstance(value, str):
         return normalize_research_plan_type_token(value)
     return ""
+
+
+def research_plan_verified_evidence_output_types(
+    db: Session,
+    *,
+    project_id: str,
+    block: dict[str, Any],
+) -> set[str]:
+    verified_types: set[str] = set()
+    for item in research_plan_evidence_items(block):
+        verified_types.update(research_plan_verified_output_types_for_evidence_item(db, project_id=project_id, item=item))
+    if block.get("no_output_required") is True and research_plan_block_has_completion_evidence(block):
+        verified_types.add("none")
+    return verified_types
+
+
+def research_plan_evidence_items(block: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    completion_evidence = block.get("completion_evidence")
+    if isinstance(completion_evidence, list):
+        items.extend(item for item in completion_evidence if isinstance(item, dict))
+    supporting_artifacts = block.get("supporting_artifacts")
+    if isinstance(supporting_artifacts, list):
+        items.extend(item for item in supporting_artifacts if isinstance(item, dict) and item.get("exists") is not False)
+    return items
+
+
+def research_plan_verified_output_types_for_evidence_item(
+    db: Session,
+    *,
+    project_id: str,
+    item: dict[str, Any],
+) -> set[str]:
+    verified_types: set[str] = set()
+    for run_id in research_plan_evidence_run_ids(item):
+        if research_plan_experiment_run_exists(db, project_id=project_id, run_id=run_id):
+            verified_types.add("experiment_run")
+            verified_types.add("leaderboard_entry")
+    artifact = research_plan_evidence_artifact(db, project_id=project_id, item=item)
+    if artifact is not None:
+        verified_types.update(research_plan_artifact_output_types(artifact))
+        for declared_type in research_plan_declared_output_types(item):
+            if declared_type == "artifact":
+                verified_types.add("artifact")
+            elif declared_type in research_plan_artifact_output_types(artifact):
+                verified_types.add(declared_type)
+    report = research_plan_evidence_report(db, project_id=project_id, item=item)
+    if report is not None:
+        verified_types.add("report")
+        artifact = db.get(Artifact, report.artifact_id)
+        if artifact is not None and artifact.project_id == project_id:
+            verified_types.update(research_plan_artifact_output_types(artifact))
+    return verified_types
+
+
+def research_plan_declared_output_types(item: dict[str, Any]) -> set[str]:
+    declared: set[str] = set()
+    for key in ("output_type", "type", "asset_type", "kind", "role"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            declared.add(normalize_research_plan_type_token(value))
+    return declared
+
+
+def research_plan_evidence_run_ids(item: dict[str, Any]) -> list[str]:
+    run_ids: list[str] = []
+    for key in ("run_id", "experiment_run_id"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            run_ids.append(value.strip())
+    return run_ids
+
+
+def research_plan_experiment_run_exists(db: Session, *, project_id: str, run_id: str) -> bool:
+    run = db.get(ExperimentRun, run_id)
+    return run is not None and run.project_id == project_id
+
+
+def research_plan_evidence_artifact(
+    db: Session,
+    *,
+    project_id: str,
+    item: dict[str, Any],
+) -> Artifact | None:
+    for key in ("artifact_id", "notebook_artifact_id", "report_artifact_id"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            artifact = db.get(Artifact, value.strip())
+            if artifact is not None and artifact.project_id == project_id:
+                return artifact
+    report_id = item.get("report_id")
+    if isinstance(report_id, str) and report_id.strip():
+        artifact = db.get(Artifact, report_id.strip())
+        if artifact is not None and artifact.project_id == project_id:
+            return artifact
+        report = db.get(Report, report_id.strip())
+        if report is not None and report.project_id == project_id:
+            artifact = db.get(Artifact, report.artifact_id)
+            if artifact is not None and artifact.project_id == project_id:
+                return artifact
+    for key in ("workspace_path", "path"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            artifact = latest_project_artifact_for_workspace_path(db, project_id=project_id, workspace_path=value)
+            if artifact is not None:
+                return artifact
+    return None
+
+
+def research_plan_evidence_report(
+    db: Session,
+    *,
+    project_id: str,
+    item: dict[str, Any],
+) -> Report | None:
+    report_id = item.get("report_id")
+    if not isinstance(report_id, str) or not report_id.strip():
+        return None
+    report = db.get(Report, report_id.strip())
+    if report is not None and report.project_id == project_id:
+        return report
+    return None
+
+
+def latest_project_artifact_for_workspace_path(
+    db: Session,
+    *,
+    project_id: str,
+    workspace_path: str,
+) -> Artifact | None:
+    relative_path = workspace_path.strip()
+    if not relative_path:
+        return None
+    artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project_id)
+            .order_by(Artifact.created_at.desc())
+            .limit(1000)
+        ).all()
+    )
+    for artifact in artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("workspace_relative_path") == relative_path:
+            return artifact
+    return None
+
+
+def research_plan_artifact_output_types(artifact: Artifact) -> set[str]:
+    asset_type = artifact.asset_type.strip().casefold()
+    output_types = {"artifact"}
+    if asset_type in PLAN_NOTEBOOK_ASSET_TYPES:
+        output_types.add("notebook")
+    if asset_type in PLAN_REPORT_ASSET_TYPES:
+        output_types.add("report")
+    if asset_type in PLAN_FIGURE_ASSET_TYPES:
+        output_types.add("visualization")
+    return output_types
 
 
 def research_plan_evidence_output_types(block: dict[str, Any]) -> set[str]:
@@ -858,14 +1066,22 @@ def normalize_research_plan_type_token(value: str) -> str:
         "analysis_notebook": "notebook",
         "data_understanding_notebook": "notebook",
         "model_diagnostics_notebook": "notebook",
+        "eda_notebook": "notebook",
         "leaderboard": "leaderboard_entry",
+        "leaderboard_result": "leaderboard_entry",
+        "leaderboard_row": "leaderboard_entry",
         "run": "experiment_run",
         "experiment": "experiment_run",
         "model_run": "experiment_run",
         "model_results": "experiment_run",
         "agent_session_report": "report",
+        "analysis_report": "report",
+        "eda_report": "report",
         "markdown_report": "report",
         "html_report": "report",
+        "chart": "visualization",
+        "figure": "visualization",
+        "plot": "visualization",
     }
     return aliases.get(token, token)
 
