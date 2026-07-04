@@ -1670,16 +1670,6 @@ function displayTextOrFallback(value: string | null | undefined, locale: string 
   return fallback;
 }
 
-function optionalDisplayText(
-  value: string | null | undefined,
-  locale: string | null | undefined,
-  fallback: string
-): string | null {
-  const text = (value ?? "").trim();
-  if (!text) return null;
-  return displayTextOrFallback(text, locale, fallback);
-}
-
 function localizedObjectCount(
   count: number,
   englishSingular: string,
@@ -6842,136 +6832,11 @@ function researchPlanCurrentPositionText({
   return nextTitle ? `${text.researchPlanNextVisibleBlock} ${nextTitle}` : "";
 }
 
-function attachResearchPlanSubtasks(
-  blocks: ResearchPlanBlock[],
-  jobs: Job[],
-  text: LocaleMessages,
-  locale: string,
-  onTabChange: (tab: Tab) => void
-): ResearchPlanBlock[] {
-  if (!jobs.length) return blocks;
-  const blockIds = new Set(blocks.map((block) => block.id));
-  const byBlock = new Map<string, ResearchPlanSubtask[]>();
-  for (const job of jobs) {
-    if (isMainAgentReplyWaitJob(job)) continue;
-    const subtask = researchPlanSubtaskFromJob(job, text, locale, onTabChange);
-    const blockId = researchPlanBlockIdForJob(job);
-    if (blockId && blockIds.has(blockId)) {
-      const existing = byBlock.get(blockId) ?? [];
-      existing.push(subtask);
-      byBlock.set(blockId, existing);
-    }
-  }
-  return blocks.map((block) => {
-    const subtasks = byBlock.get(block.id) ?? [];
-    if (!subtasks.length) return block;
-    const combinedSubtasks = [...(block.subtasks ?? []), ...subtasks];
-    return {
-      ...block,
-      subtasks: combinedSubtasks,
-      status: researchPlanStatusWithSubtasks(block.status, combinedSubtasks),
-      evidence: block.evidence ?? subtaskEvidenceSummary(subtasks, text)
-    };
-  });
-}
-
 function agentSessionHasObservedCodexProcess(session: AgentSession | null): boolean {
   if (!session) return false;
   if (session.observed_runner_state === "running") return true;
   if (session.pid_is_observed_codex_process === true) return true;
   return (session.observed_codex_process_count ?? 0) > 0;
-}
-
-function researchPlanSubtaskFromJob(
-  job: Job,
-  text: LocaleMessages,
-  locale: string,
-  onTabChange: (tab: Tab) => void
-): ResearchPlanSubtask {
-  const humanDescription = jobHumanDescription(job, text);
-  return {
-    id: job.id,
-    title: displayTextOrFallback(humanDescription.title, locale, workerDisplayName(job.job_type, text)),
-    detail: displayTextOrFallback(job.error_message ?? humanDescription.summary ?? latestJobHeadline(job), locale, text.researchPlanTimelineHint),
-    status: researchPlanStatusFromJob(job),
-    evidence: `${workerStatusLabel(job.status, text)} · ${formatDate(job.updated_at ?? job.created_at)}`,
-    onClick: () => onTabChange(tabForResearchPlanJob(job))
-  };
-}
-
-function researchPlanStatusFromJob(job: Job): ResearchPlanBlockStatus {
-  if (job.status === "running") return "active";
-  if (job.status === "approval_required") return "blocked";
-  if (job.status === "queued" || job.status === "waiting_for_agent") return "waiting";
-  if (job.status === "succeeded") return "done";
-  if (job.status === "failed" || job.status === "timed_out" || job.status === "cancelled") return "blocked";
-  return "pending";
-}
-
-function researchPlanStatusWithSubtasks(
-  currentStatus: ResearchPlanBlockStatus,
-  subtasks: ResearchPlanSubtask[]
-): ResearchPlanBlockStatus {
-  if (subtasks.some((subtask) => subtask.status === "active")) return "active";
-  if (subtasks.some((subtask) => subtask.status === "blocked")) return "blocked";
-  if (currentStatus === "skipped") return "skipped";
-  if (subtasks.some((subtask) => subtask.status === "waiting")) return "waiting";
-  return currentStatus;
-}
-
-function subtaskEvidenceSummary(subtasks: ResearchPlanSubtask[], text: LocaleMessages) {
-  return `${subtasks.length} ${subtasks.length === 1 ? text.planSubtaskSingular : text.planSubtaskPlural}`;
-}
-
-function researchPlanBlockIdForJob(job: Job): string | null {
-  const initialBlockId = activeInitialResearchPlanBlockId(job);
-  if (initialBlockId) return initialBlockId;
-  const jobType = job.job_type.toLowerCase();
-  if (jobType.includes("profile") || jobType.includes("quality") || jobType.includes("eda") || jobType.includes("understanding")) {
-    return "understanding";
-  }
-  if (jobType.includes("target") || jobType.includes("objective") || jobType.includes("assumption")) {
-    return "objective";
-  }
-  if (jobType.includes("research") || jobType.includes("source_pack") || jobType.includes("skill")) {
-    return "prior_research";
-  }
-  if (jobType.includes("evaluation") || jobType.includes("split")) {
-    return "evaluation";
-  }
-  if (jobType.includes("baseline") || jobType.includes("model") || jobType.includes("experiment") || jobType.includes("leaderboard")) {
-    return "modeling";
-  }
-  if (jobType.includes("notebook") || jobType.includes("report") || jobType.includes("insight")) {
-    return "reporting";
-  }
-  return null;
-}
-
-function tabForResearchPlanJob(job: Job): Tab {
-  const jobType = job.job_type.toLowerCase();
-  if (jobType.includes("profile") || jobType.includes("quality") || jobType.includes("eda") || jobType.includes("relational")) return "Data";
-  if (jobType.includes("target") || jobType.includes("objective") || jobType.includes("assumption")) return "Assumptions";
-  if (jobType.includes("evaluation") || jobType.includes("split")) return "Evaluation";
-  if (jobType.includes("baseline") || jobType.includes("model") || jobType.includes("leaderboard")) return "Leaderboard";
-  if (jobType.includes("experiment") || jobType.includes("agent_task")) return "Experiments";
-  if (jobType.includes("notebook")) return "Notebooks";
-  if (jobType.includes("research") || jobType.includes("report") || jobType.includes("insight") || jobType.includes("skill")) return "Insight";
-  return "Jobs";
-}
-
-function activeInitialResearchPlanBlockId(job: Job | null): "data_upload" | "objective" | "understanding" | "prior_research" | null {
-  if (!job || !jobActiveForActivity(job, Date.now())) return null;
-  if (
-    ["profile_dataset", "infer_assumptions", "create_data_understanding_notebook", "prepare_data_understanding_notebook_authoring"].includes(
-      job.job_type
-    )
-  ) {
-    return "understanding";
-  }
-  if (["create_research_source_pack", "run_research_source_pack_stub"].includes(job.job_type)) return "prior_research";
-  if (job.job_type.includes("target_definition")) return "objective";
-  return null;
 }
 
 function researchPlanStatusLabel(status: ResearchPlanBlockStatus, text: LocaleMessages) {
@@ -6981,74 +6846,6 @@ function researchPlanStatusLabel(status: ResearchPlanBlockStatus, text: LocaleMe
   if (status === "waiting") return text.planStatusWaiting;
   if (status === "skipped") return text.planStatusSkipped;
   return text.planStatusPending;
-}
-
-function hasAnyArtifactType(artifacts: Artifact[], assetTypes: string[]) {
-  const wanted = new Set(assetTypes);
-  return artifacts.some((artifact) => wanted.has(artifact.asset_type));
-}
-
-function isDataUnderstandingNotebookArtifact(artifact: Artifact) {
-  if (!["analysis_notebook", "marimo_notebook"].includes(artifact.asset_type)) return false;
-  const notebookKind = String(artifact.metadata.notebook_kind ?? artifact.metadata.kind ?? "");
-  if (notebookKind === "data_understanding") return true;
-  const workspacePath = String(artifact.metadata.workspace_relative_path ?? "");
-  return isDataUnderstandingArtifactName(`${artifact.name} ${workspacePath}`);
-}
-
-function latestDataUnderstandingNotebookName(artifacts: Artifact[]) {
-  return artifacts
-    .filter(isDataUnderstandingNotebookArtifact)
-    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0]?.name ?? null;
-}
-
-function hasReviewableDataUnderstandingNotebook(notebookIndex: NotebookIndex | null) {
-  return Boolean(
-    notebookIndex?.items.some((item) => {
-      if (item.notebook_kind !== "data_understanding") return false;
-      const readiness = String(item.content?.readiness ?? item.coverage?.content_readiness ?? "");
-      if (["not_ready", "source_only", "unknown", ""].includes(readiness)) return false;
-      return true;
-    })
-  );
-}
-
-function latestAgentAuthoredDataUnderstandingName(artifacts: Artifact[]) {
-  return artifacts
-    .filter((artifact) => {
-      if (!["agent_session_artifact", "agent_session_report"].includes(artifact.asset_type)) return false;
-      return isDataUnderstandingArtifactName(artifact.name);
-    })
-    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0]?.name ?? null;
-}
-
-function isDataUnderstandingArtifactName(value: string) {
-  return /(^|[_\-\s])(data[_\-\s]?understanding|eda|exploration|visual[_\-\s]?story|notebook[_\-\s]?evidence|grandmaster[_\-\s]?eda)([_\-\s]|$)/.test(
-    value.toLowerCase()
-  );
-}
-
-function hasAnyResolvedResearchArtifact(artifacts: Artifact[]) {
-  return artifacts.some((artifact) => {
-    if (artifact.metadata.no_relevant_findings === true || artifact.metadata.codex_decision === "no_research_needed") {
-      return true;
-    }
-    if (artifact.asset_type === "research_findings_report") {
-      return artifact.metadata.external_network_accessed === true || artifact.metadata.has_only_stub_findings === false;
-    }
-    if (artifact.asset_type === "source_citation_manifest") {
-      return artifact.metadata.external_network_accessed === true;
-    }
-    return ["research_finding_synthesis", "research_finding_synthesis_report", "agent_session_research_notebook"].includes(
-      artifact.asset_type
-    );
-  });
-}
-
-function researchNoFindingsArtifact(artifacts: Artifact[]) {
-  return artifacts.find(
-    (artifact) => artifact.metadata.no_relevant_findings === true || artifact.metadata.codex_decision === "no_research_needed"
-  ) ?? null;
 }
 
 function fallbackNavigationAnchor(anchor: string) {
