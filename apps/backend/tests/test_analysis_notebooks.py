@@ -529,3 +529,7 @@ def test_notebook_index_uses_execution_manifest_status_when_notebook_metadata_is
         assert item["coverage"]["execution_status"] == "marimo_export_succeeded"
         assert item["coverage"]["execution_capture_status"] == "marimo_export_succeeded"
         assert item["coverage"]["has_execution_html"] is True
+        assert item["coverage"]["has_html_preview"] is True
+        assert index["counts"]["with_html_preview"] == 1
+        assert item["artifact_ids"]["preview"] == "art_execution_html"
+        assert item["preview_artifact_id"] == "art_execution_html"

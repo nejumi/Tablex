@@ -2061,6 +2061,7 @@ def _notebook_index_item(
     evidence_bundle_artifact = evidence_bundle_artifact or session_linked["evidence_bundle"]
     evidence_html_artifact = evidence_html_artifact or session_linked["evidence_html"]
     evidence_figure_artifacts = _unique_artifacts([*evidence_figure_artifacts, *session_linked["evidence_figures"]])
+    readable_preview_artifact = evidence_html_artifact or execution_html_artifact or html_artifact
     report = reports_by_artifact_id.get(report_artifact.id) if report_artifact else None
     visualization = visualizations_by_artifact_id.get(visualization_artifact.id) if visualization_artifact else None
     execution_metadata = loads_json(execution_manifest_artifact.metadata_json, {}) if execution_manifest_artifact else {}
@@ -2079,7 +2080,8 @@ def _notebook_index_item(
         )
     execution_status = str(metadata.get("execution_status") or execution_metadata.get("execution_status") or "unknown")
     coverage = {
-        "has_html_preview": html_artifact is not None,
+        "has_html_preview": readable_preview_artifact is not None,
+        "has_legacy_html_preview": html_artifact is not None,
         "has_manifest": manifest_artifact is not None,
         "has_report": report_artifact is not None,
         "has_visualization": visualization_artifact is not None and visualization is not None,
@@ -2109,6 +2111,7 @@ def _notebook_index_item(
         "artifact_ids": {
             "notebook": notebook_artifact.id,
             "html_preview": html_artifact.id if html_artifact else None,
+            "preview": readable_preview_artifact.id if readable_preview_artifact else None,
             "manifest": manifest_artifact.id if manifest_artifact else None,
             "report_artifact": report_artifact.id if report_artifact else None,
             "visualization_artifact": visualization_artifact.id if visualization_artifact else None,
@@ -2123,6 +2126,7 @@ def _notebook_index_item(
             "evidence_html": evidence_html_artifact.id if evidence_html_artifact else None,
             "evidence_figures": [artifact.id for artifact in evidence_figure_artifacts[:NOTEBOOK_INDEX_FIGURE_ID_LIMIT]],
         },
+        "preview_artifact_id": readable_preview_artifact.id if readable_preview_artifact else None,
         "report_id": report.id if report else None,
         "visualization_id": visualization.id if visualization else None,
         "coverage": coverage,

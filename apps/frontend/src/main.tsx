@@ -1819,6 +1819,7 @@ type NotebookIndexItem = {
   artifact_ids: {
     notebook: string;
     html_preview: string | null;
+    preview?: string | null;
     manifest: string | null;
     report_artifact: string | null;
     visualization_artifact: string | null;
@@ -1833,6 +1834,7 @@ type NotebookIndexItem = {
     evidence_html: string | null;
     evidence_figures: string[];
   };
+  preview_artifact_id?: string | null;
   report_id: string | null;
   visualization_id: string | null;
   coverage: Record<string, unknown>;
@@ -9867,8 +9869,13 @@ function DataTab({
         .filter(
           (item) =>
             item.notebook_kind === "data_understanding" &&
-            (!latestDatasetId || item.dataset_snapshot_id === latestDatasetId)
+            (!latestDatasetId || !item.dataset_snapshot_id || item.dataset_snapshot_id === latestDatasetId)
         )
+        .sort((left, right) => {
+          const leftExact = latestDatasetId && left.dataset_snapshot_id === latestDatasetId ? 1 : 0;
+          const rightExact = latestDatasetId && right.dataset_snapshot_id === latestDatasetId ? 1 : 0;
+          return rightExact - leftExact;
+        })
         .slice(0, 5),
     [latestDatasetId, notebookIndex]
   );
@@ -13984,6 +13991,7 @@ function NotebooksTab({
     setPreviewError(null);
     try {
       setPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+      focusNavigationAnchor("notebook-preview-top");
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -15356,6 +15364,8 @@ function decisionReportStatusClass(status: string) {
 
 function notebookPreviewArtifactId(item: NotebookIndexItem) {
   return (
+    item.preview_artifact_id ??
+    item.artifact_ids.preview ??
     item.artifact_ids.evidence_html ??
     item.artifact_ids.execution_html ??
     item.artifact_ids.html_preview ??
@@ -15441,7 +15451,11 @@ function notebookKindLabel(kind: string, text: LocaleMessages) {
 
 function notebooksForDataset(index: NotebookIndex | null, datasetSnapshotId: string): NotebookIndexItem[] {
   if (!index) return [];
-  return index.items.filter((item) => item.dataset_snapshot_id === datasetSnapshotId);
+  return index.items.filter(
+    (item) =>
+      item.dataset_snapshot_id === datasetSnapshotId ||
+      (item.notebook_kind === "data_understanding" && !item.dataset_snapshot_id)
+  );
 }
 
 function notebooksForRun(index: NotebookIndex | null, runId: string): NotebookIndexItem[] {
@@ -16461,6 +16475,58 @@ function AssetsTab({
           <EmptyInline text="Model package replay validations will appear here with metric deltas, replay prediction artifacts, and validation reports." />
         )}
       </Panel>
+      <Panel id="asset-notebooks" title={text.notebookCenterTitle} icon={<BookOpen size={18} />}>
+        {notebookIndex && notebookIndex.counts.total > 0 ? (
+          <div className="stack">
+            <div className="metric-grid compact">
+              <Metric label={text.notebookMetricNotebooks} value={notebookIndex.counts.total} />
+              <Metric label={text.notebookMetricHtmlPreviews} value={notebookIndex.counts.with_html_preview} />
+              <Metric label={text.notebookMetricReports} value={notebookIndex.counts.with_report} />
+              <Metric label={text.notebookMetricCaptured} value={notebookIndex.counts.with_execution_capture} />
+            </div>
+            <Table
+              headers={[
+                text.notebookTableNotebook,
+                text.notebookTableSource,
+                text.notebookTableCoverage,
+                text.notebookTableCreated,
+                text.notebookTableActions
+              ]}
+              rows={notebookIndex.items.map((item) => {
+                const previewArtifactId = notebookPreviewArtifactId(item);
+                return [
+                  <div className="cell-stack" key={`${item.notebook_artifact_id}-title`}>
+                    <span>{item.title}</span>
+                    <small>{notebookKindLabel(item.notebook_kind, text)} · {notebookReadinessLabel(item, text)}</small>
+                  </div>,
+                  notebookSourceLabel(item, text),
+                  notebookCoverageLabel(item, text),
+                  formatDate(item.created_at),
+                  <div className="row-actions" key={`${item.notebook_artifact_id}-actions`}>
+                    <button
+                      className="icon-button"
+                      disabled={previewLoadingId === previewArtifactId}
+                      onClick={() => void loadPreview(previewArtifactId)}
+                      title={text.notebookPreview}
+                    >
+                      {previewLoadingId === previewArtifactId ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                    </button>
+                    <a
+                      className="icon-link"
+                      href={`${apiBase}/api/artifacts/${item.artifact_ids.notebook}/download`}
+                      title={text.notebookDownloadMarimoSource}
+                    >
+                      <Download size={16} />
+                    </a>
+                  </div>
+                ];
+              })}
+            />
+          </div>
+        ) : (
+          <EmptyInline text={text.notebookEmpty} />
+        )}
+      </Panel>
       <Panel title="Project Assets" icon={<Library size={18} />}>
         {artifacts.length ? (
           <Table
@@ -16503,18 +16569,22 @@ function AssetsTab({
         onEquipSkill={onEquipSkill}
         onCreateSkill={onCreateSkill}
       />
-      <Panel title="Artifact Preview" icon={<FileText size={18} />}>
+      <Panel id="assets-artifact-preview" title="Artifact Preview" icon={<FileText size={18} />}>
         {previewError ? <div className="banner danger">{previewError}</div> : null}
         {preview ? (
           preview.preview_available ? (
-            <div className="preview-block">
-              <div className="preview-meta">
-                <span className="badge">{preview.content_type}</span>
-                <span className="badge muted">{formatBytes(preview.size_bytes)}</span>
-                {preview.truncated ? <span className="badge risk">truncated</span> : null}
+            isHtmlArtifactPreview(preview) ? (
+              <HtmlArtifactPreview preview={preview} />
+            ) : (
+              <div className="preview-block">
+                <div className="preview-meta">
+                  <span className="badge">{preview.content_type}</span>
+                  <span className="badge muted">{formatBytes(preview.size_bytes)}</span>
+                  {preview.truncated ? <span className="badge risk">truncated</span> : null}
+                </div>
+                <TranslatablePreview preview={preview} />
               </div>
-              <TranslatablePreview preview={preview} />
-            </div>
+            )
           ) : (
             <EmptyInline text={preview.reason ?? "Preview is not available for this artifact."} />
           )
