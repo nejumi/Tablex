@@ -367,6 +367,8 @@ const englishMessages = {
   workerStatusWaitingForAgent: "Waiting for Codex",
   workerStatusWaitingForRunner: "Codex will retry",
   workerStatusFinished: "Finished",
+  workerStatusApproved: "approved",
+  workerStatusApprovalRequired: "approval required",
   workerDisplayAutonomousSession: "Autonomous Session",
   workerDisplayTraining: "Training Worker",
   workerDisplayNotebook: "Notebook Worker",
@@ -1035,6 +1037,8 @@ const japaneseMessages: LocaleMessages = {
   workerStatusWaitingForAgent: "Codex返答待ち",
   workerStatusWaitingForRunner: "Codex再試行待ち",
   workerStatusFinished: "完了",
+  workerStatusApproved: "承認済み",
+  workerStatusApprovalRequired: "承認が必要",
   workerDisplayAutonomousSession: "自律セッション",
   workerDisplayTraining: "学習Worker",
   workerDisplayNotebook: "ノートブックWorker",
@@ -1686,7 +1690,7 @@ function localizedObjectCount(
   japaneseLabel: string,
   locale: string | null | undefined
 ): string {
-  if (localeLooksJapanese(locale)) return `${japaneseLabel} ${count}件`;
+  if (localeLooksJapanese(locale)) return `${count}件の${japaneseLabel}`;
   return `${count} ${count === 1 ? englishSingular : englishPlural}`;
 }
 
@@ -6397,7 +6401,9 @@ function buildResearchPlanBlocks({
       status: dataUploadStatus,
       eyebrow: "01",
       evidence:
-        datasetCount > 0 ? localizedObjectCount(datasetCount, "DatasetSnapshot", "DatasetSnapshots", "DatasetSnapshot", locale) : null,
+        datasetCount > 0
+          ? localizedObjectCount(datasetCount, "DatasetSnapshot", "DatasetSnapshots", "データスナップショット", locale)
+          : null,
       onClick: () => onTabChange("Data")
     },
     {
@@ -6452,8 +6458,8 @@ function buildResearchPlanBlocks({
       eyebrow: "04",
       evidence:
         priorResearchArtifactEvidence ??
-        (equippedSkills.length ? localizedObjectCount(equippedSkills.length, "Skill", "Skills", "Skill", locale) : null) ??
-        (researchBriefs.length ? localizedObjectCount(researchBriefs.length, "brief", "briefs", "brief", locale) : null),
+        (equippedSkills.length ? localizedObjectCount(equippedSkills.length, "Skill", "Skills", "スキル", locale) : null) ??
+        (researchBriefs.length ? localizedObjectCount(researchBriefs.length, "brief", "briefs", "ブリーフ", locale) : null),
       onClick: () => onNavigateToTarget("Notebooks", "notebook-preview-top")
     }
   ];
@@ -6827,7 +6833,7 @@ function researchPlanSubtaskFromJob(
     title: localeSafeDisplayText(humanDescription.title, locale, workerDisplayName(job.job_type, text)),
     detail: localeSafeDisplayText(job.error_message ?? humanDescription.summary ?? latestJobHeadline(job), locale, text.researchPlanTimelineHint),
     status: researchPlanStatusFromJob(job),
-    evidence: `${job.status} · ${formatDate(job.updated_at ?? job.created_at)}`,
+    evidence: `${workerStatusLabel(job.status, text)} · ${formatDate(job.updated_at ?? job.created_at)}`,
     onClick: () => onTabChange(tabForResearchPlanJob(job))
   };
 }
@@ -16501,10 +16507,10 @@ function JobsTab({
 }
 
 function formatJobStatus(job: Job, text: LocaleMessages) {
-  const statusLabel = job.status === "waiting_for_agent" ? text.workerStatusWaitingForAgent : job.status;
+  const statusLabel = workerStatusLabel(job.status, text);
   const status = job.error_message ? `${statusLabel}: ${job.error_message}` : statusLabel;
-  if (job.approval_required && job.status === "queued") return `${status} / approved`;
-  if (job.approval_required) return `${status} / approval required`;
+  if (job.approval_required && job.status === "queued") return `${status} / ${text.workerStatusApproved}`;
+  if (job.approval_required) return `${status} / ${text.workerStatusApprovalRequired}`;
   return status;
 }
 
