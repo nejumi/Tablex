@@ -49,7 +49,12 @@ from tabular_harness.services.agent_sessions import (
 )
 from tabular_harness.services.approach import store_json_artifact, store_text_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore
-from tabular_harness.services.jobs import acquire_next_job, create_job, reap_stale_running_jobs
+from tabular_harness.services.jobs import (
+    acquire_next_job,
+    create_job,
+    mark_job_running,
+    reap_stale_running_jobs,
+)
 from tabular_harness.worker.jobs import (
     agent_chat_turn_handler,
     continue_autonomous_session_handler,
@@ -569,6 +574,44 @@ def test_full_auto_start_creates_main_agent_session_without_dataset_even_with_le
     assert transcript_response.status_code == 200
     transcript_event_types = [event["event_type"] for event in transcript_response.json()]
     assert "session_resumed_after_power_on" in transcript_event_types
+
+
+def test_autonomy_stop_cancels_project_work_without_old_job_type_allowlist(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Stop cancels all active work"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    other_response = client.post("/api/projects", json={"name": "Other project"})
+    assert other_response.status_code == 200
+    other_project_id = other_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        queued_report = create_job(db, job_type="generate_decision_report", project_id=project_id)
+        waiting_chat = create_job(db, job_type="agent_chat_turn", project_id=project_id)
+        waiting_chat.status = "waiting_for_agent"
+        approval_job = create_job(db, job_type="review_evaluation_approval", project_id=project_id)
+        approval_job.status = "approval_required"
+        running_training = create_job(db, job_type="train_model_candidates", project_id=project_id)
+        mark_job_running(running_training)
+        upload_job = create_job(db, job_type="upload_data_bundle", project_id=project_id)
+        other_project_job = create_job(db, job_type="generate_decision_report", project_id=other_project_id)
+        db.commit()
+        cancellable_ids = {queued_report.id, waiting_chat.id, approval_job.id, running_training.id}
+        upload_job_id = upload_job.id
+        other_project_job_id = other_project_job.id
+
+    stop_response = client.post(f"/api/projects/{project_id}/autonomy/stop")
+    assert stop_response.status_code == 200, stop_response.text
+    output = stop_response.json()["output"]
+    assert set(output["cancelled_job_ids"]) == cancellable_ids
+
+    with app.state.session_factory() as db:
+        cancelled_statuses = {db.get(Job, job_id).status for job_id in cancellable_ids}  # type: ignore[union-attr]
+        assert cancelled_statuses == {"cancelled"}
+        assert db.get(Job, upload_job_id).status == "queued"  # type: ignore[union-attr]
+        assert db.get(Job, other_project_job_id).status == "queued"  # type: ignore[union-attr]
 
 
 def test_agent_activity_does_not_show_future_autonomous_heartbeat_as_active(tmp_path: Path) -> None:

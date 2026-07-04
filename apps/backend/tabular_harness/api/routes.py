@@ -224,6 +224,7 @@ from tabular_harness.services.evaluation import (
     write_spec_artifact,
 )
 from tabular_harness.services.jobs import (
+    TERMINAL_STATUSES,
     approve_job,
     create_job,
     mark_job_failed,
@@ -272,6 +273,7 @@ from tabular_harness.worker.jobs import create_default_worker
 router = APIRouter()
 INTERACTIVE_WORKER_JOB_TYPES = {"agent_chat_turn"}
 MAIN_SESSION_CHAT_WAITING_STATUS = "waiting_for_agent"
+POWER_STOP_PRESERVED_JOB_TYPES = {"upload_data_bundle"}
 
 
 def sqlite_database_is_locked(exc: OperationalError) -> bool:
@@ -1483,22 +1485,12 @@ def stop_project_autonomy(
             },
         )
         mark_job_running(job)
-        cancellable_job_types = {
-            "start_autonomous_loop",
-            "run_agent_task",
-            "run_planned_agent_task_codex",
-            "run_planned_agent_task_stub",
-            "train_model_candidates",
-            "run_baseline",
-            "plan_agent_task",
-        }
-        active_statuses = {"queued", "running", "approval_required"}
         active_jobs = db.scalars(
             select(Job).where(
                 Job.project_id == project_id,
                 Job.id != job.id,
-                Job.status.in_(active_statuses),
-                Job.job_type.in_(cancellable_job_types),
+                ~Job.status.in_(TERMINAL_STATUSES),
+                ~Job.job_type.in_(POWER_STOP_PRESERVED_JOB_TYPES),
             )
         ).all()
         cancelled_ids: list[str] = []
