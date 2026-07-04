@@ -5811,6 +5811,11 @@ def seconds_since_timestamp(value: datetime | None, *, now: datetime) -> int | N
 
 
 def latest_agent_session_activity_summary(db: Session, *, project_id: str, session_id: str, limit: int = 280) -> str | None:
+    accepted_chat_sources = {
+        "main_codex_session_chat_update",
+        "main_agent_session_attention",
+        "main_agent_session_notebook_update",
+    }
     chat_artifacts = list(
         db.scalars(
             select(Artifact)
@@ -5821,7 +5826,7 @@ def latest_agent_session_activity_summary(db: Session, *, project_id: str, sessi
     )
     for artifact in chat_artifacts:
         metadata = loads_json(artifact.metadata_json, {})
-        if metadata.get("source") != "main_codex_session_chat_update" or metadata.get("agent_session_id") != session_id:
+        if metadata.get("source") not in accepted_chat_sources or metadata.get("agent_session_id") != session_id:
             continue
         try:
             payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
