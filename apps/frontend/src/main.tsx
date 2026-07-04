@@ -1144,7 +1144,7 @@ const japaneseMessages: LocaleMessages = {
   planStatusActive: "実行中",
   planStatusPending: "次",
   planStatusBlocked: "要確認",
-  planStatusWaiting: "待機",
+  planStatusWaiting: "待機中",
   planStatusSkipped: "委譲中",
   planSubtaskSingular: "サブタスク",
   planSubtaskPlural: "サブタスク",
@@ -5642,7 +5642,7 @@ function HomeTab({
   const researchPlanTimelineForDisplay = researchPlanTimelineMatchesDisplayLocale(researchPlanTimeline, locale)
     ? researchPlanTimeline
     : null;
-  const researchPlanBlocks = buildResearchPlanBlocks({
+  const authoredResearchPlanBlocks = buildResearchPlanBlocks({
     project,
     datasetCount,
     artifacts,
@@ -5651,19 +5651,17 @@ function HomeTab({
     notebookIndex,
     equippedSkills,
     jobs: planJobs,
-    agentSession,
-    turnState,
-    agentTranscriptEvents,
     text,
     locale,
     onTabChange,
     onNavigateToTarget
   });
+  const researchPlanBlocks = researchPlanBlocksForPowerState(authoredResearchPlanBlocks, autonomyPoweredOn);
   const researchPlanFocusBlock = primaryResearchPlanFocusBlock(researchPlanBlocks);
   const missionUsesPlanFocus = Boolean(researchPlanFocusBlock);
   const missionTitle = researchPlanFocusBlock?.title ?? recommendation.title;
   const missionReason = researchPlanFocusBlock?.subtitle ?? recommendation.reason;
-  const missionRiskLevel = missionUsesPlanFocus ? "active" : (recommendation.riskLevel ?? "ready");
+  const missionRiskLevel = researchPlanFocusBlock?.status ?? recommendation.riskLevel ?? "ready";
   const missionFocusLabel = missionUsesPlanFocus ? text.openSurface : (focusAction?.label ?? text.recommendedFocus);
   const missionFocusDisabled = busy || (!missionUsesPlanFocus && (!focusAction || focusAction.disabled));
   const handleMissionFocus = () => {
@@ -6349,9 +6347,6 @@ function buildResearchPlanBlocks({
   notebookIndex,
   equippedSkills,
   jobs,
-  agentSession,
-  turnState,
-  agentTranscriptEvents,
   text,
   locale,
   onTabChange,
@@ -6365,9 +6360,6 @@ function buildResearchPlanBlocks({
   notebookIndex: NotebookIndex | null;
   equippedSkills: EquippedSkillItem[];
   jobs: Job[];
-  agentSession: AgentSession | null;
-  turnState: TurnState;
-  agentTranscriptEvents: AgentTranscriptEvent[];
   text: LocaleMessages;
   locale: string;
   onTabChange: (tab: Tab) => void;
@@ -6389,14 +6381,15 @@ function buildResearchPlanBlocks({
     hasAnyArtifactType(artifacts, ["research_plan", "research_source_pack", "research_source_report", "notebook_authoring_brief"]);
   const noFindingsResearchArtifact = researchNoFindingsArtifact(artifacts);
   const hasPriorResearchEvidence = hasAnyResolvedResearchArtifact(artifacts);
+  const agentPowerOn = project.current_phase === "AUTONOMOUS_LOOP";
   const primaryPlanJob = jobs.find((job) => jobActiveForActivity(job)) ?? jobs.find((job) => !isTerminalJob(job)) ?? null;
-  const activeInitialBlockId = activeInitialResearchPlanBlockId(primaryPlanJob);
+  const activeInitialBlockId = agentPowerOn ? activeInitialResearchPlanBlockId(primaryPlanJob) : null;
   const objectiveDelegatedToCodex =
     !hasObjectiveEvidence &&
     datasetCount > 0 &&
     project.autonomy_mode === "full_auto" &&
     project.current_phase === "AUTONOMOUS_LOOP";
-  const dataUploadStatus = datasetCount > 0 ? "done" : "active";
+  const dataUploadStatus = datasetCount > 0 ? "done" : "pending";
   const objectiveStatus = hasObjectiveEvidence
     ? "done"
     : objectiveDelegatedToCodex
@@ -6417,11 +6410,9 @@ function buildResearchPlanBlocks({
     ? "done"
     : activeInitialBlockId === "prior_research"
       ? "active"
-      : hasPriorResearchPreparation
-        ? "pending"
-        : hasUnderstandingCompletionEvidence
-          ? "active"
-          : "waiting";
+    : hasPriorResearchPreparation || hasUnderstandingCompletionEvidence
+      ? "pending"
+      : "waiting";
   const targetDefinitionEvidence = localeSafeOptionalDisplayText(
     latestArtifactName(artifacts, "target_definition_proposal"),
     locale,
@@ -6559,6 +6550,23 @@ function renumberResearchPlanBlocks(blocks: ResearchPlanBlock[]): ResearchPlanBl
 
 function selectedResearchPlanBlockKey(blocks: ResearchPlanBlock[]): string {
   return primaryResearchPlanFocusBlock(blocks)?.id ?? "";
+}
+
+function researchPlanBlocksForPowerState(blocks: ResearchPlanBlock[], poweredOn: boolean): ResearchPlanBlock[] {
+  if (poweredOn) return blocks;
+  return blocks.map((block) => {
+    const status: ResearchPlanBlockStatus = block.status === "active" ? "waiting" : block.status;
+    const subtasks = block.subtasks?.map((subtask) => ({
+      ...subtask,
+      status: subtask.status === "active" ? "waiting" : subtask.status
+    }));
+    if (status === block.status && subtasks === block.subtasks) return block;
+    return {
+      ...block,
+      status,
+      subtasks
+    };
+  });
 }
 
 function primaryResearchPlanFocusBlock(blocks: ResearchPlanBlock[]): ResearchPlanBlock | null {
@@ -6727,42 +6735,11 @@ function attachResearchPlanSubtasks(
   });
 }
 
-function latestCodexTranscriptMessage(events: AgentTranscriptEvent[], locale: string): string | null {
-  for (const event of [...events].reverse()) {
-    if (event.source !== "codex_cli") continue;
-    if (event.title !== "Codex message" && event.event_type !== "item.completed") continue;
-    const content = event.content?.trim();
-    if (content && displayTextMatchesLocale(content, locale)) return content;
-  }
-  return null;
-}
-
 function agentSessionHasObservedCodexProcess(session: AgentSession | null): boolean {
   if (!session) return false;
   if (session.observed_runner_state === "running") return true;
   if (session.pid_is_observed_codex_process === true) return true;
   return (session.observed_codex_process_count ?? 0) > 0;
-}
-
-function agentSessionShouldRemainVisible(session: AgentSession | null): session is AgentSession {
-  if (!session) return false;
-  if (agentSessionHasObservedCodexProcess(session)) return true;
-  if (session.observed_runner_state === "supervisor_should_continue") return true;
-  return ["starting", "running", "between_turns", "waiting_for_runner"].includes(session.status);
-}
-
-function agentSessionPlanWaitingStatus(session: AgentSession): ResearchPlanBlockStatus {
-  if (session.observed_runner_state === "supervisor_should_continue") return "pending";
-  if (session.status === "waiting_for_runner") return "waiting";
-  if (session.status === "starting" || session.status === "between_turns") return "pending";
-  return "waiting";
-}
-
-function agentSessionPlanEvidence(session: AgentSession, text: LocaleMessages): string {
-  if (agentSessionHasObservedCodexProcess(session)) return text.turnStateAgentRunning;
-  if (session.observed_runner_state === "supervisor_should_continue") return text.turnStateAgentScheduled;
-  if (session.status === "waiting_for_runner") return text.turnStateWorkerPending;
-  return text.turnStateObserved;
 }
 
 function researchPlanSubtaskFromJob(
@@ -7595,6 +7572,10 @@ function displayStatusLabel(status: string, text: LocaleMessages): string {
   if (normalized === "high") return text.statusHigh;
   if (normalized === "blocking" || normalized === "blocked") return text.statusBlocking;
   if (normalized === "active" || normalized === "running") return text.statusActive;
+  if (normalized === "pending") return text.planStatusPending;
+  if (normalized === "waiting" || normalized === "idle") return text.planStatusWaiting;
+  if (normalized === "skipped" || normalized === "delegated") return text.planStatusSkipped;
+  if (normalized === "done" || normalized === "completed") return text.planStatusDone;
   if (normalized === "ready" || normalized === "ready_to_act") return text.statusReady;
   if (normalized === "missing") return text.decisionMetricMissing;
   if (normalized === "low") return text.statusLow;
