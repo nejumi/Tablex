@@ -36,6 +36,7 @@ from tabular_harness.services.metric_preferences import (
 from tabular_harness.services.research_plans import (
     attach_research_plan_artifact,
     latest_research_plan_current_work,
+    validate_research_plan_node_exists,
 )
 
 EXPERIMENT_REQUESTS_DIR = "experiments"
@@ -97,6 +98,11 @@ def process_experiment_result_requests(
             payload = loads_json(raw_text, {})
             if not isinstance(payload, dict):
                 raise ValueError("Experiment result request must be a JSON object")
+            schema_version = str(payload.get("schema_version") or "").strip()
+            if schema_version != EXPERIMENT_REQUEST_SCHEMA_VERSION:
+                raise ValueError(
+                    f"Experiment result request schema_version must be {EXPERIMENT_REQUEST_SCHEMA_VERSION}"
+                )
             request_id = str(payload.get("request_id") or path.stem)
             operation = str(payload.get("operation") or "register_runs").strip()
             if operation != "register_runs":
@@ -111,6 +117,7 @@ def process_experiment_result_requests(
                 specs=specs,
                 source_artifact=None,
                 source_request_id=request_id,
+                strict_plan_node_refs=True,
             )
             created_runs.extend(runs)
             ack = {
@@ -279,6 +286,12 @@ def run_specs_from_experiment_request(payload: dict[str, Any], *, request_id: st
                 research_plan_node_id=str(item.get("research_plan_node_id") or "").strip() or default_plan_node_id,
             )
         )
+    primary_metric_names = {spec.primary_metric_name for spec in specs}
+    if len(primary_metric_names) > 1:
+        raise ValueError(
+            "All runs in one experiment result request must use the same primary_metric_name; "
+            f"received: {', '.join(sorted(primary_metric_names))}"
+        )
     return specs
 
 
@@ -368,8 +381,11 @@ def register_experiment_run_specs(
     specs: list[RunSpec],
     source_artifact: Artifact | None,
     source_request_id: str | None,
+    strict_plan_node_refs: bool = False,
 ) -> list[ExperimentRun]:
     del store
+    if strict_plan_node_refs:
+        validate_run_spec_plan_node_refs(db, project=project, specs=specs)
     created: list[ExperimentRun] = []
     for spec in specs:
         if experiment_run_exists(db, project_id=project.id, source_key=spec.source_key):
@@ -427,6 +443,20 @@ def register_experiment_run_specs(
         )
     db.flush()
     return created
+
+
+def validate_run_spec_plan_node_refs(db: Session, *, project: Project, specs: list[RunSpec]) -> None:
+    node_ids = sorted({spec.research_plan_node_id for spec in specs if spec.research_plan_node_id})
+    if not node_ids:
+        return
+    plan = db.scalar(select(ResearchPlan).where(ResearchPlan.project_id == project.id))
+    if plan is None or not plan.active_revision_id:
+        raise ValueError("payload.research_plan_node_id was provided, but no active ResearchPlan revision exists")
+    revision = db.get(ResearchPlanRevision, plan.active_revision_id)
+    if revision is None:
+        raise ValueError("payload.research_plan_node_id was provided, but no active ResearchPlan revision exists")
+    for node_id in node_ids:
+        validate_research_plan_node_exists(revision, node_id=node_id)
 
 
 def experiment_run_exists(db: Session, *, project_id: str, source_key: str) -> bool:

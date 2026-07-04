@@ -2205,6 +2205,170 @@ def test_failed_experiment_result_file_request_is_announced_in_agent_chat(tmp_pa
         assert chat_payload["intent"]["status"] == "needs_attention"
 
 
+def test_experiment_result_request_rejects_wrong_schema_version(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    request_dir = experiment_requests_dir(workspace)
+    request_dir.mkdir(parents=True)
+    (request_dir / "wrong_schema.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "model_results.v1",
+                "request_id": "wrong_schema",
+                "operation": "register_runs",
+                "payload": {
+                    "runs": [
+                        {
+                            "model_id": "glm_baseline",
+                            "primary_metric_name": "mae",
+                            "metrics": {"mae": 42.0},
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_wrong_exp_schema", name="Wrong Experiment Schema")
+        session = AgentSession(
+            id="as_wrong_exp_schema",
+            project_id=project.id,
+            goal_text="Reject wrong experiment schema.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        ack = loads_json((experiment_acks_dir(workspace) / "wrong_schema.ack.json").read_text(encoding="utf-8"), {})
+        assert ack["status"] == "failed"
+        assert "tablex_experiment_result_request.v1" in ack["error"]["message"]
+        assert db.scalar(select(func.count()).select_from(ExperimentRun).where(ExperimentRun.project_id == project.id)) == 0
+
+
+def test_experiment_result_request_rejects_mixed_primary_metrics(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    request_dir = experiment_requests_dir(workspace)
+    request_dir.mkdir(parents=True)
+    (request_dir / "mixed_metrics.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_experiment_result_request.v1",
+                "request_id": "mixed_metrics",
+                "operation": "register_runs",
+                "payload": {
+                    "runs": [
+                        {
+                            "model_id": "regression_candidate",
+                            "primary_metric_name": "mae",
+                            "metrics": {"mae": 42.0, "rmse": 60.0},
+                        },
+                        {
+                            "model_id": "classification_candidate",
+                            "primary_metric_name": "roc_auc",
+                            "metrics": {"roc_auc": 0.82, "accuracy": 0.74},
+                        },
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_mixed_exp_metrics", name="Mixed Experiment Metrics")
+        session = AgentSession(
+            id="as_mixed_exp_metrics",
+            project_id=project.id,
+            goal_text="Reject incomparable leaderboard rows.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        ack = loads_json((experiment_acks_dir(workspace) / "mixed_metrics.ack.json").read_text(encoding="utf-8"), {})
+        assert ack["status"] == "failed"
+        assert "same primary_metric_name" in ack["error"]["message"]
+        assert db.scalar(select(func.count()).select_from(ExperimentRun).where(ExperimentRun.project_id == project.id)) == 0
+
+
+def test_experiment_result_request_rejects_unknown_research_plan_node(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    request_dir = experiment_requests_dir(workspace)
+    request_dir.mkdir(parents=True)
+    (request_dir / "unknown_plan_node.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_experiment_result_request.v1",
+                "request_id": "unknown_plan_node",
+                "operation": "register_runs",
+                "payload": {
+                    "research_plan_node_id": "missing_modeling_node",
+                    "runs": [
+                        {
+                            "model_id": "glm_baseline",
+                            "primary_metric_name": "mae",
+                            "metrics": {"mae": 42.0},
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_unknown_plan_node", name="Unknown Plan Node")
+        session = AgentSession(
+            id="as_unknown_plan_node",
+            project_id=project.id,
+            goal_text="Reject result links to unknown plan nodes.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "modeling_and_diagnostics",
+                        "title": "Modeling and diagnostics",
+                        "granularity": "chapter",
+                        "status": "active",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Declare modeling work.",
+        )
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        ack = loads_json((experiment_acks_dir(workspace) / "unknown_plan_node.ack.json").read_text(encoding="utf-8"), {})
+        assert ack["status"] == "failed"
+        assert "missing_modeling_node" in ack["error"]["message"]
+        assert db.scalar(select(func.count()).select_from(ExperimentRun).where(ExperimentRun.project_id == project.id)) == 0
+
+
 def test_research_plan_tool_rejects_later_done_node_before_open_predecessor(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
