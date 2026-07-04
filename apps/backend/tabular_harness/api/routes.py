@@ -166,7 +166,6 @@ from tabular_harness.services.analysis_notebooks import (
     build_project_notebook_index,
 )
 from tabular_harness.services.approach import (
-    create_decision_dashboard,
     create_research_plan,
     store_json_artifact,
 )
@@ -209,7 +208,6 @@ from tabular_harness.services.baseline import (
     create_baseline_strategy_plan,
     normalize_model_candidate_name,
 )
-from tabular_harness.services.baseline import run_baseline as run_baseline_service
 from tabular_harness.services.benchmark_collection import create_benchmark_collection_plan
 from tabular_harness.services.benchmark_evidence import create_benchmark_evidence_pack
 from tabular_harness.services.benchmarks import (
@@ -219,7 +217,6 @@ from tabular_harness.services.benchmarks import (
     build_relational_catalog,
     create_benchmark_scenario_pack,
     default_benchmark_root,
-    download_public_benchmark_archive,
     generate_benchmark_fixture,
     get_benchmark_dataset,
     infer_relationships,
@@ -237,7 +234,6 @@ from tabular_harness.services.benchmarks import (
 from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.dataset_profile import profile_dataset_artifact
 from tabular_harness.services.decision_reporting import current_decision_report_payload
-from tabular_harness.services.diagnostics import analyze_run_diagnostics
 from tabular_harness.services.evaluation import (
     approve_spec,
     candidate_to_dict,
@@ -248,9 +244,6 @@ from tabular_harness.services.evaluation import (
     promote_candidate_to_spec,
     spec_to_dict,
     write_spec_artifact,
-)
-from tabular_harness.services.experiment_lifecycle import (
-    draft_run_report,
 )
 from tabular_harness.services.jobs import (
     approve_job,
@@ -302,10 +295,6 @@ from tabular_harness.services.relational_feature_diagnostics import (
 )
 from tabular_harness.services.relational_feature_planning import create_relational_feature_plan
 from tabular_harness.services.relational_feature_recipe import build_relational_feature_recipe
-from tabular_harness.services.reporting import (
-    create_project_visualization_dashboard,
-    generate_project_insights,
-)
 from tabular_harness.services.research_plan_timeline import build_research_plan_timeline_response
 from tabular_harness.services.result_readout import build_result_readout
 from tabular_harness.services.translation import TranslationResult
@@ -3293,192 +3282,38 @@ def run_public_benchmark_workflow(
     payload: BenchmarkPublicDownloadRequest,
     request: Request,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
+    benchmark = raw_benchmark_dataset(benchmark_id)
+    benchmark_payload = benchmark_to_dict(benchmark, settings=request.app.state.settings, include_status=False)
+    access = benchmark_payload.get("access") if isinstance(benchmark_payload.get("access"), dict) else {}
+    if (
+        access.get("requires_account")
+        or access.get("requires_secret")
+        or not access.get("supports_direct_download")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Public benchmark workflow requires a credential-free direct download source.",
+        )
     job = create_job(
         db,
         job_type="run_public_benchmark_workflow",
         project_id=project_id,
-        input_payload={"benchmark_id": benchmark_id, "overwrite": payload.overwrite},
+        input_payload={
+            "benchmark_id": benchmark_id,
+            "overwrite": payload.overwrite,
+            "data_dir": str(request.app.state.settings.data_dir),
+            "artifact_root": str(request.app.state.settings.artifact_root),
+        },
         policy={
+            "execution": "queued_worker",
             "network": "enabled_for_catalog_public_archive_or_direct_file_only",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "external_download": "catalog_credential_free_sources_only",
         },
     )
-    try:
-        mark_job_running(job)
-        download_manifest = download_public_benchmark_archive(
-            request.app.state.settings,
-            benchmark_id,
-            overwrite=payload.overwrite,
-        )
-        download_artifact = store_json_artifact(
-            db,
-            store,
-            project_id=None,
-            asset_type="benchmark_public_download_manifest",
-            name=f"benchmark_public_download_{benchmark_id}",
-            filename="benchmark_public_download_manifest.json",
-            payload=download_manifest,
-            metadata={
-                "benchmark_id": benchmark_id,
-                "download_url": download_manifest["download_url"],
-                "archive_type": download_manifest["archive_type"],
-                "extracted_file_count": len(download_manifest["extracted_files"]),
-                "skipped_file_count": len(download_manifest["skipped_files"]),
-                "local_ready": download_manifest["local_status"]["ready"],
-            },
-        )
-        import_result = import_benchmark_dataset(
-            project_id,
-            benchmark_id,
-            BenchmarkImportRequest(target_column=None),
-            request,
-            db,
-            store,
-        )
-        dataset_id = import_result["dataset_snapshot"]["id"]
-        dataset = db.get(DatasetSnapshot, dataset_id)
-        if dataset is None:
-            raise ValueError("Public benchmark workflow did not produce a DatasetSnapshot")
-
-        quality = analyze_dataset_quality(db, store=store, project=project, dataset=dataset)
-        candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
-        comparison_artifact = create_evaluation_scenario_comparison(
-            db,
-            store=store,
-            project=project,
-            dataset=dataset,
-            candidates=list(candidates),
-        )
-        primary_candidate = next((item for item in candidates if item.status == "primary_candidate"), candidates[0])
-        spec = promote_candidate_to_spec(db, store=store, candidate=primary_candidate)
-        review = create_evaluation_approval_review(db, store=store, spec=spec, approval_intent=True)
-        if review.blocked:
-            raise ValueError("Public benchmark EvaluationSpec approval was blocked")
-        approve_spec(spec)
-        approved_artifact = write_spec_artifact(db, store, spec)
-        create_lineage_edge(
-            db,
-            project_id=spec.project_id,
-            from_asset_type="artifact",
-            from_asset_id=review.artifact.id,
-            to_asset_type="evaluation_spec",
-            to_asset_id=spec.id,
-            relation_type="supports_approval",
-        )
-        create_lineage_edge(
-            db,
-            project_id=spec.project_id,
-            from_asset_type="evaluation_spec",
-            from_asset_id=spec.id,
-            to_asset_type="artifact",
-            to_asset_id=approved_artifact.id,
-            relation_type="produces",
-        )
-        split = generate_split_manifest(db, store=store, spec=spec)
-        strategy = create_baseline_strategy_plan(
-            db,
-            store=store,
-            project=project,
-            evaluation_spec=spec,
-            split_manifest=split,
-        )
-        baseline = run_baseline_service(
-            db,
-            store=store,
-            project=project,
-            evaluation_spec=spec,
-            split_manifest=split,
-        )
-        diagnostics = analyze_run_diagnostics(db, store=store, run=baseline.run)
-        run_report = draft_run_report(db, store=store, run=baseline.run)
-        dashboard = create_project_visualization_dashboard(db, store=store, project=project)
-        insights = generate_project_insights(db, store=store, project=project)
-        decision = create_decision_dashboard(db, store=store, project=project)
-
-        supporting_artifact_ids = [item["id"] for item in import_result.get("supporting_table_artifacts", [])]
-        supporting_artifacts = (
-            list(db.scalars(select(Artifact).where(Artifact.id.in_(supporting_artifact_ids))).all())
-            if supporting_artifact_ids
-            else []
-        )
-        scenario = create_benchmark_scenario_pack(
-            db,
-            store=store,
-            project=project,
-            benchmark=raw_benchmark_dataset(benchmark_id),
-            local_status=download_manifest["local_status"],
-            dataset=dataset,
-            supporting_table_artifacts=supporting_artifacts,
-            skipped_supporting_tables=import_result.get("skipped_supporting_tables", []),
-        )
-        artifact_ids = list(
-            dict.fromkeys(
-                [
-                    download_artifact.id,
-                    import_result["artifact"]["id"],
-                    import_result["import_manifest_artifact"]["id"],
-                    import_result["relational_catalog_artifact"]["id"],
-                    *supporting_artifact_ids,
-                    *quality.artifact_ids,
-                    comparison_artifact.id,
-                    review.artifact.id,
-                    approved_artifact.id,
-                    split.artifact_id,
-                    strategy.artifact.id,
-                    *baseline.artifact_ids,
-                    *diagnostics.artifact_ids,
-                    run_report.artifact.id,
-                    *dashboard.artifact_ids,
-                    insights.artifact.id,
-                    decision.dashboard_artifact.id,
-                    decision.report_artifact.id,
-                    *decision.artifact_ids,
-                    scenario.pack_artifact.id,
-                    scenario.report_artifact.id,
-                ]
-            )
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "benchmark_id": benchmark_id,
-                "download_manifest_artifact_id": download_artifact.id,
-                "download_manifest_schema": download_manifest["schema_version"],
-                "dataset_snapshot_id": dataset.id,
-                "quality_gate": quality.gate,
-                "evaluation_candidate_ids": [candidate.id for candidate in candidates],
-                "evaluation_scenario_comparison_artifact_id": comparison_artifact.id,
-                "evaluation_spec_id": spec.id,
-                "approval_review_artifact_id": review.artifact.id,
-                "split_manifest_id": split.id,
-                "baseline_strategy_plan_artifact_id": strategy.artifact.id,
-                "experiment_run_id": baseline.run.id,
-                "model_version_id": baseline.model_version_id,
-                "metrics": baseline.metrics,
-                "diagnostics_artifact_ids": diagnostics.artifact_ids,
-                "run_report_id": run_report.report.id,
-                "run_report_artifact_id": run_report.artifact.id,
-                "visualization_ids": [visualization.id for visualization in dashboard.visualizations],
-                "insight_ids": [insight.id for insight in insights.insights],
-                "decision_dashboard_artifact_id": decision.dashboard_artifact.id,
-                "decision_report_id": decision.report.id,
-                "decision_report_artifact_id": decision.report_artifact.id,
-                "benchmark_scenario_pack_artifact_id": scenario.pack_artifact.id,
-                "benchmark_scenario_report_artifact_id": scenario.report_artifact.id,
-                "artifact_ids": artifact_ids,
-            },
-        )
-    except HTTPException as exc:
-        mark_job_failed(job, str(exc.detail))
-        raise
-    except Exception as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 

@@ -6624,7 +6624,7 @@ function researchPlanBlocksFromTimeline(
   onNavigateToTarget: (tab: Tab, anchor?: string | null) => void
 ): ResearchPlanBlock[] {
   if (!timeline?.blocks.length) return [];
-  const displayLocale = locale;
+  const displayLocale = timeline.response_locale ?? timeline.requested_locale ?? timeline.authored_locale ?? locale;
   const blocks = timeline.blocks.map((block, index) => {
     const targetTab = block.target_tab ? tabFromString(block.target_tab, "Home") : null;
     const subtasks: ResearchPlanSubtask[] = block.subtasks.map((subtask) => {

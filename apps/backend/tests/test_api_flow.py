@@ -5430,8 +5430,9 @@ def test_public_benchmark_workflow_runs_baseline_and_reports(tmp_path: Path, mon
         )
         assert workflow_response.status_code == 200, workflow_response.text
         workflow_job = workflow_response.json()
-        assert workflow_job["status"] == "succeeded"
-        output = workflow_job["output"]
+        assert workflow_job["status"] == "queued"
+        assert workflow_job["policy"]["execution"] == "queued_worker"
+        output = run_queued_job(client, workflow_job["id"])
         assert output["download_manifest_artifact_id"]
         assert output["dataset_snapshot_id"]
         assert output["evaluation_spec_id"]

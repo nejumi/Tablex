@@ -41,7 +41,12 @@ from tabular_harness.services.approach import (
     generate_research_brief,
     store_json_artifact,
 )
-from tabular_harness.services.artifacts import LocalArtifactStore
+from tabular_harness.services.artifacts import (
+    LocalArtifactStore,
+    create_lineage_edge,
+    next_artifact_version,
+    register_artifact,
+)
 from tabular_harness.services.autonomy import (
     RUNNER_MODE_CODEX_IF_AVAILABLE,
     AutonomousLoopState,
@@ -59,10 +64,18 @@ from tabular_harness.services.baseline import (
 )
 from tabular_harness.services.benchmarks import (
     benchmark_import_readiness,
+    build_import_manifest,
+    build_relational_catalog,
+    create_benchmark_scenario_pack,
     default_benchmark_root,
     download_public_benchmark_archive,
     inspect_benchmark_local_files,
     raw_benchmark_dataset,
+    relative_path,
+    resolve_benchmark_root,
+    select_primary_file,
+    store_benchmark_supporting_table_artifacts,
+    validate_required_files,
 )
 from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.dataset_profile import profile_dataset_artifact
@@ -70,10 +83,13 @@ from tabular_harness.services.decision_reporting import create_decision_report_v
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
 from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
+    approve_spec,
     create_default_evaluation_candidates,
     create_evaluation_approval_review,
     create_evaluation_scenario_comparison,
     generate_split_manifest,
+    promote_candidate_to_spec,
+    write_spec_artifact,
 )
 from tabular_harness.services.experiment_lifecycle import (
     compare_project_experiments,
@@ -226,6 +242,362 @@ def download_public_benchmark_archive_handler(db: Session, job: Job, store: Loca
         "extracted_file_count": len(manifest["extracted_files"]),
         "skipped_file_count": len(manifest["skipped_files"]),
         "local_ready": manifest["local_status"]["ready"],
+    }
+
+
+def import_benchmark_dataset_for_worker(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    settings: Settings,
+    benchmark_id: str,
+    target_column: str | None = None,
+    local_path: str | None = None,
+    primary_file_name: str | None = None,
+) -> dict[str, Any]:
+    benchmark = raw_benchmark_dataset(benchmark_id)
+    root = resolve_benchmark_root(settings, benchmark_id, local_path)
+    local_status = validate_required_files(benchmark, root)
+    primary_file = select_primary_file(benchmark, root, primary_file_name)
+    catalog_target = (benchmark.get("primary_table") or {}).get("target_column")
+    effective_target = target_column or (str(catalog_target) if catalog_target else None) or project.target_column
+    if effective_target and effective_target != project.target_column:
+        project.target_column = str(effective_target)
+
+    primary_relative_path = relative_path(root, primary_file)
+    version = next_artifact_version(db, project.id, "dataset_snapshot", f"benchmark_{benchmark_id}")
+    artifact_dir, stored, content_hash = store.store_existing_file(
+        org_id="local-org",
+        project_id=project.id,
+        asset_type="dataset_snapshot",
+        name=f"benchmark_{benchmark_id}",
+        version=version,
+        source_path=primary_file,
+        filename=primary_file.name,
+        metadata={
+            "project_id": project.id,
+            "source_type": "benchmark_catalog",
+            "benchmark_id": benchmark_id,
+            "benchmark_name": benchmark.get("name"),
+            "source_url": benchmark.get("source_url"),
+            "primary_file": primary_relative_path,
+        },
+    )
+    dataset_artifact = register_artifact(
+        db,
+        project_id=project.id,
+        asset_type="dataset_snapshot",
+        name=f"benchmark_{benchmark_id}",
+        uri=str(artifact_dir),
+        content_hash=content_hash,
+        size_bytes=stored.size_bytes,
+        metadata={
+            "primary_path": str(stored.path),
+            "source_type": "benchmark_catalog",
+            "benchmark_id": benchmark_id,
+            "benchmark_name": benchmark.get("name"),
+            "source_url": benchmark.get("source_url"),
+            "primary_file": primary_relative_path,
+            "target_column": effective_target,
+            "project_id": project.id,
+        },
+        version=version,
+    )
+    dataset = profile_dataset_artifact(
+        db,
+        store,
+        project,
+        dataset_artifact,
+        str(effective_target) if effective_target else None,
+        source_type="benchmark_catalog",
+        source_ref=f"{benchmark_id}:{primary_relative_path}",
+    )
+    import_manifest = build_import_manifest(
+        benchmark=benchmark,
+        root=root,
+        primary_file=primary_file,
+        local_status=local_status,
+        target_column=str(effective_target) if effective_target else None,
+    )
+    import_manifest["dataset_snapshot_id"] = dataset.id
+    import_manifest_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="benchmark_import_manifest",
+        name=f"benchmark_import_{benchmark_id}",
+        filename="benchmark_import_manifest.json",
+        payload=import_manifest,
+        metadata={
+            "project_id": project.id,
+            "dataset_snapshot_id": dataset.id,
+            "benchmark_id": benchmark_id,
+            "primary_file": primary_relative_path,
+        },
+    )
+    relational_catalog = build_relational_catalog(
+        benchmark=benchmark,
+        root=root,
+        primary_file=primary_file,
+        local_status=local_status,
+        target_column=str(effective_target) if effective_target else None,
+    )
+    relational_catalog["dataset_snapshot_id"] = dataset.id
+    relational_catalog_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="relational_catalog",
+        name=f"relational_catalog_{benchmark_id}",
+        filename="relational_catalog.json",
+        payload=relational_catalog,
+        metadata={
+            "project_id": project.id,
+            "dataset_snapshot_id": dataset.id,
+            "benchmark_id": benchmark_id,
+            "table_count": relational_catalog["table_count"],
+            "relationship_count": len(relational_catalog["relationships"]),
+            "primary_file": primary_relative_path,
+        },
+    )
+    supporting_tables = store_benchmark_supporting_table_artifacts(
+        db,
+        store=store,
+        project_id=project.id,
+        benchmark=benchmark,
+        root=root,
+        primary_file=primary_file,
+        relational_catalog_artifact=relational_catalog_artifact,
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=import_manifest_artifact.id,
+        to_asset_type="dataset_snapshot",
+        to_asset_id=dataset.id,
+        relation_type="describes_source",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="dataset_snapshot",
+        from_asset_id=dataset.id,
+        to_asset_type="artifact",
+        to_asset_id=relational_catalog_artifact.id,
+        relation_type="profiles_table_bundle",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=import_manifest_artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=relational_catalog_artifact.id,
+        relation_type="summarizes_bundle",
+    )
+    project.current_phase = "UNDERSTANDING_REVIEW"
+    project.updated_at = utc_now()
+    return {
+        "benchmark": benchmark,
+        "root": root,
+        "local_status": local_status,
+        "primary_file": primary_file,
+        "primary_relative_path": primary_relative_path,
+        "target_column": effective_target,
+        "dataset": dataset,
+        "dataset_artifact": dataset_artifact,
+        "import_manifest_artifact": import_manifest_artifact,
+        "relational_catalog_artifact": relational_catalog_artifact,
+        "supporting_table_artifacts": supporting_tables.artifacts,
+        "skipped_supporting_tables": supporting_tables.skipped,
+    }
+
+
+def run_public_benchmark_workflow_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "run_public_benchmark_workflow")
+    benchmark_id = benchmark_id_for_job(job, "run_public_benchmark_workflow")
+    settings = settings_for_job_payload(job, store)
+    download_manifest = download_public_benchmark_archive(
+        settings,
+        benchmark_id,
+        overwrite=bool(payload.get("overwrite")),
+    )
+    download_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=None,
+        asset_type="benchmark_public_download_manifest",
+        name=f"benchmark_public_download_{benchmark_id}",
+        filename="benchmark_public_download_manifest.json",
+        payload=download_manifest,
+        metadata={
+            "benchmark_id": benchmark_id,
+            "download_url": download_manifest["download_url"],
+            "archive_type": download_manifest["archive_type"],
+            "extracted_file_count": len(download_manifest["extracted_files"]),
+            "skipped_file_count": len(download_manifest["skipped_files"]),
+            "local_ready": download_manifest["local_status"]["ready"],
+        },
+    )
+    imported = import_benchmark_dataset_for_worker(
+        db,
+        store=store,
+        project=project,
+        settings=settings,
+        benchmark_id=benchmark_id,
+        target_column=payload.get("target_column") if isinstance(payload.get("target_column"), str) else None,
+    )
+    dataset = cast(DatasetSnapshot, imported["dataset"])
+    quality = analyze_dataset_quality(db, store=store, project=project, dataset=dataset)
+    candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
+    comparison_artifact = create_evaluation_scenario_comparison(
+        db,
+        store=store,
+        project=project,
+        dataset=dataset,
+        candidates=list(candidates),
+    )
+    primary_candidate = next((item for item in candidates if item.status == "primary_candidate"), candidates[0])
+    spec = promote_candidate_to_spec(db, store=store, candidate=primary_candidate)
+    review = create_evaluation_approval_review(db, store=store, spec=spec, approval_intent=True)
+    if review.blocked:
+        raise ValueError("Public benchmark EvaluationSpec approval was blocked")
+    approve_spec(spec)
+    approved_artifact = write_spec_artifact(db, store, spec)
+    create_lineage_edge(
+        db,
+        project_id=spec.project_id,
+        from_asset_type="artifact",
+        from_asset_id=review.artifact.id,
+        to_asset_type="evaluation_spec",
+        to_asset_id=spec.id,
+        relation_type="supports_approval",
+    )
+    create_lineage_edge(
+        db,
+        project_id=spec.project_id,
+        from_asset_type="evaluation_spec",
+        from_asset_id=spec.id,
+        to_asset_type="artifact",
+        to_asset_id=approved_artifact.id,
+        relation_type="produces",
+    )
+    split = generate_split_manifest(db, store=store, spec=spec)
+    strategy = create_baseline_strategy_plan(
+        db,
+        store=store,
+        project=project,
+        evaluation_spec=spec,
+        split_manifest=split,
+    )
+    baseline = run_baseline(
+        db,
+        store=store,
+        project=project,
+        evaluation_spec=spec,
+        split_manifest=split,
+    )
+    diagnostics = analyze_run_diagnostics(db, store=store, run=baseline.run)
+    run_report = draft_run_report(db, store=store, run=baseline.run)
+    dashboard = create_project_visualization_dashboard(db, store=store, project=project)
+    insights = generate_project_insights(db, store=store, project=project)
+    decision = create_decision_dashboard(db, store=store, project=project)
+    supporting_artifacts = cast(list[Artifact], imported["supporting_table_artifacts"])
+    scenario = create_benchmark_scenario_pack(
+        db,
+        store=store,
+        project=project,
+        benchmark=raw_benchmark_dataset(benchmark_id),
+        local_status=download_manifest["local_status"],
+        dataset=dataset,
+        supporting_table_artifacts=supporting_artifacts,
+        skipped_supporting_tables=cast(list[dict[str, Any]], imported["skipped_supporting_tables"]),
+    )
+    import_manifest_artifact = cast(Artifact, imported["import_manifest_artifact"])
+    relational_catalog_artifact = cast(Artifact, imported["relational_catalog_artifact"])
+    dataset_artifact = cast(Artifact, imported["dataset_artifact"])
+    artifact_ids = list(
+        dict.fromkeys(
+            [
+                download_artifact.id,
+                dataset_artifact.id,
+                import_manifest_artifact.id,
+                relational_catalog_artifact.id,
+                *[artifact.id for artifact in supporting_artifacts],
+                *quality.artifact_ids,
+                comparison_artifact.id,
+                review.artifact.id,
+                approved_artifact.id,
+                split.artifact_id,
+                strategy.artifact.id,
+                *baseline.artifact_ids,
+                *diagnostics.artifact_ids,
+                run_report.artifact.id,
+                *dashboard.artifact_ids,
+                insights.artifact.id,
+                decision.dashboard_artifact.id,
+                decision.report_artifact.id,
+                *decision.artifact_ids,
+                scenario.pack_artifact.id,
+                scenario.report_artifact.id,
+            ]
+        )
+    )
+    return {
+        "benchmark_id": benchmark_id,
+        "download_manifest_artifact_id": download_artifact.id,
+        "download_manifest_schema": download_manifest["schema_version"],
+        "dataset_snapshot_id": dataset.id,
+        "quality_gate": quality.gate,
+        "evaluation_candidate_ids": [candidate.id for candidate in candidates],
+        "evaluation_scenario_comparison_artifact_id": comparison_artifact.id,
+        "evaluation_spec_id": spec.id,
+        "approval_review_artifact_id": review.artifact.id,
+        "split_manifest_id": split.id,
+        "baseline_strategy_plan_artifact_id": strategy.artifact.id,
+        "experiment_run_id": baseline.run.id,
+        "model_version_id": baseline.model_version_id,
+        "metrics": baseline.metrics,
+        "diagnostics_artifact_ids": diagnostics.artifact_ids,
+        "run_report_id": run_report.report.id,
+        "run_report_artifact_id": run_report.artifact.id,
+        "visualization_ids": [visualization.id for visualization in dashboard.visualizations],
+        "insight_ids": [insight.id for insight in insights.insights],
+        "decision_dashboard_artifact_id": decision.dashboard_artifact.id,
+        "decision_report_id": decision.report.id,
+        "decision_report_artifact_id": decision.report_artifact.id,
+        "benchmark_scenario_pack_artifact_id": scenario.pack_artifact.id,
+        "benchmark_scenario_report_artifact_id": scenario.report_artifact.id,
+        "artifact_ids": artifact_ids,
+        "worker_events": [
+            {
+                "worker_id": "public-benchmark-workflow",
+                "display_name": "Benchmark Worker",
+                "status": "succeeded",
+                "headline": "Public benchmark workflow completed",
+                "detail": "Downloaded, imported, evaluated, trained a baseline, and registered reporting artifacts.",
+                "job_id": job.id,
+                "target_tab": "Leaderboard",
+                "target_anchor": "result-readout",
+                "created_at": job.created_at.isoformat(),
+                "updated_at": utc_now().isoformat(),
+                "active": False,
+                "token_usage": {
+                    "source": "benchmark_workflow_progress_estimate",
+                    "is_estimate": True,
+                    "series": [
+                        {"step": "download", "tokens": 120},
+                        {"step": "import", "tokens": 160},
+                        {"step": "evaluate", "tokens": 180},
+                        {"step": "train", "tokens": 220},
+                        {"step": "report", "tokens": 180},
+                    ],
+                },
+            }
+        ],
     }
 
 
@@ -2186,6 +2558,7 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["profile_dataset"] = profile_dataset_handler
     handlers["infer_assumptions"] = infer_assumptions_handler
     handlers["download_public_benchmark_archive"] = download_public_benchmark_archive_handler
+    handlers["run_public_benchmark_workflow"] = run_public_benchmark_workflow_handler
     handlers["probe_kaggle_benchmark_access"] = probe_kaggle_benchmark_access_handler
     handlers["fetch_kaggle_competition_inventory"] = fetch_kaggle_competition_inventory_handler
     handlers["download_kaggle_selected_files"] = download_kaggle_selected_files_handler
