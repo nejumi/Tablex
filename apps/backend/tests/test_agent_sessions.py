@@ -3592,7 +3592,8 @@ def test_research_plan_file_requests_commit_presence_links_and_attention(tmp_pat
         assert chat_payload["intent"]["type"] == "agent_attention_event"
         assert chat_payload["intent"]["message_kind"] == "research_plan_human_attention_requested"
         assert chat_payload["response_brief"]["details"]["question_id"] == question.id
-        assert chat_payload["actions"][0]["target_tab"] == "Home"
+        assert chat_payload["actions"][0]["target_tab"] == "Assumptions"
+        assert chat_payload["actions"][0]["target_anchor"] == "assumption-review"
 
 
 def test_failed_research_plan_file_request_is_announced_in_agent_chat(tmp_path: Path) -> None:

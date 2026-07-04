@@ -7888,7 +7888,8 @@ function surfaceLabel(anchor: string) {
     insights: "Insights",
     reports: "Reports",
     "evaluation-design": "Evaluation Design",
-    "approach-handoff": "Runner Handoff"
+    "approach-handoff": "Runner Handoff",
+    "assumption-review": "Review Queue"
   };
   return labels[anchor] ?? anchor.replace(/-/g, " ");
 }

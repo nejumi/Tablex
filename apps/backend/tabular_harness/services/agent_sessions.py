@@ -3846,9 +3846,7 @@ def register_agent_session_attention_chat_turn(
     japanese = locale_is_japanese(response_locale)
     details = details or {}
     assistant_message = attention_chat_message(message_kind, details=details, japanese=japanese)
-    target_tab = "Jobs" if message_kind in {"runner_unavailable", "turn_recovery"} else "Home"
-    target_anchor = "agent-workspace"
-    action_label = "状況を見る" if japanese else "Review status"
+    target_tab, target_anchor, action_label = attention_chat_action_target(message_kind, japanese=japanese)
     response = {
         "schema_version": "agent_chat_turn.v1",
         "project_id": project.id,
@@ -3917,6 +3915,14 @@ def register_agent_session_attention_chat_turn(
         update_heartbeat=False,
     )
     return chat_artifact
+
+
+def attention_chat_action_target(message_kind: str, *, japanese: bool) -> tuple[str, str, str]:
+    if message_kind in {"runner_unavailable", "turn_recovery"}:
+        return "Jobs", "agent-workspace", "状況を見る" if japanese else "Review status"
+    if message_kind == "research_plan_human_attention_requested":
+        return "Assumptions", "assumption-review", "質問を確認" if japanese else "Review question"
+    return "Home", "agent-workspace", "状況を見る" if japanese else "Review status"
 
 
 def attention_chat_message(message_kind: str, *, details: dict[str, Any], japanese: bool) -> str:
