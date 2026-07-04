@@ -922,7 +922,7 @@ def register_experiment_registration_chat_turn(
                 "status": "ready",
                 "label": action_label,
                 "target_tab": "Leaderboard",
-                "target_anchor": "leaderboard",
+                "target_anchor": "result-readout",
                 "detail": action_detail,
             }
         ],
@@ -948,7 +948,7 @@ def register_experiment_registration_chat_turn(
         },
         "worker_events": [],
         "token_usage": {"source": "not_applicable", "is_estimate": False, "series": []},
-        "next_focus": {"target_tab": "Leaderboard", "target_anchor": "leaderboard", "label": next_label},
+        "next_focus": {"target_tab": "Leaderboard", "target_anchor": "result-readout", "label": next_label},
     }
     chat_artifact = store_json_artifact(
         db,

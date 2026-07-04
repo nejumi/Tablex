@@ -2023,6 +2023,8 @@ def test_codex_structured_model_results_materialize_leaderboard_runs_and_chat_li
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
         assert chat_payload["intent"]["type"] == "experiment_results_registered"
         assert chat_payload["actions"][0]["target_tab"] == "Leaderboard"
+        assert chat_payload["actions"][0]["target_anchor"] == "result-readout"
+        assert chat_payload["next_focus"]["target_anchor"] == "result-readout"
 
         ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
         db.commit()
