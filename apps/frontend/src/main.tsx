@@ -5715,7 +5715,17 @@ function HomeTab({
     text,
     locale,
     onTabChange,
-    onNavigateToTarget
+    onNavigateToTarget,
+    onOpenArtifact: (artifactId, targetTab, targetAnchor) =>
+      onActionOpen({
+        type: "open_artifact",
+        status: "ready",
+        label: text.openSurface,
+        target_tab: targetTab,
+        target_anchor: targetAnchor ?? null,
+        detail: text.researchPlanDetailEvidence,
+        artifact_id: artifactId
+      })
   });
   const researchPlanBlocks = researchPlanBlocksForPowerState(authoredResearchPlanBlocks, autonomyPoweredOn);
   const researchPlanFocusBlock = primaryResearchPlanFocusBlock(researchPlanBlocks);
@@ -6475,7 +6485,8 @@ function buildResearchPlanBlocks({
   text,
   locale,
   onTabChange,
-  onNavigateToTarget
+  onNavigateToTarget,
+  onOpenArtifact
 }: {
   project: Project;
   datasetCount: number;
@@ -6489,8 +6500,16 @@ function buildResearchPlanBlocks({
   locale: string;
   onTabChange: (tab: Tab) => void;
   onNavigateToTarget: (tab: Tab, anchor?: string | null) => void;
+  onOpenArtifact: (artifactId: string, targetTab: Tab, targetAnchor?: string | null) => void;
 }): ResearchPlanBlock[] {
-  const codexAuthoredBlocks = researchPlanBlocksFromTimeline(researchPlanTimeline, text, locale, onNavigateToTarget);
+  const codexAuthoredBlocks = researchPlanBlocksFromTimeline(
+    researchPlanTimeline,
+    text,
+    locale,
+    onNavigateToTarget,
+    onOpenArtifact,
+    notebookIndex
+  );
   const hasObjectiveEvidence = Boolean(project.target_column) || hasAnyArtifactType(artifacts, ["target_definition_proposal"]);
   const hasUnderstandingCompletionEvidence =
     hasAnyArtifactType(artifacts, ["data_understanding_complete"]) ||
@@ -6719,7 +6738,9 @@ function researchPlanBlocksFromTimeline(
   timeline: ResearchPlanTimelineResponse | null,
   text: LocaleMessages,
   locale: string,
-  onNavigateToTarget: (tab: Tab, anchor?: string | null) => void
+  onNavigateToTarget: (tab: Tab, anchor?: string | null) => void,
+  onOpenArtifact: (artifactId: string, targetTab: Tab, targetAnchor?: string | null) => void,
+  notebookIndex: NotebookIndex | null
 ): ResearchPlanBlock[] {
   if (!timeline?.blocks.length) return [];
   const displayLocale = timeline.response_locale ?? timeline.requested_locale ?? timeline.authored_locale ?? locale;
@@ -6738,7 +6759,7 @@ function researchPlanBlocksFromTimeline(
         onClick: subtaskTab ? () => onNavigateToTarget(subtaskTab, subtask.target_anchor) : undefined
       };
     });
-    subtasks.push(...derivedResearchPlanSubtasks(block, text, displayLocale, onNavigateToTarget));
+    subtasks.push(...derivedResearchPlanSubtasks(block, text, displayLocale, onNavigateToTarget, onOpenArtifact, notebookIndex));
     return {
       id: block.id,
       title: displayTextOrFallback(block.title, displayLocale, text.researchPlanSummaryBlock),
@@ -6757,7 +6778,9 @@ function derivedResearchPlanSubtasks(
   block: ResearchPlanTimelineBlock,
   text: LocaleMessages,
   locale: string,
-  onNavigateToTarget: (tab: Tab, anchor?: string | null) => void
+  onNavigateToTarget: (tab: Tab, anchor?: string | null) => void,
+  onOpenArtifact: (artifactId: string, targetTab: Tab, targetAnchor?: string | null) => void,
+  notebookIndex: NotebookIndex | null
 ): ResearchPlanSubtask[] {
   const derived: ResearchPlanSubtask[] = [];
   if (block.next_action) {
@@ -6816,27 +6839,100 @@ function derivedResearchPlanSubtasks(
   }
   const attachedArtifacts = block.attached_artifacts ?? [];
   if (attachedArtifacts.length) {
-    const runLike = attachedArtifacts.some((artifact) => artifact.link_type === "experiment_run" || Boolean(artifact.run_id));
-    const notebookLike = attachedArtifacts.some((artifact) => artifact.asset_type?.includes("notebook"));
-    const explicitTarget = attachedArtifacts.find((artifact) => artifact.target_tab)?.target_tab;
-    const targetTab: Tab = explicitTarget ? tabFromString(explicitTarget, "Assets") : runLike ? "Leaderboard" : notebookLike ? "Notebooks" : "Assets";
-    const explicitAnchor = attachedArtifacts.find((artifact) => artifact.target_anchor)?.target_anchor;
-    const targetAnchor = explicitAnchor ?? (runLike ? "result-readout" : notebookLike ? "notebook-preview-top" : null);
-    derived.push({
-      id: `${block.id}:attached_artifacts`,
-      title: text.researchPlanDetailEvidence,
-      detail: attachedArtifacts
-        .slice(0, 4)
-        .map((artifact) => artifact.artifact_name || artifact.run_id || artifact.artifact_id || artifact.id)
-        .join(" / "),
-      status: block.status === "blocked" ? "pending" : block.status,
-      evidence: `${attachedArtifacts.length}`,
-      targetTab,
-      targetAnchor,
-      onClick: () => onNavigateToTarget(targetTab, targetAnchor)
-    });
+    for (const [index, artifact] of attachedArtifacts.slice(0, 8).entries()) {
+      const action = researchPlanArtifactLinkAction(artifact, notebookIndex, onNavigateToTarget, onOpenArtifact);
+      derived.push({
+        id: `${block.id}:attached_artifact:${artifact.id || artifact.artifact_id || artifact.run_id || index}`,
+        title: researchPlanArtifactLinkTitle(artifact, text),
+        detail: researchPlanArtifactLinkDetail(artifact),
+        status: block.status === "blocked" ? "pending" : block.status,
+        evidence: researchPlanArtifactLinkEvidence(artifact),
+        targetTab: action.targetTab,
+        targetAnchor: action.targetAnchor,
+        onClick: action.onClick
+      });
+    }
+    if (attachedArtifacts.length > 8) {
+      derived.push({
+        id: `${block.id}:attached_artifacts_more`,
+        title: text.researchPlanDetailEvidence,
+        detail: localizedObjectCount(attachedArtifacts.length - 8, "more evidence link", "more evidence links", "追加リンク", locale),
+        status: block.status === "blocked" ? "pending" : block.status,
+        evidence: `${attachedArtifacts.length}`,
+        targetTab: "Assets",
+        onClick: () => onNavigateToTarget("Assets")
+      });
+    }
   }
   return derived;
+}
+
+function researchPlanArtifactLinkAction(
+  link: ResearchPlanArtifactLink,
+  notebookIndex: NotebookIndex | null,
+  onNavigateToTarget: (tab: Tab, anchor?: string | null) => void,
+  onOpenArtifact: (artifactId: string, targetTab: Tab, targetAnchor?: string | null) => void
+): { targetTab: Tab; targetAnchor: string | null; onClick: () => void } {
+  const runLike = researchPlanArtifactLinkIsRun(link);
+  const notebookLike = researchPlanArtifactLinkIsNotebook(link);
+  const explicitTarget = link.target_tab === "Notebooks" ? "Notebooks" : link.target_tab ? tabFromString(link.target_tab, "Assets") : null;
+  const targetTab: Tab = explicitTarget ?? (runLike ? "Leaderboard" : notebookLike ? "Notebooks" : "Assets");
+  const targetAnchor = link.target_anchor ?? (runLike ? "result-readout" : notebookLike ? "notebook-preview-top" : null);
+  if (link.artifact_id) {
+    const artifactId = notebookLike ? (notebookPreviewArtifactIdForResearchPlanLink(link.artifact_id, notebookIndex) ?? link.artifact_id) : link.artifact_id;
+    return {
+      targetTab,
+      targetAnchor,
+      onClick: () => onOpenArtifact(artifactId, targetTab, targetAnchor)
+    };
+  }
+  return {
+    targetTab,
+    targetAnchor,
+    onClick: () => onNavigateToTarget(targetTab, targetAnchor)
+  };
+}
+
+function researchPlanArtifactLinkIsNotebook(link: ResearchPlanArtifactLink) {
+  const assetType = (link.asset_type ?? "").toLowerCase();
+  const role = (link.role ?? "").toLowerCase();
+  return assetType.includes("notebook") || role.includes("notebook");
+}
+
+function researchPlanArtifactLinkIsRun(link: ResearchPlanArtifactLink) {
+  return link.link_type === "experiment_run" || Boolean(link.run_id) || link.asset_type === "experiment_run";
+}
+
+function researchPlanArtifactLinkTitle(link: ResearchPlanArtifactLink, text: LocaleMessages) {
+  if (researchPlanArtifactLinkIsNotebook(link)) return text.relatedNotebooks;
+  if (researchPlanArtifactLinkIsRun(link)) return text.metricRuns;
+  if ((link.role ?? "").toLowerCase().includes("report")) return text.tabReports;
+  return text.tabAssets;
+}
+
+function researchPlanArtifactLinkDetail(link: ResearchPlanArtifactLink) {
+  return link.artifact_name || link.run_id || link.artifact_id || link.id;
+}
+
+function researchPlanArtifactLinkEvidence(link: ResearchPlanArtifactLink) {
+  return link.asset_type?.replace(/_/g, " ") ?? link.role ?? link.link_type ?? null;
+}
+
+function notebookPreviewArtifactIdForResearchPlanLink(artifactId: string, notebookIndex: NotebookIndex | null) {
+  const item = notebookIndex?.items.find((candidate) => notebookItemReferencesArtifact(candidate, artifactId));
+  return item ? notebookPreviewArtifactId(item) : null;
+}
+
+function notebookItemReferencesArtifact(item: NotebookIndexItem, artifactId: string) {
+  if (item.notebook_artifact_id === artifactId || item.preview_artifact_id === artifactId) return true;
+  return artifactIdInUnknown(item.artifact_ids, artifactId);
+}
+
+function artifactIdInUnknown(value: unknown, artifactId: string): boolean {
+  if (typeof value === "string") return value === artifactId;
+  if (Array.isArray(value)) return value.some((item) => artifactIdInUnknown(item, artifactId));
+  if (value && typeof value === "object") return Object.values(value).some((item) => artifactIdInUnknown(item, artifactId));
+  return false;
 }
 
 function researchPlanCompactSummary(blocks: ResearchPlanBlock[], text: LocaleMessages): string {
@@ -6910,10 +7006,11 @@ function attachResearchPlanSubtasks(
   return blocks.map((block) => {
     const subtasks = byBlock.get(block.id) ?? [];
     if (!subtasks.length) return block;
+    const combinedSubtasks = [...(block.subtasks ?? []), ...subtasks];
     return {
       ...block,
-      subtasks,
-      status: researchPlanStatusWithSubtasks(block.status, subtasks),
+      subtasks: combinedSubtasks,
+      status: researchPlanStatusWithSubtasks(block.status, combinedSubtasks),
       evidence: block.evidence ?? subtaskEvidenceSummary(subtasks, text)
     };
   });
