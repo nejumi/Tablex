@@ -1198,7 +1198,8 @@ textarea {
   min-height: min(58vh, 560px);
   max-height: min(62vh, 760px);
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
   scrollbar-gutter: stable;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -4876,7 +4877,8 @@ td {
   gap: 10px;
   max-height: min(62vh, 760px);
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
   scrollbar-gutter: stable;
   padding-right: 2px;
 }

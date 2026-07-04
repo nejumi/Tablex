@@ -908,6 +908,16 @@ def run_main_agent_session_supervisor(
                         content="Codex CLI is unavailable. Tablex will keep the same session and retry after a cooldown.",
                         payload={"retry_delay_seconds": retry_delay, "failure_kind": "runner_unavailable"},
                     )
+                    register_agent_session_attention_chat_turn(
+                        db,
+                        store=store,
+                        project=project,
+                        session=session,
+                        attention_key="runner_unavailable",
+                        status="waiting",
+                        message_kind="runner_unavailable",
+                        details={"retry_delay_seconds": retry_delay, "failure_kind": "runner_unavailable"},
+                    )
                     db.commit()
                     if lease_lost_event.wait(retry_delay):
                         continue
@@ -928,6 +938,16 @@ def run_main_agent_session_supervisor(
                         title="Codex turn returned non-zero; continuing session",
                         content="Full Auto remains on. Tablex will resume the same session after a cooldown instead of leaving the project stopped.",
                         payload={"exit_code": exit_code, "retry_delay_seconds": retry_delay},
+                    )
+                    register_agent_session_attention_chat_turn(
+                        db,
+                        store=store,
+                        project=project,
+                        session=session,
+                        attention_key=f"turn_recovery:{exit_code}",
+                        status="waiting",
+                        message_kind="turn_recovery",
+                        details={"exit_code": exit_code, "retry_delay_seconds": retry_delay},
                     )
                     db.commit()
                     if lease_lost_event.wait(retry_delay):
@@ -2172,6 +2192,7 @@ def codex_event_content(event: dict[str, Any]) -> str | None:
 def process_research_plan_tool_requests(
     db: Session,
     *,
+    store: LocalArtifactStore,
     project: Project,
     session: AgentSession,
     workspace: Path,
@@ -2243,6 +2264,22 @@ def process_research_plan_tool_requests(
                 content=str(exc),
                 payload={**ack, "workspace_relative_path": str(path.relative_to(workspace))},
                 update_heartbeat=False,
+            )
+            register_agent_session_attention_chat_turn(
+                db,
+                store=store,
+                project=project,
+                session=session,
+                attention_key=f"research_plan_request_failed:{request_id}",
+                status="needs_attention",
+                message_kind="research_plan_request_failed",
+                details={
+                    "request_id": request_id,
+                    "operation": operation,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc)[:1200],
+                    "workspace_relative_path": str(path.relative_to(workspace)),
+                },
             )
 
 
@@ -2471,7 +2508,7 @@ def ingest_session_workspace_outputs(
                 )
             else:
                 maybe_defer_agent_session_notebook_capture(db, session=session, artifact=artifact)
-    process_research_plan_tool_requests(db, project=project, session=session, workspace=workspace)
+    process_research_plan_tool_requests(db, store=store, project=project, session=session, workspace=workspace)
     attach_registered_session_notebooks_to_current_research_plan(db, project=project, session=session)
     if allow_notebook_auto_capture:
         capture_pending_agent_session_notebooks(db, store=store, project=project, session=session)
@@ -3044,6 +3081,145 @@ def agent_session_notebook_chat_turn_exists(
             and metadata.get("agent_session_id") == session.id
             and metadata.get("notebook_artifact_id") == notebook_artifact.id
             and metadata.get("notebook_status") == status
+        ):
+            return True
+    return False
+
+
+def register_agent_session_attention_chat_turn(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    session: AgentSession,
+    attention_key: str,
+    status: str,
+    message_kind: str,
+    details: dict[str, Any] | None = None,
+) -> Artifact | None:
+    cleaned_key = attention_key.strip()[:240]
+    if not cleaned_key:
+        return None
+    if agent_session_attention_chat_turn_exists(db, project=project, session=session, attention_key=cleaned_key):
+        return None
+    response_locale = latest_project_response_locale(db, project)
+    japanese = locale_is_japanese(response_locale)
+    details = details or {}
+    assistant_message = attention_chat_message(message_kind, details=details, japanese=japanese)
+    target_tab = "Jobs" if message_kind in {"runner_unavailable", "turn_recovery"} else "Home"
+    target_anchor = "agent-workspace"
+    action_label = "状況を見る" if japanese else "Review status"
+    response = {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": project.id,
+        "user_message": "",
+        "assistant_message": assistant_message,
+        "intent": {
+            "type": "agent_attention_event",
+            "source": "main_agent_session_observation",
+            "status": status,
+            "message_kind": message_kind,
+        },
+        "actions": [
+            {
+                "type": "open_surface",
+                "status": status,
+                "label": action_label,
+                "target_tab": target_tab,
+                "target_anchor": target_anchor,
+                "detail": assistant_message,
+            }
+        ],
+        "action_summary": {},
+        "response_brief": {
+            "schema_version": "agent_attention_event.v1",
+            "agent_session_id": session.id,
+            "attention_key": cleaned_key,
+            "status": status,
+            "message_kind": message_kind,
+            "details": details,
+        },
+        "response_composer": {
+            "schema_version": "agent_response_composer.v1",
+            "mode": "main_agent_session",
+            "status": "harness_fact",
+        },
+        "worker_events": [],
+        "token_usage": {"source": "not_applicable", "is_estimate": False, "series": []},
+        "next_focus": {"target_tab": target_tab, "target_anchor": target_anchor, "label": action_label},
+    }
+    chat_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="agent_chat_turn",
+        name=f"agent_session_attention_{session.id}_{hashlib.sha1(cleaned_key.encode('utf-8')).hexdigest()[:12]}",
+        filename="agent_chat_turn.json",
+        payload=response,
+        metadata={
+            "project_id": project.id,
+            "agent_session_id": session.id,
+            "attention_key": cleaned_key,
+            "message_kind": message_kind,
+            "source": "main_agent_session_attention",
+        },
+    )
+    append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="attention_chat_turn_registered",
+        role="harness",
+        title="Attention event registered in Chat",
+        content="Registered an agent attention event in Agent Chat.",
+        payload={"chat_artifact_id": chat_artifact.id, "attention_key": cleaned_key, "message_kind": message_kind},
+        artifact_id=chat_artifact.id,
+        update_heartbeat=False,
+    )
+    return chat_artifact
+
+
+def attention_chat_message(message_kind: str, *, details: dict[str, Any], japanese: bool) -> str:
+    retry_delay = details.get("retry_delay_seconds")
+    retry_text = f"{int(retry_delay)}s" if isinstance(retry_delay, (int, float)) else None
+    if message_kind == "runner_unavailable":
+        if japanese:
+            return f"Codex runnerをまだ起動できません。Tablexは同じセッションを保持し、{retry_text or 'しばらく後'}に再試行します。"
+        return f"Codex runner is not available yet. Tablex is keeping the same session and will retry in {retry_text or 'a moment'}."
+    if message_kind == "turn_recovery":
+        exit_code = details.get("exit_code")
+        if japanese:
+            return f"Codex turnが終了コード{exit_code}で戻りました。Full Autoは維持され、{retry_text or 'しばらく後'}に同じセッションを再開します。"
+        return f"Codex returned exit code {exit_code}. Full Auto is still on, and Tablex will resume the same session in {retry_text or 'a moment'}."
+    if message_kind == "research_plan_request_failed":
+        operation = str(details.get("operation") or "ResearchPlan update")
+        if japanese:
+            return f"ResearchPlanの更新要求 `{operation}` を保存できませんでした。Codexにはackで理由を返しているため、修正した要求を出し直せます。"
+        return f"ResearchPlan update `{operation}` could not be saved. The ack includes the reason so Codex can submit a corrected request."
+    return "Agent attention is needed." if not japanese else "Agentの状態確認が必要です。"
+
+
+def agent_session_attention_chat_turn_exists(
+    db: Session,
+    *,
+    project: Project,
+    session: AgentSession,
+    attention_key: str,
+) -> bool:
+    recent_chat_artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+            .order_by(Artifact.created_at.desc())
+            .limit(100)
+        ).all()
+    )
+    for artifact in recent_chat_artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        if (
+            metadata.get("source") == "main_agent_session_attention"
+            and metadata.get("agent_session_id") == session.id
+            and metadata.get("attention_key") == attention_key
         ):
             return True
     return False

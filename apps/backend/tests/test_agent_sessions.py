@@ -2138,6 +2138,66 @@ def test_research_plan_file_requests_commit_presence_links_and_attention(tmp_pat
         assert question.can_proceed_without_answer is True
 
 
+def test_failed_research_plan_file_request_is_announced_in_agent_chat(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    requests_dir = workspace / ".tablex" / "requests" / "research_plan"
+    requests_dir.mkdir(parents=True)
+    (requests_dir / "bad_current.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_research_plan_request.v1",
+                "request_id": "bad_current",
+                "operation": "set_current_work",
+                "payload": {"node_id": "", "summary": "Missing node id should fail."},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(
+            id="p_plan_request_failed",
+            name="Plan Request Failed",
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+        )
+        session = AgentSession(
+            id="as_plan_request_failed",
+            project_id=project.id,
+            goal_text="Keep the plan moving.",
+            workspace_path=str(workspace),
+            status="running",
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        ack = loads_json((workspace / ".tablex" / "acks" / "research_plan" / "bad_current.ack.json").read_text(encoding="utf-8"), {})
+        assert ack["status"] == "failed"
+        chat_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["intent"]["type"] == "agent_attention_event"
+        assert chat_payload["intent"]["message_kind"] == "research_plan_request_failed"
+        assert chat_payload["actions"][0]["target_tab"] == "Home"
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+        chat_count = db.scalar(
+            select(func.count())
+            .select_from(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        )
+        assert chat_count == 1
+
+
 def test_published_raw_codex_transcript_is_ingested_as_session_artifact(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
