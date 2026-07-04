@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import mimetypes
 import re
@@ -2468,53 +2469,63 @@ def upload_relational_schema_hint(
     file: Annotated[UploadFile, File()],
     note: Annotated[str | None, Form()] = None,
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
+    data = file.file.read(MAX_SCHEMA_HINT_BYTES + 1)
+    if len(data) > MAX_SCHEMA_HINT_BYTES:
+        raise HTTPException(status_code=400, detail="Uploaded ER diagram file is too large. Limit is 25 MB.")
+    source_filename = file.filename or "relational_schema_hint"
+    version = next_artifact_version(db, project_id, "relational_schema_hint_upload", "staged_schema_hint_upload")
+    artifact_dir, stored, content_hash = store.store_stream(
+        org_id="local-org",
+        project_id=project_id,
+        asset_type="relational_schema_hint_upload",
+        name="staged_schema_hint_upload",
+        version=version,
+        filename=source_filename,
+        stream=io.BytesIO(data),
+        metadata={
+            "project_id": project_id,
+            "source_filename": source_filename,
+            "content_type": file.content_type,
+            "purpose": "staged_for_worker_schema_hint_processing",
+        },
+    )
+    staging_artifact = register_artifact(
+        db,
+        project_id=project_id,
+        asset_type="relational_schema_hint_upload",
+        name="staged_schema_hint_upload",
+        uri=str(artifact_dir),
+        content_hash=content_hash,
+        size_bytes=stored.size_bytes,
+        metadata={
+            "project_id": project_id,
+            "source_filename": source_filename,
+            "content_type": file.content_type,
+            "primary_path": str(stored.path),
+            "purpose": "staged_for_worker_schema_hint_processing",
+        },
+        version=version,
+    )
     job = create_job(
         db,
         job_type="upload_relational_schema_hint",
         project_id=project_id,
         input_payload={
-            "filename": file.filename,
+            "filename": source_filename,
             "content_type": file.content_type,
+            "note": note,
             "note_present": bool(note and note.strip()),
+            "staging_artifact_id": staging_artifact.id,
         },
         policy={
+            "execution": "queued_worker",
             "network": "disabled",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "purpose": "store_user_supplied_er_diagram_evidence",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_relational_schema_hint(
-            db,
-            store=store,
-            project=project,
-            filename=file.filename or "relational_schema_hint",
-            content_type=file.content_type,
-            data=file.file.read(MAX_SCHEMA_HINT_BYTES + 1),
-            note=note,
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.summary["schema_version"],
-                "relational_schema_hint_artifact_id": result.artifact.id,
-                "relational_schema_hint_report_artifact_id": result.report_artifact.id,
-                "report_id": result.report.id,
-                "evidence_id": result.evidence.id,
-                "artifact_id": result.artifact.id,
-                "artifact_ids": [result.artifact.id, result.report_artifact.id],
-                "content_type": result.summary["content_type"],
-                "media_kind": result.summary["media_kind"],
-                "parsed_table_count": result.summary["parsed_table_count"],
-                "parsed_relationship_count": result.summary["parsed_relationship_count"],
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 

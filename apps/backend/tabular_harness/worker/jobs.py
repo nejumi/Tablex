@@ -127,6 +127,7 @@ from tabular_harness.services.project_guidance import (
     create_guided_journey_comparison,
     create_guided_journey_snapshot,
 )
+from tabular_harness.services.relational_evidence import create_relational_schema_hint
 from tabular_harness.services.relational_feature_diagnostics import (
     diagnose_relational_feature_scenarios,
 )
@@ -248,6 +249,54 @@ def compare_guided_journey_snapshots_handler(db: Session, job: Job, store: Local
         "artifact_ids": result.artifact_ids,
         "changed_stage_count": result.comparison["summary"]["changed_stage_count"],
         "recommended_focus_changed": result.comparison["summary"]["recommended_focus_changed"],
+    }
+
+
+def upload_relational_schema_hint_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "upload_relational_schema_hint")
+    staging_artifact_id = payload.get("staging_artifact_id")
+    if not isinstance(staging_artifact_id, str) or not staging_artifact_id.strip():
+        raise ValueError("upload_relational_schema_hint requires staging_artifact_id")
+    staging_artifact = db.get(Artifact, staging_artifact_id)
+    if staging_artifact is None:
+        raise ValueError("Staged relational schema hint artifact not found")
+    source_path = artifact_primary_path(staging_artifact)
+    data = source_path.read_bytes()
+    filename = payload.get("filename") if isinstance(payload.get("filename"), str) else source_path.name
+    content_type = payload.get("content_type") if isinstance(payload.get("content_type"), str) else None
+    note = payload.get("note") if isinstance(payload.get("note"), str) else None
+    result = create_relational_schema_hint(
+        db,
+        store=store,
+        project=project,
+        filename=filename,
+        content_type=content_type,
+        data=data,
+        note=note,
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=staging_artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=result.artifact.id,
+        relation_type="materialized_schema_hint",
+    )
+    return {
+        "schema_version": result.summary["schema_version"],
+        "relational_schema_hint_artifact_id": result.artifact.id,
+        "relational_schema_hint_report_artifact_id": result.report_artifact.id,
+        "report_id": result.report.id,
+        "evidence_id": result.evidence.id,
+        "artifact_id": result.artifact.id,
+        "artifact_ids": [staging_artifact.id, result.artifact.id, result.report_artifact.id],
+        "staging_artifact_id": staging_artifact.id,
+        "content_type": result.summary["content_type"],
+        "media_kind": result.summary["media_kind"],
+        "parsed_table_count": result.summary["parsed_table_count"],
+        "parsed_relationship_count": result.summary["parsed_relationship_count"],
     }
 
 
@@ -2993,6 +3042,7 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["save_guided_journey_snapshot"] = save_guided_journey_snapshot_handler
     handlers["save_autonomous_decision_brief"] = save_autonomous_decision_brief_handler
     handlers["compare_guided_journey_snapshots"] = compare_guided_journey_snapshots_handler
+    handlers["upload_relational_schema_hint"] = upload_relational_schema_hint_handler
     handlers["download_public_benchmark_archive"] = download_public_benchmark_archive_handler
     handlers["import_benchmark_dataset"] = import_benchmark_dataset_handler
     handlers["run_benchmark_fixture_smoke"] = run_benchmark_fixture_smoke_handler

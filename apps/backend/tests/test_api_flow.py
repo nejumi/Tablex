@@ -3259,13 +3259,15 @@ def test_relational_schema_hint_upload_preview_and_agent_route(tmp_path: Path) -
     )
     assert json_upload_response.status_code == 200, json_upload_response.text
     json_job = json_upload_response.json()
-    assert json_job["status"] == "succeeded"
-    assert json_job["output"]["schema_version"] == "relational_schema_hint.v1"
-    assert json_job["output"]["parsed_table_count"] == 2
-    assert json_job["output"]["parsed_relationship_count"] == 1
+    assert json_job["status"] == "queued"
+    assert json_job["policy"]["execution"] == "queued_worker"
+    json_output = run_queued_job(client, json_job["id"])
+    assert json_output["schema_version"] == "relational_schema_hint.v1"
+    assert json_output["parsed_table_count"] == 2
+    assert json_output["parsed_relationship_count"] == 1
 
     json_preview_response = client.get(
-        f"/api/artifacts/{json_job['output']['relational_schema_hint_artifact_id']}/preview"
+        f"/api/artifacts/{json_output['relational_schema_hint_artifact_id']}/preview"
     )
     assert json_preview_response.status_code == 200
     json_preview = json_preview_response.json()
@@ -3273,7 +3275,7 @@ def test_relational_schema_hint_upload_preview_and_agent_route(tmp_path: Path) -
     assert "customers" in json_preview["preview"]
 
     report_preview_response = client.get(
-        f"/api/artifacts/{json_job['output']['relational_schema_hint_report_artifact_id']}/preview"
+        f"/api/artifacts/{json_output['relational_schema_hint_report_artifact_id']}/preview"
     )
     assert report_preview_response.status_code == 200
     report_preview = report_preview_response.json()["preview"]
@@ -3286,8 +3288,11 @@ def test_relational_schema_hint_upload_preview_and_agent_route(tmp_path: Path) -
     )
     assert png_upload_response.status_code == 200, png_upload_response.text
     png_job = png_upload_response.json()
+    assert png_job["status"] == "queued"
+    assert png_job["policy"]["execution"] == "queued_worker"
+    png_output = run_queued_job(client, png_job["id"])
     png_preview_response = client.get(
-        f"/api/artifacts/{png_job['output']['relational_schema_hint_artifact_id']}/preview"
+        f"/api/artifacts/{png_output['relational_schema_hint_artifact_id']}/preview"
     )
     assert png_preview_response.status_code == 200
     png_preview = png_preview_response.json()
