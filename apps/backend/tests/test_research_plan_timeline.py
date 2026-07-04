@@ -195,6 +195,49 @@ def test_research_plan_timeline_prefers_active_db_revision() -> None:
         assert [revision.id for revision in revisions] == [result.revision.id]
 
 
+def test_research_plan_timeline_exposes_contract_validation_issues() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_plan_contract", name="Plan Contract")
+        db.add(project)
+        db.commit()
+
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v1",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "status": "done",
+                    },
+                    {
+                        "id": "modeling",
+                        "title": "Modeling",
+                        "status": "pending",
+                    },
+                ],
+            },
+            author_type="codex",
+            reason="Legacy file-based plan without tool-contract fields.",
+        )
+        db.commit()
+
+        response = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+
+        validation = response["contract_validation"]
+        assert validation["status"] == "needs_revision"
+        issue_codes = {issue["code"] for issue in validation["issues"]}
+        assert "done_node_missing_completion_evidence" in issue_codes
+        assert "done_node_missing_deliverable_contract" in issue_codes
+        assert "missing_current_node" in issue_codes
+        assert response["blocks"][0]["status"] == "done"
+
+
 def test_research_plan_timeline_exposes_current_work_and_artifact_links() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

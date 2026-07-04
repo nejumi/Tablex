@@ -148,6 +148,7 @@ def generate_with_codex_cli(*, prompt: str, count: int) -> list[AvatarCandidate]
         command = [
             codex,
             "exec",
+            "--ignore-user-config",
             "--cd",
             str(workdir),
             "--skip-git-repo-check",

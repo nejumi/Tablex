@@ -943,6 +943,43 @@ textarea {
   background: color-mix(in srgb, var(--warning-bg) 38%, var(--surface));
 }
 
+.research-plan-contract-warning {
+  display: grid;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning-bg) 36%, var(--surface));
+  padding: 9px 10px;
+}
+
+.research-plan-contract-warning span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.research-plan-contract-warning strong {
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
+.research-plan-contract-warning p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.research-plan-contract-warning ul {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .research-plan-subtasks {
   display: grid;
   gap: 8px;

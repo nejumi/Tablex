@@ -55,7 +55,10 @@ from tabular_harness.services.artifacts import (
 from tabular_harness.services.jobs import TERMINAL_STATUSES as TERMINAL_JOB_STATUSES
 from tabular_harness.services.jobs import mark_job_succeeded
 from tabular_harness.services.locales import locale_is_japanese
-from tabular_harness.services.research_plan_timeline import research_plan_localization_summary
+from tabular_harness.services.research_plan_timeline import (
+    research_plan_contract_validation_summary,
+    research_plan_localization_summary,
+)
 from tabular_harness.services.research_plans import (
     ResearchPlanValidationError,
     attach_research_plan_artifact,
@@ -1450,7 +1453,9 @@ def build_session_context(
         ],
         "equipped_skill_references": equipped_skills,
         "research_plan_display": research_plan_display_context(
+            db,
             latest_research_plan_artifact,
+            project_id=project.id,
             response_locale=response_locale,
         ),
         "python_runtimes": python_runtime_context(Path(session.workspace_path or "")),
@@ -1601,12 +1606,23 @@ def _utc_comparable(value: datetime) -> datetime:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
-def research_plan_display_context(artifact: Artifact | None, *, response_locale: str) -> dict[str, Any]:
+def research_plan_display_context(
+    db: Session,
+    artifact: Artifact | None,
+    *,
+    project_id: str,
+    response_locale: str,
+) -> dict[str, Any]:
     if artifact is None:
         return {
             "artifact_id": None,
             "response_locale": response_locale,
             "localization": research_plan_localization_summary([], locale=response_locale),
+            "contract_validation": research_plan_contract_validation_summary(
+                db,
+                project_id=project_id,
+                payload={"timeline_blocks": []},
+            ),
         }
     try:
         payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
@@ -1619,6 +1635,11 @@ def research_plan_display_context(artifact: Artifact | None, *, response_locale:
         "path": str(artifact_primary_path(artifact)),
         "response_locale": response_locale,
         "localization": localization,
+        "contract_validation": research_plan_contract_validation_summary(
+            db,
+            project_id=project_id,
+            payload=payload if isinstance(payload, dict) else {},
+        ),
     }
 
 
@@ -1816,6 +1837,7 @@ def run_codex_cli_turn_streaming(
             cmd = [
                 "codex",
                 "exec",
+                "--ignore-user-config",
                 "--cd",
                 str(workspace),
                 "--sandbox",
@@ -1832,6 +1854,7 @@ def run_codex_cli_turn_streaming(
             cmd = [
                 "codex",
                 "exec",
+                "--ignore-user-config",
                 "--cd",
                 str(workspace),
                 "--sandbox",
@@ -1841,9 +1864,9 @@ def run_codex_cli_turn_streaming(
                 str(last_message_path),
                 "--skip-git-repo-check",
                 "-",
-            ]
+        ]
         if agent_model and agent_model not in {"codex-default", "default"}:
-            insert_at = 7 if session.codex_thread_id else 2
+            insert_at = cmd.index("resume") + 1 if session.codex_thread_id else 2
             cmd[insert_at:insert_at] = ["--model", agent_model]
         append_session_event(
             db,

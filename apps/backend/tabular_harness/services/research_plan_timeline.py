@@ -15,6 +15,7 @@ from tabular_harness.services.research_plans import (
     research_plan_artifact_links,
     research_plan_current_work_payload,
     research_plan_revision_document,
+    validate_research_plan_document,
 )
 
 _MISSING = object()
@@ -42,6 +43,11 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
             "authored_locale": _research_plan_payload_locale(payload),
             "generated_at": revision.created_at.isoformat(),
             "localization": research_plan_localization_summary(raw_blocks, locale=response_locale),
+            "contract_validation": research_plan_contract_validation_summary(
+                db,
+                project_id=project_id,
+                payload=payload,
+            ),
             "current_work": research_plan_current_work_payload(
                 latest_research_plan_current_work(db, project_id=project_id)
             ),
@@ -62,6 +68,11 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
             "response_locale": locale,
             "generated_at": utc_now().isoformat(),
             "localization": research_plan_localization_summary([], locale=locale),
+            "contract_validation": research_plan_contract_validation_summary(
+                db,
+                project_id=project_id,
+                payload={"timeline_blocks": []},
+            ),
             "current_work": research_plan_current_work_payload(
                 latest_research_plan_current_work(db, project_id=project_id)
             ),
@@ -83,11 +94,35 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
         "authored_locale": _research_plan_payload_locale(payload),
         "generated_at": artifact.created_at.isoformat(),
         "localization": research_plan_localization_summary(raw_blocks, locale=response_locale),
+        "contract_validation": research_plan_contract_validation_summary(
+            db,
+            project_id=project_id,
+            payload=payload if isinstance(payload, dict) else {},
+        ),
         "current_work": research_plan_current_work_payload(
             latest_research_plan_current_work(db, project_id=project_id)
         ),
         "artifact_links": [],
         "blocks": clean_research_plan_timeline_blocks(raw_blocks, locale=response_locale),
+    }
+
+
+def research_plan_contract_validation_summary(
+    db: Session,
+    *,
+    project_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    issues = validate_research_plan_document(db, project_id=project_id, document=payload, strict=True)
+    errors = [issue for issue in issues if issue.get("severity", "error") == "error"]
+    warnings = [issue for issue in issues if issue.get("severity") == "warning"]
+    return {
+        "schema_version": "research_plan_contract_validation.v1",
+        "status": "needs_revision" if errors else "ok",
+        "issue_count": len(issues),
+        "error_count": len(errors),
+        "warning_count": len(warnings),
+        "issues": issues[:12],
     }
 
 

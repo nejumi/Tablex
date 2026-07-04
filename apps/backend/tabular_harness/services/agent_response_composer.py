@@ -226,10 +226,11 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
             "",
         ]
         prompt = "\n".join(prompt_preamble + [json.dumps(brief, ensure_ascii=False, indent=2, sort_keys=True)])
-        command_summary = "codex exec --json --sandbox read-only --output-last-message response.txt -"
+        command_summary = "codex exec --ignore-user-config --json --sandbox read-only --output-last-message response.txt -"
         cmd = [
             "codex",
             "exec",
+            "--ignore-user-config",
             "--cd",
             str(workspace),
             "--sandbox",
@@ -242,7 +243,10 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
         ]
         if model is not None:
             cmd[2:2] = ["--model", model]
-            command_summary = f"codex exec --model {model} --json --sandbox read-only --output-last-message response.txt -"
+            command_summary = (
+                f"codex exec --model {model} --ignore-user-config --json --sandbox read-only "
+                "--output-last-message response.txt -"
+            )
         started_at = time.perf_counter()
         try:
             completed = subprocess.run(

@@ -279,6 +279,7 @@ class CodexCliRunner(AgentRunner):
             cmd = [
                 self.codex_binary,
                 "exec",
+                "--ignore-user-config",
                 "--cd",
                 str(workspace),
                 "--sandbox",

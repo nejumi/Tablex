@@ -444,6 +444,10 @@ const englishMessages = {
   researchPlanCurrentPosition: "Current position",
   researchPlanCurrentWorkUnreported: "Codex is active, but it has not declared the current plan node yet.",
   researchPlanNextVisibleBlock: "No active plan node is declared. Next visible block:",
+  researchPlanContractNeedsRevision: "Plan contract needs Codex revision",
+  researchPlanContractNeedsRevisionDetail: "The current plan is visible, but its structured ledger needs a validated re-commit.",
+  researchPlanContractErrors: "errors",
+  researchPlanContractWarnings: "warnings",
   researchPlanSummaryBlock: "block",
   researchPlanSummaryBlocks: "blocks",
   planEvidenceObjective: "objective evidence",
@@ -1114,6 +1118,10 @@ const japaneseMessages: LocaleMessages = {
   researchPlanCurrentPosition: "現在地",
   researchPlanCurrentWorkUnreported: "Codexは動作中ですが、現在のプラン位置はまだ申告されていません。",
   researchPlanNextVisibleBlock: "実行中のプラン位置は未申告です。次に見えているブロック:",
+  researchPlanContractNeedsRevision: "プラン契約の再申告が必要",
+  researchPlanContractNeedsRevisionDetail: "現在のプランは表示できますが、構造化された実行台帳としてはCodexのvalidated re-commitが必要です。",
+  researchPlanContractErrors: "エラー",
+  researchPlanContractWarnings: "警告",
   researchPlanSummaryBlock: "ブロック",
   researchPlanSummaryBlocks: "ブロック",
   planEvidenceObjective: "目的根拠",
@@ -2710,6 +2718,21 @@ type ResearchPlanTimelineBlock = {
   }>;
 };
 
+type ResearchPlanContractValidation = {
+  schema_version: "research_plan_contract_validation.v1";
+  status: "ok" | "needs_revision";
+  issue_count: number;
+  error_count: number;
+  warning_count: number;
+  issues: Array<{
+    code?: string;
+    path?: string;
+    message?: string;
+    fix?: string;
+    severity?: "error" | "warning" | string;
+  }>;
+};
+
 type ResearchPlanTimelineResponse = {
   schema_version: "research_plan_timeline.v1";
   project_id: string;
@@ -2725,6 +2748,7 @@ type ResearchPlanTimelineResponse = {
     missing_subtask_count?: number;
     blocks?: Array<{ id: string; title: string; missing_fields: string[] }>;
   };
+  contract_validation?: ResearchPlanContractValidation;
   current_work?: ResearchPlanCurrentWork | null;
   artifact_links?: ResearchPlanArtifactLink[];
   blocks: ResearchPlanTimelineBlock[];
@@ -5737,6 +5761,7 @@ function HomeTab({
           </div>
           <ResearchPlanTimeline
             blocks={researchPlanBlocks}
+            contractValidation={researchPlanTimeline?.contract_validation ?? null}
             currentWork={researchPlanTimeline?.current_work ?? null}
             latestResearchPlan={latestResearchPlan}
             locale={locale}
@@ -6250,6 +6275,7 @@ function MissionSurfaceButton({
 
 function ResearchPlanTimeline({
   blocks,
+  contractValidation,
   currentWork,
   latestResearchPlan,
   locale,
@@ -6258,6 +6284,7 @@ function ResearchPlanTimeline({
   turnState
 }: {
   blocks: ResearchPlanBlock[];
+  contractValidation: ResearchPlanContractValidation | null;
   currentWork: ResearchPlanCurrentWork | null;
   latestResearchPlan: Artifact | null;
   locale: string;
@@ -6283,6 +6310,8 @@ function ResearchPlanTimeline({
     turnState,
     locale
   });
+  const contractNeedsRevision = Boolean(contractValidation && contractValidation.status === "needs_revision");
+  const contractIssues = contractValidation?.issues?.slice(0, 3) ?? [];
 
   React.useLayoutEffect(() => {
     if (!timelineRef.current || !activeBlockRef.current) return;
@@ -6364,6 +6393,23 @@ function ResearchPlanTimeline({
         <div className={`research-plan-presence ${declaredCurrentBlock ? "declared" : "unreported"}`}>
           <span>{text.researchPlanCurrentPosition}</span>
           <strong>{currentPositionText}</strong>
+        </div>
+      ) : null}
+      {contractNeedsRevision ? (
+        <div className="research-plan-contract-warning">
+          <span>{text.researchPlanContractNeedsRevision}</span>
+          <strong>
+            {contractValidation?.error_count ?? 0} {text.researchPlanContractErrors} / {contractValidation?.warning_count ?? 0}{" "}
+            {text.researchPlanContractWarnings}
+          </strong>
+          <p>{text.researchPlanContractNeedsRevisionDetail}</p>
+          {contractIssues.length ? (
+            <ul>
+              {contractIssues.map((issue, index) => (
+                <li key={`${issue.code ?? "issue"}-${index}`}>{issue.message ?? issue.code ?? issue.path}</li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       ) : null}
       <div className="research-plan-footer">
