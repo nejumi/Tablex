@@ -7825,7 +7825,51 @@ function useStickyBottomScroll<T extends HTMLElement>(dependencyKey: string, res
     mountedRef.current = true;
   }, [dependencyKey, resetKey]);
 
-  return { ref, onScroll };
+  const onWheel = React.useCallback((event: React.WheelEvent<T>) => {
+    const element = ref.current;
+    if (!element || event.deltaY === 0) return;
+    const deltaY = normalizedWheelDeltaY(event, element);
+    const atTop = element.scrollTop <= 0;
+    const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 1;
+    if (!((deltaY < 0 && atTop) || (deltaY > 0 && atBottom))) return;
+    const parent = scrollableParentForWheel(element, deltaY);
+    if (!parent) return;
+    event.preventDefault();
+    if (parent === window) {
+      window.scrollBy({ top: deltaY, behavior: "auto" });
+    } else {
+      parent.scrollBy({ top: deltaY, behavior: "auto" });
+    }
+  }, []);
+
+  return { ref, onScroll, onWheel };
+}
+
+function normalizedWheelDeltaY(event: React.WheelEvent<HTMLElement>, element: HTMLElement): number {
+  if (event.deltaMode === 1) return event.deltaY * 16;
+  if (event.deltaMode === 2) return event.deltaY * element.clientHeight;
+  return event.deltaY;
+}
+
+function scrollableParentForWheel(element: HTMLElement, deltaY: number): HTMLElement | Window | null {
+  let parent = element.parentElement;
+  while (parent && parent !== document.body && parent !== document.documentElement) {
+    const style = window.getComputedStyle(parent);
+    const scrollable = /(auto|scroll)/.test(style.overflowY) && parent.scrollHeight > parent.clientHeight;
+    if (scrollable && canScrollElementVertically(parent, deltaY)) return parent;
+    parent = parent.parentElement;
+  }
+  const scrollingElement = document.scrollingElement;
+  if (scrollingElement instanceof HTMLElement && canScrollElementVertically(scrollingElement, deltaY)) {
+    return window;
+  }
+  return null;
+}
+
+function canScrollElementVertically(element: HTMLElement, deltaY: number): boolean {
+  if (deltaY > 0) return element.scrollTop + element.clientHeight < element.scrollHeight - 1;
+  if (deltaY < 0) return element.scrollTop > 0;
+  return false;
 }
 
 function latestJobHeadline(job: Job) {
@@ -8181,7 +8225,7 @@ function RawAgentStream({
         ) : null}
       </div>
       <TurnStateBar text={text} locale={locale} turnState={turnState} />
-      <div className="raw-agent-log" ref={rawScroll.ref} onScroll={rawScroll.onScroll}>
+      <div className="raw-agent-log" ref={rawScroll.ref} onScroll={rawScroll.onScroll} onWheel={rawScroll.onWheel}>
         {rawLines.length ? (
           <>
             {rawLines.map((line) => (
@@ -8664,7 +8708,7 @@ function AgentChatDock({
         </div>
       </div>
       <TurnStateBar text={text} locale={locale} turnState={turnState} />
-      <div className="agent-chat-log" ref={chatScroll.ref} onScroll={chatScroll.onScroll}>
+      <div className="agent-chat-log" ref={chatScroll.ref} onScroll={chatScroll.onScroll} onWheel={chatScroll.onWheel}>
         {turns.length ? (
           <>
           {olderTurns.length ? (
