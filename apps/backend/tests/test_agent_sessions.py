@@ -55,6 +55,8 @@ from tabular_harness.services.agent_sessions import (
     maybe_request_codex_progress_update_safely,
     maybe_request_research_plan_contract_revision,
     metadata_for_session_output,
+    notebook_acks_dir,
+    notebook_requests_dir,
     prepare_session_workspace,
     progress_request_path,
     publish_raw_codex_transcript_snapshot,
@@ -119,11 +121,17 @@ def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path
 
     assert prepared_workspace == workspace
     assert (workspace / ".tablex" / "bin" / "python").exists()
+    assert notebook_requests_dir(workspace).is_dir()
+    assert notebook_acks_dir(workspace).is_dir()
     context = loads_json((workspace / ".tablex" / "context.json").read_text(encoding="utf-8"), {})
     runtime = context["python_runtimes"]["tablex_backend"]
     assert runtime["workspace_python"] == str(workspace / ".tablex" / "bin" / "python")
     assert runtime["workspace_python_exists"] is True
     assert "marimo" in runtime["packages"]
+    notebook_contract = context["output_contract"]["notebook_tool_requests"]
+    assert notebook_contract["request_dir"] == ".tablex/requests/notebooks"
+    assert notebook_contract["ack_dir"] == ".tablex/acks/notebooks"
+    assert notebook_contract["schema_version"] == "tablex_notebook_request.v1"
 
 
 def test_agent_session_research_plan_json_outputs_are_research_plans() -> None:
@@ -2918,6 +2926,180 @@ def test_codex_authored_marimo_notebook_capture_can_defer_until_final_ingest(
             )
         )
         assert success_event is not None
+
+
+def test_notebook_file_request_captures_preview_ack_chat_and_plan_link(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    notebooks_dir = workspace / "notebooks"
+    requests_dir = notebook_requests_dir(workspace)
+    notebooks_dir.mkdir(parents=True)
+    requests_dir.mkdir(parents=True)
+    notebook = notebooks_dir / "data_understanding.py"
+    notebook.write_text(
+        "import marimo\n\napp = marimo.App()\n\n@app.cell\ndef _():\n    return\n",
+        encoding="utf-8",
+    )
+    (requests_dir / "capture_data_understanding.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_notebook_request.v1",
+                "request_id": "capture_data_understanding",
+                "operation": "capture_notebook",
+                "payload": {
+                    "workspace_path": "notebooks/data_understanding.py",
+                    "research_plan_node_id": "data_understanding",
+                    "notebook_kind": "data_understanding",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured_notebooks: list[str] = []
+
+    def fake_capture(db: Any, *, store: LocalArtifactStore, notebook_artifact: Artifact) -> Any:
+        del db, store
+        captured_notebooks.append(notebook_artifact.id)
+        return SimpleNamespace(
+            html_artifact=SimpleNamespace(id="art_request_html"),
+            manifest_artifact=SimpleNamespace(id="art_request_manifest"),
+            evidence_html_artifact=SimpleNamespace(id="art_request_evidence"),
+        )
+
+    monkeypatch.setattr(analysis_notebooks_module, "create_notebook_execution_capture", fake_capture)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_notebook_request", name="Notebook Request")
+        session = AgentSession(
+            id="as_notebook_request",
+            project_id=project.id,
+            goal_text="Write and register a data understanding notebook.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "granularity": "chapter",
+                        "status": "active",
+                        "why_it_matters": "The notebook is the readable analysis output.",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Prepare node for notebook request.",
+        )
+        db.commit()
+
+        ingest_session_workspace_outputs(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            workspace=workspace,
+            allow_notebook_auto_capture=False,
+        )
+        db.commit()
+
+        notebook_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+        )
+        assert notebook_artifact is not None
+        assert captured_notebooks == [notebook_artifact.id]
+        ack = loads_json(
+            (notebook_acks_dir(workspace) / "capture_data_understanding.ack.json").read_text(encoding="utf-8"),
+            {},
+        )
+        assert ack["schema_version"] == "tablex_notebook_ack.v1"
+        assert ack["status"] == "succeeded"
+        assert ack["result"]["notebook_artifact_id"] == notebook_artifact.id
+        assert ack["result"]["preview_artifact_id"] == "art_request_evidence"
+        assert ack["result"]["research_plan_node_id"] == "data_understanding"
+        chat_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["intent"]["type"] == "notebook_artifact_update"
+        assert chat_payload["intent"]["status"] == "ready"
+        assert chat_payload["actions"][0]["target_tab"] == "Notebooks"
+        assert chat_payload["actions"][0]["artifact_id"] == "art_request_evidence"
+        assert chat_payload["response_brief"]["research_plan_node_id"] == "data_understanding"
+        source_edge = db.scalar(
+            select(LineageEdge).where(
+                LineageEdge.project_id == project.id,
+                LineageEdge.relation_type == "supports_plan_node",
+                LineageEdge.to_asset_id == notebook_artifact.id,
+            )
+        )
+        assert source_edge is not None
+        edge_metadata = loads_json(source_edge.metadata_json, {})
+        assert edge_metadata["node_id"] == "data_understanding"
+        assert edge_metadata["role"] == "notebook_source"
+
+
+def test_notebook_file_request_failure_writes_ack_and_chat_attention(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    requests_dir = notebook_requests_dir(workspace)
+    requests_dir.mkdir(parents=True)
+    (requests_dir / "capture_missing.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_notebook_request.v1",
+                "request_id": "capture_missing",
+                "operation": "capture_notebook",
+                "payload": {"workspace_path": "notebooks/missing.py", "research_plan_node_id": "data_understanding"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_notebook_request_failed", name="Notebook Request Failed")
+        session = AgentSession(
+            id="as_notebook_request_failed",
+            project_id=project.id,
+            goal_text="Register a notebook.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            workspace=workspace,
+            allow_notebook_auto_capture=False,
+        )
+        db.commit()
+
+        ack = loads_json((notebook_acks_dir(workspace) / "capture_missing.ack.json").read_text(encoding="utf-8"), {})
+        assert ack["schema_version"] == "tablex_notebook_ack.v1"
+        assert ack["status"] == "failed"
+        assert "not registered yet" in ack["error"]["message"]
+        chat_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["intent"]["type"] == "agent_attention_event"
+        assert chat_payload["intent"]["message_kind"] == "notebook_request_failed"
 
 
 def test_failed_notebook_auto_capture_retries_after_cooldown(

@@ -89,6 +89,9 @@ SESSION_BIN_DIR = "bin"
 SESSION_REQUESTS_DIR = "requests"
 SESSION_ACKS_DIR = "acks"
 RESEARCH_PLAN_REQUESTS_DIR = "research_plan"
+NOTEBOOK_REQUESTS_DIR = "notebooks"
+NOTEBOOK_REQUEST_SCHEMA_VERSION = "tablex_notebook_request.v1"
+NOTEBOOK_ACK_SCHEMA_VERSION = "tablex_notebook_ack.v1"
 USER_INSTRUCTIONS_INBOX_FILENAME = "user_instructions.jsonl"
 USER_INSTRUCTIONS_LATEST_FILENAME = "latest_user_instruction.md"
 PROGRESS_REQUEST_FILENAME = "progress_request.md"
@@ -245,6 +248,14 @@ def research_plan_requests_dir(workspace: Path) -> Path:
 
 def research_plan_acks_dir(workspace: Path) -> Path:
     return workspace / SESSION_INTERNAL_DIR / SESSION_ACKS_DIR / RESEARCH_PLAN_REQUESTS_DIR
+
+
+def notebook_requests_dir(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / SESSION_REQUESTS_DIR / NOTEBOOK_REQUESTS_DIR
+
+
+def notebook_acks_dir(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / SESSION_ACKS_DIR / NOTEBOOK_REQUESTS_DIR
 
 
 def build_default_goal_text(db: Session, project: Project) -> str:
@@ -1483,6 +1494,8 @@ def prepare_session_workspace(
     ensure_session_python_shims(workspace)
     research_plan_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
     research_plan_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
+    notebook_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
+    notebook_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     experiment_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
     experiment_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     write_session_context_file(db, project=project, session=session)
@@ -1740,6 +1753,31 @@ def build_session_context(
                     },
                 },
             },
+            "notebook_tool_requests": {
+                "request_dir": ".tablex/requests/notebooks",
+                "ack_dir": ".tablex/acks/notebooks",
+                "schema_version": NOTEBOOK_REQUEST_SCHEMA_VERSION,
+                "operations": ["capture_notebook"],
+                "description": (
+                    "Use this fixed JSON request/ack channel after saving a marimo notebook when you need Tablex "
+                    "to render an in-product preview, link it to a ResearchPlan node, and post a human-facing Chat link. "
+                    "Read the matching ack before marking the plan node done."
+                ),
+                "capture_notebook_contract": {
+                    "required_reference": "payload.artifact_id or payload.workspace_path",
+                    "optional_project_link": "Set payload.research_plan_node_id to link the source and preview to a visible plan node.",
+                    "example_request": {
+                        "schema_version": NOTEBOOK_REQUEST_SCHEMA_VERSION,
+                        "request_id": "capture_data_understanding_notebook_001",
+                        "operation": "capture_notebook",
+                        "payload": {
+                            "workspace_path": "notebooks/data_understanding.py",
+                            "research_plan_node_id": "data_understanding",
+                            "notebook_kind": "data_understanding",
+                        },
+                    },
+                },
+            },
             "progress": "Explain progress naturally in Codex messages. Tablex stores the raw transcript and Chat explains it to humans.",
             "chat_update": (
                 "reports/chat_update.md is the human-facing Chat update, not an internal changelog. "
@@ -1935,6 +1973,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Keep a living plan when it helps the user follow the work: write `outputs/research_plan.json` with `schema_version: \"research_plan.v1\"` and optional `timeline_blocks`. Use `timeline_blocks` as an execution ledger: after data upload, objective/task framing, data understanding, and prior-knowledge research anchors, add, refine, supersede, or branch project-specific blocks. Top-level timeline blocks should be coarse chapters/phases/milestones with `granularity: \"chapter\"`, `\"phase\"`, or `\"milestone\"`; put individual analyses, model attempts, diagnostics, notebook sections, and reports in `subtasks`, ExperimentRuns, artifacts, or completion evidence rather than as top-level blocks. Do not remove or reopen completed nodes; add follow-up nodes instead. Mark a block done only when completion_evidence/supporting_artifacts exist or you explicitly record that no useful output is needed.",
         "- For acknowledged ResearchPlan operations, write fixed JSON requests under `.tablex/requests/research_plan/` using `schema_version: \"tablex_research_plan_request.v1\"`; Tablex writes matching acks under `.tablex/acks/research_plan/`. Use this for `commit_revision`, `set_current_work`, `attach_artifact`, and `request_human_attention` when you need a validated harness-side state update. Valid commits keep the visible plan left-to-right, keep at most 7 top-level chapter/phase/milestone nodes, keep exactly one open top-level node active/waiting/blocked, keep detailed work below chapter-level nodes, and give done nodes a deliverable_contract plus matching completion evidence unless no output is intentionally required. If a done node claims notebook/report/artifact outputs, completion_evidence must reference a registered Tablex artifact_id or a workspace_path that Tablex already ingested; if it claims experiment_run or leaderboard_entry outputs, completion_evidence must reference a registered experiment_run_id. Invalid plan transitions are returned as actionable ack errors; revise and resubmit instead of continuing with an inconsistent visible plan.",
         "- For model comparison or evaluation results that should appear in Leaderboard, write fixed JSON requests under `.tablex/requests/experiments/` using `schema_version: \"tablex_experiment_result_request.v1\"` and operation `register_runs`, or save structured result JSON such as `model_results.v1` under artifacts/. Include `research_plan_node_id` when the runs belong to a visible plan node.",
+        "- For marimo notebooks that should be visible in Tablex, write fixed JSON requests under `.tablex/requests/notebooks/` using `schema_version: \"tablex_notebook_request.v1\"` and operation `capture_notebook` after saving the notebook. Include `workspace_path` or `artifact_id`, and include `research_plan_node_id` when the notebook belongs to a visible plan node. Tablex writes acks under `.tablex/acks/notebooks/` with preview artifact ids or actionable render errors.",
         "- For `outputs/research_plan.json` timeline_blocks, write human-facing strings in `.tablex/context.json` `human_interface.response_locale` when practical. Keep identifiers and source column names exact.",
         "- Keep human-facing accountability continuous: when you make meaningful progress, hit uncertainty, start or finish a long-running step, recover from an error, change the plan, or need the user to know what changed, overwrite `reports/chat_update.md` with only the latest concise update in the user's locale. Keep it under 1200 characters. Use separate report files for long history. Do not wait for Tablex to infer this from logs.",
         "- Treat `reports/chat_update.md` as a user-facing explanation, not an internal changelog: say what you are doing now, why it matters, what changed, what uncertainty remains, and where the user should look next. Avoid raw artifact IDs, hashes, filenames, internal schema names, and implementation vocabulary unless they are necessary for a user decision.",
@@ -2783,6 +2822,222 @@ def write_research_plan_tool_ack(path: Path, payload: dict[str, Any]) -> None:
     tmp_path.replace(path)
 
 
+def process_notebook_tool_requests(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    session: AgentSession,
+    workspace: Path,
+) -> None:
+    request_dir = notebook_requests_dir(workspace)
+    if not request_dir.exists():
+        return
+    ack_dir = notebook_acks_dir(workspace)
+    ack_dir.mkdir(parents=True, exist_ok=True)
+    for path in sorted(item for item in request_dir.glob("*.json") if item.is_file()):
+        ack_path = ack_dir / f"{path.stem}.ack.json"
+        if ack_path.exists():
+            continue
+        request_id = path.stem
+        operation = ""
+        try:
+            raw_text = path.read_text(encoding="utf-8")
+            payload = loads_json(raw_text, {})
+            if not isinstance(payload, dict):
+                raise ValueError("Notebook request must be a JSON object")
+            schema_version = str(payload.get("schema_version") or "")
+            if schema_version != NOTEBOOK_REQUEST_SCHEMA_VERSION:
+                raise ValueError(f"Unsupported notebook request schema_version: {schema_version or '<missing>'}")
+            request_id = str(payload.get("request_id") or path.stem)
+            operation = str(payload.get("operation") or "").strip()
+            if operation != "capture_notebook":
+                raise ValueError(f"Unsupported notebook request operation: {operation or '<missing>'}")
+            body = payload.get("payload")
+            if not isinstance(body, dict):
+                raise ValueError("payload must be an object")
+            result = execute_notebook_capture_request(
+                db,
+                store=store,
+                project=project,
+                session=session,
+                workspace=workspace,
+                payload=body,
+            )
+            ack = {
+                "schema_version": NOTEBOOK_ACK_SCHEMA_VERSION,
+                "request_id": request_id,
+                "operation": operation,
+                "status": "succeeded",
+                "request_hash": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
+                "processed_at": utc_now().isoformat(),
+                "result": result,
+            }
+            write_notebook_tool_ack(ack_path, ack)
+            append_session_event(
+                db,
+                session,
+                source="tablex_sidecar",
+                event_type="notebook_request_succeeded",
+                role="harness",
+                title="Notebook request processed",
+                content=f"Processed notebook request `{operation}` from `{path.relative_to(workspace)}`.",
+                payload=ack,
+                artifact_id=result.get("preview_artifact_id") or result.get("notebook_artifact_id"),
+                update_heartbeat=False,
+            )
+        except Exception as exc:
+            ack = {
+                "schema_version": NOTEBOOK_ACK_SCHEMA_VERSION,
+                "request_id": request_id,
+                "operation": operation,
+                "status": "failed",
+                "processed_at": utc_now().isoformat(),
+                "error": {"type": type(exc).__name__, "message": str(exc)},
+            }
+            write_notebook_tool_ack(ack_path, ack)
+            append_session_event(
+                db,
+                session,
+                source="tablex_sidecar",
+                event_type="notebook_request_failed",
+                role="harness",
+                title="Notebook request failed",
+                content=str(exc),
+                payload={**ack, "workspace_relative_path": str(path.relative_to(workspace))},
+                update_heartbeat=False,
+            )
+            register_agent_session_attention_chat_turn(
+                db,
+                store=store,
+                project=project,
+                session=session,
+                attention_key=f"notebook_request_failed:{request_id}",
+                status="needs_attention",
+                message_kind="notebook_request_failed",
+                details={
+                    "request_id": request_id,
+                    "operation": operation,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc)[:1200],
+                    "workspace_relative_path": str(path.relative_to(workspace)),
+                },
+            )
+
+
+def execute_notebook_capture_request(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    session: AgentSession,
+    workspace: Path,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    notebook_artifact = notebook_artifact_from_request(db, project=project, workspace=workspace, payload=payload)
+    node_id = str(payload.get("research_plan_node_id") or "").strip() or None
+    revision_id = str(payload.get("revision_id") or "").strip() or None
+    if node_id:
+        attach_notebook_artifacts_to_current_research_plan(
+            db,
+            session=session,
+            notebook_artifact=notebook_artifact,
+            node_id=node_id,
+            revision_id=revision_id,
+            strict=True,
+        )
+    from tabular_harness.services.analysis_notebooks import create_notebook_execution_capture
+
+    try:
+        capture = create_notebook_execution_capture(db, store=store, notebook_artifact=notebook_artifact)
+    except Exception as exc:
+        linked_plan_node_id = attach_notebook_artifacts_to_current_research_plan(
+            db,
+            session=session,
+            notebook_artifact=notebook_artifact,
+            node_id=node_id,
+            revision_id=revision_id,
+            strict=False,
+        )
+        register_agent_session_notebook_chat_turn(
+            db,
+            store=store,
+            session=session,
+            notebook_artifact=notebook_artifact,
+            status="preview_failed",
+            linked_plan_node_id=linked_plan_node_id,
+            error=str(exc)[:1200],
+        )
+        raise ValueError(f"Notebook preview capture failed: {str(exc)[:1200]}") from exc
+    linked_plan_node_id = attach_notebook_artifacts_to_current_research_plan(
+        db,
+        session=session,
+        notebook_artifact=notebook_artifact,
+        related_artifacts=[
+            (capture.evidence_html_artifact, "notebook_preview"),
+            (capture.html_artifact, "notebook_html"),
+            (capture.manifest_artifact, "notebook_manifest"),
+        ],
+        node_id=node_id,
+        revision_id=revision_id,
+        strict=bool(node_id),
+    )
+    register_agent_session_notebook_chat_turn(
+        db,
+        store=store,
+        session=session,
+        notebook_artifact=notebook_artifact,
+        status="ready",
+        preview_artifact=capture.evidence_html_artifact or capture.html_artifact,
+        html_artifact=capture.html_artifact,
+        manifest_artifact=capture.manifest_artifact,
+        linked_plan_node_id=linked_plan_node_id,
+    )
+    return {
+        "notebook_artifact_id": notebook_artifact.id,
+        "notebook_execution_html_artifact_id": getattr(capture.html_artifact, "id", None),
+        "notebook_execution_manifest_artifact_id": getattr(capture.manifest_artifact, "id", None),
+        "notebook_evidence_html_artifact_id": getattr(capture.evidence_html_artifact, "id", None),
+        "preview_artifact_id": getattr(capture.evidence_html_artifact or capture.html_artifact, "id", None),
+        "research_plan_node_id": linked_plan_node_id,
+    }
+
+
+def notebook_artifact_from_request(
+    db: Session,
+    *,
+    project: Project,
+    workspace: Path,
+    payload: dict[str, Any],
+) -> Artifact:
+    artifact_id = payload.get("artifact_id")
+    artifact: Artifact | None = None
+    if isinstance(artifact_id, str) and artifact_id.strip():
+        artifact = db.get(Artifact, artifact_id.strip())
+    else:
+        workspace_path = payload.get("workspace_path")
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            raise ValueError("payload.artifact_id or payload.workspace_path is required")
+        artifact = latest_session_artifact_for_workspace_path(
+            db,
+            project_id=project.id,
+            workspace=workspace,
+            workspace_path=workspace_path,
+        )
+    if artifact is None or artifact.project_id != project.id:
+        raise ValueError("Notebook artifact does not belong to this project or is not registered yet")
+    if artifact.asset_type != "analysis_notebook":
+        raise ValueError(f"Referenced artifact must be analysis_notebook, not {artifact.asset_type}")
+    return artifact
+
+
+def write_notebook_tool_ack(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    tmp_path.replace(path)
+
+
 def ingest_session_workspace_outputs(
     db: Session,
     *,
@@ -2882,6 +3137,7 @@ def ingest_session_workspace_outputs(
         session=session,
         locale=latest_project_response_locale(db, project),
     )
+    process_notebook_tool_requests(db, store=store, project=project, session=session, workspace=workspace)
     process_experiment_result_requests(
         db,
         store=store,
@@ -3240,12 +3496,25 @@ def attach_notebook_artifacts_to_current_research_plan(
     session: AgentSession,
     notebook_artifact: Artifact,
     related_artifacts: list[tuple[Any | None, str]] | None = None,
+    node_id: str | None = None,
+    revision_id: str | None = None,
+    strict: bool = False,
 ) -> str | None:
     if notebook_artifact.project_id is None:
         return None
     current = latest_research_plan_current_work(db, project_id=notebook_artifact.project_id)
-    if current is None or not current.node_id.strip():
-        return None
+    target_node_id = node_id.strip() if isinstance(node_id, str) and node_id.strip() else None
+    target_revision_id = revision_id.strip() if isinstance(revision_id, str) and revision_id.strip() else None
+    if target_node_id is None:
+        if current is None or not current.node_id.strip():
+            return None
+        target_node_id = current.node_id
+        target_revision_id = current.revision_id
+    if target_revision_id is None and current is not None and current.revision_id:
+        target_revision_id = current.revision_id
+    if target_revision_id is None:
+        revision = latest_research_plan_revision(db, project_id=notebook_artifact.project_id)
+        target_revision_id = revision.id if revision is not None else None
     artifact_roles: list[tuple[str, str]] = [(notebook_artifact.id, "notebook_source")]
     for artifact_like, role in related_artifacts or []:
         artifact_id = getattr(artifact_like, "id", None)
@@ -3259,7 +3528,7 @@ def attach_notebook_artifacts_to_current_research_plan(
         if research_plan_artifact_link_exists(
             db,
             project_id=notebook_artifact.project_id,
-            node_id=current.node_id,
+            node_id=target_node_id,
             artifact_id=artifact.id,
         ):
             continue
@@ -3267,20 +3536,22 @@ def attach_notebook_artifacts_to_current_research_plan(
             attach_research_plan_artifact(
                 db,
                 project_id=notebook_artifact.project_id,
-                node_id=current.node_id,
+                node_id=target_node_id,
                 artifact_id=artifact.id,
                 role=role,
-                revision_id=current.revision_id,
+                revision_id=target_revision_id,
                 metadata={
                     "agent_session_id": session.id,
                     "notebook_artifact_id": notebook_artifact.id,
-                    "source": "main_agent_session_notebook_auto_link",
+                    "source": "main_agent_session_notebook_link",
                 },
             )
         except ValueError:
+            if strict:
+                raise
             continue
         attached_any = True
-    return current.node_id if attached_any else None
+    return target_node_id if attached_any or strict else None
 
 
 def research_plan_artifact_link_exists(
@@ -3649,6 +3920,10 @@ def attention_chat_message(message_kind: str, *, details: dict[str, Any], japane
             "Tablex is asking Codex to tidy the Research Plan ledger. The current plan is too fine-grained at the top level, "
             "so Codex should re-commit it as chapter-level work with notebook and leaderboard links attached."
         )
+    if message_kind == "notebook_request_failed":
+        if japanese:
+            return "Notebookの登録またはプレビュー生成に失敗しました。Codexにはackで理由を返しているため、Notebookを修正して再提出できます。"
+        return "Notebook registration or preview rendering failed. The ack includes the reason so Codex can repair and resubmit the notebook."
     return "Agent attention is needed." if not japanese else "Agentの状態確認が必要です。"
 
 
