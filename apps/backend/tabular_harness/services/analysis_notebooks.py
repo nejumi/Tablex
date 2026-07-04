@@ -2119,7 +2119,7 @@ def _notebook_index_item(
         "notebook_artifact_id": notebook_artifact.id,
         "notebook_kind": notebook_kind,
         "title": _notebook_title(notebook_kind),
-        "status": execution_status if execution_status != "unknown" else "ready",
+        "status": _notebook_index_status(execution_status, readable_preview_artifact),
         "created_at": notebook_artifact.created_at.isoformat(),
         "dataset_snapshot_id": dataset_snapshot_id,
         "run_id": run_id,
@@ -2158,6 +2158,14 @@ def _first_metadata_text(metadata_sources: list[dict[str, Any]], key: str) -> st
         if isinstance(value, str) and value.strip():
             return value
     return None
+
+
+def _notebook_index_status(execution_status: str, readable_preview_artifact: Artifact | None) -> str:
+    if execution_status == "unknown":
+        return "ready"
+    if execution_status in {"marimo_export_failed", "static_capture_succeeded"} and readable_preview_artifact is not None:
+        return "static_preview_ready"
+    return execution_status
 
 
 def _linked_notebook_artifacts(

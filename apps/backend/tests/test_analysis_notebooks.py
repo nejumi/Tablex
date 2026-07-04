@@ -576,3 +576,46 @@ def test_notebook_index_inherits_run_context_from_related_artifact_metadata(tmp_
         item = index["items"][0]
         assert item["run_id"] == "run_context"
         assert item["model_version_id"] == "mv_context"
+
+
+def test_notebook_index_marks_static_preview_ready_without_hiding_export_failure(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    project_id = "p_notebook_static_preview"
+
+    with sessionmaker(engine)() as db:
+        project = Project(id=project_id, name="Notebook Static Preview")
+        notebook = artifact(
+            "art_notebook",
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="agent_authored_notebook",
+            metadata={"notebook_kind": "agent_authored"},
+        )
+        execution_manifest = artifact(
+            "art_execution_manifest",
+            project_id=project_id,
+            asset_type="notebook_execution_manifest",
+            name="notebook_execution_manifest",
+            metadata={
+                "notebook_artifact_id": notebook.id,
+                "execution_status": "marimo_export_failed",
+            },
+        )
+        execution_html = artifact(
+            "art_execution_html",
+            project_id=project_id,
+            asset_type="notebook_execution_html",
+            name="notebook_execution_html",
+            metadata={"notebook_artifact_id": notebook.id},
+        )
+        db.add_all([project, notebook, execution_manifest, execution_html])
+        db.commit()
+
+        index = build_project_notebook_index(db, project)
+
+        item = index["items"][0]
+        assert item["status"] == "static_preview_ready"
+        assert item["coverage"]["execution_status"] == "marimo_export_failed"
+        assert item["coverage"]["execution_capture_status"] == "marimo_export_failed"
+        assert item["coverage"]["has_html_preview"] is True

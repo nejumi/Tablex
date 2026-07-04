@@ -718,6 +718,9 @@ const englishMessages = {
   notebookReadinessPartialReview: "partial review",
   notebookReadinessNotReady: "not ready",
   notebookReadinessUnknown: "unknown",
+  notebookStatusStaticPreviewReady: "static preview ready",
+  notebookStatusMarimoExportSucceeded: "marimo export ready",
+  notebookStatusReady: "ready",
   notebookSourceProject: "project",
   notebookSourceRun: "run",
   notebookSourceDataset: "dataset",
@@ -1394,6 +1397,9 @@ const japaneseMessages: LocaleMessages = {
   notebookReadinessPartialReview: "一部レビュー",
   notebookReadinessNotReady: "未準備",
   notebookReadinessUnknown: "不明",
+  notebookStatusStaticPreviewReady: "静的プレビュー準備済み",
+  notebookStatusMarimoExportSucceeded: "marimo表示準備済み",
+  notebookStatusReady: "準備済み",
   notebookSourceProject: "プロジェクト",
   notebookSourceRun: "実験",
   notebookSourceDataset: "データセット",
@@ -2996,11 +3002,8 @@ function autoStartWorkerJobIds(actions: AgentChatAction[]): string[] {
 
 function notebookChatMessageFromJob(result: unknown, text: LocaleMessages): AgentChatMessage | null {
   if (!isJobResult(result)) return null;
-  const sourceArtifactId = textField(result.output.analysis_notebook_artifact_id);
-  const notebookHtmlArtifactId =
-    textField(result.output.notebook_html_artifact_id) ??
-    textField(result.output.notebook_evidence_html_artifact_id) ??
-    textField(result.output.notebook_execution_html_artifact_id);
+  const sourceArtifactId = notebookSourceArtifactIdFromJobOutput(result.output);
+  const notebookHtmlArtifactId = notebookPreviewArtifactIdFromJobOutput(result.output);
   if (!sourceArtifactId && !notebookHtmlArtifactId) return null;
   const artifactId = notebookPreviewArtifactIdFromJob(result);
   const notebookKind = textField(result.output.notebook_kind) ?? result.job_type.replace(/_/g, " ");
@@ -3033,14 +3036,36 @@ function isJobResult(value: unknown): value is Job {
 }
 
 function notebookPreviewArtifactIdFromJob(job: Job): string | null {
+  return notebookPreviewArtifactIdFromJobOutput(job.output);
+}
+
+function notebookSourceArtifactIdFromJobOutput(output: Record<string, unknown>): string | null {
+  const recommended = objectRecord(output.recommended_notebook);
+  const recommendedArtifacts = objectRecord(recommended?.artifact_ids);
   return (
-    textField(job.output.preview_artifact_id) ??
-    textField(job.output.notebook_evidence_html_artifact_id) ??
-    textField(job.output.notebook_execution_html_artifact_id) ??
-    textField(job.output.notebook_html_artifact_id) ??
-    textField(job.output.notebook_report_artifact_id) ??
-    textField(job.output.report_artifact_id) ??
-    textField(job.output.analysis_notebook_artifact_id)
+    textField(output.analysis_notebook_artifact_id) ??
+    textField(output.notebook_artifact_id) ??
+    textField(recommended?.notebook_artifact_id) ??
+    textField(recommendedArtifacts?.notebook)
+  );
+}
+
+function notebookPreviewArtifactIdFromJobOutput(output: Record<string, unknown>): string | null {
+  const recommended = objectRecord(output.recommended_notebook);
+  const recommendedArtifacts = objectRecord(recommended?.artifact_ids);
+  return (
+    textField(output.preview_artifact_id) ??
+    textField(output.notebook_evidence_html_artifact_id) ??
+    textField(output.notebook_execution_html_artifact_id) ??
+    textField(output.notebook_html_artifact_id) ??
+    textField(recommended?.preview_artifact_id) ??
+    textField(recommendedArtifacts?.preview) ??
+    textField(recommendedArtifacts?.execution_html) ??
+    textField(recommendedArtifacts?.html_preview) ??
+    textField(recommendedArtifacts?.evidence_html) ??
+    textField(output.notebook_report_artifact_id) ??
+    textField(output.report_artifact_id) ??
+    notebookSourceArtifactIdFromJobOutput(output)
   );
 }
 
@@ -10678,7 +10703,7 @@ function DataTab({
                   <div>
                     <strong>{item.title}</strong>
                     <small>
-                      {item.status.replace(/_/g, " ")} · {formatDate(item.created_at)}
+                      {notebookStatusLabel(item.status, text)} · {formatDate(item.created_at)}
                     </small>
                   </div>
                   <span>{text.openNotebookViewer}</span>
@@ -14030,11 +14055,7 @@ function NotebooksTab({
   async function prepareResultNotebookEvidence() {
     const job = await api<Job>(`/api/projects/${project.id}/results/notebook-evidence`, { method: "POST" });
     const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Result notebook evidence job" });
-    const htmlArtifactId =
-      textField(completedJob.output.notebook_evidence_html_artifact_id) ??
-      textField(completedJob.output.notebook_execution_html_artifact_id) ??
-      textField(completedJob.output.notebook_html_artifact_id) ??
-      textField(completedJob.output.analysis_notebook_artifact_id);
+    const htmlArtifactId = notebookPreviewArtifactIdFromJob(completedJob);
     if (htmlArtifactId) {
       await loadPreview(htmlArtifactId);
     }
@@ -15434,6 +15455,16 @@ function notebookReadinessText(value: string, text: LocaleMessages) {
   return labels[normalized] ?? normalized.replace(/_/g, " ");
 }
 
+function notebookStatusLabel(value: string, text: LocaleMessages) {
+  const normalized = value.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    static_preview_ready: text.notebookStatusStaticPreviewReady,
+    marimo_export_succeeded: text.notebookStatusMarimoExportSucceeded,
+    ready: text.notebookStatusReady
+  };
+  return labels[normalized] ?? normalized.replace(/_/g, " ");
+}
+
 function notebookSourceLabel(item: NotebookIndexItem, text?: LocaleMessages) {
   const labels = text ?? englishMessages;
   if (item.run_id) return `${labels.notebookSourceRun} ${item.run_id}`;
@@ -16218,7 +16249,15 @@ function LeaderboardTab({
                   <button
                     className="icon-button"
                     disabled={busy}
-                    onClick={() => void runAction(prepareResultNotebookEvidence)}
+                    onClick={() => {
+                      const existingNotebook = notebooksForLeaderboardEntry(notebookIndex, entry)[0] ?? resultNotebooks[0] ?? null;
+                      const existingPreviewArtifactId = existingNotebook ? notebookPreviewArtifactId(existingNotebook) : null;
+                      if (existingPreviewArtifactId) {
+                        void loadPreview(existingPreviewArtifactId);
+                        return;
+                      }
+                      void runAction(prepareResultNotebookEvidence);
+                    }}
                     title="Open notebook evidence"
                   >
                     {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
