@@ -272,6 +272,33 @@ def test_codex_safe_env_does_not_pass_connector_credentials(tmp_path: Path, monk
     assert "TABLEX_INTERNAL_ONLY" not in env
 
 
+def test_codex_safe_env_removes_stale_runtime_config_and_plugins(tmp_path: Path, monkeypatch: Any) -> None:
+    host_home = tmp_path / "home"
+    host_codex_home = host_home / ".codex"
+    host_codex_home.mkdir(parents=True)
+    (host_codex_home / "auth.json").write_text('{"token":"test-only"}', encoding="utf-8")
+    runtime_codex_home = tmp_path / "cache" / "tablex" / "codex_home"
+    (runtime_codex_home / "plugins" / "bad").mkdir(parents=True)
+    (runtime_codex_home / "plugins" / "bad" / "plugin.json").write_text("{}", encoding="utf-8")
+    (runtime_codex_home / "skills" / "bad").mkdir(parents=True)
+    (runtime_codex_home / "skills" / "bad" / "SKILL.md").write_text("bad", encoding="utf-8")
+    (runtime_codex_home / "config.toml").write_text("[mcp_servers.bad]\ncommand = 'bad'\n", encoding="utf-8")
+    (runtime_codex_home / "config.json").write_text('{"mcp_servers":{"bad":{}}}', encoding="utf-8")
+    (runtime_codex_home / "logs_2.sqlite").write_text("keep", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(host_home))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    env = safe_env(tmp_path / "workspace")
+
+    assert env["CODEX_HOME"] == str(runtime_codex_home.resolve())
+    assert (runtime_codex_home / "auth.json").is_symlink()
+    assert not (runtime_codex_home / "config.toml").exists()
+    assert not (runtime_codex_home / "config.json").exists()
+    assert not (runtime_codex_home / "plugins").exists()
+    assert not (runtime_codex_home / "skills").exists()
+    assert (runtime_codex_home / "logs_2.sqlite").exists()
+
+
 def test_codex_safe_env_uses_explicit_tablex_codex_home(tmp_path: Path, monkeypatch: Any) -> None:
     host_home = tmp_path / "home"
     host_codex_home = host_home / ".codex"

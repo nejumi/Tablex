@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from abc import ABC, abstractmethod
@@ -1256,6 +1257,7 @@ def prepare_tablex_codex_home(codex_home: Path) -> None:
         codex_home.chmod(0o700)
     except OSError:
         pass
+    remove_tablex_codex_runtime_state(codex_home)
     host_codex_home = host_codex_home_for_auth()
     if host_codex_home is None:
         return
@@ -1273,6 +1275,25 @@ def prepare_tablex_codex_home(codex_home: Path) -> None:
         except OSError:
             # Keep the runtime isolated even if the platform disallows symlinks.
             # API-key auth can still work through OPENAI_API_KEY.
+            pass
+
+
+def remove_tablex_codex_runtime_state(codex_home: Path) -> None:
+    for filename in ("config.toml", "config.json"):
+        path = codex_home / filename
+        try:
+            if path.exists() or path.is_symlink():
+                path.unlink()
+        except OSError:
+            pass
+    for dirname in ("plugins", "skills"):
+        path = codex_home / dirname
+        try:
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                shutil.rmtree(path)
+        except OSError:
             pass
 
 
