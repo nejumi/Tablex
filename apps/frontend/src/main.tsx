@@ -4575,6 +4575,8 @@ function ProjectDetail({
     }
     if (researchPlanTimelineMatchesDisplayLocale(timeline, userSettingsLocaleRef.current)) {
       setResearchPlanTimeline(timeline);
+    } else {
+      setResearchPlanTimeline(null);
     }
   }, []);
 

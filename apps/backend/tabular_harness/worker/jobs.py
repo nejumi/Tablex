@@ -14,17 +14,21 @@ from tabular_harness.models.entities import (
     DatasetSnapshot,
     EvaluationSpec,
     ExperimentRun,
+    Idea,
     Job,
     ModelVersion,
     Project,
     Question,
+    ResearchBrief,
     SplitManifest,
     utc_now,
 )
 from tabular_harness.services.adaptive_strategy import create_adaptive_strategy_brief
 from tabular_harness.services.agent_chat import handle_agent_chat_turn
+from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
 from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
+from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
 from tabular_harness.services.analysis_notebooks import (
     create_notebook_execution_capture,
     create_notebook_execution_plan,
@@ -33,6 +37,8 @@ from tabular_harness.services.approach import (
     create_decision_dashboard,
     create_research_plan,
     draft_project_report,
+    generate_approach_candidates,
+    generate_research_brief,
     store_json_artifact,
 )
 from tabular_harness.services.artifacts import LocalArtifactStore
@@ -71,6 +77,7 @@ from tabular_harness.services.evaluation import (
 )
 from tabular_harness.services.experiment_lifecycle import (
     compare_project_experiments,
+    create_experiment_plan_for_idea,
     draft_run_report,
 )
 from tabular_harness.services.jobs import JOB_TYPES, create_job
@@ -97,6 +104,9 @@ from tabular_harness.services.reporting import (
     create_project_visualization_dashboard,
     generate_project_insights,
 )
+from tabular_harness.services.research_runner import run_research_source_pack_local_stub
+from tabular_harness.services.research_sources import create_research_source_pack
+from tabular_harness.services.research_synthesis import create_research_finding_synthesis
 from tabular_harness.services.result_notebook_evidence import (
     prepare_result_notebook_evidence,
     result_notebook_evidence_job_output,
@@ -484,6 +494,192 @@ def infer_assumptions_handler(db: Session, job: Job, store: LocalArtifactStore) 
     return {
         "unanswered_questions": len(unresolved),
         "policy": "fallbacks_already_materialized_in_assumptions",
+    }
+
+
+def latest_research_brief(db: Session, project_id: str) -> ResearchBrief | None:
+    return db.scalar(
+        select(ResearchBrief).where(ResearchBrief.project_id == project_id).order_by(ResearchBrief.created_at.desc())
+    )
+
+
+def idea_for_job(db: Session, job: Job, job_type: str) -> Idea:
+    payload = loads_json(job.input_json, {})
+    idea_id = payload.get("idea_id")
+    idea = db.get(Idea, idea_id) if isinstance(idea_id, str) else None
+    if idea is None:
+        raise ValueError(f"{job_type} requires an existing idea_id")
+    if job.project_id is not None and idea.project_id != job.project_id:
+        raise ValueError(f"{job_type} project does not match the Idea")
+    return idea
+
+
+def create_research_source_pack_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "create_research_source_pack")
+    dataset = latest_dataset(db, project.id)
+    spec = latest_approved_spec(db, project.id)
+    result = create_research_source_pack(
+        db,
+        store=store,
+        project=project,
+        dataset=dataset,
+        evaluation_spec=spec,
+        job=job,
+    )
+    return {
+        "schema_version": result.pack["schema_version"],
+        "research_plan_artifact_id": result.research_plan_artifact.id,
+        "research_source_pack_artifact_id": result.pack_artifact.id,
+        "research_source_report_id": result.report.id,
+        "research_source_report_artifact_id": result.report_artifact.id,
+        "evidence_id": result.evidence.id,
+        "query_count": len(result.pack.get("controlled_queries", [])),
+        "project_source_count": len(result.pack.get("project_sources", [])),
+        "library_source_count": len(result.pack.get("library_sources", [])),
+        "network_default": result.pack["source_policy"]["network_default"],
+        "artifact_ids": [result.pack_artifact.id, result.report_artifact.id],
+    }
+
+
+def run_research_source_pack_stub_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    artifact_id = payload.get("research_source_pack_artifact_id")
+    source_pack_artifact = db.get(Artifact, artifact_id) if isinstance(artifact_id, str) else None
+    if source_pack_artifact is None:
+        raise ValueError("Research Source Pack artifact not found")
+    if source_pack_artifact.asset_type != "research_source_pack":
+        raise ValueError("Artifact is not a research_source_pack")
+    project = project_for_job(db, job, "run_research_source_pack_stub")
+    result = run_research_source_pack_local_stub(
+        db,
+        store=store,
+        project=project,
+        source_pack_artifact=source_pack_artifact,
+        job=job,
+    )
+    return {
+        "research_source_pack_artifact_id": source_pack_artifact.id,
+        "research_run_manifest_artifact_id": result.manifest_artifact.id,
+        "research_findings_report_id": result.findings_report.id,
+        "research_findings_report_artifact_id": result.findings_report_artifact.id,
+        "source_citation_manifest_artifact_id": result.citation_manifest_artifact.id,
+        "visualization_id": result.visualization.id,
+        "visualization_artifact_id": result.visualization_artifact.id,
+        "evidence_id": result.evidence.id,
+        "artifact_ids": result.artifact_ids,
+        "runner": result.manifest["runner"],
+        "execution_status": result.manifest["execution_status"],
+        "query_count": result.manifest["query_count"],
+        "external_network_accessed": result.manifest["external_network_accessed"],
+        "connector_credentials_materialized": result.manifest["connector_credentials_materialized"],
+    }
+
+
+def create_research_synthesis_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "create_research_synthesis")
+    result = create_research_finding_synthesis(db, store=store, project=project, job=job)
+    return {
+        "schema_version": result.synthesis["schema_version"],
+        "research_finding_synthesis_artifact_id": result.artifact.id,
+        "research_finding_synthesis_report_id": result.report.id,
+        "research_finding_synthesis_report_artifact_id": result.report_artifact.id,
+        "visualization_id": result.visualization.id,
+        "visualization_artifact_id": result.visualization_artifact.id,
+        "evidence_id": result.evidence.id,
+        "artifact_ids": result.artifact_ids,
+        "finding_count": result.synthesis["summary"]["finding_count"],
+        "citation_count": result.synthesis["citation_audit"]["citation_count"],
+        "external_network_accessed": result.synthesis["citation_audit"]["external_network_accessed"],
+        "has_only_stub_findings": result.synthesis["summary"]["has_only_stub_findings"],
+    }
+
+
+def generate_research_brief_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "generate_research_brief")
+    dataset = latest_dataset(db, project.id)
+    spec = latest_approved_spec(db, project.id)
+    question = payload.get("question") if isinstance(payload.get("question"), str) else None
+    result = generate_research_brief(
+        db,
+        store=store,
+        project=project,
+        dataset=dataset,
+        evaluation_spec=spec,
+        question=question,
+    )
+    return {"research_brief_id": result.brief.id, "artifact_id": result.artifact.id}
+
+
+def generate_approach_candidates_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "generate_approach_candidates")
+    dataset = latest_dataset(db, project.id)
+    spec = latest_approved_spec(db, project.id)
+    brief = latest_research_brief(db, project.id)
+    result = generate_approach_candidates(
+        db,
+        store=store,
+        project=project,
+        research_brief=brief,
+        dataset=dataset,
+        evaluation_spec=spec,
+    )
+    return {"idea_ids": [idea.id for idea in result.ideas], "artifact_ids": result.artifact_ids}
+
+
+def prepare_agent_context_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    idea = idea_for_job(db, job, "prepare_agent_context")
+    project = project_for_job(db, job, "prepare_agent_context")
+    result = prepare_idea_agent_context_pack(db, store=store, project=project, idea=idea, job=job)
+    return {
+        "idea_id": idea.id,
+        "context_pack_id": result.context_pack["id"],
+        "artifact_id": result.artifact.id,
+        "schema_version": result.context_pack["schema_version"],
+        "asset_recommendation_count": len(result.context_pack["asset_recommendations"]),
+        "materialized_library_asset_count": len(result.context_pack["materialized_library_assets"]),
+    }
+
+
+def create_experiment_plan_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    idea = idea_for_job(db, job, "create_experiment_plan")
+    project = project_for_job(db, job, "create_experiment_plan")
+    result = create_experiment_plan_for_idea(db, store=store, project=project, idea=idea, job=job)
+    return {
+        "idea_id": idea.id,
+        "plan_id": result.plan["id"],
+        "artifact_id": result.artifact.id,
+        "evidence_id": result.evidence_id,
+        "insight_id": result.insight_id,
+        "readiness": result.plan["readiness"],
+    }
+
+
+def run_agent_task_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    idea = idea_for_job(db, job, "run_agent_task")
+    project = project_for_job(db, job, "run_agent_task")
+    result = run_idea_agent_task_stub(db, store=store, project=project, idea=idea, job=job)
+    return {
+        "idea_id": idea.id,
+        "agent_status": result.agent_result.status,
+        "agent_final_message": result.agent_result.final_message,
+        "artifact_ids": result.artifact_ids,
+        "workspace_artifact_id": result.workspace_artifact_id,
+        "ingested_artifact_ids": result.ingested_artifact_ids,
+        "report_id": result.report_id,
+        "evidence_id": result.evidence_id,
+        "experiment_run_id": result.experiment_ingestion.experiment_run_id,
+        "agent_metrics_artifact_id": result.experiment_ingestion.metrics_artifact_id,
+        "agent_feature_recipe_artifact_id": result.experiment_ingestion.feature_recipe_artifact_id,
+        "approach_decision_trace_artifact_id": result.approach_decision_trace_artifact_id,
+        "source_citation_manifest_artifact_id": result.experiment_ingestion.citation_manifest_artifact_id,
+        "citation_audit_report_id": result.experiment_ingestion.citation_audit_report_id,
+        "citation_audit_report_artifact_id": result.experiment_ingestion.citation_audit_report_artifact_id,
+        "citation_evidence_id": result.experiment_ingestion.citation_evidence_id,
+        "citation_visualization_id": result.experiment_ingestion.citation_visualization_id,
+        "citation_visualization_artifact_id": result.experiment_ingestion.citation_visualization_artifact_id,
+        "visualization_ids": result.experiment_ingestion.visualization_ids,
+        "requires_human_review": result.agent_result.requires_human_review,
     }
 
 
@@ -2000,6 +2196,14 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["run_eda_review"] = run_eda_review_handler
     handlers["create_adaptive_strategy_brief"] = create_adaptive_strategy_brief_handler
     handlers["plan_research"] = plan_research_handler
+    handlers["create_research_source_pack"] = create_research_source_pack_handler
+    handlers["run_research_source_pack_stub"] = run_research_source_pack_stub_handler
+    handlers["create_research_synthesis"] = create_research_synthesis_handler
+    handlers["generate_research_brief"] = generate_research_brief_handler
+    handlers["generate_approach_candidates"] = generate_approach_candidates_handler
+    handlers["prepare_agent_context"] = prepare_agent_context_handler
+    handlers["create_experiment_plan"] = create_experiment_plan_handler
+    handlers["run_agent_task"] = run_agent_task_handler
     handlers["create_notebook_authoring_brief"] = create_notebook_authoring_brief_handler
     handlers["prepare_data_understanding_notebook_authoring"] = prepare_data_understanding_notebook_authoring_handler
     handlers["plan_agent_task"] = plan_agent_task_handler

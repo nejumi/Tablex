@@ -138,7 +138,6 @@ from tabular_harness.services.adaptive_strategy import (
     build_adaptive_strategy_brief,
 )
 from tabular_harness.services.agent_chat_status import agent_chat_wait_state
-from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
 from tabular_harness.services.agent_sessions import (
     active_main_session,
     append_session_event,
@@ -162,7 +161,6 @@ from tabular_harness.services.agent_sessions import (
     transcript_event_to_dict,
 )
 from tabular_harness.services.agent_task_results import list_agent_task_result_summaries
-from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
 from tabular_harness.services.analysis_notebooks import (
     build_project_analysis_story,
     build_project_notebook_index,
@@ -170,8 +168,6 @@ from tabular_harness.services.analysis_notebooks import (
 from tabular_harness.services.approach import (
     create_decision_dashboard,
     create_research_plan,
-    generate_approach_candidates,
-    generate_research_brief,
     store_json_artifact,
 )
 from tabular_harness.services.artifacts import (
@@ -254,7 +250,6 @@ from tabular_harness.services.evaluation import (
     write_spec_artifact,
 )
 from tabular_harness.services.experiment_lifecycle import (
-    create_experiment_plan_for_idea,
     draft_run_report,
 )
 from tabular_harness.services.jobs import (
@@ -312,9 +307,6 @@ from tabular_harness.services.reporting import (
     generate_project_insights,
 )
 from tabular_harness.services.research_plan_timeline import build_research_plan_timeline_response
-from tabular_harness.services.research_runner import run_research_source_pack_local_stub
-from tabular_harness.services.research_sources import create_research_source_pack
-from tabular_harness.services.research_synthesis import create_research_finding_synthesis
 from tabular_harness.services.result_readout import build_result_readout
 from tabular_harness.services.translation import TranslationResult
 from tabular_harness.services.translation import translate_artifact as translate_artifact_service
@@ -5223,9 +5215,8 @@ def list_project_agent_task_results(
 def generate_project_research_source_pack(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     dataset = latest_dataset(db, project_id)
     spec = latest_approved_spec(db, project_id)
     job = create_job(
@@ -5237,37 +5228,9 @@ def generate_project_research_source_pack(
             "network": "disabled",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_research_source_pack(
-            db,
-            store=store,
-            project=project,
-            dataset=dataset,
-            evaluation_spec=spec,
-            job=job,
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.pack["schema_version"],
-                "research_plan_artifact_id": result.research_plan_artifact.id,
-                "research_source_pack_artifact_id": result.pack_artifact.id,
-                "research_source_report_id": result.report.id,
-                "research_source_report_artifact_id": result.report_artifact.id,
-                "evidence_id": result.evidence.id,
-                "query_count": len(result.pack.get("controlled_queries", [])),
-                "project_source_count": len(result.pack.get("project_sources", [])),
-                "library_source_count": len(result.pack.get("library_sources", [])),
-                "network_default": result.pack["source_policy"]["network_default"],
-                "artifact_ids": [result.pack_artifact.id, result.report_artifact.id],
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -5275,7 +5238,6 @@ def generate_project_research_source_pack(
 def run_research_source_pack_stub_endpoint(
     artifact_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     source_pack_artifact = db.get(Artifact, artifact_id)
     if source_pack_artifact is None:
@@ -5295,39 +5257,9 @@ def run_research_source_pack_stub_endpoint(
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "runner": "local_stub_research_runner",
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        result = run_research_source_pack_local_stub(
-            db,
-            store=store,
-            project=project,
-            source_pack_artifact=source_pack_artifact,
-            job=job,
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "research_source_pack_artifact_id": source_pack_artifact.id,
-                "research_run_manifest_artifact_id": result.manifest_artifact.id,
-                "research_findings_report_id": result.findings_report.id,
-                "research_findings_report_artifact_id": result.findings_report_artifact.id,
-                "source_citation_manifest_artifact_id": result.citation_manifest_artifact.id,
-                "visualization_id": result.visualization.id,
-                "visualization_artifact_id": result.visualization_artifact.id,
-                "evidence_id": result.evidence.id,
-                "artifact_ids": result.artifact_ids,
-                "runner": result.manifest["runner"],
-                "execution_status": result.manifest["execution_status"],
-                "query_count": result.manifest["query_count"],
-                "external_network_accessed": result.manifest["external_network_accessed"],
-                "connector_credentials_materialized": result.manifest["connector_credentials_materialized"],
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -5335,43 +5267,20 @@ def run_research_source_pack_stub_endpoint(
 def create_project_research_synthesis(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     job = create_job(
         db,
         job_type="create_research_synthesis",
-        project_id=project.id,
+        project_id=project_id,
         input_payload={},
         policy={
             "network": "disabled",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        result = create_research_finding_synthesis(db, store=store, project=project, job=job)
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": result.synthesis["schema_version"],
-                "research_finding_synthesis_artifact_id": result.artifact.id,
-                "research_finding_synthesis_report_id": result.report.id,
-                "research_finding_synthesis_report_artifact_id": result.report_artifact.id,
-                "visualization_id": result.visualization.id,
-                "visualization_artifact_id": result.visualization_artifact.id,
-                "evidence_id": result.evidence.id,
-                "artifact_ids": result.artifact_ids,
-                "finding_count": result.synthesis["summary"]["finding_count"],
-                "citation_count": result.synthesis["citation_audit"]["citation_count"],
-                "external_network_accessed": result.synthesis["citation_audit"]["external_network_accessed"],
-                "has_only_stub_findings": result.synthesis["summary"]["has_only_stub_findings"],
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -5380,31 +5289,21 @@ def generate_project_research_brief(
     project_id: str,
     payload: ResearchBriefCreate,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     dataset = latest_dataset(db, project_id)
     spec = latest_approved_spec(db, project_id)
     job = create_job(
         db,
         job_type="generate_research_brief",
         project_id=project_id,
-        input_payload={"dataset_snapshot_id": dataset.id if dataset else None, "evaluation_spec_id": spec.id if spec else None},
+        input_payload={
+            "dataset_snapshot_id": dataset.id if dataset else None,
+            "evaluation_spec_id": spec.id if spec else None,
+            "question": payload.question,
+        },
+        policy={"execution": "queued_worker", "network": "disabled", "secret_access": "forbidden"},
     )
-    try:
-        mark_job_running(job)
-        result = generate_research_brief(
-            db,
-            store=store,
-            project=project,
-            dataset=dataset,
-            evaluation_spec=spec,
-            question=payload.question,
-        )
-        mark_job_succeeded(job, {"research_brief_id": result.brief.id, "artifact_id": result.artifact.id})
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -5421,9 +5320,8 @@ def list_project_research_briefs(project_id: str, db: Annotated[Session, Depends
 def generate_project_approach_ideas(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     dataset = latest_dataset(db, project_id)
     spec = latest_approved_spec(db, project_id)
     brief = latest_research_brief(db, project_id)
@@ -5436,24 +5334,8 @@ def generate_project_approach_ideas(
             "evaluation_spec_id": spec.id if spec else None,
             "research_brief_id": brief.id if brief else None,
         },
+        policy={"execution": "queued_worker", "network": "disabled", "secret_access": "forbidden"},
     )
-    try:
-        mark_job_running(job)
-        result = generate_approach_candidates(
-            db,
-            store=store,
-            project=project,
-            research_brief=brief,
-            dataset=dataset,
-            evaluation_spec=spec,
-        )
-        mark_job_succeeded(
-            job,
-            {"idea_ids": [idea.id for idea in result.ideas], "artifact_ids": result.artifact_ids},
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -5468,7 +5350,6 @@ def list_project_ideas(project_id: str, db: Annotated[Session, Depends(get_sessi
 def prepare_idea_agent_context(
     idea_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     idea = db.get(Idea, idea_id)
     if idea is None:
@@ -5479,24 +5360,8 @@ def prepare_idea_agent_context(
         job_type="prepare_agent_context",
         project_id=project.id,
         input_payload={"idea_id": idea.id},
+        policy={"execution": "queued_worker", "network": "disabled", "secret_access": "forbidden"},
     )
-    try:
-        mark_job_running(job)
-        result = prepare_idea_agent_context_pack(db, store=store, project=project, idea=idea, job=job)
-        mark_job_succeeded(
-            job,
-            {
-                "idea_id": idea.id,
-                "context_pack_id": result.context_pack["id"],
-                "artifact_id": result.artifact.id,
-                "schema_version": result.context_pack["schema_version"],
-                "asset_recommendation_count": len(result.context_pack["asset_recommendations"]),
-                "materialized_library_asset_count": len(result.context_pack["materialized_library_assets"]),
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -5517,7 +5382,6 @@ def list_idea_agent_context_packs(idea_id: str, db: Annotated[Session, Depends(g
 def create_idea_experiment_plan(
     idea_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     idea = db.get(Idea, idea_id)
     if idea is None:
@@ -5528,24 +5392,8 @@ def create_idea_experiment_plan(
         job_type="create_experiment_plan",
         project_id=project.id,
         input_payload={"idea_id": idea.id},
+        policy={"execution": "queued_worker", "network": "disabled", "secret_access": "forbidden"},
     )
-    try:
-        mark_job_running(job)
-        result = create_experiment_plan_for_idea(db, store=store, project=project, idea=idea, job=job)
-        mark_job_succeeded(
-            job,
-            {
-                "idea_id": idea.id,
-                "plan_id": result.plan["id"],
-                "artifact_id": result.artifact.id,
-                "evidence_id": result.evidence_id,
-                "insight_id": result.insight_id,
-                "readiness": result.plan["readiness"],
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -5566,7 +5414,6 @@ def list_idea_experiment_plans(idea_id: str, db: Annotated[Session, Depends(get_
 def run_idea_agent_task(
     idea_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     idea = db.get(Idea, idea_id)
     if idea is None:
@@ -5577,44 +5424,13 @@ def run_idea_agent_task(
         job_type="run_agent_task",
         project_id=project.id,
         input_payload={"idea_id": idea.id, "task_contract": loads_json(idea.agent_task_contract_json, {})},
+        policy={
+            "execution": "queued_worker",
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "approval_mode": "endpoint_invocation",
+        },
     )
-    try:
-        mark_job_running(job)
-        result = run_idea_agent_task_stub(db, store=store, project=project, idea=idea, job=job)
-        mark_job_succeeded(
-            job,
-            {
-                "idea_id": idea.id,
-                "agent_status": result.agent_result.status,
-                "agent_final_message": result.agent_result.final_message,
-                "artifact_ids": result.artifact_ids,
-                "workspace_artifact_id": result.workspace_artifact_id,
-                "ingested_artifact_ids": result.ingested_artifact_ids,
-                "report_id": result.report_id,
-                "evidence_id": result.evidence_id,
-                "experiment_run_id": result.experiment_ingestion.experiment_run_id,
-                "agent_metrics_artifact_id": result.experiment_ingestion.metrics_artifact_id,
-                "agent_feature_recipe_artifact_id": result.experiment_ingestion.feature_recipe_artifact_id,
-                "approach_decision_trace_artifact_id": result.approach_decision_trace_artifact_id,
-                "source_citation_manifest_artifact_id": (
-                    result.experiment_ingestion.citation_manifest_artifact_id
-                ),
-                "citation_audit_report_id": result.experiment_ingestion.citation_audit_report_id,
-                "citation_audit_report_artifact_id": (
-                    result.experiment_ingestion.citation_audit_report_artifact_id
-                ),
-                "citation_evidence_id": result.experiment_ingestion.citation_evidence_id,
-                "citation_visualization_id": result.experiment_ingestion.citation_visualization_id,
-                "citation_visualization_artifact_id": (
-                    result.experiment_ingestion.citation_visualization_artifact_id
-                ),
-                "visualization_ids": result.experiment_ingestion.visualization_ids,
-                "requires_human_review": result.agent_result.requires_human_review,
-            },
-        )
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 

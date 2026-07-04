@@ -3967,17 +3967,18 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     source_pack_response = client.post(f"/api/projects/{project_id}/approach/research-source-pack")
     assert source_pack_response.status_code == 200, source_pack_response.text
     source_pack_job = source_pack_response.json()
-    assert source_pack_job["status"] == "succeeded"
-    assert source_pack_job["output"]["schema_version"] == "research_source_pack.v1"
-    assert source_pack_job["output"]["research_plan_artifact_id"] == research_plan_artifact_id
-    assert source_pack_job["output"]["research_source_pack_artifact_id"]
-    assert source_pack_job["output"]["research_source_report_artifact_id"]
-    assert source_pack_job["output"]["project_source_count"] >= 1
-    assert source_pack_job["output"]["library_source_count"] >= 4
-    assert source_pack_job["output"]["network_default"] == "disabled_until_runner_policy_allows"
+    assert source_pack_job["status"] == "queued"
+    source_pack_output = run_queued_job(client, source_pack_job["id"])
+    assert source_pack_output["schema_version"] == "research_source_pack.v1"
+    assert source_pack_output["research_plan_artifact_id"] == research_plan_artifact_id
+    assert source_pack_output["research_source_pack_artifact_id"]
+    assert source_pack_output["research_source_report_artifact_id"]
+    assert source_pack_output["project_source_count"] >= 1
+    assert source_pack_output["library_source_count"] >= 4
+    assert source_pack_output["network_default"] == "disabled_until_runner_policy_allows"
 
     source_pack_preview_response = client.get(
-        f"/api/artifacts/{source_pack_job['output']['research_source_report_artifact_id']}/preview"
+        f"/api/artifacts/{source_pack_output['research_source_report_artifact_id']}/preview"
     )
     assert source_pack_preview_response.status_code == 200
     source_pack_preview = source_pack_preview_response.json()["preview"]
@@ -3985,22 +3986,23 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert "Connector credentials" in source_pack_preview or "connector credentials" in source_pack_preview
 
     research_stub_response = client.post(
-        f"/api/research-source-packs/{source_pack_job['output']['research_source_pack_artifact_id']}/run-local-stub"
+        f"/api/research-source-packs/{source_pack_output['research_source_pack_artifact_id']}/run-local-stub"
     )
     assert research_stub_response.status_code == 200, research_stub_response.text
     research_stub_job = research_stub_response.json()
-    assert research_stub_job["status"] == "succeeded"
-    assert research_stub_job["output"]["research_run_manifest_artifact_id"]
-    assert research_stub_job["output"]["research_findings_report_id"]
-    assert research_stub_job["output"]["research_findings_report_artifact_id"]
-    assert research_stub_job["output"]["source_citation_manifest_artifact_id"]
-    assert research_stub_job["output"]["visualization_id"]
-    assert research_stub_job["output"]["evidence_id"]
-    assert research_stub_job["output"]["external_network_accessed"] is False
-    assert research_stub_job["output"]["connector_credentials_materialized"] is False
+    assert research_stub_job["status"] == "queued"
+    research_stub_output = run_queued_job(client, research_stub_job["id"])
+    assert research_stub_output["research_run_manifest_artifact_id"]
+    assert research_stub_output["research_findings_report_id"]
+    assert research_stub_output["research_findings_report_artifact_id"]
+    assert research_stub_output["source_citation_manifest_artifact_id"]
+    assert research_stub_output["visualization_id"]
+    assert research_stub_output["evidence_id"]
+    assert research_stub_output["external_network_accessed"] is False
+    assert research_stub_output["connector_credentials_materialized"] is False
 
     research_stub_report_response = client.get(
-        f"/api/artifacts/{research_stub_job['output']['research_findings_report_artifact_id']}/preview"
+        f"/api/artifacts/{research_stub_output['research_findings_report_artifact_id']}/preview"
     )
     assert research_stub_report_response.status_code == 200
     research_stub_report = research_stub_report_response.json()["preview"]
@@ -4010,18 +4012,19 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     research_synthesis_response = client.post(f"/api/projects/{project_id}/approach/research-synthesis")
     assert research_synthesis_response.status_code == 200, research_synthesis_response.text
     research_synthesis_job = research_synthesis_response.json()
-    assert research_synthesis_job["status"] == "succeeded"
-    assert research_synthesis_job["output"]["schema_version"] == "research_finding_synthesis.v1"
-    assert research_synthesis_job["output"]["research_finding_synthesis_artifact_id"]
-    assert research_synthesis_job["output"]["research_finding_synthesis_report_id"]
-    assert research_synthesis_job["output"]["research_finding_synthesis_report_artifact_id"]
-    assert research_synthesis_job["output"]["visualization_id"]
-    assert research_synthesis_job["output"]["evidence_id"]
-    assert research_synthesis_job["output"]["external_network_accessed"] is False
-    assert research_synthesis_job["output"]["has_only_stub_findings"] is True
+    assert research_synthesis_job["status"] == "queued"
+    research_synthesis_output = run_queued_job(client, research_synthesis_job["id"])
+    assert research_synthesis_output["schema_version"] == "research_finding_synthesis.v1"
+    assert research_synthesis_output["research_finding_synthesis_artifact_id"]
+    assert research_synthesis_output["research_finding_synthesis_report_id"]
+    assert research_synthesis_output["research_finding_synthesis_report_artifact_id"]
+    assert research_synthesis_output["visualization_id"]
+    assert research_synthesis_output["evidence_id"]
+    assert research_synthesis_output["external_network_accessed"] is False
+    assert research_synthesis_output["has_only_stub_findings"] is True
 
     research_synthesis_report_response = client.get(
-        f"/api/artifacts/{research_synthesis_job['output']['research_finding_synthesis_report_artifact_id']}/preview"
+        f"/api/artifacts/{research_synthesis_output['research_finding_synthesis_report_artifact_id']}/preview"
     )
     assert research_synthesis_report_response.status_code == 200
     research_synthesis_report = research_synthesis_report_response.json()["preview"]
@@ -4052,12 +4055,13 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert agent_task_contract["inputs"]["schema_version"] == "agent_task_planning.v1"
     assert len(agent_task_contract["inputs"]["recommended_approach_candidates"]) >= 2
     assert "reporting_requirements" in agent_task_contract["inputs"]
-    assert agent_task_contract["inputs"]["research_source_pack"]["artifact_id"] == source_pack_job["output"][
+    assert agent_task_contract["inputs"]["research_source_pack"]["artifact_id"] == source_pack_output[
         "research_source_pack_artifact_id"
     ]
-    assert agent_task_contract["inputs"]["research_finding_synthesis"]["artifact_id"] == research_synthesis_job[
-        "output"
-    ]["research_finding_synthesis_artifact_id"]
+    assert (
+        agent_task_contract["inputs"]["research_finding_synthesis"]["artifact_id"]
+        == research_synthesis_output["research_finding_synthesis_artifact_id"]
+    )
     assert agent_task_contract["inputs"]["research_finding_synthesis"]["citation_audit"][
         "external_network_accessed"
     ] is False
@@ -4269,8 +4273,9 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     )
     assert research_response.status_code == 200, research_response.text
     research_job = research_response.json()
-    assert research_job["status"] == "succeeded"
-    assert research_job["output"]["research_brief_id"]
+    assert research_job["status"] == "queued"
+    research_output = run_queued_job(client, research_job["id"])
+    assert research_output["research_brief_id"]
 
     briefs_response = client.get(f"/api/projects/{project_id}/approach/research-briefs")
     assert briefs_response.status_code == 200
@@ -4283,8 +4288,9 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     ideas_response = client.post(f"/api/projects/{project_id}/approach/ideas/generate")
     assert ideas_response.status_code == 200, ideas_response.text
     ideas_job = ideas_response.json()
-    assert ideas_job["status"] == "succeeded"
-    assert len(ideas_job["output"]["idea_ids"]) >= 2
+    assert ideas_job["status"] == "queued"
+    ideas_output = run_queued_job(client, ideas_job["id"])
+    assert len(ideas_output["idea_ids"]) >= 2
 
     ideas_list_response = client.get(f"/api/projects/{project_id}/approach/ideas")
     assert ideas_list_response.status_code == 200
@@ -4295,7 +4301,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert contract_inputs["research_plan_artifact_id"] == research_plan_artifact_id
     assert (
         contract_inputs["research_finding_synthesis"]["artifact_id"]
-        == research_synthesis_job["output"]["research_finding_synthesis_artifact_id"]
+        == research_synthesis_output["research_finding_synthesis_artifact_id"]
     )
     assert len(contract_inputs["recommended_asset_ids"]) >= 4
     assert len(contract_inputs["recommended_asset_version_ids"]) >= 4
@@ -4364,16 +4370,17 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     context_response = client.post(f"/api/ideas/{idea['id']}/prepare-agent-context")
     assert context_response.status_code == 200, context_response.text
     context_job = context_response.json()
-    assert context_job["status"] == "succeeded"
-    assert context_job["output"]["schema_version"] == "agent_context_pack.v1"
-    assert context_job["output"]["artifact_id"]
-    assert context_job["output"]["asset_recommendation_count"] >= 4
-    assert context_job["output"]["materialized_library_asset_count"] >= 4
+    assert context_job["status"] == "queued"
+    context_output = run_queued_job(client, context_job["id"])
+    assert context_output["schema_version"] == "agent_context_pack.v1"
+    assert context_output["artifact_id"]
+    assert context_output["asset_recommendation_count"] >= 4
+    assert context_output["materialized_library_asset_count"] >= 4
 
     context_packs_response = client.get(f"/api/ideas/{idea['id']}/context-packs")
     assert context_packs_response.status_code == 200
     context_artifact = context_packs_response.json()[0]
-    assert context_artifact["id"] == context_job["output"]["artifact_id"]
+    assert context_artifact["id"] == context_output["artifact_id"]
 
     context_preview_response = client.get(f"/api/artifacts/{context_artifact['id']}/preview")
     assert context_preview_response.status_code == 200
@@ -4389,7 +4396,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert context_payload["research_plan_context"]["artifact_id"] == research_plan_artifact_id
     assert (
         context_payload["research_synthesis_context"]["artifact_id"]
-        == research_synthesis_job["output"]["research_finding_synthesis_artifact_id"]
+        == research_synthesis_output["research_finding_synthesis_artifact_id"]
     )
     assert context_payload["research_synthesis_context"]["citation_audit"]["external_network_accessed"] is False
     assert len(context_payload["asset_recommendations"]) >= 4
@@ -4403,15 +4410,16 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     experiment_plan_response = client.post(f"/api/ideas/{idea['id']}/experiment-plan")
     assert experiment_plan_response.status_code == 200, experiment_plan_response.text
     experiment_plan_job = experiment_plan_response.json()
-    assert experiment_plan_job["status"] == "succeeded"
-    assert experiment_plan_job["output"]["plan_id"]
-    assert experiment_plan_job["output"]["artifact_id"]
-    assert experiment_plan_job["output"]["readiness"]["status"] == "ready_for_runner"
+    assert experiment_plan_job["status"] == "queued"
+    experiment_plan_output = run_queued_job(client, experiment_plan_job["id"])
+    assert experiment_plan_output["plan_id"]
+    assert experiment_plan_output["artifact_id"]
+    assert experiment_plan_output["readiness"]["status"] == "ready_for_runner"
 
     experiment_plans_response = client.get(f"/api/ideas/{idea['id']}/experiment-plans")
     assert experiment_plans_response.status_code == 200
     experiment_plan_artifact = experiment_plans_response.json()[0]
-    assert experiment_plan_artifact["id"] == experiment_plan_job["output"]["artifact_id"]
+    assert experiment_plan_artifact["id"] == experiment_plan_output["artifact_id"]
 
     experiment_plan_preview_response = client.get(f"/api/artifacts/{experiment_plan_artifact['id']}/preview")
     assert experiment_plan_preview_response.status_code == 200
@@ -4421,28 +4429,29 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     agent_task_response = client.post(f"/api/ideas/{idea['id']}/run-agent-task")
     assert agent_task_response.status_code == 200, agent_task_response.text
     agent_task_job = agent_task_response.json()
-    assert agent_task_job["status"] == "succeeded"
-    assert agent_task_job["output"]["idea_id"] == idea["id"]
-    assert agent_task_job["output"]["agent_status"] == "succeeded"
-    assert agent_task_job["output"]["requires_human_review"] is True
-    assert len(agent_task_job["output"]["artifact_ids"]) >= 4
-    assert agent_task_job["output"]["workspace_artifact_id"]
-    assert len(agent_task_job["output"]["ingested_artifact_ids"]) == 9
-    assert agent_task_job["output"]["report_id"]
-    assert agent_task_job["output"]["evidence_id"]
-    assert agent_task_job["output"]["experiment_run_id"]
-    assert agent_task_job["output"]["agent_metrics_artifact_id"]
-    assert agent_task_job["output"]["agent_feature_recipe_artifact_id"]
-    assert agent_task_job["output"]["approach_decision_trace_artifact_id"]
-    assert agent_task_job["output"]["source_citation_manifest_artifact_id"]
-    assert agent_task_job["output"]["citation_audit_report_id"]
-    assert agent_task_job["output"]["citation_audit_report_artifact_id"]
-    assert agent_task_job["output"]["citation_evidence_id"]
-    assert agent_task_job["output"]["citation_visualization_id"]
-    assert len(agent_task_job["output"]["visualization_ids"]) == 1
+    assert agent_task_job["status"] == "queued"
+    agent_task_output = run_queued_job(client, agent_task_job["id"])
+    assert agent_task_output["idea_id"] == idea["id"]
+    assert agent_task_output["agent_status"] == "succeeded"
+    assert agent_task_output["requires_human_review"] is True
+    assert len(agent_task_output["artifact_ids"]) >= 4
+    assert agent_task_output["workspace_artifact_id"]
+    assert len(agent_task_output["ingested_artifact_ids"]) == 9
+    assert agent_task_output["report_id"]
+    assert agent_task_output["evidence_id"]
+    assert agent_task_output["experiment_run_id"]
+    assert agent_task_output["agent_metrics_artifact_id"]
+    assert agent_task_output["agent_feature_recipe_artifact_id"]
+    assert agent_task_output["approach_decision_trace_artifact_id"]
+    assert agent_task_output["source_citation_manifest_artifact_id"]
+    assert agent_task_output["citation_audit_report_id"]
+    assert agent_task_output["citation_audit_report_artifact_id"]
+    assert agent_task_output["citation_evidence_id"]
+    assert agent_task_output["citation_visualization_id"]
+    assert len(agent_task_output["visualization_ids"]) == 1
 
     citation_manifest_response = client.get(
-        f"/api/artifacts/{agent_task_job['output']['source_citation_manifest_artifact_id']}/download"
+        f"/api/artifacts/{agent_task_output['source_citation_manifest_artifact_id']}/download"
     )
     assert citation_manifest_response.status_code == 200
     citation_manifest = citation_manifest_response.json()
@@ -4450,7 +4459,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert citation_manifest["connector_credentials_materialized"] is False
 
     idea_decision_trace_response = client.get(
-        f"/api/artifacts/{agent_task_job['output']['approach_decision_trace_artifact_id']}/download"
+        f"/api/artifacts/{agent_task_output['approach_decision_trace_artifact_id']}/download"
     )
     assert idea_decision_trace_response.status_code == 200
     idea_decision_trace = idea_decision_trace_response.json()
@@ -4461,7 +4470,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     )
 
     citation_report_response = client.get(
-        f"/api/reports/{agent_task_job['output']['citation_audit_report_id']}/preview"
+        f"/api/reports/{agent_task_output['citation_audit_report_id']}/preview"
     )
     assert citation_report_response.status_code == 200
     assert "Citation Audit Report" in citation_report_response.json()["preview"]
@@ -4472,14 +4481,14 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert len(agent_results) >= 2
     idea_result = next(item for item in agent_results if item["job_id"] == agent_task_job["id"])
     assert idea_result["source"] == {"type": "idea", "id": idea["id"]}
-    assert idea_result["experiment_run"]["id"] == agent_task_job["output"]["experiment_run_id"]
+    assert idea_result["experiment_run"]["id"] == agent_task_output["experiment_run_id"]
     assert idea_result["artifacts"]["agent_task_report"]["asset_type"] == "agent_task_report"
     assert idea_result["artifacts"]["citation_audit_report"]["asset_type"] == "citation_audit_report"
-    assert idea_result["artifacts"]["approach_decision_trace"]["id"] == agent_task_job["output"][
+    assert idea_result["artifacts"]["approach_decision_trace"]["id"] == agent_task_output[
         "approach_decision_trace_artifact_id"
     ]
     assert idea_result["approach_decision_trace"]["deferred_or_rejected_count"] >= 1
-    assert idea_result["evidence"]["citation_audit"]["id"] == agent_task_job["output"]["citation_evidence_id"]
+    assert idea_result["evidence"]["citation_audit"]["id"] == agent_task_output["citation_evidence_id"]
 
     updated_ideas_response = client.get(f"/api/projects/{project_id}/approach/ideas")
     assert updated_ideas_response.status_code == 200
@@ -4488,7 +4497,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     agent_task_runs_response = client.get(f"/api/projects/{project_id}/runs")
     assert agent_task_runs_response.status_code == 200
     assert any(
-        run["id"] == agent_task_job["output"]["experiment_run_id"] and run["runner_type"] == "local_stub"
+        run["id"] == agent_task_output["experiment_run_id"] and run["runner_type"] == "local_stub"
         for run in agent_task_runs_response.json()
     )
 
@@ -5984,12 +5993,18 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
 
     ideas_response = client.post(f"/api/projects/{project_id}/approach/ideas/generate")
     assert ideas_response.status_code == 200, ideas_response.text
+    ideas_job = ideas_response.json()
+    assert ideas_job["status"] == "queued"
+    run_queued_job(client, ideas_job["id"])
     ideas_list_response = client.get(f"/api/projects/{project_id}/approach/ideas")
     assert ideas_list_response.status_code == 200
     idea = ideas_list_response.json()[0]
     context_response = client.post(f"/api/ideas/{idea['id']}/prepare-agent-context")
     assert context_response.status_code == 200, context_response.text
-    context_payload_response = client.get(f"/api/artifacts/{context_response.json()['output']['artifact_id']}/download")
+    context_job = context_response.json()
+    assert context_job["status"] == "queued"
+    context_output = run_queued_job(client, context_job["id"])
+    context_payload_response = client.get(f"/api/artifacts/{context_output['artifact_id']}/download")
     assert context_payload_response.status_code == 200
     assert context_payload_response.json()["relational_feature_plan_context"]["artifact_id"] == relational_plan_job[
         "output"

@@ -296,6 +296,8 @@ def dependencies_satisfied(db: Session, job: Job) -> bool:
 
 
 def job_requires_approval(job_type: str, policy: dict[str, Any]) -> bool:
+    if policy.get("approval_mode") == "endpoint_invocation":
+        return False
     if job_type in APPROVAL_REQUIRED_JOB_TYPES:
         return True
     if policy.get("network") in {"restricted", "full"}:
