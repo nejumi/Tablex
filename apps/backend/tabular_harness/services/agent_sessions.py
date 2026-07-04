@@ -33,8 +33,10 @@ from tabular_harness.models.entities import (
     AssetReference,
     AssetVersion,
     DatasetSnapshot,
+    ExperimentRun,
     Job,
     LineageEdge,
+    ModelVersion,
     Project,
     User,
     utc_now,
@@ -1768,6 +1770,12 @@ def build_session_context(
                 "capture_notebook_contract": {
                     "required_reference": "payload.artifact_id or payload.workspace_path",
                     "optional_project_link": "Set payload.research_plan_node_id to link the source and preview to a visible plan node.",
+                    "optional_context_links": (
+                        "Set payload.dataset_snapshot_id for data notebooks, payload.run_id for run/model diagnostics, "
+                        "and payload.model_version_id when the notebook explains a model package. Tablex validates these "
+                        "ids and stores them on the notebook artifact so Data, Leaderboard, Assets, and ResearchPlan can "
+                        "all open the same notebook viewer."
+                    ),
                     "example_request": {
                         "schema_version": NOTEBOOK_REQUEST_SCHEMA_VERSION,
                         "request_id": "capture_data_understanding_notebook_001",
@@ -1776,6 +1784,7 @@ def build_session_context(
                             "workspace_path": "notebooks/data_understanding.py",
                             "research_plan_node_id": "data_understanding",
                             "notebook_kind": "data_understanding",
+                            "dataset_snapshot_id": "ds_current",
                         },
                     },
                 },
@@ -2961,6 +2970,12 @@ def execute_notebook_capture_request(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     notebook_artifact = notebook_artifact_from_request(db, project=project, workspace=workspace, payload=payload)
+    context_links = apply_notebook_request_metadata(
+        db,
+        project=project,
+        notebook_artifact=notebook_artifact,
+        payload=payload,
+    )
     node_id = str(payload.get("research_plan_node_id") or "").strip() or None
     revision_id = str(payload.get("revision_id") or "").strip() or None
     if node_id:
@@ -3026,6 +3041,7 @@ def execute_notebook_capture_request(
         "notebook_evidence_html_artifact_id": getattr(capture.evidence_html_artifact, "id", None),
         "preview_artifact_id": getattr(capture.evidence_html_artifact or capture.html_artifact, "id", None),
         "research_plan_node_id": linked_plan_node_id,
+        **context_links,
     }
 
 
@@ -3055,6 +3071,82 @@ def notebook_artifact_from_request(
     if artifact.asset_type != "analysis_notebook":
         raise ValueError(f"Referenced artifact must be analysis_notebook, not {artifact.asset_type}")
     return artifact
+
+
+def apply_notebook_request_metadata(
+    db: Session,
+    *,
+    project: Project,
+    notebook_artifact: Artifact,
+    payload: dict[str, Any],
+) -> dict[str, str | None]:
+    notebook_kind = optional_text_field(payload, "notebook_kind")
+    dataset_snapshot_id = optional_text_field(payload, "dataset_snapshot_id")
+    run_id = optional_text_field(payload, "run_id")
+    model_version_id = optional_text_field(payload, "model_version_id")
+    research_plan_node_id = optional_text_field(payload, "research_plan_node_id")
+    run: ExperimentRun | None = None
+    model_version: ModelVersion | None = None
+    dataset_snapshot: DatasetSnapshot | None = None
+
+    if run_id:
+        run = db.get(ExperimentRun, run_id)
+        if run is None or run.project_id != project.id:
+            raise ValueError(f"payload.run_id `{run_id}` does not belong to this project")
+        if model_version_id and run.model_version_id and run.model_version_id != model_version_id:
+            raise ValueError("payload.run_id and payload.model_version_id refer to different model results")
+        if dataset_snapshot_id and run.dataset_snapshot_id and run.dataset_snapshot_id != dataset_snapshot_id:
+            raise ValueError("payload.run_id and payload.dataset_snapshot_id refer to different datasets")
+        model_version_id = model_version_id or run.model_version_id
+        dataset_snapshot_id = dataset_snapshot_id or run.dataset_snapshot_id
+
+    if model_version_id:
+        model_version = db.get(ModelVersion, model_version_id)
+        if model_version is None or model_version.project_id != project.id:
+            raise ValueError(f"payload.model_version_id `{model_version_id}` does not belong to this project")
+        if run_id and model_version.experiment_run_id != run_id:
+            raise ValueError("payload.model_version_id and payload.run_id refer to different experiment runs")
+        run_id = run_id or model_version.experiment_run_id
+        dataset_snapshot_id = dataset_snapshot_id or model_version.dataset_snapshot_id
+
+    if dataset_snapshot_id:
+        dataset_snapshot = db.get(DatasetSnapshot, dataset_snapshot_id)
+        if dataset_snapshot is None or dataset_snapshot.project_id != project.id:
+            raise ValueError(f"payload.dataset_snapshot_id `{dataset_snapshot_id}` does not belong to this project")
+        if model_version and model_version.dataset_snapshot_id and model_version.dataset_snapshot_id != dataset_snapshot.id:
+            raise ValueError("payload.model_version_id and payload.dataset_snapshot_id refer to different datasets")
+        if run and run.dataset_snapshot_id and run.dataset_snapshot_id != dataset_snapshot.id:
+            raise ValueError("payload.run_id and payload.dataset_snapshot_id refer to different datasets")
+
+    updates = {
+        "notebook_kind": notebook_kind,
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "run_id": run_id,
+        "model_version_id": model_version_id,
+        "research_plan_node_id": research_plan_node_id,
+        "notebook_context_source": "tablex_notebook_request",
+    }
+    metadata = loads_json(notebook_artifact.metadata_json, {})
+    for key, value in updates.items():
+        if isinstance(value, str) and value.strip():
+            metadata[key] = value.strip()
+    notebook_artifact.metadata_json = dumps_json(metadata)
+    return {
+        "notebook_kind": str(metadata.get("notebook_kind") or "") or None,
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "run_id": run_id,
+        "model_version_id": model_version_id,
+    }
+
+
+def optional_text_field(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"payload.{key} must be a string when provided")
+    stripped = value.strip()
+    return stripped or None
 
 
 def write_notebook_tool_ack(path: Path, payload: dict[str, Any]) -> None:

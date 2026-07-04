@@ -19,9 +19,11 @@ from tabular_harness.models.entities import (
     AgentTranscriptEvent,
     Artifact,
     Base,
+    DatasetSnapshot,
     ExperimentRun,
     Job,
     LineageEdge,
+    ModelVersion,
     Project,
     Question,
     ResearchPlanCurrentWork,
@@ -76,6 +78,7 @@ from tabular_harness.services.agent_sessions import (
     start_supervisor_lease_heartbeat,
     supervisor_slot_active,
 )
+from tabular_harness.services.analysis_notebooks import build_project_notebook_index
 from tabular_harness.services.approach import store_text_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
 from tabular_harness.services.jobs import create_job
@@ -3211,6 +3214,149 @@ def test_notebook_file_request_captures_preview_ack_chat_and_plan_link(
         edge_metadata = loads_json(source_edge.metadata_json, {})
         assert edge_metadata["node_id"] == "data_understanding"
         assert edge_metadata["role"] == "notebook_source"
+
+
+def test_notebook_file_request_links_run_model_and_dataset_context(tmp_path: Path, monkeypatch: Any) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    notebooks_dir = workspace / "notebooks"
+    requests_dir = notebook_requests_dir(workspace)
+    notebooks_dir.mkdir(parents=True)
+    requests_dir.mkdir(parents=True)
+    notebook = notebooks_dir / "model_diagnostics.py"
+    notebook.write_text(
+        "import marimo\n\napp = marimo.App()\n\n@app.cell\ndef _():\n    return\n",
+        encoding="utf-8",
+    )
+    captured_notebooks: list[str] = []
+
+    def fake_capture(db: Any, *, store: LocalArtifactStore, notebook_artifact: Artifact) -> Any:
+        del db, store
+        captured_notebooks.append(notebook_artifact.id)
+        return SimpleNamespace(
+            html_artifact=SimpleNamespace(id="art_context_html"),
+            manifest_artifact=SimpleNamespace(id="art_context_manifest"),
+            evidence_html_artifact=SimpleNamespace(id="art_context_evidence"),
+        )
+
+    monkeypatch.setattr(analysis_notebooks_module, "create_notebook_execution_capture", fake_capture)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_notebook_context", name="Notebook Context")
+        session = AgentSession(
+            id="as_notebook_context",
+            project_id=project.id,
+            goal_text="Register model diagnostics notebook context.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+        dataset_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="dataset_snapshot",
+            name="context_dataset_artifact",
+            filename="dataset.csv",
+            text="x,y\n1,2\n",
+            metadata={"project_id": project.id},
+        )
+        dataset = DatasetSnapshot(
+            id="ds_context",
+            project_id=project.id,
+            artifact_id=dataset_artifact.id,
+            source_type="upload",
+            row_count=1,
+            column_count=2,
+            schema_hash="schema_hash",
+        )
+        model_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="model_package",
+            name="context_model_artifact",
+            filename="model.json",
+            text="{}",
+            metadata={"project_id": project.id},
+        )
+        run = ExperimentRun(
+            id="run_context",
+            project_id=project.id,
+            dataset_snapshot_id=dataset.id,
+            runner_type="codex_cli",
+            status="succeeded",
+        )
+        model_version = ModelVersion(
+            id="mv_context",
+            project_id=project.id,
+            experiment_run_id=run.id,
+            dataset_snapshot_id=dataset.id,
+            artifact_id=model_artifact.id,
+            name="context_model",
+            version=1,
+            model_family="tree",
+            model_type="regressor",
+            task_type="regression",
+            status="created",
+        )
+        run.model_version_id = model_version.id
+        db.add_all([dataset, run, model_version])
+        db.commit()
+        (requests_dir / "capture_model_context.json").write_text(
+            dumps_json(
+                {
+                    "schema_version": "tablex_notebook_request.v1",
+                    "request_id": "capture_model_context",
+                    "operation": "capture_notebook",
+                    "payload": {
+                        "workspace_path": "notebooks/model_diagnostics.py",
+                        "notebook_kind": "model_diagnostics",
+                        "run_id": run.id,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        ingest_session_workspace_outputs(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            workspace=workspace,
+            allow_notebook_auto_capture=False,
+        )
+        db.commit()
+
+        notebook_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+        )
+        assert notebook_artifact is not None
+        assert captured_notebooks == [notebook_artifact.id]
+        notebook_metadata = loads_json(notebook_artifact.metadata_json, {})
+        assert notebook_metadata["notebook_kind"] == "model_diagnostics"
+        assert notebook_metadata["run_id"] == run.id
+        assert notebook_metadata["model_version_id"] == model_version.id
+        assert notebook_metadata["dataset_snapshot_id"] == dataset.id
+        ack = loads_json(
+            (notebook_acks_dir(workspace) / "capture_model_context.ack.json").read_text(encoding="utf-8"),
+            {},
+        )
+        assert ack["status"] == "succeeded"
+        assert ack["result"]["run_id"] == run.id
+        assert ack["result"]["model_version_id"] == model_version.id
+        assert ack["result"]["dataset_snapshot_id"] == dataset.id
+
+        notebook_index = build_project_notebook_index(db, project)
+        assert notebook_index["counts"]["total"] == 1
+        item = notebook_index["items"][0]
+        assert item["notebook_kind"] == "model_diagnostics"
+        assert item["run_id"] == run.id
+        assert item["model_version_id"] == model_version.id
+        assert item["dataset_snapshot_id"] == dataset.id
 
 
 def test_notebook_file_request_failure_writes_ack_and_chat_attention(tmp_path: Path) -> None:
