@@ -65,8 +65,10 @@ from tabular_harness.services.research_plans import (
     commit_research_plan_artifact_revision,
     commit_research_plan_revision,
     latest_research_plan_current_work,
+    latest_research_plan_revision,
     request_research_plan_human_attention,
     research_plan_current_work_payload,
+    research_plan_revision_document,
     set_research_plan_current_work,
 )
 
@@ -89,6 +91,7 @@ RESEARCH_PLAN_REQUESTS_DIR = "research_plan"
 USER_INSTRUCTIONS_INBOX_FILENAME = "user_instructions.jsonl"
 USER_INSTRUCTIONS_LATEST_FILENAME = "latest_user_instruction.md"
 PROGRESS_REQUEST_FILENAME = "progress_request.md"
+RESEARCH_PLAN_CONTRACT_REQUEST_FILENAME = "research_plan_contract_request.md"
 CODEX_RAW_TRANSCRIPT_FILENAME = "codex_raw_transcript.jsonl"
 CODEX_STDERR_LOG_FILENAME = "codex_stderr.log"
 PROGRESS_UPDATE_NUDGE_AFTER_SECONDS = 180
@@ -229,6 +232,10 @@ def latest_user_instruction_path(workspace: Path) -> Path:
 
 def progress_request_path(workspace: Path) -> Path:
     return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / PROGRESS_REQUEST_FILENAME
+
+
+def research_plan_contract_request_path(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / RESEARCH_PLAN_CONTRACT_REQUEST_FILENAME
 
 
 def research_plan_requests_dir(workspace: Path) -> Path:
@@ -523,6 +530,176 @@ def write_progress_request_to_workspace_inbox(
         )
     except OSError:
         return
+
+
+def research_plan_contract_issue_hash(validation: dict[str, Any]) -> str:
+    issues = validation.get("issues") if isinstance(validation.get("issues"), list) else []
+    stable_issues = [
+        {
+            "code": str(issue.get("code") or ""),
+            "path": str(issue.get("path") or ""),
+            "message": str(issue.get("message") or ""),
+            "severity": str(issue.get("severity") or "error"),
+        }
+        for issue in issues
+        if isinstance(issue, dict)
+    ]
+    return hashlib.sha1(dumps_json(stable_issues).encode("utf-8")).hexdigest()
+
+
+def latest_research_plan_contract_request_event(
+    db: Session,
+    *,
+    session_id: str,
+    issue_hash: str,
+) -> AgentTranscriptEvent | None:
+    events = list(
+        db.scalars(
+            select(AgentTranscriptEvent)
+            .where(
+                AgentTranscriptEvent.session_id == session_id,
+                AgentTranscriptEvent.source == "tablex_sidecar",
+                AgentTranscriptEvent.event_type == "research_plan_contract_revision_requested",
+            )
+            .order_by(AgentTranscriptEvent.event_index.desc())
+            .limit(50)
+        ).all()
+    )
+    for event in events:
+        payload = loads_json(event.payload_json, {})
+        if payload.get("issue_hash") == issue_hash:
+            return event
+    return None
+
+
+def write_research_plan_contract_request_to_workspace_inbox(
+    session: AgentSession,
+    *,
+    event: AgentTranscriptEvent,
+    locale: str | None,
+    validation: dict[str, Any],
+) -> None:
+    if not session.workspace_path:
+        return
+    workspace = Path(session.workspace_path)
+    path = research_plan_contract_request_path(workspace)
+    japanese = locale_is_japanese(locale)
+    issues = [issue for issue in validation.get("issues", []) if isinstance(issue, dict)]
+    if japanese:
+        headline = (
+            "現在のResearchPlanは表示できますが、構造化された実行台帳としては再申告が必要です。"
+            "作業を止めず、`.tablex/requests/research_plan/` の `commit_revision` で章粒度のplanを再commitしてください。"
+        )
+        action = (
+            "トップレベルは最大7件のchapter/phase/milestoneにまとめ、個別分析、モデル試行、診断、"
+            "Notebookやレポート断片はsubtasks、completion_evidence、ExperimentRun、artifact linkへ移してください。"
+        )
+    else:
+        headline = (
+            "The current ResearchPlan is visible, but it needs a validated re-commit as the structured execution ledger. "
+            "Do not stop the project; submit a chapter-level plan with `.tablex/requests/research_plan/` `commit_revision`."
+        )
+        action = (
+            "Keep at most 7 top-level chapter/phase/milestone nodes. Move individual analyses, model attempts, diagnostics, "
+            "notebook/report sections, and detailed comparisons into subtasks, completion_evidence, ExperimentRuns, or artifact links."
+        )
+    lines = [
+        "schema_version: tablex_research_plan_contract_request.v1",
+        f"event_index: {event.event_index}",
+        f"created_at: {event.created_at.isoformat()}",
+        f"locale: {locale or 'unspecified'}",
+        f"issue_count: {validation.get('issue_count', 0)}",
+        f"error_count: {validation.get('error_count', 0)}",
+        f"warning_count: {validation.get('warning_count', 0)}",
+        "",
+        headline,
+        "",
+        action,
+        "",
+        "Tool request path:",
+        ".tablex/requests/research_plan/<new_request_id>.json",
+        "",
+        "Expected operation:",
+        "commit_revision",
+        "",
+        "After writing the request, read the matching ack under `.tablex/acks/research_plan/`. "
+        "If the ack fails, revise the JSON and resubmit with a new request_id.",
+        "",
+        "Top issues:",
+    ]
+    for issue in issues[:8]:
+        lines.extend(
+            [
+                f"- code: {issue.get('code')}",
+                f"  path: {issue.get('path')}",
+                f"  message: {issue.get('message')}",
+                f"  fix: {issue.get('fix')}",
+            ]
+        )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
+def maybe_request_research_plan_contract_revision(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    session: AgentSession,
+    locale: str | None = None,
+) -> AgentTranscriptEvent | None:
+    if not session.workspace_path or session.status not in ACTIVE_SESSION_STATUSES:
+        return None
+    payload, source = research_plan_context_payload(db, artifact=None, project_id=project.id)
+    validation = research_plan_contract_validation_summary(db, project_id=project.id, payload=payload)
+    if validation.get("status") != "needs_revision":
+        return None
+    issue_hash = research_plan_contract_issue_hash(validation)
+    existing_event = latest_research_plan_contract_request_event(db, session_id=session.id, issue_hash=issue_hash)
+    if existing_event is not None:
+        return None
+    event = append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="research_plan_contract_revision_requested",
+        role="harness",
+        title="ResearchPlan revision requested",
+        content="Tablex asked Codex to re-commit the ResearchPlan through the validated request channel.",
+        payload={
+            "locale": locale,
+            "issue_hash": issue_hash,
+            "source": source,
+            "validation": validation,
+        },
+        update_heartbeat=False,
+    )
+    write_research_plan_contract_request_to_workspace_inbox(
+        session,
+        event=event,
+        locale=locale,
+        validation=validation,
+    )
+    register_agent_session_attention_chat_turn(
+        db,
+        store=store,
+        project=project,
+        session=session,
+        attention_key=f"research_plan_contract_needs_revision:{issue_hash}",
+        status="needs_attention",
+        message_kind="research_plan_contract_needs_revision",
+        details={
+            "issue_hash": issue_hash,
+            "error_count": validation.get("error_count", 0),
+            "warning_count": validation.get("warning_count", 0),
+            "issue_count": validation.get("issue_count", 0),
+            "top_issue_codes": [issue.get("code") for issue in validation.get("issues", [])[:6] if isinstance(issue, dict)],
+        },
+    )
+    return event
 
 
 def latest_codex_transcript_output_at(db: Session, *, session_id: str) -> datetime | None:
@@ -865,6 +1042,13 @@ def run_main_agent_session_supervisor(
                     db.commit()
                     return
                 workspace = prepare_session_workspace(db, store=store, project=project, session=session)
+                maybe_request_research_plan_contract_revision(
+                    db,
+                    store=store,
+                    project=project,
+                    session=session,
+                    locale=latest_project_response_locale(db, project),
+                )
                 turn_prompt = build_turn_prompt(db, project=project, session=session)
                 if lease_lost_event.is_set():
                     append_supervisor_lease_lost_event(db, session=session, owner_id=owner_id)
@@ -1469,7 +1653,7 @@ def build_session_context(
             "living_research_plan": (
                 "When the project plan changes, write outputs/research_plan.json with optional timeline_blocks. "
                 "Tablex renders those blocks directly; after the initial anchors, Codex may append, refine, supersede, or branch them. "
-                "Keep top-level timeline_blocks coarse: use granularity chapter, phase, or milestone. Put individual analyses, "
+                "Keep top-level timeline_blocks coarse and capped at 7 nodes: use granularity chapter, phase, or milestone. Put individual analyses, "
                 "model attempts, diagnostics, notebook sections, and reports in subtasks, ExperimentRuns, artifacts, or completion evidence. "
                 "Completed nodes are append-only: keep them visible and add follow-up nodes when more work is needed. "
                 "For validated tool commits, exactly one open top-level node should be active/waiting/blocked, and a done node needs "
@@ -1614,26 +1798,11 @@ def research_plan_display_context(
     project_id: str,
     response_locale: str,
 ) -> dict[str, Any]:
-    if artifact is None:
-        return {
-            "artifact_id": None,
-            "response_locale": response_locale,
-            "localization": research_plan_localization_summary([], locale=response_locale),
-            "contract_validation": research_plan_contract_validation_summary(
-                db,
-                project_id=project_id,
-                payload={"timeline_blocks": []},
-            ),
-        }
-    try:
-        payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
-    except OSError:
-        payload = {}
+    payload, source = research_plan_context_payload(db, artifact=artifact, project_id=project_id)
     raw_blocks = payload.get("timeline_blocks") if isinstance(payload, dict) else None
     localization = research_plan_localization_summary(raw_blocks, locale=response_locale)
     return {
-        "artifact_id": artifact.id,
-        "path": str(artifact_primary_path(artifact)),
+        **source,
         "response_locale": response_locale,
         "localization": localization,
         "contract_validation": research_plan_contract_validation_summary(
@@ -1642,6 +1811,61 @@ def research_plan_display_context(
             payload=payload if isinstance(payload, dict) else {},
         ),
     }
+
+
+def research_plan_context_payload(
+    db: Session,
+    *,
+    artifact: Artifact | None,
+    project_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    revision = latest_research_plan_revision(db, project_id=project_id)
+    if revision is not None:
+        payload = research_plan_revision_document(revision)
+        return (
+            payload if isinstance(payload, dict) else {},
+            {
+                "source": "research_plan_revision",
+                "source_revision_id": revision.id,
+                "research_plan_id": revision.research_plan_id,
+                "revision_index": revision.revision_index,
+                "revision_author_type": revision.author_type,
+                "source_artifact_id": revision.source_artifact_id,
+                "artifact_id": revision.source_artifact_id,
+                "path": None,
+            },
+        )
+    if artifact is None:
+        return (
+            {"timeline_blocks": []},
+            {
+                "source": "none",
+                "source_revision_id": None,
+                "research_plan_id": None,
+                "revision_index": None,
+                "revision_author_type": None,
+                "source_artifact_id": None,
+                "artifact_id": None,
+                "path": None,
+            },
+        )
+    try:
+        payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+    except OSError:
+        payload = {}
+    return (
+        payload if isinstance(payload, dict) else {},
+        {
+            "source": "research_plan_artifact",
+            "source_revision_id": None,
+            "research_plan_id": None,
+            "revision_index": None,
+            "revision_author_type": None,
+            "source_artifact_id": artifact.id,
+            "artifact_id": artifact.id,
+            "path": str(artifact_primary_path(artifact)),
+        },
+    )
 
 
 def equipped_skill_context(db: Session, references: list[AssetReference]) -> list[dict[str, Any]]:
@@ -1717,7 +1941,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Prefer marimo notebooks for data understanding, modeling diagnostics, and reports.",
         "- Read `.tablex/context.json` for `human_interface.response_locale` and write human-facing notebooks/reports/chat in that language.",
         "- Read equipped Skill paths in `.tablex/context.json` before EDA, prior research, notebook authoring, or modeling strategy work.",
-        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, and `.tablex/inbox/progress_request.md`; incorporate user messages and publish progress updates without waiting for a new Codex turn when practical.",
+        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, `.tablex/inbox/progress_request.md`, and `.tablex/inbox/research_plan_contract_request.md`; incorporate user messages, publish progress updates, and repair rejected ResearchPlan contract state without waiting for a new Codex turn when practical.",
         "- If you need user input in Full Auto, state the question and your provisional assumption, then continue unless a true hard safety boundary makes all useful work impossible.",
         "- Treat formal approval, data-owner confirmation, deployment permission, or production-write clearance as future evidence unless the current action would write to production, expose secrets, or violate evaluation integrity. Keep doing reversible local analysis and artifact generation while waiting.",
         "- Do not present Full Auto as stopped on approval unless no useful reversible work remains. If a destructive or deployment-grade action is deferred, say which reversible analysis, modeling, diagnostics, notebook/report work, or research you are continuing now.",
@@ -2651,6 +2875,13 @@ def ingest_session_workspace_outputs(
             else:
                 maybe_defer_agent_session_notebook_capture(db, session=session, artifact=artifact)
     process_research_plan_tool_requests(db, store=store, project=project, session=session, workspace=workspace)
+    maybe_request_research_plan_contract_revision(
+        db,
+        store=store,
+        project=project,
+        session=session,
+        locale=latest_project_response_locale(db, project),
+    )
     process_experiment_result_requests(
         db,
         store=store,
@@ -3408,6 +3639,16 @@ def attention_chat_message(message_kind: str, *, details: dict[str, Any], japane
         if japanese:
             return f"ResearchPlanの更新要求 `{operation}` を保存できませんでした。Codexにはackで理由を返しているため、修正した要求を出し直せます。"
         return f"ResearchPlan update `{operation}` could not be saved. The ack includes the reason so Codex can submit a corrected request."
+    if message_kind == "research_plan_contract_needs_revision":
+        if japanese:
+            return (
+                "Research Planの表示台帳を整理し直しています。現在の計画は細かい作業がトップレベルに出すぎているため、"
+                "Codexに章立てへまとめ直し、NotebookやLeaderboardへのリンクを付け直すよう渡しました。"
+            )
+        return (
+            "Tablex is asking Codex to tidy the Research Plan ledger. The current plan is too fine-grained at the top level, "
+            "so Codex should re-commit it as chapter-level work with notebook and leaderboard links attached."
+        )
     return "Agent attention is needed." if not japanese else "Agentの状態確認が必要です。"
 
 
