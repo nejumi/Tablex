@@ -15519,6 +15519,7 @@ function RelatedNotebookLinks({
   compact?: boolean;
 }) {
   if (!notebooks.length) {
+    if (compact) return null;
     return <span className="related-notebook-empty">{text.noRelatedNotebooks}</span>;
   }
   const visible = notebooks.slice(0, compact ? 1 : 2);
