@@ -5219,7 +5219,7 @@ function ProjectDetail({
   }
 
   function openAgentChatAction(action: AgentChatAction) {
-    const artifactId = agentChatActionArtifactId(action);
+    const artifactId = agentChatActionArtifactId(action, notebookIndex);
     const explicitNotebookViewer = artifactId && action.target_tab === "Notebooks";
     const targetTab = explicitNotebookViewer ? "Notebooks" : tabFromString(action.target_tab, "Home");
     if (artifactId) {
@@ -7877,9 +7877,16 @@ function agentChatActionLabel(action: AgentChatAction, text: LocaleMessages) {
   return `${verb} ${tabLabel(targetTab, text)}${anchorLabel}`;
 }
 
-function agentChatActionArtifactId(action: AgentChatAction): string | null {
-  if (action.artifact_id) return action.artifact_id;
-  return action.artifact_ids?.find((value) => Boolean(value)) ?? null;
+function agentChatActionArtifactId(action: AgentChatAction, notebookIndex: NotebookIndex | null = null): string | null {
+  const artifactIds = [action.artifact_id, ...(action.artifact_ids ?? [])].filter((value): value is string => Boolean(value));
+  if (action.target_tab === "Notebooks" && notebookIndex) {
+    for (const artifactId of artifactIds) {
+      const item = notebookIndex.items.find((candidate) => notebookItemReferencesArtifact(candidate, artifactId));
+      const previewId = item ? notebookPreviewArtifactId(item) : null;
+      if (previewId) return previewId;
+    }
+  }
+  return artifactIds[0] ?? null;
 }
 
 function surfaceLabel(anchor: string) {
