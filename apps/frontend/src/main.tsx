@@ -1723,7 +1723,20 @@ function shouldSubmitTextarea(
 }
 
 function resolveLocalePack(locale: string, localePacks: LocalePack[]) {
-  return localePacks.find((pack) => pack.locale === locale) ?? builtinLocalePacks[0];
+  const requested = normalizeLocale(locale);
+  const requestedLower = requested.toLowerCase();
+  const exactMatch = localePacks.find((pack) => normalizeLocale(pack.locale).toLowerCase() === requestedLower);
+  if (exactMatch) return exactMatch;
+
+  const requestedLanguage = localeLanguage(requested);
+  if (requestedLanguage) {
+    const languageMatch = localePacks.find((pack) =>
+      [pack.locale, pack.label, pack.nativeLabel].some((value) => localeLanguage(value) === requestedLanguage)
+    );
+    if (languageMatch) return languageMatch;
+  }
+
+  return builtinLocalePacks[0];
 }
 
 function createDynamicLocalePack(localeInput: string): LocalePack {
