@@ -114,23 +114,23 @@ def agent_chat_wait_state(
             )
         if stale:
             assistant_message += (
-                " 更新がしばらくありません。完了しなければworker再起動またはretry対象です。"
+                " 更新がしばらくありません。進行状況を確認し、必要なら自動的に再開します。"
                 if japanese
-                else " There has been no recent update; if it does not complete, the worker should be restarted or retried."
+                else " There has been no recent update; Tablex will check progress and resume automatically if needed."
             )
         headline = "返答を処理中" if japanese else "Processing reply"
         detail = (
-            f"workerが返信処理を実行中です。最終更新 {update_label}前。"
+            f"返信を整理しています。最終更新 {update_label}前。"
             if japanese
-            else f"The worker is running this reply job. Last update {update_label} ago."
+            else f"The reply is being organized. Last update {update_label} ago."
         )
     else:
         worker_state = f"job_{status}"
         stale = False
         assistant_message = (
-            f"返答ジョブの状態は {status} です。"
+            f"返答の状態は {status} です。"
             if japanese
-            else f"The reply job status is {status}."
+            else f"The reply status is {status}."
         )
         headline = status.replace("_", " ").title()
         detail = assistant_message
