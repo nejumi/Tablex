@@ -2065,6 +2065,22 @@ def _notebook_index_item(
     report = reports_by_artifact_id.get(report_artifact.id) if report_artifact else None
     visualization = visualizations_by_artifact_id.get(visualization_artifact.id) if visualization_artifact else None
     execution_metadata = loads_json(execution_manifest_artifact.metadata_json, {}) if execution_manifest_artifact else {}
+    related_metadata_sources = [
+        metadata,
+        execution_metadata,
+        loads_json(report_artifact.metadata_json, {}) if report_artifact else {},
+        loads_json(execution_report_artifact.metadata_json, {}) if execution_report_artifact else {},
+        loads_json(execution_html_artifact.metadata_json, {}) if execution_html_artifact else {},
+        loads_json(figure_manifest_artifact.metadata_json, {}) if figure_manifest_artifact else {},
+        loads_json(evidence_bundle_artifact.metadata_json, {}) if evidence_bundle_artifact else {},
+        loads_json(evidence_html_artifact.metadata_json, {}) if evidence_html_artifact else {},
+        loads_json(execution_source_artifact.metadata_json, {}) if execution_source_artifact else {},
+        loads_json(agent_task_contract_artifact.metadata_json, {}) if agent_task_contract_artifact else {},
+        loads_json(execution_plan_artifact.metadata_json, {}) if execution_plan_artifact else {},
+    ]
+    dataset_snapshot_id = _first_metadata_text(related_metadata_sources, "dataset_snapshot_id")
+    run_id = _first_metadata_text(related_metadata_sources, "run_id")
+    model_version_id = _first_metadata_text(related_metadata_sources, "model_version_id")
     context_summary = _notebook_artifact_context_summary(notebook_artifact)
     content = _notebook_content_signal(notebook_kind, context_summary)
     if content["readiness"] in {"source_only", "unknown"}:
@@ -2105,9 +2121,9 @@ def _notebook_index_item(
         "title": _notebook_title(notebook_kind),
         "status": execution_status if execution_status != "unknown" else "ready",
         "created_at": notebook_artifact.created_at.isoformat(),
-        "dataset_snapshot_id": metadata.get("dataset_snapshot_id"),
-        "run_id": metadata.get("run_id"),
-        "model_version_id": metadata.get("model_version_id"),
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "run_id": run_id,
+        "model_version_id": model_version_id,
         "artifact_ids": {
             "notebook": notebook_artifact.id,
             "html_preview": html_artifact.id if html_artifact else None,
@@ -2134,6 +2150,14 @@ def _notebook_index_item(
         "recommendation_score": recommendation_score,
         "recommendation_reason": _notebook_recommendation_reason(notebook_kind, coverage, content),
     }
+
+
+def _first_metadata_text(metadata_sources: list[dict[str, Any]], key: str) -> str | None:
+    for metadata in metadata_sources:
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
 
 
 def _linked_notebook_artifacts(

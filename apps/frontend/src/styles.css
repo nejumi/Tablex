@@ -3622,6 +3622,32 @@ td {
   letter-spacing: 0;
 }
 
+.leaderboard-result-notebooks {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  padding: 10px 12px;
+}
+
+.leaderboard-result-notebooks > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.leaderboard-result-notebooks strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.leaderboard-result-notebooks small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .leaderboard-best-score {
   display: grid;
   gap: 4px;

@@ -497,6 +497,8 @@ const englishMessages = {
   notebookLinkedAssetDetail: "Open the notebook viewer from this chat, the related dataset, model, run, or Assets.",
   relatedNotebooks: "Notebooks",
   noRelatedNotebooks: "No linked notebook yet",
+  leaderboardResultNotebooks: "Result notebooks",
+  leaderboardResultNotebooksBody: "Readable analysis and model-diagnostic notebooks for this leaderboard.",
   currentTaskTitle: "Current task",
   currentTaskIdle: "Idle",
   currentTaskEmpty: "No active task. Ask Tablee for the next useful move or start the agent.",
@@ -1171,6 +1173,8 @@ const japaneseMessages: LocaleMessages = {
   notebookLinkedAssetDetail: "このChat、関連するDataset、Model、Run、Assetsから同じNotebook viewerを開けます。",
   relatedNotebooks: "ノートブック",
   noRelatedNotebooks: "紐づくノートブックはまだありません",
+  leaderboardResultNotebooks: "結果ノートブック",
+  leaderboardResultNotebooksBody: "このリーダーボードに関係する分析とモデル診断のNotebookです。",
   currentTaskTitle: "現在のタスク",
   currentTaskIdle: "待機中",
   currentTaskEmpty: "実行中のタスクはありません。次の一手をTableeに聞くか、Agentを開始してください。",
@@ -15482,6 +15486,25 @@ function notebooksForLeaderboardEntry(index: NotebookIndex | null, entry: Leader
   return matched;
 }
 
+function notebooksForLeaderboardResults(index: NotebookIndex | null, leaderboard: LeaderboardEntry[]): NotebookIndexItem[] {
+  if (!index) return [];
+  const runIds = new Set(leaderboard.map((entry) => entry.run_id));
+  const modelVersionIds = new Set(
+    leaderboard.map((entry) => entry.model_version_id).filter((value): value is string => Boolean(value))
+  );
+  const resultKinds = new Set(["model_diagnostics", "agent_authored", "analysis_notebook"]);
+  const seen = new Set<string>();
+  return index.items.filter((item) => {
+    const linkedToRun = Boolean(item.run_id && runIds.has(item.run_id));
+    const linkedToModel = Boolean(item.model_version_id && modelVersionIds.has(item.model_version_id));
+    const projectResultNotebook = !item.run_id && !item.model_version_id && resultKinds.has(item.notebook_kind);
+    if (!linkedToRun && !linkedToModel && !projectResultNotebook) return false;
+    if (seen.has(item.notebook_artifact_id)) return false;
+    seen.add(item.notebook_artifact_id);
+    return true;
+  });
+}
+
 function RelatedNotebookLinks({
   notebooks,
   onOpen,
@@ -16071,6 +16094,7 @@ function LeaderboardTab({
   const topMetricName = selectedMetric ?? "metric";
   const diagnosticsReady = booleanField(resultReadout?.diagnostics.available) || diagnosticArtifacts.length > 0;
   const decisionReady = booleanField(resultReadout?.decision_report.available);
+  const resultNotebooks = notebooksForLeaderboardResults(notebookIndex, leaderboard);
 
   async function setLeaderboardMetric(metric: string) {
     await api(`/api/projects/${project.id}/leaderboard/metric`, {
@@ -16126,6 +16150,21 @@ function LeaderboardTab({
           </div>
         </div>
         {leaderboard.length ? (
+          <>
+          {resultNotebooks.length ? (
+            <div className="leaderboard-result-notebooks">
+              <div>
+                <strong>{text.leaderboardResultNotebooks}</strong>
+                <small>{text.leaderboardResultNotebooksBody}</small>
+              </div>
+              <RelatedNotebookLinks
+                notebooks={resultNotebooks}
+                onOpen={(artifactId) => void loadPreview(artifactId)}
+                previewLoadingId={previewLoadingId}
+                text={text}
+              />
+            </div>
+          ) : null}
           <div className="leaderboard-table-wrap">
             <Table
               headers={["Rank", "Run", "Score", "Model", "Evaluation", "Evidence", "Actions"]}
@@ -16195,6 +16234,7 @@ function LeaderboardTab({
               ])}
             />
           </div>
+          </>
         ) : (
           <EmptyInline text="Run a baseline or agent task after approving evaluation. Ranked runs will appear here." />
         )}

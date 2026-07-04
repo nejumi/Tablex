@@ -533,3 +533,46 @@ def test_notebook_index_uses_execution_manifest_status_when_notebook_metadata_is
         assert index["counts"]["with_html_preview"] == 1
         assert item["artifact_ids"]["preview"] == "art_execution_html"
         assert item["preview_artifact_id"] == "art_execution_html"
+
+
+def test_notebook_index_inherits_run_context_from_related_artifact_metadata(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    project_id = "p_notebook_run_context"
+
+    with sessionmaker(engine)() as db:
+        project = Project(id=project_id, name="Notebook Run Context")
+        notebook = artifact(
+            "art_notebook",
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="model_diagnostics_notebook",
+            metadata={"notebook_kind": "model_diagnostics"},
+        )
+        execution_manifest = artifact(
+            "art_execution_manifest",
+            project_id=project_id,
+            asset_type="notebook_execution_manifest",
+            name="notebook_execution_manifest",
+            metadata={
+                "notebook_artifact_id": notebook.id,
+                "execution_status": "marimo_export_succeeded",
+                "run_id": "run_context",
+                "model_version_id": "mv_context",
+            },
+        )
+        execution_html = artifact(
+            "art_execution_html",
+            project_id=project_id,
+            asset_type="notebook_execution_html",
+            name="notebook_execution_html",
+            metadata={"notebook_artifact_id": notebook.id},
+        )
+        db.add_all([project, notebook, execution_manifest, execution_html])
+        db.commit()
+
+        index = build_project_notebook_index(db, project)
+
+        item = index["items"][0]
+        assert item["run_id"] == "run_context"
+        assert item["model_version_id"] == "mv_context"
