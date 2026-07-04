@@ -27,7 +27,7 @@ def make_client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(settings))
 
 
-def test_avatar_candidate_endpoint_returns_generated_data_urls(
+def test_avatar_candidate_endpoint_queues_generated_data_urls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -52,7 +52,7 @@ def test_avatar_candidate_endpoint_returns_generated_data_urls(
         ]
 
     monkeypatch.setattr(
-        "tabular_harness.api.routes.generate_user_avatar_candidates",
+        "tabular_harness.worker.jobs.generate_user_avatar_candidates",
         fake_generate_user_avatar_candidates,
     )
 
@@ -62,7 +62,17 @@ def test_avatar_candidate_endpoint_returns_generated_data_urls(
     )
 
     assert response.status_code == 200, response.text
-    assert response.json() == {
+    job = response.json()
+    assert job["status"] == "queued"
+    assert job["job_type"] == "generate_user_avatar_candidates"
+    assert job["policy"]["execution"] == "queued_worker"
+
+    worker_response = client.post("/api/worker/run-once?include_long_running=true")
+    assert worker_response.status_code == 200, worker_response.text
+    completed = worker_response.json()
+    assert completed["id"] == job["id"]
+    assert completed["status"] == "succeeded"
+    assert completed["output"] == {
         "candidates": [
             {
                 "id": "candidate_1",
@@ -70,11 +80,27 @@ def test_avatar_candidate_endpoint_returns_generated_data_urls(
                 "model": "test-image-model",
                 "revised_prompt": "friendly analyst avatar, square icon",
             }
-        ]
+        ],
+        "candidate_count": 1,
+        "worker_events": [
+            {
+                "worker_id": "avatar-generator",
+                "display_name": "Avatar Generator",
+                "status": "succeeded",
+                "headline": "Avatar candidates generated",
+                "detail": "Generated 1 user avatar candidate(s).",
+                "target_tab": "Settings",
+                "target_anchor": "user-avatar",
+                "current_tokens": 40,
+                "cumulative_tokens": 120,
+                "token_series": [18, 45, 72, 120],
+                "source": "avatar_generation_worker",
+            }
+        ],
     }
 
 
-def test_avatar_candidate_endpoint_reports_generator_unavailable(
+def test_avatar_candidate_worker_reports_generator_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -89,7 +115,7 @@ def test_avatar_candidate_endpoint_reports_generator_unavailable(
         raise AvatarGenerationError("OPENAI_API_KEY is not configured for image generation.", status_code=503)
 
     monkeypatch.setattr(
-        "tabular_harness.api.routes.generate_user_avatar_candidates",
+        "tabular_harness.worker.jobs.generate_user_avatar_candidates",
         unavailable_generate_user_avatar_candidates,
     )
 
@@ -98,8 +124,16 @@ def test_avatar_candidate_endpoint_reports_generator_unavailable(
         json={"prompt": "friendly analyst avatar", "count": 3},
     )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == "OPENAI_API_KEY is not configured for image generation."
+    assert response.status_code == 200, response.text
+    job = response.json()
+    assert job["status"] == "queued"
+
+    worker_response = client.post("/api/worker/run-once?include_long_running=true")
+    assert worker_response.status_code == 200, worker_response.text
+    completed = worker_response.json()
+    assert completed["id"] == job["id"]
+    assert completed["status"] == "failed"
+    assert completed["error_message"] == "OPENAI_API_KEY is not configured for image generation."
 
 
 def test_avatar_generation_uses_codex_cli_without_openai_api_key(monkeypatch: pytest.MonkeyPatch) -> None:

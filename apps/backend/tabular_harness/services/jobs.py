@@ -79,6 +79,7 @@ JOB_TYPES = {
     "import_benchmark_dataset",
     "create_benchmark_scenario_pack",
     "translate_tier3_content",
+    "generate_user_avatar_candidates",
 }
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}

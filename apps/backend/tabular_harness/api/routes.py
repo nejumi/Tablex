@@ -86,7 +86,6 @@ from tabular_harness.schemas import (
     AutonomyStartCreate,
     AutonomyStopCreate,
     AvatarCandidateCreate,
-    AvatarCandidateResponse,
     BenchmarkDatasetRead,
     BenchmarkFixtureRequest,
     BenchmarkFixtureResponse,
@@ -197,10 +196,6 @@ from tabular_harness.services.auth import (
 from tabular_harness.services.autonomy import (
     queue_autonomous_session_continuation,
     run_autonomous_loop_tick,
-)
-from tabular_harness.services.avatar_generation import (
-    AvatarGenerationError,
-    generate_user_avatar_candidates,
 )
 from tabular_harness.services.baseline import (
     normalize_model_candidate_name,
@@ -448,27 +443,29 @@ def update_current_user_settings(
     return user_to_dict(user)
 
 
-@router.post("/api/user/avatar-candidates", response_model=AvatarCandidateResponse)
-def generate_avatar_candidates(payload: AvatarCandidateCreate) -> dict[str, Any]:
-    try:
-        candidates = generate_user_avatar_candidates(
-            prompt=payload.prompt,
-            count=payload.count,
-            user="tablex-user-avatar",
-        )
-    except AvatarGenerationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    return {
-        "candidates": [
-            {
-                "id": candidate.id,
-                "data_url": candidate.data_url,
-                "model": candidate.model,
-                "revised_prompt": candidate.revised_prompt,
-            }
-            for candidate in candidates
-        ]
-    }
+@router.post("/api/user/avatar-candidates", response_model=JobRead)
+def generate_avatar_candidates(
+    payload: AvatarCandidateCreate,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    job = create_job(
+        db,
+        job_type="generate_user_avatar_candidates",
+        project_id=None,
+        input_payload={"prompt": payload.prompt, "count": payload.count},
+        context={"source": "user_settings_avatar"},
+        policy={
+            "execution": "queued_worker",
+            "runner": "CodexCliRunner",
+            "network": "disabled_until_runner_policy_allows",
+            "secret_access": "forbidden",
+            "artifact_contract": "avatar_candidates.v1",
+        },
+        priority=80,
+        created_by=request_actor_id(request),
+    )
+    return job_to_dict(job)
 
 
 @router.get("/api/benchmarks", response_model=list[BenchmarkDatasetRead])

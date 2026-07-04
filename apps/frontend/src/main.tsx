@@ -82,6 +82,10 @@ type AvatarCandidate = {
   revised_prompt: string | null;
 };
 
+type AvatarCandidateJobOutput = {
+  candidates?: AvatarCandidate[];
+};
+
 const userSettingsStorageKey = "tablex.userSettings.v1";
 const dynamicLocaleStorageKey = "tablex.dynamicLocalePacks.v1";
 
@@ -3148,6 +3152,19 @@ function formatElapsedSeconds(seconds: number) {
   return `${minutes}m ${String(remainder).padStart(2, "0")}s`;
 }
 
+async function waitForAvatarJob(jobId: string): Promise<Job> {
+  const deadline = Date.now() + 12 * 60_000;
+  while (Date.now() < deadline) {
+    const job = await api<Job>(`/api/jobs/${jobId}`);
+    if (job.status === "succeeded") return job;
+    if (["failed", "cancelled", "timed_out"].includes(job.status)) {
+      throw new Error(job.error_message ?? `Avatar generation job ${job.status}.`);
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+  }
+  throw new Error("Avatar generation is still running. Check Jobs or try again shortly.");
+}
+
 function uploadFormData<T>(
   path: string,
   body: FormData,
@@ -3621,12 +3638,18 @@ function App() {
   }
 
   async function generateAvatarCandidates(prompt: string): Promise<AvatarCandidate[]> {
-    const response = await api<{ candidates: AvatarCandidate[] }>("/api/user/avatar-candidates", {
+    const job = await api<Job>("/api/user/avatar-candidates", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt, count: 3 })
     });
-    return response.candidates;
+    await api<Job>(`/api/jobs/${job.id}/run`, { method: "POST" });
+    const completedJob = await waitForAvatarJob(job.id);
+    const output = completedJob.output as AvatarCandidateJobOutput;
+    if (!Array.isArray(output.candidates)) {
+      throw new Error("Avatar generation completed without candidates.");
+    }
+    return output.candidates;
   }
 
   function ensureDynamicLocale(localeInput: string) {

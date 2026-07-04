@@ -58,6 +58,7 @@ from tabular_harness.services.autonomy import (
     queue_autonomous_session_continuation,
     run_autonomous_loop_tick,
 )
+from tabular_harness.services.avatar_generation import generate_user_avatar_candidates
 from tabular_harness.services.baseline import (
     ModelDependencyRequiredError,
     create_baseline_strategy_plan,
@@ -370,6 +371,45 @@ def translate_tier3_content_handler(db: Session, job: Job, store: LocalArtifactS
         "artifact_id": result.translated_artifact.id,
         "artifact_ids": [result.contract_artifact.id, result.translated_artifact.id],
         "translation": translation_payload,
+    }
+
+
+def generate_user_avatar_candidates_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    del db, store
+    payload = loads_json(job.input_json, {})
+    prompt = payload.get("prompt")
+    count = payload.get("count", 3)
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("generate_user_avatar_candidates requires prompt")
+    if not isinstance(count, int):
+        raise ValueError("generate_user_avatar_candidates requires integer count")
+    candidates = generate_user_avatar_candidates(prompt=prompt, count=count, user="tablex-user-avatar")
+    return {
+        "candidates": [
+            {
+                "id": candidate.id,
+                "data_url": candidate.data_url,
+                "model": candidate.model,
+                "revised_prompt": candidate.revised_prompt,
+            }
+            for candidate in candidates
+        ],
+        "candidate_count": len(candidates),
+        "worker_events": [
+            {
+                "worker_id": "avatar-generator",
+                "display_name": "Avatar Generator",
+                "status": "succeeded",
+                "headline": "Avatar candidates generated",
+                "detail": f"Generated {len(candidates)} user avatar candidate(s).",
+                "target_tab": "Settings",
+                "target_anchor": "user-avatar",
+                "current_tokens": 40,
+                "cumulative_tokens": 120,
+                "token_series": [18, 45, 72, 120],
+                "source": "avatar_generation_worker",
+            }
+        ],
     }
 
 
@@ -3117,6 +3157,7 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["compare_guided_journey_snapshots"] = compare_guided_journey_snapshots_handler
     handlers["upload_relational_schema_hint"] = upload_relational_schema_hint_handler
     handlers["translate_tier3_content"] = translate_tier3_content_handler
+    handlers["generate_user_avatar_candidates"] = generate_user_avatar_candidates_handler
     handlers["download_public_benchmark_archive"] = download_public_benchmark_archive_handler
     handlers["import_benchmark_dataset"] = import_benchmark_dataset_handler
     handlers["run_benchmark_fixture_smoke"] = run_benchmark_fixture_smoke_handler
