@@ -6520,7 +6520,7 @@ function buildResearchPlanBlocks({
   }
 
   return appendObservedAgentPlanBlock(
-    attachResearchPlanSubtasks(renumberResearchPlanBlocks(mergedBlocks), jobs, text, locale, onTabChange, { appendUnassigned: false }),
+    attachResearchPlanSubtasks(renumberResearchPlanBlocks(mergedBlocks), jobs, text, locale, onTabChange, { appendUnassigned: true }),
     turnState,
     text,
     locale,
