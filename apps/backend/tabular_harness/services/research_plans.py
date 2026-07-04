@@ -41,6 +41,7 @@ PLAN_BLOCK_STATUSES = {"done", "active", "pending", "blocked", "waiting", "skipp
 PLAN_TERMINAL_STATUSES = {"done", "skipped"}
 PLAN_CURRENT_STATUSES = {"active", "blocked", "waiting"}
 PLAN_TOP_LEVEL_GRANULARITIES = {"chapter", "phase", "milestone"}
+PLAN_MAX_TOP_LEVEL_BLOCKS = 7
 PLAN_TOO_FINE_GRANULARITIES = {
     "analysis",
     "check",
@@ -467,14 +468,13 @@ def validate_research_plan_document(
         return issues
 
     blocks = [block for block in raw_blocks if isinstance(block, dict)]
-    if strict and len(blocks) > 8:
+    if strict and len(blocks) > PLAN_MAX_TOP_LEVEL_BLOCKS:
         issues.append(
             research_plan_issue(
                 "top_level_plan_too_granular",
                 "/timeline_blocks",
-                f"The plan has {len(blocks)} top-level nodes, which is likely too granular for the main ResearchPlan.",
-                "Keep the top-level plan to a small number of chapter-like blocks. Put individual analyses, model attempts, and diagnostics under subtasks, ExperimentRuns, notebooks, or reports.",
-                severity="warning",
+                f"The plan has {len(blocks)} top-level nodes; the main ResearchPlan allows at most {PLAN_MAX_TOP_LEVEL_BLOCKS}.",
+                "Keep the top-level plan chapter-like. Put individual analyses, model attempts, diagnostics, and report sections under subtasks, ExperimentRuns, notebooks, or reports.",
             )
         )
     seen_ids: set[str] = set()
@@ -512,7 +512,6 @@ def validate_research_plan_document(
                     f"{path}/granularity",
                     f"Top-level node `{block_id}` does not declare its granularity.",
                     "Set granularity to chapter, phase, or milestone. Keep detailed work in subtasks and artifacts.",
-                    severity="warning",
                 )
             )
         if block_id in seen_ids:

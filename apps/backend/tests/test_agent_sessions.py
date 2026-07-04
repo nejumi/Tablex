@@ -1922,8 +1922,18 @@ def test_research_plan_tool_rejects_later_done_node_before_open_predecessor(tmp_
                     "document": {
                         "schema_version": "research_plan.v2",
                         "timeline_blocks": [
-                            {"id": "data_understanding", "title": "Data understanding", "status": "pending"},
-                            {"id": "modeling", "title": "Modeling", "status": "done"},
+                            {
+                                "id": "data_understanding",
+                                "title": "Data understanding",
+                                "granularity": "chapter",
+                                "status": "pending",
+                            },
+                            {
+                                "id": "modeling",
+                                "title": "Modeling",
+                                "granularity": "chapter",
+                                "status": "done",
+                            },
                         ],
                     },
                     "reason": "This should be rejected because the visible order is inconsistent.",
@@ -2121,6 +2131,74 @@ def test_research_plan_tool_rejects_fine_grained_top_level_node(tmp_path: Path) 
         assert ack["status"] == "failed"
         issue_codes = {issue["code"] for issue in ack["error"]["issues"]}
         assert "top_level_node_granularity_too_fine" in issue_codes
+        assert db.scalar(select(func.count()).select_from(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project.id)) == 0
+
+
+def test_research_plan_tool_rejects_overly_granular_top_level_plan(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    request_dir = research_plan_requests_dir(workspace)
+    request_dir.mkdir(parents=True)
+    timeline_blocks = [
+        {
+            "id": f"chapter_{index}",
+            "title": f"Chapter {index}",
+            "granularity": "chapter",
+            "status": "done",
+            "no_output_required": True,
+            "no_output_required_rationale": "Synthetic completed chapter for plan-size validation.",
+        }
+        for index in range(1, 8)
+    ]
+    timeline_blocks.append(
+        {
+            "id": "chapter_8",
+            "title": "Chapter 8",
+            "granularity": "chapter",
+            "status": "active",
+        }
+    )
+    (request_dir / "too_many_top_level.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_research_plan_request.v1",
+                "request_id": "too_many_top_level",
+                "operation": "commit_revision",
+                "payload": {
+                    "document": {
+                        "schema_version": "research_plan.v2",
+                        "timeline_blocks": timeline_blocks,
+                    },
+                    "reason": "This should be rejected because detailed work belongs below chapter nodes.",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_many_plan", name="Many Plan")
+        session = AgentSession(
+            id="as_many_plan",
+            project_id=project.id,
+            goal_text="Reject overly granular top-level plans.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        ack = loads_json(
+            (research_plan_acks_dir(workspace) / "too_many_top_level.ack.json").read_text(encoding="utf-8"),
+            {},
+        )
+        assert ack["status"] == "failed"
+        issue_codes = {issue["code"] for issue in ack["error"]["issues"]}
+        assert "top_level_plan_too_granular" in issue_codes
         assert db.scalar(select(func.count()).select_from(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project.id)) == 0
 
 
@@ -2578,6 +2656,7 @@ def test_research_plan_file_requests_commit_presence_links_and_attention(tmp_pat
                             {
                                 "id": "deep_data_understanding",
                                 "title": "Deep data understanding",
+                                "granularity": "chapter",
                                 "why_it_matters": "Inspect the actual data story before modeling.",
                                 "status": "active",
                             }
