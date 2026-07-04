@@ -14,11 +14,14 @@ from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
     AgentSession,
     Artifact,
+    DatasetSnapshot,
+    EvaluationSpec,
     ExperimentRun,
     LineageEdge,
     Project,
     ResearchPlan,
     ResearchPlanRevision,
+    SplitManifest,
     User,
     utc_now,
 )
@@ -62,6 +65,17 @@ class RunSpec:
     source_artifact_id: str | None = None
     source_workspace_path: str | None = None
     research_plan_node_id: str | None = None
+    dataset_snapshot_id: str | None = None
+    evaluation_spec_id: str | None = None
+    split_manifest_id: str | None = None
+
+
+@dataclass(frozen=True)
+class RunSpecContext:
+    source_artifact_id: str | None
+    dataset_snapshot_id: str | None
+    evaluation_spec_id: str | None
+    split_manifest_id: str | None
 
 
 def experiment_requests_dir(workspace: Path) -> Path:
@@ -129,6 +143,7 @@ def process_experiment_result_requests(
                 "processed_at": utc_now().isoformat(),
                 "result": {
                     "registered_run_ids": [run.id for run in runs],
+                    "registered_runs": [experiment_run_ack_item(run) for run in runs],
                     "registered_count": len(runs),
                     "duplicate_count": max(0, len(specs) - len(runs)),
                 },
@@ -252,12 +267,30 @@ def ingest_registered_session_experiment_artifacts(
     return created_runs
 
 
+def experiment_run_ack_item(run: ExperimentRun) -> dict[str, Any]:
+    params = loads_json(run.params_json, {})
+    return {
+        "run_id": run.id,
+        "model_id": params.get("model_id"),
+        "source_artifact_id": params.get("source_artifact_id"),
+        "dataset_snapshot_id": run.dataset_snapshot_id,
+        "evaluation_spec_id": run.evaluation_spec_id,
+        "split_manifest_id": run.split_manifest_id,
+        "research_plan_node_id": params.get("research_plan_node_id"),
+    }
+
+
 def run_specs_from_experiment_request(payload: dict[str, Any], *, request_id: str) -> list[RunSpec]:
     raw_runs = payload.get("runs")
     if not isinstance(raw_runs, list) or not raw_runs:
         raise ValueError("payload.runs must contain at least one run")
     specs: list[RunSpec] = []
     default_plan_node_id = str(payload.get("research_plan_node_id") or "").strip() or None
+    default_source_artifact_id = optional_text_field(payload, "source_artifact_id")
+    default_source_workspace_path = optional_text_field(payload, "source_workspace_path")
+    default_dataset_snapshot_id = optional_text_field(payload, "dataset_snapshot_id")
+    default_evaluation_spec_id = optional_text_field(payload, "evaluation_spec_id")
+    default_split_manifest_id = optional_text_field(payload, "split_manifest_id")
     for index, item in enumerate(raw_runs):
         if not isinstance(item, dict):
             raise ValueError(f"payload.runs/{index} must be an object")
@@ -281,9 +314,12 @@ def run_specs_from_experiment_request(payload: dict[str, Any], *, request_id: st
                 },
                 primary_metric_name=primary_metric_name,
                 primary_metric_value=primary_metric_value,
-                source_artifact_id=str(item.get("source_artifact_id")) if item.get("source_artifact_id") else None,
-                source_workspace_path=str(item.get("source_workspace_path")) if item.get("source_workspace_path") else None,
+                source_artifact_id=optional_text_field(item, "source_artifact_id") or default_source_artifact_id,
+                source_workspace_path=optional_text_field(item, "source_workspace_path") or default_source_workspace_path,
                 research_plan_node_id=str(item.get("research_plan_node_id") or "").strip() or default_plan_node_id,
+                dataset_snapshot_id=optional_text_field(item, "dataset_snapshot_id") or default_dataset_snapshot_id,
+                evaluation_spec_id=optional_text_field(item, "evaluation_spec_id") or default_evaluation_spec_id,
+                split_manifest_id=optional_text_field(item, "split_manifest_id") or default_split_manifest_id,
             )
         )
     primary_metric_names = {spec.primary_metric_name for spec in specs}
@@ -338,9 +374,22 @@ def run_specs_from_structured_result_payload(payload: dict[str, Any], *, source_
                 source_artifact_id=source_artifact.id,
                 source_workspace_path=str(loads_json(source_artifact.metadata_json, {}).get("workspace_relative_path") or ""),
                 research_plan_node_id=plan_node_id,
+                dataset_snapshot_id=optional_text_field(payload, "dataset_snapshot_id"),
+                evaluation_spec_id=optional_text_field(payload, "evaluation_spec_id"),
+                split_manifest_id=optional_text_field(payload, "split_manifest_id"),
             )
         )
     return specs
+
+
+def optional_text_field(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string when provided")
+    stripped = value.strip()
+    return stripped or None
 
 
 def normalize_metrics(source: dict[str, Any]) -> dict[str, Any]:
@@ -386,8 +435,12 @@ def register_experiment_run_specs(
     del store
     if strict_plan_node_refs:
         validate_run_spec_plan_node_refs(db, project=project, specs=specs)
+    contexts = [
+        resolve_run_spec_context(db, project=project, session=session, spec=spec, source_artifact=source_artifact)
+        for spec in specs
+    ]
     created: list[ExperimentRun] = []
-    for spec in specs:
+    for spec, context in zip(specs, contexts, strict=True):
         if experiment_run_exists(db, project_id=project.id, source_key=spec.source_key):
             continue
         result_signature = experiment_result_signature(spec.metrics, model_id=spec.model_id)
@@ -397,6 +450,9 @@ def register_experiment_run_specs(
         run = ExperimentRun(
             id=new_id("run"),
             project_id=project.id,
+            dataset_snapshot_id=context.dataset_snapshot_id,
+            evaluation_spec_id=context.evaluation_spec_id,
+            split_manifest_id=context.split_manifest_id,
             runner_type="codex_main_session",
             status="succeeded",
             started_at=now,
@@ -406,12 +462,15 @@ def register_experiment_run_specs(
                     **spec.params,
                     "agent_session_id": session.id,
                     "source_request_id": source_request_id,
-                    "source_artifact_id": spec.source_artifact_id or (source_artifact.id if source_artifact is not None else None),
+                    "source_artifact_id": context.source_artifact_id,
                     "source_workspace_path": spec.source_workspace_path,
                     "source_key": spec.source_key,
                     "result_signature": result_signature,
                     "model_id": spec.model_id,
                     "research_plan_node_id": spec.research_plan_node_id,
+                    "dataset_snapshot_id": context.dataset_snapshot_id,
+                    "evaluation_spec_id": context.evaluation_spec_id,
+                    "split_manifest_id": context.split_manifest_id,
                 }
             ),
             metrics_json=dumps_json(spec.metrics),
@@ -421,7 +480,7 @@ def register_experiment_run_specs(
         db.add(run)
         db.flush()
         created.append(run)
-        source_artifact_id = spec.source_artifact_id or (source_artifact.id if source_artifact is not None else None)
+        source_artifact_id = context.source_artifact_id
         if source_artifact_id:
             create_lineage_edge(
                 db,
@@ -443,6 +502,104 @@ def register_experiment_run_specs(
         )
     db.flush()
     return created
+
+
+def resolve_run_spec_context(
+    db: Session,
+    *,
+    project: Project,
+    session: AgentSession,
+    spec: RunSpec,
+    source_artifact: Artifact | None,
+) -> RunSpecContext:
+    source_artifact_id = resolve_run_spec_source_artifact_id(
+        db,
+        project=project,
+        session=session,
+        spec=spec,
+        source_artifact=source_artifact,
+    )
+    dataset_snapshot_id = spec.dataset_snapshot_id
+    evaluation_spec_id = spec.evaluation_spec_id
+    split_manifest_id = spec.split_manifest_id
+    if split_manifest_id:
+        split_manifest = db.get(SplitManifest, split_manifest_id)
+        if split_manifest is None or split_manifest.project_id != project.id:
+            raise ValueError(f"split_manifest_id `{split_manifest_id}` does not belong to this project")
+        if evaluation_spec_id and split_manifest.evaluation_spec_id != evaluation_spec_id:
+            raise ValueError("split_manifest_id and evaluation_spec_id refer to different evaluation designs")
+        evaluation_spec_id = split_manifest.evaluation_spec_id
+    if evaluation_spec_id:
+        evaluation_spec = db.get(EvaluationSpec, evaluation_spec_id)
+        if evaluation_spec is None or evaluation_spec.project_id != project.id:
+            raise ValueError(f"evaluation_spec_id `{evaluation_spec_id}` does not belong to this project")
+        if dataset_snapshot_id and evaluation_spec.dataset_snapshot_id != dataset_snapshot_id:
+            raise ValueError("evaluation_spec_id and dataset_snapshot_id refer to different datasets")
+        dataset_snapshot_id = evaluation_spec.dataset_snapshot_id
+    if dataset_snapshot_id:
+        dataset_snapshot = db.get(DatasetSnapshot, dataset_snapshot_id)
+        if dataset_snapshot is None or dataset_snapshot.project_id != project.id:
+            raise ValueError(f"dataset_snapshot_id `{dataset_snapshot_id}` does not belong to this project")
+    return RunSpecContext(
+        source_artifact_id=source_artifact_id,
+        dataset_snapshot_id=dataset_snapshot_id,
+        evaluation_spec_id=evaluation_spec_id,
+        split_manifest_id=split_manifest_id,
+    )
+
+
+def resolve_run_spec_source_artifact_id(
+    db: Session,
+    *,
+    project: Project,
+    session: AgentSession,
+    spec: RunSpec,
+    source_artifact: Artifact | None,
+) -> str | None:
+    explicit_artifact_id = spec.source_artifact_id or (source_artifact.id if source_artifact is not None else None)
+    if explicit_artifact_id:
+        artifact = db.get(Artifact, explicit_artifact_id)
+        if artifact is None or artifact.project_id != project.id:
+            raise ValueError(f"source_artifact_id `{explicit_artifact_id}` does not belong to this project")
+        return artifact.id
+    if not spec.source_workspace_path:
+        return None
+    artifact = latest_session_artifact_for_workspace_path(
+        db,
+        project=project,
+        session=session,
+        workspace_path=spec.source_workspace_path,
+    )
+    if artifact is None:
+        raise ValueError(f"source_workspace_path `{spec.source_workspace_path}` is not registered as a Tablex artifact")
+    return artifact.id
+
+
+def latest_session_artifact_for_workspace_path(
+    db: Session,
+    *,
+    project: Project,
+    session: AgentSession,
+    workspace_path: str,
+) -> Artifact | None:
+    normalized = workspace_path.strip().lstrip("./")
+    artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id)
+            .order_by(Artifact.created_at.desc(), Artifact.version.desc())
+            .limit(300)
+        ).all()
+    )
+    for artifact in artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("source") != "main_agent_session_workspace":
+            continue
+        if metadata.get("agent_session_id") != session.id:
+            continue
+        if str(metadata.get("workspace_relative_path") or "").strip().lstrip("./") == normalized:
+            return artifact
+    return None
 
 
 def validate_run_spec_plan_node_refs(db: Session, *, project: Project, specs: list[RunSpec]) -> None:

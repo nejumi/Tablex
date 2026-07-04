@@ -20,6 +20,7 @@ from tabular_harness.models.entities import (
     Artifact,
     Base,
     DatasetSnapshot,
+    EvaluationSpec,
     ExperimentRun,
     Job,
     LineageEdge,
@@ -28,6 +29,7 @@ from tabular_harness.models.entities import (
     Question,
     ResearchPlanCurrentWork,
     ResearchPlanRevision,
+    SplitManifest,
     User,
     utc_now,
 )
@@ -2074,8 +2076,14 @@ def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Pa
     Base.metadata.create_all(engine)
     store = LocalArtifactStore(tmp_path / "artifacts")
     workspace = tmp_path / "workspace"
+    reports_dir = workspace / "reports"
     request_dir = experiment_requests_dir(workspace)
+    reports_dir.mkdir(parents=True)
     request_dir.mkdir(parents=True)
+    (reports_dir / "model_results_summary.md").write_text(
+        "# Model result summary\n\nFold-safe candidate metrics are summarized here.\n",
+        encoding="utf-8",
+    )
     (request_dir / "register_runs.json").write_text(
         dumps_json(
             {
@@ -2084,6 +2092,8 @@ def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Pa
                 "operation": "register_runs",
                 "payload": {
                     "research_plan_node_id": "modeling_and_diagnostics",
+                    "source_workspace_path": "reports/model_results_summary.md",
+                    "split_manifest_id": "split_exp_plan_link",
                     "runs": [
                         {
                             "model_id": "xgb_candidate",
@@ -2107,6 +2117,56 @@ def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Pa
             workspace_path=str(workspace),
         )
         db.add_all([project, session])
+        db.commit()
+        dataset_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="dataset_snapshot",
+            name="exp_plan_dataset_artifact",
+            filename="dataset.csv",
+            text="x,y\n1,2\n",
+            metadata={"project_id": project.id},
+        )
+        split_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="split_manifest",
+            name="exp_plan_split_artifact",
+            filename="split.json",
+            text="{}",
+            metadata={"project_id": project.id},
+        )
+        dataset = DatasetSnapshot(
+            id="ds_exp_plan_link",
+            project_id=project.id,
+            artifact_id=dataset_artifact.id,
+            source_type="upload",
+            row_count=2,
+            column_count=2,
+            schema_hash="schema_hash",
+        )
+        evaluation_spec = EvaluationSpec(
+            id="eval_exp_plan_link",
+            project_id=project.id,
+            dataset_snapshot_id=dataset.id,
+            name="Group CV",
+            split_type="group_split",
+            primary_metric="mae",
+            rationale_md="Use stable split evidence for the registered run.",
+            risk_level="medium",
+            status="approved",
+        )
+        split_manifest = SplitManifest(
+            id="split_exp_plan_link",
+            project_id=project.id,
+            evaluation_spec_id=evaluation_spec.id,
+            artifact_id=split_artifact.id,
+            train_count=1,
+            valid_count=1,
+        )
+        db.add_all([dataset, evaluation_spec, split_manifest])
         db.commit()
         revision = commit_research_plan_revision(
             db,
@@ -2142,6 +2202,33 @@ def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Pa
         assert run is not None
         params = loads_json(run.params_json, {})
         assert params["research_plan_node_id"] == "modeling_and_diagnostics"
+        assert run.dataset_snapshot_id == dataset.id
+        assert run.evaluation_spec_id == evaluation_spec.id
+        assert run.split_manifest_id == split_manifest.id
+        assert params["dataset_snapshot_id"] == dataset.id
+        assert params["evaluation_spec_id"] == evaluation_spec.id
+        assert params["split_manifest_id"] == split_manifest.id
+        assert params["source_artifact_id"]
+        source_artifact = db.get(Artifact, params["source_artifact_id"])
+        assert source_artifact is not None
+        assert loads_json(source_artifact.metadata_json, {})["workspace_relative_path"] == "reports/model_results_summary.md"
+        ack = loads_json((experiment_acks_dir(workspace) / "register_runs.ack.json").read_text(encoding="utf-8"), {})
+        assert ack["status"] == "succeeded"
+        assert ack["result"]["registered_runs"][0]["dataset_snapshot_id"] == dataset.id
+        assert ack["result"]["registered_runs"][0]["evaluation_spec_id"] == evaluation_spec.id
+        assert ack["result"]["registered_runs"][0]["split_manifest_id"] == split_manifest.id
+        assert ack["result"]["registered_runs"][0]["source_artifact_id"] == source_artifact.id
+        source_lineage = db.scalar(
+            select(LineageEdge).where(
+                LineageEdge.project_id == project.id,
+                LineageEdge.from_asset_type == "artifact",
+                LineageEdge.from_asset_id == source_artifact.id,
+                LineageEdge.to_asset_type == "experiment_run",
+                LineageEdge.to_asset_id == run.id,
+                LineageEdge.relation_type == "materializes_metrics_for",
+            )
+        )
+        assert source_lineage is not None
         edge = db.scalar(
             select(LineageEdge).where(
                 LineageEdge.project_id == project.id,
@@ -2153,6 +2240,16 @@ def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Pa
         )
         assert edge is not None
         assert loads_json(edge.metadata_json, {})["node_id"] == "modeling_and_diagnostics"
+        source_plan_edge = db.scalar(
+            select(LineageEdge).where(
+                LineageEdge.project_id == project.id,
+                LineageEdge.relation_type == "supports_plan_node",
+                LineageEdge.to_asset_type == "artifact",
+                LineageEdge.to_asset_id == source_artifact.id,
+            )
+        )
+        assert source_plan_edge is not None
+        assert loads_json(source_plan_edge.metadata_json, {})["role"] == "experiment_evidence"
         chat_artifact = db.scalar(
             select(Artifact)
             .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
