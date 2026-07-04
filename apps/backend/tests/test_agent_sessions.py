@@ -37,6 +37,7 @@ from tabular_harness.services.agent_session_results import (
     experiment_acks_dir,
     experiment_request_rejection_path,
     experiment_requests_dir,
+    ingest_registered_session_experiment_artifacts,
 )
 from tabular_harness.services.agent_sessions import (
     CODEX_RAW_TRANSCRIPT_FILENAME,
@@ -2130,6 +2131,96 @@ def test_structured_model_results_attach_to_single_active_research_plan_node(tmp
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
         assert chat_payload["intent"]["type"] == "experiment_results_registered"
         assert chat_payload["response_brief"]["research_plan_node_ids"] == ["modeling_and_diagnostics"]
+
+
+def test_existing_experiment_run_restores_chat_and_research_plan_link(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_existing_run_visibility", name="Existing Run Visibility")
+        session = AgentSession(
+            id="as_existing_run_visibility",
+            project_id=project.id,
+            goal_text="Expose existing model results.",
+        )
+        db.add_all([project, session])
+        db.commit()
+        source_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="agent_session_artifact",
+            name="existing_model_results",
+            filename="model_results.json",
+            text=dumps_json({"schema_version": "model_results.v1", "models": []}),
+            metadata={
+                "source": "main_agent_session_workspace",
+                "agent_session_id": session.id,
+                "workspace_relative_path": "artifacts/model_results.json",
+            },
+        )
+        run = ExperimentRun(
+            id="run_existing_visibility",
+            project_id=project.id,
+            runner_type="codex_main_session",
+            status="succeeded",
+            params_json=dumps_json(
+                {
+                    "agent_session_id": session.id,
+                    "source_artifact_id": source_artifact.id,
+                    "source_key": "existing_model_results:fold_safe_tree",
+                    "model_id": "fold_safe_tree",
+                }
+            ),
+            metrics_json=dumps_json({"primary_metric_name": "mae", "primary_metric_value": 37.0, "mae": 37.0}),
+            summary_md="Recovered fold-safe tree.",
+        )
+        db.add(run)
+        db.commit()
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "modeling_and_diagnostics",
+                        "title": "Modeling and diagnostics",
+                        "granularity": "chapter",
+                        "status": "active",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Codex is working on model comparison.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        ingest_registered_session_experiment_artifacts(db, store=store, project=project, session=session)
+        db.commit()
+
+        db.refresh(run)
+        params = loads_json(run.params_json, {})
+        assert params["research_plan_node_id"] == "modeling_and_diagnostics"
+        chat_artifact = db.scalar(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+            .order_by(Artifact.created_at.desc())
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["intent"]["type"] == "experiment_results_registered"
+        assert chat_payload["actions"][0]["target_tab"] == "Leaderboard"
+        assert chat_payload["actions"][0]["target_anchor"] == "result-readout"
+        assert chat_payload["response_brief"]["run_ids"] == [run.id]
+        assert chat_payload["response_brief"]["research_plan_node_ids"] == ["modeling_and_diagnostics"]
+        timeline = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+        block_links = timeline["blocks"][0]["attached_artifacts"]
+        assert any(link["link_type"] == "experiment_run" and link["run_id"] == run.id for link in block_links)
+        assert any(link["link_type"] == "artifact" and link["artifact_id"] == source_artifact.id for link in block_links)
 
 
 def test_experiment_result_file_request_registers_leaderboard_run_with_ack(tmp_path: Path) -> None:

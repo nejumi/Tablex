@@ -281,7 +281,85 @@ def ingest_registered_session_experiment_artifacts(
             source_artifact=source_artifact,
             source_request_id=None,
         )
+    restore_registered_session_experiment_visibility(db, store=store, project=project, session=session)
     return created_runs
+
+
+def restore_registered_session_experiment_visibility(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    session: AgentSession,
+) -> list[ExperimentRun]:
+    runs = session_registered_experiment_runs(db, project=project, session=session)
+    grouped: dict[tuple[str, str], list[ExperimentRun]] = {}
+    source_artifacts: dict[tuple[str, str], Artifact | None] = {}
+    source_request_ids: dict[tuple[str, str], str | None] = {}
+    for run in runs:
+        params = loads_json(run.params_json, {})
+        node_id = ensure_experiment_run_plan_visibility(db, project=project, run=run)
+        if node_id and params.get("research_plan_node_id") != node_id:
+            params["research_plan_node_id"] = node_id
+            run.params_json = dumps_json(params)
+        source_artifact_id = str(params.get("source_artifact_id") or "").strip()
+        source_artifact = db.get(Artifact, source_artifact_id) if source_artifact_id else None
+        if source_artifact is not None and source_artifact.project_id == project.id:
+            group_key = ("artifact", source_artifact.id)
+            source_artifacts[group_key] = source_artifact
+            source_request_ids[group_key] = None
+        else:
+            source_request_id = str(params.get("source_request_id") or "").strip() or None
+            group_key = ("request", source_request_id or "restored_session_runs")
+            source_artifacts[group_key] = None
+            source_request_ids[group_key] = source_request_id or "restored_session_runs"
+        grouped.setdefault(group_key, []).append(run)
+    for group_key, group_runs in grouped.items():
+        register_experiment_registration_chat_turn(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            runs=group_runs,
+            source_artifact=source_artifacts.get(group_key),
+            source_request_id=source_request_ids.get(group_key),
+        )
+    db.flush()
+    return runs
+
+
+def session_registered_experiment_runs(db: Session, *, project: Project, session: AgentSession) -> list[ExperimentRun]:
+    runs = list(
+        db.scalars(
+            select(ExperimentRun)
+            .where(ExperimentRun.project_id == project.id)
+            .order_by(ExperimentRun.started_at.asc(), ExperimentRun.id.asc())
+        ).all()
+    )
+    session_runs: list[ExperimentRun] = []
+    for run in runs:
+        params = loads_json(run.params_json, {})
+        if params.get("agent_session_id") == session.id:
+            session_runs.append(run)
+    return session_runs
+
+
+def ensure_experiment_run_plan_visibility(db: Session, *, project: Project, run: ExperimentRun) -> str | None:
+    params = loads_json(run.params_json, {})
+    node_id = resolve_research_plan_node_for_run(
+        db,
+        project=project,
+        explicit_node_id=str(params.get("research_plan_node_id") or "").strip() or None,
+    )
+    source_artifact_id = str(params.get("source_artifact_id") or "").strip() or None
+    attach_experiment_artifact_to_current_plan_node(
+        db,
+        project=project,
+        source_artifact_id=source_artifact_id,
+        run=run,
+        node_id=node_id,
+    )
+    return node_id
 
 
 def experiment_run_ack_item(run: ExperimentRun) -> dict[str, Any]:
