@@ -21,6 +21,7 @@ from tabular_harness.models.entities import (
 from tabular_harness.services.adaptive_strategy import create_adaptive_strategy_brief
 from tabular_harness.services.agent_chat import handle_agent_chat_turn
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
+from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
 from tabular_harness.services.analysis_notebooks import (
     create_notebook_execution_capture,
     create_notebook_execution_plan,
@@ -59,8 +60,15 @@ from tabular_harness.services.model_diagnostics_artifacts import (
 )
 from tabular_harness.services.model_versions import validate_model_version_package
 from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
-from tabular_harness.services.planned_agent_execution import run_planned_agent_task_codex_cli
-from tabular_harness.services.planned_agent_workspace import load_contract_payload
+from tabular_harness.services.planned_agent_execution import (
+    PlannedAgentTaskExecutionResult,
+    run_planned_agent_task_codex_cli,
+    run_planned_agent_task_local_stub,
+)
+from tabular_harness.services.planned_agent_workspace import (
+    load_contract_payload,
+    prepare_workspace_from_contract_artifact,
+)
 from tabular_harness.services.reporting import (
     create_project_visualization_dashboard,
     generate_project_insights,
@@ -1239,11 +1247,11 @@ def train_model_candidates_handler(db: Session, job: Job, store: LocalArtifactSt
     return output
 
 
-def run_planned_agent_task_codex_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+def planned_agent_contract_artifact_for_job(db: Session, job: Job, job_type: str) -> Artifact:
     payload = loads_json(job.input_json, {})
     artifact_id = payload.get("agent_task_contract_artifact_id")
     if not isinstance(artifact_id, str):
-        raise ValueError("run_planned_agent_task_codex requires agent_task_contract_artifact_id")
+        raise ValueError(f"{job_type} requires agent_task_contract_artifact_id")
     contract_artifact = db.get(Artifact, artifact_id)
     if contract_artifact is None:
         raise ValueError("AgentTaskContract artifact not found")
@@ -1251,6 +1259,121 @@ def run_planned_agent_task_codex_handler(db: Session, job: Job, store: LocalArti
         raise ValueError("Artifact is not an agent_task_contract")
     if contract_artifact.project_id is None:
         raise ValueError("AgentTaskContract artifact is not project-scoped")
+    return contract_artifact
+
+
+def prepare_planned_agent_workspace_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    contract_artifact = planned_agent_contract_artifact_for_job(db, job, "prepare_planned_agent_workspace")
+    project = db.get(Project, contract_artifact.project_id)
+    if project is None:
+        raise ValueError("Project not found")
+    result = prepare_workspace_from_contract_artifact(
+        db,
+        store=store,
+        project=project,
+        contract_artifact=contract_artifact,
+        job=job,
+    )
+    return {
+        "schema_version": result.manifest["schema_version"],
+        "task_id": result.manifest["task_id"],
+        "agent_task_contract_artifact_id": contract_artifact.id,
+        "agent_workspace_manifest_artifact_id": result.artifact.id,
+        "artifact_id": result.artifact.id,
+        "artifact_ids": [result.artifact.id],
+        "materialized_context_count": result.materialized_context_count,
+        "materialized_relational_context_count": result.materialized_relational_context_count,
+        "materialized_library_asset_count": result.materialized_library_asset_count,
+        "skipped_source_count": result.skipped_source_count,
+        "workspace_path": result.manifest["workspace_path"],
+    }
+
+
+def review_agent_task_readiness_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    contract_artifact = planned_agent_contract_artifact_for_job(db, job, "review_agent_task_readiness")
+    project = db.get(Project, contract_artifact.project_id)
+    if project is None:
+        raise ValueError("Project not found")
+    result = review_agent_task_readiness(
+        db,
+        store=store,
+        project=project,
+        contract_artifact=contract_artifact,
+        job=job,
+    )
+    return {
+        "schema_version": result.review["schema_version"],
+        "task_id": result.review["task_id"],
+        "agent_task_contract_artifact_id": contract_artifact.id,
+        "agent_task_readiness_review_artifact_id": result.review_artifact.id,
+        "agent_task_readiness_report_artifact_id": result.report_artifact.id,
+        "visualization_id": result.visualization.id,
+        "visualization_artifact_id": result.visualization_artifact.id,
+        "report_id": result.report.id,
+        "artifact_id": result.review_artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "readiness_status": result.review["status"],
+        "blocker_count": result.review["blocker_count"],
+        "warning_count": result.review["warning_count"],
+        "pass_count": result.review["pass_count"],
+        "next_actions": result.review["next_actions"][:3],
+    }
+
+
+def planned_agent_execution_job_output(
+    contract_artifact: Artifact,
+    result: PlannedAgentTaskExecutionResult,
+) -> dict[str, Any]:
+    return {
+        "agent_task_contract_artifact_id": contract_artifact.id,
+        "task_id": result.agent_result.task_id,
+        "runner": result.agent_result.outputs.get("runner"),
+        "agent_status": result.agent_result.status,
+        "agent_final_message": result.agent_result.final_message,
+        "agent_failure_reason": result.agent_result.failure_reason,
+        "agent_workspace_manifest_artifact_id": result.workspace_artifact_id,
+        "agent_task_readiness_review_artifact_id": result.readiness_artifact_id,
+        "readiness_status": result.readiness_status,
+        "artifact_ids": result.artifact_ids,
+        "ingested_artifact_ids": result.ingested_artifact_ids,
+        "report_id": result.report_id,
+        "evidence_id": result.evidence_id,
+        "experiment_run_id": result.experiment_ingestion.experiment_run_id,
+        "agent_metrics_artifact_id": result.experiment_ingestion.metrics_artifact_id,
+        "agent_feature_recipe_artifact_id": result.experiment_ingestion.feature_recipe_artifact_id,
+        "approach_decision_trace_artifact_id": result.approach_decision_trace_artifact_id,
+        "relational_context_source_count": result.relational_context_summary.get("source_count"),
+        "relational_context_summary_artifact_id": result.relational_context_summary_artifact_id,
+        "source_citation_manifest_artifact_id": result.experiment_ingestion.citation_manifest_artifact_id,
+        "citation_audit_report_id": result.experiment_ingestion.citation_audit_report_id,
+        "citation_audit_report_artifact_id": result.experiment_ingestion.citation_audit_report_artifact_id,
+        "citation_evidence_id": result.experiment_ingestion.citation_evidence_id,
+        "citation_visualization_id": result.experiment_ingestion.citation_visualization_id,
+        "citation_visualization_artifact_id": result.experiment_ingestion.citation_visualization_artifact_id,
+        "visualization_ids": result.experiment_ingestion.visualization_ids,
+        "requires_human_review": result.agent_result.requires_human_review,
+        "auto_prepared_workspace": result.auto_prepared_workspace,
+    }
+
+
+def run_planned_agent_task_stub_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    contract_artifact = planned_agent_contract_artifact_for_job(db, job, "run_planned_agent_task_stub")
+    project = db.get(Project, contract_artifact.project_id)
+    if project is None:
+        raise ValueError("Project not found")
+    result = run_planned_agent_task_local_stub(
+        db,
+        store=store,
+        project=project,
+        contract_artifact=contract_artifact,
+        job=job,
+    )
+    output = planned_agent_execution_job_output(contract_artifact, result)
+    return output
+
+
+def run_planned_agent_task_codex_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    contract_artifact = planned_agent_contract_artifact_for_job(db, job, "run_planned_agent_task_codex")
     project = db.get(Project, contract_artifact.project_id)
     if project is None:
         raise ValueError("Project not found")
@@ -1497,6 +1620,9 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["run_baseline"] = run_baseline_handler
     handlers["build_split_manifest"] = build_split_manifest_handler
     handlers["train_model_candidates"] = train_model_candidates_handler
+    handlers["prepare_planned_agent_workspace"] = prepare_planned_agent_workspace_handler
+    handlers["review_agent_task_readiness"] = review_agent_task_readiness_handler
+    handlers["run_planned_agent_task_stub"] = run_planned_agent_task_stub_handler
     handlers["run_planned_agent_task_codex"] = run_planned_agent_task_codex_handler
     handlers["continue_autonomous_session"] = continue_autonomous_session_handler
     handlers["agent_chat_turn"] = agent_chat_turn_handler
