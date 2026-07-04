@@ -2985,6 +2985,41 @@ def test_research_plan_timeline_defaults_to_latest_project_locale(tmp_path: Path
     assert "locale: ja-JP" in request_path.read_text(encoding="utf-8")
 
 
+def test_adaptive_strategy_brief_returns_locale_display_fields(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Strategy locale"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    response = client.get(f"/api/projects/{project_id}/approach/strategy-brief?locale=ja-JP")
+    assert response.status_code == 200, response.text
+    brief = response.json()
+    assert brief["response_locale"] == "ja-JP"
+    assert brief["recommended_next_action"]["label"] == "Upload data"
+    assert brief["recommended_next_action"]["display_label"] == "データをアップロードする"
+    assert "DatasetSnapshot" not in brief["recommended_next_action"]["display_reason"]
+    data_lane = next(lane for lane in brief["candidate_lanes"] if lane["lane_id"] == "data_understanding")
+    assert data_lane["title"] == "Understand data before choosing the task shape"
+    assert data_lane["display_title"] == "データ理解を先に固める"
+    assert data_lane["display"]["why"]
+
+    job_response = client.post(
+        f"/api/projects/{project_id}/approach/strategy-brief",
+        json={"locale": "ja-JP"},
+    )
+    assert job_response.status_code == 200, job_response.text
+    job = job_response.json()
+    assert job["status"] == "queued"
+    output = run_queued_job(client, job["id"])
+    assert output["response_locale"] == "ja-JP"
+    artifact_response = client.get(f"/api/artifacts/{output['adaptive_strategy_brief_artifact_id']}/download")
+    assert artifact_response.status_code == 200
+    artifact_payload = artifact_response.json()
+    assert artifact_payload["response_locale"] == "ja-JP"
+    assert artifact_payload["candidate_lanes"][0]["display_title"]
+
+
 def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 

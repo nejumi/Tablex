@@ -2589,25 +2589,42 @@ type ResearchBrief = {
 type StrategyAction = {
   action_type: "navigate" | "api" | "agent_task";
   label: string;
+  display_label?: string;
   target_tab: string;
   reason: string;
+  display_reason?: string;
   endpoint: string | null;
   method: string | null;
   prompt: string | null;
+  display?: {
+    label?: string;
+    reason?: string;
+  };
 };
 
 type StrategyLane = {
   lane_id: string;
   title: string;
+  display_title?: string;
   status: string;
   why: string;
+  display_why?: string;
   evidence_artifact_ids: string[];
   next_action: string;
+  display_next_action?: string;
   agent_role: string;
+  display_agent_role?: string;
+  display?: {
+    title?: string;
+    why?: string;
+    next_action?: string;
+    agent_role?: string;
+  };
 };
 
 type AdaptiveStrategyBrief = {
   schema_version: string;
+  response_locale?: string | null;
   project: Record<string, unknown>;
   summary: Record<string, unknown>;
   recommended_next_action: StrategyAction;
@@ -4634,7 +4651,9 @@ function ProjectDetail({
         api<Run[]>(`/api/projects/${project.id}/runs`),
         api<LeaderboardEntry[]>(`/api/projects/${project.id}/leaderboard`),
         api<ModelVersion[]>(`/api/projects/${project.id}/model-versions`),
-        api<AdaptiveStrategyBrief>(`/api/projects/${project.id}/approach/strategy-brief`).catch(() => null),
+        api<AdaptiveStrategyBrief>(
+          `/api/projects/${project.id}/approach/strategy-brief?locale=${encodeURIComponent(userSettings.locale)}`
+        ).catch(() => null),
         api<ResearchBrief[]>(`/api/projects/${project.id}/approach/research-briefs`),
         api<Idea[]>(`/api/projects/${project.id}/approach/ideas`),
         api<Report[]>(`/api/projects/${project.id}/reports`),
@@ -5377,6 +5396,7 @@ function ProjectDetail({
           ideas={ideas}
           artifacts={artifacts}
           busy={busy}
+          locale={userSettings.locale}
           text={text}
           runAction={runAction}
           onStrategyAction={(action) => void runStrategyAction(action)}
@@ -5671,7 +5691,8 @@ function HomeTab({
               <span>{text.researchPlanTitle}</span>
               <strong>
                 {localeSafeDisplayText(
-                  latestResearchPlan?.name ?? strategyBrief?.recommended_next_action.label,
+                  latestResearchPlan?.name ??
+                    (strategyBrief ? strategyActionDisplayLabel(strategyBrief.recommended_next_action, locale, text) : undefined),
                   locale,
                   text.researchPlanTimelineHint
                 )}
@@ -12261,6 +12282,7 @@ function StrategyBriefPanel({
   project,
   brief,
   busy,
+  locale,
   text,
   onAction,
   onSave
@@ -12268,6 +12290,7 @@ function StrategyBriefPanel({
   project: Project;
   brief: AdaptiveStrategyBrief | null;
   busy: boolean;
+  locale: string;
   text: LocaleMessages;
   onAction: (action: StrategyAction) => void;
   onSave: () => Promise<void>;
@@ -12289,7 +12312,13 @@ function StrategyBriefPanel({
   }
 
   const action = brief.recommended_next_action;
-  const handoffObjective = textField(brief.codex_handoff.suggested_objective) ?? action.prompt ?? action.reason;
+  const actionLabel = strategyActionDisplayLabel(action, locale, text);
+  const actionReason = strategyActionDisplayReason(action, locale, text);
+  const handoffObjective = localeSafeDisplayText(
+    textField(brief.codex_handoff.suggested_objective) ?? action.prompt ?? action.reason,
+    locale,
+    actionReason
+  );
   const openItems =
     numericSummary(brief.summary.open_assumption_count) + numericSummary(brief.summary.open_question_count);
   const metrics = [
@@ -12306,8 +12335,8 @@ function StrategyBriefPanel({
           <img src="/mascot/tablee-hero.png" alt="" aria-hidden="true" className="strategy-hero-mascot" />
           <div>
             <div className="eyebrow">{text.strategyBriefTitle}</div>
-            <h2>{action.label}</h2>
-            <p>{action.reason}</p>
+            <h2>{actionLabel}</h2>
+            <p>{actionReason}</p>
             <div className="button-row">
               <button className="primary-button" disabled={busy} onClick={() => onAction(action)}>
                 {busy ? <Loader2 className="spin" size={16} /> : strategyActionIcon(action.action_type)}
@@ -12331,9 +12360,13 @@ function StrategyBriefPanel({
       </div>
       <div className="strategy-lane-strip" aria-label={text.strategyLaneMap}>
         {brief.candidate_lanes.map((lane) => (
-          <div key={lane.lane_id} className={`strategy-lane ${strategyLaneTone(lane.status)}`} title={lane.why}>
-            <span>{lane.title}</span>
-            <strong>{formatStrategyStatus(lane.status)}</strong>
+          <div
+            key={lane.lane_id}
+            className={`strategy-lane ${strategyLaneTone(lane.status)}`}
+            title={strategyLaneDisplayWhy(lane, locale, text)}
+          >
+            <span>{strategyLaneDisplayTitle(lane, locale, text)}</span>
+            <strong>{formatStrategyStatus(lane.status, text)}</strong>
           </div>
         ))}
       </div>
@@ -12350,6 +12383,58 @@ function StrategyBriefPanel({
       </div>
     </section>
   );
+}
+
+function strategyActionDisplayLabel(action: StrategyAction, locale: string, text: LocaleMessages): string {
+  const display = action.display?.label ?? action.display_label;
+  if (displayTextMatchesLocale(display, locale)) return display as string;
+  const fallback = strategyActionLabelFallback(action, text);
+  return localeSafeDisplayText(action.label, locale, fallback);
+}
+
+function strategyActionDisplayReason(action: StrategyAction, locale: string, text: LocaleMessages): string {
+  const display = action.display?.reason ?? action.display_reason;
+  if (displayTextMatchesLocale(display, locale)) return display as string;
+  const fallback = strategyActionReasonFallback(action, text);
+  return localeSafeDisplayText(action.reason, locale, fallback);
+}
+
+function strategyLaneDisplayTitle(lane: StrategyLane, locale: string, text: LocaleMessages): string {
+  const display = lane.display?.title ?? lane.display_title;
+  if (displayTextMatchesLocale(display, locale)) return display as string;
+  return localeSafeDisplayText(lane.title, locale, text.researchPlanBlockLocaleRefreshTitle);
+}
+
+function strategyLaneDisplayWhy(lane: StrategyLane, locale: string, text: LocaleMessages): string {
+  const display = lane.display?.why ?? lane.display_why;
+  if (displayTextMatchesLocale(display, locale)) return display as string;
+  return localeSafeDisplayText(lane.why, locale, text.researchPlanLocaleRefreshDetail);
+}
+
+function strategyActionLabelFallback(action: StrategyAction, text: LocaleMessages): string {
+  if (action.label === "Upload data") return text.strategyActionUploadData;
+  if (action.label === "Resolve blocking assumptions") return text.strategyActionResolveAssumptions;
+  if (action.label === "Lock evaluation design") return text.strategyActionLockEvaluation;
+  if (action.label === "Explore objective candidates") return text.focusUnderstandData;
+  if (action.label === "Create ResearchPlan") return text.focusApproach;
+  if (action.label === "Plan adaptive baseline") return text.focusExperiments;
+  if (action.label === "Plan Codex AgentTask") return text.focusApproach;
+  if (action.label === "Run or prepare the first approach") return text.focusExperiments;
+  if (action.label === "Refresh decision report") return text.focusReports;
+  return text.strategyRecommendedAction;
+}
+
+function strategyActionReasonFallback(action: StrategyAction, text: LocaleMessages): string {
+  if (action.label === "Upload data") return text.focusUploadDataReason;
+  if (action.label === "Resolve blocking assumptions") return text.focusAssumptionsReason;
+  if (action.label === "Lock evaluation design") return text.focusEvaluationReason;
+  if (action.label === "Explore objective candidates") return text.focusUnderstandDataReason;
+  if (action.label === "Create ResearchPlan") return text.focusApproachReason;
+  if (action.label === "Plan adaptive baseline") return text.focusApproachReason;
+  if (action.label === "Plan Codex AgentTask") return text.focusApproachReason;
+  if (action.label === "Run or prepare the first approach") return text.focusExperimentsReason;
+  if (action.label === "Refresh decision report") return text.focusReportsReason;
+  return text.strategyBriefSubtitle;
 }
 
 function RunnerHandoffFocus({
@@ -12490,7 +12575,14 @@ function strategyLaneTone(status: string) {
   return "pending";
 }
 
-function formatStrategyStatus(status: string) {
+function formatStrategyStatus(status: string, text: LocaleMessages) {
+  if (status === "ready") return researchPlanStatusLabel("done", text);
+  if (status === "needs_context") return researchPlanStatusLabel("waiting", text);
+  if (status === "needs_review") return researchPlanStatusLabel("blocked", text);
+  if (status === "needs_decision") return researchPlanStatusLabel("blocked", text);
+  if (status === "needs_plan") return researchPlanStatusLabel("pending", text);
+  if (status === "needs_handoff") return researchPlanStatusLabel("pending", text);
+  if (status === "needs_outputs") return researchPlanStatusLabel("pending", text);
   return status.replace(/_/g, " ");
 }
 
@@ -12582,6 +12674,7 @@ function ApproachTab({
   ideas,
   artifacts,
   busy,
+  locale,
   text,
   runAction,
   onStrategyAction
@@ -12592,6 +12685,7 @@ function ApproachTab({
   ideas: Idea[];
   artifacts: Artifact[];
   busy: boolean;
+  locale: string;
   text: LocaleMessages;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
   onStrategyAction: (action: StrategyAction) => void;
@@ -12780,9 +12874,18 @@ function ApproachTab({
         project={project}
         brief={strategyBrief}
         busy={busy}
+        locale={locale}
         text={text}
         onAction={onStrategyAction}
-        onSave={() => runAction(() => api(`/api/projects/${project.id}/approach/strategy-brief`, { method: "POST" }))}
+        onSave={() =>
+          runAction(() =>
+            api(`/api/projects/${project.id}/approach/strategy-brief`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ locale })
+            })
+          )
+        }
       />
       <RunnerHandoffFocus
         artifact={latestAgentTaskContract}

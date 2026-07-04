@@ -876,6 +876,7 @@ class ResearchBriefRead(BaseModel):
 
 class AdaptiveStrategyBriefRead(BaseModel):
     schema_version: str
+    response_locale: str | None = None
     project: dict[str, Any]
     summary: dict[str, Any]
     recommended_next_action: dict[str, Any]

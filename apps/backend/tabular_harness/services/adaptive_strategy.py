@@ -29,6 +29,7 @@ from tabular_harness.services.approach import (
     store_text_artifact,
 )
 from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
+from tabular_harness.services.locales import locale_is_japanese
 
 
 @dataclass(frozen=True)
@@ -68,7 +69,7 @@ STRATEGY_SOURCE_TYPES = [
 ]
 
 
-def build_adaptive_strategy_brief(db: Session, *, project: Project) -> dict[str, Any]:
+def build_adaptive_strategy_brief(db: Session, *, project: Project, locale: str | None = None) -> dict[str, Any]:
     dataset = latest_dataset(db, project.id)
     evaluation_spec = latest_approved_spec(db, project.id)
     split_manifest = latest_split_for_spec(db, evaluation_spec.id) if evaluation_spec else None
@@ -103,8 +104,9 @@ def build_adaptive_strategy_brief(db: Session, *, project: Project) -> dict[str,
     risk_register = build_risk_register(assumptions=assumptions, questions=questions, latest_artifacts=latest_artifacts)
     profile_summary = profile_summary_from_artifact(latest_artifacts.get("eda_profile"))
     latest_brief_artifact = latest_artifacts.get("adaptive_strategy_brief")
-    return {
+    brief = {
         "schema_version": "adaptive_strategy_brief.v1",
+        "response_locale": locale,
         "project": {
             "id": project.id,
             "name": project.name,
@@ -145,6 +147,7 @@ def build_adaptive_strategy_brief(db: Session, *, project: Project) -> dict[str,
         "latest_artifact_id": latest_brief_artifact.id if latest_brief_artifact else None,
         "generated_at": utc_now().isoformat(),
     }
+    return with_strategy_display_locale(brief, locale=locale)
 
 
 def create_adaptive_strategy_brief(
@@ -153,8 +156,9 @@ def create_adaptive_strategy_brief(
     store: LocalArtifactStore,
     project: Project,
     job: Job | None = None,
+    locale: str | None = None,
 ) -> AdaptiveStrategyBriefResult:
-    brief = build_adaptive_strategy_brief(db, project=project)
+    brief = build_adaptive_strategy_brief(db, project=project, locale=locale)
     source_artifact_ids = [str(item["artifact_id"]) for item in brief["artifact_refs"] if item.get("artifact_id")]
     name_suffix = job.id if job else new_id("strategy")
     artifact = store_json_artifact(
@@ -453,6 +457,141 @@ def choose_next_action(
         "Runs exist; synthesize metrics, risks, visuals, and next experiments for an in-product decision view.",
         endpoint=f"/api/projects/{project.id}/decision-dashboard/generate",
     )
+
+
+def with_strategy_display_locale(brief: dict[str, Any], *, locale: str | None) -> dict[str, Any]:
+    if not locale_is_japanese(locale):
+        return brief
+    for lane_payload in brief.get("candidate_lanes", []):
+        if isinstance(lane_payload, dict):
+            lane_payload.update(strategy_lane_display_ja(lane_payload))
+    action_payload = brief.get("recommended_next_action")
+    if isinstance(action_payload, dict):
+        action_payload.update(strategy_action_display_ja(action_payload))
+    return brief
+
+
+def strategy_lane_display_ja(lane_payload: dict[str, Any]) -> dict[str, Any]:
+    lane_id = str(lane_payload.get("lane_id") or "")
+    status = str(lane_payload.get("status") or "")
+    copy: dict[str, dict[str, str]] = {
+        "data_understanding": {
+            "title": "データ理解を先に固める",
+            "why_ready": "プロファイルとセマンティックカタログが利用できます。",
+            "why_other": "目的やアプローチ選定の前に、データ投入またはプロファイル作成が必要です。",
+            "next_action": "DataとUnderstandingを確認する",
+            "agent_role": "タスクの曖昧さ、目的候補、予測単位、データ意味の不足を整理します。",
+        },
+        "assumption_review": {
+            "title": "探索を止めずに仮定を見直す",
+            "why_ready": "現時点で優先確認すべき仮定や質問はありません。",
+            "why_other": "一部の仮定や質問が、漏洩、目的定義、運用適合性に影響し得ます。",
+            "next_action": "優先確認キューを見る",
+            "agent_role": "不確実性を明示し、無期限停止ではなくfallback policyで前に進めます。",
+        },
+        "evaluation_lock": {
+            "title": "アプローチ比較の前に評価を固定する",
+            "why_ready": "採用済みEvaluationSpecとSplitManifestがあります。",
+            "why_other": "primary評価設計がないまま候補アプローチの性能を信用すべきではありません。",
+            "next_action": "EvaluationSpecとSplitManifestを採用または生成する",
+            "agent_role": "SplitManifestを実装作業の不変入力として扱います。",
+        },
+        "research_and_skills": {
+            "title": "Skillと調査を文脈として使う",
+            "why_ready": "Codexへ渡す調査計画のartifactがあります。",
+            "why_other": "CodexがProject artifact、Skill、制御された情報源を使えるようResearchPlanが必要です。",
+            "next_action": "ResearchPlanを作成または更新する",
+            "agent_role": "根拠付き知見を使い、根拠が薄い主張は仮定として扱います。",
+        },
+        "adaptive_baseline": {
+            "title": "固定recipeではない強いベースラインを計画する",
+            "why_ready": "ベースライン戦略はCodexを縛らず、判断材料として使えます。",
+            "why_other": "目的と評価が見えた後に、候補となるベースライン群を計画します。",
+            "next_action": "ベースライン戦略を計画または実行する",
+            "agent_role": "根拠があればXGBoost、カテゴリ変換、TF-IDF、時系列特徴、sanity floorを検討し、より妥当な案があれば置き換えます。",
+        },
+        "codex_approach_space": {
+            "title": "Project固有の次アプローチをCodexに考えさせる",
+            "why_ready": "AgentTaskContractまたはIdeaがrunner handoff用に存在します。",
+            "why_other": "実装や改良をCodexに頼む前に、ハーネス所有のAgentTaskContractが必要です。",
+            "next_action": "AgentTaskContractを計画する",
+            "agent_role": "固定カタログを盲目的に実行せず、提案・却下・修正を判断履歴つきで進めます。",
+        },
+        "reporting_and_visuals": {
+            "title": "結果をプロダクト内で説明可能にする",
+            "why_ready": "プロダクト内レポートに使えるRunと可視化仕様があります。",
+            "why_other": "各実験はreport、metric、feature recipe、evidence、visualizationを出すべきです。",
+            "next_action": "次のRun後にレポートと可視化を生成する",
+            "agent_role": "レポート可能な要約、図表仕様、誤差slice、限界を返します。",
+        },
+    }
+    lane_copy = copy.get(lane_id)
+    if not lane_copy:
+        return {}
+    why_key = "why_ready" if status == "ready" else "why_other"
+    return {
+        "display_title": lane_copy["title"],
+        "display_why": lane_copy[why_key],
+        "display_next_action": lane_copy["next_action"],
+        "display_agent_role": lane_copy["agent_role"],
+        "display": {
+            "title": lane_copy["title"],
+            "why": lane_copy[why_key],
+            "next_action": lane_copy["next_action"],
+            "agent_role": lane_copy["agent_role"],
+        },
+    }
+
+
+def strategy_action_display_ja(action_payload: dict[str, Any]) -> dict[str, Any]:
+    label = str(action_payload.get("label") or "")
+    copy: dict[str, tuple[str, str]] = {
+        "Upload data": (
+            "データをアップロードする",
+            "Project固有の戦略には、少なくとも1つのデータスナップショットが必要です。",
+        ),
+        "Explore objective candidates": (
+            "目的候補を探索する",
+            "目的は列、派生集計、教師なし、逆問題などもあり得るため、Codexに目的定義レビューを依頼します。",
+        ),
+        "Resolve blocking assumptions": (
+            "ブロッキング仮定を確認する",
+            "一部のfallback policyは、デプロイに近い判断の前に確認が必要です。",
+        ),
+        "Lock evaluation design": (
+            "評価設計を固定する",
+            "柔軟なアプローチでも、性能主張の前にEvaluationSpecとSplitManifestが必要です。",
+        ),
+        "Create ResearchPlan": (
+            "ResearchPlanを作成する",
+            "戦略作業の前に、CodexへProject context、Skill hook、制御された調査枠を渡します。",
+        ),
+        "Plan adaptive baseline": (
+            "適応的ベースラインを計画する",
+            "強いベースライン戦略を証拠として作成します。ただしCodexを縛る必須recipeにはしません。",
+        ),
+        "Plan Codex AgentTask": (
+            "Codex AgentTaskを計画する",
+            "次の実装は、開かれたアプローチ空間と明示的な出力を持つハーネス所有contractにします。",
+        ),
+        "Run or prepare the first approach": (
+            "最初のアプローチを走らせる",
+            "戦略artifactはありますがRun evidenceがまだないため、Codexまたはローカルbaselineで報告可能な結果を作ります。",
+        ),
+        "Refresh decision report": (
+            "意思決定レポートを更新する",
+            "既存Runからmetric、risk、visual、次実験を統合し、プロダクト内で判断できる形にします。",
+        ),
+    }
+    localized = copy.get(label)
+    if not localized:
+        return {}
+    display_label, display_reason = localized
+    return {
+        "display_label": display_label,
+        "display_reason": display_reason,
+        "display": {"label": display_label, "reason": display_reason},
+    }
 
 
 def build_codex_handoff(

@@ -124,9 +124,12 @@ def agent_chat_turn_handler(db: Session, job: Job, store: LocalArtifactStore) ->
 
 def create_adaptive_strategy_brief_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
     project = project_for_job(db, job, "create_adaptive_strategy_brief")
-    result = create_adaptive_strategy_brief(db, store=store, project=project, job=job)
+    payload = loads_json(job.input_json, {})
+    locale = payload.get("locale") if isinstance(payload.get("locale"), str) else None
+    result = create_adaptive_strategy_brief(db, store=store, project=project, job=job, locale=locale)
     return {
         "schema_version": result.brief["schema_version"],
+        "response_locale": result.brief.get("response_locale"),
         "adaptive_strategy_brief_artifact_id": result.artifact.id,
         "adaptive_strategy_report_id": result.report.id,
         "adaptive_strategy_report_artifact_id": result.report_artifact.id,

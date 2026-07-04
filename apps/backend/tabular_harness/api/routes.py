@@ -4254,22 +4254,30 @@ def get_split_manifest(split_id: str, db: Annotated[Session, Depends(get_session
 def get_project_strategy_brief(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
+    locale: str | None = None,
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
-    return build_adaptive_strategy_brief(db, project=project)
+    response_locale = (
+        locale.strip()
+        if isinstance(locale, str) and locale.strip()
+        else explicit_project_response_locale(db, project)
+    )
+    return build_adaptive_strategy_brief(db, project=project, locale=response_locale)
 
 
 @router.post("/api/projects/{project_id}/approach/strategy-brief", response_model=JobRead)
 def create_project_strategy_brief(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
+    payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     require_project(db, project_id)
+    input_payload = payload if isinstance(payload, dict) else {}
     job = create_job(
         db,
         job_type="create_adaptive_strategy_brief",
         project_id=project_id,
-        input_payload={},
+        input_payload=input_payload,
         policy={
             "network": "disabled",
             "secret_access": "forbidden",
