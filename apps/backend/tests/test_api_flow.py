@@ -1723,46 +1723,55 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     snapshot_response = client.post(f"/api/projects/{project_id}/guidance/snapshot")
     assert snapshot_response.status_code == 200, snapshot_response.text
     snapshot_job = snapshot_response.json()
-    assert snapshot_job["status"] == "succeeded"
+    assert snapshot_job["status"] == "queued"
+    assert snapshot_job["policy"]["execution"] == "queued_worker"
     assert snapshot_job["job_type"] == "save_guided_journey_snapshot"
-    assert snapshot_job["output"]["schema_version"] == "guided_journey_snapshot.v1"
-    assert snapshot_job["output"]["guided_journey_snapshot_artifact_id"]
-    assert snapshot_job["output"]["guided_journey_report_id"]
-    assert snapshot_job["output"]["visualization_artifact_id"]
+    snapshot_output = run_queued_job(client, snapshot_job["id"])
+    assert snapshot_output["schema_version"] == "guided_journey_snapshot.v1"
+    assert snapshot_output["guided_journey_snapshot_artifact_id"]
+    assert snapshot_output["guided_journey_report_id"]
+    assert snapshot_output["visualization_artifact_id"]
 
-    report_preview_response = client.get(f"/api/reports/{snapshot_job['output']['guided_journey_report_id']}/preview")
+    report_preview_response = client.get(f"/api/reports/{snapshot_output['guided_journey_report_id']}/preview")
     assert report_preview_response.status_code == 200, report_preview_response.text
     assert "Guided Journey" in report_preview_response.json()["preview"]
 
     decision_brief_response = client.post(f"/api/projects/{project_id}/guidance/decision-brief")
     assert decision_brief_response.status_code == 200, decision_brief_response.text
     decision_brief_job = decision_brief_response.json()
-    assert decision_brief_job["status"] == "succeeded"
+    assert decision_brief_job["status"] == "queued"
+    assert decision_brief_job["policy"]["execution"] == "queued_worker"
     assert decision_brief_job["job_type"] == "save_autonomous_decision_brief"
-    assert decision_brief_job["output"]["schema_version"] == "autonomous_decision_brief.v1"
-    assert decision_brief_job["output"]["autonomous_decision_brief_artifact_id"]
-    assert decision_brief_job["output"]["autonomous_decision_brief_report_id"]
+    decision_brief_output = run_queued_job(client, decision_brief_job["id"])
+    assert decision_brief_output["schema_version"] == "autonomous_decision_brief.v1"
+    assert decision_brief_output["autonomous_decision_brief_artifact_id"]
+    assert decision_brief_output["autonomous_decision_brief_report_id"]
 
     decision_brief_preview_response = client.get(
-        f"/api/reports/{decision_brief_job['output']['autonomous_decision_brief_report_id']}/preview"
+        f"/api/reports/{decision_brief_output['autonomous_decision_brief_report_id']}/preview"
     )
     assert decision_brief_preview_response.status_code == 200, decision_brief_preview_response.text
     assert "Autonomous Decision Brief" in decision_brief_preview_response.json()["preview"]
 
     second_snapshot_response = client.post(f"/api/projects/{project_id}/guidance/snapshot")
     assert second_snapshot_response.status_code == 200, second_snapshot_response.text
+    second_snapshot_job = second_snapshot_response.json()
+    assert second_snapshot_job["status"] == "queued"
+    run_queued_job(client, second_snapshot_job["id"])
 
     comparison_response = client.post(f"/api/projects/{project_id}/guidance/snapshots/compare")
     assert comparison_response.status_code == 200, comparison_response.text
     comparison_job = comparison_response.json()
-    assert comparison_job["status"] == "succeeded"
+    assert comparison_job["status"] == "queued"
+    assert comparison_job["policy"]["execution"] == "queued_worker"
     assert comparison_job["job_type"] == "compare_guided_journey_snapshots"
-    assert comparison_job["output"]["schema_version"] == "guided_journey_comparison.v1"
-    assert comparison_job["output"]["guided_journey_comparison_artifact_id"]
-    assert comparison_job["output"]["guided_journey_comparison_report_id"]
+    comparison_output = run_queued_job(client, comparison_job["id"])
+    assert comparison_output["schema_version"] == "guided_journey_comparison.v1"
+    assert comparison_output["guided_journey_comparison_artifact_id"]
+    assert comparison_output["guided_journey_comparison_report_id"]
 
     comparison_preview_response = client.get(
-        f"/api/reports/{comparison_job['output']['guided_journey_comparison_report_id']}/preview"
+        f"/api/reports/{comparison_output['guided_journey_comparison_report_id']}/preview"
     )
     assert comparison_preview_response.status_code == 200, comparison_preview_response.text
     assert "Guided Journey Comparison" in comparison_preview_response.json()["preview"]

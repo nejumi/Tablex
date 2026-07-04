@@ -122,6 +122,11 @@ from tabular_harness.services.planned_agent_workspace import (
     load_contract_payload,
     prepare_workspace_from_contract_artifact,
 )
+from tabular_harness.services.project_guidance import (
+    create_autonomous_decision_brief,
+    create_guided_journey_comparison,
+    create_guided_journey_snapshot,
+)
 from tabular_harness.services.relational_feature_diagnostics import (
     diagnose_relational_feature_scenarios,
 )
@@ -194,6 +199,55 @@ def agent_chat_turn_handler(db: Session, job: Job, store: LocalArtifactStore) ->
         "agent_task_contract_artifact_id": result.planned_agent_task.artifact.id
         if result.planned_agent_task
         else None,
+    }
+
+
+def save_guided_journey_snapshot_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "save_guided_journey_snapshot")
+    result = create_guided_journey_snapshot(db, store=store, project=project)
+    return {
+        "schema_version": result.snapshot["schema_version"],
+        "guided_journey_snapshot_artifact_id": result.artifact.id,
+        "guided_journey_report_id": result.report.id,
+        "guided_journey_report_artifact_id": result.report_artifact.id,
+        "visualization_id": result.visualization.id,
+        "visualization_artifact_id": result.visualization_artifact.id,
+        "artifact_id": result.artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "current_stage_id": result.snapshot["current_stage_id"],
+        "recommended_focus_key": result.snapshot["recommended_focus_key"],
+    }
+
+
+def save_autonomous_decision_brief_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "save_autonomous_decision_brief")
+    result = create_autonomous_decision_brief(db, store=store, project=project)
+    return {
+        "schema_version": result.brief["schema_version"],
+        "autonomous_decision_brief_artifact_id": result.artifact.id,
+        "autonomous_decision_brief_report_id": result.report.id,
+        "autonomous_decision_brief_report_artifact_id": result.report_artifact.id,
+        "artifact_id": result.artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "focus_key": result.brief["focus_key"],
+        "target_tab": result.brief["target_tab"],
+    }
+
+
+def compare_guided_journey_snapshots_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "compare_guided_journey_snapshots")
+    result = create_guided_journey_comparison(db, store=store, project=project)
+    return {
+        "schema_version": result.comparison["schema_version"],
+        "guided_journey_comparison_artifact_id": result.artifact.id,
+        "guided_journey_comparison_report_id": result.report.id,
+        "guided_journey_comparison_report_artifact_id": result.report_artifact.id,
+        "visualization_id": result.visualization.id,
+        "visualization_artifact_id": result.visualization_artifact.id,
+        "artifact_id": result.artifact.id,
+        "artifact_ids": result.artifact_ids,
+        "changed_stage_count": result.comparison["summary"]["changed_stage_count"],
+        "recommended_focus_changed": result.comparison["summary"]["recommended_focus_changed"],
     }
 
 
@@ -2936,6 +2990,9 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers: dict[str, JobHandler] = {}
     handlers["profile_dataset"] = profile_dataset_handler
     handlers["infer_assumptions"] = infer_assumptions_handler
+    handlers["save_guided_journey_snapshot"] = save_guided_journey_snapshot_handler
+    handlers["save_autonomous_decision_brief"] = save_autonomous_decision_brief_handler
+    handlers["compare_guided_journey_snapshots"] = compare_guided_journey_snapshots_handler
     handlers["download_public_benchmark_archive"] = download_public_benchmark_archive_handler
     handlers["import_benchmark_dataset"] = import_benchmark_dataset_handler
     handlers["run_benchmark_fixture_smoke"] = run_benchmark_fixture_smoke_handler
