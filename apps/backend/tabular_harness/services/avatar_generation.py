@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tabular_harness.agent.runners import CODEX_HARNESS_CONFIG_ARGS
+
 
 class AvatarGenerationError(RuntimeError):
     def __init__(self, message: str, *, status_code: int = 502) -> None:
@@ -148,7 +150,7 @@ def generate_with_codex_cli(*, prompt: str, count: int) -> list[AvatarCandidate]
         command = [
             codex,
             "exec",
-            "--ignore-user-config",
+            *CODEX_HARNESS_CONFIG_ARGS,
             "--cd",
             str(workdir),
             "--skip-git-repo-check",

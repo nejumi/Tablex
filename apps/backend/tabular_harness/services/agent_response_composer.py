@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tabular_harness.agent.runners import safe_env
+from tabular_harness.agent.runners import CODEX_HARNESS_CONFIG_ARGS, safe_env
 from tabular_harness.models.entities import Project
 from tabular_harness.services.codex_transcript import build_codex_cli_transcript
 from tabular_harness.services.locales import locale_is_japanese
@@ -226,11 +226,12 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
             "",
         ]
         prompt = "\n".join(prompt_preamble + [json.dumps(brief, ensure_ascii=False, indent=2, sort_keys=True)])
-        command_summary = "codex exec --ignore-user-config --json --sandbox read-only --output-last-message response.txt -"
+        config_summary = " ".join(CODEX_HARNESS_CONFIG_ARGS)
+        command_summary = f"codex exec {config_summary} --json --sandbox read-only --output-last-message response.txt -"
         cmd = [
             "codex",
             "exec",
-            "--ignore-user-config",
+            *CODEX_HARNESS_CONFIG_ARGS,
             "--cd",
             str(workspace),
             "--sandbox",
@@ -244,7 +245,7 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
         if model is not None:
             cmd[2:2] = ["--model", model]
             command_summary = (
-                f"codex exec --model {model} --ignore-user-config --json --sandbox read-only "
+                f"codex exec --model {model} {config_summary} --json --sandbox read-only "
                 "--output-last-message response.txt -"
             )
         started_at = time.perf_counter()

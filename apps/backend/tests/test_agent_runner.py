@@ -12,7 +12,7 @@ from tabular_harness.agent import (
     NoopAgentRunner,
     WorkspaceRef,
 )
-from tabular_harness.agent.runners import render_prompt
+from tabular_harness.agent.runners import CODEX_HARNESS_CONFIG_ARGS, render_prompt, safe_env
 from tabular_harness.schemas import AgentRequiredOutput, AgentTaskContract
 
 
@@ -231,9 +231,27 @@ def test_codex_cli_runner_retries_without_cli_schema_when_codex_rejects_schema(
     assert len(commands) == 2
     assert "--output-schema" in commands[0]
     assert "--output-schema" not in commands[1]
+    for command in commands:
+        assert list(CODEX_HARNESS_CONFIG_ARGS) == command[2 : 2 + len(CODEX_HARNESS_CONFIG_ARGS)]
     last_message_index = commands[1].index("--output-last-message") + 1
     assert commands[1][last_message_index].endswith(".harness/codex_last_message.md")
     assert commands[1][last_message_index] != str(tmp_path / "outputs" / "result.json")
     assert result.outputs["codex_cli"]["schema_retry_without_output_schema"] is True
     assert result.outputs["codex_cli"]["result_path"] == "outputs/result.json"
     assert result.outputs["codex_cli"]["last_message_path"] == ".harness/codex_last_message.md"
+
+
+def test_codex_safe_env_does_not_pass_connector_credentials(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("KAGGLE_USERNAME", "tablex-user")
+    monkeypatch.setenv("KAGGLE_API_TOKEN", "secret-token")
+    monkeypatch.setenv("WANDB_API_KEY", "secret-wandb-token")
+    monkeypatch.setenv("TABLEX_INTERNAL_ONLY", "secret-internal")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "host-codex-home"))
+
+    env = safe_env(tmp_path / "workspace")
+
+    assert env["CODEX_HOME"] == str(tmp_path / "host-codex-home")
+    assert "KAGGLE_USERNAME" not in env
+    assert "KAGGLE_API_TOKEN" not in env
+    assert "WANDB_API_KEY" not in env
+    assert "TABLEX_INTERNAL_ONLY" not in env

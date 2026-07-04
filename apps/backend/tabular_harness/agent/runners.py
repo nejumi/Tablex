@@ -14,6 +14,8 @@ from pydantic import BaseModel
 from tabular_harness.schemas import AgentResult, AgentTaskContract
 from tabular_harness.services.codex_transcript import build_codex_cli_transcript
 
+CODEX_HARNESS_CONFIG_ARGS = ("--ignore-user-config", "-c", "mcp_servers={}")
+
 
 class WorkspaceRef(BaseModel):
     project_id: str
@@ -279,7 +281,7 @@ class CodexCliRunner(AgentRunner):
             cmd = [
                 self.codex_binary,
                 "exec",
-                "--ignore-user-config",
+                *CODEX_HARNESS_CONFIG_ARGS,
                 "--cd",
                 str(workspace),
                 "--sandbox",

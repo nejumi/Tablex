@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from tabular_harness.agent.runners import safe_env
+from tabular_harness.agent.runners import CODEX_HARNESS_CONFIG_ARGS, safe_env
 from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
@@ -2062,7 +2062,7 @@ def run_codex_cli_turn_streaming(
             cmd = [
                 "codex",
                 "exec",
-                "--ignore-user-config",
+                *CODEX_HARNESS_CONFIG_ARGS,
                 "--cd",
                 str(workspace),
                 "--sandbox",
@@ -2079,7 +2079,7 @@ def run_codex_cli_turn_streaming(
             cmd = [
                 "codex",
                 "exec",
-                "--ignore-user-config",
+                *CODEX_HARNESS_CONFIG_ARGS,
                 "--cd",
                 str(workspace),
                 "--sandbox",
@@ -2091,8 +2091,7 @@ def run_codex_cli_turn_streaming(
                 "-",
         ]
         if agent_model and agent_model not in {"codex-default", "default"}:
-            insert_at = cmd.index("resume") + 1 if session.codex_thread_id else 2
-            cmd[insert_at:insert_at] = ["--model", agent_model]
+            cmd[2:2] = ["--model", agent_model]
         append_session_event(
             db,
             session,
