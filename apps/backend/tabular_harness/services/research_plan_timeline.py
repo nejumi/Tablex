@@ -10,11 +10,13 @@ from tabular_harness.models.entities import Artifact, ExperimentRun
 from tabular_harness.services.artifacts import artifact_primary_path
 from tabular_harness.services.locales import locale_language
 from tabular_harness.services.research_plans import (
+    PLAN_CURRENT_STATUSES,
     ensure_harness_initial_research_plan_revision,
     latest_research_plan_current_work,
     latest_research_plan_revision,
     research_plan_artifact_links,
     research_plan_block_id,
+    research_plan_block_status,
     research_plan_current_work_payload,
     research_plan_evidence_artifact,
     research_plan_evidence_items,
@@ -55,8 +57,11 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
                 project_id=project_id,
                 payload=payload,
             ),
-            "current_work": research_plan_current_work_payload(
-                latest_research_plan_current_work(db, project_id=project_id)
+            "current_work": research_plan_effective_current_work_payload(
+                db,
+                project_id=project_id,
+                revision=revision,
+                raw_blocks=raw_blocks,
             ),
             "artifact_links": all_links,
             "blocks": blocks,
@@ -90,11 +95,64 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
             project_id=project_id,
             payload=payload if isinstance(payload, dict) else {},
         ),
-        "current_work": research_plan_current_work_payload(
-            latest_research_plan_current_work(db, project_id=project_id)
+        "current_work": research_plan_effective_current_work_payload(
+            db,
+            project_id=project_id,
+            revision=None,
+            raw_blocks=raw_blocks,
         ),
         "artifact_links": [],
         "blocks": clean_research_plan_timeline_blocks(raw_blocks, locale=response_locale),
+    }
+
+
+def research_plan_effective_current_work_payload(
+    db: Session,
+    *,
+    project_id: str,
+    revision: Any | None,
+    raw_blocks: Any,
+) -> dict[str, Any] | None:
+    stored = latest_research_plan_current_work(db, project_id=project_id)
+    blocks = [block for block in raw_blocks if isinstance(block, dict)] if isinstance(raw_blocks, list) else []
+    block_by_id = {research_plan_block_id(block, index): block for index, block in enumerate(blocks)}
+    stored_payload = research_plan_current_work_payload(stored)
+    current_blocks = [
+        (index, block)
+        for index, block in enumerate(blocks)
+        if research_plan_block_status(block) in PLAN_CURRENT_STATUSES
+    ]
+    stored_block = block_by_id.get(str(stored_payload.get("node_id"))) if stored_payload is not None else None
+    if stored_payload is not None and stored_block is not None and (
+        research_plan_block_status(stored_block) in PLAN_CURRENT_STATUSES or not current_blocks
+    ):
+        return stored_payload
+
+    if len(current_blocks) != 1:
+        return stored_payload
+    index, block = current_blocks[0]
+    node_id = research_plan_block_id(block, index)
+    deliverable_contract = block.get("deliverable_contract")
+    expected_outputs: list[str] = []
+    if isinstance(deliverable_contract, dict) and isinstance(deliverable_contract.get("expected_outputs"), list):
+        expected_outputs = [str(item) for item in deliverable_contract["expected_outputs"] if str(item).strip()]
+    summary = block.get("subtitle") or block.get("title") or ""
+    revision_id = getattr(revision, "id", None)
+    research_plan_id = getattr(revision, "research_plan_id", None)
+    updated_at = getattr(revision, "created_at", None)
+    return {
+        "id": f"derived:{revision_id or 'artifact'}:{node_id}",
+        "project_id": project_id,
+        "research_plan_id": research_plan_id or "",
+        "revision_id": revision_id,
+        "node_id": node_id,
+        "status": research_plan_block_status(block),
+        "summary": str(summary),
+        "expected_outputs": expected_outputs,
+        "updated_by_type": "codex",
+        "updated_by": None,
+        "updated_at": updated_at.isoformat() if updated_at is not None else "",
+        "source": "research_plan_revision_status",
     }
 
 

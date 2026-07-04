@@ -3036,6 +3036,110 @@ def test_research_plan_tool_rejects_open_plan_without_current_node(tmp_path: Pat
         assert db.scalar(select(func.count()).select_from(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project.id)) == 0
 
 
+def test_research_plan_timeline_derives_current_work_from_active_revision_node(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_derived_current_work", name="Derived Current Work")
+        db.add(project)
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "subtitle": "Codex is inspecting row semantics and leakage-sensitive fields.",
+                        "granularity": "chapter",
+                        "status": "active",
+                        "deliverable_contract": {"expected_outputs": ["notebook"]},
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Codex declared the current ResearchPlan node.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        timeline = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+        assert timeline["current_work"]["node_id"] == "data_understanding"
+        assert timeline["current_work"]["status"] == "active"
+        assert timeline["current_work"]["source"] == "research_plan_revision_status"
+        assert timeline["current_work"]["expected_outputs"] == ["notebook"]
+
+
+def test_research_plan_timeline_prefers_active_revision_node_over_stale_current_work(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_stale_current_work", name="Stale Current Work")
+        db.add(project)
+        first = commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "granularity": "chapter",
+                        "status": "active",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Start with data understanding.",
+            strict_validation=True,
+        )
+        set_research_plan_current_work(
+            db,
+            project_id=project.id,
+            node_id="data_understanding",
+            summary="Working on data understanding.",
+            status="active",
+            revision_id=first.revision.id,
+        )
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "granularity": "chapter",
+                        "status": "done",
+                        "no_output_required": True,
+                        "no_output_required_rationale": "Synthetic test data understanding is complete.",
+                    },
+                    {
+                        "id": "modeling",
+                        "title": "Modeling",
+                        "subtitle": "Codex is comparing model candidates.",
+                        "granularity": "chapter",
+                        "status": "active",
+                    },
+                ],
+            },
+            author_type="codex",
+            reason="Move to modeling.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        timeline = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+        assert timeline["current_work"]["node_id"] == "modeling"
+        assert timeline["current_work"]["status"] == "active"
+        assert timeline["current_work"]["source"] == "research_plan_revision_status"
+
+
 def test_research_plan_tool_rejects_fine_grained_top_level_node(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
