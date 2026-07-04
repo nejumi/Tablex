@@ -6652,8 +6652,9 @@ function buildResearchPlanBlocks({
   ];
   const canonicalBlocks = codexAuthoredBlocks.length ? codexAuthoredBlocks : blocks;
   const blocksWithCurrentWork = applyResearchPlanCurrentWork(canonicalBlocks, researchPlanTimeline?.current_work ?? null);
-
-  return attachResearchPlanSubtasks(renumberResearchPlanBlocks(blocksWithCurrentWork), jobs, text, locale, onTabChange);
+  const numberedBlocks = renumberResearchPlanBlocks(blocksWithCurrentWork);
+  if (codexAuthoredBlocks.length) return numberedBlocks;
+  return attachResearchPlanSubtasks(numberedBlocks, jobs, text, locale, onTabChange);
 }
 
 function applyResearchPlanCurrentWork(
