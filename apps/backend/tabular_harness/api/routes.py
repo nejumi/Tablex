@@ -275,6 +275,7 @@ from tabular_harness.services.relational_evidence import (
 )
 from tabular_harness.services.research_plan_timeline import build_research_plan_timeline_response
 from tabular_harness.services.research_plans import (
+    ResearchPlanValidationError,
     attach_research_plan_artifact,
     commit_research_plan_revision,
     request_research_plan_human_attention,
@@ -4100,7 +4101,18 @@ def commit_project_research_plan_revision(
             source_artifact_id=payload.source_artifact_id,
             parent_revision_id=payload.parent_revision_id,
             metadata=payload.metadata,
+            strict_validation=True,
         )
+    except ResearchPlanValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "schema_version": "research_plan_tool_error.v1",
+                "status": "failed",
+                "message": str(exc),
+                "issues": exc.issues,
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()

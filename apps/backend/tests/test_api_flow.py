@@ -2798,6 +2798,7 @@ def test_research_plan_tool_substrate_endpoints_expose_codex_owned_progress(tmp_
                         "id": "deep_data_understanding",
                         "title": "Deep data understanding",
                         "why_it_matters": "Understand the relational data before modeling.",
+                        "granularity": "chapter",
                         "status": "active",
                     }
                 ],
@@ -2872,6 +2873,44 @@ def test_research_plan_tool_substrate_endpoints_expose_codex_owned_progress(tmp_
     assert timeline["current_work"]["expected_outputs"] == ["marimo notebook", "finding summary"]
     assert timeline["artifact_links"][0]["artifact_id"] == notebook_artifact.id
     assert timeline["blocks"][0]["attached_artifacts"][0]["role"] == "notebook"
+
+
+def test_research_plan_tool_endpoint_rejects_invalid_done_payload_with_issues(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Plan substrate rejection"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    revision_response = client.post(
+        f"/api/projects/{project_id}/research-plan/revisions",
+        json={
+            "document": {
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "granularity": "chapter",
+                        "status": "done",
+                    }
+                ],
+            },
+            "reason": "Invalid Codex tool commit should return fixable issues.",
+            "author_type": "codex",
+        },
+    )
+
+    assert revision_response.status_code == 400, revision_response.text
+    detail = revision_response.json()["detail"]
+    assert detail["schema_version"] == "research_plan_tool_error.v1"
+    issue_codes = {issue["code"] for issue in detail["issues"]}
+    assert "done_node_missing_deliverable_contract" in issue_codes
+    assert "done_node_missing_completion_evidence" in issue_codes
+
+    timeline_response = client.get(f"/api/projects/{project_id}/research-plan/timeline")
+    assert timeline_response.status_code == 200
+    assert timeline_response.json().get("source_revision_id") is None
+    assert timeline_response.json()["blocks"] == []
 
 
 def test_research_plan_timeline_uses_artifact_locale_and_codex_display_fields(tmp_path: Path) -> None:
