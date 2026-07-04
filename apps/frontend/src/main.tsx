@@ -5734,7 +5734,9 @@ function HomeTab({
   const missionTitle = researchPlanFocusBlock?.title ?? recommendation.title;
   const missionReason = researchPlanFocusBlock?.subtitle ?? recommendation.reason;
   const missionRuntimeStatus = missionRuntimeStatusFromTurnState(turnState, autonomyPoweredOn);
-  const missionRiskLevel = missionRuntimeStatus ?? researchPlanFocusBlock?.status ?? recommendation.riskLevel ?? "ready";
+  const missionRiskLevel = autonomyPoweredOn
+    ? (missionRuntimeStatus ?? researchPlanFocusBlock?.status ?? recommendation.riskLevel ?? "ready")
+    : "off";
   const missionFocusLabel = missionUsesPlanFocus ? text.openSurface : (focusAction?.label ?? text.recommendedFocus);
   const missionFocusDisabled = busy || (!missionUsesPlanFocus && (!focusAction || focusAction.disabled));
   const handleMissionFocus = () => {
@@ -6700,7 +6702,8 @@ function researchPlanBlocksForPowerState(blocks: ResearchPlanBlock[], poweredOn:
     return {
       ...block,
       status,
-      subtasks
+      subtasks,
+      isCurrentWork: false
     };
   });
 }
@@ -6958,14 +6961,17 @@ function researchPlanCurrentPositionText({
   turnState: TurnState;
   locale: string;
 }): string {
+  const nextBlock = blocks.find((block) => ["pending", "blocked", "waiting"].includes(block.status));
+  const nextTitle = nextBlock ? displayTextOrFallback(nextBlock.title, locale, text.researchPlanSummaryBlock) : "";
+  if (!poweredOn) {
+    return nextTitle ? `${text.agentPowerOff} · ${text.researchPlanNextVisibleBlock} ${nextTitle}` : text.agentPowerOff;
+  }
   if (currentWork?.node_id && declaredCurrentBlock) {
     const title = displayTextOrFallback(declaredCurrentBlock.title, locale, currentWork.node_id);
     const summary = currentWork.summary ? displayTextOrFallback(currentWork.summary, locale, "") : "";
     return summary ? `${title}: ${summary}` : title;
   }
-  const nextBlock = blocks.find((block) => ["pending", "blocked", "waiting"].includes(block.status));
-  const nextTitle = nextBlock ? displayTextOrFallback(nextBlock.title, locale, text.researchPlanSummaryBlock) : "";
-  if (poweredOn && turnState.state === "agent_running") {
+  if (turnState.state === "agent_running") {
     return nextTitle
       ? `${text.researchPlanCurrentWorkUnreported} ${text.researchPlanNextVisibleBlock} ${nextTitle}`
       : text.researchPlanCurrentWorkUnreported;
@@ -7846,6 +7852,7 @@ function displayStatusLabel(status: string, text: LocaleMessages): string {
   if (normalized === "active" || normalized === "running") return text.statusActive;
   if (normalized === "pending") return text.planStatusPending;
   if (normalized === "waiting" || normalized === "idle") return text.planStatusWaiting;
+  if (normalized === "off" || normalized === "stopped") return text.agentPowerOff;
   if (normalized === "skipped" || normalized === "delegated") return text.planStatusSkipped;
   if (normalized === "done" || normalized === "completed") return text.planStatusDone;
   if (normalized === "ready" || normalized === "ready_to_act") return text.statusReady;
