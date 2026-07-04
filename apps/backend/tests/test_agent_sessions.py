@@ -71,6 +71,7 @@ from tabular_harness.services.agent_sessions import (
     research_plan_acks_dir,
     research_plan_artifact_rejection_path,
     research_plan_contract_request_path,
+    research_plan_request_rejection_path,
     research_plan_requests_dir,
     reserve_transcript_event_indexes,
     run_codex_cli_turn_streaming,
@@ -1540,6 +1541,7 @@ def test_turn_prompt_keeps_chat_update_human_facing_not_internal_changelog(tmp_p
         assert "reports/chat_update.md" in prompt.text
         assert ".tablex/inbox/progress_request.md" in prompt.text
         assert ".tablex/inbox/research_plan_artifact_rejection.md" in prompt.text
+        assert ".tablex/inbox/research_plan_request_rejection.md" in prompt.text
         assert "user-facing explanation, not an internal changelog" in prompt.text
         assert "Avoid raw artifact IDs" in prompt.text
         assert "do not make approval-waiting the dominant status" in prompt.text
@@ -3964,6 +3966,13 @@ def test_failed_research_plan_file_request_is_announced_in_agent_chat(tmp_path: 
 
         ack = loads_json((workspace / ".tablex" / "acks" / "research_plan" / "bad_current.ack.json").read_text(encoding="utf-8"), {})
         assert ack["status"] == "failed"
+        rejection_path = research_plan_request_rejection_path(workspace)
+        assert rejection_path.exists()
+        rejection_text = rejection_path.read_text(encoding="utf-8")
+        assert "tablex_research_plan_request_rejection.v1" in rejection_text
+        assert "bad_current" in rejection_text
+        assert ".tablex/acks/research_plan/bad_current.ack.json" in rejection_text
+        assert "did not change the canonical plan" in rejection_text
         chat_artifact = db.scalar(
             select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
         )

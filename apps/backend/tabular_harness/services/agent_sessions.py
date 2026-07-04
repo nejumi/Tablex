@@ -101,6 +101,7 @@ USER_INSTRUCTIONS_LATEST_FILENAME = "latest_user_instruction.md"
 PROGRESS_REQUEST_FILENAME = "progress_request.md"
 RESEARCH_PLAN_CONTRACT_REQUEST_FILENAME = "research_plan_contract_request.md"
 RESEARCH_PLAN_ARTIFACT_REJECTION_FILENAME = "research_plan_artifact_rejection.md"
+RESEARCH_PLAN_REQUEST_REJECTION_FILENAME = "research_plan_request_rejection.md"
 CODEX_RAW_TRANSCRIPT_FILENAME = "codex_raw_transcript.jsonl"
 CODEX_STDERR_LOG_FILENAME = "codex_stderr.log"
 PROGRESS_UPDATE_NUDGE_AFTER_SECONDS = 180
@@ -249,6 +250,10 @@ def research_plan_contract_request_path(workspace: Path) -> Path:
 
 def research_plan_artifact_rejection_path(workspace: Path) -> Path:
     return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / RESEARCH_PLAN_ARTIFACT_REJECTION_FILENAME
+
+
+def research_plan_request_rejection_path(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / RESEARCH_PLAN_REQUEST_REJECTION_FILENAME
 
 
 def research_plan_requests_dir(workspace: Path) -> Path:
@@ -698,6 +703,56 @@ def write_research_plan_artifact_rejection_to_workspace_inbox(
         "Top issues:",
     ]
     for issue in issues[:8]:
+        lines.extend(
+            [
+                f"- code: {issue.get('code')}",
+                f"  path: {issue.get('path')}",
+                f"  message: {issue.get('message')}",
+                f"  fix: {issue.get('fix')}",
+            ]
+        )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
+def write_research_plan_request_rejection_to_workspace_inbox(
+    workspace: Path,
+    *,
+    request_id: str,
+    operation: str,
+    request_relative_path: str,
+    ack_relative_path: str,
+    error_type: str,
+    error_message: str,
+    issues: list[dict[str, Any]] | None = None,
+) -> None:
+    path = research_plan_request_rejection_path(workspace)
+    lines = [
+        "schema_version: tablex_research_plan_request_rejection.v1",
+        f"request_id: {request_id}",
+        f"operation: {operation or '<unknown>'}",
+        f"created_at: {utc_now().isoformat()}",
+        f"request_path: {request_relative_path}",
+        f"ack_path: {ack_relative_path}",
+        f"error_type: {error_type}",
+        "",
+        "The ResearchPlan request was rejected by Tablex validation and did not change the canonical plan.",
+        "Read the ack JSON, repair the fixed request payload, and resubmit with a new request_id.",
+        "",
+        "Important:",
+        "- Do not continue as if the rejected ResearchPlan was accepted.",
+        "- If a done node claims notebook/report/artifact outputs, first register or capture the asset and reference its artifact_id or ingested workspace_path.",
+        "- If a done node claims experiment_run or leaderboard_entry outputs, first register runs through `.tablex/requests/experiments/` and reference a registered experiment_run_id.",
+        "",
+        "Error:",
+        error_message,
+        "",
+        "Top issues:",
+    ]
+    for issue in (issues or [])[:8]:
         lines.extend(
             [
                 f"- code: {issue.get('code')}",
@@ -2061,7 +2116,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Prefer marimo notebooks for data understanding, modeling diagnostics, and reports.",
         "- Read `.tablex/context.json` for `human_interface.response_locale` and write human-facing notebooks/reports/chat in that language.",
         "- Read equipped Skill paths in `.tablex/context.json` before EDA, prior research, notebook authoring, or modeling strategy work.",
-        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, `.tablex/inbox/progress_request.md`, `.tablex/inbox/research_plan_contract_request.md`, and `.tablex/inbox/research_plan_artifact_rejection.md`; incorporate user messages, publish progress updates, and repair rejected ResearchPlan contract state without waiting for a new Codex turn when practical.",
+        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, `.tablex/inbox/progress_request.md`, `.tablex/inbox/research_plan_contract_request.md`, `.tablex/inbox/research_plan_artifact_rejection.md`, and `.tablex/inbox/research_plan_request_rejection.md`; incorporate user messages, publish progress updates, and repair rejected ResearchPlan contract state without waiting for a new Codex turn when practical.",
         "- If you need user input in Full Auto, state the question and your provisional assumption, then continue unless a true hard safety boundary makes all useful work impossible.",
         "- Treat formal approval, data-owner confirmation, deployment permission, or production-write clearance as future evidence unless the current action would write to production, expose secrets, or violate evaluation integrity. Keep doing reversible local analysis and artifact generation while waiting.",
         "- Do not present Full Auto as stopped on approval unless no useful reversible work remains. If a destructive or deployment-grade action is deferred, say which reversible analysis, modeling, diagnostics, notebook/report work, or research you are continuing now.",
@@ -2724,6 +2779,16 @@ def process_research_plan_tool_requests(
                 },
             }
             write_research_plan_tool_ack(ack_path, ack)
+            write_research_plan_request_rejection_to_workspace_inbox(
+                workspace,
+                request_id=request_id,
+                operation=operation,
+                request_relative_path=str(path.relative_to(workspace)),
+                ack_relative_path=str(ack_path.relative_to(workspace)),
+                error_type=type(exc).__name__,
+                error_message=str(exc)[:1200],
+                issues=exc.issues,
+            )
             append_session_event(
                 db,
                 session,
@@ -2762,6 +2827,16 @@ def process_research_plan_tool_requests(
                 "error": {"type": type(exc).__name__, "message": str(exc)},
             }
             write_research_plan_tool_ack(ack_path, ack)
+            write_research_plan_request_rejection_to_workspace_inbox(
+                workspace,
+                request_id=request_id,
+                operation=operation,
+                request_relative_path=str(path.relative_to(workspace)),
+                ack_relative_path=str(ack_path.relative_to(workspace)),
+                error_type=type(exc).__name__,
+                error_message=str(exc)[:1200],
+                issues=None,
+            )
             append_session_event(
                 db,
                 session,
