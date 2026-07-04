@@ -103,6 +103,7 @@ RESEARCH_PLAN_CONTRACT_REQUEST_FILENAME = "research_plan_contract_request.md"
 RESEARCH_PLAN_ARTIFACT_REJECTION_FILENAME = "research_plan_artifact_rejection.md"
 RESEARCH_PLAN_REQUEST_REJECTION_FILENAME = "research_plan_request_rejection.md"
 NOTEBOOK_REQUEST_REJECTION_FILENAME = "notebook_request_rejection.md"
+NOTEBOOK_CAPTURE_FAILURE_FILENAME = "notebook_capture_failure.md"
 CODEX_RAW_TRANSCRIPT_FILENAME = "codex_raw_transcript.jsonl"
 CODEX_STDERR_LOG_FILENAME = "codex_stderr.log"
 PROGRESS_UPDATE_NUDGE_AFTER_SECONDS = 180
@@ -259,6 +260,10 @@ def research_plan_request_rejection_path(workspace: Path) -> Path:
 
 def notebook_request_rejection_path(workspace: Path) -> Path:
     return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / NOTEBOOK_REQUEST_REJECTION_FILENAME
+
+
+def notebook_capture_failure_path(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / NOTEBOOK_CAPTURE_FAILURE_FILENAME
 
 
 def research_plan_requests_dir(workspace: Path) -> Path:
@@ -797,6 +802,37 @@ def write_notebook_request_rejection_to_workspace_inbox(
         "Read the ack JSON, repair the fixed request payload or the notebook source, and resubmit under `.tablex/requests/notebooks/` with a new request_id.",
         "",
         "Use this request channel after saving a marimo notebook so Tablex can register it as an asset, render the preview, attach lineage, and make it visible from the related Chat, ResearchPlan node, Dataset, Run, Model, and Assets views.",
+        "",
+        "Error:",
+        error_message,
+    ]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
+def write_notebook_capture_failure_to_workspace_inbox(
+    workspace: Path,
+    *,
+    notebook_artifact: Artifact,
+    error_message: str,
+) -> None:
+    metadata = loads_json(notebook_artifact.metadata_json, {})
+    workspace_path = metadata.get("workspace_relative_path")
+    if not isinstance(workspace_path, str) or not workspace_path.strip():
+        workspace_path = metadata.get("source_path") if isinstance(metadata.get("source_path"), str) else ""
+    path = notebook_capture_failure_path(workspace)
+    lines = [
+        "schema_version: tablex_notebook_capture_failure.v1",
+        f"notebook_artifact_id: {notebook_artifact.id}",
+        f"notebook_name: {notebook_artifact.name}",
+        f"workspace_path: {workspace_path or '<unknown>'}",
+        f"created_at: {utc_now().isoformat()}",
+        "",
+        "Tablex registered the Codex-authored marimo notebook source, but preview capture failed. The source remains an artifact, but the readable in-product preview may be unavailable until the notebook is repaired or recaptured.",
+        "Repair the notebook source or write a fixed request under `.tablex/requests/notebooks/` with `schema_version: \"tablex_notebook_request.v1\"` and operation `capture_notebook`.",
         "",
         "Error:",
         error_message,
@@ -2156,7 +2192,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Prefer marimo notebooks for data understanding, modeling diagnostics, and reports.",
         "- Read `.tablex/context.json` for `human_interface.response_locale` and write human-facing notebooks/reports/chat in that language.",
         "- Read equipped Skill paths in `.tablex/context.json` before EDA, prior research, notebook authoring, or modeling strategy work.",
-        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, `.tablex/inbox/progress_request.md`, `.tablex/inbox/research_plan_contract_request.md`, `.tablex/inbox/research_plan_artifact_rejection.md`, `.tablex/inbox/research_plan_request_rejection.md`, `.tablex/inbox/notebook_request_rejection.md`, and `.tablex/inbox/experiment_result_request_rejection.md`; incorporate user messages, publish progress updates, and repair rejected ResearchPlan, Notebook, or Leaderboard result request state without waiting for a new Codex turn when practical.",
+        "- During long turns, check `.tablex/inbox/user_instructions.jsonl`, `.tablex/inbox/latest_user_instruction.md`, `.tablex/inbox/progress_request.md`, `.tablex/inbox/research_plan_contract_request.md`, `.tablex/inbox/research_plan_artifact_rejection.md`, `.tablex/inbox/research_plan_request_rejection.md`, `.tablex/inbox/notebook_request_rejection.md`, `.tablex/inbox/notebook_capture_failure.md`, and `.tablex/inbox/experiment_result_request_rejection.md`; incorporate user messages, publish progress updates, and repair rejected ResearchPlan, Notebook, or Leaderboard result request state without waiting for a new Codex turn when practical.",
         "- If you need user input in Full Auto, state the question and your provisional assumption, then continue unless a true hard safety boundary makes all useful work impossible.",
         "- Treat formal approval, data-owner confirmation, deployment permission, or production-write clearance as future evidence unless the current action would write to production, expose secrets, or violate evaluation integrity. Keep doing reversible local analysis and artifact generation while waiting.",
         "- Do not present Full Auto as stopped on approval unless no useful reversible work remains. If a destructive or deployment-grade action is deferred, say which reversible analysis, modeling, diagnostics, notebook/report work, or research you are continuing now.",
@@ -3616,6 +3652,12 @@ def maybe_capture_agent_session_notebook_output(
 
         capture = create_notebook_execution_capture(db, store=store, notebook_artifact=artifact)
     except Exception as exc:
+        if session.workspace_path:
+            write_notebook_capture_failure_to_workspace_inbox(
+                Path(session.workspace_path),
+                notebook_artifact=artifact,
+                error_message=str(exc),
+            )
         append_session_event(
             db,
             session,

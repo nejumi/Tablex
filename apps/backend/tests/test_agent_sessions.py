@@ -61,6 +61,7 @@ from tabular_harness.services.agent_sessions import (
     maybe_request_research_plan_contract_revision,
     metadata_for_session_output,
     notebook_acks_dir,
+    notebook_capture_failure_path,
     notebook_request_rejection_path,
     notebook_requests_dir,
     prepare_session_workspace,
@@ -1545,6 +1546,7 @@ def test_turn_prompt_keeps_chat_update_human_facing_not_internal_changelog(tmp_p
         assert ".tablex/inbox/research_plan_artifact_rejection.md" in prompt.text
         assert ".tablex/inbox/research_plan_request_rejection.md" in prompt.text
         assert ".tablex/inbox/notebook_request_rejection.md" in prompt.text
+        assert ".tablex/inbox/notebook_capture_failure.md" in prompt.text
         assert ".tablex/inbox/experiment_result_request_rejection.md" in prompt.text
         assert "user-facing explanation, not an internal changelog" in prompt.text
         assert "Avoid raw artifact IDs" in prompt.text
@@ -3593,6 +3595,13 @@ def test_failed_notebook_auto_capture_retries_after_cooldown(
         assert failed_chat_payload["intent"]["type"] == "notebook_artifact_update"
         assert failed_chat_payload["intent"]["status"] == "preview_failed"
         assert failed_chat_payload["actions"][0]["artifact_id"] == notebook_artifact.id
+        capture_failure = notebook_capture_failure_path(workspace)
+        assert capture_failure.exists()
+        capture_failure_text = capture_failure.read_text(encoding="utf-8")
+        assert "tablex_notebook_capture_failure.v1" in capture_failure_text
+        assert notebook_artifact.id in capture_failure_text
+        assert "temporary marimo export failure" in capture_failure_text
+        assert "preview capture failed" in capture_failure_text
 
         ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
         db.commit()
