@@ -856,6 +856,18 @@ textarea {
   color: var(--accent-strong);
 }
 
+.research-plan-block.current-work {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent),
+    0 0 28px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.research-plan-block.current-work > span {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  color: var(--accent-strong);
+}
+
 .research-plan-block.expanded {
   border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);

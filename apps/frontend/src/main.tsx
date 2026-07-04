@@ -2658,7 +2658,35 @@ type ResearchPlanBlock = {
   eyebrow: string;
   evidence: string | null;
   subtasks?: ResearchPlanSubtask[];
+  isCurrentWork?: boolean;
   onClick?: () => void;
+};
+
+type ResearchPlanArtifactLink = {
+  id: string;
+  revision_id?: string | null;
+  node_id: string;
+  role: string;
+  artifact_id: string;
+  artifact_name?: string | null;
+  asset_type?: string | null;
+  artifact_version?: number | null;
+  metadata?: Record<string, unknown>;
+  created_at?: string | null;
+};
+
+type ResearchPlanCurrentWork = {
+  id: string;
+  project_id: string;
+  research_plan_id: string;
+  revision_id?: string | null;
+  node_id: string;
+  status: ResearchPlanBlockStatus;
+  summary: string;
+  expected_outputs: string[];
+  updated_by_type: string;
+  updated_by?: string | null;
+  updated_at: string;
 };
 
 type ResearchPlanTimelineBlock = {
@@ -2681,6 +2709,7 @@ type ResearchPlanTimelineBlock = {
   status_adjustment_reason?: string | null;
   localization_status?: "localized";
   missing_localization_fields?: string[];
+  attached_artifacts?: ResearchPlanArtifactLink[];
   subtasks: Array<{
     id: string;
     title: string;
@@ -2709,6 +2738,8 @@ type ResearchPlanTimelineResponse = {
     missing_subtask_count?: number;
     blocks?: Array<{ id: string; title: string; missing_fields: string[] }>;
   };
+  current_work?: ResearchPlanCurrentWork | null;
+  artifact_links?: ResearchPlanArtifactLink[];
   blocks: ResearchPlanTimelineBlock[];
 };
 
@@ -6264,7 +6295,7 @@ function ResearchPlanTimeline({
             <React.Fragment key={block.id}>
               <button
                 ref={block.id === activeBlockKey ? activeBlockRef : undefined}
-                className={`research-plan-block ${block.status} ${expandedBlockId === block.id ? "expanded" : ""}`}
+                className={`research-plan-block ${block.status} ${block.isCurrentWork ? "current-work" : ""} ${expandedBlockId === block.id ? "expanded" : ""}`}
                 disabled={!block.onClick && !block.subtasks?.length}
                 onClick={() => {
                   if (block.subtasks?.length) {
@@ -6507,8 +6538,43 @@ function buildResearchPlanBlocks({
     }
   ];
   const mergedBlocks = mergeInitialAnchorsWithCodexPlanBlocks(blocks, codexAuthoredBlocks);
+  const blocksWithCurrentWork = applyResearchPlanCurrentWork(mergedBlocks, researchPlanTimeline?.current_work ?? null);
 
-  return attachResearchPlanSubtasks(renumberResearchPlanBlocks(mergedBlocks), jobs, text, locale, onTabChange);
+  return attachResearchPlanSubtasks(renumberResearchPlanBlocks(blocksWithCurrentWork), jobs, text, locale, onTabChange);
+}
+
+function applyResearchPlanCurrentWork(
+  blocks: ResearchPlanBlock[],
+  currentWork: ResearchPlanCurrentWork | null
+): ResearchPlanBlock[] {
+  if (!currentWork?.node_id) return blocks;
+  let matched = false;
+  const expectedOutputs = currentWork.expected_outputs.filter(Boolean).join(" / ");
+  const nextBlocks = blocks.map((block) => {
+    if (block.id !== currentWork.node_id) return block;
+    matched = true;
+    return {
+      ...block,
+      status: currentWork.status,
+      subtitle: currentWork.summary || block.subtitle,
+      evidence: block.evidence ?? (expectedOutputs || null),
+      isCurrentWork: true
+    };
+  });
+  if (matched) return nextBlocks;
+  return [
+    ...nextBlocks,
+    {
+      id: currentWork.node_id,
+      title: currentWork.node_id.replace(/[_-]+/g, " "),
+      subtitle: currentWork.summary,
+      status: currentWork.status,
+      eyebrow: "",
+      evidence: expectedOutputs || null,
+      subtasks: [],
+      isCurrentWork: true
+    }
+  ];
 }
 
 function mergeInitialAnchorsWithCodexPlanBlocks(
@@ -6570,6 +6636,8 @@ function researchPlanBlocksForPowerState(blocks: ResearchPlanBlock[], poweredOn:
 }
 
 function primaryResearchPlanFocusBlock(blocks: ResearchPlanBlock[]): ResearchPlanBlock | null {
+  const currentWorkBlock = blocks.find((block) => block.isCurrentWork && block.status === "active");
+  if (currentWorkBlock) return currentWorkBlock;
   const activeIndex = blocks.findIndex((block) => block.status === "active");
   if (activeIndex > 0) {
     const priorAttentionBlock = blocks
