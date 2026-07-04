@@ -245,16 +245,45 @@ def test_codex_cli_runner_retries_without_cli_schema_when_codex_rejects_schema(
 
 
 def test_codex_safe_env_does_not_pass_connector_credentials(tmp_path: Path, monkeypatch: Any) -> None:
+    host_home = tmp_path / "home"
+    host_codex_home = host_home / ".codex"
+    host_codex_home.mkdir(parents=True)
+    (host_codex_home / "auth.json").write_text('{"token":"test-only"}', encoding="utf-8")
+    (host_codex_home / "config.toml").write_text("[mcp_servers.bad]\ncommand = 'bad'\n", encoding="utf-8")
     monkeypatch.setenv("KAGGLE_USERNAME", "tablex-user")
     monkeypatch.setenv("KAGGLE_API_TOKEN", "secret-token")
     monkeypatch.setenv("WANDB_API_KEY", "secret-wandb-token")
     monkeypatch.setenv("TABLEX_INTERNAL_ONLY", "secret-internal")
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "host-codex-home"))
+    monkeypatch.setenv("CODEX_HOME", str(host_codex_home))
+    monkeypatch.setenv("HOME", str(host_home))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
 
     env = safe_env(tmp_path / "workspace")
 
-    assert env["CODEX_HOME"] == str(tmp_path / "host-codex-home")
+    runtime_codex_home = tmp_path / "cache" / "tablex" / "codex_home"
+    assert env["CODEX_HOME"] == str(runtime_codex_home.resolve())
+    assert Path(env["CODEX_HOME"]) != host_codex_home
+    assert (runtime_codex_home / "auth.json").is_symlink()
+    assert (runtime_codex_home / "auth.json").resolve() == (host_codex_home / "auth.json").resolve()
+    assert not (runtime_codex_home / "config.toml").exists()
     assert "KAGGLE_USERNAME" not in env
     assert "KAGGLE_API_TOKEN" not in env
     assert "WANDB_API_KEY" not in env
     assert "TABLEX_INTERNAL_ONLY" not in env
+
+
+def test_codex_safe_env_uses_explicit_tablex_codex_home(tmp_path: Path, monkeypatch: Any) -> None:
+    host_home = tmp_path / "home"
+    host_codex_home = host_home / ".codex"
+    host_codex_home.mkdir(parents=True)
+    (host_codex_home / "auth.json").write_text('{"token":"test-only"}', encoding="utf-8")
+    tablex_codex_home = tmp_path / "runtime" / "codex_home"
+    monkeypatch.setenv("HOME", str(host_home))
+    monkeypatch.setenv("CODEX_HOME", str(host_codex_home))
+    monkeypatch.setenv("TABLEX_CODEX_HOME", str(tablex_codex_home))
+
+    env = safe_env(tmp_path / "workspace")
+
+    assert env["CODEX_HOME"] == str(tablex_codex_home.resolve())
+    assert (tablex_codex_home / "auth.json").is_symlink()
+    assert (tablex_codex_home / "auth.json").resolve() == (host_codex_home / "auth.json").resolve()

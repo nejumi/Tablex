@@ -1223,7 +1223,6 @@ def safe_env(workspace: Path) -> dict[str, str]:
         "LC_ALL",
         "TERM",
         "OPENAI_API_KEY",
-        "CODEX_HOME",
     }
     env = {key: value for key, value in os.environ.items() if key in allowed}
     workspace_bin = workspace / ".tablex" / "bin"
@@ -1232,13 +1231,67 @@ def safe_env(workspace: Path) -> dict[str, str]:
     isolated_home = workspace / ".harness" / "home"
     isolated_home.mkdir(parents=True, exist_ok=True)
     env["HOME"] = str(isolated_home)
-    if "CODEX_HOME" not in env:
-        host_home = os.environ.get("HOME")
-        host_codex_home = Path(host_home) / ".codex" if host_home else None
-        if host_codex_home is not None and host_codex_home.exists():
-            env["CODEX_HOME"] = str(host_codex_home)
-        else:
-            codex_home = workspace / ".harness" / "codex_home"
-            codex_home.mkdir(parents=True, exist_ok=True)
-            env["CODEX_HOME"] = str(codex_home)
+    codex_home = tablex_codex_home()
+    prepare_tablex_codex_home(codex_home)
+    env["CODEX_HOME"] = str(codex_home)
     return env
+
+
+def tablex_codex_home() -> Path:
+    override = os.environ.get("TABLEX_CODEX_HOME")
+    if override:
+        return Path(override).expanduser().resolve()
+    cache_home = os.environ.get("XDG_CACHE_HOME")
+    if cache_home:
+        base = Path(cache_home).expanduser()
+    else:
+        host_home = os.environ.get("HOME")
+        base = (Path(host_home).expanduser() if host_home else Path.home()) / ".cache"
+    return (base / "tablex" / "codex_home").resolve()
+
+
+def prepare_tablex_codex_home(codex_home: Path) -> None:
+    codex_home.mkdir(parents=True, exist_ok=True)
+    try:
+        codex_home.chmod(0o700)
+    except OSError:
+        pass
+    host_codex_home = host_codex_home_for_auth()
+    if host_codex_home is None:
+        return
+    for filename in ("auth.json", "installation_id"):
+        source = host_codex_home / filename
+        if not source.exists():
+            continue
+        target = codex_home / filename
+        if target.exists():
+            continue
+        if target.is_symlink():
+            target.unlink()
+        try:
+            target.symlink_to(source)
+        except OSError:
+            # Keep the runtime isolated even if the platform disallows symlinks.
+            # API-key auth can still work through OPENAI_API_KEY.
+            pass
+
+
+def host_codex_home_for_auth() -> Path | None:
+    configured = os.environ.get("CODEX_HOME")
+    candidates: list[Path] = []
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    host_home = os.environ.get("HOME")
+    if host_home:
+        candidates.append(Path(host_home).expanduser() / ".codex")
+    runtime_home = tablex_codex_home()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        if resolved == runtime_home:
+            continue
+        if candidate.exists():
+            return candidate
+    return None
