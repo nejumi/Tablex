@@ -915,6 +915,34 @@ textarea {
   font-size: 11px;
 }
 
+.research-plan-presence {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-subtle) 70%, var(--surface));
+  padding: 9px 10px;
+}
+
+.research-plan-presence span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.research-plan-presence strong {
+  color: var(--text-strong);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.research-plan-presence.unreported {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--border));
+  background: color-mix(in srgb, var(--warning-bg) 38%, var(--surface));
+}
+
 .research-plan-subtasks {
   display: grid;
   gap: 8px;

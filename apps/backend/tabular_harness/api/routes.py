@@ -140,6 +140,10 @@ from tabular_harness.services.adaptive_strategy import (
     build_adaptive_strategy_brief,
 )
 from tabular_harness.services.agent_chat_status import agent_chat_wait_state
+from tabular_harness.services.agent_session_results import (
+    experiment_model_id_from_params,
+    experiment_result_signature,
+)
 from tabular_harness.services.agent_sessions import (
     active_main_session,
     append_session_event,
@@ -5308,6 +5312,17 @@ def leaderboard(project_id: str, db: Annotated[Session, Depends(get_session)]) -
     runs = db.scalars(
         select(ExperimentRun).where(ExperimentRun.project_id == project_id, ExperimentRun.status == "succeeded")
     ).all()
+    unique_runs: list[ExperimentRun] = []
+    seen_result_signatures: set[str] = set()
+    for run in runs:
+        metrics = loads_json(run.metrics_json, {})
+        params = loads_json(run.params_json, {})
+        signature = experiment_result_signature(metrics, model_id=experiment_model_id_from_params(params))
+        if signature in seen_result_signatures:
+            continue
+        seen_result_signatures.add(signature)
+        unique_runs.append(run)
+    runs = unique_runs
     metric_preference = latest_metric_preference(db, project_id)
     display_metric = metric_preference
     if display_metric is None:
@@ -6933,7 +6948,25 @@ def inline_local_html_assets(artifact: Artifact, path: Path, html: str, max_prev
         current_size = projected_size
         return f"{prefix}{data_uri}{suffix}"
 
-    return re.sub(r'(<(?:img|source)\b[^>]*\bsrc=["\'])([^"\']+)(["\'])', replace_src, html, flags=re.IGNORECASE)
+    inlined = re.sub(r'(<(?:img|source)\b[^>]*\bsrc=["\'])([^"\']+)(["\'])', replace_src, html, flags=re.IGNORECASE)
+    return inject_inline_preview_reader_style(inlined)
+
+
+def inject_inline_preview_reader_style(html: str) -> str:
+    if "tablex-inline-preview-reader-style" in html:
+        return html
+    style = """<style id="tablex-inline-preview-reader-style">
+html,body{background:#fff!important;color:#1f2933!important;color-scheme:light!important;min-height:100%;}
+body{box-sizing:border-box;}
+*,*:before,*:after{box-sizing:inherit;}
+@media (prefers-color-scheme: dark){
+  html,body{background:#fff!important;color:#1f2933!important;color-scheme:light!important;}
+  :root{--ink:#10183f;--muted:#53617d;--line:#dbe3f3;--panel:#ffffff;--wash:#f4f9fb;}
+}
+</style>"""
+    if re.search(r"</head\s*>", html, flags=re.IGNORECASE):
+        return re.sub(r"</head\s*>", f"{style}</head>", html, count=1, flags=re.IGNORECASE)
+    return f"{style}{html}"
 
 
 def html_asset_base_dirs(artifact: Artifact, path: Path) -> list[Path]:

@@ -29,6 +29,34 @@ class ResearchPlanCommitResult:
     created: bool
 
 
+class ResearchPlanValidationError(ValueError):
+    def __init__(self, issues: list[dict[str, Any]]) -> None:
+        self.issues = issues
+        errors = [issue for issue in issues if issue.get("severity", "error") == "error"]
+        summary = "; ".join(str(issue.get("message") or issue.get("code") or "invalid") for issue in errors[:4])
+        super().__init__(f"ResearchPlan document rejected: {summary}")
+
+
+PLAN_BLOCK_STATUSES = {"done", "active", "pending", "blocked", "waiting", "skipped"}
+PLAN_TERMINAL_STATUSES = {"done", "skipped"}
+PLAN_CURRENT_STATUSES = {"active", "blocked", "waiting"}
+PLAN_TOP_LEVEL_GRANULARITIES = {"chapter", "phase", "milestone"}
+PLAN_TOO_FINE_GRANULARITIES = {
+    "analysis",
+    "check",
+    "diagnostic",
+    "experiment",
+    "model",
+    "model_attempt",
+    "notebook",
+    "report",
+    "run",
+    "step",
+    "subtask",
+    "task",
+}
+
+
 def latest_research_plan_revision(db: Session, *, project_id: str) -> ResearchPlanRevision | None:
     plan = db.scalar(select(ResearchPlan).where(ResearchPlan.project_id == project_id))
     if plan is None or not plan.active_revision_id:
@@ -87,12 +115,22 @@ def commit_research_plan_revision(
     parent_revision_id: str | None = None,
     author_id: str | None = None,
     metadata: dict[str, Any] | None = None,
+    strict_validation: bool = False,
 ) -> ResearchPlanCommitResult:
     project = db.get(Project, project_id)
     org_id = project.org_id if project is not None else "local-org"
     plan = get_or_create_research_plan(db, project_id=project_id)
 
     canonical_document = research_plan_document(document)
+    validation_issues = validate_research_plan_document(
+        db,
+        project_id=project_id,
+        document=canonical_document,
+        strict=strict_validation,
+    )
+    validation_errors = [issue for issue in validation_issues if issue.get("severity", "error") == "error"]
+    if validation_errors and strict_validation:
+        raise ResearchPlanValidationError(validation_issues)
     document_json = dumps_json(canonical_document)
     document_hash = hashlib.sha256(document_json.encode("utf-8")).hexdigest()
     existing = db.scalar(
@@ -124,7 +162,7 @@ def commit_research_plan_revision(
         document_json=document_json,
         document_hash=document_hash,
         source_artifact_id=source_artifact_id,
-        metadata_json=dumps_json(metadata or {}),
+        metadata_json=dumps_json({**(metadata or {}), "validation_issues": validation_issues}),
     )
     db.add(revision)
     db.flush()
@@ -170,6 +208,7 @@ def set_research_plan_current_work(
         raise ValueError("revision_id does not belong to this project's ResearchPlan")
     if revision is None and plan.active_revision_id:
         revision = db.get(ResearchPlanRevision, plan.active_revision_id)
+    validate_research_plan_current_work_target(revision, node_id=cleaned_node_id, status=status)
     current = db.scalar(select(ResearchPlanCurrentWork).where(ResearchPlanCurrentWork.research_plan_id == plan.id))
     if current is None:
         current = ResearchPlanCurrentWork(
@@ -242,6 +281,7 @@ def attach_research_plan_artifact(
         revision = db.get(ResearchPlanRevision, plan.active_revision_id)
     if revision is None:
         raise ValueError("ResearchPlan revision is required before attaching artifacts")
+    validate_research_plan_node_exists(revision, node_id=cleaned_node_id)
     edge_metadata = {
         **(metadata or {}),
         "research_plan_id": plan.id,
@@ -393,3 +433,435 @@ def research_plan_document(document: dict[str, Any]) -> dict[str, Any]:
 def research_plan_revision_document(revision: ResearchPlanRevision) -> dict[str, Any]:
     payload = loads_json(revision.document_json, {})
     return payload if isinstance(payload, dict) else {}
+
+
+def validate_research_plan_document(
+    db: Session,
+    *,
+    project_id: str,
+    document: dict[str, Any],
+    strict: bool = False,
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    raw_blocks = document.get("timeline_blocks")
+    if raw_blocks is None:
+        if strict:
+            issues.append(
+                research_plan_issue(
+                    "missing_timeline_blocks",
+                    "/timeline_blocks",
+                    "timeline_blocks is required for ResearchPlan tool commits.",
+                    "Submit a document with timeline_blocks so Tablex can display and validate the plan.",
+                )
+            )
+        return issues
+    if not isinstance(raw_blocks, list):
+        issues.append(
+            research_plan_issue(
+                "invalid_timeline_blocks",
+                "/timeline_blocks",
+                "timeline_blocks must be an array.",
+                "Use an ordered array of ResearchPlan nodes.",
+            )
+        )
+        return issues
+
+    blocks = [block for block in raw_blocks if isinstance(block, dict)]
+    if strict and len(blocks) > 8:
+        issues.append(
+            research_plan_issue(
+                "top_level_plan_too_granular",
+                "/timeline_blocks",
+                f"The plan has {len(blocks)} top-level nodes, which is likely too granular for the main ResearchPlan.",
+                "Keep the top-level plan to a small number of chapter-like blocks. Put individual analyses, model attempts, and diagnostics under subtasks, ExperimentRuns, notebooks, or reports.",
+                severity="warning",
+            )
+        )
+    seen_ids: set[str] = set()
+    current_count = 0
+    first_open: tuple[int, str, str] | None = None
+    seen_pending: tuple[int, str, str] | None = None
+    for index, block in enumerate(blocks):
+        path = f"/timeline_blocks/{index}"
+        block_id = research_plan_block_id(block, index)
+        status = research_plan_block_status(block)
+        granularity = research_plan_block_granularity(block)
+        if strict and granularity:
+            if granularity in PLAN_TOO_FINE_GRANULARITIES:
+                issues.append(
+                    research_plan_issue(
+                        "top_level_node_granularity_too_fine",
+                        f"{path}/granularity",
+                        f"Top-level node `{block_id}` declares granularity `{granularity}`, which is too fine for the main ResearchPlan.",
+                        "Keep top-level nodes chapter-like. Put individual analyses, diagnostics, model attempts, notebooks, and reports under subtasks, ExperimentRuns, artifacts, or deliverable evidence.",
+                    )
+                )
+            elif granularity not in PLAN_TOP_LEVEL_GRANULARITIES:
+                issues.append(
+                    research_plan_issue(
+                        "unsupported_top_level_granularity",
+                        f"{path}/granularity",
+                        f"Top-level node `{block_id}` declares unsupported granularity `{granularity}`.",
+                        f"Use one of: {', '.join(sorted(PLAN_TOP_LEVEL_GRANULARITIES))}.",
+                    )
+                )
+        elif strict:
+            issues.append(
+                research_plan_issue(
+                    "top_level_granularity_missing",
+                    f"{path}/granularity",
+                    f"Top-level node `{block_id}` does not declare its granularity.",
+                    "Set granularity to chapter, phase, or milestone. Keep detailed work in subtasks and artifacts.",
+                    severity="warning",
+                )
+            )
+        if block_id in seen_ids:
+            issues.append(
+                research_plan_issue(
+                    "duplicate_node_id",
+                    f"{path}/id",
+                    f"ResearchPlan node id `{block_id}` appears more than once.",
+                    "Keep node ids stable and unique; create a new id when the work is genuinely different.",
+                )
+            )
+        seen_ids.add(block_id)
+        if status not in PLAN_BLOCK_STATUSES:
+            issues.append(
+                research_plan_issue(
+                    "invalid_status",
+                    f"{path}/status",
+                    f"Unsupported ResearchPlan status `{status}`.",
+                    f"Use one of: {', '.join(sorted(PLAN_BLOCK_STATUSES))}.",
+                )
+            )
+            continue
+        if status in PLAN_CURRENT_STATUSES:
+            current_count += 1
+            if seen_pending is not None:
+                prior_index, prior_id, prior_status = seen_pending
+                issues.append(
+                    research_plan_issue(
+                        "active_after_pending_predecessor",
+                        f"{path}/status",
+                        f"Node `{block_id}` is {status}, but earlier node `{prior_id}` at position {prior_index + 1} is still {prior_status}.",
+                        "Revise the earlier node to done/skipped with evidence, or make that earlier node the current work.",
+                    )
+                )
+        if status in PLAN_TERMINAL_STATUSES and first_open is not None:
+            prior_index, prior_id, prior_status = first_open
+            issues.append(
+                research_plan_issue(
+                    "completed_after_open_predecessor",
+                    f"{path}/status",
+                    f"Node `{block_id}` is {status}, but earlier node `{prior_id}` at position {prior_index + 1} is still {prior_status}.",
+                    "Keep the visible timeline left-to-right: finish or explicitly skip earlier nodes before marking later nodes done.",
+                )
+            )
+        if status in PLAN_TERMINAL_STATUSES:
+            if strict and status == "done" and not isinstance(block.get("deliverable_contract"), dict):
+                issues.append(
+                    research_plan_issue(
+                        "done_node_missing_deliverable_contract",
+                        f"{path}/deliverable_contract",
+                        f"Node `{block_id}` is done without a deliverable_contract.",
+                        "Declare the expected output classes in deliverable_contract.expected_outputs so Tablex can verify notebook, report, experiment, leaderboard, or no-output decisions without reading the title.",
+                        severity="warning",
+                    )
+                )
+            if status == "done" and not research_plan_block_has_completion_evidence(block):
+                issues.append(
+                    research_plan_issue(
+                        "done_node_missing_completion_evidence",
+                        f"{path}/completion_evidence",
+                        f"Node `{block_id}` is done, but no structured completion evidence is attached.",
+                        "Attach completion_evidence or supporting_artifacts, or set no_output_required with a rationale when no artifact is appropriate.",
+                    )
+                )
+            if status == "done":
+                missing_deliverables = missing_research_plan_deliverables(block)
+                if missing_deliverables:
+                    issues.append(
+                        research_plan_issue(
+                            "done_node_missing_contract_deliverables",
+                            f"{path}/deliverable_contract/expected_outputs",
+                            f"Node `{block_id}` is done, but completion evidence does not satisfy expected output(s): {', '.join(missing_deliverables[:6])}.",
+                            "Attach evidence with matching output_type/type/role/asset_type, or revise the deliverable_contract before marking the node done.",
+                        )
+                    )
+            if status == "skipped" and not research_plan_block_has_skip_reason(block):
+                issues.append(
+                    research_plan_issue(
+                        "skipped_node_missing_reason",
+                        f"{path}/skip_reason",
+                        f"Node `{block_id}` is skipped, but no skip reason is recorded.",
+                        "Add skip_reason or no_output_required_rationale so the user can understand why the node was skipped.",
+                    )
+                )
+            supporting_artifacts = block.get("supporting_artifacts")
+            if isinstance(supporting_artifacts, list):
+                missing = [
+                    str(item.get("path") or item.get("artifact_id") or index)
+                    for index, item in enumerate(supporting_artifacts)
+                    if isinstance(item, dict) and item.get("exists") is False
+                ]
+                if missing:
+                    issues.append(
+                        research_plan_issue(
+                            "completed_node_has_missing_artifacts",
+                            f"{path}/supporting_artifacts",
+                            f"Node `{block_id}` is {status}, but declared supporting artifact(s) are missing: {', '.join(missing[:4])}.",
+                            "Register or attach the artifact first, or leave the node pending/active until the evidence exists.",
+                        )
+                    )
+        elif first_open is None:
+            first_open = (index, block_id, status)
+        if status == "pending" and seen_pending is None:
+            seen_pending = (index, block_id, status)
+    if current_count > 1:
+        issues.append(
+            research_plan_issue(
+                "multiple_current_nodes",
+                "/timeline_blocks",
+                f"{current_count} ResearchPlan nodes are active/waiting/blocked.",
+                "Keep the top-level timeline to one current node; put parallel work under subtasks or child agents.",
+            )
+        )
+    if strict and current_count == 0 and any(research_plan_block_status(block) not in PLAN_TERMINAL_STATUSES for block in blocks):
+        issues.append(
+            research_plan_issue(
+                "missing_current_node",
+                "/timeline_blocks",
+                "The ResearchPlan has open top-level work but no active/waiting/blocked current node.",
+                "Mark exactly one open top-level node active, waiting, or blocked so the UI always shows where Codex is working.",
+            )
+        )
+
+    previous_revision = latest_research_plan_revision(db, project_id=project_id)
+    if previous_revision is not None:
+        previous_document = research_plan_revision_document(previous_revision)
+        previous_blocks = previous_document.get("timeline_blocks") if isinstance(previous_document, dict) else None
+        if isinstance(previous_blocks, list):
+            current_by_id = {
+                research_plan_block_id(block, index): block
+                for index, block in enumerate(blocks)
+                if isinstance(block, dict)
+            }
+            for previous_index, previous_block in enumerate(previous_blocks):
+                if not isinstance(previous_block, dict):
+                    continue
+                previous_id = research_plan_block_id(previous_block, previous_index)
+                previous_status = research_plan_block_status(previous_block)
+                if previous_status not in PLAN_TERMINAL_STATUSES:
+                    continue
+                current_block = current_by_id.get(previous_id)
+                if current_block is None:
+                    issues.append(
+                        research_plan_issue(
+                            "completed_node_removed",
+                            "/timeline_blocks",
+                            f"Previously completed node `{previous_id}` was removed.",
+                            "ResearchPlan history is append-only for completed work. Keep the node and add a superseding node or note.",
+                        )
+                    )
+                    continue
+                current_status = research_plan_block_status(current_block)
+                if current_status not in PLAN_TERMINAL_STATUSES:
+                    issues.append(
+                        research_plan_issue(
+                            "completed_node_reopened",
+                            "/timeline_blocks",
+                            f"Previously completed node `{previous_id}` was changed from {previous_status} to {current_status}.",
+                            "Do not reopen completed nodes. Add a new follow-up node if more work is needed.",
+                        )
+                    )
+    return issues
+
+
+def validate_research_plan_current_work_target(
+    revision: ResearchPlanRevision | None,
+    *,
+    node_id: str,
+    status: str,
+) -> None:
+    if revision is None:
+        raise ValueError("ResearchPlan revision is required before setting current_work")
+    blocks = research_plan_blocks_from_revision(revision)
+    node_index = next((index for index, block in enumerate(blocks) if research_plan_block_id(block, index) == node_id), None)
+    if node_index is None:
+        raise ValueError(
+            f"current_work.node_id `{node_id}` is not present in the active ResearchPlan revision. "
+            "Commit a revised plan containing the node first."
+        )
+    if status in PLAN_CURRENT_STATUSES:
+        for prior_index, prior_block in enumerate(blocks[:node_index]):
+            prior_status = research_plan_block_status(prior_block)
+            if prior_status not in PLAN_TERMINAL_STATUSES:
+                prior_id = research_plan_block_id(prior_block, prior_index)
+                raise ValueError(
+                    f"current_work.node_id `{node_id}` skips earlier node `{prior_id}` "
+                    f"which is still {prior_status}. Finish, skip, or revise that earlier node first."
+                )
+
+
+def validate_research_plan_node_exists(revision: ResearchPlanRevision, *, node_id: str) -> None:
+    blocks = research_plan_blocks_from_revision(revision)
+    for index, block in enumerate(blocks):
+        if research_plan_block_id(block, index) == node_id:
+            return
+    raise ValueError(f"ResearchPlan node `{node_id}` is not present in the active revision")
+
+
+def research_plan_blocks_from_revision(revision: ResearchPlanRevision) -> list[dict[str, Any]]:
+    document = research_plan_revision_document(revision)
+    raw_blocks = document.get("timeline_blocks") if isinstance(document, dict) else None
+    return [block for block in raw_blocks if isinstance(block, dict)] if isinstance(raw_blocks, list) else []
+
+
+def research_plan_block_id(block: dict[str, Any], index: int) -> str:
+    raw_id = block.get("id")
+    if isinstance(raw_id, str) and raw_id.strip():
+        return raw_id.strip()
+    return f"plan_block_{index + 1}"
+
+
+def research_plan_block_status(block: dict[str, Any]) -> str:
+    raw_status = block.get("status")
+    return raw_status.strip() if isinstance(raw_status, str) and raw_status.strip() else "pending"
+
+
+def research_plan_block_granularity(block: dict[str, Any]) -> str:
+    for key in ("granularity", "plan_level", "level"):
+        raw_value = block.get(key)
+        if isinstance(raw_value, str) and raw_value.strip():
+            return raw_value.strip().casefold().replace("-", "_").replace(" ", "_")
+    return ""
+
+
+def research_plan_block_has_completion_evidence(block: dict[str, Any]) -> bool:
+    completion_evidence = block.get("completion_evidence")
+    if isinstance(completion_evidence, list):
+        for item in completion_evidence:
+            if not isinstance(item, dict):
+                continue
+            if any(isinstance(item.get(key), str) and item.get(key).strip() for key in ("artifact_id", "run_id", "report_id", "notebook_artifact_id", "lineage_edge_id", "workspace_path")):
+                return True
+    supporting_artifacts = block.get("supporting_artifacts")
+    if isinstance(supporting_artifacts, list):
+        for item in supporting_artifacts:
+            if isinstance(item, dict) and item.get("exists") is not False:
+                if any(isinstance(item.get(key), str) and item.get(key).strip() for key in ("artifact_id", "path", "workspace_path")):
+                    return True
+    if block.get("no_output_required") is True:
+        rationale = block.get("no_output_required_rationale") or block.get("rationale")
+        return isinstance(rationale, str) and bool(rationale.strip())
+    return False
+
+
+def research_plan_block_has_skip_reason(block: dict[str, Any]) -> bool:
+    for key in ("skip_reason", "no_output_required_rationale", "rationale"):
+        value = block.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
+
+
+def missing_research_plan_deliverables(block: dict[str, Any]) -> list[str]:
+    contract = block.get("deliverable_contract")
+    if not isinstance(contract, dict):
+        return []
+    expected_outputs = contract.get("expected_outputs")
+    if not isinstance(expected_outputs, list):
+        return []
+    expected = [normalize_research_plan_output_type(item) for item in expected_outputs]
+    expected = [item for item in expected if item and item != "none"]
+    if not expected:
+        return []
+    evidence_types = research_plan_evidence_output_types(block)
+    missing: list[str] = []
+    for output_type in expected:
+        if output_type not in evidence_types:
+            missing.append(output_type)
+    return missing
+
+
+def normalize_research_plan_output_type(value: Any) -> str:
+    if isinstance(value, dict):
+        for key in ("output_type", "type", "asset_type", "kind", "role"):
+            item = value.get(key)
+            if isinstance(item, str) and item.strip():
+                return normalize_research_plan_type_token(item)
+        return ""
+    if isinstance(value, str):
+        return normalize_research_plan_type_token(value)
+    return ""
+
+
+def research_plan_evidence_output_types(block: dict[str, Any]) -> set[str]:
+    evidence_types: set[str] = set()
+    completion_evidence = block.get("completion_evidence")
+    if isinstance(completion_evidence, list):
+        for item in completion_evidence:
+            if not isinstance(item, dict):
+                continue
+            for key in ("output_type", "type", "asset_type", "kind", "role"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    evidence_types.add(normalize_research_plan_type_token(value))
+            if any(isinstance(item.get(key), str) and item.get(key).strip() for key in ("run_id", "experiment_run_id")):
+                evidence_types.add("experiment_run")
+                evidence_types.add("leaderboard_entry")
+            if any(isinstance(item.get(key), str) and item.get(key).strip() for key in ("notebook_artifact_id", "notebook_id")):
+                evidence_types.add("notebook")
+            if any(isinstance(item.get(key), str) and item.get(key).strip() for key in ("report_id",)):
+                evidence_types.add("report")
+    supporting_artifacts = block.get("supporting_artifacts")
+    if isinstance(supporting_artifacts, list):
+        for item in supporting_artifacts:
+            if not isinstance(item, dict) or item.get("exists") is False:
+                continue
+            for key in ("output_type", "type", "asset_type", "kind", "role"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    evidence_types.add(normalize_research_plan_type_token(value))
+            path = item.get("path") or item.get("workspace_path")
+            if isinstance(path, str):
+                lower_path = path.lower()
+                if "notebook" in lower_path or lower_path.endswith(".py"):
+                    evidence_types.add("notebook")
+                if lower_path.endswith((".md", ".html")):
+                    evidence_types.add("report")
+                if "model_result" in lower_path or "leaderboard" in lower_path or "experiment" in lower_path:
+                    evidence_types.add("experiment_run")
+                    evidence_types.add("leaderboard_entry")
+    return evidence_types
+
+
+def normalize_research_plan_type_token(value: str) -> str:
+    token = value.strip().casefold().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "marimo": "notebook",
+        "marimo_notebook": "notebook",
+        "analysis_notebook": "notebook",
+        "data_understanding_notebook": "notebook",
+        "model_diagnostics_notebook": "notebook",
+        "leaderboard": "leaderboard_entry",
+        "run": "experiment_run",
+        "experiment": "experiment_run",
+        "model_run": "experiment_run",
+        "model_results": "experiment_run",
+        "agent_session_report": "report",
+        "markdown_report": "report",
+        "html_report": "report",
+    }
+    return aliases.get(token, token)
+
+
+def research_plan_issue(
+    code: str,
+    path: str,
+    message: str,
+    fix: str,
+    *,
+    severity: str = "error",
+) -> dict[str, Any]:
+    return {"code": code, "path": path, "message": message, "fix": fix, "severity": severity}

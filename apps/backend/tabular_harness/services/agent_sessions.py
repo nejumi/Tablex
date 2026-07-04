@@ -39,6 +39,12 @@ from tabular_harness.models.entities import (
     User,
     utc_now,
 )
+from tabular_harness.services.agent_session_results import (
+    experiment_acks_dir,
+    experiment_requests_dir,
+    ingest_registered_session_experiment_artifacts,
+    process_experiment_result_requests,
+)
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
@@ -51,6 +57,7 @@ from tabular_harness.services.jobs import mark_job_succeeded
 from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.research_plan_timeline import research_plan_localization_summary
 from tabular_harness.services.research_plans import (
+    ResearchPlanValidationError,
     attach_research_plan_artifact,
     commit_research_plan_artifact_revision,
     commit_research_plan_revision,
@@ -1288,6 +1295,8 @@ def prepare_session_workspace(
     ensure_session_python_shims(workspace)
     research_plan_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
     research_plan_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
+    experiment_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
+    experiment_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     write_session_context_file(db, project=project, session=session)
     (workspace / ".tablex" / "GOAL.md").write_text(session.goal_text, encoding="utf-8")
     return workspace
@@ -1454,7 +1463,12 @@ def build_session_context(
             ),
             "living_research_plan": (
                 "When the project plan changes, write outputs/research_plan.json with optional timeline_blocks. "
-                "Tablex renders those blocks directly; after the initial anchors, Codex may add, remove, reorder, or branch them. "
+                "Tablex renders those blocks directly; after the initial anchors, Codex may append, refine, supersede, or branch them. "
+                "Keep top-level timeline_blocks coarse: use granularity chapter, phase, or milestone. Put individual analyses, "
+                "model attempts, diagnostics, notebook sections, and reports in subtasks, ExperimentRuns, artifacts, or completion evidence. "
+                "Completed nodes are append-only: keep them visible and add follow-up nodes when more work is needed. "
+                "For validated tool commits, exactly one open top-level node should be active/waiting/blocked, and a done node needs "
+                "structured completion_evidence, supporting_artifacts, or a no_output_required rationale. "
                 "Write human-visible timeline fields such as title, subtitle, why_it_matters, next_action, done_criteria, blockers, "
                 "and subtask title/detail in human_interface.response_locale. If you keep canonical English, also include "
                 "localizations like {\"ja-JP\": {\"title\": \"...\", \"subtitle\": \"...\"}}."
@@ -1473,6 +1487,17 @@ def build_session_context(
                     "Use this fixed JSON request/ack channel when you need Tablex to commit a plan revision, update the "
                     "current plan node, link an output artifact to a node, or create a human-attention question. "
                     "Use a new request_id and file for each operation, then read the matching ack JSON."
+                ),
+            },
+            "experiment_result_tool_requests": {
+                "request_dir": ".tablex/requests/experiments",
+                "ack_dir": ".tablex/acks/experiments",
+                "schema_version": "tablex_experiment_result_request.v1",
+                "operations": ["register_runs"],
+                "description": (
+                    "Use this fixed JSON request/ack channel when model or evaluation results should become "
+                    "Tablex ExperimentRun records and appear in the Leaderboard. Each run must include a stable "
+                    "model_id and numeric metrics. Prefer one comparable primary metric across runs in the same result set."
                 ),
             },
             "progress": "Explain progress naturally in Codex messages. Tablex stores the raw transcript and Chat explains it to humans.",
@@ -1611,8 +1636,9 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Do not use validation/test targets in feature generation prompts.",
         "- Do not destructively modify EvaluationSpec or SplitManifest.",
         "- Register important outputs by writing files under outputs/, reports/, notebooks/, or artifacts/.",
-        "- Keep a living plan when it helps the user follow the work: write `outputs/research_plan.json` with `schema_version: \"research_plan.v1\"` and optional `timeline_blocks`. Use `timeline_blocks` only as a display contract: after data upload, objective/task framing, data understanding, and prior-knowledge research anchors, freely add, remove, reorder, branch, or revise project-specific blocks. Mark a block done only when the supporting artifact exists or you explicitly record that no useful output is needed.",
-        "- For acknowledged ResearchPlan operations, write fixed JSON requests under `.tablex/requests/research_plan/` using `schema_version: \"tablex_research_plan_request.v1\"`; Tablex writes matching acks under `.tablex/acks/research_plan/`. Use this for `commit_revision`, `set_current_work`, `attach_artifact`, and `request_human_attention` when you need a validated harness-side state update.",
+        "- Keep a living plan when it helps the user follow the work: write `outputs/research_plan.json` with `schema_version: \"research_plan.v1\"` and optional `timeline_blocks`. Use `timeline_blocks` as an execution ledger: after data upload, objective/task framing, data understanding, and prior-knowledge research anchors, add, refine, supersede, or branch project-specific blocks. Top-level timeline blocks should be coarse chapters/phases/milestones with `granularity: \"chapter\"`, `\"phase\"`, or `\"milestone\"`; put individual analyses, model attempts, diagnostics, notebook sections, and reports in `subtasks`, ExperimentRuns, artifacts, or completion evidence rather than as top-level blocks. Do not remove or reopen completed nodes; add follow-up nodes instead. Mark a block done only when completion_evidence/supporting_artifacts exist or you explicitly record that no useful output is needed.",
+        "- For acknowledged ResearchPlan operations, write fixed JSON requests under `.tablex/requests/research_plan/` using `schema_version: \"tablex_research_plan_request.v1\"`; Tablex writes matching acks under `.tablex/acks/research_plan/`. Use this for `commit_revision`, `set_current_work`, `attach_artifact`, and `request_human_attention` when you need a validated harness-side state update. Valid commits keep the visible plan left-to-right, keep exactly one open top-level node active/waiting/blocked, and keep detailed work below chapter-level nodes. Invalid plan transitions are returned as actionable ack errors; revise and resubmit instead of continuing with an inconsistent visible plan.",
+        "- For model comparison or evaluation results that should appear in Leaderboard, write fixed JSON requests under `.tablex/requests/experiments/` using `schema_version: \"tablex_experiment_result_request.v1\"` and operation `register_runs`, or save structured result JSON such as `model_results.v1` under artifacts/.",
         "- For `outputs/research_plan.json` timeline_blocks, write human-facing strings in `.tablex/context.json` `human_interface.response_locale` when practical. Keep identifiers and source column names exact.",
         "- Keep human-facing accountability continuous: when you make meaningful progress, hit uncertainty, start or finish a long-running step, recover from an error, change the plan, or need the user to know what changed, overwrite `reports/chat_update.md` with only the latest concise update in the user's locale. Keep it under 1200 characters. Use separate report files for long history. Do not wait for Tablex to infer this from logs.",
         "- Treat `reports/chat_update.md` as a user-facing explanation, not an internal changelog: say what you are doing now, why it matters, what changed, what uncertainty remains, and where the user should look next. Avoid raw artifact IDs, hashes, filenames, internal schema names, and implementation vocabulary unless they are necessary for a user decision.",
@@ -2244,6 +2270,48 @@ def process_research_plan_tool_requests(
                 payload=ack,
                 update_heartbeat=False,
             )
+        except ResearchPlanValidationError as exc:
+            ack = {
+                "schema_version": "tablex_research_plan_ack.v1",
+                "request_id": request_id,
+                "operation": operation,
+                "status": "failed",
+                "processed_at": utc_now().isoformat(),
+                "error": {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                    "issues": exc.issues,
+                },
+            }
+            write_research_plan_tool_ack(ack_path, ack)
+            append_session_event(
+                db,
+                session,
+                source="tablex_sidecar",
+                event_type="research_plan_request_failed",
+                role="harness",
+                title="ResearchPlan request failed",
+                content=str(exc),
+                payload={**ack, "workspace_relative_path": str(path.relative_to(workspace))},
+                update_heartbeat=False,
+            )
+            register_agent_session_attention_chat_turn(
+                db,
+                store=store,
+                project=project,
+                session=session,
+                attention_key=f"research_plan_request_failed:{request_id}",
+                status="needs_attention",
+                message_kind="research_plan_request_failed",
+                details={
+                    "request_id": request_id,
+                    "operation": operation,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc)[:1200],
+                    "issues": exc.issues[:8],
+                    "workspace_relative_path": str(path.relative_to(workspace)),
+                },
+            )
         except Exception as exc:
             ack = {
                 "schema_version": "tablex_research_plan_ack.v1",
@@ -2309,6 +2377,7 @@ def execute_research_plan_tool_request(
             if payload.get("parent_revision_id") is not None
             else None,
             metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+            strict_validation=True,
         )
         return {
             "research_plan_id": result.plan.id,
@@ -2509,6 +2578,15 @@ def ingest_session_workspace_outputs(
             else:
                 maybe_defer_agent_session_notebook_capture(db, session=session, artifact=artifact)
     process_research_plan_tool_requests(db, store=store, project=project, session=session, workspace=workspace)
+    process_experiment_result_requests(
+        db,
+        store=store,
+        project=project,
+        session=session,
+        workspace=workspace,
+        append_event=append_session_event,
+    )
+    ingest_registered_session_experiment_artifacts(db, store=store, project=project, session=session)
     attach_registered_session_notebooks_to_current_research_plan(db, project=project, session=session)
     if allow_notebook_auto_capture:
         capture_pending_agent_session_notebooks(db, store=store, project=project, session=session)
@@ -2583,12 +2661,20 @@ def maybe_capture_agent_session_notebook_output(
     metadata = loads_json(artifact.metadata_json, {})
     if metadata.get("source") != "main_agent_session_workspace":
         return
-    if agent_session_notebook_capture_event_exists(
+    existing_success = latest_agent_session_notebook_capture_event(
         db,
         session=session,
         artifact=artifact,
         event_types=("notebook_auto_capture_succeeded",),
-    ):
+    )
+    if existing_success is not None:
+        register_agent_session_notebook_chat_turn_from_capture_event(
+            db,
+            store=store,
+            session=session,
+            notebook_artifact=artifact,
+            event=existing_success,
+        )
         return
     latest_failure = latest_agent_session_notebook_capture_event(
         db,
@@ -2679,6 +2765,53 @@ def maybe_capture_agent_session_notebook_output(
         preview_artifact=capture.evidence_html_artifact or capture.html_artifact,
         html_artifact=capture.html_artifact,
         manifest_artifact=capture.manifest_artifact,
+        linked_plan_node_id=linked_plan_node_id,
+    )
+
+
+def register_agent_session_notebook_chat_turn_from_capture_event(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    session: AgentSession,
+    notebook_artifact: Artifact,
+    event: AgentTranscriptEvent,
+) -> Artifact | None:
+    payload = loads_json(event.payload_json, {})
+    preview_artifact = (
+        db.get(Artifact, payload.get("notebook_evidence_html_artifact_id"))
+        if isinstance(payload.get("notebook_evidence_html_artifact_id"), str)
+        else None
+    )
+    html_artifact = (
+        db.get(Artifact, payload.get("notebook_execution_html_artifact_id"))
+        if isinstance(payload.get("notebook_execution_html_artifact_id"), str)
+        else None
+    )
+    manifest_artifact = (
+        db.get(Artifact, payload.get("notebook_execution_manifest_artifact_id"))
+        if isinstance(payload.get("notebook_execution_manifest_artifact_id"), str)
+        else None
+    )
+    linked_plan_node_id = attach_notebook_artifacts_to_current_research_plan(
+        db,
+        session=session,
+        notebook_artifact=notebook_artifact,
+        related_artifacts=[
+            (preview_artifact, "notebook_preview"),
+            (html_artifact, "notebook_html"),
+            (manifest_artifact, "notebook_manifest"),
+        ],
+    )
+    return register_agent_session_notebook_chat_turn(
+        db,
+        store=store,
+        session=session,
+        notebook_artifact=notebook_artifact,
+        status="ready",
+        preview_artifact=preview_artifact,
+        html_artifact=html_artifact,
+        manifest_artifact=manifest_artifact,
         linked_plan_node_id=linked_plan_node_id,
     )
 
@@ -2949,7 +3082,13 @@ def register_agent_session_notebook_chat_turn(
         for item in [notebook_artifact.id, preview_artifact_id, html_artifact_id, manifest_artifact_id]
         if isinstance(item, str) and item.strip()
     ]
-    open_artifact_id = preview_artifact_id if isinstance(preview_artifact_id, str) and preview_artifact_id else notebook_artifact.id
+    open_artifact_id = (
+        preview_artifact_id
+        if isinstance(preview_artifact_id, str) and preview_artifact_id
+        else html_artifact_id
+        if isinstance(html_artifact_id, str) and html_artifact_id
+        else notebook_artifact.id
+    )
     if status == "ready":
         assistant_message = (
             "分析ノートブックを保存し、Tablex内で開けるプレビューを用意しました。"

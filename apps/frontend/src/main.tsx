@@ -441,6 +441,9 @@ const englishMessages = {
   researchPlanDetailFallback: "Detail",
   researchPlanFallbackDetail: "",
   researchPlanUntitledBlockTitle: "Untitled block",
+  researchPlanCurrentPosition: "Current position",
+  researchPlanCurrentWorkUnreported: "Codex is active, but it has not declared the current plan node yet.",
+  researchPlanNextVisibleBlock: "No active plan node is declared. Next visible block:",
   researchPlanSummaryBlock: "block",
   researchPlanSummaryBlocks: "blocks",
   planEvidenceObjective: "objective evidence",
@@ -1108,6 +1111,9 @@ const japaneseMessages: LocaleMessages = {
   researchPlanDetailFallback: "詳細",
   researchPlanFallbackDetail: "",
   researchPlanUntitledBlockTitle: "無題のブロック",
+  researchPlanCurrentPosition: "現在地",
+  researchPlanCurrentWorkUnreported: "Codexは動作中ですが、現在のプラン位置はまだ申告されていません。",
+  researchPlanNextVisibleBlock: "実行中のプラン位置は未申告です。次に見えているブロック:",
   researchPlanSummaryBlock: "ブロック",
   researchPlanSummaryBlocks: "ブロック",
   planEvidenceObjective: "目的根拠",
@@ -5729,7 +5735,15 @@ function HomeTab({
               </strong>
             </div>
           </div>
-          <ResearchPlanTimeline blocks={researchPlanBlocks} latestResearchPlan={latestResearchPlan} locale={locale} text={text} />
+          <ResearchPlanTimeline
+            blocks={researchPlanBlocks}
+            currentWork={researchPlanTimeline?.current_work ?? null}
+            latestResearchPlan={latestResearchPlan}
+            locale={locale}
+            poweredOn={autonomyPoweredOn}
+            text={text}
+            turnState={turnState}
+          />
           <div className="mission-plan-facts">
             <Metric label={text.metricDatasets} value={projectStateLoaded ? datasetCount : "..."} />
             <Metric label={text.metricRuns} value={runs.length} />
@@ -6236,14 +6250,20 @@ function MissionSurfaceButton({
 
 function ResearchPlanTimeline({
   blocks,
+  currentWork,
   latestResearchPlan,
   locale,
-  text
+  poweredOn,
+  text,
+  turnState
 }: {
   blocks: ResearchPlanBlock[];
+  currentWork: ResearchPlanCurrentWork | null;
   latestResearchPlan: Artifact | null;
   locale: string;
+  poweredOn: boolean;
   text: LocaleMessages;
+  turnState: TurnState;
 }) {
   const [expandedBlockId, setExpandedBlockId] = React.useState<string | null>(null);
   const timelineRef = React.useRef<HTMLDivElement | null>(null);
@@ -6251,6 +6271,18 @@ function ResearchPlanTimeline({
   const expandedBlock = blocks.find((block) => block.id === expandedBlockId && block.subtasks?.length);
   const activeBlockKey = selectedResearchPlanBlockKey(blocks);
   const summary = researchPlanCompactSummary(blocks, text);
+  const declaredCurrentBlock = currentWork?.node_id
+    ? blocks.find((block) => block.id === currentWork.node_id) ?? null
+    : null;
+  const currentPositionText = researchPlanCurrentPositionText({
+    blocks,
+    currentWork,
+    declaredCurrentBlock,
+    poweredOn,
+    text,
+    turnState,
+    locale
+  });
 
   React.useLayoutEffect(() => {
     if (!timelineRef.current || !activeBlockRef.current) return;
@@ -6326,6 +6358,12 @@ function ResearchPlanTimeline({
               </button>
             ))}
           </div>
+        </div>
+      ) : null}
+      {currentPositionText ? (
+        <div className={`research-plan-presence ${declaredCurrentBlock ? "declared" : "unreported"}`}>
+          <span>{text.researchPlanCurrentPosition}</span>
+          <strong>{currentPositionText}</strong>
         </div>
       ) : null}
       <div className="research-plan-footer">
@@ -6711,6 +6749,38 @@ function researchPlanCompactSummary(blocks: ResearchPlanBlock[], text: LocaleMes
     .map((status) => `${researchPlanStatusLabel(status, text)} ${counts[status]}`);
   const blockLabel = blocks.length === 1 ? text.researchPlanSummaryBlock : text.researchPlanSummaryBlocks;
   return `${blocks.length} ${blockLabel}: ${parts.join(" / ")}`;
+}
+
+function researchPlanCurrentPositionText({
+  blocks,
+  currentWork,
+  declaredCurrentBlock,
+  poweredOn,
+  text,
+  turnState,
+  locale
+}: {
+  blocks: ResearchPlanBlock[];
+  currentWork: ResearchPlanCurrentWork | null;
+  declaredCurrentBlock: ResearchPlanBlock | null;
+  poweredOn: boolean;
+  text: LocaleMessages;
+  turnState: TurnState;
+  locale: string;
+}): string {
+  if (currentWork?.node_id && declaredCurrentBlock) {
+    const title = displayTextOrFallback(declaredCurrentBlock.title, locale, currentWork.node_id);
+    const summary = currentWork.summary ? displayTextOrFallback(currentWork.summary, locale, "") : "";
+    return summary ? `${title}: ${summary}` : title;
+  }
+  const nextBlock = blocks.find((block) => ["pending", "blocked", "waiting"].includes(block.status));
+  const nextTitle = nextBlock ? displayTextOrFallback(nextBlock.title, locale, text.researchPlanSummaryBlock) : "";
+  if (poweredOn && turnState.state === "agent_running") {
+    return nextTitle
+      ? `${text.researchPlanCurrentWorkUnreported} ${text.researchPlanNextVisibleBlock} ${nextTitle}`
+      : text.researchPlanCurrentWorkUnreported;
+  }
+  return nextTitle ? `${text.researchPlanNextVisibleBlock} ${nextTitle}` : "";
 }
 
 function attachResearchPlanSubtasks(
