@@ -38,6 +38,7 @@ from tabular_harness.models.entities import (
     LineageEdge,
     ModelVersion,
     Project,
+    ResearchPlanRevision,
     User,
     utc_now,
 )
@@ -63,6 +64,7 @@ from tabular_harness.services.research_plan_timeline import (
     research_plan_localization_summary,
 )
 from tabular_harness.services.research_plans import (
+    PLAN_CURRENT_STATUSES,
     ResearchPlanValidationError,
     attach_research_plan_artifact,
     commit_research_plan_artifact_revision,
@@ -3903,9 +3905,14 @@ def attach_notebook_artifacts_to_current_research_plan(
     target_revision_id = revision_id.strip() if isinstance(revision_id, str) and revision_id.strip() else None
     if target_node_id is None:
         if current is None or not current.node_id.strip():
-            return None
-        target_node_id = current.node_id
-        target_revision_id = current.revision_id
+            revision = latest_research_plan_revision(db, project_id=notebook_artifact.project_id)
+            target_node_id = single_current_research_plan_node_id(revision)
+            target_revision_id = revision.id if revision is not None else None
+            if target_node_id is None:
+                return None
+        else:
+            target_node_id = current.node_id
+            target_revision_id = current.revision_id
     if target_revision_id is None and current is not None and current.revision_id:
         target_revision_id = current.revision_id
     if target_revision_id is None:
@@ -3948,6 +3955,24 @@ def attach_notebook_artifacts_to_current_research_plan(
             continue
         attached_any = True
     return target_node_id if attached_any or strict else None
+
+
+def single_current_research_plan_node_id(revision: ResearchPlanRevision | None) -> str | None:
+    if revision is None:
+        return None
+    document = research_plan_revision_document(revision)
+    raw_blocks = document.get("timeline_blocks")
+    if not isinstance(raw_blocks, list):
+        return None
+    current_node_ids: list[str] = []
+    for raw_block in raw_blocks:
+        if not isinstance(raw_block, dict):
+            continue
+        node_id = str(raw_block.get("id") or "").strip()
+        status = str(raw_block.get("status") or "").strip().lower()
+        if node_id and status in PLAN_CURRENT_STATUSES:
+            current_node_ids.append(node_id)
+    return current_node_ids[0] if len(current_node_ids) == 1 else None
 
 
 def research_plan_artifact_link_exists(

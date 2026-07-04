@@ -3655,6 +3655,97 @@ def test_failed_notebook_auto_capture_retries_after_cooldown(
         assert [payload["intent"]["status"] for payload in chat_payloads] == ["preview_failed", "ready"]
 
 
+def test_auto_captured_notebook_attaches_to_single_active_research_plan_node(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    notebooks_dir = workspace / "notebooks"
+    notebooks_dir.mkdir(parents=True)
+    notebook = notebooks_dir / "deep_data_understanding.py"
+    notebook.write_text(
+        "import marimo\n\napp = marimo.App()\n\n@app.cell\ndef _():\n    return\n",
+        encoding="utf-8",
+    )
+
+    def fake_capture(db: Any, *, store: LocalArtifactStore, notebook_artifact: Artifact) -> Any:
+        del db, store, notebook_artifact
+        return SimpleNamespace(
+            html_artifact=SimpleNamespace(id="art_auto_html"),
+            manifest_artifact=SimpleNamespace(id="art_auto_manifest"),
+            evidence_html_artifact=SimpleNamespace(id="art_auto_evidence"),
+        )
+
+    monkeypatch.setattr(analysis_notebooks_module, "create_notebook_execution_capture", fake_capture)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_auto_notebook_plan_link", name="Auto Notebook Plan Link")
+        session = AgentSession(
+            id="as_auto_notebook_plan_link",
+            project_id=project.id,
+            goal_text="Write a readable data understanding notebook.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "granularity": "chapter",
+                        "status": "active",
+                    },
+                    {
+                        "id": "modeling",
+                        "title": "Modeling",
+                        "granularity": "chapter",
+                        "status": "pending",
+                    },
+                ],
+            },
+            author_type="codex",
+            reason="Codex committed the active chapter before notebook authoring.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        notebook_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+        )
+        assert notebook_artifact is not None
+        source_edge = db.scalar(
+            select(LineageEdge).where(
+                LineageEdge.project_id == project.id,
+                LineageEdge.relation_type == "supports_plan_node",
+                LineageEdge.to_asset_id == notebook_artifact.id,
+            )
+        )
+        assert source_edge is not None
+        assert loads_json(source_edge.metadata_json, {})["node_id"] == "data_understanding"
+        chat_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["actions"][0]["target_tab"] == "Notebooks"
+        assert chat_payload["actions"][0]["artifact_id"] == "art_auto_evidence"
+        assert chat_payload["response_brief"]["research_plan_node_id"] == "data_understanding"
+
+        timeline = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+        data_block = next(block for block in timeline["blocks"] if block["id"] == "data_understanding")
+        assert any(link["artifact_id"] == notebook_artifact.id for link in data_block["attached_artifacts"])
+
+
 def test_research_plan_ingest_commits_contract_valid_workspace_plan(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
