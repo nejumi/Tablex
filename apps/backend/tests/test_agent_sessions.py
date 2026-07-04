@@ -21,6 +21,7 @@ from tabular_harness.models.entities import (
     Base,
     Job,
     Project,
+    ResearchPlanRevision,
     User,
     utc_now,
 )
@@ -1871,6 +1872,11 @@ def test_research_plan_ingest_preserves_mixed_language_timeline_without_repair_e
         plan_payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
         assert plan_payload["timeline_blocks"][0]["title"] == "Modeling review"
         assert plan_payload["timeline_blocks"][0]["why_it_matters"] == "Compare candidate models after EDA."
+        revision = db.scalar(select(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project.id))
+        assert revision is not None
+        assert revision.source_artifact_id == artifact.id
+        assert revision.author_type == "codex"
+        assert loads_json(revision.document_json, {})["timeline_blocks"][0]["title"] == "Modeling review"
 
         events = list(db.scalars(select(AgentTranscriptEvent).where(AgentTranscriptEvent.session_id == session.id)))
         assert [event.event_type for event in events] == ["artifact_registered"]
@@ -1879,6 +1885,12 @@ def test_research_plan_ingest_preserves_mixed_language_timeline_without_repair_e
         db.commit()
         repeated_events = list(db.scalars(select(AgentTranscriptEvent).where(AgentTranscriptEvent.session_id == session.id)))
         assert [event.event_type for event in repeated_events] == ["artifact_registered"]
+        revision_count = db.scalar(
+            select(func.count())
+            .select_from(ResearchPlanRevision)
+            .where(ResearchPlanRevision.project_id == project.id)
+        )
+        assert revision_count == 1
 
 
 def test_published_raw_codex_transcript_is_ingested_as_session_artifact(tmp_path: Path) -> None:

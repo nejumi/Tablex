@@ -47,6 +47,7 @@ from tabular_harness.services.jobs import TERMINAL_STATUSES as TERMINAL_JOB_STAT
 from tabular_harness.services.jobs import mark_job_succeeded
 from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.research_plan_timeline import research_plan_localization_summary
+from tabular_harness.services.research_plans import commit_research_plan_artifact_revision
 
 MAIN_AUTONOMOUS_SESSION_TYPE = "main_autonomous"
 ACTIVE_SESSION_STATUSES = {"starting", "running", "between_turns", "waiting_for_runner"}
@@ -2137,6 +2138,12 @@ def ingest_session_workspace_outputs(
                 path=path,
                 artifact=artifact,
             )
+            if asset_type == "research_plan":
+                commit_research_plan_artifact_revision(
+                    db,
+                    artifact=artifact,
+                    reason=f"Committed Codex-authored workspace ResearchPlan from {path.relative_to(workspace)}.",
+                )
             if allow_notebook_auto_capture:
                 maybe_capture_agent_session_notebook_output(
                     db,

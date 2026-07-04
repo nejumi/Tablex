@@ -33,6 +33,7 @@ from tabular_harness.services.artifacts import (
     next_artifact_version,
     register_artifact,
 )
+from tabular_harness.services.research_plans import commit_research_plan_artifact_revision
 
 
 @dataclass(frozen=True)
@@ -329,6 +330,11 @@ def create_research_plan(
             "recommended_asset_count": len(recommended_references),
             "network_default": "disabled_until_runner_policy_allows",
         },
+    )
+    commit_research_plan_artifact_revision(
+        db,
+        artifact=artifact,
+        reason="Created harness ResearchPlan artifact.",
     )
     create_research_plan_lineage(
         db,

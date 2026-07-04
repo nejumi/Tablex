@@ -9,11 +9,35 @@ from tabular_harness.core.json import loads_json
 from tabular_harness.models.entities import Artifact, utc_now
 from tabular_harness.services.artifacts import artifact_primary_path
 from tabular_harness.services.locales import locale_language
+from tabular_harness.services.research_plans import (
+    latest_research_plan_revision,
+    research_plan_revision_document,
+)
 
 _MISSING = object()
 
 
 def build_research_plan_timeline_response(db: Session, *, project_id: str, locale: str | None = None) -> dict[str, Any]:
+    revision = latest_research_plan_revision(db, project_id=project_id)
+    if revision is not None:
+        payload = research_plan_revision_document(revision)
+        raw_blocks = payload.get("timeline_blocks") if isinstance(payload, dict) else None
+        response_locale = _research_plan_effective_locale(locale, payload)
+        return {
+            "schema_version": "research_plan_timeline.v1",
+            "project_id": project_id,
+            "source_artifact_id": revision.source_artifact_id,
+            "source_revision_id": revision.id,
+            "research_plan_id": revision.research_plan_id,
+            "revision_index": revision.revision_index,
+            "revision_author_type": revision.author_type,
+            "response_locale": response_locale,
+            "requested_locale": locale,
+            "authored_locale": _research_plan_payload_locale(payload),
+            "generated_at": revision.created_at.isoformat(),
+            "localization": research_plan_localization_summary(raw_blocks, locale=response_locale),
+            "blocks": clean_research_plan_timeline_blocks(raw_blocks, locale=response_locale),
+        }
     artifact = db.scalar(
         select(Artifact)
         .where(Artifact.project_id == project_id, Artifact.asset_type == "research_plan")

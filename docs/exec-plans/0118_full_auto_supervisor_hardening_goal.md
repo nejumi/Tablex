@@ -157,6 +157,23 @@ This pass deliberately removes that path:
 
 This section supersedes the earlier locale-refresh hardening entries in this file.
 
+## 2026-07-04 ResearchPlan Substrate Phase 1
+
+Fable's next recommendation was to stop treating ResearchPlan as a frontend-composed view over artifacts and process presence. This pass adds the first backend substrate without changing Codex's visible behavior:
+
+- Added `ResearchPlan` and append-only `ResearchPlanRevision` metadata tables.
+- A project has one active ResearchPlan document; each revision stores the full JSON document snapshot, parent revision, author type, source artifact, hash, reason, and revision index.
+- Newly created harness ResearchPlan artifacts and Codex workspace `outputs/research_plan.json` artifacts are committed into `ResearchPlanRevision`.
+- Timeline API now prefers the active DB revision and falls back to the latest legacy `research_plan` artifact only for older projects that have not yet been committed.
+- Repeated ingestion of the same document is idempotent by document hash, so workspace rescans do not create revision spam.
+
+Still deferred:
+
+- MCP/tool surface for Codex to call `commit_revision`, `set_current_work`, `attach_artifact`, and `request_human_attention` directly.
+- `ResearchPlanCurrentWork` presence table or equivalent lightweight current-work channel.
+- Removal of the frontend initial-anchor merge/inference layer after Codex can operate the plan through the tool substrate.
+- A migration/backfill command for historical `research_plan` artifacts into revisions. The GET path intentionally remains read-only and does not mutate DB state.
+
 ## Deferred Scope
 
 - Do not prune historical duplicate artifacts automatically. Existing projects may still contain large artifact histories from older naming behavior; deletion or compaction needs an explicit maintenance command and user approval.
@@ -164,6 +181,7 @@ This section supersedes the earlier locale-refresh hardening entries in this fil
 - Full browser UX review remains necessary for Activity overlay behavior under live running workloads. Chat/Raw, Research Plan Japanese rendering, and Notebook preview/Japanese chrome now have Firefox Playwright evidence for the inspected project.
 - Chat quality still depends on Codex honoring `reports/chat_update.md` at a useful cadence. The harness now requests those updates from the supervisor path as well as user/chat/activity paths, but real long-running sessions should be observed to confirm the cadence feels natural.
 - Research Plan still needs the document-revision/tool substrate. The current pass is a stop-loss cleanup, not the final ideal model for plan authority or current-work reporting.
+- ResearchPlan has a Phase 1 DB document/revision substrate, but Codex does not yet have the MCP/tool interface to operate it directly.
 - The product still has large frontend/backend files (`main.tsx`, `routes.py`, `analysis_notebooks.py`). Future edits should reduce risk through extraction rather than broad, unrelated edits.
 
 ## Risks
@@ -179,6 +197,8 @@ This section supersedes the earlier locale-refresh hardening entries in this fil
 - `.venv/bin/pytest apps/backend/tests/test_research_plan_timeline.py -q`
 - `.venv/bin/pytest apps/backend/tests/test_agent_sessions.py::test_turn_prompt_includes_living_research_plan_contract apps/backend/tests/test_agent_sessions.py::test_research_plan_ingest_preserves_mixed_language_timeline_without_repair_event -q`
 - `.venv/bin/pytest apps/backend/tests/test_api_flow.py::test_research_plan_timeline_reads_artifact_authored_blocks apps/backend/tests/test_api_flow.py::test_research_plan_timeline_uses_artifact_locale_and_codex_display_fields apps/backend/tests/test_api_flow.py::test_research_plan_timeline_uses_artifact_locale_when_query_locale_absent apps/backend/tests/test_api_flow.py::test_research_plan_timeline_defaults_to_latest_project_locale -q`
+- `.venv/bin/pytest apps/backend/tests/test_research_plan_timeline.py apps/backend/tests/test_agent_sessions.py::test_research_plan_ingest_preserves_mixed_language_timeline_without_repair_event apps/backend/tests/test_api_flow.py::test_research_plan_timeline_reads_artifact_authored_blocks -q`
+- `.venv/bin/pytest apps/backend/tests -q`
 - `npm --prefix apps/frontend run build`
 - `npm run lint`
 - `npm run build`

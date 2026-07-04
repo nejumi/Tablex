@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+from tabular_harness.models.entities import Base, Project, ResearchPlanRevision
 from tabular_harness.services.research_plan_timeline import (
+    build_research_plan_timeline_response,
     clean_research_plan_timeline_blocks,
     research_plan_localization_summary,
 )
+from tabular_harness.services.research_plans import commit_research_plan_revision
 
 
 def test_research_plan_timeline_preserves_codex_authored_text_without_locale_masking() -> None:
@@ -142,3 +147,44 @@ def test_research_plan_timeline_does_not_rewrite_done_status_for_missing_support
     assert blocks[0]["missing_supporting_artifact_count"] == 1
     assert blocks[0]["evidence_verified"] is False
     assert blocks[0]["status_adjustment_reason"] is None
+
+
+def test_research_plan_timeline_prefers_active_db_revision() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_plan_revision", name="Plan Revision")
+        db.add(project)
+        db.commit()
+
+        result = commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v1",
+                "timeline_blocks": [
+                    {
+                        "id": "revision_owned_step",
+                        "title": "Revision-owned data understanding",
+                        "why_it_matters": "The active revision is the canonical timeline source.",
+                        "status": "active",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Codex committed the active plan.",
+        )
+        db.commit()
+
+        response = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+
+        assert response["source_revision_id"] == result.revision.id
+        assert response["research_plan_id"] == result.plan.id
+        assert response["revision_index"] == 1
+        assert response["revision_author_type"] == "codex"
+        assert response["blocks"][0]["id"] == "revision_owned_step"
+        assert response["blocks"][0]["title"] == "Revision-owned data understanding"
+
+        revisions = list(db.scalars(select(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project.id)))
+        assert [revision.id for revision in revisions] == [result.revision.id]

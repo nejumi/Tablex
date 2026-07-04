@@ -310,6 +310,49 @@ class ExperimentRun(Base):
     created_by: Mapped[str | None] = mapped_column(String, default="local-user")
 
 
+class ResearchPlan(Base):
+    __tablename__ = "research_plans"
+    __table_args__ = (
+        UniqueConstraint("project_id"),
+        Index("ix_research_plans_project_updated", "project_id", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    org_id: Mapped[str] = mapped_column(String, default="local-org", nullable=False)
+    project_id: Mapped[str] = mapped_column(String, ForeignKey("projects.id"), nullable=False)
+    active_revision_id: Mapped[str | None] = mapped_column(String)
+    created_by: Mapped[str | None] = mapped_column(String, default="local-user")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class ResearchPlanRevision(Base):
+    __tablename__ = "research_plan_revisions"
+    __table_args__ = (
+        UniqueConstraint("research_plan_id", "revision_index"),
+        UniqueConstraint("research_plan_id", "document_hash"),
+        Index("ix_research_plan_revisions_plan_created", "research_plan_id", "created_at"),
+        Index("ix_research_plan_revisions_project_created", "project_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    org_id: Mapped[str] = mapped_column(String, default="local-org", nullable=False)
+    project_id: Mapped[str] = mapped_column(String, ForeignKey("projects.id"), nullable=False)
+    research_plan_id: Mapped[str] = mapped_column(String, ForeignKey("research_plans.id"), nullable=False)
+    parent_revision_id: Mapped[str | None] = mapped_column(String, ForeignKey("research_plan_revisions.id"))
+    revision_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    author_type: Mapped[str] = mapped_column(String, default="codex", nullable=False)
+    author_id: Mapped[str | None] = mapped_column(String)
+    reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    document_json: Mapped[str] = mapped_column(Text, nullable=False)
+    document_hash: Mapped[str] = mapped_column(String, nullable=False)
+    source_artifact_id: Mapped[str | None] = mapped_column(String, ForeignKey("artifacts.id"))
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class ResearchBrief(Base):
     __tablename__ = "research_briefs"
 
