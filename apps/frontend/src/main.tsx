@@ -1613,6 +1613,7 @@ function localePrefersShiftEnter(locale: string): boolean {
     normalized.startsWith("ja") ||
     normalized.startsWith("zh") ||
     normalized.startsWith("ko") ||
+    normalized.startsWith("日本語") ||
     normalized.includes("japanese") ||
     normalized.includes("chinese") ||
     normalized.includes("korean")
@@ -1620,7 +1621,10 @@ function localePrefersShiftEnter(locale: string): boolean {
 }
 
 function localeLanguage(locale: string | null | undefined): string {
-  return (locale ?? "").trim().replace("_", "-").split("-", 1)[0].toLowerCase();
+  const normalized = (locale ?? "").trim().toLowerCase().replace("_", "-");
+  if (!normalized) return "";
+  if (normalized === "japanese" || normalized === "日本語" || normalized.startsWith("日本語")) return "ja";
+  return normalized.split("-", 1)[0];
 }
 
 function localeLooksJapanese(locale: string | null | undefined): boolean {
