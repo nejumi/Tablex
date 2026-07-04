@@ -157,6 +157,7 @@ from tabular_harness.services.agent_sessions import (
     maybe_request_codex_progress_update,
     raw_codex_stderr_path,
     raw_codex_transcript_path,
+    reconcile_project_notebook_chat_links,
     run_main_agent_session_supervisor,
     session_to_dict,
     start_main_agent_session_supervisor_thread,
@@ -3717,8 +3718,15 @@ def utc_datetime_or_none(value: datetime | None) -> datetime | None:
 
 
 @router.get("/api/projects/{project_id}/agent-chat/history", response_model=list[AgentChatHistoryTurnRead])
-def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+def list_agent_chat_history(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> list[dict[str, Any]]:
     project = require_project(db, project_id)
+    if reconcile_project_notebook_chat_links(db, store=store, project=project):
+        db.flush()
+        db.commit()
     response_locale = latest_project_response_locale(db, project)
     plan_actions, plan_next_focus = chat_update_actions_from_research_plan_evidence(
         db,
@@ -5055,8 +5063,12 @@ def generate_data_understanding_notebook_endpoint(
 def list_project_analysis_notebooks(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
+    if reconcile_project_notebook_chat_links(db, store=store, project=project):
+        db.flush()
+        db.commit()
     return build_project_notebook_index(db, project)
 
 
@@ -5630,6 +5642,9 @@ def get_project_agent_activity(
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
+    if reconcile_project_notebook_chat_links(db, store=store, project=project):
+        db.flush()
+        db.commit()
     recovered_session = ensure_project_full_auto_agent_session(
         db,
         store=store,

@@ -1131,6 +1131,83 @@ def test_agent_chat_history_surfaces_notebook_update_link(
     assert turn["next_focus"]["target_anchor"] == "notebook-preview-top"
 
 
+def test_agent_chat_history_reconciles_existing_source_only_session_notebook(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Notebook chat backfill"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        session = AgentSession(
+            id="ags_source_only_notebook",
+            project_id=project_id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Backfill source-only notebooks.",
+            last_heartbeat_at=utc_now(),
+        )
+        db.add(session)
+        db.flush()
+        notebook_artifact = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="agent_session_source_only_notebook",
+            filename="source_only.py",
+            text="import marimo\n\napp = marimo.App()\n",
+            metadata={
+                "project_id": project_id,
+                "agent_session_id": session.id,
+                "source": "main_agent_session_workspace",
+                "workspace_relative_path": "notebooks/source_only.py",
+                "notebook_kind": "data_understanding",
+            },
+        )
+        db.commit()
+
+    history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
+    assert history_response.status_code == 200
+    history = history_response.json()
+    notebook_turns = [
+        item
+        for item in history
+        if item["intent"].get("type") == "notebook_artifact_update"
+        and item["response_brief"]["notebook_artifact_id"] == notebook_artifact.id
+    ]
+    assert len(notebook_turns) == 1
+    turn = notebook_turns[0]
+    assert turn["intent"]["status"] == "source_saved"
+    assert turn["actions"][0]["target_tab"] == "Notebooks"
+    assert turn["actions"][0]["target_anchor"] == "notebook-preview-top"
+    assert turn["actions"][0]["artifact_id"] == notebook_artifact.id
+    assert turn["response_brief"]["status"] == "source_saved"
+
+    second_history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
+    assert second_history_response.status_code == 200
+    second_history = second_history_response.json()
+    second_notebook_turns = [
+        item
+        for item in second_history
+        if item["intent"].get("type") == "notebook_artifact_update"
+        and item["response_brief"]["notebook_artifact_id"] == notebook_artifact.id
+    ]
+    assert len(second_notebook_turns) == 1
+
+
 def test_agent_activity_surfaces_runner_retry_state(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setattr(
         "tabular_harness.api.routes.run_main_agent_session_supervisor",

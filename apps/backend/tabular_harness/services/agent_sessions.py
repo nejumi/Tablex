@@ -3894,6 +3894,83 @@ def capture_pending_agent_session_notebooks(
         maybe_capture_agent_session_notebook_output(db, store=store, session=session, artifact=artifact)
 
 
+def reconcile_project_notebook_chat_links(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    limit: int = 80,
+) -> int:
+    notebook_artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+            .order_by(Artifact.created_at.desc())
+            .limit(limit)
+        ).all()
+    )
+    registered = 0
+    for artifact in reversed(notebook_artifacts):
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("source") != "main_agent_session_workspace":
+            continue
+        session_id = metadata.get("agent_session_id")
+        if not isinstance(session_id, str) or not session_id.strip():
+            continue
+        session = db.get(AgentSession, session_id)
+        if session is None or session.project_id != project.id:
+            continue
+        capture_artifacts = latest_notebook_capture_artifacts(
+            db,
+            project_id=project.id,
+            notebook_artifact_id=artifact.id,
+        )
+        preview_artifact = capture_artifacts["evidence_html"] or capture_artifacts["html"]
+        if preview_artifact is not None or capture_artifacts["manifest"] is not None:
+            chat_artifact = register_agent_session_notebook_chat_turn(
+                db,
+                store=store,
+                session=session,
+                notebook_artifact=artifact,
+                status="ready",
+                preview_artifact=preview_artifact,
+                html_artifact=capture_artifacts["html"],
+                manifest_artifact=capture_artifacts["manifest"],
+            )
+            if chat_artifact is not None:
+                registered += 1
+            continue
+        failure_event = latest_agent_session_notebook_capture_event(
+            db,
+            session=session,
+            artifact=artifact,
+            event_types=("notebook_auto_capture_failed",),
+        )
+        if failure_event is not None:
+            payload = loads_json(failure_event.payload_json, {})
+            chat_artifact = register_agent_session_notebook_chat_turn(
+                db,
+                store=store,
+                session=session,
+                notebook_artifact=artifact,
+                status="preview_failed",
+                error=str(payload.get("error") or "")[:1200] or None,
+            )
+            if chat_artifact is not None:
+                registered += 1
+            continue
+        chat_artifact = register_agent_session_notebook_chat_turn(
+            db,
+            store=store,
+            session=session,
+            notebook_artifact=artifact,
+            status="source_saved",
+        )
+        if chat_artifact is not None:
+            registered += 1
+    return registered
+
+
 def attach_registered_session_notebooks_to_current_research_plan(
     db: Session,
     *,
@@ -4153,6 +4230,20 @@ def register_agent_session_notebook_chat_turn(
             else "Open the saved marimo source and rendered preview."
         )
         next_focus_label = "ノートブック" if japanese else "Notebook"
+    elif status == "source_saved":
+        assistant_message = (
+            "分析ノートブックのソースを保存しました。プレビュー生成が完了すると、この同じ場所から開けるようになります。"
+            if japanese
+            else "The analysis notebook source is saved. Once preview rendering completes, it will open from this same place."
+        )
+        action_status = "ready"
+        action_label = "ノートブックソースを開く" if japanese else "Open notebook source"
+        action_detail = (
+            "保存されたmarimo sourceを確認できます。"
+            if japanese
+            else "Open the saved marimo source."
+        )
+        next_focus_label = "ノートブックソース" if japanese else "Notebook source"
     else:
         assistant_message = (
             "分析ノートブックのソースは保存されていますが、プレビュー生成に失敗しました。ソースは確認できます。"
