@@ -1051,6 +1051,86 @@ def test_agent_activity_uses_notebook_update_chat_turn_as_target(
     assert activity["workers"][0]["artifact_ids"] == []
 
 
+def test_agent_chat_history_surfaces_notebook_update_link(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Notebook chat history link"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    notebook_message = "分析ノートブックを保存し、Tablex内で開けるプレビューを用意しました。"
+
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.autonomy_mode = "full_auto"
+        project.current_phase = "AUTONOMOUS_LOOP"
+        session = AgentSession(
+            id="ags_notebook_history",
+            project_id=project_id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Keep notebooks visible.",
+            last_heartbeat_at=utc_now(),
+        )
+        db.add(session)
+        db.flush()
+        store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="agent_chat_turn",
+            name="agent_session_notebook_history_update",
+            filename="agent_chat_turn.json",
+            payload={
+                "schema_version": "agent_chat_turn.v1",
+                "user_message": "",
+                "assistant_message": notebook_message,
+                "intent": {"type": "notebook_artifact_update", "status": "ready"},
+                "actions": [
+                    {
+                        "type": "open_artifact",
+                        "status": "ready",
+                        "label": "ノートブックを開く",
+                        "target_tab": "Notebooks",
+                        "target_anchor": "notebook-preview-top",
+                        "artifact_id": "art_notebook_preview",
+                        "artifact_ids": ["art_notebook_source", "art_notebook_preview"],
+                    }
+                ],
+                "worker_events": [],
+                "next_focus": {"target_tab": "Notebooks", "target_anchor": "notebook-preview-top", "label": "ノートブック"},
+            },
+            metadata={
+                "project_id": project_id,
+                "agent_session_id": session.id,
+                "source": "main_agent_session_notebook_update",
+            },
+        )
+        db.commit()
+
+    history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
+    assert history_response.status_code == 200
+    history = history_response.json()
+    turn = next(item for item in history if item["assistant_message"] == notebook_message)
+    assert turn["intent"]["type"] == "notebook_artifact_update"
+    assert turn["actions"][0]["target_tab"] == "Notebooks"
+    assert turn["actions"][0]["target_anchor"] == "notebook-preview-top"
+    assert turn["actions"][0]["artifact_id"] == "art_notebook_preview"
+    assert turn["actions"][0]["artifact_ids"] == ["art_notebook_source", "art_notebook_preview"]
+    assert turn["next_focus"]["target_tab"] == "Notebooks"
+    assert turn["next_focus"]["target_anchor"] == "notebook-preview-top"
+
+
 def test_agent_activity_surfaces_runner_retry_state(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setattr(
         "tabular_harness.api.routes.run_main_agent_session_supervisor",
