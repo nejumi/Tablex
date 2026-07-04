@@ -1959,6 +1959,10 @@ type TranslationResult = {
   job: Job;
 };
 
+type TranslationJobOutput = {
+  translation?: Omit<TranslationResult, "job">;
+};
+
 type BenchmarkDataset = {
   id: string;
   name: string;
@@ -9465,6 +9469,19 @@ function evidenceMetricCardClass(tone: EvidenceReaderMetric["tone"] = "muted") {
   return `evidence-reader-metric ${tone}`;
 }
 
+async function waitForJobTranslation(jobId: string): Promise<Job> {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    const job = await api<Job>(`/api/jobs/${jobId}`);
+    if (job.status === "succeeded") return job;
+    if (["failed", "cancelled", "timed_out"].includes(job.status)) {
+      throw new Error(job.error_message ?? `Translation job ${job.status}.`);
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+  }
+  throw new Error("Translation job is still running. Check Agent Activity or try again shortly.");
+}
+
 function TranslatablePreview({
   preview,
   sourceType = "artifact",
@@ -9486,7 +9503,7 @@ function TranslatablePreview({
     setBusy(true);
     setError(null);
     try {
-      const result = await api<TranslationResult>(
+      const job = await api<Job>(
         sourceType === "report"
           ? `/api/reports/${effectiveSourceId}/translate`
           : `/api/artifacts/${effectiveSourceId}/translate`,
@@ -9496,7 +9513,13 @@ function TranslatablePreview({
           body: JSON.stringify({ source_locale: "en-US", target_locale: locale })
         }
       );
-      setTranslation(result);
+      await api<Job>(`/api/jobs/${job.id}/run`, { method: "POST" });
+      const completedJob = await waitForJobTranslation(job.id);
+      const output = completedJob.output as TranslationJobOutput;
+      if (!output.translation) {
+        throw new Error("Translation job completed without a translated preview.");
+      }
+      setTranslation({ ...output.translation, job: completedJob });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

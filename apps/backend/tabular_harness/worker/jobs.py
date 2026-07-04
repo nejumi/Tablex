@@ -19,6 +19,7 @@ from tabular_harness.models.entities import (
     ModelVersion,
     Project,
     Question,
+    Report,
     ResearchBrief,
     SplitManifest,
     utc_now,
@@ -144,6 +145,7 @@ from tabular_harness.services.result_notebook_evidence import (
     prepare_result_notebook_evidence,
     result_notebook_evidence_job_output,
 )
+from tabular_harness.services.translation import translate_artifact
 from tabular_harness.worker.runner import JobHandler, SyncWorker
 
 INITIAL_JOB_TYPES = tuple(sorted(JOB_TYPES))
@@ -297,6 +299,77 @@ def upload_relational_schema_hint_handler(db: Session, job: Job, store: LocalArt
         "media_kind": result.summary["media_kind"],
         "parsed_table_count": result.summary["parsed_table_count"],
         "parsed_relationship_count": result.summary["parsed_relationship_count"],
+    }
+
+
+def report_to_dict_for_worker(report: Report) -> dict[str, Any]:
+    return {
+        "id": report.id,
+        "project_id": report.project_id,
+        "report_type": report.report_type,
+        "title": report.title,
+        "summary": report.summary,
+        "artifact_id": report.artifact_id,
+        "source_asset_ids": loads_json(report.source_asset_ids_json, []),
+        "status": report.status,
+        "created_by_type": report.created_by_type,
+        "created_at": report.created_at.isoformat(),
+    }
+
+
+def translate_tier3_content_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    source_type = payload.get("source_type")
+    source_id = payload.get("source_id")
+    source_artifact_id = payload.get("source_artifact_id")
+    source_locale = payload.get("source_locale")
+    target_locale = payload.get("target_locale")
+    if not isinstance(source_type, str) or source_type not in {"artifact", "report"}:
+        raise ValueError("translate_tier3_content requires source_type artifact or report")
+    if not isinstance(source_id, str) or not source_id.strip():
+        raise ValueError("translate_tier3_content requires source_id")
+    if not isinstance(source_artifact_id, str) or not source_artifact_id.strip():
+        raise ValueError("translate_tier3_content requires source_artifact_id")
+    if not isinstance(source_locale, str) or not source_locale.strip():
+        raise ValueError("translate_tier3_content requires source_locale")
+    if not isinstance(target_locale, str) or not target_locale.strip():
+        raise ValueError("translate_tier3_content requires target_locale")
+    artifact = db.get(Artifact, source_artifact_id)
+    if artifact is None:
+        raise ValueError("Source artifact not found")
+    source_report = db.get(Report, source_id) if source_type == "report" else None
+    if source_type == "report" and source_report is None:
+        raise ValueError("Source report not found")
+    result = translate_artifact(
+        db,
+        store=store,
+        artifact=artifact,
+        source_report=source_report,
+        source_locale=source_locale,
+        target_locale=target_locale,
+        job_id=job.id,
+    )
+    translation_payload = {
+        "source_type": source_type,
+        "source_id": source_id,
+        "source_artifact_id": source_artifact_id,
+        "source_locale": source_locale,
+        "target_locale": target_locale,
+        "provider_status": result.provider_status,
+        "translation_status": result.translation_status,
+        "artifact": artifact_to_dict(result.translated_artifact),
+        "report": report_to_dict_for_worker(result.translated_report) if result.translated_report else None,
+        "preview": result.preview,
+    }
+    return {
+        "translated_artifact_id": result.translated_artifact.id,
+        "translated_report_id": result.translated_report.id if result.translated_report else None,
+        "codex_translation_contract_artifact_id": result.contract_artifact.id,
+        "provider_status": result.provider_status,
+        "translation_status": result.translation_status,
+        "artifact_id": result.translated_artifact.id,
+        "artifact_ids": [result.contract_artifact.id, result.translated_artifact.id],
+        "translation": translation_payload,
     }
 
 
@@ -3043,6 +3116,7 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["save_autonomous_decision_brief"] = save_autonomous_decision_brief_handler
     handlers["compare_guided_journey_snapshots"] = compare_guided_journey_snapshots_handler
     handlers["upload_relational_schema_hint"] = upload_relational_schema_hint_handler
+    handlers["translate_tier3_content"] = translate_tier3_content_handler
     handlers["download_public_benchmark_archive"] = download_public_benchmark_archive_handler
     handlers["import_benchmark_dataset"] = import_benchmark_dataset_handler
     handlers["run_benchmark_fixture_smoke"] = run_benchmark_fixture_smoke_handler
