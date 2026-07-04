@@ -5692,7 +5692,8 @@ function HomeTab({
   const missionUsesPlanFocus = Boolean(researchPlanFocusBlock);
   const missionTitle = researchPlanFocusBlock?.title ?? recommendation.title;
   const missionReason = researchPlanFocusBlock?.subtitle ?? recommendation.reason;
-  const missionRiskLevel = researchPlanFocusBlock?.status ?? recommendation.riskLevel ?? "ready";
+  const missionRuntimeStatus = missionRuntimeStatusFromTurnState(turnState, autonomyPoweredOn);
+  const missionRiskLevel = missionRuntimeStatus ?? researchPlanFocusBlock?.status ?? recommendation.riskLevel ?? "ready";
   const missionFocusLabel = missionUsesPlanFocus ? text.openSurface : (focusAction?.label ?? text.recommendedFocus);
   const missionFocusDisabled = busy || (!missionUsesPlanFocus && (!focusAction || focusAction.disabled));
   const handleMissionFocus = () => {
@@ -5714,7 +5715,7 @@ function HomeTab({
             <span className={navigatorStatusClass(missionRiskLevel)}>
               {displayStatusLabel(missionRiskLevel, text)}
             </span>
-            <span className="badge muted">{formatWorkflowState(project.current_phase, text)}</span>
+            {autonomyPoweredOn ? <span className="badge muted">{formatWorkflowState(project.current_phase, text)}</span> : null}
             <span className="badge muted">
               {project.target_column ? `${text.targetLabelShort}: ${project.target_column}` : text.surfaceTargetOpen}
             </span>
@@ -5942,6 +5943,15 @@ function HomeTab({
       </div>
     </div>
   );
+}
+
+function missionRuntimeStatusFromTurnState(turnState: TurnState, autonomyPoweredOn: boolean): ResearchPlanBlockStatus | null {
+  if (!autonomyPoweredOn) return "waiting";
+  if (turnState.state === "agent_running") return "active";
+  if (turnState.state === "worker_pending" || turnState.state === "agent_scheduled") return "waiting";
+  if (turnState.state === "stale_runner" || turnState.state === "needs_attention") return "blocked";
+  if (turnState.state === "waiting_for_user") return "waiting";
+  return null;
 }
 
 function AutonomyInterventionDialog({
