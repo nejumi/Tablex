@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata as importlib_metadata
 import json
 import os
 import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -32,6 +34,7 @@ from tabular_harness.models.entities import (
     AssetVersion,
     DatasetSnapshot,
     Job,
+    LineageEdge,
     Project,
     User,
     utc_now,
@@ -51,6 +54,7 @@ from tabular_harness.services.research_plans import (
     attach_research_plan_artifact,
     commit_research_plan_artifact_revision,
     commit_research_plan_revision,
+    latest_research_plan_current_work,
     request_research_plan_human_attention,
     research_plan_current_work_payload,
     set_research_plan_current_work,
@@ -68,6 +72,7 @@ STREAM_EVENT_FLUSH_INTERVAL_SECONDS = 0.5
 STREAM_EVENT_FLUSH_MAX_LINES = 24
 SESSION_INTERNAL_DIR = ".tablex"
 SESSION_INBOX_DIR = "inbox"
+SESSION_BIN_DIR = "bin"
 SESSION_REQUESTS_DIR = "requests"
 SESSION_ACKS_DIR = "acks"
 RESEARCH_PLAN_REQUESTS_DIR = "research_plan"
@@ -1260,11 +1265,71 @@ def prepare_session_workspace(
     (workspace / "notebooks").mkdir(parents=True, exist_ok=True)
     (workspace / "artifacts").mkdir(parents=True, exist_ok=True)
     (workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR).mkdir(parents=True, exist_ok=True)
+    ensure_session_python_shims(workspace)
     research_plan_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
     research_plan_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     write_session_context_file(db, project=project, session=session)
     (workspace / ".tablex" / "GOAL.md").write_text(session.goal_text, encoding="utf-8")
     return workspace
+
+
+def ensure_session_python_shims(workspace: Path) -> None:
+    bin_dir = workspace / SESSION_INTERNAL_DIR / SESSION_BIN_DIR
+    try:
+        bin_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+    for name in ("python", "python3"):
+        target = bin_dir / name
+        try:
+            if target.exists() or target.is_symlink():
+                if target.resolve() == Path(sys.executable).resolve():
+                    continue
+                target.unlink()
+            target.symlink_to(sys.executable)
+        except OSError:
+            script = f"#!/usr/bin/env sh\nexec {json.dumps(sys.executable)} \"$@\"\n"
+            try:
+                target.write_text(script, encoding="utf-8")
+                target.chmod(0o755)
+            except OSError:
+                continue
+
+
+def python_runtime_context(workspace: Path) -> dict[str, Any]:
+    workspace_python = workspace / SESSION_INTERNAL_DIR / SESSION_BIN_DIR / "python"
+    packages = {
+        "marimo": package_version_or_none("marimo"),
+        "pandas": package_version_or_none("pandas"),
+        "numpy": package_version_or_none("numpy"),
+        "scikit_learn": package_version_or_none("scikit-learn"),
+        "matplotlib": package_version_or_none("matplotlib"),
+        "plotly": package_version_or_none("plotly"),
+        "duckdb": package_version_or_none("duckdb"),
+        "polars": package_version_or_none("polars"),
+        "xgboost": package_version_or_none("xgboost"),
+        "lightgbm": package_version_or_none("lightgbm"),
+    }
+    return {
+        "tablex_backend": {
+            "executable": sys.executable,
+            "workspace_python": str(workspace_python),
+            "workspace_python_exists": workspace_python.exists(),
+            "packages": packages,
+        },
+        "notebook_execution": {
+            "marimo_available": packages["marimo"] is not None,
+            "rendering_owner": "tablex_harness",
+            "source_dirs": ["notebooks", "outputs/notebooks"],
+        },
+    }
+
+
+def package_version_or_none(package_name: str) -> str | None:
+    try:
+        return importlib_metadata.version(package_name)
+    except importlib_metadata.PackageNotFoundError:
+        return None
 
 
 def write_session_context_file(
@@ -1359,9 +1424,14 @@ def build_session_context(
             latest_research_plan_artifact,
             response_locale=response_locale,
         ),
+        "python_runtimes": python_runtime_context(Path(session.workspace_path or "")),
         "output_contract": {
             "registerable_dirs": ["outputs", "reports", "notebooks", "artifacts"],
             "marimo_notebooks": "Place .py marimo notebooks under notebooks/ or outputs/notebooks/.",
+            "notebook_runtime": (
+                "For local notebook checks inside this workspace, prefer python_runtimes.tablex_backend.workspace_python. "
+                "Tablex renders registered marimo notebooks after they are saved as artifacts."
+            ),
             "living_research_plan": (
                 "When the project plan changes, write outputs/research_plan.json with optional timeline_blocks. "
                 "Tablex renders those blocks directly; after the initial anchors, Codex may add, remove, reorder, or branch them. "
@@ -2402,6 +2472,7 @@ def ingest_session_workspace_outputs(
             else:
                 maybe_defer_agent_session_notebook_capture(db, session=session, artifact=artifact)
     process_research_plan_tool_requests(db, project=project, session=session, workspace=workspace)
+    attach_registered_session_notebooks_to_current_research_plan(db, project=project, session=session)
     if allow_notebook_auto_capture:
         capture_pending_agent_session_notebooks(db, store=store, project=project, session=session)
 
@@ -2519,6 +2590,20 @@ def maybe_capture_agent_session_notebook_output(
             payload={"notebook_artifact_id": artifact.id, "error": str(exc)[:1200]},
             artifact_id=artifact.id,
         )
+        linked_plan_node_id = attach_notebook_artifacts_to_current_research_plan(
+            db,
+            session=session,
+            notebook_artifact=artifact,
+        )
+        register_agent_session_notebook_chat_turn(
+            db,
+            store=store,
+            session=session,
+            notebook_artifact=artifact,
+            status="preview_failed",
+            linked_plan_node_id=linked_plan_node_id,
+            error=str(exc)[:1200],
+        )
         return
     append_session_event(
         db,
@@ -2537,6 +2622,27 @@ def maybe_capture_agent_session_notebook_output(
             else None,
         },
         artifact_id=capture.html_artifact.id,
+    )
+    linked_plan_node_id = attach_notebook_artifacts_to_current_research_plan(
+        db,
+        session=session,
+        notebook_artifact=artifact,
+        related_artifacts=[
+            (capture.evidence_html_artifact, "notebook_preview"),
+            (capture.html_artifact, "notebook_html"),
+            (capture.manifest_artifact, "notebook_manifest"),
+        ],
+    )
+    register_agent_session_notebook_chat_turn(
+        db,
+        store=store,
+        session=session,
+        notebook_artifact=artifact,
+        status="ready",
+        preview_artifact=capture.evidence_html_artifact or capture.html_artifact,
+        html_artifact=capture.html_artifact,
+        manifest_artifact=capture.manifest_artifact,
+        linked_plan_node_id=linked_plan_node_id,
     )
 
 
@@ -2606,6 +2712,130 @@ def capture_pending_agent_session_notebooks(
         maybe_capture_agent_session_notebook_output(db, store=store, session=session, artifact=artifact)
 
 
+def attach_registered_session_notebooks_to_current_research_plan(
+    db: Session,
+    *,
+    project: Project,
+    session: AgentSession,
+) -> None:
+    notebook_artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+            .order_by(Artifact.created_at.desc())
+            .limit(50)
+        ).all()
+    )
+    for artifact in reversed(notebook_artifacts):
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("source") != "main_agent_session_workspace":
+            continue
+        if metadata.get("agent_session_id") != session.id:
+            continue
+        success_event = latest_agent_session_notebook_capture_event(
+            db,
+            session=session,
+            artifact=artifact,
+            event_types=("notebook_auto_capture_succeeded",),
+        )
+        related_artifacts: list[tuple[Artifact | None, str]] = []
+        if success_event is not None:
+            payload = loads_json(success_event.payload_json, {})
+            related_artifacts = [
+                (db.get(Artifact, payload.get("notebook_evidence_html_artifact_id")), "notebook_preview")
+                if isinstance(payload.get("notebook_evidence_html_artifact_id"), str)
+                else (None, "notebook_preview"),
+                (db.get(Artifact, payload.get("notebook_execution_html_artifact_id")), "notebook_html")
+                if isinstance(payload.get("notebook_execution_html_artifact_id"), str)
+                else (None, "notebook_html"),
+                (db.get(Artifact, payload.get("notebook_execution_manifest_artifact_id")), "notebook_manifest")
+                if isinstance(payload.get("notebook_execution_manifest_artifact_id"), str)
+                else (None, "notebook_manifest"),
+            ]
+        attach_notebook_artifacts_to_current_research_plan(
+            db,
+            session=session,
+            notebook_artifact=artifact,
+            related_artifacts=related_artifacts,
+        )
+
+
+def attach_notebook_artifacts_to_current_research_plan(
+    db: Session,
+    *,
+    session: AgentSession,
+    notebook_artifact: Artifact,
+    related_artifacts: list[tuple[Any | None, str]] | None = None,
+) -> str | None:
+    if notebook_artifact.project_id is None:
+        return None
+    current = latest_research_plan_current_work(db, project_id=notebook_artifact.project_id)
+    if current is None or not current.node_id.strip():
+        return None
+    artifact_roles: list[tuple[str, str]] = [(notebook_artifact.id, "notebook_source")]
+    for artifact_like, role in related_artifacts or []:
+        artifact_id = getattr(artifact_like, "id", None)
+        if isinstance(artifact_id, str) and artifact_id.strip():
+            artifact_roles.append((artifact_id, role))
+    attached_any = False
+    for artifact_id, role in artifact_roles:
+        artifact = db.get(Artifact, artifact_id)
+        if artifact is None or artifact.project_id != notebook_artifact.project_id:
+            continue
+        if research_plan_artifact_link_exists(
+            db,
+            project_id=notebook_artifact.project_id,
+            node_id=current.node_id,
+            artifact_id=artifact.id,
+        ):
+            continue
+        try:
+            attach_research_plan_artifact(
+                db,
+                project_id=notebook_artifact.project_id,
+                node_id=current.node_id,
+                artifact_id=artifact.id,
+                role=role,
+                revision_id=current.revision_id,
+                metadata={
+                    "agent_session_id": session.id,
+                    "notebook_artifact_id": notebook_artifact.id,
+                    "source": "main_agent_session_notebook_auto_link",
+                },
+            )
+        except ValueError:
+            continue
+        attached_any = True
+    return current.node_id if attached_any else None
+
+
+def research_plan_artifact_link_exists(
+    db: Session,
+    *,
+    project_id: str,
+    node_id: str,
+    artifact_id: str,
+) -> bool:
+    edges = list(
+        db.scalars(
+            select(LineageEdge)
+            .where(
+                LineageEdge.project_id == project_id,
+                LineageEdge.to_asset_type == "artifact",
+                LineageEdge.to_asset_id == artifact_id,
+                LineageEdge.relation_type == "supports_plan_node",
+            )
+            .order_by(LineageEdge.created_at.desc())
+            .limit(20)
+        ).all()
+    )
+    for edge in edges:
+        metadata = loads_json(edge.metadata_json, {})
+        if metadata.get("node_id") == node_id:
+            return True
+    return False
+
+
 def agent_session_notebook_capture_event_exists(
     db: Session,
     *,
@@ -2644,6 +2874,179 @@ def latest_agent_session_notebook_capture_event(
         if payload.get("notebook_artifact_id") == artifact.id:
             return event
     return None
+
+
+def register_agent_session_notebook_chat_turn(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    session: AgentSession,
+    notebook_artifact: Artifact,
+    status: str,
+    preview_artifact: Any | None = None,
+    html_artifact: Any | None = None,
+    manifest_artifact: Any | None = None,
+    linked_plan_node_id: str | None = None,
+    error: str | None = None,
+) -> Artifact | None:
+    if notebook_artifact.project_id is None:
+        return None
+    project = db.get(Project, notebook_artifact.project_id)
+    if project is None:
+        return None
+    if agent_session_notebook_chat_turn_exists(
+        db,
+        project=project,
+        session=session,
+        notebook_artifact=notebook_artifact,
+        status=status,
+    ):
+        return None
+    response_locale = latest_project_response_locale(db, project)
+    japanese = locale_is_japanese(response_locale)
+    preview_artifact_id = getattr(preview_artifact, "id", None)
+    html_artifact_id = getattr(html_artifact, "id", None)
+    manifest_artifact_id = getattr(manifest_artifact, "id", None)
+    artifact_ids = [
+        item
+        for item in [notebook_artifact.id, preview_artifact_id, html_artifact_id, manifest_artifact_id]
+        if isinstance(item, str) and item.strip()
+    ]
+    open_artifact_id = preview_artifact_id if isinstance(preview_artifact_id, str) and preview_artifact_id else notebook_artifact.id
+    if status == "ready":
+        assistant_message = (
+            "分析ノートブックを保存し、Tablex内で開けるプレビューを用意しました。"
+            if japanese
+            else "The analysis notebook is saved, and its in-product preview is ready."
+        )
+        action_status = "ready"
+        action_label = "ノートブックを開く" if japanese else "Open notebook"
+        action_detail = (
+            "保存されたmarimo sourceと生成済みプレビューを確認できます。"
+            if japanese
+            else "Open the saved marimo source and rendered preview."
+        )
+        next_focus_label = "ノートブック" if japanese else "Notebook"
+    else:
+        assistant_message = (
+            "分析ノートブックのソースは保存されていますが、プレビュー生成に失敗しました。ソースは確認できます。"
+            if japanese
+            else "The analysis notebook source is saved, but Tablex could not render the preview yet. The source is available."
+        )
+        action_status = "needs_attention"
+        action_label = "ノートブックソースを開く" if japanese else "Open notebook source"
+        action_detail = (
+            "プレビュー生成は後で再試行されます。"
+            if japanese
+            else "Preview rendering will be retried later."
+        )
+        next_focus_label = "ノートブックソース" if japanese else "Notebook source"
+    response = {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": project.id,
+        "user_message": "",
+        "assistant_message": assistant_message,
+        "intent": {
+            "type": "notebook_artifact_update",
+            "source": "main_agent_session_workspace",
+            "status": status,
+        },
+        "actions": [
+            {
+                "type": "open_artifact",
+                "status": action_status,
+                "label": action_label,
+                "target_tab": "Notebooks",
+                "target_anchor": "notebook-preview-top",
+                "detail": action_detail,
+                "artifact_id": open_artifact_id,
+                "artifact_ids": artifact_ids,
+            }
+        ],
+        "action_summary": {},
+        "response_brief": {
+            "schema_version": "notebook_artifact_update.v1",
+            "agent_session_id": session.id,
+            "notebook_artifact_id": notebook_artifact.id,
+            "preview_artifact_id": preview_artifact_id,
+            "html_artifact_id": html_artifact_id,
+            "manifest_artifact_id": manifest_artifact_id,
+            "status": status,
+            "error": error,
+            "research_plan_node_id": linked_plan_node_id,
+        },
+        "response_composer": {
+            "schema_version": "agent_response_composer.v1",
+            "mode": "main_agent_session",
+            "status": "harness_fact",
+        },
+        "worker_events": [],
+        "token_usage": {"source": "not_applicable", "is_estimate": False, "series": []},
+        "next_focus": {"target_tab": "Notebooks", "target_anchor": "notebook-preview-top", "label": next_focus_label},
+    }
+    chat_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="agent_chat_turn",
+        name=f"agent_session_notebook_update_{session.id}_{notebook_artifact.id}_{status}",
+        filename="agent_chat_turn.json",
+        payload=response,
+        metadata={
+            "project_id": project.id,
+            "agent_session_id": session.id,
+            "source_artifact_id": notebook_artifact.id,
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_status": status,
+            "source": "main_agent_session_notebook_update",
+        },
+    )
+    append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="notebook_chat_turn_registered",
+        role="harness",
+        title="Notebook chat turn registered",
+        content="Registered notebook availability in Agent Chat.",
+        payload={
+            "chat_artifact_id": chat_artifact.id,
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_status": status,
+            "preview_artifact_id": preview_artifact_id,
+        },
+        artifact_id=chat_artifact.id,
+        update_heartbeat=False,
+    )
+    return chat_artifact
+
+
+def agent_session_notebook_chat_turn_exists(
+    db: Session,
+    *,
+    project: Project,
+    session: AgentSession,
+    notebook_artifact: Artifact,
+    status: str,
+) -> bool:
+    recent_chat_artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+            .order_by(Artifact.created_at.desc())
+            .limit(100)
+        ).all()
+    )
+    for artifact in recent_chat_artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        if (
+            metadata.get("source") == "main_agent_session_notebook_update"
+            and metadata.get("agent_session_id") == session.id
+            and metadata.get("notebook_artifact_id") == notebook_artifact.id
+            and metadata.get("notebook_status") == status
+        ):
+            return True
+    return False
 
 
 def maybe_register_chat_update_from_workspace_output(

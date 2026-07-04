@@ -47,6 +47,7 @@ from tabular_harness.services.agent_sessions import (
     maybe_request_codex_progress_update,
     maybe_request_codex_progress_update_safely,
     metadata_for_session_output,
+    prepare_session_workspace,
     progress_request_path,
     publish_raw_codex_transcript_snapshot,
     raw_codex_stderr_path,
@@ -65,6 +66,10 @@ from tabular_harness.services.agent_sessions import (
 from tabular_harness.services.approach import store_text_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
 from tabular_harness.services.jobs import create_job
+from tabular_harness.services.research_plans import (
+    commit_research_plan_revision,
+    set_research_plan_current_work,
+)
 
 
 def test_agent_session_marimo_notebook_outputs_are_analysis_notebooks() -> None:
@@ -79,6 +84,34 @@ def test_agent_session_model_notebook_outputs_are_diagnostics_notebooks() -> Non
 
     assert asset_type_for_session_output(path) == "analysis_notebook"
     assert metadata_for_session_output(path)["notebook_kind"] == "model_diagnostics"
+
+
+def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_runtime", name="Runtime Project")
+        session = AgentSession(
+            id="as_runtime",
+            project_id=project.id,
+            goal_text="Expose the notebook runtime.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        prepared_workspace = prepare_session_workspace(db, store=store, project=project, session=session)
+        db.commit()
+
+    assert prepared_workspace == workspace
+    assert (workspace / ".tablex" / "bin" / "python").exists()
+    context = loads_json((workspace / ".tablex" / "context.json").read_text(encoding="utf-8"), {})
+    runtime = context["python_runtimes"]["tablex_backend"]
+    assert runtime["workspace_python"] == str(workspace / ".tablex" / "bin" / "python")
+    assert runtime["workspace_python_exists"] is True
+    assert "marimo" in runtime["packages"]
 
 
 def test_agent_session_research_plan_json_outputs_are_research_plans() -> None:
@@ -1646,6 +1679,32 @@ def test_codex_authored_marimo_notebook_is_auto_captured_on_workspace_ingest(
         )
         db.add_all([project, session])
         db.commit()
+        revision = commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "why_it_matters": "Use the notebook as the readable analysis evidence.",
+                        "status": "active",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Declare current notebook work.",
+        ).revision
+        set_research_plan_current_work(
+            db,
+            project_id=project.id,
+            node_id="data_understanding",
+            summary="Writing a readable analysis notebook.",
+            expected_outputs=["marimo notebook"],
+            revision_id=revision.id,
+        )
+        db.commit()
 
         ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
         db.commit()
@@ -1669,6 +1728,30 @@ def test_codex_authored_marimo_notebook_is_auto_captured_on_workspace_ingest(
         payload = loads_json(events[0].payload_json, {})
         assert payload["notebook_artifact_id"] == notebook_artifact.id
         assert payload["notebook_execution_html_artifact_id"] == "art_auto_html"
+        chat_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["intent"]["type"] == "notebook_artifact_update"
+        assert chat_payload["intent"]["status"] == "ready"
+        assert chat_payload["actions"][0]["type"] == "open_artifact"
+        assert chat_payload["actions"][0]["target_tab"] == "Notebooks"
+        assert chat_payload["actions"][0]["target_anchor"] == "notebook-preview-top"
+        assert chat_payload["actions"][0]["artifact_id"] == "art_auto_evidence"
+        assert notebook_artifact.id in chat_payload["actions"][0]["artifact_ids"]
+        assert chat_payload["response_brief"]["research_plan_node_id"] == "data_understanding"
+        edge = db.scalar(
+            select(LineageEdge).where(
+                LineageEdge.project_id == project.id,
+                LineageEdge.relation_type == "supports_plan_node",
+                LineageEdge.to_asset_id == notebook_artifact.id,
+            )
+        )
+        assert edge is not None
+        edge_metadata = loads_json(edge.metadata_json, {})
+        assert edge_metadata["node_id"] == "data_understanding"
+        assert edge_metadata["role"] == "notebook_source"
 
 
 def test_codex_authored_marimo_notebook_capture_can_defer_until_final_ingest(
@@ -1799,10 +1882,24 @@ def test_failed_notebook_auto_capture_retries_after_cooldown(
             )
         )
         assert failed_event is not None
+        failed_chat_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        )
+        assert failed_chat_artifact is not None
+        failed_chat_payload = loads_json(artifact_primary_path(failed_chat_artifact).read_text(encoding="utf-8"), {})
+        assert failed_chat_payload["intent"]["type"] == "notebook_artifact_update"
+        assert failed_chat_payload["intent"]["status"] == "preview_failed"
+        assert failed_chat_payload["actions"][0]["artifact_id"] == notebook_artifact.id
 
         ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
         db.commit()
         assert attempts == [notebook_artifact.id]
+        failed_chat_artifacts = list(
+            db.scalars(
+                select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+            )
+        )
+        assert len(failed_chat_artifacts) == 1
 
         failed_event.created_at = utc_now() - timedelta(minutes=10)
         db.commit()
@@ -1820,6 +1917,16 @@ def test_failed_notebook_auto_capture_retries_after_cooldown(
         success_payload = loads_json(success_event.payload_json, {})
         assert success_payload["notebook_artifact_id"] == notebook_artifact.id
         assert success_payload["notebook_execution_html_artifact_id"] == "art_retry_html"
+        chat_artifacts = list(
+            db.scalars(
+                select(Artifact)
+                .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+                .order_by(Artifact.created_at.asc())
+            )
+        )
+        assert len(chat_artifacts) == 2
+        chat_payloads = [loads_json(artifact_primary_path(item).read_text(encoding="utf-8"), {}) for item in chat_artifacts]
+        assert [payload["intent"]["status"] for payload in chat_payloads] == ["preview_failed", "ready"]
 
 
 def test_research_plan_ingest_preserves_mixed_language_timeline_without_repair_event(tmp_path: Path) -> None:

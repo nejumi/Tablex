@@ -1223,6 +1223,9 @@ def safe_env(workspace: Path) -> dict[str, str]:
         "CODEX_HOME",
     }
     env = {key: value for key, value in os.environ.items() if key in allowed}
+    workspace_bin = workspace / ".tablex" / "bin"
+    existing_path = env.get("PATH") or os.defpath
+    env["PATH"] = f"{workspace_bin}{os.pathsep}{existing_path}"
     isolated_home = workspace / ".harness" / "home"
     isolated_home.mkdir(parents=True, exist_ok=True)
     env["HOME"] = str(isolated_home)
