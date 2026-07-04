@@ -282,6 +282,12 @@ def test_codex_safe_env_removes_stale_runtime_config_and_plugins(tmp_path: Path,
     (runtime_codex_home / "plugins" / "bad" / "plugin.json").write_text("{}", encoding="utf-8")
     (runtime_codex_home / "skills" / "bad").mkdir(parents=True)
     (runtime_codex_home / "skills" / "bad" / "SKILL.md").write_text("bad", encoding="utf-8")
+    (runtime_codex_home / ".tmp" / "plugins").mkdir(parents=True)
+    (runtime_codex_home / ".tmp" / "plugins" / "README.md").write_text("stale", encoding="utf-8")
+    (runtime_codex_home / "cache" / "codex_apps_server_info").mkdir(parents=True)
+    (runtime_codex_home / "cache" / "codex_apps_server_info" / "stale.json").write_text("{}", encoding="utf-8")
+    (runtime_codex_home / "cache" / "codex_apps_tools").mkdir(parents=True)
+    (runtime_codex_home / "cache" / "codex_apps_tools" / "stale.json").write_text("{}", encoding="utf-8")
     (runtime_codex_home / "config.toml").write_text("[mcp_servers.bad]\ncommand = 'bad'\n", encoding="utf-8")
     (runtime_codex_home / "config.json").write_text('{"mcp_servers":{"bad":{}}}', encoding="utf-8")
     (runtime_codex_home / "logs_2.sqlite").write_text("keep", encoding="utf-8")
@@ -296,6 +302,9 @@ def test_codex_safe_env_removes_stale_runtime_config_and_plugins(tmp_path: Path,
     assert not (runtime_codex_home / "config.json").exists()
     assert not (runtime_codex_home / "plugins").exists()
     assert not (runtime_codex_home / "skills").exists()
+    assert not (runtime_codex_home / ".tmp" / "plugins").exists()
+    assert not (runtime_codex_home / "cache" / "codex_apps_server_info").exists()
+    assert not (runtime_codex_home / "cache" / "codex_apps_tools").exists()
     assert (runtime_codex_home / "logs_2.sqlite").exists()
 
 

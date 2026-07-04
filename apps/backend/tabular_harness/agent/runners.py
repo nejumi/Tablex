@@ -1295,6 +1295,19 @@ def remove_tablex_codex_runtime_state(codex_home: Path) -> None:
                 shutil.rmtree(path)
         except OSError:
             pass
+    for relative_path in (
+        Path(".tmp") / "plugins",
+        Path("cache") / "codex_apps_server_info",
+        Path("cache") / "codex_apps_tools",
+    ):
+        path = codex_home / relative_path
+        try:
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                shutil.rmtree(path)
+        except OSError:
+            pass
 
 
 def host_codex_home_for_auth() -> Path | None:
