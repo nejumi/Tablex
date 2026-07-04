@@ -5200,10 +5200,12 @@ def test_public_benchmark_download_extracts_expected_files(tmp_path: Path, monke
         download_response = client.post("/api/benchmarks/public_zip_smoke/public-download", json={"overwrite": False})
         assert download_response.status_code == 200, download_response.text
         job = download_response.json()
-        assert job["status"] == "succeeded"
-        assert job["output"]["extracted_file_count"] == 1
-        assert job["output"]["local_ready"] is True
-        assert job["output"]["artifact_id"]
+        assert job["status"] == "queued"
+        assert job["policy"]["execution"] == "queued_worker"
+        output = run_queued_job(client, job["id"])
+        assert output["extracted_file_count"] == 1
+        assert output["local_ready"] is True
+        assert output["artifact_id"]
 
         benchmark_root = tmp_path / "data" / "benchmarks" / "public_zip_smoke"
         assert (benchmark_root / "public.csv").read_text(encoding="utf-8").startswith("feature,target")
@@ -5213,7 +5215,7 @@ def test_public_benchmark_download_extracts_expected_files(tmp_path: Path, monke
         assert status_response.status_code == 200
         assert status_response.json()["ready"] is True
 
-        manifest_preview_response = client.get(f"/api/artifacts/{job['output']['artifact_id']}/preview")
+        manifest_preview_response = client.get(f"/api/artifacts/{output['artifact_id']}/preview")
         assert manifest_preview_response.status_code == 200
         manifest_preview = manifest_preview_response.json()["preview"]
         assert "benchmark_public_download_manifest.v1" in manifest_preview
@@ -5282,9 +5284,11 @@ def test_public_benchmark_download_places_direct_csv(tmp_path: Path, monkeypatch
         download_response = client.post("/api/benchmarks/public_csv_smoke/public-download", json={"overwrite": False})
         assert download_response.status_code == 200, download_response.text
         job = download_response.json()
-        assert job["status"] == "succeeded"
-        assert job["output"]["extracted_file_count"] == 1
-        assert job["output"]["local_ready"] is True
+        assert job["status"] == "queued"
+        assert job["policy"]["execution"] == "queued_worker"
+        output = run_queued_job(client, job["id"])
+        assert output["extracted_file_count"] == 1
+        assert output["local_ready"] is True
 
         benchmark_root = tmp_path / "data" / "benchmarks" / "public_csv_smoke"
         assert (benchmark_root / "credit.csv").read_text(encoding="utf-8").startswith("feature,class")

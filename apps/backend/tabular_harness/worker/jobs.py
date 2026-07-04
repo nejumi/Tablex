@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import replace
+from pathlib import Path
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tabular_harness.core.config import get_settings
+from tabular_harness.core.config import Settings, get_settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.models.entities import (
     Artifact,
@@ -30,6 +32,7 @@ from tabular_harness.services.approach import (
     create_decision_dashboard,
     create_research_plan,
     draft_project_report,
+    store_json_artifact,
 )
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.autonomy import (
@@ -47,6 +50,13 @@ from tabular_harness.services.baseline import (
     run_baseline,
     run_model_candidate,
 )
+from tabular_harness.services.benchmarks import (
+    benchmark_import_readiness,
+    default_benchmark_root,
+    download_public_benchmark_archive,
+    inspect_benchmark_local_files,
+    raw_benchmark_dataset,
+)
 from tabular_harness.services.decision_reporting import create_decision_report_v1
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
 from tabular_harness.services.evaluation import generate_split_manifest
@@ -55,6 +65,11 @@ from tabular_harness.services.experiment_lifecycle import (
     draft_run_report,
 )
 from tabular_harness.services.jobs import JOB_TYPES, create_job
+from tabular_harness.services.kaggle_probe import (
+    download_kaggle_selected_files,
+    fetch_kaggle_competition_inventory,
+    probe_kaggle_benchmark_access,
+)
 from tabular_harness.services.model_diagnostics_artifacts import (
     materialize_model_diagnostics_artifacts,
 )
@@ -133,6 +148,221 @@ def agent_chat_turn_handler(db: Session, job: Job, store: LocalArtifactStore) ->
         "agent_task_contract_artifact_id": result.planned_agent_task.artifact.id
         if result.planned_agent_task
         else None,
+    }
+
+
+def settings_for_job_payload(job: Job, store: LocalArtifactStore) -> Settings:
+    payload = loads_json(job.input_json, {})
+    base = get_settings()
+    data_dir = payload.get("data_dir")
+    artifact_root = payload.get("artifact_root")
+    if not isinstance(data_dir, str):
+        return base
+    return replace(
+        base,
+        data_dir=Path(data_dir),
+        artifact_root=Path(artifact_root) if isinstance(artifact_root, str) else store.root,
+    )
+
+
+def benchmark_id_for_job(job: Job, job_type: str) -> str:
+    payload = loads_json(job.input_json, {})
+    benchmark_id = payload.get("benchmark_id")
+    if not isinstance(benchmark_id, str) or not benchmark_id.strip():
+        raise ValueError(f"{job_type} requires benchmark_id")
+    return benchmark_id
+
+
+def download_public_benchmark_archive_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    benchmark_id = benchmark_id_for_job(job, "download_public_benchmark_archive")
+    settings = settings_for_job_payload(job, store)
+    manifest = download_public_benchmark_archive(
+        settings,
+        benchmark_id,
+        overwrite=bool(payload.get("overwrite")),
+    )
+    artifact = store_json_artifact(
+        db,
+        store,
+        project_id=None,
+        asset_type="benchmark_public_download_manifest",
+        name=f"benchmark_public_download_{benchmark_id}",
+        filename="benchmark_public_download_manifest.json",
+        payload=manifest,
+        metadata={
+            "benchmark_id": benchmark_id,
+            "download_url": manifest["download_url"],
+            "extracted_file_count": len(manifest["extracted_files"]),
+            "skipped_file_count": len(manifest["skipped_files"]),
+            "local_ready": manifest["local_status"]["ready"],
+        },
+    )
+    return {
+        "benchmark_id": benchmark_id,
+        "artifact_id": artifact.id,
+        "schema_version": manifest["schema_version"],
+        "download_url": manifest["download_url"],
+        "root_path": manifest["root_path"],
+        "extracted_file_count": len(manifest["extracted_files"]),
+        "skipped_file_count": len(manifest["skipped_files"]),
+        "local_ready": manifest["local_status"]["ready"],
+    }
+
+
+def probe_kaggle_benchmark_access_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    benchmark_id = benchmark_id_for_job(job, "probe_kaggle_benchmark_access")
+    benchmark = raw_benchmark_dataset(benchmark_id)
+    payload = probe_kaggle_benchmark_access(benchmark)
+    credential_status = cast(dict[str, Any], payload["credential_status"])
+    probe = cast(dict[str, Any], payload["probe"])
+    artifact = store_json_artifact(
+        db,
+        store,
+        project_id=None,
+        asset_type="kaggle_credential_probe",
+        name=f"kaggle_credential_probe_{benchmark_id}",
+        filename="kaggle_credential_probe.json",
+        payload=payload,
+        metadata={
+            "benchmark_id": benchmark_id,
+            "competition_slug": payload["competition_slug"],
+            "probe_status": probe["status"],
+            "credential_available": credential_status["available"],
+            "credential_sources": credential_status["credential_sources"],
+            "auth_schemes": credential_status["auth_schemes"],
+            "username_available": credential_status["username_available"],
+            "can_access_competition_files": probe["can_access_competition_files"],
+            "http_status": probe["http_status"],
+            "secret_value_artifacted": False,
+            "agent_runner_access": False,
+        },
+    )
+    return {
+        "schema_version": payload["schema_version"],
+        "benchmark_id": benchmark_id,
+        "competition_slug": payload["competition_slug"],
+        "probe_status": probe["status"],
+        "credential_available": credential_status["available"],
+        "credential_sources": credential_status["credential_sources"],
+        "auth_schemes": credential_status["auth_schemes"],
+        "username_available": credential_status["username_available"],
+        "can_access_competition_files": probe["can_access_competition_files"],
+        "http_status": probe["http_status"],
+        "attempt_count": probe["attempt_count"],
+        "kaggle_probe_artifact_id": artifact.id,
+        "artifact_id": artifact.id,
+        "artifact_ids": [artifact.id],
+    }
+
+
+def fetch_kaggle_competition_inventory_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    benchmark_id = benchmark_id_for_job(job, "fetch_kaggle_competition_inventory")
+    benchmark = raw_benchmark_dataset(benchmark_id)
+    payload = fetch_kaggle_competition_inventory(benchmark)
+    credential_status = cast(dict[str, Any], payload["credential_status"])
+    inventory = cast(dict[str, Any], payload["inventory"])
+    artifact = store_json_artifact(
+        db,
+        store,
+        project_id=None,
+        asset_type="kaggle_file_inventory",
+        name=f"kaggle_file_inventory_{benchmark_id}",
+        filename="kaggle_file_inventory.json",
+        payload=payload,
+        metadata={
+            "benchmark_id": benchmark_id,
+            "competition_slug": payload["competition_slug"],
+            "inventory_status": inventory["status"],
+            "file_count": inventory["file_count"],
+            "total_size_bytes": inventory["total_size_bytes"],
+            "required_present_count": inventory["required_present_count"],
+            "required_missing_count": inventory["required_missing_count"],
+            "recommended_present_count": inventory["recommended_present_count"],
+            "holdout_file_count": inventory["holdout_file_count"],
+            "credential_available": credential_status["available"],
+            "credential_sources": credential_status["credential_sources"],
+            "auth_schemes": credential_status["auth_schemes"],
+            "secret_value_artifacted": False,
+            "agent_runner_access": False,
+        },
+    )
+    return {
+        "schema_version": payload["schema_version"],
+        "benchmark_id": benchmark_id,
+        "competition_slug": payload["competition_slug"],
+        "inventory_status": inventory["status"],
+        "credential_available": credential_status["available"],
+        "file_count": inventory["file_count"],
+        "total_size_bytes": inventory["total_size_bytes"],
+        "required_present_count": inventory["required_present_count"],
+        "required_missing_count": inventory["required_missing_count"],
+        "recommended_present_count": inventory["recommended_present_count"],
+        "holdout_file_count": inventory["holdout_file_count"],
+        "attempt_count": inventory["attempt_count"],
+        "kaggle_inventory_artifact_id": artifact.id,
+        "artifact_id": artifact.id,
+        "artifact_ids": [artifact.id],
+    }
+
+
+def download_kaggle_selected_files_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    benchmark_id = benchmark_id_for_job(job, "download_kaggle_selected_files")
+    benchmark = raw_benchmark_dataset(benchmark_id)
+    settings = settings_for_job_payload(job, store)
+    root = default_benchmark_root(settings, benchmark_id)
+    selected_files = payload.get("selected_files") if isinstance(payload.get("selected_files"), list) else []
+    manifest = download_kaggle_selected_files(
+        benchmark,
+        root=root,
+        selected_files=[str(item) for item in selected_files],
+        include_required=bool(payload.get("include_required")),
+        include_recommended=bool(payload.get("include_recommended")),
+        include_holdout=bool(payload.get("include_holdout")),
+        overwrite=bool(payload.get("overwrite")),
+        max_total_bytes=payload.get("max_total_bytes") if isinstance(payload.get("max_total_bytes"), int) else None,
+    )
+    local_status = inspect_benchmark_local_files(benchmark, root)
+    readiness = benchmark_import_readiness(benchmark, root, local_status)
+    manifest["local_status"] = local_status
+    manifest["import_readiness"] = readiness
+    credential_status = cast(dict[str, Any], manifest["credential_status"])
+    download = cast(dict[str, Any], manifest["download"])
+    artifact = store_json_artifact(
+        db,
+        store,
+        project_id=None,
+        asset_type="kaggle_selective_download_manifest",
+        name=f"kaggle_selective_download_{benchmark_id}",
+        filename="kaggle_selective_download_manifest.json",
+        payload=manifest,
+        metadata={
+            "benchmark_id": benchmark_id,
+            "competition_slug": manifest["competition_slug"],
+            "download_status": download["status"],
+            "downloaded_count": download["downloaded_count"],
+            "skipped_count": download["skipped_count"],
+            "downloaded_bytes": download["downloaded_bytes"],
+            "local_ready": local_status["ready"],
+            "credential_available": credential_status["available"],
+            "secret_value_artifacted": False,
+            "agent_runner_access": False,
+        },
+    )
+    return {
+        "schema_version": manifest["schema_version"],
+        "benchmark_id": benchmark_id,
+        "competition_slug": manifest["competition_slug"],
+        "download_status": download["status"],
+        "downloaded_count": download["downloaded_count"],
+        "skipped_count": download["skipped_count"],
+        "downloaded_bytes": download["downloaded_bytes"],
+        "local_ready": local_status["ready"],
+        "can_import_now": readiness["can_import_now"],
+        "kaggle_download_manifest_artifact_id": artifact.id,
+        "artifact_id": artifact.id,
+        "artifact_ids": [artifact.id],
     }
 
 
@@ -1597,6 +1827,10 @@ def default_handlers() -> dict[str, JobHandler]:
 
 def concrete_handlers() -> dict[str, JobHandler]:
     handlers: dict[str, JobHandler] = {}
+    handlers["download_public_benchmark_archive"] = download_public_benchmark_archive_handler
+    handlers["probe_kaggle_benchmark_access"] = probe_kaggle_benchmark_access_handler
+    handlers["fetch_kaggle_competition_inventory"] = fetch_kaggle_competition_inventory_handler
+    handlers["download_kaggle_selected_files"] = download_kaggle_selected_files_handler
     handlers["create_adaptive_strategy_brief"] = create_adaptive_strategy_brief_handler
     handlers["plan_research"] = plan_research_handler
     handlers["create_notebook_authoring_brief"] = create_notebook_authoring_brief_handler

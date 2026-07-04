@@ -217,7 +217,6 @@ from tabular_harness.services.baseline import run_baseline as run_baseline_servi
 from tabular_harness.services.benchmark_collection import create_benchmark_collection_plan
 from tabular_harness.services.benchmark_evidence import create_benchmark_evidence_pack
 from tabular_harness.services.benchmarks import (
-    benchmark_import_readiness,
     benchmark_source_card,
     benchmark_to_dict,
     build_import_manifest,
@@ -268,11 +267,6 @@ from tabular_harness.services.jobs import (
 )
 from tabular_harness.services.jobs import (
     cancel_job as cancel_job_service,
-)
-from tabular_harness.services.kaggle_probe import (
-    download_kaggle_selected_files,
-    fetch_kaggle_competition_inventory,
-    probe_kaggle_benchmark_access,
 )
 from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.metric_preferences import (
@@ -608,65 +602,28 @@ def download_public_benchmark_endpoint(
     payload: BenchmarkPublicDownloadRequest,
     request: Request,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
+    try:
+        raw_benchmark_dataset(benchmark_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
     job = create_job(
         db,
         job_type="download_public_benchmark_archive",
         project_id=None,
-        input_payload={"benchmark_id": benchmark_id, "overwrite": payload.overwrite},
+        input_payload={
+            "benchmark_id": benchmark_id,
+            "overwrite": payload.overwrite,
+            "data_dir": str(request.app.state.settings.data_dir),
+            "artifact_root": str(request.app.state.settings.artifact_root),
+        },
         policy={
             "network": "enabled_for_catalog_public_archive_only",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        manifest = download_public_benchmark_archive(
-            request.app.state.settings,
-            benchmark_id,
-            overwrite=payload.overwrite,
-        )
-        artifact = store_json_artifact(
-            db,
-            store,
-            project_id=None,
-            asset_type="benchmark_public_download_manifest",
-            name=f"benchmark_public_download_{benchmark_id}",
-            filename="benchmark_public_download_manifest.json",
-            payload=manifest,
-            metadata={
-                "benchmark_id": benchmark_id,
-                "download_url": manifest["download_url"],
-                "extracted_file_count": len(manifest["extracted_files"]),
-                "skipped_file_count": len(manifest["skipped_files"]),
-                "local_ready": manifest["local_status"]["ready"],
-            },
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "benchmark_id": benchmark_id,
-                "artifact_id": artifact.id,
-                "schema_version": manifest["schema_version"],
-                "download_url": manifest["download_url"],
-                "root_path": manifest["root_path"],
-                "extracted_file_count": len(manifest["extracted_files"]),
-                "skipped_file_count": len(manifest["skipped_files"]),
-                "local_ready": manifest["local_status"]["ready"],
-            },
-        )
-    except KeyError as exc:
-        mark_job_failed(job, "Benchmark dataset not found")
-        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        message = f"Autonomous loop start failed: {exc}"
-        mark_job_failed(job, message)
-        raise HTTPException(status_code=500, detail=message) from exc
     return job_to_dict(job)
 
 
@@ -674,8 +631,11 @@ def download_public_benchmark_endpoint(
 def probe_kaggle_benchmark_endpoint(
     benchmark_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
+    try:
+        raw_benchmark_dataset(benchmark_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
     job = create_job(
         db,
         job_type="probe_kaggle_benchmark_access",
@@ -688,64 +648,9 @@ def probe_kaggle_benchmark_endpoint(
             "agent_runner_access": False,
             "agent_task_contract_access": False,
             "artifact_contains_secret_values": False,
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        benchmark = raw_benchmark_dataset(benchmark_id)
-        payload = probe_kaggle_benchmark_access(benchmark)
-        credential_status = cast(dict[str, Any], payload["credential_status"])
-        probe = cast(dict[str, Any], payload["probe"])
-        artifact = store_json_artifact(
-            db,
-            store,
-            project_id=None,
-            asset_type="kaggle_credential_probe",
-            name=f"kaggle_credential_probe_{benchmark_id}",
-            filename="kaggle_credential_probe.json",
-            payload=payload,
-            metadata={
-                "benchmark_id": benchmark_id,
-                "competition_slug": payload["competition_slug"],
-                "probe_status": probe["status"],
-                "credential_available": credential_status["available"],
-                "credential_sources": credential_status["credential_sources"],
-                "auth_schemes": credential_status["auth_schemes"],
-                "username_available": credential_status["username_available"],
-                "can_access_competition_files": probe["can_access_competition_files"],
-                "http_status": probe["http_status"],
-                "secret_value_artifacted": False,
-                "agent_runner_access": False,
-            },
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": payload["schema_version"],
-                "benchmark_id": benchmark_id,
-                "competition_slug": payload["competition_slug"],
-                "probe_status": probe["status"],
-                "credential_available": credential_status["available"],
-                "credential_sources": credential_status["credential_sources"],
-                "auth_schemes": credential_status["auth_schemes"],
-                "username_available": credential_status["username_available"],
-                "can_access_competition_files": probe["can_access_competition_files"],
-                "http_status": probe["http_status"],
-                "attempt_count": probe["attempt_count"],
-                "kaggle_probe_artifact_id": artifact.id,
-                "artifact_id": artifact.id,
-                "artifact_ids": [artifact.id],
-            },
-        )
-    except KeyError as exc:
-        mark_job_failed(job, "Benchmark dataset not found")
-        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        mark_job_failed(job, str(exc))
-        raise
     return job_to_dict(job)
 
 
@@ -753,8 +658,11 @@ def probe_kaggle_benchmark_endpoint(
 def fetch_kaggle_inventory_endpoint(
     benchmark_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
+    try:
+        raw_benchmark_dataset(benchmark_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
     job = create_job(
         db,
         job_type="fetch_kaggle_competition_inventory",
@@ -767,65 +675,9 @@ def fetch_kaggle_inventory_endpoint(
             "agent_runner_access": False,
             "agent_task_contract_access": False,
             "artifact_contains_secret_values": False,
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        benchmark = raw_benchmark_dataset(benchmark_id)
-        payload = fetch_kaggle_competition_inventory(benchmark)
-        credential_status = cast(dict[str, Any], payload["credential_status"])
-        inventory = cast(dict[str, Any], payload["inventory"])
-        artifact = store_json_artifact(
-            db,
-            store,
-            project_id=None,
-            asset_type="kaggle_file_inventory",
-            name=f"kaggle_file_inventory_{benchmark_id}",
-            filename="kaggle_file_inventory.json",
-            payload=payload,
-            metadata={
-                "benchmark_id": benchmark_id,
-                "competition_slug": payload["competition_slug"],
-                "inventory_status": inventory["status"],
-                "file_count": inventory["file_count"],
-                "total_size_bytes": inventory["total_size_bytes"],
-                "required_present_count": inventory["required_present_count"],
-                "required_missing_count": inventory["required_missing_count"],
-                "recommended_present_count": inventory["recommended_present_count"],
-                "holdout_file_count": inventory["holdout_file_count"],
-                "credential_available": credential_status["available"],
-                "credential_sources": credential_status["credential_sources"],
-                "auth_schemes": credential_status["auth_schemes"],
-                "secret_value_artifacted": False,
-                "agent_runner_access": False,
-            },
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": payload["schema_version"],
-                "benchmark_id": benchmark_id,
-                "competition_slug": payload["competition_slug"],
-                "inventory_status": inventory["status"],
-                "credential_available": credential_status["available"],
-                "file_count": inventory["file_count"],
-                "total_size_bytes": inventory["total_size_bytes"],
-                "required_present_count": inventory["required_present_count"],
-                "required_missing_count": inventory["required_missing_count"],
-                "recommended_present_count": inventory["recommended_present_count"],
-                "holdout_file_count": inventory["holdout_file_count"],
-                "attempt_count": inventory["attempt_count"],
-                "kaggle_inventory_artifact_id": artifact.id,
-                "artifact_id": artifact.id,
-                "artifact_ids": [artifact.id],
-            },
-        )
-    except KeyError as exc:
-        mark_job_failed(job, "Benchmark dataset not found")
-        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
@@ -855,8 +707,11 @@ def download_kaggle_selected_files_endpoint(
     payload: KaggleSelectiveDownloadRequest,
     request: Request,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
+    try:
+        raw_benchmark_dataset(benchmark_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
     job = create_job(
         db,
         job_type="download_kaggle_selected_files",
@@ -869,6 +724,8 @@ def download_kaggle_selected_files_endpoint(
             "include_holdout": payload.include_holdout,
             "overwrite": payload.overwrite,
             "max_total_bytes": payload.max_total_bytes,
+            "data_dir": str(request.app.state.settings.data_dir),
+            "artifact_root": str(request.app.state.settings.artifact_root),
         },
         policy={
             "network": "enabled_for_kaggle_selected_download_only",
@@ -877,72 +734,9 @@ def download_kaggle_selected_files_endpoint(
             "agent_runner_access": False,
             "agent_task_contract_access": False,
             "artifact_contains_secret_values": False,
+            "execution": "queued_worker",
         },
     )
-    try:
-        mark_job_running(job)
-        benchmark = raw_benchmark_dataset(benchmark_id)
-        root = default_benchmark_root(request.app.state.settings, benchmark_id)
-        manifest = download_kaggle_selected_files(
-            benchmark,
-            root=root,
-            selected_files=payload.selected_files,
-            include_required=payload.include_required,
-            include_recommended=payload.include_recommended,
-            include_holdout=payload.include_holdout,
-            overwrite=payload.overwrite,
-            max_total_bytes=payload.max_total_bytes,
-        )
-        local_status = inspect_benchmark_local_files(benchmark, root)
-        readiness = benchmark_import_readiness(benchmark, root, local_status)
-        manifest["local_status"] = local_status
-        manifest["import_readiness"] = readiness
-        credential_status = cast(dict[str, Any], manifest["credential_status"])
-        download = cast(dict[str, Any], manifest["download"])
-        artifact = store_json_artifact(
-            db,
-            store,
-            project_id=None,
-            asset_type="kaggle_selective_download_manifest",
-            name=f"kaggle_selective_download_{benchmark_id}",
-            filename="kaggle_selective_download_manifest.json",
-            payload=manifest,
-            metadata={
-                "benchmark_id": benchmark_id,
-                "competition_slug": manifest["competition_slug"],
-                "download_status": download["status"],
-                "downloaded_count": download["downloaded_count"],
-                "skipped_count": download["skipped_count"],
-                "downloaded_bytes": download["downloaded_bytes"],
-                "local_ready": local_status["ready"],
-                "credential_available": credential_status["available"],
-                "secret_value_artifacted": False,
-                "agent_runner_access": False,
-            },
-        )
-        mark_job_succeeded(
-            job,
-            {
-                "schema_version": manifest["schema_version"],
-                "benchmark_id": benchmark_id,
-                "competition_slug": manifest["competition_slug"],
-                "download_status": download["status"],
-                "downloaded_count": download["downloaded_count"],
-                "skipped_count": download["skipped_count"],
-                "downloaded_bytes": download["downloaded_bytes"],
-                "local_ready": local_status["ready"],
-                "can_import_now": readiness["can_import_now"],
-                "kaggle_download_manifest_artifact_id": artifact.id,
-                "artifact_id": artifact.id,
-                "artifact_ids": [artifact.id],
-            },
-        )
-    except KeyError as exc:
-        mark_job_failed(job, "Benchmark dataset not found")
-        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 

@@ -8,17 +8,20 @@ from email.message import Message
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi.testclient import TestClient
 from tabular_harness.core.config import Settings
+from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
+from tabular_harness.models.entities import Job
 from tabular_harness.services.kaggle_probe import (
     build_kaggle_auth_candidates,
     download_kaggle_selected_files,
     fetch_kaggle_competition_inventory,
     probe_kaggle_benchmark_access,
 )
+from tabular_harness.worker.jobs import create_default_worker
 
 
 class FakeResponse:
@@ -66,6 +69,17 @@ def make_client(tmp_path: Path) -> TestClient:
         cors_origins=("http://localhost:5173",),
     )
     return TestClient(create_app(settings))
+
+
+def run_queued_job(client: TestClient, job_id: str) -> dict[str, Any]:
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        job = db.get(Job, job_id)
+        assert job is not None
+        worker = create_default_worker(store=app.state.artifact_store)
+        completed = worker.run_job(db, job)
+        assert completed.status == "succeeded", completed.error_message
+        return loads_json(completed.output_json, {})
 
 
 def home_credit_benchmark() -> dict[str, Any]:
@@ -292,17 +306,19 @@ def test_kaggle_probe_endpoint_stores_safe_artifact(tmp_path: Path, monkeypatch:
             "next_actions": ["Competition file access is available to the harness process."],
         }
 
-    monkeypatch.setattr("tabular_harness.api.routes.probe_kaggle_benchmark_access", fake_probe)
+    monkeypatch.setattr("tabular_harness.worker.jobs.probe_kaggle_benchmark_access", fake_probe)
     response = client.post("/api/benchmarks/kaggle_home_credit_default_risk/kaggle/probe")
     assert response.status_code == 200, response.text
     job = response.json()
-    assert job["status"] == "succeeded"
+    assert job["status"] == "queued"
     assert job["policy"]["secret_access"] == "harness_process_only"
     assert job["policy"]["agent_runner_access"] is False
-    assert job["output"]["probe_status"] == "ok"
-    assert job["output"]["kaggle_probe_artifact_id"]
+    assert job["policy"]["execution"] == "queued_worker"
+    output = run_queued_job(client, job["id"])
+    assert output["probe_status"] == "ok"
+    assert output["kaggle_probe_artifact_id"]
 
-    preview_response = client.get(f"/api/artifacts/{job['output']['kaggle_probe_artifact_id']}/preview")
+    preview_response = client.get(f"/api/artifacts/{output['kaggle_probe_artifact_id']}/preview")
     assert preview_response.status_code == 200
     preview = preview_response.json()["preview"]
     assert "kaggle_credential_probe.v1" in preview
@@ -367,20 +383,22 @@ def test_kaggle_inventory_endpoint_stores_safe_artifact(tmp_path: Path, monkeypa
             "next_actions": ["Use the inventory artifact to choose files before download."],
         }
 
-    monkeypatch.setattr("tabular_harness.api.routes.fetch_kaggle_competition_inventory", fake_inventory)
+    monkeypatch.setattr("tabular_harness.worker.jobs.fetch_kaggle_competition_inventory", fake_inventory)
     response = client.post("/api/benchmarks/kaggle_home_credit_default_risk/kaggle/inventory")
     assert response.status_code == 200, response.text
     job = response.json()
-    assert job["status"] == "succeeded"
+    assert job["status"] == "queued"
     assert job["policy"]["secret_access"] == "harness_process_only"
-    assert job["output"]["inventory_status"] == "ok"
-    assert job["output"]["file_count"] == 3
-    assert job["output"]["required_missing_count"] == 0
-    assert job["output"]["kaggle_inventory_artifact_id"]
+    assert job["policy"]["execution"] == "queued_worker"
+    output = run_queued_job(client, job["id"])
+    assert output["inventory_status"] == "ok"
+    assert output["file_count"] == 3
+    assert output["required_missing_count"] == 0
+    assert output["kaggle_inventory_artifact_id"]
 
     latest_response = client.get("/api/benchmarks/kaggle_home_credit_default_risk/kaggle/inventory/latest")
     assert latest_response.status_code == 200
-    assert latest_response.json()["id"] == job["output"]["kaggle_inventory_artifact_id"]
+    assert latest_response.json()["id"] == output["kaggle_inventory_artifact_id"]
 
 
 def test_kaggle_download_endpoint_stores_manifest(tmp_path: Path, monkeypatch: Any) -> None:
@@ -451,17 +469,19 @@ def test_kaggle_download_endpoint_stores_manifest(tmp_path: Path, monkeypatch: A
             "next_actions": ["Run benchmark local-status or import from the resolved benchmark root."],
         }
 
-    monkeypatch.setattr("tabular_harness.api.routes.download_kaggle_selected_files", fake_download)
+    monkeypatch.setattr("tabular_harness.worker.jobs.download_kaggle_selected_files", fake_download)
     response = client.post(
         "/api/benchmarks/kaggle_home_credit_default_risk/kaggle/download",
         json={"include_required": True, "overwrite": False},
     )
     assert response.status_code == 200, response.text
     job = response.json()
-    assert job["status"] == "succeeded"
+    assert job["status"] == "queued"
     assert job["policy"]["secret_access"] == "harness_process_only"
-    assert job["output"]["download_status"] == "completed"
-    assert job["output"]["downloaded_count"] == 1
-    assert job["output"]["local_ready"] is True
-    assert job["output"]["can_import_now"] is True
-    assert job["output"]["kaggle_download_manifest_artifact_id"]
+    assert job["policy"]["execution"] == "queued_worker"
+    output = run_queued_job(client, job["id"])
+    assert output["download_status"] == "completed"
+    assert output["downloaded_count"] == 1
+    assert output["local_ready"] is True
+    assert output["can_import_now"] is True
+    assert output["kaggle_download_manifest_artifact_id"]
