@@ -47,7 +47,14 @@ from tabular_harness.services.jobs import TERMINAL_STATUSES as TERMINAL_JOB_STAT
 from tabular_harness.services.jobs import mark_job_succeeded
 from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.research_plan_timeline import research_plan_localization_summary
-from tabular_harness.services.research_plans import commit_research_plan_artifact_revision
+from tabular_harness.services.research_plans import (
+    attach_research_plan_artifact,
+    commit_research_plan_artifact_revision,
+    commit_research_plan_revision,
+    request_research_plan_human_attention,
+    research_plan_current_work_payload,
+    set_research_plan_current_work,
+)
 
 MAIN_AUTONOMOUS_SESSION_TYPE = "main_autonomous"
 ACTIVE_SESSION_STATUSES = {"starting", "running", "between_turns", "waiting_for_runner"}
@@ -61,6 +68,9 @@ STREAM_EVENT_FLUSH_INTERVAL_SECONDS = 0.5
 STREAM_EVENT_FLUSH_MAX_LINES = 24
 SESSION_INTERNAL_DIR = ".tablex"
 SESSION_INBOX_DIR = "inbox"
+SESSION_REQUESTS_DIR = "requests"
+SESSION_ACKS_DIR = "acks"
+RESEARCH_PLAN_REQUESTS_DIR = "research_plan"
 USER_INSTRUCTIONS_INBOX_FILENAME = "user_instructions.jsonl"
 USER_INSTRUCTIONS_LATEST_FILENAME = "latest_user_instruction.md"
 PROGRESS_REQUEST_FILENAME = "progress_request.md"
@@ -204,6 +214,14 @@ def latest_user_instruction_path(workspace: Path) -> Path:
 
 def progress_request_path(workspace: Path) -> Path:
     return workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR / PROGRESS_REQUEST_FILENAME
+
+
+def research_plan_requests_dir(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / SESSION_REQUESTS_DIR / RESEARCH_PLAN_REQUESTS_DIR
+
+
+def research_plan_acks_dir(workspace: Path) -> Path:
+    return workspace / SESSION_INTERNAL_DIR / SESSION_ACKS_DIR / RESEARCH_PLAN_REQUESTS_DIR
 
 
 def build_default_goal_text(db: Session, project: Project) -> str:
@@ -1242,6 +1260,8 @@ def prepare_session_workspace(
     (workspace / "notebooks").mkdir(parents=True, exist_ok=True)
     (workspace / "artifacts").mkdir(parents=True, exist_ok=True)
     (workspace / SESSION_INTERNAL_DIR / SESSION_INBOX_DIR).mkdir(parents=True, exist_ok=True)
+    research_plan_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
+    research_plan_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     write_session_context_file(db, project=project, session=session)
     (workspace / ".tablex" / "GOAL.md").write_text(session.goal_text, encoding="utf-8")
     return workspace
@@ -1349,6 +1369,22 @@ def build_session_context(
                 "and subtask title/detail in human_interface.response_locale. If you keep canonical English, also include "
                 "localizations like {\"ja-JP\": {\"title\": \"...\", \"subtitle\": \"...\"}}."
             ),
+            "research_plan_tool_requests": {
+                "request_dir": ".tablex/requests/research_plan",
+                "ack_dir": ".tablex/acks/research_plan",
+                "schema_version": "tablex_research_plan_request.v1",
+                "operations": [
+                    "commit_revision",
+                    "set_current_work",
+                    "attach_artifact",
+                    "request_human_attention",
+                ],
+                "description": (
+                    "Use this fixed JSON request/ack channel when you need Tablex to commit a plan revision, update the "
+                    "current plan node, link an output artifact to a node, or create a human-attention question. "
+                    "Use a new request_id and file for each operation, then read the matching ack JSON."
+                ),
+            },
             "progress": "Explain progress naturally in Codex messages. Tablex stores the raw transcript and Chat explains it to humans.",
             "chat_update": (
                 "reports/chat_update.md is the human-facing Chat update, not an internal changelog. "
@@ -1486,6 +1522,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Do not destructively modify EvaluationSpec or SplitManifest.",
         "- Register important outputs by writing files under outputs/, reports/, notebooks/, or artifacts/.",
         "- Keep a living plan when it helps the user follow the work: write `outputs/research_plan.json` with `schema_version: \"research_plan.v1\"` and optional `timeline_blocks`. Use `timeline_blocks` only as a display contract: after data upload, objective/task framing, data understanding, and prior-knowledge research anchors, freely add, remove, reorder, branch, or revise project-specific blocks. Mark a block done only when the supporting artifact exists or you explicitly record that no useful output is needed.",
+        "- For acknowledged ResearchPlan operations, write fixed JSON requests under `.tablex/requests/research_plan/` using `schema_version: \"tablex_research_plan_request.v1\"`; Tablex writes matching acks under `.tablex/acks/research_plan/`. Use this for `commit_revision`, `set_current_work`, `attach_artifact`, and `request_human_attention` when you need a validated harness-side state update.",
         "- For `outputs/research_plan.json` timeline_blocks, write human-facing strings in `.tablex/context.json` `human_interface.response_locale` when practical. Keep identifiers and source column names exact.",
         "- Keep human-facing accountability continuous: when you make meaningful progress, hit uncertainty, start or finish a long-running step, recover from an error, change the plan, or need the user to know what changed, overwrite `reports/chat_update.md` with only the latest concise update in the user's locale. Keep it under 1200 characters. Use separate report files for long history. Do not wait for Tablex to infer this from logs.",
         "- Treat `reports/chat_update.md` as a user-facing explanation, not an internal changelog: say what you are doing now, why it matters, what changed, what uncertainty remains, and where the user should look next. Avoid raw artifact IDs, hashes, filenames, internal schema names, and implementation vocabulary unless they are necessary for a user decision.",
@@ -2062,6 +2099,217 @@ def codex_event_content(event: dict[str, Any]) -> str | None:
     return None
 
 
+def process_research_plan_tool_requests(
+    db: Session,
+    *,
+    project: Project,
+    session: AgentSession,
+    workspace: Path,
+) -> None:
+    request_dir = research_plan_requests_dir(workspace)
+    if not request_dir.exists():
+        return
+    ack_dir = research_plan_acks_dir(workspace)
+    ack_dir.mkdir(parents=True, exist_ok=True)
+    for path in sorted(item for item in request_dir.glob("*.json") if item.is_file()):
+        ack_path = ack_dir / f"{path.stem}.ack.json"
+        if ack_path.exists():
+            continue
+        request_id = path.stem
+        operation = ""
+        try:
+            raw_text = path.read_text(encoding="utf-8")
+            payload = loads_json(raw_text, {})
+            if not isinstance(payload, dict):
+                raise ValueError("ResearchPlan request must be a JSON object")
+            request_id = str(payload.get("request_id") or path.stem)
+            operation = str(payload.get("operation") or payload.get("tool") or "").strip()
+            body = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
+            result = execute_research_plan_tool_request(
+                db,
+                project=project,
+                workspace=workspace,
+                operation=operation,
+                payload=body,
+            )
+            ack = {
+                "schema_version": "tablex_research_plan_ack.v1",
+                "request_id": request_id,
+                "operation": operation,
+                "status": "succeeded",
+                "request_hash": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
+                "processed_at": utc_now().isoformat(),
+                "result": result,
+            }
+            write_research_plan_tool_ack(ack_path, ack)
+            append_session_event(
+                db,
+                session,
+                source="tablex_sidecar",
+                event_type="research_plan_request_succeeded",
+                role="harness",
+                title="ResearchPlan request processed",
+                content=f"Processed ResearchPlan request `{operation}` from `{path.relative_to(workspace)}`.",
+                payload=ack,
+                update_heartbeat=False,
+            )
+        except Exception as exc:
+            ack = {
+                "schema_version": "tablex_research_plan_ack.v1",
+                "request_id": request_id,
+                "operation": operation,
+                "status": "failed",
+                "processed_at": utc_now().isoformat(),
+                "error": {"type": type(exc).__name__, "message": str(exc)},
+            }
+            write_research_plan_tool_ack(ack_path, ack)
+            append_session_event(
+                db,
+                session,
+                source="tablex_sidecar",
+                event_type="research_plan_request_failed",
+                role="harness",
+                title="ResearchPlan request failed",
+                content=str(exc),
+                payload={**ack, "workspace_relative_path": str(path.relative_to(workspace))},
+                update_heartbeat=False,
+            )
+
+
+def execute_research_plan_tool_request(
+    db: Session,
+    *,
+    project: Project,
+    workspace: Path,
+    operation: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    if operation == "commit_revision":
+        document = payload.get("document")
+        if not isinstance(document, dict):
+            raise ValueError("payload.document is required for commit_revision")
+        result = commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document=document,
+            author_type=str(payload.get("author_type") or "codex"),
+            author_id=str(payload.get("author_id")) if payload.get("author_id") is not None else None,
+            reason=str(payload.get("reason") or ""),
+            source_artifact_id=str(payload.get("source_artifact_id"))
+            if payload.get("source_artifact_id") is not None
+            else None,
+            parent_revision_id=str(payload.get("parent_revision_id"))
+            if payload.get("parent_revision_id") is not None
+            else None,
+            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+        )
+        return {
+            "research_plan_id": result.plan.id,
+            "revision_id": result.revision.id,
+            "revision_index": result.revision.revision_index,
+            "created": result.created,
+        }
+    if operation == "set_current_work":
+        current = set_research_plan_current_work(
+            db,
+            project_id=project.id,
+            node_id=str(payload.get("node_id") or ""),
+            summary=str(payload.get("summary") or ""),
+            status=str(payload.get("status") or "active"),
+            expected_outputs=[str(item) for item in payload.get("expected_outputs", [])]
+            if isinstance(payload.get("expected_outputs"), list)
+            else [],
+            revision_id=str(payload.get("revision_id")) if payload.get("revision_id") is not None else None,
+            updated_by_type=str(payload.get("updated_by_type") or "codex"),
+            updated_by=str(payload.get("updated_by")) if payload.get("updated_by") is not None else None,
+        )
+        return {"current_work": research_plan_current_work_payload(current)}
+    if operation == "attach_artifact":
+        artifact_id = payload.get("artifact_id")
+        if not isinstance(artifact_id, str) or not artifact_id.strip():
+            workspace_path = payload.get("workspace_path")
+            if not isinstance(workspace_path, str) or not workspace_path.strip():
+                raise ValueError("payload.artifact_id or payload.workspace_path is required for attach_artifact")
+            artifact = latest_session_artifact_for_workspace_path(
+                db,
+                project_id=project.id,
+                workspace=workspace,
+                workspace_path=workspace_path,
+            )
+            if artifact is None:
+                raise ValueError(f"No registered artifact found for workspace_path {workspace_path}")
+            artifact_id = artifact.id
+        edge = attach_research_plan_artifact(
+            db,
+            project_id=project.id,
+            node_id=str(payload.get("node_id") or ""),
+            artifact_id=artifact_id,
+            role=str(payload.get("role") or "evidence"),
+            revision_id=str(payload.get("revision_id")) if payload.get("revision_id") is not None else None,
+            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+        )
+        return {
+            "link_id": edge.id,
+            "artifact_id": edge.to_asset_id,
+            "node_id": str(loads_json(edge.metadata_json, {}).get("node_id") or ""),
+        }
+    if operation == "request_human_attention":
+        question = request_research_plan_human_attention(
+            db,
+            project_id=project.id,
+            question=str(payload.get("question") or ""),
+            why_it_matters=str(payload.get("why_it_matters") or ""),
+            node_id=str(payload.get("node_id")) if payload.get("node_id") is not None else None,
+            provisional_assumption=str(payload.get("provisional_assumption"))
+            if payload.get("provisional_assumption") is not None
+            else None,
+            impact_if_wrong=str(payload.get("impact_if_wrong")) if payload.get("impact_if_wrong") is not None else None,
+            urgency=str(payload.get("urgency") or "medium"),
+            fallback_policy=str(payload.get("fallback_policy") or "infer_and_continue"),
+            blocks_next_phase=bool(payload.get("blocks_next_phase") or False),
+            revision_id=str(payload.get("revision_id")) if payload.get("revision_id") is not None else None,
+        )
+        return {"question_id": question.id, "can_proceed_without_answer": question.can_proceed_without_answer}
+    raise ValueError(f"Unsupported ResearchPlan request operation: {operation}")
+
+
+def latest_session_artifact_for_workspace_path(
+    db: Session,
+    *,
+    project_id: str,
+    workspace: Path,
+    workspace_path: str,
+) -> Artifact | None:
+    candidate = Path(workspace_path)
+    if candidate.is_absolute():
+        try:
+            relative_path = str(candidate.relative_to(workspace))
+        except ValueError:
+            relative_path = str(candidate)
+    else:
+        relative_path = str(candidate)
+    artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project_id)
+            .order_by(Artifact.created_at.desc())
+            .limit(300)
+        ).all()
+    )
+    for artifact in artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("workspace_relative_path") == relative_path:
+            return artifact
+    return None
+
+
+def write_research_plan_tool_ack(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    tmp_path.replace(path)
+
+
 def ingest_session_workspace_outputs(
     db: Session,
     *,
@@ -2153,6 +2401,7 @@ def ingest_session_workspace_outputs(
                 )
             else:
                 maybe_defer_agent_session_notebook_capture(db, session=session, artifact=artifact)
+    process_research_plan_tool_requests(db, project=project, session=session, workspace=workspace)
     if allow_notebook_auto_capture:
         capture_pending_agent_session_notebooks(db, store=store, project=project, session=session)
 

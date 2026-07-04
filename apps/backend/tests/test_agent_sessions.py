@@ -20,7 +20,10 @@ from tabular_harness.models.entities import (
     Artifact,
     Base,
     Job,
+    LineageEdge,
     Project,
+    Question,
+    ResearchPlanCurrentWork,
     ResearchPlanRevision,
     User,
     utc_now,
@@ -1891,6 +1894,141 @@ def test_research_plan_ingest_preserves_mixed_language_timeline_without_repair_e
             .where(ResearchPlanRevision.project_id == project.id)
         )
         assert revision_count == 1
+
+
+def test_research_plan_file_requests_commit_presence_links_and_attention(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    outputs_dir = workspace / "outputs"
+    requests_dir = workspace / ".tablex" / "requests" / "research_plan"
+    outputs_dir.mkdir(parents=True)
+    requests_dir.mkdir(parents=True)
+    (outputs_dir / "deep_eda.md").write_text("# Deep EDA\n", encoding="utf-8")
+    (requests_dir / "01_commit.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_research_plan_request.v1",
+                "request_id": "rp_req_commit",
+                "operation": "commit_revision",
+                "payload": {
+                    "document": {
+                        "schema_version": "research_plan.v2",
+                        "timeline_blocks": [
+                            {
+                                "id": "deep_data_understanding",
+                                "title": "Deep data understanding",
+                                "why_it_matters": "Inspect the actual data story before modeling.",
+                                "status": "active",
+                            }
+                        ],
+                    },
+                    "reason": "Codex declared the current plan.",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (requests_dir / "02_current.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_research_plan_request.v1",
+                "request_id": "rp_req_current",
+                "operation": "set_current_work",
+                "payload": {
+                    "node_id": "deep_data_understanding",
+                    "summary": "Writing the EDA narrative and checking leakage-sensitive fields.",
+                    "expected_outputs": ["EDA report"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (requests_dir / "03_attach.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_research_plan_request.v1",
+                "request_id": "rp_req_attach",
+                "operation": "attach_artifact",
+                "payload": {
+                    "node_id": "deep_data_understanding",
+                    "workspace_path": "outputs/deep_eda.md",
+                    "role": "report",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (requests_dir / "04_attention.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_research_plan_request.v1",
+                "request_id": "rp_req_attention",
+                "operation": "request_human_attention",
+                "payload": {
+                    "node_id": "deep_data_understanding",
+                    "question": "Is this target definition the production objective?",
+                    "why_it_matters": "It changes the evaluation boundary.",
+                    "provisional_assumption": "Continue with the uploaded objective for local analysis.",
+                    "urgency": "high",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(
+            id="p_plan_request",
+            name="Plan Request",
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+        )
+        session = AgentSession(
+            id="as_plan_request",
+            project_id=project.id,
+            goal_text="Keep the plan moving.",
+            workspace_path=str(workspace),
+            status="running",
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        ack_dir = workspace / ".tablex" / "acks" / "research_plan"
+        for name in ("01_commit", "02_current", "03_attach", "04_attention"):
+            ack = loads_json((ack_dir / f"{name}.ack.json").read_text(encoding="utf-8"), {})
+            assert ack["status"] == "succeeded"
+
+        revision = db.scalar(select(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project.id))
+        assert revision is not None
+        assert loads_json(revision.document_json, {})["timeline_blocks"][0]["id"] == "deep_data_understanding"
+        current = db.scalar(select(ResearchPlanCurrentWork).where(ResearchPlanCurrentWork.project_id == project.id))
+        assert current is not None
+        assert current.node_id == "deep_data_understanding"
+        linked_artifact = next(
+            (
+                artifact
+                for artifact in db.scalars(select(Artifact).where(Artifact.project_id == project.id)).all()
+                if loads_json(artifact.metadata_json, {}).get("workspace_relative_path") == "outputs/deep_eda.md"
+            ),
+            None,
+        )
+        assert linked_artifact is not None
+        edge = db.scalar(
+            select(LineageEdge).where(
+                LineageEdge.project_id == project.id,
+                LineageEdge.relation_type == "supports_plan_node",
+            )
+        )
+        assert edge is not None
+        assert edge.to_asset_id == linked_artifact.id
+        question = db.scalar(select(Question).where(Question.project_id == project.id, Question.topic == "research_plan"))
+        assert question is not None
+        assert question.can_proceed_without_answer is True
 
 
 def test_published_raw_codex_transcript_is_ingested_as_session_artifact(tmp_path: Path) -> None:
