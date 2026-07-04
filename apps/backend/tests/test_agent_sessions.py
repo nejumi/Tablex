@@ -97,6 +97,65 @@ def test_agent_session_codex_stderr_outputs_are_log_artifacts() -> None:
     assert metadata_for_session_output(path) == {"transcript_kind": "codex_cli_stderr", "raw_codex_cli": True}
 
 
+def test_workspace_output_artifact_names_include_relative_path_to_avoid_stem_collisions(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    reports_summary = workspace / "reports" / "summary.md"
+    outputs_summary = workspace / "outputs" / "summary.md"
+    reports_summary.parent.mkdir(parents=True)
+    outputs_summary.parent.mkdir(parents=True)
+    reports_summary.write_text("Reports summary", encoding="utf-8")
+    outputs_summary.write_text("Outputs summary", encoding="utf-8")
+
+    with session_factory() as db:
+        project = Project(id="p_collision", name="Collision Project", current_phase="AUTONOMOUS_LOOP", autonomy_mode="full_auto")
+        session = AgentSession(
+            id="as_collision",
+            project_id=project.id,
+            goal_text="Register outputs without name collisions.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        reports_name = session_output_artifact_name(session.id, reports_summary.relative_to(workspace))
+        outputs_name = session_output_artifact_name(session.id, outputs_summary.relative_to(workspace))
+
+        assert reports_name != outputs_name
+        assert "reports_summary_md" in reports_name
+        assert "outputs_summary_md" in outputs_name
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        artifacts = list(
+            db.scalars(
+                select(Artifact)
+                .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_session_report")
+                .order_by(Artifact.name.asc())
+            )
+        )
+        assert len(artifacts) == 2
+        assert {artifact.name for artifact in artifacts} == {reports_name, outputs_name}
+        assert {
+            loads_json(artifact.metadata_json, {})["workspace_relative_path"]
+            for artifact in artifacts
+        } == {"reports/summary.md", "outputs/summary.md"}
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        artifact_count = db.scalar(
+            select(func.count())
+            .select_from(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_session_report")
+        )
+        assert artifact_count == 2
+
+
 def test_codex_stream_lines_are_persisted_and_published_without_rewriting_stdout(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     stdout_line = '{"type":"thread.started","thread_id":"abc"}\n'
