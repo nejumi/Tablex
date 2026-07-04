@@ -54,6 +54,47 @@ def test_research_plan_timeline_uses_explicit_localized_display() -> None:
     assert blocks[0]["localization_status"] == "localized"
 
 
+def test_research_plan_timeline_accepts_human_locale_alias_keys() -> None:
+    raw_blocks = [
+        {
+            "id": "deep_eda",
+            "title": "Deep EDA and feature hypothesis review",
+            "why_it_matters": "Find the data story before modeling.",
+            "status": "active",
+            "localizations": {
+                "Japanese": {
+                    "title": "深いEDAと特徴量仮説の確認",
+                    "why_it_matters": "モデリング前にデータの物語を見つけます。",
+                }
+            },
+            "subtasks": [
+                {
+                    "id": "tail_story",
+                    "title": "Tail story",
+                    "detail": "Inspect high-salary segments.",
+                    "status": "pending",
+                    "human_display": {
+                        "日本語": {
+                            "title": "裾の見立て",
+                            "detail": "高salaryセグメントを確認します。",
+                        }
+                    },
+                }
+            ],
+        }
+    ]
+
+    summary = research_plan_localization_summary(raw_blocks, locale="ja-JP")
+    blocks = clean_research_plan_timeline_blocks(raw_blocks, locale="ja-JP")
+
+    assert summary["missing_block_count"] == 0
+    assert summary["missing_subtask_count"] == 0
+    assert blocks[0]["title"] == "深いEDAと特徴量仮説の確認"
+    assert blocks[0]["subtitle"] == "モデリング前にデータの物語を見つけます。"
+    assert blocks[0]["subtasks"][0]["title"] == "裾の見立て"
+    assert blocks[0]["subtasks"][0]["detail"] == "高salaryセグメントを確認します。"
+
+
 def test_research_plan_timeline_masks_codex_added_mixed_english_blocks() -> None:
     raw_blocks = [
         {

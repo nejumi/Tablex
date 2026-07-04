@@ -369,7 +369,9 @@ def _research_plan_locale_keys(locale: str | None) -> list[str]:
     language = lower.split("-", 1)[0]
     keys = [normalized, lower, language]
     if _research_plan_locale_is_japanese(locale):
-        keys.extend(["ja-JP", "ja-jp", "ja"])
+        keys.extend(["ja-JP", "ja-jp", "ja", "Japanese", "japanese", "日本語", "Japanese / 日本語"])
+    elif language == "en":
+        keys.extend(["en-US", "en-us", "en", "English", "english"])
     return list(dict.fromkeys(keys))
 
 
