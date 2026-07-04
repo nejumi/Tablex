@@ -2659,13 +2659,17 @@ type ResearchPlanBlock = {
 
 type ResearchPlanArtifactLink = {
   id: string;
+  link_type?: string | null;
   revision_id?: string | null;
   node_id: string;
   role: string;
-  artifact_id: string;
+  artifact_id?: string | null;
+  run_id?: string | null;
   artifact_name?: string | null;
   asset_type?: string | null;
   artifact_version?: number | null;
+  target_tab?: string | null;
+  target_anchor?: string | null;
   metadata?: Record<string, unknown>;
   created_at?: string | null;
 };
@@ -6781,15 +6785,18 @@ function derivedResearchPlanSubtasks(
   }
   const attachedArtifacts = block.attached_artifacts ?? [];
   if (attachedArtifacts.length) {
+    const runLike = attachedArtifacts.some((artifact) => artifact.link_type === "experiment_run" || Boolean(artifact.run_id));
     const notebookLike = attachedArtifacts.some((artifact) => artifact.asset_type?.includes("notebook"));
-    const targetTab: Tab = notebookLike ? "Notebooks" : "Assets";
-    const targetAnchor = notebookLike ? "notebook-preview-top" : null;
+    const explicitTarget = attachedArtifacts.find((artifact) => artifact.target_tab)?.target_tab;
+    const targetTab: Tab = explicitTarget ? tabFromString(explicitTarget, "Assets") : runLike ? "Leaderboard" : notebookLike ? "Notebooks" : "Assets";
+    const explicitAnchor = attachedArtifacts.find((artifact) => artifact.target_anchor)?.target_anchor;
+    const targetAnchor = explicitAnchor ?? (runLike ? "result-readout" : notebookLike ? "notebook-preview-top" : null);
     derived.push({
       id: `${block.id}:attached_artifacts`,
       title: text.researchPlanDetailEvidence,
       detail: attachedArtifacts
         .slice(0, 4)
-        .map((artifact) => artifact.artifact_name || artifact.artifact_id)
+        .map((artifact) => artifact.artifact_name || artifact.run_id || artifact.artifact_id || artifact.id)
         .join(" / "),
       status: block.status === "blocked" ? "pending" : block.status,
       evidence: `${attachedArtifacts.length}`,
@@ -8330,14 +8337,12 @@ function agentChatWaitLatestCodexMessage(brief: Record<string, unknown> | null |
 function AgentConversationTurnCard({
   turn,
   text,
-  locale,
   userAvatarSrc,
   tableeMotionState,
   onActionOpen
 }: {
   turn: AgentConversationTurn;
   text: LocaleMessages;
-  locale: string;
   userAvatarSrc: string | null;
   tableeMotionState: TableeMotionState;
   onActionOpen: (action: AgentChatAction) => void;
@@ -8536,7 +8541,6 @@ function AgentChatDock({
                     key={turn.id}
                     turn={turn}
                     text={text}
-                    locale={locale}
                     userAvatarSrc={userAvatarSrc}
                     tableeMotionState={tableeMotionState}
                     onActionOpen={onActionOpen}
@@ -8550,7 +8554,6 @@ function AgentChatDock({
               key={turn.id}
               turn={turn}
               text={text}
-              locale={locale}
               userAvatarSrc={userAvatarSrc}
               tableeMotionState={tableeMotionState}
               onActionOpen={onActionOpen}

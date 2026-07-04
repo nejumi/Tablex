@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
-from tabular_harness.models.entities import Artifact, Base, Project, ResearchPlanRevision
+from tabular_harness.core.json import dumps_json
+from tabular_harness.models.entities import (
+    Artifact,
+    Base,
+    ExperimentRun,
+    Project,
+    ResearchPlanRevision,
+)
 from tabular_harness.services.research_plan_timeline import (
     build_research_plan_timeline_response,
     clean_research_plan_timeline_blocks,
@@ -319,3 +326,69 @@ def test_research_plan_timeline_exposes_current_work_and_artifact_links() -> Non
         db.refresh(question)
         assert question.priority == 75
         assert question.can_proceed_without_answer is True
+
+
+def test_research_plan_timeline_exposes_completion_evidence_artifacts_and_runs() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_plan_evidence_links", name="Plan Evidence Links")
+        artifact = Artifact(
+            id="art_story_notebook",
+            project_id=project.id,
+            asset_type="analysis_notebook",
+            name="story_notebook",
+            version=1,
+            uri="/tmp/story_notebook.py",
+            content_hash="hash",
+            size_bytes=12,
+            metadata_json=dumps_json({"workspace_relative_path": "notebooks/story.py"}),
+        )
+        run = ExperimentRun(
+            id="run_story_model",
+            project_id=project.id,
+            runner_type="codex_main_session",
+            status="succeeded",
+            params_json=dumps_json({"model_id": "text_masked_ridge"}),
+            metrics_json=dumps_json({"mae": 25275.0}),
+        )
+        db.add_all([project, artifact, run])
+        db.commit()
+
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "analysis_and_modeling",
+                        "title": "Analysis and modeling",
+                        "granularity": "chapter",
+                        "status": "done",
+                        "deliverable_contract": {"expected_outputs": ["notebook", "leaderboard_entry"]},
+                        "completion_evidence": [
+                            {"output_type": "notebook", "workspace_path": "notebooks/story.py"},
+                            {"output_type": "leaderboard_entry", "experiment_run_id": run.id},
+                        ],
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Commit registered evidence links.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        response = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+
+        assert response["contract_validation"]["status"] == "ok"
+        links = response["blocks"][0]["attached_artifacts"]
+        artifact_link = next(link for link in links if link["link_type"] == "artifact")
+        run_link = next(link for link in links if link["link_type"] == "experiment_run")
+        assert artifact_link["artifact_id"] == artifact.id
+        assert artifact_link["asset_type"] == "analysis_notebook"
+        assert run_link["run_id"] == run.id
+        assert run_link["target_tab"] == "Leaderboard"
+        assert "text_masked_ridge" in run_link["artifact_name"]

@@ -6,14 +6,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.json import loads_json
-from tabular_harness.models.entities import Artifact, utc_now
+from tabular_harness.models.entities import Artifact, ExperimentRun, utc_now
 from tabular_harness.services.artifacts import artifact_primary_path
 from tabular_harness.services.locales import locale_language
 from tabular_harness.services.research_plans import (
     latest_research_plan_current_work,
     latest_research_plan_revision,
     research_plan_artifact_links,
+    research_plan_block_id,
     research_plan_current_work_payload,
+    research_plan_evidence_artifact,
+    research_plan_evidence_items,
+    research_plan_evidence_run_ids,
     research_plan_revision_document,
     validate_research_plan_document,
 )
@@ -28,8 +32,10 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
         raw_blocks = payload.get("timeline_blocks") if isinstance(payload, dict) else None
         response_locale = _research_plan_effective_locale(locale, payload)
         artifact_links = research_plan_artifact_links(db, revision=revision)
+        evidence_links = research_plan_evidence_links(db, revision=revision, raw_blocks=raw_blocks)
+        all_links = merge_research_plan_links(artifact_links, evidence_links)
         blocks = clean_research_plan_timeline_blocks(raw_blocks, locale=response_locale)
-        attach_research_plan_artifact_links_to_blocks(blocks, artifact_links)
+        attach_research_plan_artifact_links_to_blocks(blocks, all_links)
         return {
             "schema_version": "research_plan_timeline.v1",
             "project_id": project_id,
@@ -51,7 +57,7 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
             "current_work": research_plan_current_work_payload(
                 latest_research_plan_current_work(db, project_id=project_id)
             ),
-            "artifact_links": artifact_links,
+            "artifact_links": all_links,
             "blocks": blocks,
         }
     artifact = db.scalar(
@@ -124,6 +130,102 @@ def research_plan_contract_validation_summary(
         "warning_count": len(warnings),
         "issues": issues[:12],
     }
+
+
+def merge_research_plan_links(*link_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for links in link_groups:
+        for link in links:
+            link_type = str(link.get("link_type") or "artifact")
+            node_id = str(link.get("node_id") or "")
+            target_id = str(link.get("artifact_id") or link.get("run_id") or link.get("id") or "")
+            role = str(link.get("role") or "")
+            key = (link_type, node_id, target_id, role)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(link)
+    return merged
+
+
+def research_plan_evidence_links(
+    db: Session,
+    *,
+    revision: Any,
+    raw_blocks: Any,
+) -> list[dict[str, Any]]:
+    if not isinstance(raw_blocks, list):
+        return []
+    links: list[dict[str, Any]] = []
+    for block_index, block in enumerate(raw_blocks):
+        if not isinstance(block, dict):
+            continue
+        node_id = research_plan_block_id(block, block_index)
+        for item_index, item in enumerate(research_plan_evidence_items(block)):
+            role = research_plan_evidence_role(item)
+            artifact = research_plan_evidence_artifact(db, project_id=revision.project_id, item=item)
+            if artifact is not None:
+                links.append(
+                    {
+                        "id": f"evidence_artifact:{revision.id}:{node_id}:{item_index}:{artifact.id}",
+                        "link_type": "artifact",
+                        "revision_id": revision.id,
+                        "node_id": node_id,
+                        "role": role,
+                        "artifact_id": artifact.id,
+                        "artifact_name": artifact.name,
+                        "asset_type": artifact.asset_type,
+                        "artifact_version": artifact.version,
+                        "metadata": {"source": "research_plan_completion_evidence"},
+                        "created_at": revision.created_at.isoformat(),
+                    }
+                )
+            for run_id in research_plan_evidence_run_ids(item):
+                run = db.get(ExperimentRun, run_id)
+                if run is None or run.project_id != revision.project_id:
+                    continue
+                links.append(
+                    {
+                        "id": f"evidence_run:{revision.id}:{node_id}:{item_index}:{run.id}",
+                        "link_type": "experiment_run",
+                        "revision_id": revision.id,
+                        "node_id": node_id,
+                        "role": role,
+                        "run_id": run.id,
+                        "artifact_id": None,
+                        "artifact_name": research_plan_run_label(run),
+                        "asset_type": "experiment_run",
+                        "artifact_version": None,
+                        "target_tab": "Leaderboard",
+                        "target_anchor": "result-readout",
+                        "metadata": {
+                            "source": "research_plan_completion_evidence",
+                            "runner_type": run.runner_type,
+                            "status": run.status,
+                        },
+                        "created_at": revision.created_at.isoformat(),
+                    }
+                )
+    return links
+
+
+def research_plan_evidence_role(item: dict[str, Any]) -> str:
+    for key in ("role", "output_type", "type", "asset_type", "kind"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:80]
+    return "evidence"
+
+
+def research_plan_run_label(run: ExperimentRun) -> str:
+    params = loads_json(run.params_json, {})
+    if isinstance(params, dict):
+        for key in ("model_id", "run_name", "name", "condition"):
+            value = params.get(key)
+            if isinstance(value, str) and value.strip():
+                return f"{value.strip()} · {run.id}"
+    return run.id
 
 
 def attach_research_plan_artifact_links_to_blocks(
