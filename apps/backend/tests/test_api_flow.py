@@ -3184,6 +3184,15 @@ def test_core_harness_actions_use_explicit_endpoints(tmp_path: Path) -> None:
     assert upload_response.status_code == 200, upload_response.text
     dataset_id = upload_response.json()["dataset_snapshot"]["id"]
 
+    understanding_response = client.post(f"/api/projects/{project_id}/understanding/run")
+    assert understanding_response.status_code == 200, understanding_response.text
+    understanding_job = understanding_response.json()
+    assert understanding_job["status"] == "queued"
+    assert understanding_job["job_type"] == "profile_dataset"
+    understanding_output = run_queued_job(client, understanding_job["id"])
+    assert understanding_output["dataset_snapshot_id"]
+    assert understanding_output["source_dataset_snapshot_id"] == dataset_id
+
     quality_response = client.post(f"/api/datasets/{dataset_id}/quality/run")
     assert quality_response.status_code == 200, quality_response.text
     quality_job = quality_response.json()
@@ -3552,6 +3561,15 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert assumptions_response.status_code == 200
     assumptions = assumptions_response.json()
     assert any(item["fallback_policy"] == "exclude_until_confirmed" for item in assumptions)
+
+    infer_response = client.post(f"/api/projects/{project_id}/assumptions/infer")
+    assert infer_response.status_code == 200, infer_response.text
+    infer_job = infer_response.json()
+    assert infer_job["status"] == "queued"
+    assert infer_job["job_type"] == "infer_assumptions"
+    infer_output = run_queued_job(client, infer_job["id"])
+    assert infer_output["policy"] == "fallbacks_already_materialized_in_assumptions"
+    assert infer_output["unanswered_questions"] >= 0
 
     review_queue_response = client.get(f"/api/projects/{project_id}/assumptions/review-queue")
     assert review_queue_response.status_code == 200, review_queue_response.text

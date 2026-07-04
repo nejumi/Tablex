@@ -92,7 +92,7 @@ def test_local_worker_daemon_does_not_succeed_stub_only_jobs(tmp_path: Path) -> 
         with app_any.state.session_factory() as db:
             job = create_job(
                 db,
-                job_type="profile_dataset",
+                job_type="generate_data_understanding_notebook",
                 project_id=None,
                 input_payload={"source": "daemon-test"},
             )

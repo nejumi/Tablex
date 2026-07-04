@@ -17,6 +17,7 @@ from tabular_harness.models.entities import (
     Job,
     ModelVersion,
     Project,
+    Question,
     SplitManifest,
     utc_now,
 )
@@ -58,6 +59,7 @@ from tabular_harness.services.benchmarks import (
     raw_benchmark_dataset,
 )
 from tabular_harness.services.data_quality import analyze_dataset_quality
+from tabular_harness.services.dataset_profile import profile_dataset_artifact
 from tabular_harness.services.decision_reporting import create_decision_report_v1
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
 from tabular_harness.services.eda_review import create_dataset_eda_review
@@ -435,6 +437,53 @@ def review_evaluation_approval_handler(db: Session, job: Job, store: LocalArtifa
         "blocked": decision["blocked"],
         "blocker_count": decision["blocker_count"],
         "warning_count": decision["warning_count"],
+    }
+
+
+def profile_dataset_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "profile_dataset")
+    artifact_id = payload.get("artifact_id")
+    source_dataset_id = payload.get("dataset_snapshot_id")
+    source_dataset = db.get(DatasetSnapshot, source_dataset_id) if isinstance(source_dataset_id, str) else None
+    if not isinstance(artifact_id, str) and source_dataset is not None:
+        artifact_id = source_dataset.artifact_id
+    dataset_artifact = db.get(Artifact, artifact_id) if isinstance(artifact_id, str) else None
+    if dataset_artifact is None:
+        raise ValueError("profile_dataset requires an existing artifact_id or dataset_snapshot_id")
+    target_column = payload.get("target_column") if isinstance(payload.get("target_column"), str) else project.target_column
+    source_type = payload.get("source_type") if isinstance(payload.get("source_type"), str) else None
+    source_ref = payload.get("source_ref") if isinstance(payload.get("source_ref"), str) else None
+    if source_type is None and source_dataset is not None:
+        source_type = source_dataset.source_type
+    if source_ref is None and source_dataset is not None:
+        source_ref = source_dataset.source_ref
+    dataset = profile_dataset_artifact(
+        db,
+        store,
+        project,
+        dataset_artifact,
+        target_column,
+        source_type=source_type or "upload",
+        source_ref=source_ref,
+    )
+    project.current_phase = "UNDERSTANDING_REVIEW"
+    project.updated_at = utc_now()
+    return {
+        "dataset_snapshot_id": dataset.id,
+        "source_dataset_snapshot_id": source_dataset.id if source_dataset is not None else None,
+        "artifact_id": dataset_artifact.id,
+        "target_column": target_column,
+    }
+
+
+def infer_assumptions_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    del store
+    project = project_for_job(db, job, "infer_assumptions")
+    unresolved = db.scalars(select(Question).where(Question.project_id == project.id, Question.status == "open")).all()
+    return {
+        "unanswered_questions": len(unresolved),
+        "policy": "fallbacks_already_materialized_in_assumptions",
     }
 
 
@@ -1938,6 +1987,8 @@ def default_handlers() -> dict[str, JobHandler]:
 
 def concrete_handlers() -> dict[str, JobHandler]:
     handlers: dict[str, JobHandler] = {}
+    handlers["profile_dataset"] = profile_dataset_handler
+    handlers["infer_assumptions"] = infer_assumptions_handler
     handlers["download_public_benchmark_archive"] = download_public_benchmark_archive_handler
     handlers["probe_kaggle_benchmark_access"] = probe_kaggle_benchmark_access_handler
     handlers["fetch_kaggle_competition_inventory"] = fetch_kaggle_competition_inventory_handler
