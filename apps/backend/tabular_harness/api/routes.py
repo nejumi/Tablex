@@ -3755,6 +3755,16 @@ def list_agent_chat_history(project_id: str, db: Annotated[Session, Depends(get_
         }
         if metadata.get("source") == "main_codex_session_chat_update" and isinstance(metadata.get("agent_session_id"), str):
             turn["agent_session_id"] = metadata["agent_session_id"]
+            if plan_actions:
+                turn["actions"] = plan_actions
+                response_brief = turn["response_brief"] if isinstance(turn["response_brief"], dict) else {}
+                turn["response_brief"] = {
+                    **response_brief,
+                    "linked_action_count": len(plan_actions),
+                    "linked_action_source": "research_plan_completion_evidence",
+                    "linked_actions_refreshed_for_display": True,
+                }
+                turn["next_focus"] = plan_next_focus
             main_session_update_turns.append(turn)
         else:
             turns.append(turn)

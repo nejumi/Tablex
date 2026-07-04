@@ -1326,6 +1326,20 @@ def test_chat_update_links_registered_plan_evidence_without_parsing_message(tmp_
             text="import marimo\napp = marimo.App()\n",
             metadata={"project_id": project.id, "workspace_relative_path": "notebooks/grandmaster_eda.py"},
         )
+        notebook_preview_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="notebook_execution_html",
+            name="notebook_execution_preview_grandmaster_eda",
+            filename="notebook_execution_preview.html",
+            text="<html><body><h1>Readable notebook</h1></body></html>",
+            metadata={
+                "project_id": project.id,
+                "notebook_artifact_id": notebook_artifact.id,
+                "content_type": "text/html",
+            },
+        )
         report_artifact = store_text_artifact(
             db,
             store,
@@ -1407,7 +1421,8 @@ def test_chat_update_links_registered_plan_evidence_without_parsing_message(tmp_
         assert chat_payload["assistant_message"] == message
         assert chat_payload["response_brief"]["linked_action_count"] == 3
         assert chat_payload["actions"][0]["target_tab"] == "Notebooks"
-        assert chat_payload["actions"][0]["artifact_id"] == notebook_artifact.id
+        assert chat_payload["actions"][0]["artifact_id"] == notebook_preview_artifact.id
+        assert chat_payload["actions"][0]["artifact_ids"] == [notebook_artifact.id, notebook_preview_artifact.id]
         assert chat_payload["actions"][1]["target_tab"] == "Leaderboard"
         assert chat_payload["actions"][1]["run_id"] == run.id
         assert chat_payload["actions"][2]["target_tab"] == "Assets"

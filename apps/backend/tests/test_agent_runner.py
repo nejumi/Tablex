@@ -233,6 +233,9 @@ def test_codex_cli_runner_retries_without_cli_schema_when_codex_rejects_schema(
     assert "--output-schema" not in commands[1]
     for command in commands:
         assert list(CODEX_HARNESS_CONFIG_ARGS) == command[2 : 2 + len(CODEX_HARNESS_CONFIG_ARGS)]
+        assert "--ignore-user-config" in command
+        assert "--ignore-rules" in command
+        assert "mcp_servers={}" in command
     last_message_index = commands[1].index("--output-last-message") + 1
     assert commands[1][last_message_index].endswith(".harness/codex_last_message.md")
     assert commands[1][last_message_index] != str(tmp_path / "outputs" / "result.json")

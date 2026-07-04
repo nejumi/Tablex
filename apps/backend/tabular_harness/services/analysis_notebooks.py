@@ -4,6 +4,7 @@ import ast
 import csv
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -702,7 +703,7 @@ def create_notebook_execution_capture(
     html = (
         str(marimo_export_result["html"])
         if marimo_export_result["status"] == "succeeded" and marimo_export_result.get("html")
-        else render_notebook_execution_html_preview(manifest)
+        else render_notebook_execution_html_preview(manifest, notebook_source)
     )
     html_artifact = store_text_artifact(
         db,
@@ -2650,7 +2651,10 @@ def _notebook_execution_headline(execution_status: str, compile_result: dict[str
     return "Notebook source did not pass isolated Python syntax validation; inspect stderr before runner execution."
 
 
-def render_notebook_execution_html_preview(manifest: dict[str, Any]) -> str:
+def render_notebook_execution_html_preview(manifest: dict[str, Any], notebook_source: str | None = None) -> str:
+    markdown_cells = extract_marimo_markdown_cells(notebook_source or "")
+    if markdown_cells:
+        return render_marimo_source_reader_html(manifest, markdown_cells)
     summary = manifest["summary"]
     safety = manifest["safety_policy"]
     compile_result = manifest["static_compile"]
@@ -2750,6 +2754,196 @@ def render_notebook_execution_html_preview(manifest: dict[str, Any]) -> str:
   </main>
 </body>
 </html>"""
+
+
+def extract_marimo_markdown_cells(source: str) -> list[str]:
+    if not source.strip():
+        return []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    visitor = MarimoMarkdownCellVisitor()
+    visitor.visit(tree)
+    visitor.cells.sort(key=lambda item: item[0])
+    return [text for _, text in visitor.cells]
+
+
+class MarimoMarkdownCellVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.cells: list[tuple[int, str]] = []
+        self.control_depth = 0
+
+    def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
+        if self.control_depth == 0 and node.args and is_marimo_markdown_call(node):
+            first_arg = node.args[0]
+            if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
+                text = first_arg.value.strip()
+                if text:
+                    self.cells.append((getattr(node, "lineno", 0), text))
+        self.generic_visit(node)
+
+    def visit_If(self, node: ast.If) -> None:  # noqa: N802
+        self._visit_control_node(node)
+
+    def visit_For(self, node: ast.For) -> None:  # noqa: N802
+        self._visit_control_node(node)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:  # noqa: N802
+        self._visit_control_node(node)
+
+    def visit_While(self, node: ast.While) -> None:  # noqa: N802
+        self._visit_control_node(node)
+
+    def visit_Try(self, node: ast.Try) -> None:  # noqa: N802
+        self._visit_control_node(node)
+
+    def visit_With(self, node: ast.With) -> None:  # noqa: N802
+        self._visit_control_node(node)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:  # noqa: N802
+        self._visit_control_node(node)
+
+    def _visit_control_node(self, node: ast.AST) -> None:
+        self.control_depth += 1
+        try:
+            self.generic_visit(node)
+        finally:
+            self.control_depth -= 1
+
+
+def is_marimo_markdown_call(node: ast.Call) -> bool:
+    callee = node.func
+    return isinstance(callee, ast.Attribute) and callee.attr == "md"
+
+
+def render_marimo_source_reader_html(manifest: dict[str, Any], markdown_cells: list[str]) -> str:
+    summary = manifest["summary"]
+    linked_artifacts = cast(list[dict[str, Any]], manifest["linked_artifacts"])
+    marimo_export = cast(dict[str, Any], manifest.get("marimo_export") or {})
+    body = "\n".join(markdown_to_html_fragment(cell) for cell in markdown_cells)
+    return f"""<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Notebook Reader</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --ink: #10183f;
+      --muted: #53617d;
+      --line: #dbe3f3;
+      --wash: #f4f9fb;
+      --teal: #18b8a6;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background: #ffffff;
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    main {{ max-width: 980px; margin: 0 auto; padding: 32px 28px 44px; }}
+    .notebook-body {{ display: grid; gap: 18px; }}
+    .markdown-cell {{
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      padding: 18px 20px;
+      box-shadow: 0 14px 36px rgba(34, 48, 88, .08);
+    }}
+    h1, h2, h3 {{ letter-spacing: 0; color: var(--ink); }}
+    h1 {{ margin: 0 0 12px; font-size: 30px; }}
+    h2 {{ margin: 0 0 10px; font-size: 21px; }}
+    h3 {{ margin: 0 0 8px; font-size: 17px; }}
+    p, li {{ color: var(--muted); line-height: 1.65; font-size: 15px; }}
+    p {{ margin: 0 0 10px; }}
+    ul {{ margin: 8px 0 0; padding-left: 22px; }}
+    code {{ border-radius: 6px; background: #eef3ff; padding: 2px 5px; color: #20315f; }}
+    details {{
+      margin-top: 22px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--wash);
+      padding: 14px 16px;
+    }}
+    summary {{ cursor: pointer; font-weight: 800; color: var(--ink); }}
+    pre {{ white-space: pre-wrap; overflow: auto; max-height: 220px; color: var(--muted); }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }}
+    th, td {{ border-bottom: 1px solid var(--line); padding: 8px; text-align: left; overflow-wrap: anywhere; }}
+  </style>
+</head>
+<body>
+  <main id="notebook-preview-top">
+    <section class="notebook-body">
+      {body}
+    </section>
+    <details>
+      <summary>Render diagnostics</summary>
+      <p>{escape(str(summary.get("headline") or ""))}</p>
+      <p>marimo export: <code>{escape(str(marimo_export.get("status") or "unknown"))}</code></p>
+      <pre>{escape(str(marimo_export.get("stderr_excerpt") or ""))}</pre>
+      {_html_table(linked_artifacts, ["role", "asset_type", "artifact_id"])}
+    </details>
+  </main>
+</body>
+</html>"""
+
+
+def markdown_to_html_fragment(markdown: str) -> str:
+    lines = markdown.splitlines()
+    html_parts: list[str] = ['<article class="markdown-cell">']
+    in_list = False
+    paragraph: list[str] = []
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph
+        if paragraph:
+            html_parts.append(f"<p>{inline_markdown(' '.join(paragraph))}</p>")
+            paragraph = []
+
+    def close_list() -> None:
+        nonlocal in_list
+        if in_list:
+            html_parts.append("</ul>")
+            in_list = False
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            flush_paragraph()
+            close_list()
+            continue
+        if line.startswith("### "):
+            flush_paragraph()
+            close_list()
+            html_parts.append(f"<h3>{inline_markdown(line[4:])}</h3>")
+        elif line.startswith("## "):
+            flush_paragraph()
+            close_list()
+            html_parts.append(f"<h2>{inline_markdown(line[3:])}</h2>")
+        elif line.startswith("# "):
+            flush_paragraph()
+            close_list()
+            html_parts.append(f"<h1>{inline_markdown(line[2:])}</h1>")
+        elif line.startswith("- "):
+            flush_paragraph()
+            if not in_list:
+                html_parts.append("<ul>")
+                in_list = True
+            html_parts.append(f"<li>{inline_markdown(line[2:])}</li>")
+        else:
+            paragraph.append(line)
+    flush_paragraph()
+    close_list()
+    html_parts.append("</article>")
+    return "\n".join(html_parts)
+
+
+def inline_markdown(text: str) -> str:
+    escaped = escape(text)
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
 
 
 def render_notebook_execution_report(

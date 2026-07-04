@@ -3684,6 +3684,11 @@ NOTEBOOK_EVIDENCE_ASSET_TYPES = {
     "notebook_execution_html",
     "notebook_static_html",
 }
+READABLE_NOTEBOOK_PREVIEW_ASSET_TYPES = (
+    "notebook_evidence_html",
+    "notebook_execution_html",
+    "notebook_static_html",
+)
 REPORT_EVIDENCE_ASSET_TYPES = {
     "agent_session_report",
     "notebook_execution_report",
@@ -3716,6 +3721,12 @@ def chat_update_actions_from_research_plan_evidence(
     if notebook_link is not None:
         artifact_id = notebook_link.get("artifact_id")
         if isinstance(artifact_id, str) and artifact_id:
+            action_artifact_id, action_artifact_ids, action_detail = notebook_action_artifact_targets(
+                db,
+                project_id=project.id,
+                evidence_artifact_id=artifact_id,
+                fallback_detail=evidence_link_detail(notebook_link),
+            )
             actions.append(
                 {
                     "type": "open_artifact",
@@ -3723,9 +3734,9 @@ def chat_update_actions_from_research_plan_evidence(
                     "label": "ノートブックを開く" if japanese else "Open notebook",
                     "target_tab": "Notebooks",
                     "target_anchor": "notebook-preview-top",
-                    "detail": evidence_link_detail(notebook_link),
-                    "artifact_id": artifact_id,
-                    "artifact_ids": [artifact_id],
+                    "detail": action_detail,
+                    "artifact_id": action_artifact_id,
+                    "artifact_ids": action_artifact_ids,
                     "research_plan_node_id": notebook_link.get("node_id"),
                     "source": "research_plan_completion_evidence",
                 }
@@ -3773,6 +3784,74 @@ def chat_update_actions_from_research_plan_evidence(
         "label": first.get("label") or ("Agent workspace"),
     }
     return actions, next_focus
+
+
+def notebook_action_artifact_targets(
+    db: Session,
+    *,
+    project_id: str,
+    evidence_artifact_id: str,
+    fallback_detail: str,
+) -> tuple[str, list[str], str]:
+    evidence_artifact = db.get(Artifact, evidence_artifact_id)
+    if evidence_artifact is None or evidence_artifact.project_id != project_id:
+        return evidence_artifact_id, [evidence_artifact_id], fallback_detail
+
+    evidence_metadata = loads_json(evidence_artifact.metadata_json, {})
+    source_notebook_id = evidence_metadata.get("notebook_artifact_id")
+    if evidence_artifact.asset_type in READABLE_NOTEBOOK_PREVIEW_ASSET_TYPES:
+        artifact_ids = [evidence_artifact.id]
+        if isinstance(source_notebook_id, str) and source_notebook_id.strip():
+            artifact_ids.insert(0, source_notebook_id.strip())
+        return evidence_artifact.id, dedupe_preserve_order(artifact_ids), evidence_artifact.name
+
+    if evidence_artifact.asset_type == "analysis_notebook":
+        preview_artifact = latest_readable_notebook_preview_artifact(
+            db,
+            project_id=project_id,
+            notebook_artifact_id=evidence_artifact.id,
+        )
+        if preview_artifact is not None:
+            return (
+                preview_artifact.id,
+                dedupe_preserve_order([evidence_artifact.id, preview_artifact.id]),
+                preview_artifact.name,
+            )
+
+    return evidence_artifact.id, [evidence_artifact.id], evidence_artifact.name or fallback_detail
+
+
+def latest_readable_notebook_preview_artifact(
+    db: Session,
+    *,
+    project_id: str,
+    notebook_artifact_id: str,
+) -> Artifact | None:
+    for asset_type in READABLE_NOTEBOOK_PREVIEW_ASSET_TYPES:
+        candidates = list(
+            db.scalars(
+                select(Artifact)
+                .where(Artifact.project_id == project_id, Artifact.asset_type == asset_type)
+                .order_by(Artifact.created_at.desc())
+                .limit(50)
+            ).all()
+        )
+        for artifact in candidates:
+            metadata = loads_json(artifact.metadata_json, {})
+            if metadata.get("notebook_artifact_id") == notebook_artifact_id:
+                return artifact
+    return None
+
+
+def dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def first_evidence_link(

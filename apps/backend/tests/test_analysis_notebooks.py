@@ -16,8 +16,10 @@ from tabular_harness.services.analysis_notebooks import (
     _notebook_recommendation_score,
     _validate_marimo_notebook_source,
     build_project_notebook_index,
+    extract_marimo_markdown_cells,
     list_latest_notebook_index_artifacts,
     notebook_execution_status,
+    render_notebook_execution_html_preview,
     run_marimo_html_export,
     source_notebook_path_for_export,
 )
@@ -173,6 +175,57 @@ def _():
     assert validation["is_capture_eligible"] is True
     assert validation["checks"]["imports_marimo"] is True
     assert validation["checks"]["defines_marimo_app"] is True
+
+
+def test_static_notebook_preview_renders_codex_authored_markdown_cells() -> None:
+    source = '''
+import marimo
+
+app = marimo.App()
+
+@app.cell
+def _(mo):
+    mo.md("""# salary 予測ノート
+
+Codexが今回のデータから書いた説明です。
+
+- `pay_period` を確認
+- company split を利用
+""")
+    return
+'''
+    manifest = {
+        "summary": {"headline": "marimo export failed"},
+        "linked_artifacts": [{"role": "notebook", "asset_type": "analysis_notebook", "artifact_id": "art_nb"}],
+        "marimo_export": {"status": "failed", "stderr_excerpt": "cell failed"},
+    }
+
+    html = render_notebook_execution_html_preview(manifest, source)
+
+    assert extract_marimo_markdown_cells(source)[0].startswith("# salary")
+    assert "salary 予測ノート" in html
+    assert "Codexが今回のデータから書いた説明です。" in html
+    assert "<code>pay_period</code>" in html
+    assert "Notebook Execution Capture" not in html
+
+
+def test_static_notebook_preview_skips_unexecuted_conditional_markdown() -> None:
+    source = '''
+import marimo
+
+app = marimo.App()
+
+@app.cell
+def _(mo):
+    mo.md("常に読む説明")
+    if False:
+        mo.md("実行されていない分岐")
+    return
+'''
+
+    cells = extract_marimo_markdown_cells(source)
+
+    assert cells == ["常に読む説明"]
 
 
 def test_marimo_notebook_validation_does_not_accept_comment_markers_only() -> None:
