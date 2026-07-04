@@ -2000,6 +2000,96 @@ def _build_notebook_artifact_lookup(artifacts: list[Artifact]) -> NotebookArtifa
     )
 
 
+def _notebook_index_context_links(
+    db: Session,
+    project: Project,
+    *,
+    notebook_kind: str,
+    dataset_snapshot_id: str | None,
+    run_id: str | None,
+    model_version_id: str | None,
+) -> dict[str, str | None]:
+    context_source = "metadata" if any((dataset_snapshot_id, run_id, model_version_id)) else "none"
+    run: ExperimentRun | None = None
+    model_version: ModelVersion | None = None
+
+    if run_id:
+        run = db.get(ExperimentRun, run_id)
+        if run is not None and run.project_id == project.id:
+            dataset_snapshot_id = dataset_snapshot_id or run.dataset_snapshot_id
+            model_version_id = model_version_id or run.model_version_id
+
+    if model_version_id:
+        model_version = db.get(ModelVersion, model_version_id)
+        if model_version is not None and model_version.project_id == project.id:
+            run_id = run_id or model_version.experiment_run_id
+            dataset_snapshot_id = dataset_snapshot_id or model_version.dataset_snapshot_id
+
+    if notebook_kind == "data_understanding" and not dataset_snapshot_id:
+        dataset_snapshot = _unique_project_dataset_snapshot(db, project.id)
+        if dataset_snapshot is not None:
+            dataset_snapshot_id = dataset_snapshot.id
+            context_source = "unique_project_dataset"
+
+    if notebook_kind == "model_diagnostics" and not run_id and not model_version_id:
+        unique_run = _unique_project_experiment_run(db, project.id)
+        if unique_run is not None:
+            run_id = unique_run.id
+            dataset_snapshot_id = dataset_snapshot_id or unique_run.dataset_snapshot_id
+            model_version_id = unique_run.model_version_id
+            context_source = "unique_project_run"
+        else:
+            unique_model_version = _unique_project_model_version(db, project.id)
+            if unique_model_version is not None:
+                model_version_id = unique_model_version.id
+                run_id = unique_model_version.experiment_run_id
+                dataset_snapshot_id = dataset_snapshot_id or unique_model_version.dataset_snapshot_id
+                context_source = "unique_project_model_version"
+
+    return {
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "run_id": run_id,
+        "model_version_id": model_version_id,
+        "context_link_source": context_source,
+    }
+
+
+def _unique_project_dataset_snapshot(db: Session, project_id: str) -> DatasetSnapshot | None:
+    candidates = list(
+        db.scalars(
+            select(DatasetSnapshot)
+            .where(DatasetSnapshot.project_id == project_id)
+            .order_by(DatasetSnapshot.created_at.desc())
+            .limit(2)
+        ).all()
+    )
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _unique_project_experiment_run(db: Session, project_id: str) -> ExperimentRun | None:
+    candidates = list(
+        db.scalars(
+            select(ExperimentRun)
+            .where(ExperimentRun.project_id == project_id)
+            .order_by(ExperimentRun.started_at.desc().nullslast(), ExperimentRun.id.desc())
+            .limit(2)
+        ).all()
+    )
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _unique_project_model_version(db: Session, project_id: str) -> ModelVersion | None:
+    candidates = list(
+        db.scalars(
+            select(ModelVersion)
+            .where(ModelVersion.project_id == project_id)
+            .order_by(ModelVersion.created_at.desc())
+            .limit(2)
+        ).all()
+    )
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _notebook_index_item(
     db: Session,
     project: Project,
@@ -2078,9 +2168,17 @@ def _notebook_index_item(
         loads_json(agent_task_contract_artifact.metadata_json, {}) if agent_task_contract_artifact else {},
         loads_json(execution_plan_artifact.metadata_json, {}) if execution_plan_artifact else {},
     ]
-    dataset_snapshot_id = _first_metadata_text(related_metadata_sources, "dataset_snapshot_id")
-    run_id = _first_metadata_text(related_metadata_sources, "run_id")
-    model_version_id = _first_metadata_text(related_metadata_sources, "model_version_id")
+    context_links = _notebook_index_context_links(
+        db,
+        project,
+        notebook_kind=notebook_kind,
+        dataset_snapshot_id=_first_metadata_text(related_metadata_sources, "dataset_snapshot_id"),
+        run_id=_first_metadata_text(related_metadata_sources, "run_id"),
+        model_version_id=_first_metadata_text(related_metadata_sources, "model_version_id"),
+    )
+    dataset_snapshot_id = context_links["dataset_snapshot_id"]
+    run_id = context_links["run_id"]
+    model_version_id = context_links["model_version_id"]
     context_summary = _notebook_artifact_context_summary(notebook_artifact)
     content = _notebook_content_signal(notebook_kind, context_summary)
     if content["readiness"] in {"source_only", "unknown"}:
@@ -2124,6 +2222,7 @@ def _notebook_index_item(
         "dataset_snapshot_id": dataset_snapshot_id,
         "run_id": run_id,
         "model_version_id": model_version_id,
+        "context_link_source": context_links["context_link_source"],
         "artifact_ids": {
             "notebook": notebook_artifact.id,
             "html_preview": html_artifact.id if html_artifact else None,

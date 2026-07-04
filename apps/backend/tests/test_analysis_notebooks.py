@@ -7,7 +7,14 @@ from typing import Any
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from tabular_harness.core.json import dumps_json
-from tabular_harness.models.entities import Artifact, Base, Project
+from tabular_harness.models.entities import (
+    Artifact,
+    Base,
+    DatasetSnapshot,
+    ExperimentRun,
+    ModelVersion,
+    Project,
+)
 from tabular_harness.services import analysis_notebooks as analysis_notebooks_module
 from tabular_harness.services.analysis_notebooks import (
     _model_metric_comparison,
@@ -576,6 +583,194 @@ def test_notebook_index_inherits_run_context_from_related_artifact_metadata(tmp_
         item = index["items"][0]
         assert item["run_id"] == "run_context"
         assert item["model_version_id"] == "mv_context"
+
+
+def test_notebook_index_links_data_notebook_to_unique_dataset_context(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    project_id = "p_notebook_unique_dataset"
+
+    with sessionmaker(engine)() as db:
+        project = Project(id=project_id, name="Notebook Unique Dataset")
+        dataset_artifact = artifact(
+            "art_dataset",
+            project_id=project_id,
+            asset_type="dataset_snapshot",
+            name="uploaded_dataset",
+        )
+        dataset = DatasetSnapshot(
+            id="ds_unique",
+            project_id=project_id,
+            artifact_id=dataset_artifact.id,
+            source_type="upload",
+            row_count=10,
+            column_count=3,
+            schema_hash="schema_hash",
+        )
+        notebook = artifact(
+            "art_notebook",
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="agent_data_understanding",
+            metadata={"notebook_kind": "data_understanding"},
+        )
+        db.add_all([project, dataset_artifact, dataset, notebook])
+        db.commit()
+
+        index = build_project_notebook_index(db, project)
+
+        item = index["items"][0]
+        assert item["dataset_snapshot_id"] == dataset.id
+        assert item["context_link_source"] == "unique_project_dataset"
+
+
+def test_notebook_index_does_not_guess_dataset_when_multiple_exist(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    project_id = "p_notebook_multiple_datasets"
+
+    with sessionmaker(engine)() as db:
+        project = Project(id=project_id, name="Notebook Multiple Datasets")
+        first_artifact = artifact(
+            "art_dataset_a",
+            project_id=project_id,
+            asset_type="dataset_snapshot",
+            name="dataset_a",
+        )
+        second_artifact = artifact(
+            "art_dataset_b",
+            project_id=project_id,
+            asset_type="dataset_snapshot",
+            name="dataset_b",
+        )
+        first_dataset = DatasetSnapshot(
+            id="ds_a",
+            project_id=project_id,
+            artifact_id=first_artifact.id,
+            source_type="upload",
+            row_count=10,
+            column_count=3,
+            schema_hash="schema_a",
+        )
+        second_dataset = DatasetSnapshot(
+            id="ds_b",
+            project_id=project_id,
+            artifact_id=second_artifact.id,
+            source_type="upload",
+            row_count=11,
+            column_count=4,
+            schema_hash="schema_b",
+        )
+        notebook = artifact(
+            "art_notebook",
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="agent_data_understanding",
+            metadata={"notebook_kind": "data_understanding"},
+        )
+        db.add_all([project, first_artifact, second_artifact, first_dataset, second_dataset, notebook])
+        db.commit()
+
+        index = build_project_notebook_index(db, project)
+
+        item = index["items"][0]
+        assert item["dataset_snapshot_id"] is None
+        assert item["context_link_source"] == "none"
+
+
+def test_notebook_index_links_model_notebook_to_unique_run_context(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    project_id = "p_notebook_unique_run"
+
+    with sessionmaker(engine)() as db:
+        project = Project(id=project_id, name="Notebook Unique Run")
+        dataset_artifact = artifact(
+            "art_dataset",
+            project_id=project_id,
+            asset_type="dataset_snapshot",
+            name="uploaded_dataset",
+        )
+        model_artifact = artifact(
+            "art_model",
+            project_id=project_id,
+            asset_type="model_package",
+            name="model_package",
+        )
+        dataset = DatasetSnapshot(
+            id="ds_unique",
+            project_id=project_id,
+            artifact_id=dataset_artifact.id,
+            source_type="upload",
+            row_count=10,
+            column_count=3,
+            schema_hash="schema_hash",
+        )
+        run = ExperimentRun(
+            id="run_unique",
+            project_id=project_id,
+            dataset_snapshot_id=dataset.id,
+            runner_type="codex_cli",
+            status="succeeded",
+        )
+        model_version = ModelVersion(
+            id="mv_unique",
+            project_id=project_id,
+            experiment_run_id=run.id,
+            dataset_snapshot_id=dataset.id,
+            artifact_id=model_artifact.id,
+            name="model",
+            version=1,
+            model_family="tree",
+            model_type="regressor",
+            task_type="regression",
+            status="created",
+        )
+        run.model_version_id = model_version.id
+        notebook = artifact(
+            "art_notebook",
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="agent_model_diagnostics",
+            metadata={"notebook_kind": "model_diagnostics"},
+        )
+        db.add_all([project, dataset_artifact, model_artifact, dataset, run, model_version, notebook])
+        db.commit()
+
+        index = build_project_notebook_index(db, project)
+
+        item = index["items"][0]
+        assert item["dataset_snapshot_id"] == dataset.id
+        assert item["run_id"] == run.id
+        assert item["model_version_id"] == model_version.id
+        assert item["context_link_source"] == "unique_project_run"
+
+
+def test_notebook_index_does_not_guess_run_when_multiple_exist(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    project_id = "p_notebook_multiple_runs"
+
+    with sessionmaker(engine)() as db:
+        project = Project(id=project_id, name="Notebook Multiple Runs")
+        first_run = ExperimentRun(id="run_a", project_id=project_id, runner_type="codex_cli", status="succeeded")
+        second_run = ExperimentRun(id="run_b", project_id=project_id, runner_type="codex_cli", status="succeeded")
+        notebook = artifact(
+            "art_notebook",
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="agent_model_diagnostics",
+            metadata={"notebook_kind": "model_diagnostics"},
+        )
+        db.add_all([project, first_run, second_run, notebook])
+        db.commit()
+
+        index = build_project_notebook_index(db, project)
+
+        item = index["items"][0]
+        assert item["run_id"] is None
+        assert item["model_version_id"] is None
+        assert item["context_link_source"] == "none"
 
 
 def test_notebook_index_marks_static_preview_ready_without_hiding_export_failure(tmp_path: Path) -> None:
