@@ -353,6 +353,30 @@ class ResearchPlanRevision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class ResearchPlanCurrentWork(Base):
+    __tablename__ = "research_plan_current_work"
+    __table_args__ = (
+        UniqueConstraint("research_plan_id"),
+        Index("ix_research_plan_current_work_project_updated", "project_id", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    org_id: Mapped[str] = mapped_column(String, default="local-org", nullable=False)
+    project_id: Mapped[str] = mapped_column(String, ForeignKey("projects.id"), nullable=False)
+    research_plan_id: Mapped[str] = mapped_column(String, ForeignKey("research_plans.id"), nullable=False)
+    revision_id: Mapped[str | None] = mapped_column(String, ForeignKey("research_plan_revisions.id"))
+    node_id: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="active", nullable=False)
+    summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    expected_outputs_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    updated_by_type: Mapped[str] = mapped_column(String, default="codex", nullable=False)
+    updated_by: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
 class ResearchBrief(Base):
     __tablename__ = "research_briefs"
 

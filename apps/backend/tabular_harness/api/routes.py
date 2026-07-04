@@ -124,6 +124,10 @@ from tabular_harness.schemas import (
     ReportRead,
     ResearchBriefCreate,
     ResearchBriefRead,
+    ResearchPlanArtifactAttachCreate,
+    ResearchPlanCurrentWorkCreate,
+    ResearchPlanHumanAttentionCreate,
+    ResearchPlanRevisionCommitCreate,
     ResultReadoutRead,
     SemanticCatalogRead,
     SplitManifestRead,
@@ -265,6 +269,13 @@ from tabular_harness.services.relational_evidence import (
     create_relational_schema_hint,
 )
 from tabular_harness.services.research_plan_timeline import build_research_plan_timeline_response
+from tabular_harness.services.research_plans import (
+    attach_research_plan_artifact,
+    commit_research_plan_revision,
+    request_research_plan_human_attention,
+    research_plan_current_work_payload,
+    set_research_plan_current_work,
+)
 from tabular_harness.services.result_readout import build_result_readout
 from tabular_harness.worker.jobs import create_default_worker
 
@@ -4034,6 +4045,139 @@ def get_research_plan_timeline(
         else explicit_project_response_locale(db, project)
     )
     return build_research_plan_timeline_response(db, project_id=project_id, locale=response_locale)
+
+
+@router.post("/api/projects/{project_id}/research-plan/revisions")
+def commit_project_research_plan_revision(
+    project_id: str,
+    payload: ResearchPlanRevisionCommitCreate,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    require_project(db, project_id)
+    if payload.source_artifact_id is not None:
+        source_artifact = db.get(Artifact, payload.source_artifact_id)
+        if source_artifact is None or source_artifact.project_id != project_id:
+            raise HTTPException(status_code=400, detail="source_artifact_id does not belong to this project")
+    try:
+        result = commit_research_plan_revision(
+            db,
+            project_id=project_id,
+            document=payload.document,
+            author_type=payload.author_type,
+            author_id=payload.author_id,
+            reason=payload.reason,
+            source_artifact_id=payload.source_artifact_id,
+            parent_revision_id=payload.parent_revision_id,
+            metadata=payload.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return {
+        "schema_version": "research_plan_revision_commit.v1",
+        "project_id": project_id,
+        "research_plan_id": result.plan.id,
+        "revision_id": result.revision.id,
+        "revision_index": result.revision.revision_index,
+        "created": result.created,
+        "active_revision_id": result.plan.active_revision_id,
+    }
+
+
+@router.post("/api/projects/{project_id}/research-plan/current-work")
+def set_project_research_plan_current_work(
+    project_id: str,
+    payload: ResearchPlanCurrentWorkCreate,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    require_project(db, project_id)
+    try:
+        current = set_research_plan_current_work(
+            db,
+            project_id=project_id,
+            node_id=payload.node_id,
+            summary=payload.summary,
+            status=payload.status,
+            expected_outputs=payload.expected_outputs,
+            revision_id=payload.revision_id,
+            updated_by_type=payload.updated_by_type,
+            updated_by=payload.updated_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return {
+        "schema_version": "research_plan_current_work.v1",
+        "project_id": project_id,
+        "current_work": research_plan_current_work_payload(current),
+    }
+
+
+@router.post("/api/projects/{project_id}/research-plan/artifacts")
+def attach_project_research_plan_artifact(
+    project_id: str,
+    payload: ResearchPlanArtifactAttachCreate,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    require_project(db, project_id)
+    try:
+        edge = attach_research_plan_artifact(
+            db,
+            project_id=project_id,
+            node_id=payload.node_id,
+            artifact_id=payload.artifact_id,
+            role=payload.role,
+            revision_id=payload.revision_id,
+            metadata=payload.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return {
+        "schema_version": "research_plan_artifact_link.v1",
+        "project_id": project_id,
+        "link": {
+            "id": edge.id,
+            "from_asset_type": edge.from_asset_type,
+            "from_asset_id": edge.from_asset_id,
+            "to_asset_type": edge.to_asset_type,
+            "to_asset_id": edge.to_asset_id,
+            "relation_type": edge.relation_type,
+            "metadata": loads_json(edge.metadata_json, {}),
+            "created_at": edge.created_at.isoformat(),
+        },
+    }
+
+
+@router.post("/api/projects/{project_id}/research-plan/human-attention")
+def request_project_research_plan_human_attention(
+    project_id: str,
+    payload: ResearchPlanHumanAttentionCreate,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    require_project(db, project_id)
+    try:
+        question = request_research_plan_human_attention(
+            db,
+            project_id=project_id,
+            question=payload.question,
+            why_it_matters=payload.why_it_matters,
+            node_id=payload.node_id,
+            provisional_assumption=payload.provisional_assumption,
+            impact_if_wrong=payload.impact_if_wrong,
+            urgency=payload.urgency,
+            fallback_policy=payload.fallback_policy,
+            blocks_next_phase=payload.blocks_next_phase,
+            revision_id=payload.revision_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return {
+        "schema_version": "research_plan_human_attention.v1",
+        "project_id": project_id,
+        "question": question_to_dict(question),
+    }
 
 
 def explicit_project_response_locale(db: Session, project: Project) -> str | None:

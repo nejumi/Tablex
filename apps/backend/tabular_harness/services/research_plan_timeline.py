@@ -10,7 +10,10 @@ from tabular_harness.models.entities import Artifact, utc_now
 from tabular_harness.services.artifacts import artifact_primary_path
 from tabular_harness.services.locales import locale_language
 from tabular_harness.services.research_plans import (
+    latest_research_plan_current_work,
     latest_research_plan_revision,
+    research_plan_artifact_links,
+    research_plan_current_work_payload,
     research_plan_revision_document,
 )
 
@@ -23,6 +26,9 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
         payload = research_plan_revision_document(revision)
         raw_blocks = payload.get("timeline_blocks") if isinstance(payload, dict) else None
         response_locale = _research_plan_effective_locale(locale, payload)
+        artifact_links = research_plan_artifact_links(db, revision=revision)
+        blocks = clean_research_plan_timeline_blocks(raw_blocks, locale=response_locale)
+        attach_research_plan_artifact_links_to_blocks(blocks, artifact_links)
         return {
             "schema_version": "research_plan_timeline.v1",
             "project_id": project_id,
@@ -36,7 +42,11 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
             "authored_locale": _research_plan_payload_locale(payload),
             "generated_at": revision.created_at.isoformat(),
             "localization": research_plan_localization_summary(raw_blocks, locale=response_locale),
-            "blocks": clean_research_plan_timeline_blocks(raw_blocks, locale=response_locale),
+            "current_work": research_plan_current_work_payload(
+                latest_research_plan_current_work(db, project_id=project_id)
+            ),
+            "artifact_links": artifact_links,
+            "blocks": blocks,
         }
     artifact = db.scalar(
         select(Artifact)
@@ -52,6 +62,10 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
             "response_locale": locale,
             "generated_at": utc_now().isoformat(),
             "localization": research_plan_localization_summary([], locale=locale),
+            "current_work": research_plan_current_work_payload(
+                latest_research_plan_current_work(db, project_id=project_id)
+            ),
+            "artifact_links": [],
             "blocks": [],
         }
     try:
@@ -69,8 +83,27 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
         "authored_locale": _research_plan_payload_locale(payload),
         "generated_at": artifact.created_at.isoformat(),
         "localization": research_plan_localization_summary(raw_blocks, locale=response_locale),
+        "current_work": research_plan_current_work_payload(
+            latest_research_plan_current_work(db, project_id=project_id)
+        ),
+        "artifact_links": [],
         "blocks": clean_research_plan_timeline_blocks(raw_blocks, locale=response_locale),
     }
+
+
+def attach_research_plan_artifact_links_to_blocks(
+    blocks: list[dict[str, Any]],
+    artifact_links: list[dict[str, Any]],
+) -> None:
+    by_node_id: dict[str, list[dict[str, Any]]] = {}
+    for link in artifact_links:
+        node_id = link.get("node_id")
+        if isinstance(node_id, str) and node_id:
+            by_node_id.setdefault(node_id, []).append(link)
+    for block in blocks:
+        block_id = block.get("id")
+        if isinstance(block_id, str):
+            block["attached_artifacts"] = by_node_id.get(block_id, [])
 
 
 def clean_research_plan_timeline_blocks(raw_blocks: Any, *, locale: str | None = None) -> list[dict[str, Any]]:

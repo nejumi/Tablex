@@ -38,6 +38,46 @@ class DataUnderstandingNotebookCreate(BaseModel):
     locale: str | None = None
 
 
+class ResearchPlanRevisionCommitCreate(BaseModel):
+    document: dict[str, Any]
+    reason: str = Field(default="", max_length=2000)
+    parent_revision_id: str | None = None
+    author_type: str = Field(default="codex", max_length=80)
+    author_id: str | None = Field(default=None, max_length=160)
+    source_artifact_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResearchPlanCurrentWorkCreate(BaseModel):
+    node_id: str = Field(min_length=1, max_length=160)
+    summary: str = Field(default="", max_length=4000)
+    status: Literal["active", "pending", "blocked", "waiting", "done", "skipped"] = "active"
+    expected_outputs: list[str] = Field(default_factory=list, max_length=40)
+    revision_id: str | None = None
+    updated_by_type: str = Field(default="codex", max_length=80)
+    updated_by: str | None = Field(default=None, max_length=160)
+
+
+class ResearchPlanArtifactAttachCreate(BaseModel):
+    node_id: str = Field(min_length=1, max_length=160)
+    artifact_id: str
+    role: str = Field(default="evidence", max_length=80)
+    revision_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResearchPlanHumanAttentionCreate(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+    why_it_matters: str = Field(default="", max_length=4000)
+    node_id: str | None = Field(default=None, max_length=160)
+    provisional_assumption: str | None = Field(default=None, max_length=4000)
+    impact_if_wrong: str | None = Field(default=None, max_length=4000)
+    urgency: Literal["low", "medium", "high", "critical"] = "medium"
+    fallback_policy: str = Field(default="infer_and_continue", max_length=120)
+    blocks_next_phase: bool = False
+    revision_id: str | None = None
+
+
 class AgentSessionRead(BaseModel):
     id: str
     project_id: str

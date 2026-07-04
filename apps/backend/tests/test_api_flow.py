@@ -2658,6 +2658,98 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert japanese_alias["blocks"][1]["localization_status"] == "localized"
 
 
+def test_research_plan_tool_substrate_endpoints_expose_codex_owned_progress(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Plan substrate API"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    revision_response = client.post(
+        f"/api/projects/{project_id}/research-plan/revisions",
+        json={
+            "document": {
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "deep_data_understanding",
+                        "title": "Deep data understanding",
+                        "why_it_matters": "Understand the relational data before modeling.",
+                        "status": "active",
+                    }
+                ],
+            },
+            "reason": "Codex committed the current plan.",
+            "author_type": "codex",
+        },
+    )
+    assert revision_response.status_code == 200, revision_response.text
+    revision = revision_response.json()
+    assert revision["created"] is True
+    assert revision["revision_index"] == 1
+
+    current_response = client.post(
+        f"/api/projects/{project_id}/research-plan/current-work",
+        json={
+            "node_id": "deep_data_understanding",
+            "summary": "Inspecting key coverage and preparing the EDA notebook.",
+            "expected_outputs": ["marimo notebook", "finding summary"],
+            "revision_id": revision["revision_id"],
+        },
+    )
+    assert current_response.status_code == 200, current_response.text
+    assert current_response.json()["current_work"]["node_id"] == "deep_data_understanding"
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        notebook_artifact = store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="deep_data_understanding_notebook",
+            filename="notebook_manifest.json",
+            payload={"path": "notebooks/deep_data_understanding.py"},
+            metadata={"project_id": project_id},
+        )
+        db.commit()
+
+    link_response = client.post(
+        f"/api/projects/{project_id}/research-plan/artifacts",
+        json={
+            "node_id": "deep_data_understanding",
+            "artifact_id": notebook_artifact.id,
+            "role": "notebook",
+            "revision_id": revision["revision_id"],
+        },
+    )
+    assert link_response.status_code == 200, link_response.text
+    assert link_response.json()["link"]["metadata"]["node_id"] == "deep_data_understanding"
+
+    attention_response = client.post(
+        f"/api/projects/{project_id}/research-plan/human-attention",
+        json={
+            "node_id": "deep_data_understanding",
+            "question": "Is this target definition production-facing?",
+            "why_it_matters": "The answer changes evaluation and leakage boundaries.",
+            "provisional_assumption": "Continue as provisional and record the risk.",
+            "urgency": "high",
+            "revision_id": revision["revision_id"],
+        },
+    )
+    assert attention_response.status_code == 200, attention_response.text
+    assert attention_response.json()["question"]["topic"] == "research_plan"
+    assert attention_response.json()["question"]["can_proceed_without_answer"] is True
+
+    timeline_response = client.get(f"/api/projects/{project_id}/research-plan/timeline")
+    assert timeline_response.status_code == 200
+    timeline = timeline_response.json()
+    assert timeline["source_revision_id"] == revision["revision_id"]
+    assert timeline["current_work"]["node_id"] == "deep_data_understanding"
+    assert timeline["current_work"]["expected_outputs"] == ["marimo notebook", "finding summary"]
+    assert timeline["artifact_links"][0]["artifact_id"] == notebook_artifact.id
+    assert timeline["blocks"][0]["attached_artifacts"][0]["role"] == "notebook"
+
+
 def test_research_plan_timeline_uses_artifact_locale_and_codex_display_fields(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_response = client.post("/api/projects", json={"name": "Plan display locale"})
