@@ -59,7 +59,12 @@ from tabular_harness.services.benchmarks import (
 )
 from tabular_harness.services.decision_reporting import create_decision_report_v1
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
-from tabular_harness.services.evaluation import generate_split_manifest
+from tabular_harness.services.evaluation import (
+    create_default_evaluation_candidates,
+    create_evaluation_approval_review,
+    create_evaluation_scenario_comparison,
+    generate_split_manifest,
+)
 from tabular_harness.services.experiment_lifecycle import (
     compare_project_experiments,
     draft_run_report,
@@ -363,6 +368,71 @@ def download_kaggle_selected_files_handler(db: Session, job: Job, store: LocalAr
         "kaggle_download_manifest_artifact_id": artifact.id,
         "artifact_id": artifact.id,
         "artifact_ids": [artifact.id],
+    }
+
+
+def dataset_for_job_payload(db: Session, job: Job, job_type: str) -> DatasetSnapshot:
+    payload = loads_json(job.input_json, {})
+    dataset_id = payload.get("dataset_snapshot_id")
+    dataset = db.get(DatasetSnapshot, dataset_id) if isinstance(dataset_id, str) else None
+    if dataset is None:
+        raise ValueError(f"{job_type} requires an existing dataset_snapshot_id")
+    return dataset
+
+
+def evaluation_spec_for_job_payload(db: Session, job: Job, job_type: str) -> EvaluationSpec:
+    payload = loads_json(job.input_json, {})
+    spec_id = payload.get("evaluation_spec_id")
+    spec = db.get(EvaluationSpec, spec_id) if isinstance(spec_id, str) else None
+    if spec is None:
+        raise ValueError(f"{job_type} requires an existing evaluation_spec_id")
+    return spec
+
+
+def design_evaluation_candidates_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "design_evaluation_candidates")
+    dataset = dataset_for_job_payload(db, job, "design_evaluation_candidates")
+    candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
+    return {"evaluation_candidate_ids": [candidate.id for candidate in candidates]}
+
+
+def compare_evaluation_scenarios_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    project = project_for_job(db, job, "compare_evaluation_scenarios")
+    dataset = dataset_for_job_payload(db, job, "compare_evaluation_scenarios")
+    candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
+    artifact = create_evaluation_scenario_comparison(
+        db,
+        store=store,
+        project=project,
+        dataset=dataset,
+        candidates=list(candidates),
+    )
+    metadata = loads_json(artifact.metadata_json, {})
+    return {
+        "dataset_snapshot_id": dataset.id,
+        "artifact_id": artifact.id,
+        "candidate_count": len(candidates),
+        "recommended_candidate_id": metadata.get("recommended_candidate_id"),
+    }
+
+
+def review_evaluation_approval_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    spec = evaluation_spec_for_job_payload(db, job, "review_evaluation_approval")
+    result = create_evaluation_approval_review(
+        db,
+        store=store,
+        spec=spec,
+        approval_intent=bool(payload.get("approval_intent")),
+    )
+    decision = result.payload["decision_support"]
+    return {
+        "evaluation_spec_id": spec.id,
+        "artifact_id": result.artifact.id,
+        "review_status": decision["review_status"],
+        "blocked": decision["blocked"],
+        "blocker_count": decision["blocker_count"],
+        "warning_count": decision["warning_count"],
     }
 
 
@@ -1831,6 +1901,9 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["probe_kaggle_benchmark_access"] = probe_kaggle_benchmark_access_handler
     handlers["fetch_kaggle_competition_inventory"] = fetch_kaggle_competition_inventory_handler
     handlers["download_kaggle_selected_files"] = download_kaggle_selected_files_handler
+    handlers["design_evaluation_candidates"] = design_evaluation_candidates_handler
+    handlers["compare_evaluation_scenarios"] = compare_evaluation_scenarios_handler
+    handlers["review_evaluation_approval"] = review_evaluation_approval_handler
     handlers["create_adaptive_strategy_brief"] = create_adaptive_strategy_brief_handler
     handlers["plan_research"] = plan_research_handler
     handlers["create_notebook_authoring_brief"] = create_notebook_authoring_brief_handler

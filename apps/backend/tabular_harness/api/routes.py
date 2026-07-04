@@ -3794,19 +3794,18 @@ def list_assumption_evidence(assumption_id: str, db: Annotated[Session, Depends(
 
 
 @router.post("/api/projects/{project_id}/evaluation/design", response_model=JobRead)
-def design_evaluation(project_id: str, db: Annotated[Session, Depends(get_session)], store: Annotated[LocalArtifactStore, Depends(get_artifact_store)]) -> dict[str, Any]:
-    project = require_project(db, project_id)
+def design_evaluation(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    require_project(db, project_id)
     dataset = latest_dataset(db, project_id)
     if dataset is None:
         raise HTTPException(status_code=400, detail="Upload a dataset before designing evaluation")
-    job = create_job(db, job_type="design_evaluation_candidates", project_id=project_id, input_payload={"dataset_snapshot_id": dataset.id})
-    try:
-        mark_job_running(job)
-        candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
-        mark_job_succeeded(job, {"evaluation_candidate_ids": [candidate.id for candidate in candidates]})
-    except Exception as exc:
-        mark_job_failed(job, str(exc))
-        raise
+    job = create_job(
+        db,
+        job_type="design_evaluation_candidates",
+        project_id=project_id,
+        input_payload={"dataset_snapshot_id": dataset.id},
+        policy={"execution": "queued_worker", "network": "disabled", "secret_access": "forbidden"},
+    )
     return job_to_dict(job)
 
 
@@ -3814,9 +3813,8 @@ def design_evaluation(project_id: str, db: Annotated[Session, Depends(get_sessio
 def compare_evaluation_scenarios(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
     dataset = latest_dataset(db, project_id)
     if dataset is None:
         raise HTTPException(status_code=400, detail="Upload a dataset before comparing evaluation scenarios")
@@ -3825,30 +3823,8 @@ def compare_evaluation_scenarios(
         job_type="compare_evaluation_scenarios",
         project_id=project_id,
         input_payload={"dataset_snapshot_id": dataset.id},
+        policy={"execution": "queued_worker", "network": "disabled", "secret_access": "forbidden"},
     )
-    try:
-        mark_job_running(job)
-        candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
-        artifact = create_evaluation_scenario_comparison(
-            db,
-            store=store,
-            project=project,
-            dataset=dataset,
-            candidates=list(candidates),
-        )
-        metadata = loads_json(artifact.metadata_json, {})
-        mark_job_succeeded(
-            job,
-            {
-                "dataset_snapshot_id": dataset.id,
-                "artifact_id": artifact.id,
-                "candidate_count": len(candidates),
-                "recommended_candidate_id": metadata.get("recommended_candidate_id"),
-            },
-        )
-    except Exception as exc:
-        mark_job_failed(job, str(exc))
-        raise
     return job_to_dict(job)
 
 
@@ -3889,7 +3865,6 @@ def get_evaluation_spec(spec_id: str, db: Annotated[Session, Depends(get_session
 def review_evaluation_spec_approval(
     spec_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     spec = require_eval_spec(db, spec_id)
     job = create_job(
@@ -3897,25 +3872,8 @@ def review_evaluation_spec_approval(
         job_type="review_evaluation_approval",
         project_id=spec.project_id,
         input_payload={"evaluation_spec_id": spec.id, "approval_intent": False},
+        policy={"execution": "queued_worker", "network": "disabled", "secret_access": "forbidden"},
     )
-    try:
-        mark_job_running(job)
-        result = create_evaluation_approval_review(db, store=store, spec=spec, approval_intent=False)
-        decision = result.payload["decision_support"]
-        mark_job_succeeded(
-            job,
-            {
-                "evaluation_spec_id": spec.id,
-                "artifact_id": result.artifact.id,
-                "review_status": decision["review_status"],
-                "blocked": decision["blocked"],
-                "blocker_count": decision["blocker_count"],
-                "warning_count": decision["warning_count"],
-            },
-        )
-    except Exception as exc:
-        mark_job_failed(job, str(exc))
-        raise
     return job_to_dict(job)
 
 
@@ -3992,18 +3950,17 @@ def approve_evaluation_spec(
     return spec_to_dict(spec)
 
 
-@router.post("/api/evaluation-specs/{spec_id}/generate-split", response_model=SplitManifestRead)
-def generate_split(spec_id: str, db: Annotated[Session, Depends(get_session)], store: Annotated[LocalArtifactStore, Depends(get_artifact_store)]) -> dict[str, Any]:
+@router.post("/api/evaluation-specs/{spec_id}/generate-split", response_model=JobRead)
+def generate_split(spec_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
     spec = require_eval_spec(db, spec_id)
-    job = create_job(db, job_type="build_split_manifest", project_id=spec.project_id, input_payload={"evaluation_spec_id": spec.id})
-    try:
-        mark_job_running(job)
-        split = generate_split_manifest(db, store=store, spec=spec)
-        mark_job_succeeded(job, {"split_manifest_id": split.id})
-    except ValueError as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return split_to_dict(split)
+    job = create_job(
+        db,
+        job_type="build_split_manifest",
+        project_id=spec.project_id,
+        input_payload={"evaluation_spec_id": spec.id},
+        policy={"execution": "queued_worker", "network": "disabled", "secret_access": "forbidden"},
+    )
+    return job_to_dict(job)
 
 
 @router.get("/api/split-manifests/{split_id}", response_model=SplitManifestRead)

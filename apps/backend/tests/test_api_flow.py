@@ -1789,6 +1789,8 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
 
     design_response = client.post(f"/api/projects/{project_id}/evaluation/design")
     assert design_response.status_code == 200, design_response.text
+    assert design_response.json()["status"] == "queued"
+    run_queued_job(client, design_response.json()["id"])
     candidates_before = client.get(f"/api/projects/{project_id}/evaluation/candidates").json()
     assert any(candidate["primary_metric"] == "pr_auc" for candidate in candidates_before)
 
@@ -3054,6 +3056,8 @@ def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_
 
     design_response = client.post(f"/api/projects/{project_id}/evaluation/design")
     assert design_response.status_code == 200, design_response.text
+    assert design_response.json()["status"] == "queued"
+    run_queued_job(client, design_response.json()["id"])
     candidates_response = client.get(f"/api/projects/{project_id}/evaluation/candidates")
     assert candidates_response.status_code == 200
     primary = next(item for item in candidates_response.json() if item["status"] == "primary_candidate")
@@ -3064,6 +3068,8 @@ def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_
     assert approve_response.status_code == 200, approve_response.text
     split_response = client.post(f"/api/evaluation-specs/{spec_id}/generate-split")
     assert split_response.status_code == 200, split_response.text
+    assert split_response.json()["status"] == "queued"
+    run_queued_job(client, split_response.json()["id"])
 
     queue_response = client.post(
         f"/api/projects/{project_id}/model-candidates/run",
@@ -3187,8 +3193,9 @@ def test_core_harness_actions_use_explicit_endpoints(tmp_path: Path) -> None:
     evaluation_response = client.post(f"/api/projects/{project_id}/evaluation/compare")
     assert evaluation_response.status_code == 200, evaluation_response.text
     evaluation_job = evaluation_response.json()
-    assert evaluation_job["status"] == "succeeded"
-    assert evaluation_job["output"]["artifact_id"]
+    assert evaluation_job["status"] == "queued"
+    evaluation_output = run_queued_job(client, evaluation_job["id"])
+    assert evaluation_output["artifact_id"]
 
     report_response = client.post(f"/api/projects/{project_id}/decision-report/generate")
     assert report_response.status_code == 200, report_response.text
@@ -3601,7 +3608,9 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
 
     design_response = client.post(f"/api/projects/{project_id}/evaluation/design")
     assert design_response.status_code == 200
-    assert design_response.json()["status"] == "succeeded"
+    design_job = design_response.json()
+    assert design_job["status"] == "queued"
+    run_queued_job(client, design_job["id"])
 
     candidates_response = client.get(f"/api/projects/{project_id}/evaluation/candidates")
     assert candidates_response.status_code == 200
@@ -3613,11 +3622,12 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     scenario_compare_response = client.post(f"/api/projects/{project_id}/evaluation/compare")
     assert scenario_compare_response.status_code == 200, scenario_compare_response.text
     scenario_compare_job = scenario_compare_response.json()
-    assert scenario_compare_job["status"] == "succeeded"
-    assert scenario_compare_job["output"]["artifact_id"]
-    assert scenario_compare_job["output"]["candidate_count"] >= 2
+    assert scenario_compare_job["status"] == "queued"
+    scenario_compare_output = run_queued_job(client, scenario_compare_job["id"])
+    assert scenario_compare_output["artifact_id"]
+    assert scenario_compare_output["candidate_count"] >= 2
     scenario_compare_preview_response = client.get(
-        f"/api/artifacts/{scenario_compare_job['output']['artifact_id']}/preview"
+        f"/api/artifacts/{scenario_compare_output['artifact_id']}/preview"
     )
     assert scenario_compare_preview_response.status_code == 200
     scenario_compare_preview = scenario_compare_preview_response.json()["preview"]
@@ -3631,11 +3641,12 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     approval_review_response = client.post(f"/api/evaluation-specs/{spec_id}/approval-review")
     assert approval_review_response.status_code == 200, approval_review_response.text
     approval_review_job = approval_review_response.json()
-    assert approval_review_job["status"] == "succeeded"
-    assert approval_review_job["output"]["artifact_id"]
-    assert approval_review_job["output"]["review_status"] in {"ready", "ready_with_assumptions"}
+    assert approval_review_job["status"] == "queued"
+    approval_review_output = run_queued_job(client, approval_review_job["id"])
+    assert approval_review_output["artifact_id"]
+    assert approval_review_output["review_status"] in {"ready", "ready_with_assumptions"}
     approval_review_preview_response = client.get(
-        f"/api/artifacts/{approval_review_job['output']['artifact_id']}/preview"
+        f"/api/artifacts/{approval_review_output['artifact_id']}/preview"
     )
     assert approval_review_preview_response.status_code == 200
     approval_review_preview = approval_review_preview_response.json()["preview"]
@@ -3647,6 +3658,11 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert approve_response.json()["status"] == "approved"
 
     split_response = client.post(f"/api/evaluation-specs/{spec_id}/generate-split")
+    assert split_response.status_code == 200, split_response.text
+    split_job = split_response.json()
+    assert split_job["status"] == "queued"
+    split_output = run_queued_job(client, split_job["id"])
+    split_response = client.get(f"/api/split-manifests/{split_output['split_manifest_id']}")
     assert split_response.status_code == 200, split_response.text
     split = split_response.json()
     assert split["train_count"] > 0
@@ -4923,6 +4939,8 @@ def test_evaluation_approval_blocks_required_unanswered_question(tmp_path: Path)
 
     design_response = client.post(f"/api/projects/{project_id}/evaluation/design")
     assert design_response.status_code == 200, design_response.text
+    assert design_response.json()["status"] == "queued"
+    run_queued_job(client, design_response.json()["id"])
     candidates_response = client.get(f"/api/projects/{project_id}/evaluation/candidates")
     assert candidates_response.status_code == 200
     candidate = candidates_response.json()[0]
@@ -4934,8 +4952,10 @@ def test_evaluation_approval_blocks_required_unanswered_question(tmp_path: Path)
     review_response = client.post(f"/api/evaluation-specs/{spec_id}/approval-review")
     assert review_response.status_code == 200, review_response.text
     review_job = review_response.json()
-    assert review_job["output"]["review_status"] == "blocked"
-    assert review_job["output"]["blocker_count"] >= 1
+    assert review_job["status"] == "queued"
+    review_output = run_queued_job(client, review_job["id"])
+    assert review_output["review_status"] == "blocked"
+    assert review_output["blocker_count"] >= 1
 
     approve_response = client.post(f"/api/evaluation-specs/{spec_id}/approve")
     assert approve_response.status_code == 409
@@ -5788,6 +5808,8 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
 
     evaluation_design_response = client.post(f"/api/projects/{project_id}/evaluation/design")
     assert evaluation_design_response.status_code == 200, evaluation_design_response.text
+    assert evaluation_design_response.json()["status"] == "queued"
+    run_queued_job(client, evaluation_design_response.json()["id"])
     candidates_response = client.get(f"/api/projects/{project_id}/evaluation/candidates")
     assert candidates_response.status_code == 200
     random_candidate = next(item for item in candidates_response.json() if item["split_type"] == "random")
@@ -5798,6 +5820,8 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
     assert approval_response.status_code == 200, approval_response.text
     split_response = client.post(f"/api/evaluation-specs/{spec_id}/generate-split")
     assert split_response.status_code == 200, split_response.text
+    assert split_response.json()["status"] == "queued"
+    run_queued_job(client, split_response.json()["id"])
 
     agent_task_plan_response = client.post(f"/api/projects/{project_id}/approach/agent-task-plan", json={})
     assert agent_task_plan_response.status_code == 200, agent_task_plan_response.text

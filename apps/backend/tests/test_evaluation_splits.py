@@ -5,7 +5,10 @@ from typing import Any, cast
 
 from fastapi.testclient import TestClient
 from tabular_harness.core.config import Settings
+from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
+from tabular_harness.models.entities import Job
+from tabular_harness.worker.jobs import create_default_worker
 
 
 def make_client(tmp_path: Path) -> TestClient:
@@ -18,6 +21,17 @@ def make_client(tmp_path: Path) -> TestClient:
         cors_origins=("http://localhost:5173",),
     )
     return TestClient(create_app(settings))
+
+
+def run_queued_job(client: TestClient, job_id: str) -> dict[str, Any]:
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        job = db.get(Job, job_id)
+        assert job is not None
+        worker = create_default_worker(store=app.state.artifact_store)
+        completed = worker.run_job(db, job)
+        assert completed.status == "succeeded", completed.error_message
+        return loads_json(completed.output_json, {})
 
 
 def create_project_with_candidates(client: TestClient) -> tuple[str, list[dict[str, Any]]]:
@@ -47,6 +61,8 @@ def create_project_with_candidates(client: TestClient) -> tuple[str, list[dict[s
 
     design_response = client.post(f"/api/projects/{project_id}/evaluation/design")
     assert design_response.status_code == 200
+    assert design_response.json()["status"] == "queued"
+    run_queued_job(client, design_response.json()["id"])
 
     candidates_response = client.get(f"/api/projects/{project_id}/evaluation/candidates")
     assert candidates_response.status_code == 200
@@ -63,7 +79,12 @@ def promote_approve_and_split(client: TestClient, candidate_id: str) -> dict[str
 
     split_response = client.post(f"/api/evaluation-specs/{spec_id}/generate-split")
     assert split_response.status_code == 200, split_response.text
-    return cast(dict[str, Any], split_response.json())
+    split_job = split_response.json()
+    assert split_job["status"] == "queued"
+    split_output = run_queued_job(client, split_job["id"])
+    split_manifest_response = client.get(f"/api/split-manifests/{split_output['split_manifest_id']}")
+    assert split_manifest_response.status_code == 200, split_manifest_response.text
+    return cast(dict[str, Any], split_manifest_response.json())
 
 
 def test_time_split_manifest_generation_respects_time_order(tmp_path: Path) -> None:
