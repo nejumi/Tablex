@@ -3636,18 +3636,33 @@ def maybe_capture_agent_session_notebook_output(
     )
     if latest_failure is not None and not notebook_capture_failure_retry_due(latest_failure):
         return
-    existing_captures = list(
-        db.scalars(
-            select(Artifact)
-            .where(
-                Artifact.project_id == artifact.project_id,
-                Artifact.asset_type == "notebook_execution_manifest",
-            )
-            .order_by(Artifact.created_at.desc())
-            .limit(50)
-        ).all()
+    existing_capture = latest_notebook_capture_artifacts(
+        db,
+        project_id=artifact.project_id,
+        notebook_artifact_id=artifact.id,
     )
-    if any(loads_json(item.metadata_json, {}).get("notebook_artifact_id") == artifact.id for item in existing_captures):
+    if existing_capture["manifest"] is not None:
+        linked_plan_node_id = attach_notebook_artifacts_to_current_research_plan(
+            db,
+            session=session,
+            notebook_artifact=artifact,
+            related_artifacts=[
+                (existing_capture["evidence_html"], "notebook_preview"),
+                (existing_capture["html"], "notebook_html"),
+                (existing_capture["manifest"], "notebook_manifest"),
+            ],
+        )
+        register_agent_session_notebook_chat_turn(
+            db,
+            store=store,
+            session=session,
+            notebook_artifact=artifact,
+            status="ready",
+            preview_artifact=existing_capture["evidence_html"] or existing_capture["html"],
+            html_artifact=existing_capture["html"],
+            manifest_artifact=existing_capture["manifest"],
+            linked_plan_node_id=linked_plan_node_id,
+        )
         return
     try:
         from tabular_harness.services.analysis_notebooks import create_notebook_execution_capture
@@ -3772,6 +3787,45 @@ def register_agent_session_notebook_chat_turn_from_capture_event(
         manifest_artifact=manifest_artifact,
         linked_plan_node_id=linked_plan_node_id,
     )
+
+
+def latest_notebook_capture_artifacts(
+    db: Session,
+    *,
+    project_id: str,
+    notebook_artifact_id: str,
+) -> dict[str, Artifact | None]:
+    artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(
+                Artifact.project_id == project_id,
+                Artifact.asset_type.in_(
+                    {
+                        "notebook_execution_manifest",
+                        "notebook_execution_html",
+                        "notebook_evidence_html",
+                    }
+                ),
+            )
+            .order_by(Artifact.created_at.desc())
+            .limit(150)
+        ).all()
+    )
+    result: dict[str, Artifact | None] = {"manifest": None, "html": None, "evidence_html": None}
+    key_by_asset_type = {
+        "notebook_execution_manifest": "manifest",
+        "notebook_execution_html": "html",
+        "notebook_evidence_html": "evidence_html",
+    }
+    for artifact in artifacts:
+        key = key_by_asset_type.get(artifact.asset_type)
+        if key is None or result[key] is not None:
+            continue
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("notebook_artifact_id") == notebook_artifact_id:
+            result[key] = artifact
+    return result
 
 
 def notebook_capture_failure_retry_due(

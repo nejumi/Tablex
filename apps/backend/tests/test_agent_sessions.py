@@ -3746,6 +3746,127 @@ def test_auto_captured_notebook_attaches_to_single_active_research_plan_node(
         assert any(link["artifact_id"] == notebook_artifact.id for link in data_block["attached_artifacts"])
 
 
+def test_existing_notebook_capture_restores_chat_and_plan_link_without_recapture(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+
+    def fail_if_recaptured(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise AssertionError("existing notebook capture should be reused")
+
+    monkeypatch.setattr(analysis_notebooks_module, "create_notebook_execution_capture", fail_if_recaptured)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_existing_capture", name="Existing Capture")
+        session = AgentSession(
+            id="as_existing_capture",
+            project_id=project.id,
+            goal_text="Expose an already captured notebook.",
+        )
+        notebook_artifact = Artifact(
+            id="art_existing_notebook",
+            project_id=project.id,
+            asset_type="analysis_notebook",
+            name="existing_notebook",
+            version=1,
+            uri="/tmp/notebook.py",
+            content_hash="hash_nb",
+            size_bytes=120,
+            metadata_json=dumps_json(
+                {
+                    "source": "main_agent_session_workspace",
+                    "agent_session_id": session.id,
+                    "notebook_kind": "data_understanding",
+                }
+            ),
+        )
+        evidence_html_artifact = Artifact(
+            id="art_existing_evidence_html",
+            project_id=project.id,
+            asset_type="notebook_evidence_html",
+            name="existing_evidence_html",
+            version=1,
+            uri="/tmp/evidence.html",
+            content_hash="hash_evidence",
+            size_bytes=120,
+            metadata_json=dumps_json({"notebook_artifact_id": notebook_artifact.id}),
+        )
+        html_artifact = Artifact(
+            id="art_existing_html",
+            project_id=project.id,
+            asset_type="notebook_execution_html",
+            name="existing_html",
+            version=1,
+            uri="/tmp/notebook.html",
+            content_hash="hash_html",
+            size_bytes=120,
+            metadata_json=dumps_json({"notebook_artifact_id": notebook_artifact.id}),
+        )
+        manifest_artifact = Artifact(
+            id="art_existing_manifest",
+            project_id=project.id,
+            asset_type="notebook_execution_manifest",
+            name="existing_manifest",
+            version=1,
+            uri="/tmp/manifest.json",
+            content_hash="hash_manifest",
+            size_bytes=120,
+            metadata_json=dumps_json({"notebook_artifact_id": notebook_artifact.id}),
+        )
+        db.add_all([project, session, notebook_artifact, evidence_html_artifact, html_artifact, manifest_artifact])
+        db.commit()
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "granularity": "chapter",
+                        "status": "active",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Codex is working on the data understanding chapter.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        maybe_capture_agent_session_notebook_output(db, store=store, session=session, artifact=notebook_artifact)
+        db.commit()
+
+        chat_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["intent"]["type"] == "notebook_artifact_update"
+        assert chat_payload["intent"]["status"] == "ready"
+        assert chat_payload["actions"][0]["artifact_id"] == evidence_html_artifact.id
+        assert chat_payload["actions"][0]["artifact_ids"] == [
+            notebook_artifact.id,
+            evidence_html_artifact.id,
+            html_artifact.id,
+            manifest_artifact.id,
+        ]
+        assert chat_payload["response_brief"]["research_plan_node_id"] == "data_understanding"
+        timeline = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+        data_block = timeline["blocks"][0]
+        attached_ids = {link["artifact_id"] for link in data_block["attached_artifacts"] if link["link_type"] == "artifact"}
+        assert {
+            notebook_artifact.id,
+            evidence_html_artifact.id,
+            html_artifact.id,
+            manifest_artifact.id,
+        }.issubset(attached_ids)
+
+
 def test_research_plan_ingest_commits_contract_valid_workspace_plan(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
