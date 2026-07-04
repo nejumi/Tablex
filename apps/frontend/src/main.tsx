@@ -5219,11 +5219,12 @@ function ProjectDetail({
   }
 
   function openAgentChatAction(action: AgentChatAction) {
-    const explicitNotebookViewer = action.artifact_id && action.target_tab === "Notebooks";
+    const artifactId = agentChatActionArtifactId(action);
+    const explicitNotebookViewer = artifactId && action.target_tab === "Notebooks";
     const targetTab = explicitNotebookViewer ? "Notebooks" : tabFromString(action.target_tab, "Home");
-    if (action.artifact_id) {
+    if (artifactId) {
       setArtifactPreviewRequest({
-        artifactId: action.artifact_id,
+        artifactId,
         targetTab,
         anchor: action.target_anchor ?? null,
         nonce: Date.now()
@@ -7868,12 +7869,17 @@ function displayStatusLabel(status: string, text: LocaleMessages): string {
 }
 
 function agentChatActionLabel(action: AgentChatAction, text: LocaleMessages) {
-  const targetTab = action.artifact_id && action.target_tab === "Notebooks" ? "Notebooks" : tabFromString(action.target_tab, "Home");
+  const targetTab = agentChatActionArtifactId(action) && action.target_tab === "Notebooks" ? "Notebooks" : tabFromString(action.target_tab, "Home");
   const verb = ["needs_review", "created", "recorded", "explained"].includes(action.status)
     ? text.chatActionReview
     : text.chatActionOpen;
   const anchorLabel = action.target_anchor ? ` · ${surfaceLabel(action.target_anchor)}` : "";
   return `${verb} ${tabLabel(targetTab, text)}${anchorLabel}`;
+}
+
+function agentChatActionArtifactId(action: AgentChatAction): string | null {
+  if (action.artifact_id) return action.artifact_id;
+  return action.artifact_ids?.find((value) => Boolean(value)) ?? null;
 }
 
 function surfaceLabel(anchor: string) {
