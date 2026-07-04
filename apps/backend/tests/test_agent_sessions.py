@@ -2033,6 +2033,105 @@ def test_codex_structured_model_results_materialize_leaderboard_runs_and_chat_li
         assert run_count == 2
 
 
+def test_structured_model_results_attach_to_single_active_research_plan_node(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    artifacts_dir = workspace / "artifacts"
+    artifacts_dir.mkdir(parents=True)
+    (artifacts_dir / "model_results.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "model_results.v1",
+                "models": [
+                    {
+                        "model_id": "fold_safe_tree",
+                        "summary": "A fold-safe tree candidate.",
+                        "primary_metric_name": "mae",
+                        "mae": 42.0,
+                        "rmse": 60.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_structured_plan_link", name="Structured Plan Link")
+        session = AgentSession(
+            id="as_structured_plan_link",
+            project_id=project.id,
+            goal_text="Register structured model results.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "modeling_and_diagnostics",
+                        "title": "Modeling and diagnostics",
+                        "granularity": "chapter",
+                        "status": "active",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Codex is working on model comparison.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        run = db.scalar(select(ExperimentRun).where(ExperimentRun.project_id == project.id))
+        assert run is not None
+        params = loads_json(run.params_json, {})
+        assert params["research_plan_node_id"] == "modeling_and_diagnostics"
+        source_artifact = db.get(Artifact, params["source_artifact_id"])
+        assert source_artifact is not None
+        edge = db.scalar(
+            select(LineageEdge).where(
+                LineageEdge.project_id == project.id,
+                LineageEdge.from_asset_type == "research_plan_revision",
+                LineageEdge.to_asset_type == "experiment_run",
+                LineageEdge.to_asset_id == run.id,
+                LineageEdge.relation_type == "supports_plan_node",
+            )
+        )
+        assert edge is not None
+        assert loads_json(edge.metadata_json, {})["node_id"] == "modeling_and_diagnostics"
+        source_plan_edge = db.scalar(
+            select(LineageEdge).where(
+                LineageEdge.project_id == project.id,
+                LineageEdge.relation_type == "supports_plan_node",
+                LineageEdge.to_asset_type == "artifact",
+                LineageEdge.to_asset_id == source_artifact.id,
+            )
+        )
+        assert source_plan_edge is not None
+        timeline = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+        block_links = timeline["blocks"][0]["attached_artifacts"]
+        assert any(link["link_type"] == "experiment_run" and link["run_id"] == run.id for link in block_links)
+        assert any(link["link_type"] == "artifact" and link["artifact_id"] == source_artifact.id for link in block_links)
+        chat_artifact = db.scalar(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+            .order_by(Artifact.created_at.desc())
+        )
+        assert chat_artifact is not None
+        chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        assert chat_payload["intent"]["type"] == "experiment_results_registered"
+        assert chat_payload["response_brief"]["research_plan_node_ids"] == ["modeling_and_diagnostics"]
+
+
 def test_experiment_result_file_request_registers_leaderboard_run_with_ack(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)

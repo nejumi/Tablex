@@ -37,8 +37,11 @@ from tabular_harness.services.metric_preferences import (
     normalize_metric_name,
 )
 from tabular_harness.services.research_plans import (
+    PLAN_CURRENT_STATUSES,
     attach_research_plan_artifact,
     latest_research_plan_current_work,
+    latest_research_plan_revision,
+    research_plan_revision_document,
     validate_research_plan_node_exists,
 )
 
@@ -460,6 +463,11 @@ def register_experiment_run_specs(
         result_signature = experiment_result_signature(spec.metrics, model_id=spec.model_id)
         if experiment_run_with_signature_exists(db, project_id=project.id, result_signature=result_signature):
             continue
+        research_plan_node_id = resolve_research_plan_node_for_run(
+            db,
+            project=project,
+            explicit_node_id=spec.research_plan_node_id,
+        )
         now = utc_now()
         run = ExperimentRun(
             id=new_id("run"),
@@ -481,7 +489,7 @@ def register_experiment_run_specs(
                     "source_key": spec.source_key,
                     "result_signature": result_signature,
                     "model_id": spec.model_id,
-                    "research_plan_node_id": spec.research_plan_node_id,
+                    "research_plan_node_id": research_plan_node_id,
                     "dataset_snapshot_id": context.dataset_snapshot_id,
                     "evaluation_spec_id": context.evaluation_spec_id,
                     "split_manifest_id": context.split_manifest_id,
@@ -512,10 +520,44 @@ def register_experiment_run_specs(
             project=project,
             source_artifact_id=source_artifact_id,
             run=run,
-            node_id=spec.research_plan_node_id,
+            node_id=research_plan_node_id,
         )
     db.flush()
     return created
+
+
+def resolve_research_plan_node_for_run(
+    db: Session,
+    *,
+    project: Project,
+    explicit_node_id: str | None,
+) -> str | None:
+    node_id = explicit_node_id.strip() if isinstance(explicit_node_id, str) and explicit_node_id.strip() else None
+    if node_id:
+        return node_id
+    current = latest_research_plan_current_work(db, project_id=project.id)
+    if current is not None and current.node_id.strip():
+        return current.node_id
+    revision = latest_research_plan_revision(db, project_id=project.id)
+    return single_current_research_plan_node_id(revision)
+
+
+def single_current_research_plan_node_id(revision: ResearchPlanRevision | None) -> str | None:
+    if revision is None:
+        return None
+    document = research_plan_revision_document(revision)
+    raw_blocks = document.get("timeline_blocks")
+    if not isinstance(raw_blocks, list):
+        return None
+    current_node_ids: list[str] = []
+    for raw_block in raw_blocks:
+        if not isinstance(raw_block, dict):
+            continue
+        node_id = str(raw_block.get("id") or "").strip()
+        status = str(raw_block.get("status") or "").strip().lower()
+        if node_id and status in PLAN_CURRENT_STATUSES:
+            current_node_ids.append(node_id)
+    return current_node_ids[0] if len(current_node_ids) == 1 else None
 
 
 def resolve_run_spec_context(
