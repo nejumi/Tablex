@@ -5089,8 +5089,13 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
     assert "Home Credit Default Risk" in collection_report
 
     import_missing_response = client.post(f"/api/projects/{project_id}/benchmarks/uci_bank_marketing/import", json={})
-    assert import_missing_response.status_code == 400
-    assert "Missing required benchmark files" in import_missing_response.text
+    assert import_missing_response.status_code == 200
+    import_missing_job = import_missing_response.json()
+    assert import_missing_job["status"] == "queued"
+    assert import_missing_job["policy"]["execution"] == "queued_worker"
+    failed_import_job, _ = run_queued_job_expect_status(client, import_missing_job["id"], "failed")
+    assert failed_import_job.error_message is not None
+    assert "Missing required benchmark files" in failed_import_job.error_message
 
     fixture_response = client.post("/api/benchmarks/uci_bank_marketing/fixtures/generate", json={"overwrite": True})
     assert fixture_response.status_code == 200, fixture_response.text
@@ -5106,7 +5111,10 @@ def test_benchmark_catalog_and_local_import(tmp_path: Path) -> None:
 
     import_response = client.post(f"/api/projects/{project_id}/benchmarks/uci_bank_marketing/import", json={})
     assert import_response.status_code == 200, import_response.text
-    payload = import_response.json()
+    import_job = import_response.json()
+    assert import_job["status"] == "queued"
+    assert import_job["policy"]["execution"] == "queued_worker"
+    payload = run_queued_job(client, import_job["id"])
     assert payload["primary_file"] == "bank-full.csv"
     assert payload["dataset_snapshot"]["source_type"] == "benchmark_catalog"
     assert payload["dataset_snapshot"]["source_ref"] == "uci_bank_marketing:bank-full.csv"
@@ -5175,7 +5183,10 @@ def test_public_uci_wine_fixture_source_card_import(tmp_path: Path) -> None:
 
     import_response = client.post(f"/api/projects/{project_id}/benchmarks/uci_wine_quality/import", json={})
     assert import_response.status_code == 200, import_response.text
-    payload = import_response.json()
+    import_job = import_response.json()
+    assert import_job["status"] == "queued"
+    assert import_job["policy"]["execution"] == "queued_worker"
+    payload = run_queued_job(client, import_job["id"])
     assert payload["primary_file"] == "winequality-red.csv"
     assert payload["dataset_snapshot"]["source_ref"] == "uci_wine_quality:winequality-red.csv"
     assert payload["dataset_snapshot"]["row_count"] == 8
@@ -5551,8 +5562,9 @@ def test_home_credit_fixture_smoke_harness(tmp_path: Path) -> None:
     )
     assert smoke_response.status_code == 200, smoke_response.text
     smoke_job = smoke_response.json()
-    assert smoke_job["status"] == "succeeded"
-    output = smoke_job["output"]
+    assert smoke_job["status"] == "queued"
+    assert smoke_job["policy"]["execution"] == "queued_worker"
+    output = run_queued_job(client, smoke_job["id"])
     assert output["fixture"]["local_status"]["ready"] is True
     assert output["fixture"]["fixture_matches_expected"] is True
     assert output["dataset_snapshot_id"]
@@ -5670,15 +5682,19 @@ def test_benchmark_relational_catalog_infers_shared_keys(tmp_path: Path) -> None
         json={},
     )
     assert import_response.status_code == 200, import_response.text
-    assert len(import_response.json()["supporting_table_artifacts"]) == 1
-    assert import_response.json()["supporting_table_artifacts"][0]["asset_type"] == "benchmark_supporting_table"
+    import_job_response = import_response.json()
+    assert import_job_response["status"] == "queued"
+    assert import_job_response["policy"]["execution"] == "queued_worker"
+    import_output = run_queued_job(client, import_job_response["id"])
+    assert len(import_output["supporting_table_artifacts"]) == 1
+    assert import_output["supporting_table_artifacts"][0]["asset_type"] == "benchmark_supporting_table"
     output_job_response = client.get(f"/api/projects/{project_id}/jobs")
     assert output_job_response.status_code == 200
     import_job = next(item for item in output_job_response.json() if item["job_type"] == "import_benchmark_dataset")
     assert import_job["output"]["table_count"] == 2
     assert import_job["output"]["relationship_count"] >= 1
 
-    relational_artifact_id = import_response.json()["relational_catalog_artifact"]["id"]
+    relational_artifact_id = import_output["relational_catalog_artifact"]["id"]
     relational_preview_response = client.get(f"/api/artifacts/{relational_artifact_id}/preview")
     assert relational_preview_response.status_code == 200
     preview = relational_preview_response.json()["preview"]

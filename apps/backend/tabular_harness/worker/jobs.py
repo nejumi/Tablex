@@ -44,6 +44,7 @@ from tabular_harness.services.approach import (
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
     artifact_primary_path,
+    artifact_to_dict,
     create_lineage_edge,
     next_artifact_version,
     register_artifact,
@@ -67,11 +68,13 @@ from tabular_harness.services.benchmark_collection import create_benchmark_colle
 from tabular_harness.services.benchmark_evidence import create_benchmark_evidence_pack
 from tabular_harness.services.benchmarks import (
     benchmark_import_readiness,
+    benchmark_to_dict,
     build_import_manifest,
     build_relational_catalog,
     create_benchmark_scenario_pack,
     default_benchmark_root,
     download_public_benchmark_archive,
+    generate_benchmark_fixture,
     inspect_benchmark_local_files,
     raw_benchmark_dataset,
     relative_path,
@@ -253,6 +256,21 @@ def download_public_benchmark_archive_handler(db: Session, job: Job, store: Loca
     }
 
 
+def dataset_snapshot_to_dict_for_worker(dataset: DatasetSnapshot) -> dict[str, Any]:
+    return {
+        "id": dataset.id,
+        "project_id": dataset.project_id,
+        "artifact_id": dataset.artifact_id,
+        "source_type": dataset.source_type,
+        "source_ref": dataset.source_ref,
+        "row_count": dataset.row_count,
+        "column_count": dataset.column_count,
+        "schema_hash": dataset.schema_hash,
+        "data_hash": dataset.data_hash,
+        "created_at": dataset.created_at.isoformat(),
+    }
+
+
 def import_benchmark_dataset_for_worker(
     db: Session,
     *,
@@ -420,6 +438,179 @@ def import_benchmark_dataset_for_worker(
         "relational_catalog_artifact": relational_catalog_artifact,
         "supporting_table_artifacts": supporting_tables.artifacts,
         "skipped_supporting_tables": supporting_tables.skipped,
+    }
+
+
+def import_benchmark_dataset_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "import_benchmark_dataset")
+    benchmark_id = benchmark_id_for_job(job, "import_benchmark_dataset")
+    settings = settings_for_job_payload(job, store)
+    imported = import_benchmark_dataset_for_worker(
+        db,
+        store=store,
+        project=project,
+        settings=settings,
+        benchmark_id=benchmark_id,
+        target_column=payload.get("target_column") if isinstance(payload.get("target_column"), str) else None,
+        local_path=payload.get("local_path") if isinstance(payload.get("local_path"), str) else None,
+        primary_file_name=payload.get("primary_file") if isinstance(payload.get("primary_file"), str) else None,
+    )
+    benchmark = cast(dict[str, Any], imported["benchmark"])
+    local_status = cast(dict[str, Any], imported["local_status"])
+    dataset = cast(DatasetSnapshot, imported["dataset"])
+    dataset_artifact = cast(Artifact, imported["dataset_artifact"])
+    import_manifest_artifact = cast(Artifact, imported["import_manifest_artifact"])
+    relational_catalog_artifact = cast(Artifact, imported["relational_catalog_artifact"])
+    supporting_artifacts = cast(list[Artifact], imported["supporting_table_artifacts"])
+    benchmark_payload = benchmark_to_dict(benchmark, settings=settings, include_status=True)
+    benchmark_payload["local_status"] = local_status
+    return {
+        "benchmark": benchmark_payload,
+        "dataset_snapshot": dataset_snapshot_to_dict_for_worker(dataset),
+        "artifact": artifact_to_dict(dataset_artifact),
+        "import_manifest_artifact": artifact_to_dict(import_manifest_artifact),
+        "relational_catalog_artifact": artifact_to_dict(relational_catalog_artifact),
+        "supporting_table_artifacts": [artifact_to_dict(artifact) for artifact in supporting_artifacts],
+        "skipped_supporting_tables": cast(list[dict[str, Any]], imported["skipped_supporting_tables"]),
+        "profile_job_id": job.id,
+        "primary_file": str(imported["primary_relative_path"]),
+        "benchmark_id": benchmark_id,
+        "dataset_snapshot_id": dataset.id,
+        "artifact_id": dataset_artifact.id,
+        "import_manifest_artifact_id": import_manifest_artifact.id,
+        "relational_catalog_artifact_id": relational_catalog_artifact.id,
+        "target_column": imported["target_column"],
+        "table_count": int(cast(dict[str, Any], loads_json(relational_catalog_artifact.metadata_json, {})).get("table_count", 0)),
+        "relationship_count": int(cast(dict[str, Any], loads_json(relational_catalog_artifact.metadata_json, {})).get("relationship_count", 0)),
+        "supporting_table_artifact_ids": [artifact.id for artifact in supporting_artifacts],
+        "artifact_ids": [
+            dataset_artifact.id,
+            import_manifest_artifact.id,
+            relational_catalog_artifact.id,
+            *[artifact.id for artifact in supporting_artifacts],
+        ],
+    }
+
+
+def run_benchmark_fixture_smoke_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "run_benchmark_fixture_smoke")
+    benchmark_id = benchmark_id_for_job(job, "run_benchmark_fixture_smoke")
+    settings = settings_for_job_payload(job, store)
+    fixture = generate_benchmark_fixture(
+        settings,
+        benchmark_id,
+        overwrite=bool(payload.get("overwrite")),
+    )
+    if not fixture["fixture_matches_expected"]:
+        raise ValueError(
+            "Existing benchmark files do not match the Tablex fixture. "
+            "Use overwrite=true to replace fixture files, or run normal benchmark import manually."
+        )
+    imported = import_benchmark_dataset_for_worker(
+        db,
+        store=store,
+        project=project,
+        settings=settings,
+        benchmark_id=benchmark_id,
+        target_column=payload.get("target_column") if isinstance(payload.get("target_column"), str) else None,
+    )
+    dataset = cast(DatasetSnapshot, imported["dataset"])
+    quality = analyze_dataset_quality(db, store=store, project=project, dataset=dataset)
+    candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
+    comparison_artifact = create_evaluation_scenario_comparison(
+        db,
+        store=store,
+        project=project,
+        dataset=dataset,
+        candidates=list(candidates),
+    )
+    primary_candidate = next((item for item in candidates if item.status == "primary_candidate"), candidates[0])
+    spec = promote_candidate_to_spec(db, store=store, candidate=primary_candidate)
+    review = create_evaluation_approval_review(db, store=store, spec=spec, approval_intent=True)
+    if review.blocked:
+        raise ValueError("Fixture EvaluationSpec approval was blocked")
+    approve_spec(spec)
+    approved_artifact = write_spec_artifact(db, store, spec)
+    create_lineage_edge(
+        db,
+        project_id=spec.project_id,
+        from_asset_type="artifact",
+        from_asset_id=review.artifact.id,
+        to_asset_type="evaluation_spec",
+        to_asset_id=spec.id,
+        relation_type="supports_approval",
+    )
+    create_lineage_edge(
+        db,
+        project_id=spec.project_id,
+        from_asset_type="evaluation_spec",
+        from_asset_id=spec.id,
+        to_asset_type="artifact",
+        to_asset_id=approved_artifact.id,
+        relation_type="produces",
+    )
+    split = generate_split_manifest(db, store=store, spec=spec)
+    strategy = create_baseline_strategy_plan(
+        db,
+        store=store,
+        project=project,
+        evaluation_spec=spec,
+        split_manifest=split,
+    )
+    research_plan = create_research_plan(
+        db,
+        store=store,
+        project=project,
+        dataset=dataset,
+        evaluation_spec=spec,
+    )
+    supporting_artifacts = cast(list[Artifact], imported["supporting_table_artifacts"])
+    scenario = create_benchmark_scenario_pack(
+        db,
+        store=store,
+        project=project,
+        benchmark=raw_benchmark_dataset(benchmark_id),
+        local_status=fixture["local_status"],
+        fixture=fixture,
+        dataset=dataset,
+        supporting_table_artifacts=supporting_artifacts,
+        skipped_supporting_tables=cast(list[dict[str, Any]], imported["skipped_supporting_tables"]),
+    )
+    dataset_artifact = cast(Artifact, imported["dataset_artifact"])
+    import_manifest_artifact = cast(Artifact, imported["import_manifest_artifact"])
+    relational_catalog_artifact = cast(Artifact, imported["relational_catalog_artifact"])
+    artifact_ids = [
+        dataset_artifact.id,
+        import_manifest_artifact.id,
+        relational_catalog_artifact.id,
+        *[artifact.id for artifact in supporting_artifacts],
+        *quality.artifact_ids,
+        comparison_artifact.id,
+        review.artifact.id,
+        approved_artifact.id,
+        split.artifact_id,
+        strategy.artifact.id,
+        research_plan.artifact.id,
+        scenario.pack_artifact.id,
+        scenario.report_artifact.id,
+    ]
+    return {
+        "benchmark_id": benchmark_id,
+        "fixture": fixture,
+        "dataset_snapshot_id": dataset.id,
+        "quality_gate": quality.gate,
+        "evaluation_candidate_ids": [candidate.id for candidate in candidates],
+        "evaluation_scenario_comparison_artifact_id": comparison_artifact.id,
+        "evaluation_spec_id": spec.id,
+        "approval_review_artifact_id": review.artifact.id,
+        "split_manifest_id": split.id,
+        "baseline_strategy_plan_artifact_id": strategy.artifact.id,
+        "research_plan_artifact_id": research_plan.artifact.id,
+        "benchmark_scenario_pack_artifact_id": scenario.pack_artifact.id,
+        "benchmark_scenario_report_artifact_id": scenario.report_artifact.id,
+        "artifact_ids": artifact_ids,
     }
 
 
@@ -2746,6 +2937,8 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["profile_dataset"] = profile_dataset_handler
     handlers["infer_assumptions"] = infer_assumptions_handler
     handlers["download_public_benchmark_archive"] = download_public_benchmark_archive_handler
+    handlers["import_benchmark_dataset"] = import_benchmark_dataset_handler
+    handlers["run_benchmark_fixture_smoke"] = run_benchmark_fixture_smoke_handler
     handlers["run_public_benchmark_workflow"] = run_public_benchmark_workflow_handler
     handlers["create_benchmark_scenario_pack"] = create_benchmark_scenario_pack_handler
     handlers["create_benchmark_collection_plan"] = create_benchmark_collection_plan_handler

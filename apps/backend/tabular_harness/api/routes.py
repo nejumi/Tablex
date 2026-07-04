@@ -91,7 +91,6 @@ from tabular_harness.schemas import (
     BenchmarkFixtureResponse,
     BenchmarkImportReadinessRead,
     BenchmarkImportRequest,
-    BenchmarkImportResponse,
     BenchmarkLocalStatusRead,
     BenchmarkPublicDownloadRequest,
     BenchmarkSourceCardRead,
@@ -166,7 +165,6 @@ from tabular_harness.services.analysis_notebooks import (
     build_project_notebook_index,
 )
 from tabular_harness.services.approach import (
-    create_research_plan,
     store_json_artifact,
 )
 from tabular_harness.services.artifacts import (
@@ -205,15 +203,11 @@ from tabular_harness.services.avatar_generation import (
     generate_user_avatar_candidates,
 )
 from tabular_harness.services.baseline import (
-    create_baseline_strategy_plan,
     normalize_model_candidate_name,
 )
 from tabular_harness.services.benchmarks import (
     benchmark_source_card,
     benchmark_to_dict,
-    build_import_manifest,
-    build_relational_catalog,
-    create_benchmark_scenario_pack,
     generate_benchmark_fixture,
     get_benchmark_dataset,
     infer_relationships,
@@ -221,23 +215,15 @@ from tabular_harness.services.benchmarks import (
     list_benchmark_datasets,
     profile_table_file,
     raw_benchmark_dataset,
-    relative_path,
     resolve_benchmark_root,
-    select_primary_file,
-    store_benchmark_supporting_table_artifacts,
     table_name_from_path,
-    validate_required_files,
 )
-from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.dataset_profile import profile_dataset_artifact
 from tabular_harness.services.decision_reporting import current_decision_report_payload
 from tabular_harness.services.evaluation import (
     approve_spec,
     candidate_to_dict,
-    create_default_evaluation_candidates,
     create_evaluation_approval_review,
-    create_evaluation_scenario_comparison,
-    generate_split_manifest,
     promote_candidate_to_spec,
     spec_to_dict,
     write_spec_artifact,
@@ -2596,217 +2582,39 @@ def upload_relational_schema_hint(
     return job_to_dict(job)
 
 
-@router.post("/api/projects/{project_id}/benchmarks/{benchmark_id}/import", response_model=BenchmarkImportResponse)
+@router.post("/api/projects/{project_id}/benchmarks/{benchmark_id}/import", response_model=JobRead)
 def import_benchmark_dataset(
     project_id: str,
     benchmark_id: str,
     payload: BenchmarkImportRequest,
     request: Request,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
-    settings = request.app.state.settings
+    require_project(db, project_id)
     try:
-        benchmark = raw_benchmark_dataset(benchmark_id)
-        root = resolve_benchmark_root(settings, benchmark_id, payload.local_path)
-        local_status = validate_required_files(benchmark, root)
-        primary_file = select_primary_file(benchmark, root, payload.primary_file)
+        raw_benchmark_dataset(benchmark_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    catalog_target = (benchmark.get("primary_table") or {}).get("target_column")
-    effective_target = payload.target_column or catalog_target or project.target_column
-    if effective_target and effective_target != project.target_column:
-        project.target_column = str(effective_target)
-
-    primary_relative_path = relative_path(root, primary_file)
     job = create_job(
         db,
         job_type="import_benchmark_dataset",
         project_id=project_id,
         input_payload={
             "benchmark_id": benchmark_id,
-            "local_path": str(root),
-            "primary_file": primary_relative_path,
-            "target_column": effective_target,
+            "local_path": payload.local_path,
+            "primary_file": payload.primary_file,
+            "target_column": payload.target_column,
+            "data_dir": str(request.app.state.settings.data_dir),
+            "artifact_root": str(request.app.state.settings.artifact_root),
         },
         policy={
+            "execution": "queued_worker",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "external_download": "user_managed_outside_tablex",
         },
     )
-    try:
-        mark_job_running(job)
-        version = next_artifact_version(db, project_id, "dataset_snapshot", f"benchmark_{benchmark_id}")
-        artifact_dir, stored, content_hash = store.store_existing_file(
-            org_id="local-org",
-            project_id=project_id,
-            asset_type="dataset_snapshot",
-            name=f"benchmark_{benchmark_id}",
-            version=version,
-            source_path=primary_file,
-            filename=primary_file.name,
-            metadata={
-                "project_id": project_id,
-                "source_type": "benchmark_catalog",
-                "benchmark_id": benchmark_id,
-                "benchmark_name": benchmark.get("name"),
-                "source_url": benchmark.get("source_url"),
-                "primary_file": primary_relative_path,
-            },
-        )
-        dataset_artifact = register_artifact(
-            db,
-            project_id=project_id,
-            asset_type="dataset_snapshot",
-            name=f"benchmark_{benchmark_id}",
-            uri=str(artifact_dir),
-            content_hash=content_hash,
-            size_bytes=stored.size_bytes,
-            metadata={
-                "primary_path": str(stored.path),
-                "source_type": "benchmark_catalog",
-                "benchmark_id": benchmark_id,
-                "benchmark_name": benchmark.get("name"),
-                "source_url": benchmark.get("source_url"),
-                "primary_file": primary_relative_path,
-                "target_column": effective_target,
-                "project_id": project_id,
-            },
-            version=version,
-        )
-        dataset = profile_dataset_artifact(
-            db,
-            store,
-            project,
-            dataset_artifact,
-            str(effective_target) if effective_target else None,
-            source_type="benchmark_catalog",
-            source_ref=f"{benchmark_id}:{primary_relative_path}",
-        )
-        import_manifest = build_import_manifest(
-            benchmark=benchmark,
-            root=root,
-            primary_file=primary_file,
-            local_status=local_status,
-            target_column=str(effective_target) if effective_target else None,
-        )
-        import_manifest["dataset_snapshot_id"] = dataset.id
-        import_manifest_artifact = store_and_register_json(
-            db,
-            store,
-            project_id=project_id,
-            asset_type="benchmark_import_manifest",
-            name=f"benchmark_import_{benchmark_id}",
-            filename="benchmark_import_manifest.json",
-            payload=import_manifest,
-            metadata={
-                "project_id": project_id,
-                "dataset_snapshot_id": dataset.id,
-                "benchmark_id": benchmark_id,
-                "primary_file": primary_relative_path,
-            },
-        )
-        relational_catalog = build_relational_catalog(
-            benchmark=benchmark,
-            root=root,
-            primary_file=primary_file,
-            local_status=local_status,
-            target_column=str(effective_target) if effective_target else None,
-        )
-        relational_catalog["dataset_snapshot_id"] = dataset.id
-        relational_catalog_artifact = store_and_register_json(
-            db,
-            store,
-            project_id=project_id,
-            asset_type="relational_catalog",
-            name=f"relational_catalog_{benchmark_id}",
-            filename="relational_catalog.json",
-            payload=relational_catalog,
-            metadata={
-                "project_id": project_id,
-                "dataset_snapshot_id": dataset.id,
-                "benchmark_id": benchmark_id,
-                "table_count": relational_catalog["table_count"],
-                "relationship_count": len(relational_catalog["relationships"]),
-                "primary_file": primary_relative_path,
-            },
-        )
-        supporting_tables = store_benchmark_supporting_table_artifacts(
-            db,
-            store=store,
-            project_id=project_id,
-            benchmark=benchmark,
-            root=root,
-            primary_file=primary_file,
-            relational_catalog_artifact=relational_catalog_artifact,
-        )
-        create_lineage_edge(
-            db,
-            project_id=project_id,
-            from_asset_type="artifact",
-            from_asset_id=import_manifest_artifact.id,
-            to_asset_type="dataset_snapshot",
-            to_asset_id=dataset.id,
-            relation_type="describes_source",
-        )
-        create_lineage_edge(
-            db,
-            project_id=project_id,
-            from_asset_type="dataset_snapshot",
-            from_asset_id=dataset.id,
-            to_asset_type="artifact",
-            to_asset_id=relational_catalog_artifact.id,
-            relation_type="profiles_table_bundle",
-        )
-        create_lineage_edge(
-            db,
-            project_id=project_id,
-            from_asset_type="artifact",
-            from_asset_id=import_manifest_artifact.id,
-            to_asset_type="artifact",
-            to_asset_id=relational_catalog_artifact.id,
-            relation_type="summarizes_bundle",
-        )
-        project.current_phase = "UNDERSTANDING_REVIEW"
-        project.updated_at = utc_now()
-        mark_job_succeeded(
-            job,
-            {
-                "benchmark_id": benchmark_id,
-                "dataset_snapshot_id": dataset.id,
-                "artifact_id": dataset_artifact.id,
-                "import_manifest_artifact_id": import_manifest_artifact.id,
-                "relational_catalog_artifact_id": relational_catalog_artifact.id,
-                "primary_file": primary_relative_path,
-                "target_column": effective_target,
-                "table_count": relational_catalog["table_count"],
-                "relationship_count": len(relational_catalog["relationships"]),
-                "supporting_table_artifact_ids": [artifact.id for artifact in supporting_tables.artifacts],
-                "skipped_supporting_tables": supporting_tables.skipped,
-            },
-        )
-    except Exception as exc:
-        mark_job_failed(job, str(exc))
-        raise
-
-    benchmark_payload = benchmark_to_dict(benchmark, settings=settings, include_status=True)
-    benchmark_payload["local_status"] = local_status
-    return {
-        "benchmark": benchmark_payload,
-        "dataset_snapshot": dataset_to_dict(dataset),
-        "artifact": artifact_to_dict(dataset_artifact),
-        "import_manifest_artifact": artifact_to_dict(import_manifest_artifact),
-        "relational_catalog_artifact": artifact_to_dict(relational_catalog_artifact),
-        "supporting_table_artifacts": [artifact_to_dict(artifact) for artifact in supporting_tables.artifacts],
-        "skipped_supporting_tables": supporting_tables.skipped,
-        "profile_job_id": job.id,
-        "primary_file": primary_relative_path,
-    }
+    return job_to_dict(job)
 
 
 @router.post("/api/projects/{project_id}/benchmarks/{benchmark_id}/scenario-pack", response_model=JobRead)
@@ -2964,150 +2772,29 @@ def run_benchmark_fixture_smoke(
     payload: BenchmarkFixtureRequest,
     request: Request,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    require_project(db, project_id)
+    try:
+        raw_benchmark_dataset(benchmark_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Benchmark dataset not found") from exc
     job = create_job(
         db,
         job_type="run_benchmark_fixture_smoke",
         project_id=project_id,
-        input_payload={"benchmark_id": benchmark_id, "overwrite": payload.overwrite},
+        input_payload={
+            "benchmark_id": benchmark_id,
+            "overwrite": payload.overwrite,
+            "data_dir": str(request.app.state.settings.data_dir),
+            "artifact_root": str(request.app.state.settings.artifact_root),
+        },
         policy={
+            "execution": "queued_worker",
             "secret_access": "forbidden",
             "connector_credentials": "not_materialized",
             "external_download": "not_required_for_fixture",
         },
     )
-    try:
-        mark_job_running(job)
-        fixture = generate_benchmark_fixture(
-            request.app.state.settings,
-            benchmark_id,
-            overwrite=payload.overwrite,
-        )
-        if not fixture["fixture_matches_expected"]:
-            raise ValueError(
-                "Existing benchmark files do not match the Tablex fixture. "
-                "Use overwrite=true to replace fixture files, or run normal benchmark import manually."
-            )
-        import_result = import_benchmark_dataset(
-            project_id,
-            benchmark_id,
-            BenchmarkImportRequest(target_column=None),
-            request,
-            db,
-            store,
-        )
-        dataset_id = import_result["dataset_snapshot"]["id"]
-        dataset = db.get(DatasetSnapshot, dataset_id)
-        if dataset is None:
-            raise ValueError("Fixture import did not produce a DatasetSnapshot")
-        quality = analyze_dataset_quality(db, store=store, project=project, dataset=dataset)
-        candidates = create_default_evaluation_candidates(db, store=store, project=project, dataset=dataset)
-        comparison_artifact = create_evaluation_scenario_comparison(
-            db,
-            store=store,
-            project=project,
-            dataset=dataset,
-            candidates=list(candidates),
-        )
-        primary_candidate = next((item for item in candidates if item.status == "primary_candidate"), candidates[0])
-        spec = promote_candidate_to_spec(db, store=store, candidate=primary_candidate)
-        review = create_evaluation_approval_review(db, store=store, spec=spec, approval_intent=True)
-        if review.blocked:
-            raise ValueError("Fixture EvaluationSpec approval was blocked")
-        approve_spec(spec)
-        approved_artifact = write_spec_artifact(db, store, spec)
-        create_lineage_edge(
-            db,
-            project_id=spec.project_id,
-            from_asset_type="artifact",
-            from_asset_id=review.artifact.id,
-            to_asset_type="evaluation_spec",
-            to_asset_id=spec.id,
-            relation_type="supports_approval",
-        )
-        create_lineage_edge(
-            db,
-            project_id=spec.project_id,
-            from_asset_type="evaluation_spec",
-            from_asset_id=spec.id,
-            to_asset_type="artifact",
-            to_asset_id=approved_artifact.id,
-            relation_type="produces",
-        )
-        split = generate_split_manifest(db, store=store, spec=spec)
-        strategy = create_baseline_strategy_plan(
-            db,
-            store=store,
-            project=project,
-            evaluation_spec=spec,
-            split_manifest=split,
-        )
-        research_plan = create_research_plan(
-            db,
-            store=store,
-            project=project,
-            dataset=dataset,
-            evaluation_spec=spec,
-        )
-        supporting_artifact_ids = [item["id"] for item in import_result.get("supporting_table_artifacts", [])]
-        supporting_artifacts = (
-            list(db.scalars(select(Artifact).where(Artifact.id.in_(supporting_artifact_ids))).all())
-            if supporting_artifact_ids
-            else []
-        )
-        scenario = create_benchmark_scenario_pack(
-            db,
-            store=store,
-            project=project,
-            benchmark=raw_benchmark_dataset(benchmark_id),
-            local_status=fixture["local_status"],
-            fixture=fixture,
-            dataset=dataset,
-            supporting_table_artifacts=supporting_artifacts,
-            skipped_supporting_tables=import_result.get("skipped_supporting_tables", []),
-        )
-        artifact_ids = [
-            import_result["artifact"]["id"],
-            import_result["import_manifest_artifact"]["id"],
-            import_result["relational_catalog_artifact"]["id"],
-            *supporting_artifact_ids,
-            *quality.artifact_ids,
-            comparison_artifact.id,
-            review.artifact.id,
-            approved_artifact.id,
-            split.artifact_id,
-            strategy.artifact.id,
-            research_plan.artifact.id,
-            scenario.pack_artifact.id,
-            scenario.report_artifact.id,
-        ]
-        mark_job_succeeded(
-            job,
-            {
-                "benchmark_id": benchmark_id,
-                "fixture": fixture,
-                "dataset_snapshot_id": dataset.id,
-                "quality_gate": quality.gate,
-                "evaluation_candidate_ids": [candidate.id for candidate in candidates],
-                "evaluation_scenario_comparison_artifact_id": comparison_artifact.id,
-                "evaluation_spec_id": spec.id,
-                "approval_review_artifact_id": review.artifact.id,
-                "split_manifest_id": split.id,
-                "baseline_strategy_plan_artifact_id": strategy.artifact.id,
-                "research_plan_artifact_id": research_plan.artifact.id,
-                "benchmark_scenario_pack_artifact_id": scenario.pack_artifact.id,
-                "benchmark_scenario_report_artifact_id": scenario.report_artifact.id,
-                "artifact_ids": artifact_ids,
-            },
-        )
-    except HTTPException as exc:
-        mark_job_failed(job, str(exc.detail))
-        raise
-    except Exception as exc:
-        mark_job_failed(job, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job_to_dict(job)
 
 
