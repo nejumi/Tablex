@@ -1464,6 +1464,29 @@ def test_health_aliases_are_public_when_auth_is_enabled(tmp_path: Path) -> None:
     assert client.get("/api/projects").status_code == 401
 
 
+def test_admin_storage_usage_api_returns_categories(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    response = client.get("/api/admin/storage/usage")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "storage_usage.v1"
+    assert set(payload["categories"]) == {"datasets", "artifacts", "workspaces", "pipeline_envs", "marimo", "db"}
+
+
+def test_admin_storage_gc_api_registers_dry_run_report(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    response = client.post("/api/admin/storage/gc")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "artifact_gc_plan.v1"
+    assert payload["dry_run"] is True
+    assert isinstance(payload["report_artifact_id"], str)
+
+
 def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -> None:
     settings = Settings(
         app_display_name="Tablex",

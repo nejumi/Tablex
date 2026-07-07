@@ -109,6 +109,12 @@ type AvatarCandidateJobOutput = {
   candidates?: AvatarCandidate[];
 };
 
+type StorageUsage = {
+  schema_version: string;
+  total_bytes: number;
+  categories: Record<string, number>;
+};
+
 const userSettingsStorageKey = "tablex.userSettings.v1";
 const dynamicLocaleStorageKey = "tablex.dynamicLocalePacks.v1";
 
@@ -1613,6 +1619,9 @@ function UserSettingsPanel({
   const [avatarStatus, setAvatarStatus] = React.useState<string | null>(null);
   const [avatarStartedAt, setAvatarStartedAt] = React.useState<number | null>(null);
   const [avatarElapsedSeconds, setAvatarElapsedSeconds] = React.useState(0);
+  const [storageUsage, setStorageUsage] = React.useState<StorageUsage | null>(null);
+  const [storageBusy, setStorageBusy] = React.useState(false);
+  const [storageStatus, setStorageStatus] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (!avatarBusy || avatarStartedAt === null) return undefined;
@@ -1622,10 +1631,26 @@ function UserSettingsPanel({
     return () => window.clearInterval(handle);
   }, [avatarBusy, avatarStartedAt]);
 
+  React.useEffect(() => {
+    void loadStorageUsage();
+  }, []);
+
   function update(patch: Partial<UserSettings>) {
     setLocaleStatus(null);
     setAvatarStatus(null);
     onChange({ ...settings, ...patch });
+  }
+
+  async function loadStorageUsage() {
+    setStorageBusy(true);
+    setStorageStatus(null);
+    try {
+      setStorageUsage(await api<StorageUsage>("/api/admin/storage/usage"));
+    } catch (err) {
+      setStorageStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStorageBusy(false);
+    }
   }
 
   function addDynamicLocale() {
@@ -1787,6 +1812,24 @@ function UserSettingsPanel({
           <span>{text.showDetailedTabs}</span>
         </label>
         <p className="settings-hint">{text.showDetailedTabsHint}</p>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-label-row">
+          <span>{text.storageUsage}</span>
+          <strong>{storageUsage ? formatBytes(storageUsage.total_bytes) : "-"}</strong>
+        </div>
+        <div className="metric-grid compact">
+          {["datasets", "artifacts", "workspaces", "pipeline_envs", "marimo", "db"].map((key) => (
+            <Metric key={key} label={storageCategoryLabel(key, text)} value={formatBytes(storageUsage?.categories[key] ?? null)} />
+          ))}
+        </div>
+        <button className="secondary-button" disabled={storageBusy} onClick={() => void loadStorageUsage()} type="button">
+          {storageBusy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+          {text.storageUsageRefresh}
+        </button>
+        <p className="settings-hint">{text.storageUsageHint}</p>
+        {storageStatus ? <div className="settings-status">{storageStatus}</div> : null}
       </div>
 
       <div className="settings-section">
@@ -12041,6 +12084,16 @@ function formatBytes(value: number | null) {
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
   return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function storageCategoryLabel(key: string, text: LocaleMessages) {
+  if (key === "datasets") return text.storageDatasets;
+  if (key === "artifacts") return text.storageArtifacts;
+  if (key === "workspaces") return text.storageWorkspaces;
+  if (key === "pipeline_envs") return text.storagePipelineEnvs;
+  if (key === "marimo") return text.storageMarimo;
+  if (key === "db") return text.storageDb;
+  return key;
 }
 
 function formatCompactCount(value: number) {

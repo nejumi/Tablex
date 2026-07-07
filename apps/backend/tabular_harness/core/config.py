@@ -29,6 +29,7 @@ class Settings:
     agent_session_web_search_enabled: bool = True
     notebook_data_copy_max_bytes: int = 128 * 1024 * 1024
     marimo_max_sessions: int = 4
+    artifact_version_retention: int = 5
     local_worker_enabled: bool = True
     local_worker_interval_seconds: float = 1.0
     local_worker_max_jobs_per_wake: int = 3
@@ -67,6 +68,7 @@ def get_settings() -> Settings:
         agent_session_web_search_enabled=bool_env("TABLEX_AGENT_SESSION_WEB_SEARCH_ENABLED", True),
         notebook_data_copy_max_bytes=int(os.getenv("TABLEX_NOTEBOOK_DATA_COPY_MAX_BYTES", str(128 * 1024 * 1024))),
         marimo_max_sessions=int(os.getenv("TABLEX_MARIMO_MAX_SESSIONS", "4")),
+        artifact_version_retention=int(os.getenv("TABLEX_ARTIFACT_VERSION_RETENTION", "5")),
         local_worker_enabled=bool_env("TABLEX_LOCAL_WORKER_ENABLED", True),
         local_worker_interval_seconds=float(os.getenv("TABLEX_LOCAL_WORKER_INTERVAL_SECONDS", "1.0")),
         local_worker_max_jobs_per_wake=int(os.getenv("TABLEX_LOCAL_WORKER_MAX_JOBS_PER_WAKE", "3")),

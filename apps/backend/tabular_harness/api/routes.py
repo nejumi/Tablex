@@ -17,9 +17,10 @@ import tempfile
 import threading
 import time
 import zipfile
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, Callable, cast
+from typing import Annotated, Any, cast
 
 import httpx
 import websockets
@@ -36,10 +37,10 @@ from fastapi import (
     WebSocket,
 )
 from fastapi.responses import FileResponse, HTMLResponse
-from starlette.background import BackgroundTask
 from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.background import BackgroundTask
 
 from tabular_harness.api.deps import get_artifact_store, get_session
 from tabular_harness.core.config import get_settings
@@ -163,10 +164,12 @@ from tabular_harness.services.adaptive_strategy import (
     build_adaptive_strategy_brief,
 )
 from tabular_harness.services.agent_chat_status import agent_chat_wait_state
+from tabular_harness.services.agent_requests.data import (
+    record_user_confirmed_task_spec_for_project_edit,
+)
 from tabular_harness.services.agent_session_results import (
     experiment_model_id_from_params,
     experiment_result_signature,
-    reconcile_project_experiment_chat_links,
 )
 from tabular_harness.services.agent_sessions import (
     active_main_session,
@@ -183,9 +186,6 @@ from tabular_harness.services.agent_sessions import (
     notebook_artifact_has_declared_context,
     raw_codex_stderr_path,
     raw_codex_transcript_path,
-    reconcile_project_notebook_chat_links,
-    reconcile_project_notebook_context_requests,
-    reconcile_project_notebook_quality_requests,
     run_main_agent_session_supervisor,
     session_to_dict,
     start_main_agent_session_supervisor_thread,
@@ -195,7 +195,6 @@ from tabular_harness.services.agent_sessions import (
     transcript_event_to_dict,
     write_notebook_runtime_failure_to_workspace_inbox,
 )
-from tabular_harness.services.agent_requests.data import record_user_confirmed_task_spec_for_project_edit
 from tabular_harness.services.agent_task_results import list_agent_task_result_summaries
 from tabular_harness.services.analysis_notebooks import (
     build_project_analysis_story,
@@ -299,6 +298,8 @@ from tabular_harness.services.metric_preferences import (
 )
 from tabular_harness.services.model_diagnostics_artifacts import (
     artifact_ref as model_diagnostics_artifact_ref,
+)
+from tabular_harness.services.model_diagnostics_artifacts import (
     latest_run_artifact,
     load_json_artifact,
 )
@@ -335,6 +336,7 @@ from tabular_harness.services.research_plans import (
     set_research_plan_current_work,
 )
 from tabular_harness.services.result_readout import build_result_readout
+from tabular_harness.services.storage_management import artifact_gc_plan, storage_usage_report
 from tabular_harness.worker.jobs import create_default_worker
 
 router = APIRouter()
@@ -503,6 +505,42 @@ def app_config(request: Request) -> dict[str, Any]:
         "api_agent_session_supervisor_enabled": bool(settings.api_agent_session_supervisor_enabled),
         "local_worker_enabled": bool(settings.local_worker_enabled),
     }
+
+
+@router.get("/api/admin/storage/usage")
+def admin_storage_usage(
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    return storage_usage_report(request.app.state.settings, db)
+
+
+@router.post("/api/admin/storage/gc")
+def admin_storage_gc(
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+    dry_run: bool = Query(default=True),
+    retention: int | None = Query(default=None, ge=1, le=100),
+) -> dict[str, Any]:
+    plan = artifact_gc_plan(db, settings=request.app.state.settings, dry_run=dry_run, retention=retention)
+    report_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=None,
+        asset_type="storage_gc_report",
+        name="storage_gc_report",
+        filename="storage_gc_report.json",
+        payload=plan,
+        metadata={
+            "source": "admin_storage_gc",
+            "dry_run": dry_run,
+            "retention": plan["retention"],
+        },
+        created_by="tablex",
+    )
+    db.commit()
+    return {**plan, "report_artifact_id": report_artifact.id}
 
 
 @router.get("/api/auth/status", response_model=AuthStatusRead)
@@ -5641,7 +5679,7 @@ def group_notebook_update_turns(
         for action in turn.get("actions") if isinstance(turn.get("actions"), list) else []:
             if not isinstance(action, dict):
                 continue
-            action_key = str(action.get("artifact_id") or action.get("label") or len(actions))
+            action_key = str(action.get("artifact_id") or action.get("label") or len(action_order))
             if action_key not in seen_action_keys:
                 seen_action_keys.add(action_key)
                 action_order.append(action_key)

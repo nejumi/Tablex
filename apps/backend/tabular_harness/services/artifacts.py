@@ -187,6 +187,20 @@ def register_artifact(
     org_id: str = "local-org",
     created_by: str | None = None,
 ) -> Artifact:
+    existing = db.scalar(
+        select(Artifact)
+        .where(
+            Artifact.org_id == org_id,
+            Artifact.project_id == project_id,
+            Artifact.asset_type == asset_type,
+            Artifact.name == name,
+            Artifact.content_hash == content_hash,
+        )
+        .order_by(Artifact.version.desc())
+        .limit(1)
+    )
+    if existing is not None:
+        return existing
     artifact = Artifact(
         id=new_id("art"),
         org_id=org_id,
