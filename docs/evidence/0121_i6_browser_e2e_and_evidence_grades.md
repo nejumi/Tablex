@@ -118,9 +118,12 @@ Static checks:
 
 ```bash
 .venv/bin/python -m py_compile apps/frontend/e2e/seed_golden_slice.py
+.venv/bin/python -m py_compile apps/frontend/e2e/seed_live_pilot_materials.py
 .venv/bin/ruff check apps/frontend/e2e/seed_golden_slice.py
+.venv/bin/ruff check apps/frontend/e2e/seed_live_pilot_materials.py
 node --check apps/frontend/e2e/golden_slice_smoke.mjs
-(cd apps/frontend && npm exec eslint -- src/components/AgentActivityRail.tsx e2e/golden_slice_smoke.mjs --max-warnings=0)
+node --check apps/frontend/e2e/live_full_auto_research_pilot_smoke.mjs
+(cd apps/frontend && npm exec eslint -- src/components/AgentActivityRail.tsx e2e/golden_slice_smoke.mjs e2e/live_full_auto_research_pilot_smoke.mjs --max-warnings=0)
 npm --prefix apps/frontend run build
 ```
 
