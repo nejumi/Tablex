@@ -610,42 +610,6 @@ function isNativeNotebookSourceAssetType(assetType: string): boolean {
   return assetType === "analysis_notebook" || assetType === "marimo_notebook";
 }
 
-function isStaticNotebookHtmlAssetType(assetType: string): boolean {
-  return assetType === "notebook_html" || assetType === "notebook_execution_html" || assetType === "notebook_evidence_html";
-}
-
-function isNotebookSupportingAssetType(assetType: string): boolean {
-  return [
-    "notebook_run_manifest",
-    "notebook_report",
-    "notebook_execution_plan",
-    "notebook_figure_manifest",
-    "notebook_evidence_bundle",
-    "notebook_evidence_svg"
-  ].includes(assetType);
-}
-
-function isAgentSupportingRecordAssetType(assetType: string): boolean {
-  return [
-    "agent_chat_turn",
-    "agent_session_transcript",
-    "agent_session_log",
-    "agent_task_contract"
-  ].includes(assetType);
-}
-
-function isProjectAssetPrimaryRow(artifact: Artifact): boolean {
-  if (artifact.surface_role) {
-    return artifact.surface_role === "primary";
-  }
-  return (
-    !isStaticNotebookHtmlAssetType(artifact.asset_type) &&
-    !isNativeNotebookSourceAssetType(artifact.asset_type) &&
-    !isNotebookSupportingAssetType(artifact.asset_type) &&
-    !isAgentSupportingRecordAssetType(artifact.asset_type)
-  );
-}
-
 function notebookLinkedContext(output: Record<string, unknown>): string {
   const datasetId = textField(output.dataset_snapshot_id);
   const runId = textField(output.run_id);
@@ -3245,6 +3209,7 @@ function ProjectDetail({
           modelVersions={modelVersions}
           validationsByModelVersion={validationsByModelVersion}
           notebookIndex={notebookIndex}
+          researchPlanTimeline={researchPlanTimeline}
           libraryAssets={libraryAssets}
           projectAssetReferences={projectAssetReferences}
           previewRequest={artifactPreviewRequest}
@@ -4169,6 +4134,8 @@ function researchPlanEvidenceLinks(
       const action = researchPlanArtifactLinkAction(artifact, notebookIndex, onNavigateToTarget, onOpenArtifact);
       links.push({
         id: `${block.id}:attached_artifact:${artifact.id || artifact.artifact_id || artifact.run_id || index}`,
+        artifactId: artifact.artifact_id ?? null,
+        outputKind: researchPlanArtifactLinkKind(artifact),
         title: researchPlanArtifactLinkTitle(artifact, text),
         detail: researchPlanArtifactLinkDetail(artifact),
         evidence: researchPlanArtifactLinkEvidence(artifact),
@@ -4226,6 +4193,17 @@ function researchPlanArtifactLinkIsNotebook(link: ResearchPlanArtifactLink) {
 
 function researchPlanArtifactLinkIsRun(link: ResearchPlanArtifactLink) {
   return link.link_type === "experiment_run" || Boolean(link.run_id) || link.asset_type === "experiment_run";
+}
+
+function researchPlanArtifactLinkKind(link: ResearchPlanArtifactLink): ResearchPlanEvidenceLinkItem["outputKind"] {
+  const assetType = (link.asset_type ?? "").toLowerCase();
+  if (researchPlanArtifactLinkIsNotebook(link)) return "notebook";
+  if (researchPlanArtifactLinkIsRun(link)) return "run";
+  const category = assetCategoryForAssetType(assetType);
+  if (category === "model_prediction") return "pipeline";
+  if (category === "research") return "research";
+  if (category === "reports") return "report";
+  return "artifact";
 }
 
 function researchPlanArtifactLinkTitle(link: ResearchPlanArtifactLink, text: LocaleMessages) {
@@ -11321,6 +11299,99 @@ function formatStrategyArtifact(artifact: Artifact) {
   return parts.length ? parts.join(" / ") : "-";
 }
 
+type AssetCategoryKey = "notebooks" | "reports" | "model_prediction" | "research" | "data" | "plans_records" | "other";
+
+const assetTypeCategoryMap: Record<string, AssetCategoryKey> = {
+  analysis_notebook: "notebooks",
+  marimo_notebook: "notebooks",
+  notebook_authoring_brief: "notebooks",
+  notebook_evidence_bundle: "notebooks",
+  notebook_evidence_svg: "notebooks",
+  notebook_execution_plan: "notebooks",
+  notebook_figure_manifest: "notebooks",
+  notebook_quality_manifest: "notebooks",
+  notebook_report: "notebooks",
+  notebook_run_manifest: "notebooks",
+  decision_dashboard: "reports",
+  decision_report: "reports",
+  report: "reports",
+  run_report: "reports",
+  agent_task_report: "reports",
+  understanding_report: "reports",
+  model_diagnostics_artifact_report: "reports",
+  feature_importance: "model_prediction",
+  permutation_importance: "model_prediction",
+  model_diagnostics_artifact_pack: "model_prediction",
+  prediction_pipeline: "model_prediction",
+  pilot_prediction_batch: "model_prediction",
+  pilot_outcome_batch: "model_prediction",
+  pilot_scoring_report: "model_prediction",
+  pilot_validation_audit: "model_prediction",
+  research_findings_report: "research",
+  source_citation_manifest: "research",
+  citation_audit_report: "research",
+  research_plan: "plans_records",
+  research_plan_revision: "plans_records",
+  agent_context_pack: "plans_records",
+  agent_task_contract: "plans_records",
+  split_manifest: "plans_records",
+  evaluation_spec: "plans_records",
+  evaluation_candidate: "plans_records",
+  dataset_snapshot: "data",
+  uploaded_supporting_table: "data",
+  uploaded_table: "data",
+  upload_staging_file: "data",
+  relational_catalog: "data",
+  relational_schema_hint_upload: "data",
+  relational_table_bundle_manifest: "data",
+  semantic_catalog: "data",
+  eda_profile: "data"
+};
+
+const assetCategoryOrder: Array<AssetCategoryKey | "all"> = [
+  "all",
+  "notebooks",
+  "reports",
+  "model_prediction",
+  "research",
+  "data",
+  "plans_records",
+  "other"
+];
+
+function assetCategoryForArtifact(artifact: Artifact): AssetCategoryKey {
+  return assetCategoryForAssetType(artifact.asset_type);
+}
+
+function assetCategoryForAssetType(assetType: string): AssetCategoryKey {
+  return assetTypeCategoryMap[assetType] ?? "other";
+}
+
+function assetResearchPlanNodeIds(artifact: Artifact, timeline: ResearchPlanTimelineResponse | null): Set<string> {
+  const nodeIds = new Set<string>();
+  for (const key of ["research_plan_node_id", "plan_node_id", "node_id"]) {
+    const value = artifact.metadata[key];
+    if (typeof value === "string" && value.trim()) nodeIds.add(value.trim());
+  }
+  for (const block of timeline?.blocks ?? []) {
+    for (const link of block.attached_artifacts ?? []) {
+      if (link.artifact_id === artifact.id) nodeIds.add(block.id);
+    }
+  }
+  return nodeIds;
+}
+
+function assetCategoryLabel(key: AssetCategoryKey | "all", text: LocaleMessages) {
+  if (key === "all") return text.assetCategoryAll;
+  if (key === "notebooks") return text.assetCategoryNotebooks;
+  if (key === "reports") return text.assetCategoryReports;
+  if (key === "model_prediction") return text.assetCategoryModelPrediction;
+  if (key === "research") return text.assetCategoryResearch;
+  if (key === "data") return text.assetCategoryData;
+  if (key === "plans_records") return text.assetCategoryPlansRecords;
+  return text.assetCategoryOther;
+}
+
 function formatContractModes(idea: Idea) {
   const inputs = idea.agent_task_contract.inputs;
   if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) return "-";
@@ -11400,6 +11471,7 @@ function AssetsTab({
   modelVersions,
   validationsByModelVersion,
   notebookIndex,
+  researchPlanTimeline,
   libraryAssets,
   projectAssetReferences,
   previewRequest,
@@ -11415,6 +11487,7 @@ function AssetsTab({
   modelVersions: ModelVersion[];
   validationsByModelVersion: Record<string, ModelValidation[]>;
   notebookIndex: NotebookIndex | null;
+  researchPlanTimeline: ResearchPlanTimelineResponse | null;
   libraryAssets: LibraryAsset[];
   projectAssetReferences: AssetReference[];
   previewRequest: ArtifactPreviewRequest | null;
@@ -11428,15 +11501,34 @@ function AssetsTab({
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
+  const [assetSearch, setAssetSearch] = React.useState("");
+  const [assetCategoryFilter, setAssetCategoryFilter] = React.useState<AssetCategoryKey | "all">("all");
+  const [assetPlanFilter, setAssetPlanFilter] = React.useState("all");
   const validationRows = modelVersions.flatMap((modelVersion) =>
     (validationsByModelVersion[modelVersion.id] ?? []).map((validation) => ({
       modelVersion,
       validation
     }))
   );
-  const projectArtifactRows = artifacts.filter(isProjectAssetPrimaryRow);
-  const supportingArtifactRows = artifacts.filter((artifact) => !isProjectAssetPrimaryRow(artifact));
   const notebookItems = React.useMemo(() => preferredNotebookItems(notebookIndex), [notebookIndex]);
+  const planNodeOptions = React.useMemo(() => researchPlanTimeline?.blocks ?? [], [researchPlanTimeline]);
+  const visibleArtifactRows = React.useMemo(
+    () =>
+      artifacts.filter((artifact) => {
+        const category = assetCategoryForArtifact(artifact);
+        const matchesCategory = assetCategoryFilter === "all" || category === assetCategoryFilter;
+        const query = assetSearch.trim().toLowerCase();
+        const matchesSearch =
+          !query ||
+          artifact.name.toLowerCase().includes(query) ||
+          artifact.asset_type.toLowerCase().includes(query) ||
+          artifact.id.toLowerCase().includes(query);
+        const nodeIds = assetResearchPlanNodeIds(artifact, researchPlanTimeline);
+        const matchesPlan = assetPlanFilter === "all" || nodeIds.has(assetPlanFilter);
+        return matchesCategory && matchesSearch && matchesPlan;
+      }),
+    [artifacts, assetCategoryFilter, assetPlanFilter, assetSearch, researchPlanTimeline]
+  );
   const handledPreviewRequestRef = React.useRef<number | null>(null);
 
   async function loadPreview(artifactId: string) {
@@ -11565,23 +11657,64 @@ function AssetsTab({
         )}
       </Panel>
       <Panel title={text.projectAssetsTitle} icon={<Library size={18} />}>
-        {projectArtifactRows.length ? (
+        <div className="asset-inventory-controls">
+          <label>
+            <span>{text.assetSearchLabel}</span>
+            <input
+              value={assetSearch}
+              onChange={(event) => setAssetSearch(event.target.value)}
+              placeholder={text.assetSearchPlaceholder}
+            />
+          </label>
+          <label>
+            <span>{text.assetCategoryFilter}</span>
+            <select
+              value={assetCategoryFilter}
+              onChange={(event) => setAssetCategoryFilter(event.target.value as AssetCategoryKey | "all")}
+            >
+              {assetCategoryOrder.map((key) => (
+                <option key={key} value={key}>
+                  {assetCategoryLabel(key, text)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>{text.assetPlanNodeFilter}</span>
+            <select value={assetPlanFilter} onChange={(event) => setAssetPlanFilter(event.target.value)}>
+              <option value="all">{text.assetPlanNodeAll}</option>
+              {planNodeOptions.map((block) => (
+                <option key={block.id} value={block.id}>
+                  {block.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="badge muted">{visibleArtifactRows.length} / {artifacts.length}</span>
+        </div>
+        {visibleArtifactRows.length ? (
           <Table
             headers={[
+              text.assetCategoryTable,
               text.artifactTableType,
               text.artifactTableName,
               text.artifactTableVersion,
               text.artifactTableSize,
               text.artifactTableActions
             ]}
-            rows={projectArtifactRows.map((artifact) => {
+            rows={visibleArtifactRows.slice(0, 160).map((artifact) => {
               const linkedNotebook = preferredNotebookForArtifact(notebookIndex, artifact.id);
+              const planNodeIds = Array.from(assetResearchPlanNodeIds(artifact, researchPlanTimeline));
               return [
+                assetCategoryLabel(assetCategoryForArtifact(artifact), text),
                 <div className="cell-stack" key={`${artifact.id}-type`}>
                   <span>{artifact.asset_type}</span>
+                  {planNodeIds.length ? <small>{planNodeIds.slice(0, 2).join(", ")}</small> : null}
+                </div>,
+                <div className="cell-stack" key={`${artifact.id}-name`}>
+                  <span>{artifact.name}</span>
                   {linkedNotebook ? <small>{text.relatedNotebooks}: {conciseNotebookTitle(linkedNotebook.title)}</small> : null}
                 </div>,
-                artifact.name,
                 `v${artifact.version}`,
                 formatBytes(artifact.size_bytes),
                 <div className="row-actions" key={artifact.id}>
@@ -11616,50 +11749,7 @@ function AssetsTab({
         ) : (
           <EmptyInline text={text.projectAssetsEmpty} />
         )}
-        <details className="supporting-details">
-          <summary>
-            <span>{text.projectAssetSupportingRecords}</span>
-            <small>{supportingArtifactRows.length} · {text.projectAssetSupportingRecordsHint}</small>
-          </summary>
-          <div className="supporting-details-body single-column">
-            {supportingArtifactRows.length ? (
-              <Table
-                headers={[
-                  text.artifactTableType,
-                  text.artifactTableName,
-                  text.artifactTableVersion,
-                  text.artifactTableSize,
-                  text.artifactTableActions
-                ]}
-                rows={supportingArtifactRows.slice(0, 80).map((artifact) => [
-                  artifact.asset_type,
-                  artifact.name,
-                  `v${artifact.version}`,
-                  formatBytes(artifact.size_bytes),
-                  <div className="row-actions" key={artifact.id}>
-                    <button
-                      className="icon-button"
-                      disabled={previewLoadingId === artifact.id}
-                      onClick={() => void loadPreview(artifact.id)}
-                      title={text.previewArtifact}
-                    >
-                      {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-                    </button>
-                    <a
-                      className="icon-link"
-                      href={`${apiBase}/api/artifacts/${artifact.id}/download`}
-                      title={text.downloadArtifact}
-                    >
-                      <Download size={16} />
-                    </a>
-                  </div>
-                ])}
-              />
-            ) : (
-              <EmptyInline text={text.projectAssetSupportingEmpty} />
-            )}
-          </div>
-        </details>
+        {visibleArtifactRows.length > 160 ? <EmptyInline text={text.assetInventoryLimited.replace("{count}", String(visibleArtifactRows.length - 160))} /> : null}
       </Panel>
       <LibraryTab
         project={project}

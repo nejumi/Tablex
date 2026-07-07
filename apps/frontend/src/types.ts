@@ -1126,6 +1126,8 @@ export type ResearchPlanSubtask = {
 
 export type ResearchPlanEvidenceLinkItem = {
   id: string;
+  artifactId?: string | null;
+  outputKind?: "notebook" | "report" | "run" | "pipeline" | "research" | "artifact";
   title: string;
   detail: string;
   evidence: string | null;

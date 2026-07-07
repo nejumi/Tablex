@@ -1242,6 +1242,126 @@ textarea {
   gap: 6px;
 }
 
+.related-outputs-drawer {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--surface-subtle));
+  padding: 8px;
+}
+
+.related-outputs-drawer.compact {
+  max-width: 300px;
+  padding: 6px 8px;
+}
+
+.related-outputs-drawer summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.related-outputs-drawer summary small {
+  border-radius: 999px;
+  background: var(--surface-muted);
+  padding: 1px 7px;
+  color: var(--muted);
+}
+
+.related-output-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.related-output-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 7px;
+}
+
+.related-output-item > button {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.related-output-item > button:not(:disabled) {
+  cursor: pointer;
+}
+
+.related-output-item > button:not(:disabled):hover strong {
+  color: var(--accent-strong);
+}
+
+.related-output-item > button > svg {
+  flex: 0 0 auto;
+  margin-right: 7px;
+  color: var(--accent);
+}
+
+.related-output-item span {
+  display: grid;
+  min-width: 0;
+}
+
+.related-output-item strong,
+.related-output-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.related-output-item strong {
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
+.related-output-item small,
+.related-output-empty,
+.related-output-more {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.related-output-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.asset-inventory-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.8fr) minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.asset-inventory-controls label {
+  display: grid;
+  gap: 4px;
+}
+
+.asset-inventory-controls label span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .research-plan-subtask {
   width: 100%;
   border: 1px solid var(--border);

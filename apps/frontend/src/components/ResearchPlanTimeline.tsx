@@ -2,6 +2,7 @@ import React from "react";
 import { Download } from "lucide-react";
 import type { LocaleMessages } from "../copy";
 import type { Artifact, ResearchPlanBlock, ResearchPlanBlockStatus, ResearchPlanContractValidation, ResearchPlanCurrentWork, ResearchPlanTimelineResponse, TurnState } from "../types";
+import { RelatedOutputsDrawer, type RelatedOutputItem } from "./RelatedOutputsDrawer";
 
 export function ResearchPlanTimeline({
   apiBase,
@@ -135,21 +136,20 @@ export function ResearchPlanTimeline({
             </div>
           ) : null}
           {expandedBlock.evidenceLinks?.length ? (
-            <div className="research-plan-evidence-link-list" aria-label={text.researchPlanDetailEvidence}>
-              {expandedBlock.evidenceLinks.map((link) => (
-                <button
-                  className="research-plan-evidence-link"
-                  disabled={!link.onClick}
-                  key={link.id}
-                  onClick={link.onClick}
-                  type="button"
-                >
-                  <span>{link.title}</span>
-                  <strong>{link.detail}</strong>
-                  {link.evidence ? <small>{link.evidence}</small> : null}
-                </button>
-              ))}
-            </div>
+            <RelatedOutputsDrawer
+              downloadLabel={text.downloadArtifact}
+              emptyText={text.projectAssetsEmpty}
+              items={expandedBlock.evidenceLinks.map((link): RelatedOutputItem => ({
+                id: link.id,
+                kind: link.outputKind ?? "artifact",
+                title: link.title,
+                detail: link.detail,
+                meta: link.evidence,
+                onOpen: link.onClick,
+                downloadUrl: link.artifactId ? `${apiBase}/api/artifacts/${link.artifactId}/download` : null
+              }))}
+              title={text.relatedOutputs}
+            />
           ) : null}
         </div>
       ) : null}

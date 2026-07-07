@@ -1,7 +1,8 @@
 import React from "react";
 import { BarChart3, Download, FileText, ListChecks, Loader2, MessageSquare, PieChart, Plus } from "lucide-react";
 import type { LocaleMessages } from "../copy";
-import { RelatedNotebookArtifactLinks, RelatedNotebookLinks, notebooksForLeaderboardEntry, notebooksForLeaderboardResults } from "./NotebookLinks";
+import { RelatedNotebookLinks, notebooksForLeaderboardEntry, notebooksForLeaderboardResults } from "./NotebookLinks";
+import { RelatedOutputsDrawer, type RelatedOutputItem } from "./RelatedOutputsDrawer";
 import type {
   AgentChatResponse,
   Artifact,
@@ -11,7 +12,6 @@ import type {
   Job,
   LeaderboardEntry,
   NotebookIndex,
-  NotebookIndexItem,
   PilotDeploymentRead,
   PilotScoringReportRead,
   PilotValidationAuditRead,
@@ -156,19 +156,6 @@ function formatDate(value: string | null) {
 function truncateLabel(value: string, length: number) {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length <= length ? normalized : `${normalized.slice(0, Math.max(0, length - 3)).trim()}...`;
-}
-
-function formatBytes(value: number | null) {
-  if (value == null) return "-";
-  if (value < 1024) return `${value} B`;
-  const units = ["KB", "MB", "GB"];
-  let amount = value / 1024;
-  let unitIndex = 0;
-  while (amount >= 1024 && unitIndex < units.length - 1) {
-    amount /= 1024;
-    unitIndex += 1;
-  }
-  return `${amount.toFixed(amount >= 10 ? 1 : 2)} ${units[unitIndex]}`;
 }
 
 function Table({ headers, rows }: { headers: string[]; rows: Array<Array<React.ReactNode>> }) {
@@ -627,23 +614,13 @@ export function LeaderboardTab({
                   <span className={decisionReady ? "badge success" : "badge warning"}>
                     {decisionReady ? text.leaderboardEvidenceReportReady : text.leaderboardEvidenceReportMissing}
                   </span>
-                  {notebooksForLeaderboardEntry(notebookIndex, entry).length ? (
-                    <RelatedNotebookLinks
-                      notebooks={notebooksForLeaderboardEntry(notebookIndex, entry)}
-                      onOpen={onOpenNotebookArtifact}
-                      previewLoadingId={previewLoadingId}
-                      text={text}
-                      compact
-                    />
-                  ) : (
-                    <RelatedNotebookArtifactLinks
-                      artifactIds={entry.related_notebook_artifact_ids ?? []}
-                      onOpen={onOpenNotebookArtifact}
-                      previewLoadingId={previewLoadingId}
-                      text={text}
-                      compact
-                    />
-                  )}
+                  <RelatedOutputsDrawer
+                    compact
+                    downloadLabel={text.downloadArtifact}
+                    emptyText={text.relatedOutputsEmpty}
+                    items={relatedOutputItemsForLeaderboardEntry(entry, notebookIndex, text, onOpenNotebookArtifact, loadPreview)}
+                    title={text.relatedOutputs}
+                  />
                 </div>,
                 <div className="row-actions" key={`${entry.run_id}-actions`}>
                   <button
@@ -846,6 +823,19 @@ const modelDiagnosticCheckLabels: Record<string, string> = {
   shap: "SHAP"
 };
 
+const relatedOutputAssetTypeKindMap: Record<string, RelatedOutputItem["kind"]> = {
+  analysis_notebook: "notebook",
+  marimo_notebook: "notebook",
+  notebook_report: "notebook",
+  model_diagnostics_artifact_report: "report",
+  run_report: "report",
+  feature_importance: "artifact",
+  permutation_importance: "artifact",
+  model_diagnostics_artifact_pack: "artifact",
+  prediction_pipeline: "pipeline",
+  research_findings_report: "research"
+};
+
 function modelDiagnosticsBadgeClass(entry: LeaderboardEntry) {
   const status = entry.model_diagnostics?.status ?? "missing";
   if (status === "ready") return "badge success";
@@ -868,6 +858,97 @@ function modelDiagnosticsChecksLabel(entry: LeaderboardEntry) {
     return `${label}: ${status.replace(/_/g, " ")}`;
   });
   return parts.join(" / ");
+}
+
+function relatedOutputItemsForLeaderboardEntry(
+  entry: LeaderboardEntry,
+  notebookIndex: NotebookIndex | null,
+  text: LocaleMessages,
+  onOpenNotebookArtifact: (artifactId: string) => void,
+  loadPreview: (artifactId: string) => Promise<void>
+): RelatedOutputItem[] {
+  const seen = new Set<string>();
+  const items: RelatedOutputItem[] = [];
+  const add = (item: RelatedOutputItem) => {
+    if (seen.has(item.id)) return;
+    seen.add(item.id);
+    items.push(item);
+  };
+
+  for (const notebook of notebooksForLeaderboardEntry(notebookIndex, entry)) {
+    const artifactId = notebook.artifact_ids.notebook;
+    add({
+      id: `notebook:${artifactId}`,
+      kind: "notebook",
+      title: text.notebookKindModelDiagnostics,
+      detail: notebook.title,
+      meta: notebook.notebook_kind.replace(/_/g, " "),
+      status: notebook.status,
+      onOpen: () => onOpenNotebookArtifact(artifactId),
+      downloadUrl: `${apiBase}/api/artifacts/${artifactId}/download`
+    });
+  }
+
+  for (const relatedNotebook of entry.related_notebooks ?? []) {
+    if (!relatedNotebook.openable || seen.has(`notebook:${relatedNotebook.artifact_id}`)) continue;
+    add({
+      id: `notebook:${relatedNotebook.artifact_id}`,
+      kind: "notebook",
+      title: text.notebookKindModelDiagnostics,
+      detail: relatedNotebook.title ?? relatedNotebook.artifact_id,
+      meta: relatedNotebook.notebook_kind?.replace(/_/g, " ") ?? null,
+      status: relatedNotebook.status ?? relatedNotebook.native_marimo_status ?? null,
+      onOpen: () => onOpenNotebookArtifact(relatedNotebook.artifact_id),
+      downloadUrl: `${apiBase}/api/artifacts/${relatedNotebook.artifact_id}/download`
+    });
+  }
+
+  if (entry.pipeline_artifact_id) {
+    add({
+      id: `pipeline:${entry.pipeline_artifact_id}`,
+      kind: "pipeline",
+      title: text.downloadPipelineBundle,
+      detail: leaderboardEntryModelLabel(entry),
+      meta: entry.pipeline_artifact_id,
+      downloadUrl: `${apiBase}/api/experiment-runs/${entry.run_id}/pipeline-bundle`
+    });
+  }
+
+  for (const [key, ref] of Object.entries(entry.model_diagnostics?.artifact_refs ?? {})) {
+    add({
+      id: `artifact:${ref.artifact_id}`,
+      kind: relatedOutputKindForAssetType(ref.asset_type),
+      title: key.replace(/_/g, " "),
+      detail: ref.name ?? ref.artifact_id,
+      meta: ref.asset_type.replace(/_/g, " "),
+      onOpen: () => void loadPreview(ref.artifact_id),
+      downloadUrl: relatedOutputDownloadUrl(ref.download_url, ref.artifact_id)
+    });
+  }
+
+  for (const [key, check] of Object.entries(entry.model_diagnostics?.standard_checks ?? {})) {
+    if (!check.artifact_id) continue;
+    add({
+      id: `artifact:${check.artifact_id}`,
+      kind: "artifact",
+      title: key.replace(/_/g, " "),
+      detail: check.artifact_id,
+      status: check.status.replace(/_/g, " "),
+      onOpen: () => void loadPreview(check.artifact_id as string),
+      downloadUrl: `${apiBase}/api/artifacts/${check.artifact_id}/download`
+    });
+  }
+
+  return items;
+}
+
+function relatedOutputKindForAssetType(assetType: string): RelatedOutputItem["kind"] {
+  return relatedOutputAssetTypeKindMap[assetType] ?? "artifact";
+}
+
+function relatedOutputDownloadUrl(downloadUrl: string | null | undefined, artifactId: string) {
+  if (downloadUrl) return downloadUrl.startsWith("/api/") ? `${apiBase}${downloadUrl}` : downloadUrl;
+  return `${apiBase}/api/artifacts/${artifactId}/download`;
 }
 
 function pilotDeploymentLabel(deployment: PilotDeploymentRead, artifacts: Artifact[], text: LocaleMessages) {
