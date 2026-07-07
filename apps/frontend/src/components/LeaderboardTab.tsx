@@ -1,6 +1,7 @@
 import React from "react";
 import { BarChart3, Download, FileText, ListChecks, Loader2, MessageSquare, PieChart, Plus } from "lucide-react";
 import type { LocaleMessages } from "../copy";
+import { ArtifactLineagePanel } from "./ArtifactLineagePanel";
 import { RelatedNotebookLinks, notebooksForLeaderboardEntry, notebooksForLeaderboardResults } from "./NotebookLinks";
 import { RelatedOutputsDrawer, type RelatedOutputItem } from "./RelatedOutputsDrawer";
 import type {
@@ -779,6 +780,13 @@ export function LeaderboardTab({
           ) : (
             <EmptyInline text={preview?.reason ?? "Select a run action to inspect its diagnostics, model evidence, notebook evidence, or report."} />
           )}
+          {preview ? (
+            <ArtifactLineagePanel
+              inputs={preview.lineage?.inputs ?? []}
+              outputs={preview.lineage?.outputs ?? []}
+              text={text}
+            />
+          ) : null}
         </Panel>
       ) : null}
     </div>

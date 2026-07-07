@@ -10631,6 +10631,7 @@ def artifact_preview_to_dict(
         "name": artifact.name,
         "filename": path.name,
         "size_bytes": artifact.size_bytes,
+        "lineage": artifact_preview_lineage(db, artifact) if db is not None else {"inputs": [], "outputs": []},
     }
     if artifact.asset_type == "research_findings_report" and suffix == ".json":
         try:
@@ -10744,6 +10745,56 @@ def artifact_preview_to_dict(
         "preview": preview,
         "truncated": truncated,
         "reason": None,
+    }
+
+
+def artifact_preview_lineage(db: Session, artifact: Artifact) -> dict[str, list[dict[str, Any]]]:
+    edges = list(
+        db.scalars(
+            select(LineageEdge)
+            .where(
+                LineageEdge.project_id == artifact.project_id,
+                (
+                    (LineageEdge.to_asset_type == "artifact") & (LineageEdge.to_asset_id == artifact.id)
+                    | ((LineageEdge.from_asset_type == "artifact") & (LineageEdge.from_asset_id == artifact.id))
+                ),
+            )
+            .order_by(LineageEdge.created_at.desc())
+            .limit(30)
+        ).all()
+    )
+    inputs: list[dict[str, Any]] = []
+    outputs: list[dict[str, Any]] = []
+    for edge in edges:
+        if edge.to_asset_type == "artifact" and edge.to_asset_id == artifact.id:
+            inputs.append(artifact_lineage_endpoint_dict(db, edge, direction="input"))
+        elif edge.from_asset_type == "artifact" and edge.from_asset_id == artifact.id:
+            outputs.append(artifact_lineage_endpoint_dict(db, edge, direction="output"))
+    return {"inputs": inputs[:10], "outputs": outputs[:10]}
+
+
+def artifact_lineage_endpoint_dict(db: Session, edge: LineageEdge, *, direction: str) -> dict[str, Any]:
+    if direction == "input":
+        asset_type = edge.from_asset_type
+        asset_id = edge.from_asset_id
+    else:
+        asset_type = edge.to_asset_type
+        asset_id = edge.to_asset_id
+    label = asset_id
+    endpoint_asset_type = asset_type
+    if asset_type == "artifact":
+        linked_artifact = db.get(Artifact, asset_id)
+        if linked_artifact is not None:
+            label = linked_artifact.name
+            endpoint_asset_type = linked_artifact.asset_type
+    return {
+        "edge_id": edge.id,
+        "relation_type": edge.relation_type,
+        "asset_type": asset_type,
+        "asset_id": asset_id,
+        "label": label,
+        "endpoint_asset_type": endpoint_asset_type,
+        "created_at": edge.created_at.isoformat(),
     }
 
 

@@ -4,6 +4,7 @@ import { LocaleContext, useLocale } from "./locale";
 import { ResearchPlanTimeline, primaryResearchPlanFocusBlock, researchPlanBlockRuntimeAwareStatusLabel, researchPlanStatusLabel } from "./components/ResearchPlanTimeline";
 import { AgentChatDock, TurnStateBar, UserAvatar, agentInputFormClassName, turnStateLabel } from "./components/AgentChatDock";
 import { FocusedEvidenceReader, HtmlArtifactPreview, NativeMarimoFrame, TranslatablePreview, VisualArtifactPreview, isHtmlArtifactPreview, isVisualArtifactPreview } from "./components/ArtifactPreview";
+import { ArtifactLineagePanel } from "./components/ArtifactLineagePanel";
 import { AgentActivityRail, hasLiveAgentOrModelActivity, humanizeLabel, jobActiveForActivity, optimisticWorkerEvent, workerEventsFromJob, workerStatusLabel } from "./components/AgentActivityRail";
 import { LeaderboardTab, metricLabel } from "./components/LeaderboardTab";
 import { RawAgentStream } from "./components/RawAgentStream";
@@ -11783,6 +11784,13 @@ function AssetsTab({
         ) : (
           <EmptyInline text="Select an artifact preview action to inspect JSON, Markdown, CSV, or text outputs without leaving the workbench." />
         )}
+        {preview ? (
+          <ArtifactLineagePanel
+            inputs={preview.lineage?.inputs ?? []}
+            outputs={preview.lineage?.outputs ?? []}
+            text={text}
+          />
+        ) : null}
       </Panel>
     </div>
   );

@@ -112,7 +112,21 @@ export type ArtifactPreview = {
   preview: string | null;
   truncated: boolean;
   size_bytes: number | null;
+  lineage?: {
+    inputs?: ArtifactPreviewLineageEdge[];
+    outputs?: ArtifactPreviewLineageEdge[];
+  };
   reason: string | null;
+};
+
+export type ArtifactPreviewLineageEdge = {
+  edge_id: string;
+  relation_type: string;
+  asset_type: string;
+  asset_id: string;
+  label: string;
+  endpoint_asset_type: string;
+  created_at: string;
 };
 
 export type NativeMarimoSession = {

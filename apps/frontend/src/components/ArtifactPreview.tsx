@@ -2,6 +2,7 @@ import React from "react";
 import { FileText, Loader2, Maximize2, MessageSquare, RefreshCw, Search, X } from "lucide-react";
 import { LocaleContext, useLocale } from "../locale";
 import type { ArtifactPreview, EvidenceReaderMetric, Job, NativeMarimoSession, TranslationJobOutput, TranslationResult } from "../types";
+import { ArtifactLineagePanel } from "./ArtifactLineagePanel";
 
 const apiBase = import.meta.env.VITE_API_BASE ?? "";
 
@@ -104,6 +105,7 @@ export function FocusedEvidenceReader({
   previewSourceId?: string;
   boundary: string;
 }) {
+  const { text } = useLocale();
   return (
     <section id={id} className="evidence-reader" aria-label={eyebrow}>
       <div className="evidence-reader-head">
@@ -159,6 +161,13 @@ export function FocusedEvidenceReader({
         ) : (
           <EmptyInline text={preview?.reason ?? previewEmpty} />
         )}
+        {preview ? (
+          <ArtifactLineagePanel
+            inputs={preview.lineage?.inputs ?? []}
+            outputs={preview.lineage?.outputs ?? []}
+            text={text}
+          />
+        ) : null}
       </div>
     </section>
   );

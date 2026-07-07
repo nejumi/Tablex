@@ -1487,6 +1487,82 @@ def test_admin_storage_gc_api_registers_dry_run_report(tmp_path: Path) -> None:
     assert isinstance(payload["report_artifact_id"], str)
 
 
+def test_artifact_preview_includes_one_hop_lineage(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = Project(id="p_preview_lineage", name="Preview lineage")
+        db.add(project)
+        db.flush()
+        source = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project.id,
+            asset_type="dataset_snapshot",
+            name="source_data",
+            filename="source.txt",
+            text="source",
+            metadata={},
+        )
+        target = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project.id,
+            asset_type="model_diagnostics_artifact_report",
+            name="target_report",
+            filename="report.md",
+            text="# report\n",
+            metadata={},
+        )
+        output = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project.id,
+            asset_type="decision_report",
+            name="output_report",
+            filename="decision.md",
+            text="# decision\n",
+            metadata={},
+        )
+        db.add_all(
+            [
+                LineageEdge(
+                    id="lin_preview_input",
+                    project_id=project.id,
+                    from_asset_type="artifact",
+                    from_asset_id=source.id,
+                    to_asset_type="artifact",
+                    to_asset_id=target.id,
+                    relation_type="derived_from",
+                    metadata_json="{}",
+                ),
+                LineageEdge(
+                    id="lin_preview_output",
+                    project_id=project.id,
+                    from_asset_type="artifact",
+                    from_asset_id=target.id,
+                    to_asset_type="artifact",
+                    to_asset_id=output.id,
+                    relation_type="supports",
+                    metadata_json="{}",
+                ),
+            ]
+        )
+        db.commit()
+        source_id = source.id
+        target_id = target.id
+        output_id = output.id
+
+    response = client.get(f"/api/artifacts/{target_id}/preview")
+
+    assert response.status_code == 200
+    lineage = response.json()["lineage"]
+    assert lineage["inputs"][0]["asset_id"] == source_id
+    assert lineage["inputs"][0]["label"] == "source_data"
+    assert lineage["outputs"][0]["asset_id"] == output_id
+    assert lineage["outputs"][0]["endpoint_asset_type"] == "decision_report"
+
+
 def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -> None:
     settings = Settings(
         app_display_name="Tablex",

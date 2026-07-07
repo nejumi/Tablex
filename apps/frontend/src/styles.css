@@ -1343,6 +1343,64 @@ textarea {
   gap: 4px;
 }
 
+.artifact-lineage-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-subtle) 70%, var(--surface));
+  padding: 10px;
+}
+
+.artifact-lineage-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-strong);
+}
+
+.artifact-lineage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.artifact-lineage-list {
+  display: grid;
+  gap: 6px;
+}
+
+.artifact-lineage-list > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.artifact-lineage-edge {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 8px;
+}
+
+.artifact-lineage-edge strong,
+.artifact-lineage-edge small {
+  overflow-wrap: anywhere;
+}
+
+.artifact-lineage-edge strong {
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
+.artifact-lineage-edge small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .asset-inventory-controls {
   display: grid;
   grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.8fr) minmax(180px, 1fr) auto;

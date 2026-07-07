@@ -245,6 +245,7 @@ class ArtifactPreviewRead(BaseModel):
     preview: str | None
     truncated: bool
     size_bytes: int | None
+    lineage: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     reason: str | None = None
 
 

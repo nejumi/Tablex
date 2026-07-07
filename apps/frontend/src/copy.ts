@@ -101,6 +101,9 @@ export const englishMessages = {
   artifactPreviewAvailableTitle: "Open this artifact directly.",
   artifactPreviewAvailableBody: "HTML artifacts are not used as notebook previews. marimo notebooks open through the native marimo action.",
   artifactPreviewInspectSource: "Download source",
+  artifactLineageTitle: "Lineage",
+  artifactLineageInputs: "Built from",
+  artifactLineageOutputs: "Used by",
   projectAssetsTitle: "Project Assets",
   projectAssetsEmpty:
     "Registered datasets, reports, evaluation artifacts, model outputs, and reusable project evidence will appear here.",
@@ -939,6 +942,9 @@ export const japaneseMessages: LocaleMessages = {
   artifactPreviewAvailableTitle: "このartifactを直接開きます。",
   artifactPreviewAvailableBody: "HTML artifactはNotebook previewとして扱いません。marimo Notebookはnative marimoの操作から開きます。",
   artifactPreviewInspectSource: "sourceをdownload",
+  artifactLineageTitle: "来歴",
+  artifactLineageInputs: "元になったもの",
+  artifactLineageOutputs: "これを使ったもの",
   projectAssetsTitle: "成果物",
   projectAssetsEmpty:
     "登録済みデータ、レポート、評価、モデル出力、再利用可能な根拠がここに表示されます。",
