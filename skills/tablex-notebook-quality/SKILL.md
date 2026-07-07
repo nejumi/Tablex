@@ -19,7 +19,7 @@ Write for a human analyst first, while preserving harness-owned evaluation bound
 - Use clear section flow: executive read, EDA quality rubric, data shape, target/profile, feature landscape, evaluation guardrails, model diagnostics, failure analysis, next actions.
 - Prefer a few high-signal plots with interpretation over many disconnected charts.
 - Every important claim should be backed by an artifact, metric, table, plot, or explicit assumption.
-- Include a next-analysis queue for Codex or a human: feature importance, permutation importance, partial dependence, calibration, threshold analysis, slice metrics, residual/error review, and prediction examples when relevant.
+- Include a next-analysis queue for Codex or a human: permutation importance, native feature importance for tree-based models, partial dependence for the most important features, SHAP inspection when the runtime/model supports it, calibration, threshold analysis, slice metrics, residual/error review, and prediction examples when relevant.
 
 ## Quality Rubric
 
@@ -36,7 +36,7 @@ Make these areas explicit in generated notebooks and reports:
 - Leakage and availability: post-outcome fields, duplicate rows/entities, prediction-time availability, temporal leakage.
 - Evaluation guardrails: random/stratified/time/group scenarios, SplitManifest constraints, unresolved assumptions.
 - Feature landscape: numeric, categorical, text, datetime, group/entity, sparse, high-cardinality, and leakage-suspect queues.
-- Model diagnostics: feature importance, permutation importance, PDP, calibration, threshold analysis, slice metrics, residual/error review, prediction examples.
+- Model diagnostics: permutation importance, native feature importance for tree-based models, partial dependence plots for the most important features, SHAP inspection when supported, calibration, threshold analysis, slice metrics, residual/error review, prediction examples.
 
 If evidence is missing, mark the area as missing/deferred and describe the next artifact or runner work needed. Do not pretend a static scaffold is an executed analysis.
 
@@ -54,6 +54,8 @@ If evidence is missing, mark the area as missing/deferred and describe the next 
 - Never read secrets or connector credentials.
 - Never include validation/test targets in feature-generation prompts.
 - Do not destructively modify EvaluationSpec or SplitManifest from notebook code.
-- Register generated source, HTML preview, report, figure manifest, and execution/capture evidence as artifacts.
+- Register the native marimo Python source, report, figure manifest, and execution/capture evidence as artifacts.
+- Do not register static HTML as notebook evidence or preview fallback. If native marimo cannot open the source, surface the runtime failure and repair the notebook source.
 - Make notebook outputs useful inside the Tablex UI: concise headings, metric cards, readable tables, charts with captions, and clear next actions.
 - If `notebook_authoring_brief` is present, read it first. Treat its source cards and sample moves as craft context for Codex, not as deterministic harness sections.
+- For `notebook_kind="model_diagnostics"`, register the notebook with `quality_manifest.model_diagnostics.checks`. Cover `permutation_importance`, `native_feature_importance`, `partial_dependence`, and `shap` using the fixed status vocabulary from Tablex. If a check cannot be run yet, say which model artifact, prediction artifact, dependency, or runtime support is missing instead of omitting the check.

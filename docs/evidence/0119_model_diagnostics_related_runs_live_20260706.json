@@ -1,0 +1,985 @@
+{
+  "records": [
+    {
+      "label": "poll_0",
+      "observed_at": "2026-07-06T12:34:47.657569+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:34:40.391042",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_1",
+      "observed_at": "2026-07-06T12:35:02.660566+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:34:40.391042",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_2",
+      "observed_at": "2026-07-06T12:35:17.663386+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:34:40.391042",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_3",
+      "observed_at": "2026-07-06T12:35:32.666894+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:35:21.149123",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_4",
+      "observed_at": "2026-07-06T12:35:47.671148+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:35:21.149123",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_5",
+      "observed_at": "2026-07-06T12:36:02.675985+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:35:59.528384",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_6",
+      "observed_at": "2026-07-06T12:36:17.680927+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:36:02.783325",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_7",
+      "observed_at": "2026-07-06T12:36:32.685841+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:36:02.783325",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_8",
+      "observed_at": "2026-07-06T12:36:47.690868+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:36:02.783325",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_9",
+      "observed_at": "2026-07-06T12:37:02.695855+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:36:02.783325",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_10",
+      "observed_at": "2026-07-06T12:37:17.700840+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:36:02.783325",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_11",
+      "observed_at": "2026-07-06T12:37:32.705815+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:37:24.879578",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_8734f538ae6e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:24.420494"
+        },
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_12",
+      "observed_at": "2026-07-06T12:37:47.710799+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:37:24.879578",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_8734f538ae6e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:24.420494"
+        },
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_13",
+      "observed_at": "2026-07-06T12:38:02.715830+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:37:54.952880",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_976cb5169a3e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:54.485375"
+        },
+        {
+          "id": "art_8734f538ae6e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:24.420494"
+        },
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_14",
+      "observed_at": "2026-07-06T12:38:17.720810+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:37:54.952880",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_976cb5169a3e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:54.485375"
+        },
+        {
+          "id": "art_8734f538ae6e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:24.420494"
+        },
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_15",
+      "observed_at": "2026-07-06T12:38:32.725827+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:37:54.952880",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_976cb5169a3e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:54.485375"
+        },
+        {
+          "id": "art_8734f538ae6e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:24.420494"
+        },
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_16",
+      "observed_at": "2026-07-06T12:38:47.730938+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:37:54.952880",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_976cb5169a3e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:54.485375"
+        },
+        {
+          "id": "art_8734f538ae6e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:24.420494"
+        },
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_17",
+      "observed_at": "2026-07-06T12:39:02.736006+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:37:54.952880",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_976cb5169a3e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:54.485375"
+        },
+        {
+          "id": "art_8734f538ae6e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:24.420494"
+        },
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_18",
+      "observed_at": "2026-07-06T12:39:17.741019+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:37:54.952880",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_976cb5169a3e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:54.485375"
+        },
+        {
+          "id": "art_8734f538ae6e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:24.420494"
+        },
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_19",
+      "observed_at": "2026-07-06T12:39:32.746007+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "running",
+        "pid": 3924639,
+        "turn_index": 0,
+        "last_error": null,
+        "updated_at": "2026-07-06 12:37:54.952880",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_976cb5169a3e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:54.485375"
+        },
+        {
+          "id": "art_8734f538ae6e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:24.420494"
+        },
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    },
+    {
+      "label": "poll_20",
+      "observed_at": "2026-07-06T12:39:47.751027+00:00",
+      "success": false,
+      "session": {
+        "id": "ags_767d4b6328c6",
+        "status": "between_turns",
+        "pid": null,
+        "turn_index": 0,
+        "last_error": "Codex turn exited with code -15; supervisor will retry in 30s.",
+        "updated_at": "2026-07-06 12:39:41.813101",
+        "ended_at": null
+      },
+      "notebooks": [
+        {
+          "id": "art_976cb5169a3e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:54.485375"
+        },
+        {
+          "id": "art_8734f538ae6e",
+          "kind": "model_diagnostics",
+          "quality_status": null,
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 12:37:24.420494"
+        },
+        {
+          "id": "art_1acc33d92eaf",
+          "kind": "model_diagnostics",
+          "quality_status": "manifest_provided",
+          "run_id": "run_eeac491f6802",
+          "related_run_ids": null,
+          "check_names": [
+            "native_feature_importance",
+            "partial_dependence",
+            "permutation_importance",
+            "shap"
+          ],
+          "created_at": "2026-07-06 12:09:44.209763"
+        },
+        {
+          "id": "art_950d5dc32006",
+          "kind": "data_understanding",
+          "quality_status": "manifest_provided",
+          "run_id": null,
+          "related_run_ids": null,
+          "check_names": [],
+          "created_at": "2026-07-06 11:43:03.205252"
+        }
+      ]
+    }
+  ]
+}

@@ -99,6 +99,7 @@ def profile_tabular_file(
     column_profiles: list[dict[str, Any]] = []
     semantic_columns: list[dict[str, Any]] = []
     leakage_columns: list[str] = []
+    name_based_leakage_hint_columns: list[str] = []
     time_candidates: list[str] = []
     group_candidates: list[str] = []
     deferred_columns: list[dict[str, Any]] = []
@@ -136,12 +137,12 @@ def profile_tabular_file(
             )
         )
         available = "unknown"
-        leakage_suspect = any(hint in lower_name for hint in LEAKAGE_NAME_HINTS)
+        name_based_leakage_hint = any(hint in lower_name for hint in LEAKAGE_NAME_HINTS)
         if name == target_column:
-            leakage_suspect = False
             available = "no"
-        if leakage_suspect:
-            leakage_columns.append(name)
+        if name_based_leakage_hint and name != target_column:
+            name_based_leakage_hint_columns.append(name)
+        leakage_suspect = False
         if semantic_type == "datetime":
             time_candidates.append(name)
         if role == "group":
@@ -162,6 +163,9 @@ def profile_tabular_file(
                 "sample_missing_count": scoped_missing_count if bounded else None,
                 "sample_unique_count": scoped_unique_count if bounded else None,
                 "is_leakage_suspect": leakage_suspect,
+                "name_based_hints": {
+                    "leakage_candidate": name_based_leakage_hint and name != target_column,
+                },
             }
         )
         if bounded:
@@ -185,6 +189,9 @@ def profile_tabular_file(
                 "available_at_prediction_time": available,
                 "pii_level": "unknown",
                 "is_leakage_suspect": leakage_suspect,
+                "name_based_hints": {
+                    "leakage_candidate": name_based_leakage_hint and name != target_column,
+                },
                 "description": None,
                 "confidence": 0.55 if role != "feature" else 0.45,
                 "evidence": [{"type": "schema_inference", "summary": f"{name} inferred from name/type"}],
@@ -210,6 +217,9 @@ def profile_tabular_file(
         "time_candidates": time_candidates,
         "group_candidates": group_candidates,
         "leakage_suspects": leakage_columns,
+        "name_based_hints": {
+            "leakage_candidate_columns": name_based_leakage_hint_columns,
+        },
         "deferred_deep_profile": {
             "recommended": bounded,
             "reason": (
@@ -685,7 +695,9 @@ def render_understanding(
     assumptions: list[dict[str, Any]],
     questions: list[dict[str, Any]],
 ) -> str:
-    leakage = profile["leakage_suspects"] or ["None detected by name heuristic"]
+    name_hints = profile.get("name_based_hints") if isinstance(profile.get("name_based_hints"), dict) else {}
+    hint_columns = name_hints.get("leakage_candidate_columns") if isinstance(name_hints.get("leakage_candidate_columns"), list) else []
+    leakage = profile["leakage_suspects"] or ["None registered as leakage by the harness"]
     target_line = (
         f"Supervised objective column: `{profile['target_column']}`."
         if profile["target_column"]
@@ -742,6 +754,7 @@ def render_understanding(
             "",
             "## Leakage Risks",
             f"Potential leakage columns: {', '.join(leakage)}",
+            f"Name-based availability hints for Codex review: {', '.join(str(item) for item in hint_columns) or 'none'}",
             "",
             "## Prediction Feasibility",
             "Feasibility cannot be finalized until target and prediction-time availability are confirmed.",

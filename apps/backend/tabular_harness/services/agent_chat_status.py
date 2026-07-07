@@ -127,12 +127,26 @@ def agent_chat_wait_state(
     else:
         worker_state = f"job_{status}"
         stale = False
-        assistant_message = (
-            f"返答の状態は {status} です。"
-            if japanese
-            else f"The reply status is {status}."
-        )
-        headline = status.replace("_", " ").title()
+        if status in {"succeeded", "completed"}:
+            assistant_message = "返答を保存しました。" if japanese else "The reply was saved."
+            headline = "返答を保存しました" if japanese else "Reply saved"
+        elif status in {"failed", "error"}:
+            assistant_message = (
+                "返答を作成できませんでした。Activityで現在の状況を確認できます。"
+                if japanese
+                else "The reply could not be prepared. Activity shows the current status."
+            )
+            headline = "返答を作成できませんでした" if japanese else "Reply not prepared"
+        elif status in {"cancelled", "canceled"}:
+            assistant_message = "返答はキャンセルされました。" if japanese else "The reply was cancelled."
+            headline = "キャンセル済み" if japanese else "Cancelled"
+        else:
+            assistant_message = (
+                "返答の処理状態を確認しています。"
+                if japanese
+                else "Checking the reply status."
+            )
+            headline = "状態確認中" if japanese else "Checking status"
         detail = assistant_message
     return {
         "assistant_message": assistant_message,

@@ -1,0 +1,270 @@
+{
+  "project_id": "p_1de5cbf8666d",
+  "data_dir": "/tmp/tablex-0119-e2e-long-pipeline",
+  "note": "Manual summary after stopping pre-patch long smoke; server did not include latest pipeline alias compatibility patch.",
+  "agent_sessions_count": 1,
+  "agent_transcript_events_count": 707,
+  "experiment_runs_count": 18,
+  "model_versions_count": 0,
+  "artifacts_count": 139,
+  "jobs_count": 146,
+  "artifact_counts": [
+    {
+      "asset_type": "agent_chat_turn",
+      "c": 37
+    },
+    {
+      "asset_type": "agent_session_artifact",
+      "c": 22
+    },
+    {
+      "asset_type": "agent_session_output",
+      "c": 21
+    },
+    {
+      "asset_type": "prediction_pipeline",
+      "c": 18
+    },
+    {
+      "asset_type": "agent_session_report",
+      "c": 8
+    },
+    {
+      "asset_type": "analysis_notebook",
+      "c": 4
+    },
+    {
+      "asset_type": "research_plan",
+      "c": 4
+    },
+    {
+      "asset_type": "agent_session_figure",
+      "c": 1
+    },
+    {
+      "asset_type": "agent_session_transcript",
+      "c": 1
+    },
+    {
+      "asset_type": "assumption_set",
+      "c": 1
+    },
+    {
+      "asset_type": "dataset_snapshot",
+      "c": 1
+    },
+    {
+      "asset_type": "eda_profile",
+      "c": 1
+    },
+    {
+      "asset_type": "evidence_set",
+      "c": 1
+    },
+    {
+      "asset_type": "question_set",
+      "c": 1
+    },
+    {
+      "asset_type": "semantic_catalog",
+      "c": 1
+    },
+    {
+      "asset_type": "understanding_report",
+      "c": 1
+    }
+  ],
+  "latest_events": [
+    {
+      "event_index": 706,
+      "source": "codex_cli",
+      "event_type": "item.completed",
+      "title": "Item Completed",
+      "content": "",
+      "created_at": "2026-07-06 00:38:47.712353"
+    },
+    {
+      "event_index": 705,
+      "source": "codex_cli",
+      "event_type": "item.started",
+      "title": "Item Started",
+      "content": "",
+      "created_at": "2026-07-06 00:38:47.204991"
+    },
+    {
+      "event_index": 704,
+      "source": "codex_cli",
+      "event_type": "item.completed",
+      "title": "Codex message",
+      "content": "marimoの依存チェックで、複数セルが同じ変数名 `fig` を公開している点だけ検出されました。表示用の一時変数に直して再チェックします。",
+      "created_at": "2026-07-06 00:38:45.699952"
+    },
+    {
+      "event_index": 703,
+      "source": "codex_cli",
+      "event_type": "item.completed",
+      "title": "Command execution",
+      "content": "/bin/bash -lc '.tablex/bin/python -m marimo check notebooks/final_salary_report.py && .tablex/bin/python -m py_compile notebooks/final_salary_report.py'",
+      "created_at": "2026-07-06 00:38:40.694224"
+    },
+    {
+      "event_index": 702,
+      "source": "codex_cli",
+      "event_type": "item.completed",
+      "title": "Command execution",
+      "content": "/bin/bash -lc \".tablex/bin/python - <<'PY'\nimport json\nfrom pathlib import Path\nm=json.load(open('artifacts/model_results.json'))\nprint(m.get('schema_version'))\nprint(len(m.get('results', [])), len(m.get('cv_results', [])), len(m.get('tempo",
+      "created_at": "2026-07-06 00:38:40.191492"
+    },
+    {
+      "event_index": 701,
+      "source": "codex_cli",
+      "event_type": "item.started",
+      "title": "Item Started",
+      "content": "/bin/bash -lc \".tablex/bin/python - <<'PY'\nimport json\nfrom pathlib import Path\nm=json.load(open('artifacts/model_results.json'))\nprint(m.get('schema_version'))\nprint(len(m.get('results', [])), len(m.get('cv_results', [])), len(m.get('tempo",
+      "created_at": "2026-07-06 00:38:40.191492"
+    },
+    {
+      "event_index": 700,
+      "source": "codex_cli",
+      "event_type": "item.started",
+      "title": "Item Started",
+      "content": "/bin/bash -lc '.tablex/bin/python -m marimo check notebooks/final_salary_report.py && .tablex/bin/python -m py_compile notebooks/final_salary_report.py'",
+      "created_at": "2026-07-06 00:38:40.191492"
+    },
+    {
+      "event_index": 699,
+      "source": "codex_cli",
+      "event_type": "item.completed",
+      "title": "Item Completed",
+      "content": "",
+      "created_at": "2026-07-06 00:38:33.295505"
+    },
+    {
+      "event_index": 698,
+      "source": "codex_cli",
+      "event_type": "item.started",
+      "title": "Item Started",
+      "content": "",
+      "created_at": "2026-07-06 00:38:32.793021"
+    },
+    {
+      "event_index": 697,
+      "source": "tablex_sidecar",
+      "event_type": "notebook_chat_turn_registered",
+      "title": "Notebook chat turn registered",
+      "content": "Registered notebook availability in Agent Chat.",
+      "created_at": "2026-07-06 00:38:31.456257"
+    },
+    {
+      "event_index": 696,
+      "source": "codex_cli",
+      "event_type": "item.completed",
+      "title": "Codex message",
+      "content": "ノートブックを追加しました。これからmarimo形式チェックと軽い構文確認を行い、問題がなければTablexへ登録します。",
+      "created_at": "2026-07-06 00:38:30.787318"
+    },
+    {
+      "event_index": 695,
+      "source": "tablex_sidecar",
+      "event_type": "research_plan_current_work_requested",
+      "title": "ResearchPlan current work requested",
+      "content": "Tablex asked Codex to declare the current ResearchPlan node without interrupting the current work.",
+      "created_at": "2026-07-06 00:38:29.782916"
+    }
+  ],
+  "workspace_exists": true,
+  "pipeline_ack_status_counts": {
+    "failed": 126,
+    "succeeded": 18
+  },
+  "latest_pipeline_ack_errors": [
+    {
+      "file": "register_pipeline_run_161c805310b8.ack.json",
+      "type": "ValueError",
+      "message": "payload.pipeline_name is required",
+      "issues": null
+    },
+    {
+      "file": "register_pipeline_run_50ab31ec17e0.ack.json",
+      "type": "ValueError",
+      "message": "payload.pipeline_name is required",
+      "issues": null
+    },
+    {
+      "file": "register_pipeline_run_7966432250cc.ack.json",
+      "type": "ValueError",
+      "message": "payload.pipeline_name is required",
+      "issues": null
+    },
+    {
+      "file": "register_pipeline_run_7e06083a10dc.ack.json",
+      "type": "ValueError",
+      "message": "payload.pipeline_name is required",
+      "issues": null
+    },
+    {
+      "file": "register_pipeline_run_8b4b182c024c.ack.json",
+      "type": "ValueError",
+      "message": "payload.pipeline_name is required",
+      "issues": null
+    },
+    {
+      "file": "register_pipeline_run_9f39ef05ff6a.ack.json",
+      "type": "ValueError",
+      "message": "payload.pipeline_name is required",
+      "issues": null
+    },
+    {
+      "file": "register_pipeline_run_be7ba24d6c04.ack.json",
+      "type": "ValueError",
+      "message": "payload.pipeline_name is required",
+      "issues": null
+    },
+    {
+      "file": "register_pipeline_run_c0f30b59939f.ack.json",
+      "type": "ValueError",
+      "message": "payload.pipeline_name is required",
+      "issues": null
+    },
+    {
+      "file": "register_pipeline_run_d0a554804483.ack.json",
+      "type": "ValueError",
+      "message": "payload.pipeline_name is required",
+      "issues": null
+    },
+    {
+      "file": "register_pipeline_run_dd40278b8832.ack.json",
+      "type": "ValueError",
+      "message": "payload.pipeline_name is required",
+      "issues": null
+    },
+    {
+      "file": "register_pipeline_run_e597c57b46bc.ack.json",
+      "type": "ValueError",
+      "message": "payload.pipeline_name is required",
+      "issues": null
+    },
+    {
+      "file": "register_pipeline_run_f0f83370c3dc.ack.json",
+      "type": "ValueError",
+      "message": "payload.pipeline_name is required",
+      "issues": null
+    }
+  ],
+  "request_counts": {
+    "pilot": 0,
+    "pipelines": 144,
+    "notebooks": 1,
+    "research": 0,
+    "experiments": 10,
+    "research_plan": 7
+  },
+  "ack_counts": {
+    "pilot": 0,
+    "pipelines": 144,
+    "notebooks": 1,
+    "research": 0,
+    "experiments": 10,
+    "research_plan": 7
+  }
+}

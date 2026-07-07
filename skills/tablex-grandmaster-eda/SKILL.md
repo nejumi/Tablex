@@ -22,7 +22,7 @@ Treat Codex as the analyst. Treat Tablex as the harness that provides context, r
 3. Read `references/grandmaster_eda_patterns.md` when planning exploration depth, multi-table analysis, leakage/drift checks, entity trajectory review, or hypothesis extraction.
 4. Read `references/tablex_marimo_outputs.md` before writing marimo notebooks or notebook-adjacent JSON artifacts.
 5. Execute exploratory analysis in the controlled workspace. Prefer DuckDB, Polars, pandas, Plotly, matplotlib, scikit-learn, and project-approved libraries already available in the environment.
-6. Turn discoveries into Tablex assets: findings, ideas, assumptions, questions, evidence, notebook source, rendered notebook/report, figure manifest, and next-analysis queue.
+6. Turn discoveries into Tablex assets: findings, ideas, assumptions, questions, evidence, native marimo notebook source, figure manifest, and next-analysis queue.
 7. Register every important output through the AgentResult contract. Do not leave insight only in terminal logs.
 
 ## Analysis Standard
@@ -49,7 +49,7 @@ When the task involves data understanding or notebook authoring, aim to produce 
 - `artifacts/eda_hypotheses.json`: hypotheses, confidence, evidence, next check, risk.
 - `artifacts/visual_story_cards.json`: UI-ready cards with titles, captions, evidence links, and next actions.
 - `artifacts/research_source_notes.json`: external source notes and how they shaped the analysis.
-- `artifacts/notebook_figure_manifest.json`: figure/table inventory with captions and data sources.
+- `artifacts/notebook_figure_manifest.json`: figure/table inventory with captions, chart types, and data sources.
 - `artifacts/notebook_evidence_bundle.json`: evidence behind material claims.
 - `artifacts/next_analysis_queue.json`: what Codex should do next without losing momentum.
 

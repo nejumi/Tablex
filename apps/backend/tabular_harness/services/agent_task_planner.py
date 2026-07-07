@@ -938,7 +938,6 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "data_quality_gate": latest_project_artifact(db, project_id, "data_quality_gate"),
         "notebook_authoring_brief": latest_project_artifact(db, project_id, "notebook_authoring_brief"),
         "eda_review_bundle": latest_project_artifact(db, project_id, "eda_review_bundle"),
-        "eda_review_html": latest_project_artifact(db, project_id, "eda_review_html"),
         "relational_catalog": latest_project_artifact(db, project_id, "relational_catalog"),
         "relational_table_bundle_manifest": latest_project_artifact(
             db, project_id, "relational_table_bundle_manifest"
@@ -983,12 +982,7 @@ def planning_context_artifacts(db: Session, project_id: str) -> dict[str, Artifa
         "decision_dashboard": latest_project_artifact(db, project_id, "decision_dashboard"),
         "notebook_figure_manifest": latest_project_artifact(db, project_id, "notebook_figure_manifest"),
         "notebook_evidence_bundle": latest_project_artifact(db, project_id, "notebook_evidence_bundle"),
-        "notebook_evidence_html": latest_project_artifact(db, project_id, "notebook_evidence_html"),
         "notebook_execution_plan": latest_project_artifact(db, project_id, "notebook_execution_plan"),
-        "notebook_execution_manifest": latest_project_artifact(db, project_id, "notebook_execution_manifest"),
-        "notebook_execution_report": latest_project_artifact(db, project_id, "notebook_execution_report"),
-        "notebook_execution_html": latest_project_artifact(db, project_id, "notebook_execution_html"),
-        "notebook_execution_source": latest_project_artifact(db, project_id, "notebook_execution_source"),
     }
 
 
@@ -1132,7 +1126,6 @@ def notebook_authoring_brief_contract_inputs(brief_artifact: Artifact | None) ->
 def notebook_followup_contract_inputs(context_artifacts: dict[str, Artifact | None]) -> dict[str, Any]:
     relevant_roles = [
         "eda_review_bundle",
-        "eda_review_html",
         "evaluation_diagnostics",
         "evaluation_diagnostics_report",
         "baseline_metrics",
@@ -1141,12 +1134,7 @@ def notebook_followup_contract_inputs(context_artifacts: dict[str, Artifact | No
         "decision_dashboard",
         "notebook_figure_manifest",
         "notebook_evidence_bundle",
-        "notebook_evidence_html",
         "notebook_execution_plan",
-        "notebook_execution_manifest",
-        "notebook_execution_report",
-        "notebook_execution_html",
-        "notebook_execution_source",
     ]
     refs = []
     for role in relevant_roles:

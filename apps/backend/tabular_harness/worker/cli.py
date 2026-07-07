@@ -36,6 +36,8 @@ def main() -> None:
             session_factory,
             artifact_store,
             lease_owner_id=f"worker:{args.worker_id}:pid:{os.getpid()}",
+            turn_timeout_seconds=settings.agent_idle_timeout_seconds,
+            turn_start_silence_timeout_seconds=settings.agent_turn_start_silence_timeout_seconds,
         )
         next_supervisor_recovery_at = time.monotonic() + supervisor_recovery_interval_seconds
 
@@ -49,6 +51,8 @@ def main() -> None:
                 session_factory,
                 artifact_store,
                 lease_owner_id=f"worker:{args.worker_id}:pid:{os.getpid()}",
+                turn_timeout_seconds=settings.agent_idle_timeout_seconds,
+                turn_start_silence_timeout_seconds=settings.agent_turn_start_silence_timeout_seconds,
             )
             next_supervisor_recovery_at = time.monotonic() + supervisor_recovery_interval_seconds
         with session_factory() as session:

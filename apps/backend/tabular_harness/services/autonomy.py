@@ -477,7 +477,7 @@ def run_data_understanding_stack(
         except ValueError as exc:
             state.warn(f"EDA review skipped: {exc}")
 
-    existing_notebook = latest_project_artifact(db, project.id, "analysis_notebook")
+    existing_notebook = latest_native_notebook_artifact(db, project.id)
     if existing_notebook is not None:
         state.record(
             "data_understanding_notebook",
@@ -622,6 +622,14 @@ def latest_project_artifact(db: Session, project_id: str, asset_type: str) -> Ar
     return db.scalar(
         select(Artifact)
         .where(Artifact.project_id == project_id, Artifact.asset_type == asset_type)
+        .order_by(Artifact.created_at.desc())
+    )
+
+
+def latest_native_notebook_artifact(db: Session, project_id: str) -> Artifact | None:
+    return db.scalar(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.asset_type.in_(("analysis_notebook", "marimo_notebook")))
         .order_by(Artifact.created_at.desc())
     )
 
@@ -1818,6 +1826,11 @@ def primary_candidate(candidates: list[EvaluationCandidate]) -> EvaluationCandid
 
 
 def latest_dataset(db: Session, project_id: str) -> DatasetSnapshot | None:
+    project = db.get(Project, project_id)
+    if project is not None and project.primary_dataset_snapshot_id:
+        primary = db.get(DatasetSnapshot, project.primary_dataset_snapshot_id)
+        if primary is not None and primary.project_id == project_id:
+            return primary
     return db.scalar(
         select(DatasetSnapshot)
         .where(DatasetSnapshot.project_id == project_id)
@@ -1826,6 +1839,11 @@ def latest_dataset(db: Session, project_id: str) -> DatasetSnapshot | None:
 
 
 def select_autonomy_dataset(db: Session, project_id: str, *, target_column: str | None) -> DatasetSnapshot | None:
+    project = db.get(Project, project_id)
+    if project is not None and project.primary_dataset_snapshot_id:
+        primary = db.get(DatasetSnapshot, project.primary_dataset_snapshot_id)
+        if primary is not None and primary.project_id == project_id:
+            return primary
     datasets = list(
         db.scalars(
             select(DatasetSnapshot)

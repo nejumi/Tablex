@@ -15,10 +15,10 @@ Move generated Data Understanding notebooks from a basic profile dump toward a h
   - leakage and evaluation guardrails,
   - richer analysis questions.
 - Updated generated marimo source to put quality, target readiness, storyboard, and guardrails before raw column tables.
-- Updated static HTML preview to show the same narrative sections inside the workbench.
+- Updated the notebook source and native marimo viewing path so the same narrative sections are available inside the workbench.
 - Updated notebook report and run manifest with quality metadata.
 - Updated `skills/tablex-notebook-quality/SKILL.md` with a concrete quality rubric for future Codex runners.
-- Added integration assertions for notebook source, HTML preview, and manifest quality fields.
+- Added integration assertions for notebook source registration and manifest quality fields.
 
 ## Deferred Scope
 

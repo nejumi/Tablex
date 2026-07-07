@@ -10,14 +10,13 @@ Extend Analysis Notebook support from Data Understanding into run-level model di
 - Added `POST /api/runs/{run_id}/analysis-notebook`.
 - Generated model diagnostics notebook artifacts:
   - `analysis_notebook` marimo `.py` source.
-  - `notebook_html` static in-product preview.
   - `notebook_run_manifest` with source artifacts, extension points, and safety policy.
   - `notebook_report` Markdown report plus `Report` record.
   - `visualization_spec` metric-card summary plus `VisualizationSpec` record.
 - Added lineage from ExperimentRun, ModelVersion, and source artifacts to the notebook and derived artifacts.
 - Added Experiments UI action for generating a model diagnostics notebook from a run row.
-- Added HTML artifact preview support in the Experiments preview panel.
-- Added integration coverage for source preview, HTML preview, manifest inputs, and visualization ids.
+- Added native marimo opening for the notebook source from experiment context.
+- Added integration coverage for source registration, manifest inputs, and visualization ids.
 
 ## Design Decisions
 
@@ -37,6 +36,6 @@ Extend Analysis Notebook support from Data Understanding into run-level model di
 
 ## Risks
 
-- Notebook code is generated and previewed but not executed, so runtime compatibility is still a future controlled-runner concern.
+- Notebook code is generated and opened through native marimo; runtime failures must be surfaced as repair targets rather than hidden behind snapshots.
 - Metrics and prediction summaries are limited to already persisted artifacts.
 - Feature importance and partial dependence are intentionally not faked; users must see them as missing until a runner materializes evidence.

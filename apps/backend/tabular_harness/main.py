@@ -17,6 +17,7 @@ from tabular_harness.services.agent_sessions import start_active_main_session_su
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.auth import ensure_bootstrap_user, user_for_session_token
 from tabular_harness.services.jobs import reap_stale_running_jobs
+from tabular_harness.services.marimo_sessions import stop_orphaned_native_marimo_processes
 from tabular_harness.worker.daemon import LocalWorkerDaemon
 
 
@@ -28,11 +29,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        stop_orphaned_native_marimo_processes(settings=app_settings)
         if app_settings.api_agent_session_supervisor_enabled:
             start_active_main_session_supervisors(
                 session_factory,
                 app.state.artifact_store,
                 lease_owner_id=f"api:pid:{os.getpid()}",
+                turn_timeout_seconds=app_settings.agent_idle_timeout_seconds,
+                turn_start_silence_timeout_seconds=app_settings.agent_turn_start_silence_timeout_seconds,
             )
         worker_daemon: LocalWorkerDaemon | None = None
         if app_settings.local_worker_enabled:

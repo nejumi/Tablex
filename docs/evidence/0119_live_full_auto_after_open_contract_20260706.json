@@ -1,0 +1,2182 @@
+{
+  "base": "http://127.0.0.1:8024",
+  "csv_path": "/tmp/tablex-0119-after-open-contract/retail_demand.csv",
+  "events": [
+    {
+      "t": "2026-07-06T11:33:59.285778+00:00",
+      "label": "project_created",
+      "payload": {
+        "id": "p_7ec9c59d29e5",
+        "org_id": "local-org",
+        "name": "0119 live after open-contract",
+        "description": null,
+        "task_type": null,
+        "target_column": null,
+        "current_phase": "DRAFT",
+        "status": "active",
+        "autonomy_mode": "approval_based",
+        "created_by": "local-user",
+        "created_at": "2026-07-06T11:33:59.212628+00:00",
+        "updated_at": "2026-07-06T11:33:59.212634+00:00"
+      }
+    },
+    {
+      "t": "2026-07-06T11:33:59.855512+00:00",
+      "label": "dataset_uploaded",
+      "payload": {
+        "dataset_snapshot_id": "ds_f25eff156314",
+        "artifact_id": "art_9457c92db8c0"
+      }
+    },
+    {
+      "t": "2026-07-06T11:33:59.881893+00:00",
+      "label": "autonomy_started",
+      "payload": {
+        "id": "job_f381f52c911b",
+        "project_id": "p_7ec9c59d29e5",
+        "job_type": "start_autonomous_loop",
+        "status": "succeeded",
+        "priority": 50,
+        "attempt_count": 0,
+        "max_attempts": 1,
+        "input": {
+          "agent_model": null,
+          "agent_session_id": "ags_767d4b6328c6",
+          "autonomy_mode": "full_auto",
+          "locale": "ja-JP",
+          "requested_runner_mode": "codex_cli_if_available",
+          "runner_mode": "codex_cli_if_available",
+          "utility_model": null
+        },
+        "output": {
+          "agent_chat_turn_artifact_id": "art_2967a83dc98e",
+          "agent_session_id": "ags_767d4b6328c6",
+          "assistant_message": "フルオートを開始しました。データの確認、目的の整理、評価設計、分析ノートブック作成へ順に進めます。進行中の内容はこのチャットとアクティビティに表示します。",
+          "created_job_ids": [],
+          "project_id": "p_7ec9c59d29e5",
+          "schema_version": "agent_session_start.v1",
+          "status": "started",
+          "token_usage": {
+            "is_estimate": true,
+            "series": [
+              {
+                "step": "session_created",
+                "tokens": 32
+              },
+              {
+                "step": "codex_starting",
+                "tokens": 48
+              }
+            ],
+            "source": "agent_session_transcript_pending"
+          },
+          "worker_events": [
+            {
+              "active": true,
+              "agent_session_id": "ags_767d4b6328c6",
+              "created_at": "2026-07-06T11:33:59.873311+00:00",
+              "detail": "プロジェクトの状況を確認し、次の分析ステップを開始しています。",
+              "display_name": "自律分析",
+              "headline": "分析を開始しています",
+              "job_id": "job_f381f52c911b",
+              "job_type": "start_autonomous_loop",
+              "project_id": "p_7ec9c59d29e5",
+              "status": "starting",
+              "target_anchor": "agent-workspace",
+              "target_tab": "Home",
+              "token_usage": {
+                "is_estimate": true,
+                "series": [
+                  {
+                    "step": "session_created",
+                    "tokens": 32
+                  },
+                  {
+                    "step": "codex_starting",
+                    "tokens": 48
+                  }
+                ],
+                "source": "agent_session_transcript_pending"
+              },
+              "updated_at": "2026-07-06T11:33:59.873704+00:00",
+              "worker_id": "main-agent-session"
+            }
+          ]
+        },
+        "context": {},
+        "policy": {
+          "autonomy_mode": "full_auto",
+          "connector_credentials": "not_materialized",
+          "control_record_only": true,
+          "main_execution_state": "agent_session",
+          "production_write": "forbidden",
+          "requested_runner_mode": "codex_cli_if_available",
+          "runner_mode": "codex_cli_if_available",
+          "secret_access": "forbidden"
+        },
+        "dependency_job_ids": [],
+        "error_message": null,
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "run_after": null,
+        "locked_by": null,
+        "locked_at": null,
+        "created_at": "2026-07-06T11:33:59.873311+00:00",
+        "updated_at": "2026-07-06T11:33:59.876094+00:00",
+        "started_at": null,
+        "ended_at": "2026-07-06T11:33:59.873805+00:00"
+      }
+    },
+    {
+      "t": "2026-07-06T11:34:00.034809+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 1,
+          "stdout": 0,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 8
+        },
+        "current_work": {
+          "id": "derived:rprev_71ba395278cc:data_understanding",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_71ba395278cc",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "Understand row semantics, relationships, missingness, leakage risk, and useful hypotheses before modeling.",
+          "expected_outputs": [
+            "notebook"
+          ],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:33:59.853331",
+          "source": "research_plan_revision_status",
+          "activity_state": "declared_only",
+          "is_live": false,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "starting",
+          "observed_codex_process_count": 0
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 0.2
+      }
+    },
+    {
+      "t": "2026-07-06T11:34:15.157200+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 1,
+          "stdout": 2,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 8
+        },
+        "current_work": {
+          "id": "derived:rprev_71ba395278cc:data_understanding",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_71ba395278cc",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "Understand row semantics, relationships, missingness, leakage risk, and useful hypotheses before modeling.",
+          "expected_outputs": [
+            "notebook"
+          ],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:33:59.853331",
+          "source": "research_plan_revision_status",
+          "activity_state": "declared_only",
+          "is_live": false,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 15.3
+      }
+    },
+    {
+      "t": "2026-07-06T11:34:30.280475+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 1,
+          "stdout": 11,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 8
+        },
+        "current_work": {
+          "id": "derived:rprev_71ba395278cc:data_understanding",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_71ba395278cc",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "Understand row semantics, relationships, missingness, leakage risk, and useful hypotheses before modeling.",
+          "expected_outputs": [
+            "notebook"
+          ],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:33:59.853331",
+          "source": "research_plan_revision_status",
+          "activity_state": "declared_only",
+          "is_live": false,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 30.4
+      }
+    },
+    {
+      "t": "2026-07-06T11:34:45.394423+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 1,
+          "stdout": 20,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 8
+        },
+        "current_work": {
+          "id": "derived:rprev_71ba395278cc:data_understanding",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_71ba395278cc",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "Understand row semantics, relationships, missingness, leakage risk, and useful hypotheses before modeling.",
+          "expected_outputs": [
+            "notebook"
+          ],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:33:59.853331",
+          "source": "research_plan_revision_status",
+          "activity_state": "declared_only",
+          "is_live": false,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 45.5
+      }
+    },
+    {
+      "t": "2026-07-06T11:35:00.518137+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 1,
+          "stdout": 28,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 8
+        },
+        "current_work": {
+          "id": "derived:rprev_71ba395278cc:data_understanding",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_71ba395278cc",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "Understand row semantics, relationships, missingness, leakage risk, and useful hypotheses before modeling.",
+          "expected_outputs": [
+            "notebook"
+          ],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:33:59.853331",
+          "source": "research_plan_revision_status",
+          "activity_state": "declared_only",
+          "is_live": false,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 60.6
+      }
+    },
+    {
+      "t": "2026-07-06T11:35:15.616827+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 1,
+          "stdout": 37,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 8
+        },
+        "current_work": {
+          "id": "derived:rprev_71ba395278cc:data_understanding",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_71ba395278cc",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "Understand row semantics, relationships, missingness, leakage risk, and useful hypotheses before modeling.",
+          "expected_outputs": [
+            "notebook"
+          ],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:33:59.853331",
+          "source": "research_plan_revision_status",
+          "activity_state": "declared_only",
+          "is_live": false,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 75.7
+      }
+    },
+    {
+      "t": "2026-07-06T11:35:30.739237+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 1,
+          "stdout": 40,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 8
+        },
+        "current_work": {
+          "id": "derived:rprev_71ba395278cc:data_understanding",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_71ba395278cc",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "Understand row semantics, relationships, missingness, leakage risk, and useful hypotheses before modeling.",
+          "expected_outputs": [
+            "notebook"
+          ],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:33:59.853331",
+          "source": "research_plan_revision_status",
+          "activity_state": "declared_only",
+          "is_live": false,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 90.9
+      }
+    },
+    {
+      "t": "2026-07-06T11:36:00.982859+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 2,
+          "stdout": 44,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 11
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 121.1
+      }
+    },
+    {
+      "t": "2026-07-06T11:36:16.101285+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 2,
+          "stdout": 47,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 11
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 136.2
+      }
+    },
+    {
+      "t": "2026-07-06T11:36:46.334133+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 2,
+          "stdout": 53,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 11
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 166.5
+      }
+    },
+    {
+      "t": "2026-07-06T11:37:01.433723+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 2,
+          "stdout": 57,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 11
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 181.6
+      }
+    },
+    {
+      "t": "2026-07-06T11:37:46.774690+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 2,
+          "stdout": 58,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 11
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 226.9
+      }
+    },
+    {
+      "t": "2026-07-06T11:39:02.322857+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 3,
+          "stdout": 58,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 12
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 302.4
+      }
+    },
+    {
+      "t": "2026-07-06T11:39:47.717276+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 3,
+          "stdout": 68,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 13
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 347.8
+      }
+    },
+    {
+      "t": "2026-07-06T11:40:02.828721+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 3,
+          "stdout": 76,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 13
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 362.9
+      }
+    },
+    {
+      "t": "2026-07-06T11:40:17.949902+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 3,
+          "stdout": 77,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 13
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 378.1
+      }
+    },
+    {
+      "t": "2026-07-06T11:40:33.071523+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 3,
+          "stdout": 79,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 13
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 393.2
+      }
+    },
+    {
+      "t": "2026-07-06T11:40:48.195997+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 3,
+          "stdout": 82,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 13
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 408.3
+      }
+    },
+    {
+      "t": "2026-07-06T11:41:03.320665+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 3,
+          "stdout": 87,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 13
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 423.4
+      }
+    },
+    {
+      "t": "2026-07-06T11:41:18.439456+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 3,
+          "stdout": 96,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 13
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 438.6
+      }
+    },
+    {
+      "t": "2026-07-06T11:41:33.569082+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 3,
+          "stdout": 105,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 24
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 453.7
+      }
+    },
+    {
+      "t": "2026-07-06T11:41:48.676034+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 4,
+          "stdout": 108,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 25
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 468.8
+      }
+    },
+    {
+      "t": "2026-07-06T11:42:03.783873+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 4,
+          "stdout": 113,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 25
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 483.9
+      }
+    },
+    {
+      "t": "2026-07-06T11:42:33.992358+00:00",
+      "label": "snapshot",
+      "payload": {
+        "counts": {
+          "chat": 4,
+          "stdout": 114,
+          "stderr": 0,
+          "leaderboard": 0,
+          "notebooks": 0,
+          "research_findings": 0,
+          "pipelines": 0,
+          "pilot_reports": 0,
+          "validation_audits": 0,
+          "artifacts": 25
+        },
+        "current_work": {
+          "id": "rpcw_e084bc253af6",
+          "project_id": "p_7ec9c59d29e5",
+          "research_plan_id": "rplan_fdc322cdab88",
+          "revision_id": "rprev_b8fe0d794b63",
+          "node_id": "data_understanding",
+          "status": "active",
+          "summary": "",
+          "expected_outputs": [],
+          "updated_by_type": "codex",
+          "updated_by": null,
+          "updated_at": "2026-07-06T11:35:50.601361",
+          "activity_state": "active",
+          "is_live": true,
+          "agent_session_id": "ags_767d4b6328c6",
+          "agent_session_status": "running",
+          "observed_codex_process_count": 1
+        },
+        "blocks": [
+          {
+            "id": "data_upload",
+            "status": "done",
+            "title": "データアップロード",
+            "expected": null
+          },
+          {
+            "id": "objective_framing",
+            "status": "done",
+            "title": "目的設定",
+            "expected": null
+          },
+          {
+            "id": "data_understanding",
+            "status": "active",
+            "title": "データ理解",
+            "expected": null
+          },
+          {
+            "id": "prior_knowledge_research",
+            "status": "pending",
+            "title": "従来知見の調査",
+            "expected": null
+          },
+          {
+            "id": "evaluation_and_modeling",
+            "status": "pending",
+            "title": "評価設計とモデル比較",
+            "expected": null
+          },
+          {
+            "id": "diagnostics_and_reporting",
+            "status": "pending",
+            "title": "診断と最終レポート",
+            "expected": null
+          }
+        ],
+        "contract_validation": {
+          "schema_version": "research_plan_contract_validation.v1",
+          "status": "ok",
+          "issue_count": 0,
+          "error_count": 0,
+          "warning_count": 0,
+          "issues": []
+        },
+        "elapsed_seconds": 514.1
+      }
+    },
+    {
+      "t": "2026-07-06T11:43:04.403896+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:43:19.555447+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:43:34.694465+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:43:49.825052+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:44:04.980172+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:44:20.127240+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:44:35.287579+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:44:50.476753+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:45:05.700725+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:45:20.905145+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:45:36.083915+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:45:51.280095+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:46:06.453717+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:46:21.631593+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    },
+    {
+      "t": "2026-07-06T11:46:36.816454+00:00",
+      "label": "poll_error",
+      "payload": {
+        "error": "HTTPError",
+        "message": "HTTP Error 500: Internal Server Error"
+      }
+    }
+  ]
+}

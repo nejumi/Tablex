@@ -151,7 +151,7 @@ def build_recent_updates(projects: list[Project], jobs: list[Job], artifacts: li
                 "title": project.name,
                 "summary": f"Project is in {project.current_phase.replace('_', ' ').lower()}",
                 "created_at": project.updated_at.isoformat(),
-                "target_tab": "Overview",
+                "target_tab": "Home",
             }
         )
     for job in jobs[:6]:
@@ -205,10 +205,8 @@ def portal_artifact_title(asset_type: str) -> str:
     labels = {
         "decision_report": "Decision report saved",
         "decision_report_bundle": "Decision report bundle saved",
-        "eda_review_html": "Data review report saved",
         "eda_review_bundle": "Data review evidence saved",
         "analysis_notebook": "Analysis notebook saved",
-        "notebook_html": "Notebook preview saved",
         "agent_task_contract": "Agent task handoff saved",
         "autonomous_decision_brief": "Decision brief saved",
         "autonomous_decision_brief_report": "Decision brief report saved",
@@ -327,13 +325,33 @@ def build_project_turn_state(
     active_job_ids: set[str],
 ) -> dict[str, Any]:
     observed_at = utc_now()
-    active_workers = [worker for worker in workers if worker.get("active")]
-    approval_workers = [worker for worker in workers if worker.get("status") == "approval_required"]
-    running_jobs = [job for job in jobs if job.status == "running"]
-    queued_jobs = [job for job in jobs if job.status == "queued"]
-    active_jobs = [job for job in jobs if job.id in active_job_ids]
+    agent_powered_on = project.current_phase == "AUTONOMOUS_LOOP"
+    observable_when_powered_off = {"starting", "running", "approval_required", "waiting_for_agent"}
+    state_workers = [
+        worker
+        for worker in workers
+        if (
+            agent_powered_on
+            or not is_agentish_job(str(worker.get("job_type") or ""))
+            or str(worker.get("status") or "") in observable_when_powered_off
+        )
+    ]
+    state_jobs = [
+        job
+        for job in jobs
+        if agent_powered_on or not is_agentish_job(job.job_type) or job.status in observable_when_powered_off
+    ]
+    active_workers = [worker for worker in state_workers if worker.get("active")]
+    approval_workers = [worker for worker in state_workers if worker.get("status") == "approval_required"]
+    running_jobs = [job for job in state_jobs if job.status == "running"]
+    queued_jobs = [job for job in state_jobs if job.status == "queued"]
+    active_jobs = [job for job in state_jobs if job.id in active_job_ids]
     codex_processes = running_codex_processes_for_project(project.id)
-    running_codex_jobs = [job for job in running_jobs if job.job_type == "run_planned_agent_task_codex"]
+    running_codex_jobs = [
+        job
+        for job in running_jobs
+        if job.job_type == "run_planned_agent_task_codex"
+    ]
     stale_codex_jobs = [
         job
         for job in running_codex_jobs
@@ -400,8 +418,8 @@ def build_project_turn_state(
             **base,
             "state": "worker_pending",
             "owner": "system",
-            "label": "Waiting for a local worker",
-            "detail": "A job is queued and due, but no worker has locked it yet.",
+            "label": "Waiting to start",
+            "detail": "Work is queued and ready, but execution has not started yet.",
             "input_attention": False,
             "confidence": "observed",
             "active_job_id": job.id,
@@ -550,8 +568,8 @@ def human_description_for_job(
     title = str(output.get("assistant_message") or f"{humanize_identifier(job.job_type)} is {job.status}")
     if job.status == "queued":
         summary = (
-            f"Waiting for a local worker to pick up {job.id} for {project_label}. "
-            "No live token telemetry is available until the worker starts running."
+            f"Waiting to start {job.id} for {project_label}. "
+            "Live token activity will appear after execution starts."
         )
     elif job.status == "running":
         summary = f"Running {job.id} for {project_label}."
@@ -563,7 +581,7 @@ def human_description_for_job(
 
 
 def default_human_description_for_job(job: Job, *, project_label: str) -> dict[str, str] | None:
-    waiting = "Waiting for a local worker to pick it up. " if job.status == "queued" else ""
+    waiting = "Waiting to start. " if job.status == "queued" else ""
     if job.job_type == "run_baseline":
         return {
             "title": "Train the adaptive baseline",
@@ -584,10 +602,10 @@ def default_human_description_for_job(job: Job, *, project_label: str) -> dict[s
         }
     if job.job_type == "run_planned_agent_task_codex":
         return {
-            "title": "Run Codex on the prepared agent task",
+            "title": "Run prepared Codex work",
             "summary": (
-                f"{waiting}Execute the prepared AgentTaskContract for {project_label}, then return artifacts, "
-                "findings, and next recommendations to the harness."
+                f"{waiting}Use the prepared project context for {project_label}, then return artifacts, "
+                "findings, and next recommendations."
             ),
             "source": "job_type_default",
         }
@@ -617,32 +635,36 @@ def is_agentish_job(job_type: str) -> bool:
 
 
 def worker_display_name(job_type: str) -> str:
+    if job_type in {"upload_data_bundle", "select_primary_table"}:
+        return "Data Intake"
     if job_type == "continue_autonomous_session":
         return "Autonomous Session"
     if "train" in job_type or "baseline" in job_type:
         return "Training Worker"
     if "notebook" in job_type:
-        return "Notebook Worker"
+        return "Notebook"
     if "research" in job_type:
-        return "Research Worker"
+        return "Research"
     if "agent" in job_type:
-        return "Agent Runner"
+        return "Codex Work"
     if "split" in job_type:
-        return "Evaluation Worker"
-    return "Harness Worker"
+        return "Evaluation"
+    return "Tablex Work"
 
 
 def target_tab_for_job(job_type: str) -> str | None:
+    if job_type in {"upload_data_bundle", "select_primary_table"}:
+        return "Data"
     if "train" in job_type:
         return "Leaderboard"
     if "notebook" in job_type:
         return "Notebooks"
-    if "agent" in job_type or "research" in job_type:
-        return "Approach"
+    if "agent" in job_type or "autonomous" in job_type or "research" in job_type:
+        return "Home"
     if "split" in job_type:
         return "Evaluation"
     if "baseline" in job_type or "experiment" in job_type:
-        return "Experiments"
+        return "Leaderboard"
     return None
 
 
@@ -650,9 +672,9 @@ def target_tab_for_artifact(asset_type: str) -> str | None:
     if "notebook" in asset_type:
         return "Notebooks"
     if "report" in asset_type or "dashboard" in asset_type:
-        return "Reports"
+        return "Insight"
     if "evaluation" in asset_type or "split" in asset_type:
         return "Evaluation"
     if "agent" in asset_type or "research" in asset_type:
-        return "Approach"
+        return "Home"
     return "Assets"

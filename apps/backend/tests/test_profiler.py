@@ -21,8 +21,9 @@ def test_profile_tabular_file_generates_understanding_assets(tmp_path: Path) -> 
     assert result.column_count == 5
     assert result.profile["profile_mode"] == "full"
     assert result.profile["target_profile"]["unique_count"] == 2
-    assert "final_status" in result.profile["leakage_suspects"]
-    assert any(item["risk_level"] == "high" for item in result.assumptions)
+    assert result.profile["leakage_suspects"] == []
+    assert "final_status" in result.profile["name_based_hints"]["leakage_candidate_columns"]
+    assert not any(item["topic"] == "prediction_time_availability" for item in result.assumptions)
     assert "Data Understanding" in result.understanding_md
 
 

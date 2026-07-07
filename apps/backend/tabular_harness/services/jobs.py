@@ -25,6 +25,7 @@ JOB_TYPES = {
     "diagnose_relational_feature_scenarios",
     "upload_relational_schema_hint",
     "upload_data_bundle",
+    "select_primary_table",
     "run_public_benchmark_workflow",
     "run_baseline",
     "train_model_candidates",
@@ -61,7 +62,6 @@ JOB_TYPES = {
     "generate_model_diagnostics_notebook",
     "materialize_model_diagnostics_artifacts",
     "plan_notebook_execution",
-    "capture_notebook_execution",
     "prepare_result_notebook_evidence",
     "prepare_agent_context",
     "prepare_planned_agent_workspace",
@@ -80,6 +80,9 @@ JOB_TYPES = {
     "create_benchmark_scenario_pack",
     "translate_tier3_content",
     "generate_user_avatar_candidates",
+    "register_prediction_pipeline",
+    "run_prediction_pipeline",
+    "score_pilot_outcomes",
 }
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}
@@ -89,6 +92,8 @@ JOB_LOCK_EXPIRY_SECONDS = 10 * 60
 STALE_RUNNING_JOB_TIMEOUT_SECONDS = {
     "agent_chat_turn": 5 * 60,
     "continue_autonomous_session": 10 * 60,
+    "select_primary_table": 15 * 60,
+    "upload_data_bundle": 60 * 60,
 }
 
 
@@ -254,7 +259,7 @@ def reap_stale_running_jobs(db: Session, *, now: datetime | None = None) -> int:
     reaped = 0
     for job in candidates:
         timeout_seconds = STALE_RUNNING_JOB_TIMEOUT_SECONDS[job.job_type]
-        reference = job.locked_at or job.started_at or job.updated_at or job.created_at
+        reference = latest_job_activity_at(job)
         if reference.tzinfo is None:
             reference = reference.replace(tzinfo=timezone.utc)
         if (observed_at - reference).total_seconds() < timeout_seconds:
@@ -273,6 +278,16 @@ def reap_stale_running_jobs(db: Session, *, now: datetime | None = None) -> int:
     if reaped:
         db.flush()
     return reaped
+
+
+def latest_job_activity_at(job: Job) -> datetime:
+    timestamps = [job.updated_at, job.locked_at, job.started_at, job.created_at]
+    normalized: list[datetime] = []
+    for timestamp in timestamps:
+        if timestamp is None:
+            continue
+        normalized.append(timestamp.replace(tzinfo=timezone.utc) if timestamp.tzinfo is None else timestamp)
+    return max(normalized) if normalized else utc_now()
 
 
 def queued_job_lock_is_stale(job: Job, *, now: datetime | None = None) -> bool:

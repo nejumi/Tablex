@@ -75,6 +75,7 @@ class Project(Base):
     description: Mapped[str | None] = mapped_column(Text)
     task_type: Mapped[str | None] = mapped_column(String)
     target_column: Mapped[str | None] = mapped_column(String)
+    primary_dataset_snapshot_id: Mapped[str | None] = mapped_column(String)
     current_phase: Mapped[str] = mapped_column(String, default="DRAFT", nullable=False)
     status: Mapped[str] = mapped_column(String, default="active", nullable=False)
     autonomy_mode: Mapped[str] = mapped_column(String, default="approval_based", nullable=False)
@@ -289,6 +290,7 @@ class SplitManifest(Base):
 
 class ExperimentRun(Base):
     __tablename__ = "experiment_runs"
+    __table_args__ = (Index("ix_experiment_runs_project_started", "project_id", "started_at"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     project_id: Mapped[str] = mapped_column(String, ForeignKey("projects.id"), nullable=False)
@@ -499,6 +501,45 @@ class ModelVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class PilotDeployment(Base):
+    __tablename__ = "pilot_deployments"
+    __table_args__ = (Index("ix_pilot_deployments_project_status", "project_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String, ForeignKey("projects.id"), nullable=False)
+    pipeline_artifact_id: Mapped[str] = mapped_column(String, ForeignKey("artifacts.id"), nullable=False)
+    model_version_id: Mapped[str | None] = mapped_column(String, ForeignKey("model_versions.id"))
+    experiment_run_id: Mapped[str | None] = mapped_column(String, ForeignKey("experiment_runs.id"))
+    status: Mapped[str] = mapped_column(String, default="active", nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
+class PilotPredictionBatch(Base):
+    __tablename__ = "pilot_prediction_batches"
+    __table_args__ = (Index("ix_pilot_prediction_batches_deployment_created", "deployment_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    deployment_id: Mapped[str] = mapped_column(String, ForeignKey("pilot_deployments.id"), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    input_artifact_id: Mapped[str] = mapped_column(String, ForeignKey("artifacts.id"), nullable=False)
+    predictions_artifact_id: Mapped[str] = mapped_column(String, ForeignKey("artifacts.id"), nullable=False)
+    row_count: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class PilotOutcomeBatch(Base):
+    __tablename__ = "pilot_outcome_batches"
+    __table_args__ = (Index("ix_pilot_outcome_batches_deployment_ingested", "deployment_id", "ingested_at"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    deployment_id: Mapped[str] = mapped_column(String, ForeignKey("pilot_deployments.id"), nullable=False)
+    outcomes_artifact_id: Mapped[str] = mapped_column(String, ForeignKey("artifacts.id"), nullable=False)
+    join_keys_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    matched_rows: Mapped[int | None] = mapped_column(Integer)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class Asset(Base):
     __tablename__ = "assets"
 
@@ -555,6 +596,10 @@ class AssetReference(Base):
 
 class LineageEdge(Base):
     __tablename__ = "lineage_edges"
+    __table_args__ = (
+        Index("ix_lineage_edges_project_created", "project_id", "created_at"),
+        Index("ix_lineage_edges_project_relation", "project_id", "relation_type"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     org_id: Mapped[str] = mapped_column(String, default="local-org", nullable=False)
@@ -570,6 +615,7 @@ class LineageEdge(Base):
 
 class AgentSession(Base):
     __tablename__ = "agent_sessions"
+    __table_args__ = (Index("ix_agent_sessions_project_updated", "project_id", "updated_at"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     org_id: Mapped[str] = mapped_column(String, default="local-org", nullable=False)
@@ -628,6 +674,10 @@ class AgentTranscriptEvent(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = (
+        Index("ix_jobs_project_status_updated", "project_id", "status", "updated_at"),
+        Index("ix_jobs_project_created", "project_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     project_id: Mapped[str | None] = mapped_column(String, ForeignKey("projects.id"))

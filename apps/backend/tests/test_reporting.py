@@ -105,8 +105,8 @@ def test_html_artifact_preview_inlines_local_images(tmp_path) -> None:
     artifact = Artifact(
         id="art_html",
         project_id="p1",
-        asset_type="notebook_html",
-        name="notebook_html",
+        asset_type="agent_session_report",
+        name="agent_session_report",
         version=1,
         uri=str(html_path),
         content_hash="hash",

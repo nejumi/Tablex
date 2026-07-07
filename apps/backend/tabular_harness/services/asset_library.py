@@ -104,9 +104,9 @@ DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
                     "use": "Problem formulation, data storytelling, validation, train/test difference, and iterative intuition.",
                 },
                 {
-                    "title": "marimo static HTML export",
-                    "url": "https://docs.marimo.io/guides/exporting/static_html/",
-                    "use": "In-product notebook HTML rendering and artifact export.",
+                    "title": "marimo as reusable Python notebooks",
+                    "url": "https://docs.marimo.io/",
+                    "use": "Native interactive notebook authoring, review, and reusable Python source artifacts.",
                 },
             ],
             "guardrails": [

@@ -1,0 +1,2567 @@
+{
+  "run_id": "20260706T063546Z",
+  "base": "http://127.0.0.1:8022",
+  "project_id": "p_db4e2c5cca9c",
+  "events": [
+    {
+      "t": "2026-07-06T06:35:56.394412+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 10.3,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 1,
+        "stdout": 28,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 4,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:36:06.656121+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 20.5,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 1,
+        "stdout": 28,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 4,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:36:16.906937+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 30.8,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 1,
+        "stdout": 28,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 4,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:36:27.244597+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 41.1,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 31,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:36:37.604066+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 51.5,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 31,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:36:47.858133+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 61.7,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 32,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:36:58.073751+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 71.9,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 35,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:37:08.330539+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 82.2,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 38,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:37:18.583402+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 92.4,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 45,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:37:28.801622+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 102.7,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 45,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:37:39.018587+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 112.9,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 56,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:37:49.259673+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 123.1,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 56,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:37:59.497435+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 133.4,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 56,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:38:09.732300+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 143.6,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 56,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:38:19.977064+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 153.8,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 57,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:38:30.190280+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 164.1,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 59,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:38:40.425671+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 174.3,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 59,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:38:50.688587+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 184.6,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 60,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:39:00.937120+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 194.8,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 60,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:39:11.202204+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 205.1,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 60,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:39:21.457575+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 215.3,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 62,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:39:31.698375+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 225.6,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 62,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:39:41.952452+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 235.8,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 62,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:39:52.212706+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 246.1,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 62,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:40:02.434909+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 256.3,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 62,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:40:12.693938+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 266.6,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:40:22.955996+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 276.8,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:40:33.211967+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 287.1,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:40:43.463411+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 297.3,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:40:53.720078+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 307.6,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:41:03.969595+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 317.8,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:41:14.239575+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 328.1,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:41:24.481747+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 338.3,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:41:34.736391+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 348.6,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:41:44.962678+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 358.8,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:41:55.211048+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 369.1,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:42:05.466315+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 379.3,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:42:15.816725+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 389.7,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:42:26.071957+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 399.9,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:42:36.321390+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 410.2,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:42:46.572397+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 420.4,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:42:56.824963+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 430.7,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:43:07.046001+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 440.9,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:43:17.293297+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 451.2,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:43:27.550689+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 461.4,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:43:37.792714+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 471.7,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:43:48.037128+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 481.9,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:43:58.285717+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 492.1,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:44:08.546181+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 502.4,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:44:18.796217+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 512.7,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 63,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:44:29.059421+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 522.9,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 65,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:44:39.318622+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 533.2,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 68,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:44:49.684316+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 543.5,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 2,
+        "stdout": 72,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:45:00.030156+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 553.9,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 6,
+        "stdout": 73,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:45:10.411964+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 564.3,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 6,
+        "stdout": 85,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:45:20.780395+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 574.6,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 6,
+        "stdout": 90,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:45:31.251459+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 585.1,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 8,
+        "stdout": 93,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:45:41.726947+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 595.6,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 8,
+        "stdout": 96,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:45:52.184937+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 606.0,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 10,
+        "stdout": 98,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:46:02.645566+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 616.5,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 10,
+        "stdout": 100,
+        "stderr": 0,
+        "activity_workers": 2,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:46:13.105703+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 627.0,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 12,
+        "stdout": 102,
+        "stderr": 0,
+        "activity_workers": 1,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:46:23.568015+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 637.4,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 12,
+        "stdout": 103,
+        "stderr": 0,
+        "activity_workers": 1,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:46:34.018276+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 647.9,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 12,
+        "stdout": 105,
+        "stderr": 0,
+        "activity_workers": 1,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:46:44.485867+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 658.3,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 12,
+        "stdout": 107,
+        "stderr": 0,
+        "activity_workers": 1,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:46:54.966504+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 668.8,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 12,
+        "stdout": 110,
+        "stderr": 0,
+        "activity_workers": 1,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:47:05.441946+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 679.3,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 12,
+        "stdout": 110,
+        "stderr": 0,
+        "activity_workers": 1,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:47:15.913312+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 689.8,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 12,
+        "stdout": 110,
+        "stderr": 0,
+        "activity_workers": 1,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "data_understanding"
+      }
+    },
+    {
+      "t": "2026-07-06T06:47:26.394650+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 700.3,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 12,
+        "stdout": 113,
+        "stderr": 0,
+        "activity_workers": 1,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "prior_knowledge_research"
+      }
+    },
+    {
+      "t": "2026-07-06T06:47:36.863025+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 710.7,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 12,
+        "stdout": 113,
+        "stderr": 0,
+        "activity_workers": 1,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "prior_knowledge_research"
+      }
+    },
+    {
+      "t": "2026-07-06T06:47:47.342622+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 721.2,
+        "leaderboard": 0,
+        "notebooks": 2,
+        "pipelines": 0,
+        "research_findings": 0,
+        "chat_turns": 12,
+        "stdout": 113,
+        "stderr": 0,
+        "activity_workers": 1,
+        "turn_state": "agent_running",
+        "plan_blocks": 6,
+        "current_work": "prior_knowledge_research"
+      }
+    },
+    {
+      "t": "2026-07-06T06:47:47.343304+00:00",
+      "label": "final_snapshot",
+      "payload": {
+        "stop_reason": "timeout",
+        "overview": {
+          "project": {
+            "id": "p_db4e2c5cca9c",
+            "org_id": "local-org",
+            "name": "0119 current full auto smoke 20260706T063451Z",
+            "description": "Isolated current-code Full Auto verification smoke.",
+            "task_type": null,
+            "target_column": "salary",
+            "current_phase": "AUTONOMOUS_LOOP",
+            "status": "active",
+            "autonomy_mode": "full_auto",
+            "created_by": "local-user",
+            "created_at": "2026-07-06T06:34:51.700690",
+            "updated_at": "2026-07-06T06:34:52.034796"
+          },
+          "counts": {
+            "datasets": 1,
+            "artifacts": 46,
+            "artifact_versions": 52,
+            "questions": 2,
+            "assumptions": 2,
+            "evaluation_candidates": 0,
+            "evaluation_specs": 0,
+            "experiment_runs": 0,
+            "model_versions": 0,
+            "jobs": 2,
+            "research_briefs": 0,
+            "ideas": 0,
+            "reports": 0,
+            "visualizations": 0,
+            "insights": 0
+          },
+          "next_actions": [
+            "Review open questions and high-risk assumptions.",
+            "Design evaluation candidates."
+          ],
+          "latest_dataset_snapshot_id": "ds_908dbfe0c6de",
+          "high_risk_assumptions": [],
+          "recent_artifacts": [
+            {
+              "id": "art_5611072e2b23",
+              "project_id": "p_db4e2c5cca9c",
+              "asset_type": "research_plan",
+              "surface_role": "primary",
+              "name": "agent_session_ags_ca234205801d_outputs_research_plan_json_af1c09ac5e",
+              "version": 2,
+              "uri": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/research_plan/agent_session_ags_ca234205801d_outputs_research_plan_json_af1c09ac5e/v2",
+              "content_hash": "3e1a76c11ee97ce0ec7c676c035ab823316674c08e3f9f7d7784f3075380be91",
+              "size_bytes": 6436,
+              "metadata": {
+                "agent_session_id": "ags_ca234205801d",
+                "primary_path": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/research_plan/agent_session_ags_ca234205801d_outputs_research_plan_json_af1c09ac5e/v2/research_plan.json",
+                "project_id": "p_db4e2c5cca9c",
+                "source": "main_agent_session_workspace",
+                "workspace_relative_path": "outputs/research_plan.json"
+              },
+              "created_at": "2026-07-06T06:47:17.676664"
+            },
+            {
+              "id": "art_7c6538d256d7",
+              "project_id": "p_db4e2c5cca9c",
+              "asset_type": "agent_session_artifact",
+              "surface_role": "primary",
+              "name": "agent_session_ags_ca234205801d_notebooks_marimo_session_grandmaster_eda_py_json_12a20e20b2",
+              "version": 2,
+              "uri": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_session_artifact/agent_session_ags_ca234205801d_notebooks_marimo_session_grandmaster_eda_py_json_12a20e20b2/v2",
+              "content_hash": "b8739526ff5b708eb453e7aff488e1df0957eed7b47a0e3111d8a79b8ca1afd2",
+              "size_bytes": 116398,
+              "metadata": {
+                "agent_session_id": "ags_ca234205801d",
+                "primary_path": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_session_artifact/agent_session_ags_ca234205801d_notebooks_marimo_session_grandmaster_eda_py_json_12a20e20b2/v2/grandmaster_eda.py.json",
+                "project_id": "p_db4e2c5cca9c",
+                "source": "main_agent_session_workspace",
+                "workspace_relative_path": "notebooks/__marimo__/session/grandmaster_eda.py.json"
+              },
+              "created_at": "2026-07-06T06:46:16.747330"
+            },
+            {
+              "id": "art_ad7594aa94c2",
+              "project_id": "p_db4e2c5cca9c",
+              "asset_type": "agent_chat_turn",
+              "surface_role": "supporting",
+              "name": "agent_session_attention_ags_ca234205801d_0c26c4dff0d1",
+              "version": 1,
+              "uri": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_session_attention_ags_ca234205801d_0c26c4dff0d1/v1",
+              "content_hash": "d6dbcb3bb824d5011445de142a3b38eb773db921369e2d204e8b8fd650be9f1c",
+              "size_bytes": 2182,
+              "metadata": {
+                "agent_session_id": "ags_ca234205801d",
+                "attention_key": "notebook_quality_repair_needed:ags_ca234205801d:98abb72533a2",
+                "message_kind": "notebook_quality_repair_needed",
+                "primary_path": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_session_attention_ags_ca234205801d_0c26c4dff0d1/v1/agent_chat_turn.json",
+                "project_id": "p_db4e2c5cca9c",
+                "source": "main_agent_session_attention",
+                "source_transcript_event_id": "agte_8370a626113e",
+                "source_transcript_event_index": 157,
+                "source_transcript_event_type": "attention_chat_turn_registered"
+              },
+              "created_at": "2026-07-06T06:46:10.195027"
+            },
+            {
+              "id": "art_27244357e78c",
+              "project_id": "p_db4e2c5cca9c",
+              "asset_type": "agent_chat_turn",
+              "surface_role": "supporting",
+              "name": "agent_session_notebook_update_ags_ca234205801d_art_bc9a84e311cf_source_saved",
+              "version": 1,
+              "uri": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_session_notebook_update_ags_ca234205801d_art_bc9a84e311cf_source_saved/v1",
+              "content_hash": "9bc478c18e5bbdce83168485fc5ea479ac4ff8bfab06d7d9efb260f3b554130e",
+              "size_bytes": 4149,
+              "metadata": {
+                "agent_session_id": "ags_ca234205801d",
+                "notebook_artifact_id": "art_bc9a84e311cf",
+                "notebook_status": "source_saved",
+                "primary_path": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_session_notebook_update_ags_ca234205801d_art_bc9a84e311cf_source_saved/v1/agent_chat_turn.json",
+                "project_id": "p_db4e2c5cca9c",
+                "source": "main_agent_session_notebook_update",
+                "source_artifact_id": "art_bc9a84e311cf",
+                "source_transcript_event_id": "agte_b60d56aeb811",
+                "source_transcript_event_index": 155,
+                "source_transcript_event_type": "notebook_chat_turn_registered"
+              },
+              "created_at": "2026-07-06T06:46:10.118856"
+            },
+            {
+              "id": "art_32a414966453",
+              "project_id": "p_db4e2c5cca9c",
+              "asset_type": "agent_session_artifact",
+              "surface_role": "primary",
+              "name": "agent_session_ags_ca234205801d_notebooks_marimo_session_model_diagnostics_py_json_0d38bc43ec",
+              "version": 1,
+              "uri": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_session_artifact/agent_session_ags_ca234205801d_notebooks_marimo_session_model_diagnostics_py_json_0d38bc43ec/v1",
+              "content_hash": "bb5ad0118ae666204e7c1e78158bed3bc9acedc38da81e7e01bc5a1fd5b5a3cd",
+              "size_bytes": 98548,
+              "metadata": {
+                "agent_session_id": "ags_ca234205801d",
+                "primary_path": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_session_artifact/agent_session_ags_ca234205801d_notebooks_marimo_session_model_diagnostics_py_json_0d38bc43ec/v1/model_diagnostics.py.json",
+                "project_id": "p_db4e2c5cca9c",
+                "source": "main_agent_session_workspace",
+                "workspace_relative_path": "notebooks/__marimo__/session/model_diagnostics.py.json"
+              },
+              "created_at": "2026-07-06T06:45:46.305388"
+            },
+            {
+              "id": "art_2e1e79239722",
+              "project_id": "p_db4e2c5cca9c",
+              "asset_type": "agent_chat_turn",
+              "surface_role": "supporting",
+              "name": "agent_session_attention_ags_ca234205801d_60f447145190",
+              "version": 1,
+              "uri": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_session_attention_ags_ca234205801d_60f447145190/v1",
+              "content_hash": "468d572b49f22104cd558d2e1c71d3cbd66c834ae1663f265d86412935800a00",
+              "size_bytes": 1936,
+              "metadata": {
+                "agent_session_id": "ags_ca234205801d",
+                "attention_key": "session_output_rejected:ags_ca234205801d:outputs/notebook_exports/model_diagnostics.html:static_html_outputs_are_not_tablex_notebook_artifacts",
+                "message_kind": "static_html_output_rejected",
+                "primary_path": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_session_attention_ags_ca234205801d_60f447145190/v1/agent_chat_turn.json",
+                "project_id": "p_db4e2c5cca9c",
+                "source": "main_agent_session_attention",
+                "source_transcript_event_id": "agte_e380dca45d6d",
+                "source_transcript_event_index": 148,
+                "source_transcript_event_type": "attention_chat_turn_registered"
+              },
+              "created_at": "2026-07-06T06:45:46.278003"
+            },
+            {
+              "id": "art_04dada0f5171",
+              "project_id": "p_db4e2c5cca9c",
+              "asset_type": "agent_chat_turn",
+              "surface_role": "supporting",
+              "name": "agent_session_attention_ags_ca234205801d_7c380fa0a2b7",
+              "version": 1,
+              "uri": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_session_attention_ags_ca234205801d_7c380fa0a2b7/v1",
+              "content_hash": "282aee620402dfe45edaa3df48497ffaad7e0978ef6a0954e264e80dcd8639d2",
+              "size_bytes": 1928,
+              "metadata": {
+                "agent_session_id": "ags_ca234205801d",
+                "attention_key": "session_output_rejected:ags_ca234205801d:outputs/notebook_exports/grandmaster_eda.html:static_html_outputs_are_not_tablex_notebook_artifacts",
+                "message_kind": "static_html_output_rejected",
+                "primary_path": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_session_attention_ags_ca234205801d_7c380fa0a2b7/v1/agent_chat_turn.json",
+                "project_id": "p_db4e2c5cca9c",
+                "source": "main_agent_session_attention",
+                "source_transcript_event_id": "agte_6db167fb00ec",
+                "source_transcript_event_index": 146,
+                "source_transcript_event_type": "attention_chat_turn_registered"
+              },
+              "created_at": "2026-07-06T06:45:46.265242"
+            },
+            {
+              "id": "art_61728bb12302",
+              "project_id": "p_db4e2c5cca9c",
+              "asset_type": "agent_chat_turn",
+              "surface_role": "supporting",
+              "name": "agent_session_notebook_update_ags_ca234205801d_art_888647e9b901_quality_needs_attention",
+              "version": 1,
+              "uri": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_session_notebook_update_ags_ca234205801d_art_888647e9b901_quality_needs_attention/v1",
+              "content_hash": "ced634b761ee880f3b40447ec2f08a8771a25a3d7aa5aa2b98a851509e1bab00",
+              "size_bytes": 3856,
+              "metadata": {
+                "agent_session_id": "ags_ca234205801d",
+                "notebook_artifact_id": "art_888647e9b901",
+                "notebook_status": "quality_needs_attention",
+                "primary_path": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_session_notebook_update_ags_ca234205801d_art_888647e9b901_quality_needs_attention/v1/agent_chat_turn.json",
+                "project_id": "p_db4e2c5cca9c",
+                "source": "main_agent_session_notebook_update",
+                "source_artifact_id": "art_888647e9b901",
+                "source_transcript_event_id": "agte_20f527d4e791",
+                "source_transcript_event_index": 140,
+                "source_transcript_event_type": "notebook_chat_turn_registered"
+              },
+              "created_at": "2026-07-06T06:45:30.898169"
+            }
+          ],
+          "recent_jobs": [
+            {
+              "id": "job_555cdb1c1813",
+              "project_id": "p_db4e2c5cca9c",
+              "job_type": "start_autonomous_loop",
+              "status": "succeeded",
+              "priority": 50,
+              "attempt_count": 0,
+              "max_attempts": 1,
+              "input": {
+                "agent_model": null,
+                "agent_session_id": "ags_ca234205801d",
+                "autonomy_mode": "full_auto",
+                "locale": "ja-JP",
+                "requested_runner_mode": "codex_cli",
+                "runner_mode": "codex_cli",
+                "utility_model": null
+              },
+              "output": {
+                "agent_chat_turn_artifact_id": "art_936dc5368085",
+                "agent_session_id": "ags_ca234205801d",
+                "assistant_message": "フルオートを開始しました。データの確認、目的の整理、評価設計、分析ノートブック作成へ順に進めます。進行中の内容はこのチャットとアクティビティに表示します。",
+                "created_job_ids": [],
+                "project_id": "p_db4e2c5cca9c",
+                "schema_version": "agent_session_start.v1",
+                "status": "started",
+                "token_usage": {
+                  "is_estimate": true,
+                  "series": [
+                    {
+                      "step": "session_created",
+                      "tokens": 32
+                    },
+                    {
+                      "step": "codex_starting",
+                      "tokens": 48
+                    }
+                  ],
+                  "source": "agent_session_transcript_pending"
+                },
+                "worker_events": [
+                  {
+                    "active": true,
+                    "agent_session_id": "ags_ca234205801d",
+                    "created_at": "2026-07-06T06:34:52.046895+00:00",
+                    "detail": "プロジェクトの状況を確認し、次の分析ステップを開始しています。",
+                    "display_name": "自律分析",
+                    "headline": "分析を開始しています",
+                    "job_id": "job_555cdb1c1813",
+                    "job_type": "start_autonomous_loop",
+                    "project_id": "p_db4e2c5cca9c",
+                    "status": "starting",
+                    "target_anchor": "agent-workspace",
+                    "target_tab": "Home",
+                    "token_usage": {
+                      "is_estimate": true,
+                      "series": [
+                        {
+                          "step": "session_created",
+                          "tokens": 32
+                        },
+                        {
+                          "step": "codex_starting",
+                          "tokens": 48
+                        }
+                      ],
+                      "source": "agent_session_transcript_pending"
+                    },
+                    "updated_at": "2026-07-06T06:34:52.047369+00:00",
+                    "worker_id": "main-agent-session"
+                  }
+                ]
+              },
+              "context": {},
+              "policy": {
+                "autonomy_mode": "full_auto",
+                "connector_credentials": "not_materialized",
+                "control_record_only": true,
+                "main_execution_state": "agent_session",
+                "production_write": "forbidden",
+                "requested_runner_mode": "codex_cli",
+                "runner_mode": "codex_cli",
+                "secret_access": "forbidden"
+              },
+              "dependency_job_ids": [],
+              "error_message": null,
+              "approval_required": false,
+              "approved_by": null,
+              "approved_at": null,
+              "cancelled_by": null,
+              "run_after": null,
+              "locked_by": null,
+              "locked_at": null,
+              "created_at": "2026-07-06T06:34:52.046895",
+              "updated_at": "2026-07-06T06:34:52.050129",
+              "started_at": null,
+              "ended_at": "2026-07-06T06:34:52.047482"
+            },
+            {
+              "id": "job_22e9d095f0ce",
+              "project_id": "p_db4e2c5cca9c",
+              "job_type": "profile_dataset",
+              "status": "succeeded",
+              "priority": 50,
+              "attempt_count": 1,
+              "max_attempts": 1,
+              "input": {
+                "artifact_id": "art_5f006ce1e940",
+                "target_column": "salary"
+              },
+              "output": {
+                "dataset_snapshot_id": "ds_908dbfe0c6de"
+              },
+              "context": {},
+              "policy": {},
+              "dependency_job_ids": [],
+              "error_message": null,
+              "approval_required": false,
+              "approved_by": null,
+              "approved_at": null,
+              "cancelled_by": null,
+              "run_after": null,
+              "locked_by": null,
+              "locked_at": null,
+              "created_at": "2026-07-06T06:34:51.802846",
+              "updated_at": "2026-07-06T06:34:52.025622",
+              "started_at": "2026-07-06T06:34:51.803440",
+              "ended_at": "2026-07-06T06:34:52.025616"
+            }
+          ]
+        },
+        "counts": {
+          "elapsed_s": 721.2,
+          "leaderboard": 0,
+          "notebooks": 2,
+          "pipelines": 0,
+          "research_findings": 0,
+          "chat_turns": 12,
+          "stdout": 113,
+          "stderr": 0,
+          "activity_workers": 1,
+          "turn_state": "agent_running",
+          "plan_blocks": 6,
+          "current_work": "prior_knowledge_research"
+        },
+        "leaderboard_sample": [],
+        "notebook_sample": [
+          {
+            "notebook_artifact_id": "art_bc9a84e311cf",
+            "notebook_kind": "data_understanding",
+            "title": "概要",
+            "status": "ready",
+            "created_at": "2026-07-06T06:45:25.967544",
+            "dataset_snapshot_id": "ds_908dbfe0c6de",
+            "run_id": null,
+            "model_version_id": null,
+            "context_link_source": "metadata",
+            "research_plan_id": "rplan_591b866711f7",
+            "research_plan_node_id": "data_understanding",
+            "related_run_ids": [],
+            "related_context": {
+              "dataset_snapshot_id": "ds_908dbfe0c6de",
+              "run_id": null,
+              "model_version_id": null,
+              "context_link_source": "metadata",
+              "research_plan_id": "rplan_591b866711f7",
+              "research_plan_node_id": "data_understanding",
+              "related_run_ids": []
+            },
+            "artifact_ids": {
+              "notebook": "art_bc9a84e311cf",
+              "source": "art_bc9a84e311cf",
+              "manifest": null,
+              "report_artifact": "art_74dea6db9e9b",
+              "visualization_artifact": null,
+              "execution_plan": null,
+              "agent_task_contract": null,
+              "figure_manifest": "art_f1dc153bcf5b",
+              "evidence_bundle": "art_9d43f9e3cd7e",
+              "evidence_figures": []
+            },
+            "source_artifact_id": "art_bc9a84e311cf",
+            "report_id": null,
+            "visualization_id": null,
+            "coverage": {
+              "has_native_source": true,
+              "has_manifest": false,
+              "has_quality_manifest": true,
+              "notebook_quality_status": "manifest_provided",
+              "has_report": true,
+              "has_visualization": false,
+              "has_execution_plan": false,
+              "has_execution_report": false,
+              "has_evidence_bundle": true,
+              "evidence_figure_count": 0,
+              "declared_figure_count": 6,
+              "declared_table_count": 3,
+              "declared_finding_count": 4,
+              "declared_read_order_count": 3,
+              "has_figure_manifest": true,
+              "execution_status": "unknown",
+              "native_marimo_status": "source_registered",
+              "native_marimo_error_artifact_id": null,
+              "content_readiness": "evidence_ready",
+              "content_quality_score": 40
+            },
+            "quality_manifest": {
+              "data_sources_used": [
+                "ds_908dbfe0c6de"
+              ],
+              "figure_count": 6,
+              "key_findings": [
+                "salaryは欠損のない年収回帰ターゲットとして扱える。",
+                "titleは職位と職種に分解でき、給与差の中心的な説明要因である。",
+                "company_idは18社に各5件ずつあり、主評価では会社グループ分割が必要である。",
+                "descriptionはtitleとlocationを含むテンプレートで、独立した情報として過信しない。"
+              ],
+              "limitations": [
+                "90行の小規模データであり、分割ごとのばらつきは大きくなり得る。",
+                "データはテンプレート生成に見えるため、外部求人データへの一般化は未確認である。"
+              ],
+              "read_order": [
+                {
+                  "anchor": "給与データ理解",
+                  "label": "概要"
+                },
+                {
+                  "anchor": "職位別のsalary",
+                  "label": "職位と職種"
+                },
+                {
+                  "anchor": "漏洩・評価上の判断",
+                  "label": "評価リスク"
+                }
+              ],
+              "schema_version": "tablex_notebook_quality_manifest.v1",
+              "table_count": 3
+            },
+            "content": {
+              "readiness": "evidence_ready",
+              "quality_score": 40,
+              "read_order_count": 0,
+              "story_card_count": 4,
+              "playbook_count": 0,
+              "primary_metric_available": false,
+              "prediction_rows": 0,
+              "evidence_figure_count": 1
+            },
+            "recommendation_score": 105,
+            "recommendation_reason": "Best starting point: Data Understanding has narrative, story cards, playbook, and evidence figures."
+          },
+          {
+            "notebook_artifact_id": "art_888647e9b901",
+            "notebook_kind": "model_diagnostics",
+            "title": "Model Diagnostics Notebook",
+            "status": "needs_attention",
+            "created_at": "2026-07-06T06:45:25.985634",
+            "dataset_snapshot_id": "ds_908dbfe0c6de",
+            "run_id": null,
+            "model_version_id": null,
+            "context_link_source": "research_plan_node",
+            "research_plan_id": "rplan_591b866711f7",
+            "research_plan_node_id": "data_understanding",
+            "related_run_ids": [],
+            "related_context": {
+              "dataset_snapshot_id": "ds_908dbfe0c6de",
+              "run_id": null,
+              "model_version_id": null,
+              "context_link_source": "research_plan_node",
+              "research_plan_id": "rplan_591b866711f7",
+              "research_plan_node_id": "data_understanding",
+              "related_run_ids": []
+            },
+            "artifact_ids": {
+              "notebook": "art_888647e9b901",
+              "source": "art_888647e9b901",
+              "manifest": null,
+              "report_artifact": "art_02dc3d264077",
+              "visualization_artifact": null,
+              "execution_plan": null,
+              "agent_task_contract": null,
+              "figure_manifest": "art_f1dc153bcf5b",
+              "evidence_bundle": "art_9d43f9e3cd7e",
+              "evidence_figures": []
+            },
+            "source_artifact_id": "art_888647e9b901",
+            "report_id": null,
+            "visualization_id": null,
+            "coverage": {
+              "has_native_source": true,
+              "has_manifest": false,
+              "has_quality_manifest": false,
+              "notebook_quality_status": "needs_manifest",
+              "has_report": true,
+              "has_visualization": false,
+              "has_execution_plan": false,
+              "has_execution_report": false,
+              "has_evidence_bundle": true,
+              "evidence_figure_count": 0,
+              "declared_figure_count": 0,
+              "declared_table_count": 0,
+              "declared_finding_count": 0,
+              "declared_read_order_count": 0,
+              "has_figure_manifest": true,
+              "execution_status": "unknown",
+              "native_marimo_status": "source_registered",
+              "native_marimo_error_artifact_id": null,
+              "content_readiness": "not_ready",
+              "content_quality_score": 0
+            },
+            "quality_manifest": null,
+            "content": {
+              "readiness": "not_ready",
+              "quality_score": 0,
+              "read_order_count": 0,
+              "story_card_count": 0,
+              "playbook_count": 0,
+              "primary_metric_available": false,
+              "prediction_rows": 0,
+              "has_predictions": false
+            },
+            "recommendation_score": -15,
+            "recommendation_reason": "Model diagnostics exists, but it is not useful yet because metric, prediction, or diagnostic evidence is missing."
+          }
+        ],
+        "pipeline_artifacts": [],
+        "research_findings_artifacts": [],
+        "chat_tail": [
+          {
+            "schema_version": "agent_chat_turn.v1",
+            "project_id": "p_db4e2c5cca9c",
+            "user_message": "",
+            "assistant_message": "分析ノートブック2件の最新版をここからmarimoで開けます。",
+            "intent": {
+              "source": "main_agent_session_workspace",
+              "status": "quality_needs_attention",
+              "type": "notebook_artifact_update",
+              "grouped": true,
+              "grouped_turn_count": 2
+            },
+            "actions": [
+              {
+                "artifact_id": "art_bc9a84e311cf",
+                "artifact_ids": [
+                  "art_bc9a84e311cf"
+                ],
+                "detail": "Notebook source assetと関連成果物の棚へ移動します。",
+                "label": "Assetsで見る",
+                "status": "ready",
+                "target_anchor": "asset-notebooks",
+                "target_tab": "Assets",
+                "type": "open_artifact"
+              },
+              {
+                "artifact_id": "art_888647e9b901",
+                "artifact_ids": [
+                  "art_888647e9b901"
+                ],
+                "detail": "Notebook source assetと関連成果物の棚へ移動します。",
+                "label": "Assetsで見る",
+                "status": "ready",
+                "target_anchor": "asset-notebooks",
+                "target_tab": "Assets",
+                "type": "open_artifact"
+              }
+            ],
+            "action_summary": {},
+            "response_brief": {
+              "schema_version": "notebook_artifact_update_group.v1",
+              "status": "source_saved",
+              "grouped_turn_count": 2,
+              "notebook_count": 2,
+              "notebook_artifact_ids": [
+                "art_bc9a84e311cf",
+                "art_888647e9b901"
+              ],
+              "source_artifact_ids": [
+                "art_836a0cdbc298",
+                "art_61728bb12302"
+              ],
+              "source_transcript_event_indexes": [
+                139,
+                140
+              ]
+            },
+            "response_composer": {
+              "mode": "main_agent_session",
+              "schema_version": "agent_response_composer.v1",
+              "status": "harness_fact"
+            },
+            "worker_events": [],
+            "token_usage": {
+              "is_estimate": false,
+              "series": [],
+              "source": "not_applicable"
+            },
+            "next_focus": {
+              "artifact_id": "art_888647e9b901",
+              "artifact_ids": [
+                "art_888647e9b901"
+              ],
+              "detail": "Notebook source assetと関連成果物の棚へ移動します。",
+              "label": "Assetsで見る",
+              "status": "ready",
+              "target_anchor": "asset-notebooks",
+              "target_tab": "Assets",
+              "type": "open_artifact"
+            },
+            "artifact_id": "notebook_update_group_art_836a0cdbc298_art_61728bb12302",
+            "job_id": null,
+            "created_at": "2026-07-06T06:45:30.898169"
+          },
+          {
+            "schema_version": "agent_chat_turn.v1",
+            "project_id": "p_db4e2c5cca9c",
+            "user_message": "",
+            "assistant_message": "`outputs/notebook_exports/grandmaster_eda.html` はNotebookとして登録しませんでした。静的HTMLではなく、native marimoで開けるPython notebook sourceを保存してください。",
+            "intent": {
+              "message_kind": "static_html_output_rejected",
+              "source": "main_agent_session_observation",
+              "status": "needs_attention",
+              "type": "agent_attention_event"
+            },
+            "actions": [
+              {
+                "detail": "失敗は隠さず、marimo sourceの修正対象として扱います。",
+                "label": "Notebookを確認",
+                "status": "needs_attention",
+                "target_anchor": "notebook-native-marimo-top",
+                "target_tab": "Notebooks",
+                "type": "open_surface"
+              }
+            ],
+            "action_summary": {},
+            "response_brief": {
+              "agent_session_id": "ags_ca234205801d",
+              "attention_key": "session_output_rejected:ags_ca234205801d:outputs/notebook_exports/grandmaster_eda.html:static_html_outputs_are_not_tablex_notebook_artifacts",
+              "details": {
+                "reason": "static_html_outputs_are_not_tablex_notebook_artifacts",
+                "workspace_relative_path": "outputs/notebook_exports/grandmaster_eda.html"
+              },
+              "message_kind": "static_html_output_rejected",
+              "schema_version": "agent_attention_event.v1",
+              "source_transcript_event": {
+                "event_index": 146,
+                "event_type": "attention_chat_turn_registered",
+                "id": "agte_6db167fb00ec",
+                "source": "tablex_sidecar"
+              },
+              "status": "needs_attention"
+            },
+            "response_composer": {
+              "mode": "main_agent_session",
+              "schema_version": "agent_response_composer.v1",
+              "status": "harness_fact"
+            },
+            "worker_events": [],
+            "token_usage": {
+              "is_estimate": false,
+              "series": [],
+              "source": "not_applicable"
+            },
+            "next_focus": {
+              "label": "Notebookを確認",
+              "target_anchor": "notebook-native-marimo-top",
+              "target_tab": "Notebooks"
+            },
+            "artifact_id": "art_04dada0f5171",
+            "job_id": null,
+            "created_at": "2026-07-06T06:45:46.265242"
+          },
+          {
+            "schema_version": "agent_chat_turn.v1",
+            "project_id": "p_db4e2c5cca9c",
+            "user_message": "",
+            "assistant_message": "`outputs/notebook_exports/model_diagnostics.html` はNotebookとして登録しませんでした。静的HTMLではなく、native marimoで開けるPython notebook sourceを保存してください。",
+            "intent": {
+              "message_kind": "static_html_output_rejected",
+              "source": "main_agent_session_observation",
+              "status": "needs_attention",
+              "type": "agent_attention_event"
+            },
+            "actions": [
+              {
+                "detail": "失敗は隠さず、marimo sourceの修正対象として扱います。",
+                "label": "Notebookを確認",
+                "status": "needs_attention",
+                "target_anchor": "notebook-native-marimo-top",
+                "target_tab": "Notebooks",
+                "type": "open_surface"
+              }
+            ],
+            "action_summary": {},
+            "response_brief": {
+              "agent_session_id": "ags_ca234205801d",
+              "attention_key": "session_output_rejected:ags_ca234205801d:outputs/notebook_exports/model_diagnostics.html:static_html_outputs_are_not_tablex_notebook_artifacts",
+              "details": {
+                "reason": "static_html_outputs_are_not_tablex_notebook_artifacts",
+                "workspace_relative_path": "outputs/notebook_exports/model_diagnostics.html"
+              },
+              "message_kind": "static_html_output_rejected",
+              "schema_version": "agent_attention_event.v1",
+              "source_transcript_event": {
+                "event_index": 148,
+                "event_type": "attention_chat_turn_registered",
+                "id": "agte_e380dca45d6d",
+                "source": "tablex_sidecar"
+              },
+              "status": "needs_attention"
+            },
+            "response_composer": {
+              "mode": "main_agent_session",
+              "schema_version": "agent_response_composer.v1",
+              "status": "harness_fact"
+            },
+            "worker_events": [],
+            "token_usage": {
+              "is_estimate": false,
+              "series": [],
+              "source": "not_applicable"
+            },
+            "next_focus": {
+              "label": "Notebookを確認",
+              "target_anchor": "notebook-native-marimo-top",
+              "target_tab": "Notebooks"
+            },
+            "artifact_id": "art_2e1e79239722",
+            "job_id": null,
+            "created_at": "2026-07-06T06:45:46.278003"
+          },
+          {
+            "schema_version": "agent_chat_turn.v1",
+            "project_id": "p_db4e2c5cca9c",
+            "user_message": "",
+            "assistant_message": "分析ノートブックのソースを保存しました。この同じ場所からmarimoで開けます。",
+            "intent": {
+              "source": "main_agent_session_workspace",
+              "status": "source_saved",
+              "type": "notebook_artifact_update"
+            },
+            "actions": [
+              {
+                "artifact_id": "art_bc9a84e311cf",
+                "artifact_ids": [
+                  "art_bc9a84e311cf"
+                ],
+                "detail": "保存されたmarimo sourceをnative marimoで開きます。",
+                "label": "ノートブックを開く",
+                "status": "ready",
+                "target_anchor": "notebook-native-marimo-top",
+                "target_tab": "Notebooks",
+                "type": "open_artifact"
+              },
+              {
+                "artifact_id": "art_bc9a84e311cf",
+                "detail": "このNotebookが説明しているDatasetへ移動します。",
+                "entity_ids": [
+                  "ds_908dbfe0c6de"
+                ],
+                "label": "関連データを見る",
+                "status": "ready",
+                "target_anchor": "data-focus",
+                "target_tab": "Data",
+                "type": "open_surface"
+              },
+              {
+                "artifact_id": "art_bc9a84e311cf",
+                "artifact_ids": [
+                  "art_bc9a84e311cf"
+                ],
+                "detail": "Notebook source assetと関連成果物の棚へ移動します。",
+                "label": "Assetsで見る",
+                "status": "ready",
+                "target_anchor": "asset-notebooks",
+                "target_tab": "Assets",
+                "type": "open_artifact"
+              }
+            ],
+            "action_summary": {},
+            "response_brief": {
+              "agent_session_id": "ags_ca234205801d",
+              "dataset_snapshot_id": "ds_908dbfe0c6de",
+              "error": null,
+              "model_version_id": null,
+              "notebook_artifact_id": "art_bc9a84e311cf",
+              "notebook_quality": {
+                "figure_count": 6,
+                "key_finding_count": 4,
+                "read_order_count": 3,
+                "schema_version": "tablex_notebook_quality_manifest.v1",
+                "status": "manifest_provided",
+                "table_count": 3
+              },
+              "research_plan_node_id": "data_understanding",
+              "run_id": null,
+              "schema_version": "notebook_artifact_update.v1",
+              "source_transcript_event": {
+                "event_index": 155,
+                "event_type": "notebook_chat_turn_registered",
+                "id": "agte_b60d56aeb811",
+                "source": "tablex_sidecar"
+              },
+              "status": "source_saved",
+              "visible_surfaces": {
+                "assets": {
+                  "artifact_id": "art_bc9a84e311cf",
+                  "target_anchor": "asset-notebooks",
+                  "target_tab": "Assets"
+                },
+                "chat": {
+                  "artifact_id": "art_27244357e78c",
+                  "target_anchor": "agent-workspace",
+                  "target_tab": "Home"
+                },
+                "data": {
+                  "artifact_id": "art_bc9a84e311cf",
+                  "dataset_snapshot_id": "ds_908dbfe0c6de",
+                  "target_anchor": "data-focus",
+                  "target_tab": "Data"
+                },
+                "notebooks": {
+                  "artifact_id": "art_bc9a84e311cf",
+                  "target_anchor": "notebook-native-marimo-top",
+                  "target_tab": "Notebooks"
+                },
+                "research_plan": {
+                  "artifact_id": "art_bc9a84e311cf",
+                  "node_id": "data_understanding",
+                  "target_anchor": "research-plan",
+                  "target_tab": "Home"
+                }
+              },
+              "source_artifact_id": "art_bc9a84e311cf"
+            },
+            "response_composer": {
+              "mode": "main_agent_session",
+              "schema_version": "agent_response_composer.v1",
+              "status": "harness_fact"
+            },
+            "worker_events": [],
+            "token_usage": {
+              "is_estimate": false,
+              "series": [],
+              "source": "not_applicable"
+            },
+            "next_focus": {
+              "label": "ノートブック",
+              "target_anchor": "notebook-native-marimo-top",
+              "target_tab": "Notebooks"
+            },
+            "artifact_id": "art_27244357e78c",
+            "job_id": null,
+            "created_at": "2026-07-06T06:46:10.118856"
+          },
+          {
+            "schema_version": "agent_chat_turn.v1",
+            "project_id": "p_db4e2c5cca9c",
+            "user_message": "",
+            "assistant_message": "3件のNotebookは保存されていますが、人が読む成果物としては図や品質manifestが不足しています。Codexには修正依頼を渡しているので、marimoソースを直して再登録できます。",
+            "intent": {
+              "message_kind": "notebook_quality_repair_needed",
+              "source": "main_agent_session_observation",
+              "status": "needs_attention",
+              "type": "agent_attention_event"
+            },
+            "actions": [
+              {
+                "detail": "失敗は隠さず、marimo sourceの修正対象として扱います。",
+                "label": "Notebookを確認",
+                "status": "needs_attention",
+                "target_anchor": "notebook-native-marimo-top",
+                "target_tab": "Notebooks",
+                "type": "open_surface"
+              }
+            ],
+            "action_summary": {},
+            "response_brief": {
+              "agent_session_id": "ags_ca234205801d",
+              "attention_key": "notebook_quality_repair_needed:ags_ca234205801d:98abb72533a2",
+              "details": {
+                "notebook_artifact_ids": [
+                  "art_888647e9b901",
+                  "art_2d1ba8b0c86b",
+                  "art_086536af3e98"
+                ],
+                "notebook_count": 3,
+                "quality_statuses": [
+                  "needs_manifest",
+                  "needs_manifest",
+                  "needs_manifest"
+                ],
+                "workspace_paths": [
+                  "notebooks/model_diagnostics.py",
+                  "notebooks/model_diagnostics.py",
+                  "notebooks/grandmaster_eda.py"
+                ]
+              },
+              "message_kind": "notebook_quality_repair_needed",
+              "schema_version": "agent_attention_event.v1",
+              "source_transcript_event": {
+                "event_index": 157,
+                "event_type": "attention_chat_turn_registered",
+                "id": "agte_8370a626113e",
+                "source": "tablex_sidecar"
+              },
+              "status": "needs_attention"
+            },
+            "response_composer": {
+              "mode": "main_agent_session",
+              "schema_version": "agent_response_composer.v1",
+              "status": "harness_fact"
+            },
+            "worker_events": [],
+            "token_usage": {
+              "is_estimate": false,
+              "series": [],
+              "source": "not_applicable"
+            },
+            "next_focus": {
+              "label": "Notebookを確認",
+              "target_anchor": "notebook-native-marimo-top",
+              "target_tab": "Notebooks"
+            },
+            "artifact_id": "art_ad7594aa94c2",
+            "job_id": null,
+            "created_at": "2026-07-06T06:46:10.195027"
+          }
+        ],
+        "raw_tail": [
+          {
+            "line_number": 106,
+            "text": "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"command_execution\",\"command\":\"/bin/bash -lc \\\"sed -n '1,240p' .tablex/context.json\\\"\",\"aggregated_output\":\"{\\n  \\\"schema_version\\\": \\\"tablex_agent_session_context.v1\\\",\\n  \\\"project\\\": {\\n    \\\"id\\\": \\\"p_db4e2c5cca9c\\\",\\n    \\\"name\\\": \\\"0119 current full auto smoke 20260706T063451Z\\\",\\n    \\\"task_type\\\": null,\\n    \\\"target_column\\\": \\\"salary\\\",\\n    \\\"current_phase\\\": \\\"AUTONOMOUS_LOOP\\\",\\n    \\\"autonomy_mode\\\": \\\"full_auto\\\"\\n  },\\n  \\\"human_interface\\\": {\\n    \\\"response_locale\\\": \\\"ja-JP\\\",\\n    \\\"notebook_language\\\": \\\"ja-JP\\\",\\n    \\\"instruction\\\": \\\"Write human-facing chat responses, marimo notebook narratives, research summaries, and reports in this locale unless the user explicitly asks otherwise.\\\"\\n  },\\n  \\\"session\\\": {\\n    \\\"id\\\": \\\"ags_ca234205801d\\\",\\n    \\\"turn_index\\\": 0,\\n    \\\"codex_thread_id\\\": null\\n  },\\n  \\\"datasets\\\": [\\n    {\\n      \\\"id\\\": \\\"ds_908dbfe0c6de\\\",\\n      \\\"artifact_id\\\": \\\"art_5f006ce1e940\\\",\\n      \\\"source_ref\\\": \\\"tablex_0119_current_salary_20260706T063451Z.csv\\\",\\n      \\\"row_count\\\": 90,\\n      \\\"column_count\\\": 11,\\n      \\\"workspace_path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/agent_sessions/p_db4e2c5cca9c/ags_ca234205801d/.tablex/data/ds_908dbfe0c6de__tablex_0119_current_salary_20260706T063451Z.csv\\\",\\n      \\\"workspace_relative_path\\\": \\\".tablex/data/ds_908dbfe0c6de__tablex_0119_current_salary_20260706T063451Z.csv\\\"\\n    }\\n  ],\\n  \\\"dataset_access\\\": {\\n    \\\"root\\\": \\\".tablex/data\\\",\\n    \\\"manifest_path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/agent_sessions/p_db4e2c5cca9c/ags_ca234205801d/.tablex/data_manifest.json\\\",\\n    \\\"manifest_relative_path\\\": \\\".tablex/data_manifest.json\\\",\\n    \\\"data_dir\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/agent_sessions/p_db4e2c5cca9c/ags_ca234205801d/.tablex/data\\\",\\n    \\\"data_dir_relative_path\\\": \\\".tablex/data\\\",\\n    \\\"files\\\": [\\n      {\\n        \\\"dataset_snapshot_id\\\": \\\"ds_908dbfe0c6de\\\",\\n        \\\"artifact_id\\\": \\\"art_5f006ce1e940\\\",\\n        \\\"source_ref\\\": \\\"tablex_0119_current_salary_20260706T063451Z.csv\\\",\\n        \\\"row_count\\\": 90,\\n        \\\"column_count\\\": 11,\\n        \\\"workspace_path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/agent_sessions/p_db4e2c5cca9c/ags_ca234205801d/.tablex/data/ds_908dbfe0c6de__tablex_0119_current_salary_20260706T063451Z.csv\\\",\\n        \\\"workspace_relative_path\\\": \\\".tablex/data/ds_908dbfe0c6de__tablex_0119_current_salary_20260706T063451Z.csv\\\",\\n        \\\"source_artifact_path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/dataset_snapshot/uploaded_dataset/v1/tablex_0119_current_salary_20260706T063451Z.csv\\\",\\n        \\\"materialization\\\": \\\"symlink\\\"\\n      }\\n    ],\\n    \\\"datasets\\\": [\\n      {\\n        \\\"dataset_snapshot_id\\\": \\\"ds_908dbfe0c6de\\\",\\n        \\\"artifact_id\\\": \\\"art_5f006ce1e940\\\",\\n        \\\"source_ref\\\": \\\"tablex_0119_current_salary_20260706T063451Z.csv\\\",\\n        \\\"row_count\\\": 90,\\n        \\\"column_count\\\": 11,\\n        \\\"workspace_path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/agent_sessions/p_db4e2c5cca9c/ags_ca234205801d/.tablex/data/ds_908dbfe0c6de__tablex_0119_current_salary_20260706T063451Z.csv\\\",\\n        \\\"workspace_relative_path\\\": \\\".tablex/data/ds_908dbfe0c6de__tablex_0119_current_salary_20260706T063451Z.csv\\\",\\n        \\\"source_artifact_path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/dataset_snapshot/uploaded_dataset/v1/tablex_0119_current_salary_20260706T063451Z.csv\\\",\\n        \\\"materialization\\\": \\\"symlink\\\"\\n      }\\n    ],\\n    \\\"guarantee\\\": \\\"These workspace_relative_path values are stable AgentSession workspace paths. Tablex starts native marimo for registered session notebooks with the AgentSession workspace as the working directory, so notebook code can read them directly.\\\",\\n    \\\"instruction\\\": \\\"Use dataset_access.datasets[*].workspace_relative_path from the session workspace when notebooks or scripts need to read project data. These are Tablex-managed links or copies of registered DatasetSnapshot artifacts.\\\"\\n  },\\n  \\\"recent_artifacts\\\": [\\n    {\\n      \\\"id\\\": \\\"art_936dc5368085\\\",\\n      \\\"asset_type\\\": \\\"agent_chat_turn\\\",\\n      \\\"name\\\": \\\"agent_loop_control_job_555cdb1c1813\\\",\\n      \\\"uri\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_loop_control_job_555cdb1c1813/v1\\\",\\n      \\\"path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_loop_control_job_555cdb1c1813/v1/agent_chat_turn.json\\\",\\n      \\\"metadata\\\": {\\n        \\\"action_count\\\": 0,\\n        \\\"intent_type\\\": \\\"agent_loop_control\\\",\\n        \\\"job_id\\\": \\\"job_555cdb1c1813\\\",\\n        \\\"primary_path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/agent_chat_turn/agent_loop_control_job_555cdb1c1813/v1/agent_chat_turn.json\\\",\\n        \\\"project_id\\\": \\\"p_db4e2c5cca9c\\\",\\n        \\\"response_composer_mode\\\": \\\"autonomy_control_event\\\",\\n        \\\"response_locale\\\": \\\"ja-JP\\\",\\n        \\\"token_usage_source\\\": \\\"agent_session_transcript_pending\\\"\\n      }\\n    },\\n    {\\n      \\\"id\\\": \\\"art_be37c6f7728c\\\",\\n      \\\"asset_type\\\": \\\"evidence_set\\\",\\n      \\\"name\\\": \\\"evidence\\\",\\n      \\\"uri\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/evidence_set/evidence/v1\\\",\\n      \\\"path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/evidence_set/evidence/v1/evidence.json\\\",\\n      \\\"metadata\\\": {\\n        \\\"dataset_snapshot_id\\\": \\\"ds_908dbfe0c6de\\\",\\n        \\\"primary_path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/evidence_set/evidence/v1/evidence.json\\\",\\n        \\\"project_id\\\": \\\"p_db4e2c5cca9c\\\"\\n      }\\n    },\\n    {\\n      \\\"id\\\": \\\"art_359377eb4160\\\",\\n      \\\"asset_type\\\": \\\"assumption_set\\\",\\n      \\\"name\\\": \\\"assumptions\\\",\\n      \\\"uri\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/assumption_set/assumptions/v1\\\",\\n      \\\"path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/assumption_set/assumptions/v1/assumptions.json\\\",\\n      \\\"metadata\\\": {\\n        \\\"dataset_snapshot_id\\\": \\\"ds_908dbfe0c6de\\\",\\n        \\\"primary_path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/assumption_set/assumptions/v1/assumptions.json\\\",\\n        \\\"project_id\\\": \\\"p_db4e2c5cca9c\\\"\\n      }\\n    },\\n    {\\n      \\\"id\\\": \\\"art_405c1afad5f0\\\",\\n      \\\"asset_type\\\": \\\"question_set\\\",\\n      \\\"name\\\": \\\"questions\\\",\\n      \\\"uri\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/question_set/questions/v1\\\",\\n      \\\"path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/question_set/questions/v1/questions.json\\\",\\n      \\\"metadata\\\": {\\n        \\\"dataset_snapshot_id\\\": \\\"ds_908dbfe0c6de\\\",\\n        \\\"primary_path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/question_set/questions/v1/questions.json\\\",\\n        \\\"project_id\\\": \\\"p_db4e2c5cca9c\\\"\\n      }\\n    },\\n    {\\n      \\\"id\\\": \\\"art_81d24e38aac1\\\",\\n      \\\"asset_type\\\": \\\"semantic_catalog\\\",\\n      \\\"name\\\": \\\"semantic_catalog\\\",\\n      \\\"uri\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/semantic_catalog/semantic_catalog/v1\\\",\\n      \\\"path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/semantic_catalog/semantic_catalog/v1/semantic_catalog.json\\\",\\n      \\\"metadata\\\": {\\n        \\\"dataset_snapshot_id\\\": \\\"ds_908dbfe0c6de\\\",\\n        \\\"primary_path\\\": \\\"/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/semantic_catalog/semantic_catalog/v1/semantic_catalog.json\\\",\\n        \\\"project_id\\\": \\\"p_db4e2c5cca9c\\\"\\n      }\\n    },\\n    {\\n      \\\"id{\"type\":\"item.completed\",\"item\":{\"id\":\"item_28\",\"type\":\"command_execution\",\"command\":\"/bin/bash -lc \\\"sed -n '1,220p' /tmp/tablex-0119-current-e2e/artifacts/local-org/_cross_project/library_skill/tablex_grandmaster_eda/v1/asset_version.json\\\"\",\"aggregated_output\":\"{\\n  \\\"asset_type\\\": \\\"skill\\\",\\n  \\\"content\\\": {\\n    \\\"expected_outputs\\\": [\\n      \\\"notebooks/grandmaster_eda.py\\\",\\n      \\\"reports/eda_story.md\\\",\\n      \\\"artifacts/eda_hypotheses.json\\\",\\n      \\\"artifacts/visual_story_cards.json\\\",\\n      \\\"artifacts/research_source_notes.json\\\",\\n      \\\"artifacts/notebook_figure_manifest.json\\\",\\n      \\\"artifacts/notebook_evidence_bundle.json\\\",\\n      \\\"artifacts/next_analysis_queue.json\\\"\\n    ],\\n    \\\"guardrails\\\": [\\n      \\\"Do not read secrets or connector credentials.\\\",\\n      \\\"Do not use validation/test targets in feature generation prompts, encoders, joins, or imputers.\\\",\\n      \\\"Do not destructively modify EvaluationSpec or SplitManifest.\\\",\\n      \\\"Do not copy public notebook prose, code, images, or section order.\\\",\\n      \\\"Treat Give Up as a last resort after preserving useful partial artifacts.\\\"\\n    ],\\n    \\\"instructions\\\": [\\n      \\\"Use this as craft context for deep data understanding, not as deterministic harness logic.\\\",\\n      \\\"Let Codex infer objectives, choose analyses, generate hypotheses, and write marimo notebooks from evidence.\\\",\\n      \\\"Register hypotheses, visual story cards, evidence bundles, notebook source, reports, and next-analysis queues as artifacts.\\\",\\n      \\\"Ask useful questions, but in Full Auto continue with explicit assumptions and fallback policies when safe.\\\"\\n    ],\\n    \\\"reference_paths\\\": [\\n      \\\"skills/tablex-grandmaster-eda/references/grandmaster_eda_patterns.md\\\",\\n      \\\"skills/tablex-grandmaster-eda/references/tablex_marimo_outputs.md\\\"\\n    ],\\n    \\\"skill_path\\\": \\\"skills/tablex-grandmaster-eda/SKILL.md\\\",\\n    \\\"source_inspirations\\\": [\\n      {\\n        \\\"title\\\": \\\"Kaggle EDA for tabular data: Advanced Techniques\\\",\\n        \\\"url\\\": \\\"https://www.kaggle.com/code/vbmokin/eda-for-tabular-data-advanced-techniques\\\",\\n        \\\"use\\\": \\\"Index of strong public tabular EDA examples.\\\"\\n      },\\n      {\\n        \\\"title\\\": \\\"Kaggle Data Science for tabular data: Advanced Techniques\\\",\\n        \\\"url\\\": \\\"https://www.kaggle.com/code/vbmokin/data-science-for-{\"type\":\"item.started\",\"item\":{\"id\":\"item_61\",\"type\":\"command_execution\",\"command\":\"/bin/bash -lc 'for i in $(seq 1 30); do c=0; for id in attach_data_understanding_report_001 attach_data_profile_001 attach_eda_hypotheses_001; do [ -f .tablex/acks/research_plan/${id}.ack.json ] && c=$((c+1)); done; if [ \\\"$c\\\" -eq 3 ]; then for id in attach_data_understanding_report_001 attach_data_profile_001 attach_eda_hypotheses_001; do echo \\\"### $id\\\"; sed -n '\\\"'1,220p' .tablex/acks/research_plan/\\\"'${id}.ack.json; done; exit 0; fi; sleep 1; done; find .tablex/acks/research_plan -maxdepth 1 -type f -print -exec sed -n '\\\"'1,220p' {} \\\\\\\\;\\\"\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}",
+            "parsed": null,
+            "truncated": false,
+            "original_length": 10802
+          },
+          {
+            "line_number": 107,
+            "text": "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_61\",\"type\":\"command_execution\",\"command\":\"/bin/bash -lc 'for i in $(seq 1 30); do c=0; for id in attach_data_understanding_report_001 attach_data_profile_001 attach_eda_hypotheses_001; do [ -f .tablex/acks/research_plan/${id}.ack.json ] && c=$((c+1)); done; if [ \\\"$c\\\" -eq 3 ]; then for id in attach_data_understanding_report_001 attach_data_profile_001 attach_eda_hypotheses_001; do echo \\\"### $id\\\"; sed -n '\\\"'1,220p' .tablex/acks/research_plan/\\\"'${id}.ack.json; done; exit 0; fi; sleep 1; done; find .tablex/acks/research_plan -maxdepth 1 -type f -print -exec sed -n '\\\"'1,220p' {} \\\\\\\\;\\\"\",\"aggregated_output\":\"### attach_data_understanding_report_001\\n{\\n  \\\"operation\\\": \\\"attach_artifact\\\",\\n  \\\"processed_at\\\": \\\"2026-07-06T06:46:37.114430+00:00\\\",\\n  \\\"request_hash\\\": \\\"04c7cb1eda9958cabe26e0db8f252181954ae93b2d422da8ef7bbeb329c59fae\\\",\\n  \\\"request_id\\\": \\\"attach_data_understanding_report_001\\\",\\n  \\\"result\\\": {\\n    \\\"artifact_id\\\": \\\"art_74dea6db9e9b\\\",\\n    \\\"compatibility_warnings\\\": [],\\n    \\\"link_id\\\": \\\"lin_95df6661a0e3\\\",\\n    \\\"node_id\\\": \\\"data_understanding\\\"\\n  },\\n  \\\"schema_version\\\": \\\"tablex_research_plan_ack.v1\\\",\\n  \\\"status\\\": \\\"succeeded\\\"\\n}### attach_data_profile_001\\n{\\n  \\\"operation\\\": \\\"attach_artifact\\\",\\n  \\\"processed_at\\\": \\\"2026-07-06T06:46:37.110175+00:00\\\",\\n  \\\"request_hash\\\": \\\"f8b3b6d261a0a002df042a2ccd4b87957498a2a605e54e8baf8876345751b90e\\\",\\n  \\\"request_id\\\": \\\"attach_data_profile_001\\\",\\n  \\\"result\\\": {\\n    \\\"artifact_id\\\": \\\"art_494a6cb84b63\\\",\\n    \\\"compatibility_warnings\\\": [],\\n    \\\"link_id\\\": \\\"lin_19dd912094da\\\",\\n    \\\"node_id\\\": \\\"data_understanding\\\"\\n  },\\n  \\\"schema_version\\\": \\\"tablex_research_plan_ack.v1\\\",\\n  \\\"status\\\": \\\"succeeded\\\"\\n}### attach_eda_hypotheses_001\\n{\\n  \\\"operation\\\": \\\"attach_artifact\\\",\\n  \\\"processed_at\\\": \\\"2026-07-06T06:46:37.118455+00:00\\\",\\n  \\\"request_hash\\\": \\\"f922af172d9d90d15b9dbd8072040f9ff59ee516b4cef1451ffba8940176e16d\\\",\\n  \\\"request_id\\\": \\\"attach_eda_hypotheses_001\\\",\\n  \\\"result\\\": {\\n    \\\"artifact_id\\\": \\\"art_cb40af43d6b5\\\",\\n    \\\"compatibility_warnings\\\": [],\\n    \\\"link_id\\\": \\\"lin_9e372691c0bc\\\",\\n    \\\"node_id\\\": \\\"data_understanding\\\"\\n  },\\n  \\\"schema_version\\\": \\\"tablex_research_plan_ack.v1\\\",\\n  \\\"status\\\": \\\"succeeded\\\"\\n}\",\"exit_code\":0,\"status\":\"completed\"}}",
+            "parsed": {
+              "type": "item.completed",
+              "item": {
+                "id": "item_61",
+                "type": "command_execution",
+                "command": "/bin/bash -lc 'for i in $(seq 1 30); do c=0; for id in attach_data_understanding_report_001 attach_data_profile_001 attach_eda_hypotheses_001; do [ -f .tablex/acks/research_plan/${id}.ack.json ] && c=$((c+1)); done; if [ \"$c\" -eq 3 ]; then for id in attach_data_understanding_report_001 attach_data_profile_001 attach_eda_hypotheses_001; do echo \"### $id\"; sed -n '\"'1,220p' .tablex/acks/research_plan/\"'${id}.ack.json; done; exit 0; fi; sleep 1; done; find .tablex/acks/research_plan -maxdepth 1 -type f -print -exec sed -n '\"'1,220p' {} \\\\;\"",
+                "aggregated_output": "### attach_data_understanding_report_001\n{\n  \"operation\": \"attach_artifact\",\n  \"processed_at\": \"2026-07-06T06:46:37.114430+00:00\",\n  \"request_hash\": \"04c7cb1eda9958cabe26e0db8f252181954ae93b2d422da8ef7bbeb329c59fae\",\n  \"request_id\": \"attach_data_understanding_report_001\",\n  \"result\": {\n    \"artifact_id\": \"art_74dea6db9e9b\",\n    \"compatibility_warnings\": [],\n    \"link_id\": \"lin_95df6661a0e3\",\n    \"node_id\": \"data_understanding\"\n  },\n  \"schema_version\": \"tablex_research_plan_ack.v1\",\n  \"status\": \"succeeded\"\n}### attach_data_profile_001\n{\n  \"operation\": \"attach_artifact\",\n  \"processed_at\": \"2026-07-06T06:46:37.110175+00:00\",\n  \"request_hash\": \"f8b3b6d261a0a002df042a2ccd4b87957498a2a605e54e8baf8876345751b90e\",\n  \"request_id\": \"attach_data_profile_001\",\n  \"result\": {\n    \"artifact_id\": \"art_494a6cb84b63\",\n    \"compatibility_warnings\": [],\n    \"link_id\": \"lin_19dd912094da\",\n    \"node_id\": \"data_understanding\"\n  },\n  \"schema_version\": \"tablex_research_plan_ack.v1\",\n  \"status\": \"succeeded\"\n}### attach_eda_hypotheses_001\n{\n  \"operation\": \"attach_artifact\",\n  \"processed_at\": \"2026-07-06T06:46:37.118455+00:00\",\n  \"request_hash\": \"f922af172d9d90d15b9dbd8072040f9ff59ee516b4cef1451ffba8940176e16d\",\n  \"request_id\": \"attach_eda_hypotheses_001\",\n  \"result\": {\n    \"artifact_id\": \"art_cb40af43d6b5\",\n    \"compatibility_warnings\": [],\n    \"link_id\": \"lin_9e372691c0bc\",\n    \"node_id\": \"data_understanding\"\n  },\n  \"schema_version\": \"tablex_research_plan_ack.v1\",\n  \"status\": \"succeeded\"\n}",
+                "exit_code": 0,
+                "status": "completed"
+              }
+            },
+            "truncated": false,
+            "original_length": 2350
+          },
+          {
+            "line_number": 108,
+            "text": "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_62\",\"type\":\"agent_message\",\"text\":\"The report, profile, and hypothesis artifacts attached successfully. I’m updating the visible chapter state next: mark data understanding done with evidence, then make prior-knowledge synthesis the single active chapter before moving on.\"}}",
+            "parsed": {
+              "type": "item.completed",
+              "item": {
+                "id": "item_62",
+                "type": "agent_message",
+                "text": "The report, profile, and hypothesis artifacts attached successfully. I’m updating the visible chapter state next: mark data understanding done with evidence, then make prior-knowledge synthesis the single active chapter before moving on."
+              }
+            },
+            "truncated": false,
+            "original_length": 319
+          },
+          {
+            "line_number": 109,
+            "text": "{\"type\":\"item.started\",\"item\":{\"id\":\"item_63\",\"type\":\"command_execution\",\"command\":\"/bin/bash -lc \\\"sed -n '1,260p' outputs/research_plan.json\\\"\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}",
+            "parsed": {
+              "type": "item.started",
+              "item": {
+                "id": "item_63",
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"sed -n '1,260p' outputs/research_plan.json\"",
+                "aggregated_output": "",
+                "exit_code": null,
+                "status": "in_progress"
+              }
+            },
+            "truncated": false,
+            "original_length": 210
+          },
+          {
+            "line_number": 110,
+            "text": "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_63\",\"type\":\"command_execution\",\"command\":\"/bin/bash -lc \\\"sed -n '1,260p' outputs/research_plan.json\\\"\",\"aggregated_output\":\"{\\n  \\\"schema_version\\\": \\\"research_plan.v2\\\",\\n  \\\"project_id\\\": \\\"p_db4e2c5cca9c\\\",\\n  \\\"response_locale\\\": \\\"ja-JP\\\",\\n  \\\"timeline_blocks\\\": [\\n    {\\n      \\\"id\\\": \\\"data_upload\\\",\\n      \\\"granularity\\\": \\\"chapter\\\",\\n      \\\"status\\\": \\\"done\\\",\\n      \\\"title\\\": \\\"データアップロード\\\",\\n      \\\"subtitle\\\": \\\"アップロード済みデータはTablex artifactとして登録されています。\\\",\\n      \\\"target_tab\\\": \\\"Data\\\",\\n      \\\"target_anchor\\\": \\\"dataset-upload\\\",\\n      \\\"deliverable_contract\\\": {\\n        \\\"expected_outputs\\\": [\\n          \\\"artifact\\\"\\n        ]\\n      },\\n      \\\"completion_evidence\\\": [\\n        {\\n          \\\"output_type\\\": \\\"artifact\\\",\\n          \\\"artifact_id\\\": \\\"art_5f006ce1e940\\\",\\n          \\\"role\\\": \\\"primary_dataset\\\"\\n        }\\n      ]\\n    },\\n    {\\n      \\\"id\\\": \\\"objective_framing\\\",\\n      \\\"granularity\\\": \\\"chapter\\\",\\n      \\\"status\\\": \\\"done\\\",\\n      \\\"title\\\": \\\"目的設定\\\",\\n      \\\"subtitle\\\": \\\"現在の目的: salary。初期仮説は給与の回帰予測です。\\\",\\n      \\\"target_tab\\\": \\\"Home\\\",\\n      \\\"target_anchor\\\": \\\"research-plan\\\",\\n      \\\"no_output_required\\\": true,\\n      \\\"no_output_required_rationale\\\": \\\"The structured project objective is stored on the Project record and will be refined in downstream reports if the data suggests a different framing.\\\",\\n      \\\"completion_evidence\\\": [\\n        {\\n          \\\"output_type\\\": \\\"project_setting\\\",\\n          \\\"project_field\\\": \\\"target_column\\\",\\n          \\\"role\\\": \\\"project_objective\\\",\\n          \\\"value\\\": \\\"salary\\\"\\n        }\\n      ]\\n    },\\n    {\\n      \\\"id\\\": \\\"data_understanding\\\",\\n      \\\"granularity\\\": \\\"chapter\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"title\\\": \\\"データ理解\\\",\\n      \\\"subtitle\\\": \\\"行の意味、列の型、欠損、外れ値、給与分布、漏洩リスク、評価設計の前提を確認します。\\\",\\n      \\\"why_it_matters\\\": \\\"小さいデータセットでは、ターゲット漏洩や不安定な分割がモデル評価を大きく歪めるため、先に構造とリスクを把握します。\\\",\\n      \\\"next_action\\\": \\\"CSVを読み込み、プロフィール、可視化、仮説、評価方針を作成します。\\\",\\n      \\\"done_criteria\\\": \\\"データ理解ノートブック、要約レポート、仮説・リスク・次アクションの成果物が保存され、Tablexに登録されていること。\\\",\\n      \\\"target_tab\\\": \\\"Data\\\",\\n      \\\"target_anchor\\\": \\\"data-focus\\\",\\n      \\\"subtasks\\\": [\\n        {\\n          \\\"id\\\": \\\"profile_columns\\\",\\n          \\\"status\\\": \\\"active\\\",\\n          \\\"title\\\": \\\"列とターゲット分布の把握\\\",\\n          \\\"detail\\\": \\\"型、欠損、一意性、分布、給与との関係を確認します。\\\"\\n        },\\n        {\\n          \\\"id\\\": \\\"leakage_and_eval_risk\\\",\\n          \\\"status\\\": \\\"pending\\\",\\n          \\\"title\\\": \\\"漏洩と評価リスク\\\",\\n          \\\"detail\\\": \\\"給与を直接・間接に含む特徴量や、小標本による評価不安定性を確認します。\\\"\\n        },\\n        {\\n          \\\"id\\\": \\\"eda_deliverables\\\",\\n          \\\"status\\\": \\\"pending\\\",\\n          \\\"title\\\": \\\"可視化と人向け説明\\\",\\n          \\\"detail\\\": \\\"marimoノートブックと短いレポートに主要な発見をまとめます。\\\"\\n        }\\n      ]\\n    },\\n    {\\n      \\\"id\\\": \\\"prior_knowledge_research\\\",\\n      \\\"granularity\\\": \\\"chapter\\\",\\n      \\\"status\\\": \\\"pending\\\",\\n      \\\"title\\\": \\\"従来知見の調査\\\",\\n      \\\"subtitle\\\": \\\"Skillとプロジェクト内証拠を中心に、小規模な表形式給与予測に効く検証・モデリング方針を整理します。\\\",\\n      \\\"target_tab\\\": \\\"Insight\\\",\\n      \\\"target_anchor\\\": \\\"insights\\\"\\n    },\\n    {\\n      \\\"id\\\": \\\"evaluation_modeling\\\",\\n      \\\"granularity\\\": \\\"phase\\\",\\n      \\\"status\\\": \\\"pending\\\",\\n      \\\"title\\\": \\\"評価設計とモデリング\\\",\\n      \\\"subtitle\\\": \\\"信頼できる分割・指標を定義し、単純ベースラインから正則化線形モデル、ツリー系モデルまで比較します。\\\",\\n      \\\"target_tab\\\": \\\"Leaderboard\\\",\\n      \\\"target_anchor\\\": \\\"leaderboard\\\"\\n    },\\n    {\\n      \\\"id\\\": \\\"model_diagnostics_reporting\\\",\\n      \\\"granularity\\\": \\\"milestone\\\",\\n      \\\"status\\\": \\\"pending\\\",\\n      \\\"title\\\": \\\"診断と最終報告\\\",\\n      \\\"subtitle\\\": \\\"勝ちモデルの誤差、重要特徴、限界、実務上の使いどころをノートブックとレポートにまとめます。\\\",\\n      \\\"target_tab\\\": \\\"Insight\\\",\\n      \\\"target_anchor\\\": \\\"final-report\\\"\\n    }\\n  ]\\n}\\n\",\"exit_code\":0,\"status\":\"completed\"}}",
+            "parsed": {
+              "type": "item.completed",
+              "item": {
+                "id": "item_63",
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"sed -n '1,260p' outputs/research_plan.json\"",
+                "aggregated_output": "{\n  \"schema_version\": \"research_plan.v2\",\n  \"project_id\": \"p_db4e2c5cca9c\",\n  \"response_locale\": \"ja-JP\",\n  \"timeline_blocks\": [\n    {\n      \"id\": \"data_upload\",\n      \"granularity\": \"chapter\",\n      \"status\": \"done\",\n      \"title\": \"データアップロード\",\n      \"subtitle\": \"アップロード済みデータはTablex artifactとして登録されています。\",\n      \"target_tab\": \"Data\",\n      \"target_anchor\": \"dataset-upload\",\n      \"deliverable_contract\": {\n        \"expected_outputs\": [\n          \"artifact\"\n        ]\n      },\n      \"completion_evidence\": [\n        {\n          \"output_type\": \"artifact\",\n          \"artifact_id\": \"art_5f006ce1e940\",\n          \"role\": \"primary_dataset\"\n        }\n      ]\n    },\n    {\n      \"id\": \"objective_framing\",\n      \"granularity\": \"chapter\",\n      \"status\": \"done\",\n      \"title\": \"目的設定\",\n      \"subtitle\": \"現在の目的: salary。初期仮説は給与の回帰予測です。\",\n      \"target_tab\": \"Home\",\n      \"target_anchor\": \"research-plan\",\n      \"no_output_required\": true,\n      \"no_output_required_rationale\": \"The structured project objective is stored on the Project record and will be refined in downstream reports if the data suggests a different framing.\",\n      \"completion_evidence\": [\n        {\n          \"output_type\": \"project_setting\",\n          \"project_field\": \"target_column\",\n          \"role\": \"project_objective\",\n          \"value\": \"salary\"\n        }\n      ]\n    },\n    {\n      \"id\": \"data_understanding\",\n      \"granularity\": \"chapter\",\n      \"status\": \"active\",\n      \"title\": \"データ理解\",\n      \"subtitle\": \"行の意味、列の型、欠損、外れ値、給与分布、漏洩リスク、評価設計の前提を確認します。\",\n      \"why_it_matters\": \"小さいデータセットでは、ターゲット漏洩や不安定な分割がモデル評価を大きく歪めるため、先に構造とリスクを把握します。\",\n      \"next_action\": \"CSVを読み込み、プロフィール、可視化、仮説、評価方針を作成します。\",\n      \"done_criteria\": \"データ理解ノートブック、要約レポート、仮説・リスク・次アクションの成果物が保存され、Tablexに登録されていること。\",\n      \"target_tab\": \"Data\",\n      \"target_anchor\": \"data-focus\",\n      \"subtasks\": [\n        {\n          \"id\": \"profile_columns\",\n          \"status\": \"active\",\n          \"title\": \"列とターゲット分布の把握\",\n          \"detail\": \"型、欠損、一意性、分布、給与との関係を確認します。\"\n        },\n        {\n          \"id\": \"leakage_and_eval_risk\",\n          \"status\": \"pending\",\n          \"title\": \"漏洩と評価リスク\",\n          \"detail\": \"給与を直接・間接に含む特徴量や、小標本による評価不安定性を確認します。\"\n        },\n        {\n          \"id\": \"eda_deliverables\",\n          \"status\": \"pending\",\n          \"title\": \"可視化と人向け説明\",\n          \"detail\": \"marimoノートブックと短いレポートに主要な発見をまとめます。\"\n        }\n      ]\n    },\n    {\n      \"id\": \"prior_knowledge_research\",\n      \"granularity\": \"chapter\",\n      \"status\": \"pending\",\n      \"title\": \"従来知見の調査\",\n      \"subtitle\": \"Skillとプロジェクト内証拠を中心に、小規模な表形式給与予測に効く検証・モデリング方針を整理します。\",\n      \"target_tab\": \"Insight\",\n      \"target_anchor\": \"insights\"\n    },\n    {\n      \"id\": \"evaluation_modeling\",\n      \"granularity\": \"phase\",\n      \"status\": \"pending\",\n      \"title\": \"評価設計とモデリング\",\n      \"subtitle\": \"信頼できる分割・指標を定義し、単純ベースラインから正則化線形モデル、ツリー系モデルまで比較します。\",\n      \"target_tab\": \"Leaderboard\",\n      \"target_anchor\": \"leaderboard\"\n    },\n    {\n      \"id\": \"model_diagnostics_reporting\",\n      \"granularity\": \"milestone\",\n      \"status\": \"pending\",\n      \"title\": \"診断と最終報告\",\n      \"subtitle\": \"勝ちモデルの誤差、重要特徴、限界、実務上の使いどころをノートブックとレポートにまとめます。\",\n      \"target_tab\": \"Insight\",\n      \"target_anchor\": \"final-report\"\n    }\n  ]\n}\n",
+                "exit_code": 0,
+                "status": "completed"
+              }
+            },
+            "truncated": false,
+            "original_length": 3822
+          },
+          {
+            "line_number": 111,
+            "text": "{\"type\":\"item.started\",\"item\":{\"id\":\"item_64\",\"type\":\"file_change\",\"changes\":[{\"path\":\"/tmp/tablex-0119-current-e2e/artifacts/agent_sessions/p_db4e2c5cca9c/ags_ca234205801d/outputs/research_plan.json\",\"kind\":\"update\"}],\"status\":\"in_progress\"}}",
+            "parsed": {
+              "type": "item.started",
+              "item": {
+                "id": "item_64",
+                "type": "file_change",
+                "changes": [
+                  {
+                    "path": "/tmp/tablex-0119-current-e2e/artifacts/agent_sessions/p_db4e2c5cca9c/ags_ca234205801d/outputs/research_plan.json",
+                    "kind": "update"
+                  }
+                ],
+                "status": "in_progress"
+              }
+            },
+            "truncated": false,
+            "original_length": 243
+          },
+          {
+            "line_number": 112,
+            "text": "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_64\",\"type\":\"file_change\",\"changes\":[{\"path\":\"/tmp/tablex-0119-current-e2e/artifacts/agent_sessions/p_db4e2c5cca9c/ags_ca234205801d/outputs/research_plan.json\",\"kind\":\"update\"}],\"status\":\"completed\"}}",
+            "parsed": {
+              "type": "item.completed",
+              "item": {
+                "id": "item_64",
+                "type": "file_change",
+                "changes": [
+                  {
+                    "path": "/tmp/tablex-0119-current-e2e/artifacts/agent_sessions/p_db4e2c5cca9c/ags_ca234205801d/outputs/research_plan.json",
+                    "kind": "update"
+                  }
+                ],
+                "status": "completed"
+              }
+            },
+            "truncated": false,
+            "original_length": 243
+          },
+          {
+            "line_number": 113,
+            "text": "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_65\",\"type\":\"agent_message\",\"text\":\"The local plan now has data understanding marked done with registered evidence, and prior-knowledge synthesis as the only active chapter. I’m submitting that revision through the Tablex ack channel before continuing.\"}}",
+            "parsed": {
+              "type": "item.completed",
+              "item": {
+                "id": "item_65",
+                "type": "agent_message",
+                "text": "The local plan now has data understanding marked done with registered evidence, and prior-knowledge synthesis as the only active chapter. I’m submitting that revision through the Tablex ack channel before continuing."
+              }
+            },
+            "truncated": false,
+            "original_length": 298
+          }
+        ],
+        "activity": {
+          "schema_version": "agent_activity.v1",
+          "project_id": "p_db4e2c5cca9c",
+          "generated_at": "2026-07-06T06:47:47.283910+00:00",
+          "active_count": 1,
+          "turn_state": {
+            "schema_version": "turn_state.v1",
+            "project_id": "p_db4e2c5cca9c",
+            "observed_at": "2026-07-06T06:47:47.249077+00:00",
+            "sources": [
+              "metadata_db.jobs",
+              "agent_activity.workers",
+              "local_process_table.codex_exec"
+            ],
+            "active_count": 1,
+            "active_job_ids": [],
+            "active_codex_process_count": 1,
+            "codex_processes": [
+              {
+                "pid": 3685386,
+                "command": "codex exec --ignore-user-config --ignore-rules -c mcp_servers={} -c sandbox_workspace_write.network_access=true -c web_search=\"live\" --cd /tmp/tablex-0119-current-e2e/artifacts/agent_sessions/p_db4e2c5cca9c/ags_ca234205801d -- ...[truncated]"
+              }
+            ],
+            "state": "agent_running",
+            "owner": "agent",
+            "label": "Codexが作業中",
+            "detail": "The local plan now has data understanding marked done with registered evidence, and prior-knowledge synthesis as the only active chapter. I’m submitting that revision through the Tablex ack channel before continuing. 最終出力は25秒前です。",
+            "input_attention": false,
+            "confidence": "observed",
+            "active_job_id": null,
+            "active_job_type": "agent_session",
+            "agent_session_id": "ags_ca234205801d",
+            "last_output_at": "2026-07-06T06:47:21.340793",
+            "last_output_seconds_ago": 25,
+            "raw_transcript": {
+              "session_id": "ags_ca234205801d",
+              "stdout_line_count": 113,
+              "stderr_line_count": 0,
+              "updated_at": "2026-07-06T06:47:20.845550+00:00"
+            },
+            "retry_state": null
+          },
+          "workers": [
+            {
+              "worker_id": "main-agent-session",
+              "display_name": "自律分析",
+              "status": "running",
+              "headline": "Codexが作業中",
+              "detail": "The local plan now has data understanding marked done with registered evidence, and prior-knowledge synthesis as the only active chapter. I’m submitting that revision through the Tablex ack channel before continuing. 最終出力は25秒前です。",
+              "job_id": null,
+              "job_type": "agent_session",
+              "project_id": "p_db4e2c5cca9c",
+              "project_name": "0119 current full auto smoke 20260706T063451Z",
+              "agent_session_id": "ags_ca234205801d",
+              "target_tab": "Home",
+              "target_anchor": "agent-workspace",
+              "artifact_id": null,
+              "artifact_ids": [],
+              "created_at": "2026-07-06T06:34:52.041526",
+              "updated_at": "2026-07-06T06:47:21.341079",
+              "started_at": "2026-07-06T06:34:52.107817",
+              "run_after": null,
+              "active": true,
+              "last_output_at": "2026-07-06T06:47:21.340793",
+              "last_output_seconds_ago": 25,
+              "raw_transcript": {
+                "session_id": "ags_ca234205801d",
+                "stdout_line_count": 113,
+                "stderr_line_count": 0,
+                "updated_at": "2026-07-06T06:47:20.845550+00:00"
+              },
+              "retry_state": null,
+              "human_description": {
+                "source": "agent_session",
+                "title": "自律分析",
+                "summary": "The local plan now has data understanding marked done with registered evidence, and prior-knowledge synthesis as the only active chapter. I’m submitting that revision through the Tablex ack channel before continuing."
+              },
+              "token_usage": {
+                "source": "codex_cli_transcript",
+                "is_estimate": true,
+                "series": [
+                  {
+                    "step": "session",
+                    "tokens": 32
+                  },
+                  {
+                    "step": "running",
+                    "tokens": 64
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "timeline_summary": {
+          "source_revision_id": "rprev_67df1ccb7fc0",
+          "current_work": {
+            "id": "derived:rprev_67df1ccb7fc0:prior_knowledge_research",
+            "project_id": "p_db4e2c5cca9c",
+            "research_plan_id": "rplan_591b866711f7",
+            "revision_id": "rprev_67df1ccb7fc0",
+            "node_id": "prior_knowledge_research",
+            "status": "active",
+            "summary": "Skillとプロジェクト内証拠を中心に、小規模な表形式給与予測に効く検証・モデリング方針を整理します。",
+            "expected_outputs": [],
+            "updated_by_type": "codex",
+            "updated_by": null,
+            "updated_at": "2026-07-06T06:47:17.695344",
+            "source": "research_plan_revision_status",
+            "activity_state": "declared_only",
+            "is_live": false,
+            "agent_session_id": "ags_ca234205801d",
+            "agent_session_status": "running",
+            "observed_codex_process_count": 1
+          },
+          "blocks": [
+            {
+              "id": "data_upload",
+              "title": "データアップロード",
+              "status": "done"
+            },
+            {
+              "id": "objective_framing",
+              "title": "目的設定",
+              "status": "done"
+            },
+            {
+              "id": "data_understanding",
+              "title": "データ理解",
+              "status": "done"
+            },
+            {
+              "id": "prior_knowledge_research",
+              "title": "従来知見の調査",
+              "status": "active"
+            },
+            {
+              "id": "evaluation_modeling",
+              "title": "評価設計とモデリング",
+              "status": "pending"
+            },
+            {
+              "id": "model_diagnostics_reporting",
+              "title": "診断と最終報告",
+              "status": "pending"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": "2026-07-06T06:47:47.360294+00:00",
+      "label": "autonomy_stopped",
+      "payload": {
+        "id": "job_be42b2679c49",
+        "project_id": "p_db4e2c5cca9c",
+        "job_type": "stop_autonomous_loop",
+        "status": "succeeded",
+        "priority": 50,
+        "attempt_count": 1,
+        "max_attempts": 1,
+        "input": {
+          "requested_state": "off"
+        },
+        "output": {
+          "agent_chat_turn_artifact_id": "art_d14f8f2d5a75",
+          "assistant_message": "Agent loopを停止しました。実行中または待機中の作業は可能な範囲でキャンセルしました。再開すると、最新のProject状態を読み直して続きから動きます。",
+          "cancelled_job_ids": [],
+          "project_id": "p_db4e2c5cca9c",
+          "response_locale": "ja-JP",
+          "schema_version": "autonomous_loop_stop.v1",
+          "stopped_agent_session_id": "ags_ca234205801d",
+          "worker_events": [
+            {
+              "active": false,
+              "created_at": "2026-07-06T06:47:47.351144+00:00",
+              "detail": "Stopped 0 active or queued runner/model job(s).",
+              "display_name": "Full Auto Agent",
+              "headline": "Autonomous activity stopped.",
+              "job_id": "job_be42b2679c49",
+              "project_id": "p_db4e2c5cca9c",
+              "status": "cancelled",
+              "target_anchor": "agent-workspace",
+              "target_tab": "Home",
+              "token_usage": {
+                "is_estimate": true,
+                "series": [
+                  {
+                    "step": "stop",
+                    "tokens": 24
+                  },
+                  {
+                    "step": "cancel",
+                    "tokens": 24
+                  }
+                ],
+                "source": "autonomous_stop_event"
+              },
+              "updated_at": "2026-07-06T06:47:47.355920+00:00",
+              "worker_id": "full-auto-loop"
+            }
+          ]
+        },
+        "context": {},
+        "policy": {
+          "action": "stop_autonomous_activity",
+          "connector_credentials": "not_materialized",
+          "production_write": "forbidden",
+          "secret_access": "forbidden"
+        },
+        "dependency_job_ids": [],
+        "error_message": null,
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "run_after": null,
+        "locked_by": null,
+        "locked_at": null,
+        "created_at": "2026-07-06T06:47:47.351144+00:00",
+        "updated_at": "2026-07-06T06:47:47.355984+00:00",
+        "started_at": "2026-07-06T06:47:47.351431+00:00",
+        "ended_at": "2026-07-06T06:47:47.355981+00:00"
+      }
+    }
+  ]
+}

@@ -1,0 +1,406 @@
+{
+  "created_at": "2026-07-07T18:36:14+0900",
+  "base_url": "http://127.0.0.1:8000",
+  "workspace": "/tmp/tablex-h5-e2e-eokgtibv",
+  "steps": [
+    {
+      "name": "create_project",
+      "status": 200,
+      "payload": {
+        "id": "p_4c9ccdbf03d3",
+        "org_id": "local-org",
+        "name": "0120 H5 E2E primary-free",
+        "description": null,
+        "task_type": null,
+        "target_column": null,
+        "primary_dataset_snapshot_id": null,
+        "current_phase": "DRAFT",
+        "status": "active",
+        "autonomy_mode": "approval_based",
+        "created_by": "local-user",
+        "created_at": "2026-07-07T09:36:14.913446+00:00",
+        "updated_at": "2026-07-07T09:36:14.913453+00:00"
+      }
+    },
+    {
+      "name": "upload_bundle_primary_free",
+      "status": 200,
+      "payload": {
+        "id": "job_d722dac5b016",
+        "project_id": "p_4c9ccdbf03d3",
+        "job_type": "upload_data_bundle",
+        "status": "queued",
+        "priority": 50,
+        "attempt_count": 0,
+        "max_attempts": 1,
+        "input": {
+          "file_count": 2,
+          "note": null,
+          "note_present": false,
+          "primary_filename": null,
+          "relational_hint_file_count": 0,
+          "response_locale": "ja-JP",
+          "staged_relational_hint_artifact_ids": [],
+          "staged_table_artifact_ids": [
+            "art_4c8932879756",
+            "art_9f2febfa4a61"
+          ],
+          "table_file_count": 2,
+          "target_column": null
+        },
+        "output": {
+          "assistant_message": "ファイルを受け取りました。Tablexがデータbundleの取り込みとprofileを続けています。",
+          "progress_percent": 5,
+          "progress_stage": "queued_for_ingest",
+          "schema_version": "upload_data_bundle_staging.v1",
+          "staged_relational_hint_artifact_ids": [],
+          "staged_table_artifact_ids": [
+            "art_4c8932879756",
+            "art_9f2febfa4a61"
+          ],
+          "status": "queued_for_ingest"
+        },
+        "context": {},
+        "policy": {
+          "connector_credentials": "not_materialized",
+          "network": "disabled",
+          "purpose": "store_user_supplied_table_bundle_and_relational_evidence",
+          "secret_access": "forbidden"
+        },
+        "dependency_job_ids": [],
+        "error_message": null,
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "run_after": null,
+        "locked_by": null,
+        "locked_at": null,
+        "created_at": "2026-07-07T09:36:14.937397+00:00",
+        "updated_at": "2026-07-07T09:36:14.937402+00:00",
+        "started_at": null,
+        "ended_at": null
+      }
+    },
+    {
+      "name": "run_upload_job",
+      "status": 200,
+      "payload": {
+        "id": "job_d722dac5b016",
+        "project_id": "p_4c9ccdbf03d3",
+        "job_type": "upload_data_bundle",
+        "status": "queued",
+        "priority": 90,
+        "attempt_count": 0,
+        "max_attempts": 1,
+        "input": {
+          "file_count": 2,
+          "note": null,
+          "note_present": false,
+          "primary_filename": null,
+          "relational_hint_file_count": 0,
+          "response_locale": "ja-JP",
+          "staged_relational_hint_artifact_ids": [],
+          "staged_table_artifact_ids": [
+            "art_4c8932879756",
+            "art_9f2febfa4a61"
+          ],
+          "table_file_count": 2,
+          "target_column": null
+        },
+        "output": {
+          "assistant_message": "ファイルを受け取りました。Tablexがデータbundleの取り込みとprofileを続けています。",
+          "progress_percent": 5,
+          "progress_stage": "queued_for_ingest",
+          "schema_version": "upload_data_bundle_staging.v1",
+          "staged_relational_hint_artifact_ids": [],
+          "staged_table_artifact_ids": [
+            "art_4c8932879756",
+            "art_9f2febfa4a61"
+          ],
+          "status": "queued_for_ingest"
+        },
+        "context": {},
+        "policy": {
+          "connector_credentials": "not_materialized",
+          "network": "disabled",
+          "purpose": "store_user_supplied_table_bundle_and_relational_evidence",
+          "secret_access": "forbidden"
+        },
+        "dependency_job_ids": [],
+        "error_message": null,
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "run_after": null,
+        "locked_by": null,
+        "locked_at": null,
+        "created_at": "2026-07-07T09:36:14.937397",
+        "updated_at": "2026-07-07T09:36:14.946812+00:00",
+        "started_at": null,
+        "ended_at": null
+      }
+    },
+    {
+      "name": "project_after_upload",
+      "status": 200,
+      "payload": {
+        "id": "p_4c9ccdbf03d3",
+        "org_id": "local-org",
+        "name": "0120 H5 E2E primary-free",
+        "description": null,
+        "task_type": null,
+        "target_column": null,
+        "primary_dataset_snapshot_id": null,
+        "current_phase": "DRAFT",
+        "status": "active",
+        "autonomy_mode": "approval_based",
+        "created_by": "local-user",
+        "created_at": "2026-07-07T09:36:14.913446",
+        "updated_at": "2026-07-07T09:36:14.913453"
+      }
+    },
+    {
+      "name": "data_columns",
+      "status": 200,
+      "payload_summary": {
+        "dataset_count": 0
+      }
+    },
+    {
+      "name": "start_full_auto",
+      "status": 200,
+      "payload": {
+        "id": "job_100e7ef54e44",
+        "project_id": "p_4c9ccdbf03d3",
+        "job_type": "start_autonomous_loop",
+        "status": "succeeded",
+        "priority": 50,
+        "attempt_count": 0,
+        "max_attempts": 1,
+        "input": {
+          "agent_model": null,
+          "agent_session_id": "ags_fd8f1daa0530",
+          "autonomy_mode": "full_auto",
+          "locale": null,
+          "requested_runner_mode": "codex_cli_if_available",
+          "runner_mode": "codex_cli_if_available",
+          "utility_model": null
+        },
+        "output": {
+          "agent_chat_turn_artifact_id": "art_ac6a8300462c",
+          "agent_session_id": "ags_fd8f1daa0530",
+          "assistant_message": "Full Auto started. I will work through data review, objective framing, evaluation design, and analysis notebooks. Progress will appear in this chat and Activity.",
+          "created_job_ids": [],
+          "project_id": "p_4c9ccdbf03d3",
+          "schema_version": "agent_session_start.v1",
+          "status": "started",
+          "token_usage": {
+            "is_estimate": true,
+            "series": [
+              {
+                "step": "session_created",
+                "tokens": 32
+              },
+              {
+                "step": "codex_starting",
+                "tokens": 48
+              }
+            ],
+            "source": "agent_session_transcript_pending"
+          },
+          "worker_events": [
+            {
+              "active": true,
+              "agent_session_id": "ags_fd8f1daa0530",
+              "created_at": "2026-07-07T09:36:14.964679+00:00",
+              "detail": "Preparing the project context and beginning the next analysis step.",
+              "display_name": "Autonomous Analyst",
+              "headline": "Analysis is starting",
+              "job_id": "job_100e7ef54e44",
+              "job_type": "start_autonomous_loop",
+              "project_id": "p_4c9ccdbf03d3",
+              "status": "starting",
+              "target_anchor": "agent-workspace",
+              "target_tab": "Home",
+              "token_usage": {
+                "is_estimate": true,
+                "series": [
+                  {
+                    "step": "session_created",
+                    "tokens": 32
+                  },
+                  {
+                    "step": "codex_starting",
+                    "tokens": 48
+                  }
+                ],
+                "source": "agent_session_transcript_pending"
+              },
+              "updated_at": "2026-07-07T09:36:14.965074+00:00",
+              "worker_id": "main-agent-session"
+            }
+          ]
+        },
+        "context": {},
+        "policy": {
+          "autonomy_mode": "full_auto",
+          "connector_credentials": "not_materialized",
+          "control_record_only": true,
+          "main_execution_state": "agent_session",
+          "production_write": "forbidden",
+          "requested_runner_mode": "codex_cli_if_available",
+          "runner_mode": "codex_cli_if_available",
+          "secret_access": "forbidden"
+        },
+        "dependency_job_ids": [],
+        "error_message": null,
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "run_after": null,
+        "locked_by": null,
+        "locked_at": null,
+        "created_at": "2026-07-07T09:36:14.964679+00:00",
+        "updated_at": "2026-07-07T09:36:14.967434+00:00",
+        "started_at": null,
+        "ended_at": "2026-07-07T09:36:14.965184+00:00"
+      }
+    },
+    {
+      "name": "activity_after_start",
+      "status": 200,
+      "payload": {
+        "schema_version": "agent_activity.v1",
+        "project_id": "p_4c9ccdbf03d3",
+        "generated_at": "2026-07-07T09:36:15.068547+00:00",
+        "active_count": 1,
+        "turn_state": {
+          "schema_version": "turn_state.v1",
+          "project_id": "p_4c9ccdbf03d3",
+          "observed_at": "2026-07-07T09:36:15.030759+00:00",
+          "sources": [
+            "metadata_db.jobs",
+            "agent_activity.workers",
+            "local_process_table.codex_exec"
+          ],
+          "active_count": 1,
+          "active_job_ids": [],
+          "active_codex_process_count": 0,
+          "codex_processes": [],
+          "state": "agent_scheduled",
+          "owner": "agent",
+          "label": "Full Auto will continue",
+          "detail": "The project is still active. Progress will appear here when the next step starts.",
+          "input_attention": false,
+          "confidence": "observed",
+          "active_job_id": null,
+          "active_job_type": "agent_session",
+          "agent_session_id": "ags_fd8f1daa0530",
+          "last_output_at": null,
+          "last_output_seconds_ago": null,
+          "raw_transcript": {
+            "session_id": "ags_fd8f1daa0530",
+            "stdout_line_count": 0,
+            "stderr_line_count": 0,
+            "updated_at": null
+          },
+          "retry_state": null
+        },
+        "workers": [
+          {
+            "worker_id": "main-agent-session",
+            "display_name": "Autonomous Analyst",
+            "status": "starting",
+            "headline": "Full Auto will continue",
+            "detail": "Preparing context, running analysis, or waiting for the next execution slot.",
+            "job_id": null,
+            "job_type": "agent_session",
+            "project_id": "p_4c9ccdbf03d3",
+            "project_name": "0120 H5 E2E primary-free",
+            "agent_session_id": "ags_fd8f1daa0530",
+            "target_tab": "Home",
+            "target_anchor": "agent-workspace",
+            "artifact_id": null,
+            "artifact_ids": [],
+            "created_at": "2026-07-07T09:36:14.962239",
+            "updated_at": "2026-07-07T09:36:14.963854",
+            "started_at": null,
+            "run_after": null,
+            "active": true,
+            "last_output_at": null,
+            "last_output_seconds_ago": null,
+            "raw_transcript": {
+              "session_id": "ags_fd8f1daa0530",
+              "stdout_line_count": 0,
+              "stderr_line_count": 0,
+              "updated_at": null
+            },
+            "retry_state": null,
+            "human_description": {
+              "source": "agent_session",
+              "title": "Autonomous Analyst",
+              "summary": "Preparing context, running analysis, or waiting for the next execution slot."
+            },
+            "token_usage": {
+              "source": "codex_cli_transcript",
+              "is_estimate": true,
+              "series": [
+                {
+                  "step": "session",
+                  "tokens": 32
+                },
+                {
+                  "step": "starting",
+                  "tokens": 64
+                }
+              ]
+            }
+          },
+          {
+            "worker_id": "main-agent-session",
+            "display_name": "Autonomous Analyst",
+            "status": "succeeded",
+            "headline": "Analysis is starting",
+            "detail": "Preparing the project context and beginning the next analysis step.",
+            "job_id": "job_100e7ef54e44",
+            "job_type": "start_autonomous_loop",
+            "project_id": "p_4c9ccdbf03d3",
+            "project_name": "0120 H5 E2E primary-free",
+            "target_tab": "Home",
+            "target_anchor": "agent-workspace",
+            "artifact_id": null,
+            "artifact_ids": [],
+            "created_at": "2026-07-07T09:36:14.964679+00:00",
+            "updated_at": "2026-07-07T09:36:14.967434",
+            "started_at": null,
+            "run_after": null,
+            "active": false,
+            "human_description": {
+              "title": "Full Auto started. I will work through data review, objective framing, evaluation design, and analysis notebooks. Progress will appear in this chat and Activity.",
+              "summary": "job_100e7ef54e44 is succeeded for 0120 H5 E2E primary-free.",
+              "source": "job_status_fallback"
+            },
+            "token_usage": {
+              "is_estimate": true,
+              "series": [
+                {
+                  "step": "session_created",
+                  "tokens": 32
+                },
+                {
+                  "step": "codex_starting",
+                  "tokens": 48
+                }
+              ],
+              "source": "agent_session_transcript_pending"
+            },
+            "source_chat_artifact_id": "art_ac6a8300462c"
+          }
+        ]
+      }
+    }
+  ]
+}

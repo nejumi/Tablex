@@ -99,16 +99,16 @@ curl http://localhost:8000/api/projects/{project_id}/analysis-story
 curl -X POST http://localhost:8000/api/projects/{project_id}/notebook-authoring/brief
 curl -X POST http://localhost:8000/api/projects/{project_id}/results/notebook-evidence
 curl -X POST http://localhost:8000/api/analysis-notebooks/{analysis_notebook_artifact_id}/execution-plan
-curl -X POST http://localhost:8000/api/analysis-notebooks/{analysis_notebook_artifact_id}/execution-capture
+curl -X POST http://localhost:8000/api/analysis-notebooks/{analysis_notebook_artifact_id}/marimo-session
 ```
 
-The Data Review endpoint runs harness-controlled DuckDB analysis over a DatasetSnapshot and stores `eda_review_bundle`, `eda_review_html`, `eda_review_svg`, `eda_review_report`, and `visualization_spec` artifacts plus Report, Evidence, Insight, and lineage. It computes shape, target status, missingness pressure, numeric median/IQR/outlier hints, categorical cardinality/top values, simple target relationships, numeric correlation candidates, findings, read order, story cards, a review playbook, and Codex next prompts. It does not execute user notebook code, access external networks, or materialize connector credentials. The Notebooks tab exposes this as `Run EDA Review`. Agent Chat may discuss or propose this action, but harness execution must come from an explicit control or a schema-validated agent proposal, not keyword routing.
+The Data Review endpoint runs harness-controlled DuckDB analysis over a DatasetSnapshot and stores `eda_review_bundle`, `eda_review_svg`, `eda_review_report`, and `visualization_spec` artifacts plus Report, Evidence, Insight, and lineage. It computes shape, target status, missingness pressure, numeric median/IQR/outlier hints, categorical cardinality/top values, simple target relationships, numeric correlation candidates, findings, read order, story cards, a review playbook, and Codex next prompts. It does not execute user notebook code, access external networks, materialize connector credentials, or produce notebook HTML. Agent Chat may discuss or propose this action, but harness execution must come from an explicit control or a schema-validated agent proposal, not keyword routing.
 
 The harness must not author notebook prose. Data Understanding and run-level Model Diagnostics notebook endpoints prepare `notebook_authoring_brief` and `notebook_authoring_report` artifacts only; they do not create `analysis_notebook`, `notebook_html`, `notebook_run_manifest`, or `notebook_report` artifacts by themselves. A marimo notebook becomes an `analysis_notebook` asset only after Codex/AgentRunner writes the notebook source and returns it through a validated result path. The project notebook index therefore lists authored notebook assets only, not authoring briefs. `/analysis-story` can still surface Data Review evidence while notebook authoring is pending.
 
 `notebook_authoring_brief` artifacts are the handoff layer for Codex-authored notebooks: they bundle current Tablex evidence, source cards from public Kaggle Grandmaster-style notebook craft references, authoring principles, sample analytical moves, response locale, and a runner contract. This is not a notebook template. Codex should read the brief, inspect linked artifacts, and decide the narrative, sections, figures, and analysis depth on the fly while preserving EvaluationSpec/SplitManifest and secret boundaries. `author_analysis_notebook` AgentTaskContracts request notebook-specific outputs: marimo source, reader report, figure manifest, evidence bundle, notebook quality review, and citation audit. LocalStub execution does not author the final notebook, but it may store a `notebook_authoring_plan` artifact so the handoff is reviewable before a real Codex runner writes code.
 
-Notebook authoring preparation accepts the user's response locale and stores it as `response_locale` on the authoring brief. When Codex runs, the AgentSession context includes `human_interface.response_locale`, `python_runtimes.tablex_backend.workspace_python`, notebook execution facts, and equipped Skill details so Codex can read `tablex-grandmaster-eda`, `tablex-notebook-quality`, project artifacts, and actual data before writing human-facing notebook narrative in the user's language. The session workspace exposes `.tablex/bin/python` and `.tablex/bin/python3` shims to the backend Python environment so Codex can verify marimo notebooks with the same runtime Tablex uses for capture.
+Notebook authoring preparation accepts the user's response locale and stores it as `response_locale` on the authoring brief. When Codex runs, the AgentSession context includes `human_interface.response_locale`, `python_runtimes.tablex_backend.workspace_python`, notebook runtime facts, and equipped Skill details so Codex can read `tablex-grandmaster-eda`, `tablex-notebook-quality`, project artifacts, and actual data before writing human-facing notebook narrative in the user's language. The session workspace exposes `.tablex/bin/python` and `.tablex/bin/python3` shims to the backend Python environment so Codex can verify marimo notebooks with the same runtime Tablex uses for native marimo opening.
 
 Prior-knowledge research in the Research Plan must not be marked complete merely because a Skill, source pack, or authoring brief exists. Completion requires artifact-backed external or controlled research output, a research synthesis/report produced by the agent, or an explicit Codex decision artifact such as `no_relevant_findings` / `no_research_needed`. If Codex judges no findings are needed, the UI should show that plainly instead of implying hidden research happened.
 
@@ -119,16 +119,16 @@ ResearchPlan human-attention Chat actions open the Assumptions review queue (`ta
 
 Experiment result requests under `.tablex/requests/experiments/*.json` are also fixed tool payloads, not chat commands. They must use `tablex_experiment_result_request.v1`, operation `register_runs`, at least one run with a stable `model_id`, and one comparable `primary_metric_name` across the request. If a request links runs to a `research_plan_node_id`, that node must exist in the active ResearchPlan revision. Invalid requests produce failed acks under `.tablex/acks/experiments/` and a Chat attention event, and they do not create partial ExperimentRuns or Leaderboard rows.
 
-Experiment requests should include `source_workspace_path` or `source_artifact_id` for the file that explains the reported metrics. They can also include `dataset_snapshot_id`, `evaluation_spec_id`, and `split_manifest_id`; Tablex validates these fixed IDs, derives missing dataset/evaluation context from the split manifest when possible, stores them on the resulting ExperimentRun, and links the source artifact plus run back to the ResearchPlan node. This is the Leaderboard-side counterpart to notebook capture requests: Codex stays free to decide the modeling approach, while the harness guarantees that reported scores are comparable, traceable, and visible in-product.
+Experiment requests should include `source_workspace_path` or `source_artifact_id` for the file that explains the reported metrics. They can also include `dataset_snapshot_id`, `evaluation_spec_id`, and `split_manifest_id`; Tablex validates these fixed IDs, derives missing dataset/evaluation context from the split manifest when possible, stores them on the resulting ExperimentRun, and links the source artifact plus run back to the ResearchPlan node. This is the Leaderboard-side counterpart to notebook registration requests: Codex stays free to decide the modeling approach, while the harness guarantees that reported scores are comparable, traceable, and visible in-product.
 
-Notebook artifacts are navigation targets, not isolated files. When Codex/AgentRunner returns a marimo notebook or notebook evidence preview, the UI records a Chat message with an `Open notebook` action and routes it to the same Notebook viewer used by the Notebooks tab. Main AgentSession notebook outputs are registered as `analysis_notebook` artifacts, rendered into in-product preview/evidence when possible, and announced in persistent Agent Chat; if preview capture fails, Chat still links to the saved source artifact and the retry remains visible. Dataset rows in Data, Run rows in Experiments/Leaderboard, and ModelVersion rows in Assets display related notebook links from the project notebook index. When Codex has declared a ResearchPlan current node, notebook source and preview artifacts are linked to that node through lineage rather than by frontend inference. The backend lineage remains the source of truth; the UI should make the relationship obvious without asking users to inspect raw artifact IDs.
-Agent Chat artifact actions should prefer the explicit `artifact_id` and fall back to `artifact_ids` when older or utility-produced actions only provide the list. Notebook actions resolve any listed source, report, or preview artifact through the Notebook index and open the readable preview artifact when available, so Chat links do not drop users into raw marimo source unless no preview exists.
+Notebook artifacts are navigation targets, not isolated files. When Codex/AgentRunner returns a marimo notebook source, the UI records a Chat message with an `Open notebook` action and routes it to the same native marimo viewer used by the Notebooks tab. Main AgentSession notebook outputs are registered as `analysis_notebook` artifacts and announced in persistent Agent Chat; if native marimo cannot open the source, Chat and Activity surface that as a notebook/runtime failure to repair rather than falling back to static HTML. Dataset rows in Data, Run rows in Experiments/Leaderboard, and ModelVersion rows in Assets display related notebook links from the project notebook index. When Codex has declared a ResearchPlan current node, notebook source artifacts are linked to that node through lineage rather than by frontend inference. The backend lineage remains the source of truth; the UI should make the relationship obvious without asking users to inspect raw artifact IDs.
+Agent Chat artifact actions should prefer the explicit `artifact_id` and fall back to `artifact_ids` when older or utility-produced actions only provide the list. Notebook actions resolve any listed source, report, or legacy preview artifact through the Notebook index and open the registered native marimo source. Static HTML snapshots are not notebook evidence and must not be used as a fallback that hides missing or broken marimo output.
 
-Agent Activity main-session cards inherit the latest accepted Chat action target when it exists. Notebook updates should point to `target_tab=Notebooks` / `target_anchor=notebook-preview-top`, and experiment registration updates should point to the Leaderboard readout, so the same generated evidence remains reachable from Chat, Activity, Data/Leaderboard context panels, and Assets.
+Agent Activity main-session cards inherit the latest accepted Chat action target when it exists. Notebook updates should point to `target_tab=Notebooks` / `target_anchor=notebook-native-marimo-top`, and experiment registration updates should point to the Leaderboard readout, so the same generated evidence remains reachable from Chat, Activity, Data/Leaderboard context panels, and Assets.
 
-Codex-authored notebooks should be submitted through `.tablex/requests/notebooks/*.json` with `schema_version=tablex_notebook_request.v1` and `operation=capture_notebook`. The payload must reference the saved notebook with `workspace_path` or `artifact_id`. Include `research_plan_node_id` for the visible plan node, `dataset_snapshot_id` for data-understanding notebooks, and `run_id` / `model_version_id` for run or model diagnostics. Tablex validates those fixed IDs, records them on the notebook artifact, returns them in the ack, and the Notebook index then exposes the same notebook from Data, Leaderboard, Assets, Chat, Activity, and ResearchPlan links.
+Codex-authored notebooks should be submitted through `.tablex/requests/notebooks/*.json` with `schema_version=tablex_notebook_request.v1` and `operation=register_notebook`. The payload must reference the saved native marimo Python source with `workspace_path` or `artifact_id`. Include `research_plan_node_id` for the visible plan node, `dataset_snapshot_id` for data-understanding notebooks, and `run_id` / `model_version_id` for run or model diagnostics. Tablex validates those fixed IDs, records them on the notebook artifact, returns them in the ack, and the Notebook index then exposes the same notebook from Data, Leaderboard, Assets, Chat, Activity, and ResearchPlan links.
 
-The execution-plan endpoint stores `agent_task_contract` and `notebook_execution_plan` artifacts for an existing Agent-authored `analysis_notebook`; it does not execute notebook code. Plans require artifact capture, human review, no secret or connector credential materialization, no external network by default, and preservation of EvaluationSpec/SplitManifest boundaries. The execution-capture endpoint is only for notebooks already authored by Codex/AgentRunner. Future controlled runners should capture actually executed figures, tables, target-aware distributions, bivariate/multivariate plots, feature importance, permutation importance, partial dependence, calibration, threshold analysis, slice metrics, residual/error review, and prediction examples as additional artifacts.
+The execution-plan endpoint stores `agent_task_contract` and `notebook_execution_plan` artifacts for an existing Agent-authored `analysis_notebook`; it does not execute notebook code and must not create static HTML notebook snapshots. Plans require artifact registration, human review, no secret or connector credential materialization, no external network by default, and preservation of EvaluationSpec/SplitManifest boundaries. Native marimo viewing is provided through the marimo-session endpoint. Future controlled runners should persist actually executed figures, tables, target-aware distributions, bivariate/multivariate plots, feature importance, permutation importance, partial dependence, calibration, threshold analysis, slice metrics, residual/error review, and prediction examples as structured artifacts while keeping the marimo Python source as the notebook artifact of record.
 
 Project Guidance is available from:
 
@@ -155,7 +155,7 @@ Agent Chat is intentionally a human-facing buffer over the raw event stream. `/a
 
 By default, the chat response composer attempts Codex CLI when it is available. If Codex cannot run, Tablex must say that plainly instead of returning a fake success message such as a saved-ticket summary. Objective definition follows the same boundary: the harness may package profiles, semantic catalogs, assumptions, questions, EDA, relational context, and lineage into an AgentTaskContract, but it must not infer the objective with brittle rules. Codex/AgentRunner proposes or revises the objective through a schema-validated `target_definition_proposal` compatibility payload, which the harness can validate, register as Evidence/Assumption, and then use to update evaluation. `AgentResult.status=gave_up` is allowed as a last resort across any task when Codex itself concludes that required information, execution capability, safety policy, or data access is missing; it must include `give_up_reason`, `required_next_inputs`, and any useful partial artifacts.
 User Settings stores separate `agentModel` and `utilityModel` preferences. The agent model is intended for deep planning, notebook authoring, modeling strategy, and autonomous reasoning. The utility model is intended for translation, short summaries, UI wording, and conversation compression. Current local execution records and forwards these preferences in Chat and Autonomy payloads; real model dispatch remains a runner/composer integration point.
-The same response still includes `recommended_focus`, `journey_stages`, and `current_stage_id` as supporting structure. Stage statuses are `done`, `current`, `next`, `blocked`, or `waiting`; stage actions reuse `ProjectGuidanceAction` so the UI can open the relevant tab, call a harness endpoint, or create a scoped AgentTaskContract while leaving approach selection open-ended. The journey includes a Notebooks stage between Experiments and Reports, so successful runs are routed through notebook generation/capture before final report review when notebook evidence is missing. These details should stay behind the Navigator's "show map only if needed" disclosure unless the user asks for them.
+The same response still includes `recommended_focus`, `journey_stages`, and `current_stage_id` as supporting structure. Stage statuses are `done`, `current`, `next`, `blocked`, or `waiting`; stage actions reuse `ProjectGuidanceAction` so the UI can open the relevant tab, call a harness endpoint, or create a scoped AgentTaskContract while leaving approach selection open-ended. The journey includes a Notebooks stage between Experiments and Reports, so successful runs are routed through Codex-authored native marimo notebook evidence before final report review when notebook evidence is missing. These details should stay behind the Navigator's "show map only if needed" disclosure unless the user asks for them.
 `/guidance/snapshot` saves the current Guided Journey state as a `guided_journey_snapshot` JSON artifact, `guided_journey_report` Markdown artifact/Report, and `visualization_spec` stage-status artifact with lineage. It is useful before asking Codex for a larger next task or when capturing a decision checkpoint for review.
 `/guidance/snapshots/compare` compares the latest two saved Guided Journey snapshots and stores `guided_journey_comparison`, `guided_journey_comparison_report`, and a comparison `visualization_spec` with lineage from both source snapshots. The Reports tab surfaces these in Guidance History.
 
@@ -173,7 +173,7 @@ curl -X POST http://localhost:8000/api/worker/run-once
 
 Jobs can carry `context`, `policy`, `dependency_job_ids`, `priority`, `max_attempts`, and `approval_required`. `run_agent_task` and jobs with restricted/full network or production-write policy require approval before they become runnable.
 
-The FastAPI app starts a lightweight local worker daemon by default in the app lifespan. This is the single-Docker default path: queued sidecar jobs such as chat response composition, split building, notebook capture, and local training should not sit forever waiting for a separate shell. The daemon only acquires job types with concrete handlers; it must not mark generic MVP stub jobs as succeeded. It can be disabled with `TABLEX_LOCAL_WORKER_ENABLED=false`, and its polling can be tuned with `TABLEX_LOCAL_WORKER_INTERVAL_SECONDS` and `TABLEX_LOCAL_WORKER_MAX_JOBS_PER_WAKE`.
+The FastAPI app starts a lightweight local worker daemon by default in the app lifespan. This is the single-Docker default path: queued sidecar jobs such as chat response composition, split building, notebook planning, and local training should not sit forever waiting for a separate shell. The daemon only acquires job types with concrete handlers; it must not mark generic MVP stub jobs as succeeded. It can be disabled with `TABLEX_LOCAL_WORKER_ENABLED=false`, and its polling can be tuned with `TABLEX_LOCAL_WORKER_INTERVAL_SECONDS` and `TABLEX_LOCAL_WORKER_MAX_JOBS_PER_WAKE`.
 
 You can still run an explicit local worker from a shell for debugging or heavier isolated execution:
 
@@ -659,3 +659,76 @@ The chat response should stay human-readable and route the user to `Approach` / 
 The Approach tab treats `approach-handoff` as the focused Runner Handoff surface. Latest AgentTaskContracts store `agent_task_contract_summary` metadata so the UI can show the task type, objective summary, evaluation state, output/check counts, and next execution choice before opening the raw JSON preview.
 
 Runner readiness reviews store `pass_count`, `first_next_action`, and status counts in artifact metadata and return `next_actions` in the review job output. The Approach focus panel uses this to show readiness inline while keeping the full Markdown/JSON review in supporting previews.
+
+## Main Agent Research Network Check
+
+Full Auto main sessions can be given network access for prior-knowledge research. The default is enabled:
+
+```bash
+TABLEX_AGENT_SESSION_NETWORK_ENABLED=true
+TABLEX_AGENT_SESSION_WEB_SEARCH_ENABLED=true
+```
+
+To verify the local Codex CLI supports the config surface used by Tablex:
+
+```bash
+codex exec --help | sed -n '1,120p'
+```
+
+On `codex-cli 0.142.2`, `--enable <FEATURE>` exists but `--enable web_search` emits a deprecation event because web search is configured by top-level `web_search`. With the defaults above, Tablex starts the main Codex session with `sandbox_workspace_write.network_access=true` and `web_search="live"`. To inspect the generated arguments, run:
+
+```bash
+python - <<'PY'
+from tabular_harness.agent.runners import codex_harness_config_args
+print(" ".join(codex_harness_config_args(network_enabled=True, web_search_enabled=True)))
+PY
+```
+
+To test network availability in a temporary session workspace without using project data, run:
+
+```bash
+tmpdir=$(mktemp -d /tmp/tablex_codex_network_check_XXXXXX)
+codex exec --ignore-user-config --ignore-rules \
+  -c mcp_servers={} \
+  -c sandbox_workspace_write.network_access=true \
+  -c 'web_search="live"' \
+  --cd "$tmpdir" \
+  --sandbox workspace-write \
+  --json \
+  --output-last-message "$tmpdir/last.md" \
+  --skip-git-repo-check \
+  'Run `curl -I --max-time 20 https://example.com` once to verify sandbox network access, then report only whether it succeeded and the HTTP status line.'
+cat "$tmpdir/last.md"
+```
+
+If a deployment must forbid external research, set both variables to `false`; Codex will still be able to register an explicit `no_findings` research request when it cannot or should not use external sources.
+
+## Pilot Phase Local Check
+
+Pilot deployment and scoring are worker-backed. API calls should return queued jobs rather than running prediction or scoring inside the request.
+
+Minimal manual check:
+
+```bash
+curl -s -X POST http://localhost:8000/api/projects/{project_id}/pilot-deployments \
+  -H 'Content-Type: application/json' \
+  -d '{"pipeline_artifact_id":"art_prediction_pipeline"}'
+
+curl -s -X POST http://localhost:8000/api/pilot-deployments/{deployment_id}/predict \
+  -H 'Content-Type: application/json' \
+  -d '{"dataset_snapshot_id":"ds_inference","history_artifact_id":"art_optional_history","as_of":"2026-07-06T00:00:00Z"}'
+
+curl -s -X POST http://localhost:8000/api/pilot-deployments/{deployment_id}/outcomes \
+  -H 'Content-Type: application/json' \
+  -d '{"outcomes_artifact_id":"art_outcomes","join_keys":["id"],"actual_column":"actual","observed_at_column":"observed_at"}'
+```
+
+The scoring worker registers a `pilot_scoring_report` artifact and writes a `pilot_observation_available_*.md` notice into the active main session inbox when one exists. Codex should then register a `tablex_pilot_request.v1` `register_validation_audit` request; Tablex validates fixed IDs/enums, records the audit artifact/evidence, and leaves the interpretation to Codex.
+
+The Leaderboard surface reads the registered pilot state from:
+
+```bash
+curl -s http://localhost:8000/api/projects/{project_id}/pilot-deployments
+```
+
+The response is a fact table: deployment rows, prediction batches, outcome batches, and scoring report artifact summaries. It does not interpret drift or validation fit.

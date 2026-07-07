@@ -18,6 +18,28 @@ from tabular_harness.services.codex_transcript import build_codex_cli_transcript
 CODEX_HARNESS_CONFIG_ARGS = ("--ignore-user-config", "--ignore-rules", "-c", "mcp_servers={}")
 
 
+def codex_harness_config_args(
+    *,
+    network_enabled: bool = False,
+    web_search_enabled: bool = False,
+) -> tuple[str, ...]:
+    args = list(CODEX_HARNESS_CONFIG_ARGS)
+    if network_enabled:
+        args.extend(["-c", "sandbox_workspace_write.network_access=true"])
+    if web_search_enabled:
+        args.extend(["-c", 'web_search="live"'])
+    return tuple(args)
+
+
+def codex_harness_config_args_for_policy(execution_policy: "ExecutionPolicy") -> tuple[str, ...]:
+    network_enabled = execution_policy.network in {"restricted", "full"}
+    web_search_enabled = execution_policy.network == "full"
+    return codex_harness_config_args(
+        network_enabled=network_enabled,
+        web_search_enabled=web_search_enabled,
+    )
+
+
 class WorkspaceRef(BaseModel):
     project_id: str
     path: str
@@ -277,12 +299,13 @@ class CodexCliRunner(AgentRunner):
         last_message_path = harness_dir / "codex_last_message.md"
         (workspace / "outputs").mkdir(exist_ok=True)
         prompt = render_prompt(task_contract)
+        config_args = codex_harness_config_args_for_policy(execution_policy)
 
         def build_command(*, include_output_schema: bool) -> list[str]:
             cmd = [
                 self.codex_binary,
                 "exec",
-                *CODEX_HARNESS_CONFIG_ARGS,
+                *config_args,
                 "--cd",
                 str(workspace),
                 "--sandbox",

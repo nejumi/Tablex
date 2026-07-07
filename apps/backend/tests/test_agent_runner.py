@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -12,7 +13,7 @@ from tabular_harness.agent import (
     NoopAgentRunner,
     WorkspaceRef,
 )
-from tabular_harness.agent.runners import CODEX_HARNESS_CONFIG_ARGS, render_prompt, safe_env
+from tabular_harness.agent.runners import codex_harness_config_args, render_prompt, safe_env
 from tabular_harness.schemas import AgentRequiredOutput, AgentTaskContract
 
 
@@ -232,7 +233,8 @@ def test_codex_cli_runner_retries_without_cli_schema_when_codex_rejects_schema(
     assert "--output-schema" in commands[0]
     assert "--output-schema" not in commands[1]
     for command in commands:
-        assert list(CODEX_HARNESS_CONFIG_ARGS) == command[2 : 2 + len(CODEX_HARNESS_CONFIG_ARGS)]
+        expected_config_args = list(codex_harness_config_args(network_enabled=False, web_search_enabled=False))
+        assert expected_config_args == command[2 : 2 + len(expected_config_args)]
         assert "--ignore-user-config" in command
         assert "--ignore-rules" in command
         assert "mcp_servers={}" in command
@@ -242,6 +244,69 @@ def test_codex_cli_runner_retries_without_cli_schema_when_codex_rejects_schema(
     assert result.outputs["codex_cli"]["schema_retry_without_output_schema"] is True
     assert result.outputs["codex_cli"]["result_path"] == "outputs/result.json"
     assert result.outputs["codex_cli"]["last_message_path"] == ".harness/codex_last_message.md"
+
+
+def test_codex_cli_runner_honors_full_network_execution_policy(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    contract = AgentTaskContract(
+        task_id="task_codex_network",
+        task_type="controlled_research",
+        project_id="p_001",
+        objective="Use the execution policy when launching Codex.",
+        inputs={},
+        required_outputs=[AgentRequiredOutput(path="outputs/result.json", schema="schemas/agent_result.schema.json")],
+        quality_checks=["Return schema-valid AgentResult."],
+        forbidden_actions=["Do not read secrets."],
+    )
+    output_schema = {
+        "type": "object",
+        "required": ["task_id", "status", "final_message", "outputs", "artifacts", "warnings"],
+        "properties": {
+            "task_id": {"type": "string"},
+            "status": {"type": "string", "enum": ["succeeded", "failed", "needs_approval", "gave_up"]},
+            "final_message": {"type": "string"},
+            "outputs": {"type": "object"},
+            "artifacts": {"type": "array"},
+            "warnings": {"type": "array"},
+        },
+    }
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> Any:
+        commands.append(cmd)
+        result_path = tmp_path / "outputs" / "result.json"
+        result_path.parent.mkdir(exist_ok=True)
+        result_path.write_text(
+            json.dumps(
+                {
+                    "task_id": contract.task_id,
+                    "status": "succeeded",
+                    "final_message": "Codex launched with policy-derived config.",
+                    "outputs": {},
+                    "artifacts": [],
+                    "warnings": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout='{"msg":{"type":"done"}}\n', stderr="")
+
+    monkeypatch.setattr("tabular_harness.agent.runners.subprocess.run", fake_run)
+
+    result = CodexCliRunner(codex_binary="codex").run_task(
+        WorkspaceRef(project_id="p_001", path=str(tmp_path)),
+        contract,
+        output_schema,
+        ExecutionPolicy(network="full"),
+    )
+
+    assert result.status == "succeeded"
+    command = commands[0]
+    assert "sandbox_workspace_write.network_access=true" in command
+    assert "--enable" not in command
+    assert 'web_search="live"' in command
 
 
 def test_codex_safe_env_does_not_pass_connector_credentials(tmp_path: Path, monkeypatch: Any) -> None:
@@ -270,6 +335,18 @@ def test_codex_safe_env_does_not_pass_connector_credentials(tmp_path: Path, monk
     assert "KAGGLE_API_TOKEN" not in env
     assert "WANDB_API_KEY" not in env
     assert "TABLEX_INTERNAL_ONLY" not in env
+
+
+def test_codex_safe_env_prefers_workspace_python_shims(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("PATH", f"/usr/local/bin{os.pathsep}/usr/bin")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    workspace = tmp_path / "workspace"
+
+    env = safe_env(workspace)
+
+    path_parts = env["PATH"].split(os.pathsep)
+    assert path_parts[0] == str(workspace / ".tablex" / "bin")
+    assert path_parts[1:] == ["/usr/local/bin", "/usr/bin"]
 
 
 def test_codex_safe_env_removes_stale_runtime_config_and_plugins(tmp_path: Path, monkeypatch: Any) -> None:

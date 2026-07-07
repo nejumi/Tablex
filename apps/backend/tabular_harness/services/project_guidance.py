@@ -34,6 +34,8 @@ from tabular_harness.services.artifacts import (
     create_lineage_edge,
 )
 
+NATIVE_NOTEBOOK_ASSET_TYPES = ("analysis_notebook", "marimo_notebook")
+
 
 @dataclass(frozen=True)
 class GuidedJourneySnapshotResult:
@@ -84,13 +86,10 @@ def build_project_guidance(db: Session, project: Project) -> dict[str, Any]:
         "visualizations": _count_project_rows(db, VisualizationSpec, project.id),
         "insights": _count_project_rows(db, Insight, project.id),
         "analysis_notebooks": _count_project_rows(
-            db, Artifact, project.id, Artifact.asset_type == "analysis_notebook"
+            db, Artifact, project.id, Artifact.asset_type.in_(NATIVE_NOTEBOOK_ASSET_TYPES)
         ),
         "notebook_execution_plans": _count_project_rows(
             db, Artifact, project.id, Artifact.asset_type == "notebook_execution_plan"
-        ),
-        "notebook_execution_captures": _count_project_rows(
-            db, Artifact, project.id, Artifact.asset_type == "notebook_execution_manifest"
         ),
     }
     state = _state_summary(db, project, counts)
@@ -834,7 +833,7 @@ def _state_summary(db: Session, project: Project, counts: dict[str, int]) -> dic
     )
     latest_notebook = db.scalar(
         select(Artifact)
-        .where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+        .where(Artifact.project_id == project.id, Artifact.asset_type.in_(NATIVE_NOTEBOOK_ASSET_TYPES))
         .order_by(Artifact.created_at.desc())
     )
     has_understanding_report = _count_project_rows(
@@ -900,7 +899,6 @@ def _state_summary(db: Session, project: Project, counts: dict[str, int]) -> dic
         "report_count": counts["reports"],
         "analysis_notebook_count": counts["analysis_notebooks"],
         "notebook_execution_plan_count": counts["notebook_execution_plans"],
-        "notebook_execution_capture_count": counts["notebook_execution_captures"],
         "candidate_count": counts["evaluation_candidates"],
         "idea_count": counts["ideas"],
         "visualization_count": counts["visualizations"],
@@ -1197,7 +1195,7 @@ def _recommended_focus(project: Project, counts: dict[str, int], state: dict[str
         prompt = _approach_prompt(project, state)
         return _focus(
             focus_key="approach",
-            target_tab="Approach",
+            target_tab="Home",
             title="Plan the next flexible agent approach",
             reason="The harness has enough context to ask Codex for a scoped approach without forcing a fixed recipe.",
             risk_level="medium",
@@ -1209,7 +1207,7 @@ def _recommended_focus(project: Project, counts: dict[str, int], state: dict[str
             ],
             primary_action=_agent_prompt_action(project.id, "create_scoped_agent_task", prompt),
             secondary_actions=[
-                _navigate_action("inspect_experiments_empty", "Inspect Experiments", "Experiments"),
+                _navigate_action("inspect_experiments_empty", "Inspect Experiments", "Leaderboard"),
                 _navigate_action("inspect_assets_for_agent", "Inspect Assets", "Assets"),
             ],
             suggested_agent_prompt=prompt,
@@ -1231,48 +1229,21 @@ def _recommended_focus(project: Project, counts: dict[str, int], state: dict[str
             focus_key="notebooks",
             target_tab="Notebooks",
             title="Generate notebook evidence",
-            reason="Experiment evidence is easier to review when diagnostics, findings, visual previews, and runner capture evidence are consolidated into notebook artifacts.",
+            reason="Experiment evidence is easier to review when diagnostics, findings, and visual explanations are consolidated into native marimo notebook artifacts.",
             risk_level="medium",
             confidence=0.81,
             evidence=[f"{state['successful_run_count']} successful runs", "0 analysis notebooks"],
             primary_action=primary_action,
             secondary_actions=[
-                _navigate_action("inspect_experiments_for_notebooks", "Inspect Experiments", "Experiments"),
+                _navigate_action("inspect_experiments_for_notebooks", "Inspect Experiments", "Leaderboard"),
                 _navigate_action("inspect_leaderboard_for_notebooks", "Inspect Leaderboard", "Leaderboard"),
-            ],
-        )
-
-    if int(state["notebook_execution_capture_count"]) == 0:
-        latest_notebook_id = state.get("latest_analysis_notebook_artifact_id")
-        primary_action = (
-            _endpoint_action(
-                "capture_notebook_execution",
-                "Capture notebook execution evidence",
-                "Notebooks",
-                f"/api/analysis-notebooks/{latest_notebook_id}/execution-capture",
-            )
-            if isinstance(latest_notebook_id, str)
-            else _navigate_action("inspect_notebooks_for_capture", "Open Notebooks", "Notebooks")
-        )
-        return _focus(
-            focus_key="notebooks",
-            target_tab="Notebooks",
-            title="Capture notebook execution evidence",
-            reason="A safe static capture gives the workbench an execution manifest, report, HTML preview, and figure plan before full notebook runtime execution.",
-            risk_level="medium",
-            confidence=0.8,
-            evidence=[f"{state['analysis_notebook_count']} analysis notebooks", "0 notebook captures"],
-            primary_action=primary_action,
-            secondary_actions=[
-                _navigate_action("inspect_reports_after_capture", "Inspect Reports", "Reports"),
-                _navigate_action("inspect_lineage_after_capture", "Inspect Lineage", "Lineage"),
             ],
         )
 
     if int(state["report_count"]) == 0:
         return _focus(
             focus_key="reports",
-            target_tab="Reports",
+            target_tab="Insight",
             title="Create the decision report",
             reason="Reports summarize readiness, risks, evidence, and next actions without requiring raw artifact inspection.",
             risk_level="medium",
@@ -1281,7 +1252,7 @@ def _recommended_focus(project: Project, counts: dict[str, int], state: dict[str
             primary_action=_endpoint_action(
                 "generate_decision_report",
                 "Generate decision report",
-                "Reports",
+                "Insight",
                 f"/api/projects/{project.id}/decision-report/generate",
             ),
             secondary_actions=[
@@ -1292,13 +1263,13 @@ def _recommended_focus(project: Project, counts: dict[str, int], state: dict[str
 
     return _focus(
         focus_key="reports",
-        target_tab="Reports",
+        target_tab="Insight",
         title="Read the decision report",
         reason="The project has enough evidence to review outcomes and decide the next controlled agent task.",
         risk_level="low",
         confidence=0.78,
         evidence=[f"{counts['reports']} reports", f"{state['successful_run_count']} successful runs"],
-        primary_action=_navigate_action("read_reports", "Open Reports", "Reports"),
+        primary_action=_navigate_action("read_reports", "Open Reports", "Insight"),
         secondary_actions=[
             _navigate_action("inspect_leaderboard_ready", "Inspect Leaderboard", "Leaderboard"),
             _agent_prompt_action(project.id, "plan_next_iteration", _next_iteration_prompt(project)),
@@ -1318,7 +1289,7 @@ def _journey_stages(
     evaluation_locked = int(state["approved_evaluation_spec_count"]) > 0 and int(state["split_manifest_count"]) > 0
     has_agent_planning = counts["ideas"] > 0 or counts["research_briefs"] > 0
     has_successful_run = int(state["successful_run_count"]) > 0
-    has_notebook_capture = int(state["notebook_execution_capture_count"]) > 0
+    has_notebook_source = int(state["analysis_notebook_count"]) > 0
     has_report = int(state["report_count"]) > 0
 
     data_status = "done" if state["has_dataset"] else "current"
@@ -1368,7 +1339,7 @@ def _journey_stages(
     else:
         experiments_status = "waiting"
 
-    if has_notebook_capture:
+    if has_notebook_source:
         notebooks_status = "done"
     elif focus_key == "notebooks":
         notebooks_status = "current"
@@ -1381,7 +1352,7 @@ def _journey_stages(
         reports_status = "done"
     elif focus_key == "reports":
         reports_status = "current"
-    elif has_successful_run and has_notebook_capture:
+    elif has_successful_run and has_notebook_source:
         reports_status = "next"
     else:
         reports_status = "waiting"
@@ -1449,7 +1420,7 @@ def _journey_stages(
         _journey_stage(
             "approach",
             "Approach",
-            "Approach",
+            "Home",
             approach_status,
             "Prepare an open-ended Codex/Skill handoff without forcing a fixed recipe.",
             [
@@ -1461,7 +1432,7 @@ def _journey_stages(
         _journey_stage(
             "experiments",
             "Experiments",
-            "Experiments",
+            "Leaderboard",
             experiments_status,
             "Run or ingest evidence-producing experiments under the locked evaluation design.",
             [f"{state['successful_run_count']} successful runs", f"{counts['jobs']} jobs"],
@@ -1472,17 +1443,17 @@ def _journey_stages(
             "Notebooks",
             "Notebooks",
             notebooks_status,
-            "Turn run evidence into inspectable notebooks, visual previews, and controlled execution capture artifacts.",
+            "Turn run evidence into inspectable native marimo notebooks and linked supporting artifacts.",
             [
                 f"{state['analysis_notebook_count']} analysis notebooks",
-                f"{state['notebook_execution_capture_count']} notebook captures",
+                "native marimo is the primary viewer",
             ],
             stage_action("notebooks"),
         ),
         _journey_stage(
             "reports",
             "Reports",
-            "Reports",
+            "Insight",
             reports_status,
             "Turn evidence, risks, diagnostics, and next actions into in-product reports.",
             [f"{state['report_count']} reports", f"{state['visualization_count']} visualizations"],
@@ -1580,7 +1551,7 @@ def _agent_prompt_action(project_id: str, action_id: str, prompt: str) -> dict[s
     return {
         "id": action_id,
         "label": "Create scoped AgentTask",
-        "target_tab": "Approach",
+        "target_tab": "Home",
         "action_type": "agent_task_prompt",
         "method": "POST",
         "endpoint": f"/api/projects/{project_id}/approach/agent-task-plan",
@@ -1601,8 +1572,8 @@ def _agent_guidance(state: dict[str, Any]) -> list[str]:
         guidance.append("Review high-risk assumptions before asking Codex to generate feature or model code.")
     if int(state["successful_run_count"]) == 0 and int(state["split_manifest_count"]) > 0:
         guidance.append("Ask Codex for a flexible, evidence-backed approach rather than a fixed baseline recipe.")
-    if int(state["successful_run_count"]) > 0 and int(state["notebook_execution_capture_count"]) == 0:
-        guidance.append("Generate or capture notebook evidence before relying on final reports for experiment interpretation.")
+    if int(state["successful_run_count"]) > 0 and int(state["analysis_notebook_count"]) == 0:
+        guidance.append("Generate a marimo notebook before relying on final reports for experiment interpretation.")
     return guidance
 
 

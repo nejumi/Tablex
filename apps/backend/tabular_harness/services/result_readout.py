@@ -97,7 +97,7 @@ def build_result_readout(db: Session, *, project: Project) -> dict[str, Any]:
             "summary": notebook_section.get("human_summary"),
             "recommended": notebook_section.get("recommended_notebook"),
             "count": notebook_section.get("notebook_count"),
-            "captured_count": notebook_section.get("captured_count"),
+            "source_count": notebook_section.get("source_count"),
             "action_endpoint": f"/api/projects/{project.id}/results/notebook-evidence",
             "action_label": "Build Notebook Evidence",
             "target_tab": "Notebooks",
@@ -246,13 +246,13 @@ def build_read_order(
 ) -> list[dict[str, Any]]:
     report_ref = decision_report["report"] if decision_report["available"] else None
     recommended_notebook = notebook_section.get("recommended_notebook")
-    notebook_artifact_id = notebook_preview_artifact_id(recommended_notebook if isinstance(recommended_notebook, dict) else None)
+    notebook_artifact_id = notebook_source_artifact_id(recommended_notebook if isinstance(recommended_notebook, dict) else None)
     return [
         {
             "step": 1,
             "title": "Read the result",
             "body": metric_story(top_run_ref),
-            "target_tab": "Reports" if report_ref else "Leaderboard",
+            "target_tab": "Insight" if report_ref else "Leaderboard",
             "artifact_id": report_ref.get("artifact_id") if isinstance(report_ref, dict) else None,
             "state": "ready" if top_run_ref else "missing",
         },
@@ -286,20 +286,20 @@ def build_read_order(
             "step": 5,
             "title": "Decide the next action",
             "body": "Use the decision report when it exists; otherwise generate it from this readout.",
-            "target_tab": "Reports",
+            "target_tab": "Insight",
             "artifact_id": report_ref.get("artifact_id") if isinstance(report_ref, dict) else None,
             "state": "ready" if status in {"needs_attention", "ready_for_review"} and report_ref else "needs_action",
         },
     ]
 
 
-def notebook_preview_artifact_id(notebook: dict[str, Any] | None) -> str | None:
+def notebook_source_artifact_id(notebook: dict[str, Any] | None) -> str | None:
     if not notebook:
         return None
     artifact_ids = notebook.get("artifact_ids")
     if not isinstance(artifact_ids, dict):
         return None
-    for key in ("evidence_html", "execution_html", "html_preview", "report_artifact", "notebook"):
+    for key in ("notebook", "report_artifact", "figure_manifest", "evidence_bundle"):
         value = artifact_ids.get(key)
         if isinstance(value, str) and value:
             return value
@@ -326,7 +326,7 @@ def next_result_action(
     if top_run is None:
         return {
             "label": "Run a baseline or agent experiment",
-            "target_tab": "Experiments",
+            "target_tab": "Leaderboard",
             "target_anchor": None,
             "agent_prompt": "Run a flexible baseline or plan the next agent experiment under the approved evaluation.",
         }
@@ -347,13 +347,13 @@ def next_result_action(
     if not decision_report_available:
         return {
             "label": "Generate post-run decision report",
-            "target_tab": "Reports",
+            "target_tab": "Insight",
             "target_anchor": "decision-report",
             "agent_prompt": "Prepare a post-run decision report with diagnostics and run comparison.",
         }
     return {
         "label": str(bundle_next_action.get("title") or "Read the current decision report"),
-        "target_tab": str(bundle_next_action.get("target_tab") or "Reports"),
+        "target_tab": normalize_result_readout_target_tab(str(bundle_next_action.get("target_tab") or "Insight")),
         "target_anchor": "decision-report",
         "agent_prompt": (
             f"{bundle_next_action.get('title') or 'Explain the next action'}: "
@@ -376,18 +376,28 @@ def evidence_gaps(evidence_map: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def gap_target_tab(area: str) -> str:
-    return {
+    return normalize_result_readout_target_tab({
         "Data Review": "Data",
         "Assumptions": "Assumptions",
         "Evaluation": "Evaluation",
         "Experiments": "Leaderboard",
         "Notebooks": "Notebooks",
-        "Runner Results": "Approach",
-        "Citations": "Approach",
-        "Reports": "Reports",
+        "Runner Results": "Home",
+        "Citations": "Home",
+        "Reports": "Insight",
         "Benchmark": "Data",
         "Relational": "Data",
-    }.get(area, "Reports")
+    }.get(area, "Insight"))
+
+
+def normalize_result_readout_target_tab(target_tab: str) -> str:
+    return {
+        "Overview": "Home",
+        "Approach": "Home",
+        "Experiments": "Leaderboard",
+        "Reports": "Insight",
+        "Notebooks": "Notebooks",
+    }.get(target_tab, target_tab)
 
 
 def primary_metric_from_metrics(metrics: dict[str, Any]) -> str | None:

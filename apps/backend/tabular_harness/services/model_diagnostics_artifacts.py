@@ -48,6 +48,10 @@ from tabular_harness.services.diagnostics import (
 LOSS_METRICS = {"rmse", "mae", "log_loss", "mape", "mean_absolute_error"}
 MAX_PERMUTATION_ROWS = 2000
 MAX_PERMUTATION_FEATURES = 30
+MAX_PARTIAL_DEPENDENCE_ROWS = 1000
+MAX_PARTIAL_DEPENDENCE_FEATURES = 8
+MAX_PARTIAL_DEPENDENCE_GRID_SIZE = 12
+MAX_SHAP_ROWS = 500
 MAX_DENSE_CELLS = 2_500_000
 
 
@@ -109,6 +113,19 @@ def materialize_model_diagnostics_artifacts(
         metrics=metrics,
         task_kind=str(evaluation_diagnostics.get("task_kind") or "classification"),
     )
+    partial_dependence = build_partial_dependence(
+        model_package=model_package,
+        split_rows=split_rows,
+        metrics=metrics,
+        task_kind=str(evaluation_diagnostics.get("task_kind") or "classification"),
+        permutation_importance=permutation_importance,
+    )
+    shap_summary = build_shap_summary(
+        model_package=model_package,
+        split_rows=split_rows,
+        metrics=metrics,
+        task_kind=str(evaluation_diagnostics.get("task_kind") or "classification"),
+    )
     prediction_review = build_prediction_review(
         predictions=predictions,
         metrics=metrics,
@@ -125,6 +142,8 @@ def materialize_model_diagnostics_artifacts(
         "availability": diagnostics_availability(
             native_importance=native_importance,
             permutation_importance=permutation_importance,
+            partial_dependence=partial_dependence,
+            shap_summary=shap_summary,
             prediction_review=prediction_review,
             evaluation_diagnostics=evaluation_diagnostics,
         ),
@@ -138,6 +157,8 @@ def materialize_model_diagnostics_artifacts(
         },
         "native_feature_importance": native_importance,
         "permutation_importance": permutation_importance,
+        "partial_dependence": partial_dependence,
+        "shap_summary": shap_summary,
         "prediction_review": prediction_review,
         "evaluation_diagnostics_summary": {
             "summary": evaluation_diagnostics.get("summary", {}),
@@ -209,6 +230,8 @@ def materialize_model_diagnostics_artifacts(
             "model_version_id": run.model_version_id,
             "feature_importance_status": native_importance["status"],
             "permutation_importance_status": permutation_importance["status"],
+            "partial_dependence_status": partial_dependence["status"],
+            "shap_status": shap_summary["status"],
         },
     )
     report_artifact = store_text_artifact(
@@ -231,6 +254,36 @@ def materialize_model_diagnostics_artifacts(
         filename="model_diagnostics_visualization.json",
         payload=visualization_spec,
         metadata={"project_id": project.id, "run_id": run.id, "chart_type": visualization_spec["chart_type"]},
+    )
+    partial_dependence_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="partial_dependence",
+        name=f"partial_dependence_{run.id}",
+        filename="partial_dependence.json",
+        payload=partial_dependence,
+        metadata={
+            "project_id": project.id,
+            "run_id": run.id,
+            "model_version_id": run.model_version_id,
+            "status": partial_dependence["status"],
+        },
+    )
+    shap_summary_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="shap_summary",
+        name=f"shap_summary_{run.id}",
+        filename="shap_summary.json",
+        payload=shap_summary,
+        metadata={
+            "project_id": project.id,
+            "run_id": run.id,
+            "model_version_id": run.model_version_id,
+            "status": shap_summary["status"],
+        },
     )
     evidence = Evidence(
         id=new_id("ev"),
@@ -277,6 +330,8 @@ def materialize_model_diagnostics_artifacts(
         diagnostics_artifact,
         report_artifact,
         visualization_artifact,
+        partial_dependence_artifact,
+        shap_summary_artifact,
     ]
     for artifact in produced_artifacts:
         create_lineage_edge(
@@ -322,9 +377,19 @@ def latest_run_artifact(db: Session, run: ExperimentRun, asset_type: str) -> Art
         .order_by(Artifact.created_at.desc())
     ).all()
     for artifact in artifacts:
-        if loads_json(artifact.metadata_json, {}).get("run_id") == run.id:
+        if artifact_metadata_mentions_run(loads_json(artifact.metadata_json, {}), run.id):
             return artifact
     return None
+
+
+def artifact_metadata_mentions_run(metadata: dict[str, Any], run_id: str) -> bool:
+    if metadata.get("run_id") == run_id:
+        return True
+    for key in ("run_ids", "related_run_ids"):
+        value = metadata.get(key)
+        if isinstance(value, list) and run_id in {str(item) for item in value}:
+            return True
+    return False
 
 
 def load_json_artifact(artifact: Artifact | None) -> dict[str, Any] | None:
@@ -355,14 +420,16 @@ def build_native_feature_importance(model_package: dict[str, Any] | None) -> dic
             "No model package artifact is available for this run.",
         )
     model = model_package.get("model")
-    importances = getattr(model, "feature_importances_", None)
+    feature_names = feature_names_from_package(model_package)
+    native = native_feature_importance_vector(model, feature_names=feature_names)
+    importances = native[0] if native is not None else None
+    method = native[1] if native is not None else None
     if importances is None:
         return blocked_payload(
             "feature_importance.v1",
             "model_does_not_expose_native_importance",
-            "The stored model does not expose feature_importances_.",
+            "The stored model does not expose a supported native feature-importance API.",
         )
-    feature_names = feature_names_from_package(model_package)
     rows = []
     for index, value in enumerate(list(importances)):
         name = feature_names[index] if index < len(feature_names) else f"feature_{index}"
@@ -389,7 +456,7 @@ def build_native_feature_importance(model_package: dict[str, Any] | None) -> dic
     return {
         "schema_version": "feature_importance.v1",
         "status": "ready",
-        "method": "model_native_feature_importances",
+        "method": method or "model_native_feature_importance",
         "feature_count": len(rows),
         "top_features": rows[:60],
         "family_importance": family_importance(rows),
@@ -511,6 +578,227 @@ def build_permutation_importance(
             "max_rows": MAX_PERMUTATION_ROWS,
             "max_features": MAX_PERMUTATION_FEATURES,
             "negative_importance_policy": "kept_as_signal_of_noise_or_sampling_variance",
+        },
+    }
+
+
+def build_partial_dependence(
+    *,
+    model_package: dict[str, Any] | None,
+    split_rows: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    task_kind: str,
+    permutation_importance: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not model_package:
+        return blocked_payload(
+            "partial_dependence.v1",
+            "missing_model_package",
+            "No model package artifact is available for partial dependence.",
+        )
+    model = model_package.get("model")
+    builder = model_package.get("feature_builder")
+    baseline_plan = model_package.get("baseline_plan")
+    if model is None or builder is None or not isinstance(baseline_plan, dict):
+        return blocked_payload(
+            "partial_dependence.v1",
+            "incomplete_model_package",
+            "The model package is missing model, feature_builder, or baseline_plan.",
+        )
+    valid_rows = [
+        row
+        for row in split_rows
+        if row.get(SPLIT_VALUE_COLUMN) == "valid" and row.get(TARGET_VALUE_COLUMN) is not None
+    ]
+    if not valid_rows:
+        return blocked_payload(
+            "partial_dependence.v1",
+            "missing_valid_rows",
+            "No validation rows were available in the SplitManifest.",
+        )
+    sample_rows = deterministic_sample(valid_rows, MAX_PARTIAL_DEPENDENCE_ROWS)
+    augmented_rows = augment_rows_for_baseline_plan(sample_rows, baseline_plan)
+    matrix = builder.transform(augmented_rows)
+    shape = getattr(matrix, "shape", (len(augmented_rows), 0))
+    row_count, feature_count = int(shape[0]), int(shape[1])
+    if row_count * feature_count > MAX_DENSE_CELLS:
+        return blocked_payload(
+            "partial_dependence.v1",
+            "feature_matrix_too_large_for_inline_partial_dependence",
+            f"Bounded partial dependence would require {row_count * feature_count:,} dense cells.",
+            sample_row_count=row_count,
+            feature_count=feature_count,
+        )
+    dense = matrix.toarray() if hasattr(matrix, "toarray") else np.asarray(matrix)
+    feature_names = feature_names_from_package(model_package)
+    candidate_indices = top_dependence_feature_indices(
+        model_package,
+        feature_count,
+        MAX_PARTIAL_DEPENDENCE_FEATURES,
+        permutation_importance=permutation_importance,
+    )
+    curves = []
+    for feature_index in candidate_indices:
+        values = dense[:, feature_index]
+        grid = partial_dependence_grid(values)
+        if not grid:
+            continue
+        points = []
+        for grid_value in grid:
+            perturbed = np.array(dense, copy=True)
+            perturbed[:, feature_index] = grid_value
+            predictions = predict_with_matrix(model_package, perturbed, metrics=metrics, task_kind=task_kind)
+            points.append(
+                {
+                    "feature_value": finite_float(grid_value),
+                    "average_response": average_model_response(predictions, task_kind=task_kind),
+                }
+            )
+        name = feature_names[feature_index] if feature_index < len(feature_names) else f"feature_{feature_index}"
+        curves.append(
+            {
+                "feature_index": feature_index,
+                "feature_name": name,
+                "source_column": source_column_for_feature(name),
+                "family": feature_family_for_feature(name, model_package),
+                "points": points,
+            }
+        )
+    if not curves:
+        return blocked_payload(
+            "partial_dependence.v1",
+            "no_eligible_features",
+            "No finite transformed features were available for bounded partial dependence.",
+            sample_row_count=row_count,
+            feature_count=feature_count,
+        )
+    return {
+        "schema_version": "partial_dependence.v1",
+        "status": "ready",
+        "method": "bounded_valid_split_transformed_feature_grid",
+        "sample_row_count": row_count,
+        "feature_count": feature_count,
+        "evaluated_feature_count": len(curves),
+        "grid_size": MAX_PARTIAL_DEPENDENCE_GRID_SIZE,
+        "curves": curves,
+        "policy": {
+            "split": "valid",
+            "sample_seed": 42,
+            "max_rows": MAX_PARTIAL_DEPENDENCE_ROWS,
+            "max_features": MAX_PARTIAL_DEPENDENCE_FEATURES,
+        },
+    }
+
+
+def build_shap_summary(
+    *,
+    model_package: dict[str, Any] | None,
+    split_rows: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    task_kind: str,
+) -> dict[str, Any]:
+    if not model_package:
+        return blocked_payload("shap_summary.v1", "missing_model_package", "No model package artifact is available for SHAP.")
+    try:
+        import shap  # type: ignore[import-not-found]
+    except Exception as exc:
+        return blocked_payload(
+            "shap_summary.v1",
+            "shap_dependency_unavailable",
+            f"SHAP is not importable in this runtime: {type(exc).__name__}.",
+        )
+    model = model_package.get("model")
+    builder = model_package.get("feature_builder")
+    baseline_plan = model_package.get("baseline_plan")
+    if model is None or builder is None or not isinstance(baseline_plan, dict):
+        return blocked_payload(
+            "shap_summary.v1",
+            "incomplete_model_package",
+            "The model package is missing model, feature_builder, or baseline_plan.",
+        )
+    valid_rows = [
+        row
+        for row in split_rows
+        if row.get(SPLIT_VALUE_COLUMN) == "valid" and row.get(TARGET_VALUE_COLUMN) is not None
+    ]
+    if not valid_rows:
+        return blocked_payload("shap_summary.v1", "missing_valid_rows", "No validation rows were available.")
+    sample_rows = deterministic_sample(valid_rows, MAX_SHAP_ROWS)
+    augmented_rows = augment_rows_for_baseline_plan(sample_rows, baseline_plan)
+    matrix = builder.transform(augmented_rows)
+    shape = getattr(matrix, "shape", (len(augmented_rows), 0))
+    row_count, feature_count = int(shape[0]), int(shape[1])
+    if row_count * feature_count > MAX_DENSE_CELLS:
+        return blocked_payload(
+            "shap_summary.v1",
+            "feature_matrix_too_large_for_inline_shap",
+            f"Bounded SHAP would require {row_count * feature_count:,} dense cells.",
+            sample_row_count=row_count,
+            feature_count=feature_count,
+        )
+    dense = matrix.toarray() if hasattr(matrix, "toarray") else np.asarray(matrix)
+    try:
+        explainer = shap.Explainer(model, dense)
+        explanation = explainer(dense)
+        values = np.asarray(explanation.values)
+    except Exception as exc:
+        return blocked_payload(
+            "shap_summary.v1",
+            "shap_explainer_failed",
+            f"SHAP explainer failed for the stored model package: {type(exc).__name__}.",
+            sample_row_count=row_count,
+            feature_count=feature_count,
+        )
+    if values.ndim == 3:
+        class_index = values.shape[2] - 1 if task_kind != "regression" else 0
+        values = values[:, :, class_index]
+    if values.ndim != 2:
+        return blocked_payload(
+            "shap_summary.v1",
+            "unexpected_shap_value_shape",
+            f"SHAP returned values with shape {tuple(values.shape)}.",
+            sample_row_count=row_count,
+            feature_count=feature_count,
+        )
+    mean_abs = np.nanmean(np.abs(values), axis=0)
+    feature_names = feature_names_from_package(model_package)
+    rows = []
+    for index, value in enumerate(mean_abs):
+        importance = finite_float(value)
+        if importance is None:
+            continue
+        name = feature_names[index] if index < len(feature_names) else f"feature_{index}"
+        rows.append(
+            {
+                "feature_index": index,
+                "feature_name": name,
+                "source_column": source_column_for_feature(name),
+                "family": feature_family_for_feature(name, model_package),
+                "mean_abs_shap": importance,
+            }
+        )
+    rows.sort(key=lambda item: finite_float(item.get("mean_abs_shap")) or 0.0, reverse=True)
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    if not rows:
+        return blocked_payload(
+            "shap_summary.v1",
+            "no_finite_shap_values",
+            "SHAP ran, but no finite SHAP values were produced.",
+            sample_row_count=row_count,
+            feature_count=feature_count,
+        )
+    return {
+        "schema_version": "shap_summary.v1",
+        "status": "ready",
+        "method": "bounded_shap_explainer_mean_abs",
+        "sample_row_count": row_count,
+        "feature_count": feature_count,
+        "top_features": rows[:60],
+        "policy": {
+            "split": "valid",
+            "sample_seed": 42,
+            "max_rows": MAX_SHAP_ROWS,
         },
     }
 
@@ -689,6 +977,26 @@ def score_predictions(
     return accuracy(class_y_true, class_y_pred)
 
 
+def partial_dependence_grid(values: np.ndarray) -> list[float]:
+    finite_values = np.asarray([float(value) for value in values if math.isfinite(float(value))])
+    if finite_values.size == 0:
+        return []
+    unique_values = np.unique(finite_values)
+    if unique_values.size <= MAX_PARTIAL_DEPENDENCE_GRID_SIZE:
+        return [float(value) for value in unique_values]
+    quantiles = np.linspace(0.05, 0.95, MAX_PARTIAL_DEPENDENCE_GRID_SIZE)
+    grid = np.unique(np.quantile(finite_values, quantiles))
+    return [float(value) for value in grid if math.isfinite(float(value))]
+
+
+def average_model_response(predictions: dict[str, Any], *, task_kind: str) -> float | None:
+    key = "prediction" if task_kind == "regression" else "score"
+    values = [float(value) for value in list_value(predictions.get(key)) if is_number(value)]
+    if not values:
+        return None
+    return finite_float(sum(values) / len(values))
+
+
 def deterministic_sample(rows: list[dict[str, Any]], max_rows: int) -> list[dict[str, Any]]:
     if len(rows) <= max_rows:
         return rows
@@ -699,7 +1007,10 @@ def deterministic_sample(rows: list[dict[str, Any]], max_rows: int) -> list[dict
 
 def top_native_feature_indices(model_package: dict[str, Any], feature_count: int, limit: int) -> list[int]:
     model = model_package.get("model")
-    importances = getattr(model, "feature_importances_", None)
+    importances = None
+    native = native_feature_importance_vector(model, feature_names=feature_names_from_package(model_package))
+    if native is not None:
+        importances = native[0]
     if importances is None:
         return list(range(min(feature_count, limit)))
     ranked = sorted(
@@ -708,6 +1019,103 @@ def top_native_feature_indices(model_package: dict[str, Any], feature_count: int
         reverse=True,
     )
     return ranked[:limit]
+
+
+def top_dependence_feature_indices(
+    model_package: dict[str, Any],
+    feature_count: int,
+    limit: int,
+    *,
+    permutation_importance: dict[str, Any] | None = None,
+) -> list[int]:
+    model = model_package.get("model")
+    if native_feature_importance_vector(model, feature_names=feature_names_from_package(model_package)) is not None:
+        return top_native_feature_indices(model_package, feature_count, limit)
+    ranked: list[int] = []
+    if isinstance(permutation_importance, dict) and permutation_importance.get("status") == "ready":
+        for item in list_value(permutation_importance.get("top_features")):
+            row = dict_value(item)
+            index = row.get("feature_index")
+            if isinstance(index, int) and 0 <= index < feature_count and index not in ranked:
+                ranked.append(index)
+            if len(ranked) >= limit:
+                return ranked
+    for index in range(feature_count):
+        if index not in ranked:
+            ranked.append(index)
+        if len(ranked) >= limit:
+            break
+    return ranked
+
+
+def native_feature_importance_vector(
+    model: Any,
+    *,
+    feature_names: list[str] | None = None,
+) -> tuple[list[Any], str] | None:
+    if model is None:
+        return None
+    importances = getattr(model, "feature_importances_", None)
+    if importances is not None:
+        return list(np.ravel(np.asarray(importances))), "model_feature_importances"
+    getter = getattr(model, "get_feature_importance", None)
+    if callable(getter):
+        for kwargs in ({}, {"type": "FeatureImportance"}):
+            try:
+                values = getter(**kwargs)
+            except Exception:
+                continue
+            if values is not None:
+                return list(np.ravel(np.asarray(values))), "model_get_feature_importance"
+    booster_getter = getattr(model, "get_booster", None)
+    if callable(booster_getter):
+        try:
+            booster = booster_getter()
+        except Exception:
+            booster = None
+        score_getter = getattr(booster, "get_score", None)
+        if callable(score_getter):
+            scores = None
+            for kwargs in ({"importance_type": "gain"}, {}):
+                try:
+                    scores = score_getter(**kwargs)
+                except Exception:
+                    continue
+                if isinstance(scores, dict):
+                    break
+            if isinstance(scores, dict):
+                vector = booster_score_dict_to_vector(scores, feature_names=feature_names or [])
+                if vector:
+                    return vector, "booster_get_score"
+    return None
+
+
+def booster_score_dict_to_vector(scores: dict[Any, Any], *, feature_names: list[str]) -> list[Any]:
+    feature_name_index = {name: index for index, name in enumerate(feature_names)}
+    parsed: dict[int, Any] = {}
+    for key, value in scores.items():
+        index = booster_feature_index(key, feature_name_index)
+        if index is not None:
+            parsed[index] = value
+    if not parsed:
+        return []
+    size = max(max(parsed) + 1, len(feature_names))
+    vector = [0.0] * size
+    for index, value in parsed.items():
+        vector[index] = value
+    return vector
+
+
+def booster_feature_index(key: Any, feature_name_index: dict[str, int]) -> int | None:
+    if isinstance(key, int):
+        return key if key >= 0 else None
+    if not isinstance(key, str):
+        return None
+    if key in feature_name_index:
+        return feature_name_index[key]
+    if key.startswith("f") and key[1:].isdigit():
+        return int(key[1:])
+    return None
 
 
 def feature_names_from_package(model_package: dict[str, Any]) -> list[str]:
@@ -764,12 +1172,16 @@ def diagnostics_availability(
     *,
     native_importance: dict[str, Any],
     permutation_importance: dict[str, Any],
+    partial_dependence: dict[str, Any],
+    shap_summary: dict[str, Any],
     prediction_review: dict[str, Any],
     evaluation_diagnostics: dict[str, Any],
 ) -> dict[str, str]:
     return {
         "native_feature_importance": str(native_importance.get("status") or "blocked"),
         "permutation_importance": str(permutation_importance.get("status") or "blocked"),
+        "partial_dependence": str(partial_dependence.get("status") or "blocked"),
+        "shap": str(shap_summary.get("status") or "blocked"),
         "prediction_review": str(prediction_review.get("status") or "blocked"),
         "score_bins": "ready" if evaluation_diagnostics.get("bins") else "missing",
         "slice_metrics": "ready" if evaluation_diagnostics.get("slice_metrics") else "missing",
@@ -862,6 +1274,22 @@ def build_model_diagnostics_visualization_spec(diagnostics: dict[str, Any]) -> d
                 "chart_type": "bar",
                 "data": list_value(diagnostics.get("permutation_importance", {}).get("top_features"))[:20],
                 "encoding": {"x": "importance_delta", "y": "feature_name", "color": "family"},
+            },
+            {
+                "id": "partial_dependence",
+                "chart_type": "line",
+                "data": [
+                    {"feature_name": curve.get("feature_name"), **point}
+                    for curve in list_value(diagnostics.get("partial_dependence", {}).get("curves"))[:8]
+                    for point in list_value(dict_value(curve).get("points"))
+                ],
+                "encoding": {"x": "feature_value", "y": "average_response", "color": "feature_name"},
+            },
+            {
+                "id": "shap_summary",
+                "chart_type": "bar",
+                "data": list_value(diagnostics.get("shap_summary", {}).get("top_features"))[:20],
+                "encoding": {"x": "mean_abs_shap", "y": "feature_name", "color": "family"},
             },
             {
                 "id": "calibration_bins",

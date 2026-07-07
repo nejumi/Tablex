@@ -1,0 +1,898 @@
+import React from "react";
+import { BarChart3, Download, FileText, ListChecks, Loader2, MessageSquare, PieChart, Plus } from "lucide-react";
+import type { LocaleMessages } from "../copy";
+import { RelatedNotebookArtifactLinks, RelatedNotebookLinks, notebooksForLeaderboardEntry, notebooksForLeaderboardResults } from "./NotebookLinks";
+import type {
+  AgentChatResponse,
+  Artifact,
+  ArtifactPreview,
+  EvaluationSpec,
+  EvidenceReaderMetric,
+  Job,
+  LeaderboardEntry,
+  NotebookIndex,
+  NotebookIndexItem,
+  PilotDeploymentRead,
+  PilotScoringReportRead,
+  PilotValidationAuditRead,
+  Project,
+  ResultReadout,
+  TranslationJobOutput,
+  TranslationResult
+} from "../types";
+
+const apiBase = import.meta.env.VITE_API_BASE ?? "";
+
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${apiBase}${path}`, { credentials: "include", ...init });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(apiErrorMessage(detail, response.statusText));
+  }
+  return response.json() as Promise<T>;
+}
+
+function apiErrorMessage(body: string, fallback: string): string {
+  if (!body) return fallback;
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (parsed && typeof parsed === "object" && "detail" in parsed) {
+      const detail = (parsed as { detail?: unknown }).detail;
+      if (typeof detail === "string") return detail;
+      if (Array.isArray(detail)) return detail.map((item) => String(item)).join("; ");
+    }
+  } catch {
+    return body;
+  }
+  return body;
+}
+
+type JobWaitOptions = {
+  timeoutMs?: number;
+  pollMs?: number;
+  label?: string;
+};
+
+async function waitForJobCompletion(jobId: string, options: JobWaitOptions = {}): Promise<Job> {
+  const timeoutMs = options.timeoutMs ?? 10 * 60_000;
+  const pollMs = options.pollMs ?? 1000;
+  const label = options.label ?? "Job";
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const job = await api<Job>(`/api/jobs/${jobId}`);
+    if (job.status === "succeeded") return job;
+    if (["failed", "cancelled", "timed_out"].includes(job.status)) {
+      throw new Error(job.error_message ?? `${label} ${job.status}.`);
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, pollMs));
+  }
+  throw new Error(`${label} is still running. Check Agent Activity or try again shortly.`);
+}
+
+async function runQueuedJobAndWait(job: Job, options: JobWaitOptions = {}): Promise<Job> {
+  await api<Job>(`/api/jobs/${job.id}/run`, { method: "POST" });
+  return waitForJobCompletion(job.id, options);
+}
+
+function textField(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function booleanField(value: unknown): boolean {
+  return value === true;
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function notebookSourceArtifactIdFromJobOutput(output: Record<string, unknown>): string | null {
+  const recommended = objectRecord(output.recommended_notebook);
+  const recommendedArtifacts = objectRecord(recommended?.artifact_ids);
+  return (
+    textField(output.source_artifact_id) ??
+    textField(output.analysis_notebook_artifact_id) ??
+    textField(output.notebook_artifact_id) ??
+    textField(recommended?.source_artifact_id) ??
+    textField(recommended?.notebook_artifact_id) ??
+    textField(recommendedArtifacts?.source) ??
+    textField(recommendedArtifacts?.notebook)
+  );
+}
+
+function notebookAuthoringBriefArtifactIdFromJobOutput(output: Record<string, unknown>): string | null {
+  return textField(output.notebook_authoring_brief_artifact_id) ?? textField(output.authoring_brief_artifact_id);
+}
+
+async function openNotebookOrAskAgentToAuthor({
+  completedJob,
+  locale,
+  projectName,
+  notebookKind,
+  onOpenNotebookArtifact,
+  onAskAgent
+}: {
+  completedJob: Job;
+  locale: string;
+  projectName: string;
+  notebookKind: string;
+  onOpenNotebookArtifact: (artifactId: string) => void | Promise<void>;
+  onAskAgent: (message: string) => Promise<AgentChatResponse | void>;
+}) {
+  const notebookArtifactId = notebookSourceArtifactIdFromJobOutput(completedJob.output);
+  if (notebookArtifactId) {
+    await onOpenNotebookArtifact(notebookArtifactId);
+    return;
+  }
+  const authoringBriefArtifactId = notebookAuthoringBriefArtifactIdFromJobOutput(completedJob.output);
+  if (!authoringBriefArtifactId) return;
+  const japanese = locale.toLowerCase().startsWith("ja");
+  const message = japanese
+    ? [
+        `${projectName} の ${notebookKind} 用 notebook_authoring_brief ${authoringBriefArtifactId} を読み、`,
+        "native marimo Python notebookを作成してTablexに登録してください。",
+        "生成後はNotebookを開けるリンクと、何を読むべきかを短く報告してください。"
+      ].join("")
+    : [
+        `Read notebook_authoring_brief ${authoringBriefArtifactId} for ${projectName} ${notebookKind}, `,
+        "author a native marimo Python notebook, and register it in Tablex. ",
+        "After it is registered, reply with the notebook link and a short read-first summary."
+      ].join("");
+  await onAskAgent(message);
+}
+
+function evidenceMetricClass(tone: EvidenceReaderMetric["tone"] = "muted") {
+  if (tone === "ready") return "badge success";
+  if (tone === "warning") return "badge warning";
+  if (tone === "risk") return "badge risk";
+  return "badge muted";
+}
+
+function formatDate(value: string | null) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
+}
+
+function truncateLabel(value: string, length: number) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length <= length ? normalized : `${normalized.slice(0, Math.max(0, length - 3)).trim()}...`;
+}
+
+function formatBytes(value: number | null) {
+  if (value == null) return "-";
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB"];
+  let amount = value / 1024;
+  let unitIndex = 0;
+  while (amount >= 1024 && unitIndex < units.length - 1) {
+    amount /= 1024;
+    unitIndex += 1;
+  }
+  return `${amount.toFixed(amount >= 10 ? 1 : 2)} ${units[unitIndex]}`;
+}
+
+function Table({ headers, rows }: { headers: string[]; rows: Array<Array<React.ReactNode>> }) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            {headers.map((header) => (
+              <th key={header}>{header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.map((cell, cellIndex) => (
+                <td key={cellIndex}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Panel({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div className="panel-title">
+          {icon}
+          <h2>{title}</h2>
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function EmptyInline({ text }: { text: string }) {
+  return <div className="empty-inline">{text}</div>;
+}
+
+function isHtmlArtifactPreview(preview: ArtifactPreview | null): boolean {
+  if (!preview?.preview_available) return false;
+  const filename = preview.filename.toLowerCase();
+  return (
+    preview.content_type === "text/html" ||
+    preview.content_type === "image/svg+xml" ||
+    filename.endsWith(".html") ||
+    filename.endsWith(".htm") ||
+    filename.endsWith(".svg")
+  );
+}
+
+function isVisualArtifactPreview(preview: ArtifactPreview | null): boolean {
+  if (!preview?.preview_available) return false;
+  return preview.content_type.startsWith("image/") || preview.content_type === "application/pdf";
+}
+
+function VisualArtifactPreview({ preview, text }: { preview: ArtifactPreview; text: LocaleMessages }) {
+  const url = preview.preview?.startsWith("/api/") ? `${apiBase}${preview.preview}` : preview.preview ?? `${apiBase}/api/artifacts/${preview.id}/download`;
+  const isPdf = preview.content_type === "application/pdf" || preview.filename.toLowerCase().endsWith(".pdf");
+  return (
+    <div className="preview-block">
+      <div className="preview-toolbar">
+        <div className="preview-meta">
+          <span className="badge">{isPdf ? text.artifactPreviewPdfBadge : text.artifactPreviewImageBadge}</span>
+          <span className="badge muted">{preview.filename}</span>
+        </div>
+        <a className="secondary-button text-link-button" href={url} target="_blank" rel="noreferrer">
+          {text.artifactPreviewOpenOriginal}
+        </a>
+      </div>
+      <div className="visual-preview-shell">
+        {isPdf ? (
+          <iframe className="visual-preview-frame" src={url} title={`${preview.name} preview`} />
+        ) : (
+          <img className="visual-preview-image" src={url} alt={`${preview.name} preview`} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HtmlArtifactPreview({ preview, text }: { preview: ArtifactPreview; text: LocaleMessages }) {
+  const isSvg = preview.content_type === "image/svg+xml" || preview.filename.toLowerCase().endsWith(".svg");
+  const previewType = isSvg ? text.artifactPreviewSvgBadge : text.artifactPreviewHtmlBadge;
+  const url = `${apiBase}/api/artifacts/${preview.id}/download`;
+
+  return (
+    <div className="preview-block">
+      <div className="preview-toolbar">
+        <div className="preview-meta">
+          <span className="badge">{previewType}</span>
+          <span className="badge muted">{preview.filename}</span>
+          {preview.truncated ? <span className="badge risk">{text.artifactPreviewTruncatedBadge}</span> : null}
+        </div>
+        <div className="row-actions">
+          <a className="secondary-button text-link-button" href={url} target="_blank" rel="noreferrer">
+            {text.artifactPreviewOpenOriginal}
+          </a>
+        </div>
+      </div>
+      {preview.truncated ? <div className="banner warning">{text.artifactPreviewTruncatedWarning}</div> : null}
+      <div className="html-artifact-open-only">
+        <FileText size={22} />
+        <div>
+          <strong>{text.artifactPreviewAvailableTitle}</strong>
+          <p>{text.artifactPreviewAvailableBody}</p>
+        </div>
+        <a className="secondary-button text-link-button" href={url} target="_blank" rel="noreferrer">
+          {text.artifactPreviewOpenOriginal}
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function TranslatablePreview({
+  preview,
+  text,
+  locale,
+  sourceType = "artifact",
+  sourceId
+}: {
+  preview: ArtifactPreview;
+  text: LocaleMessages;
+  locale: string;
+  sourceType?: "artifact" | "report";
+  sourceId?: string;
+}) {
+  const [translation, setTranslation] = React.useState<TranslationResult | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const effectiveSourceId = sourceId ?? preview.id;
+  const isSourceLocale = locale.toLowerCase().startsWith("en");
+  const shownPreview = translation?.preview.preview_available ? translation.preview.preview : preview.preview;
+
+  async function translate() {
+    setBusy(true);
+    setError(null);
+    try {
+      const job = await api<Job>(
+        sourceType === "report"
+          ? `/api/reports/${effectiveSourceId}/translate`
+          : `/api/artifacts/${effectiveSourceId}/translate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source_locale: "en-US", target_locale: locale })
+        }
+      );
+      await api<Job>(`/api/jobs/${job.id}/run`, { method: "POST" });
+      const completedJob = await waitForJobCompletion(job.id, { timeoutMs: 60_000, label: "Translation job" });
+      const output = completedJob.output as TranslationJobOutput;
+      if (!output.translation) {
+        throw new Error("Translation job completed without a translated preview.");
+      }
+      setTranslation({ ...output.translation, job: completedJob });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="preview-block">
+      <div className="preview-toolbar">
+        <div className="preview-meta">
+          <span className="badge">{translation ? text.translatedDraft : text.originalSource}</span>
+          <span className="badge muted">{translation?.target_locale ?? "en-US"}</span>
+          {translation ? <span className="badge muted">{translation.provider_status}</span> : null}
+        </div>
+        <button className="secondary-button" disabled={busy || isSourceLocale || !preview.preview_available} onClick={() => void translate()}>
+          {busy ? <Loader2 className="spin" size={16} /> : <MessageSquare size={16} />}
+          {busy ? text.translating : text.translate}
+        </button>
+      </div>
+      {translation ? <p className="translation-note">{text.codexTranslationPending}</p> : null}
+      {error ? <div className="banner danger">{error}</div> : null}
+      <pre className="markdown-preview">{shownPreview}</pre>
+    </div>
+  );
+}
+
+function resultReadoutStatusTone(status: string, fallback: EvidenceReaderMetric["tone"]): EvidenceReaderMetric["tone"] {
+  if (status === "ready_for_review") return "ready";
+  if (status === "needs_attention" || status === "needs_decision_report" || status === "needs_diagnostics") return "warning";
+  if (status === "needs_evaluation" || status === "needs_run") return "risk";
+  return fallback;
+}
+
+const builtinLeaderboardMetrics = ["roc_auc", "pr_auc", "accuracy", "macro_f1", "f1", "log_loss", "rmse", "mae", "r2"];
+const preferredMetricOrder = builtinLeaderboardMetrics;
+const ignoredMetricKeys = new Set([
+  "primary_metric_value",
+  "train_count",
+  "valid_count",
+  "feature_count",
+  "numeric_feature_count",
+  "categorical_feature_count",
+  "text_feature_count"
+]);
+
+function leaderboardMetricOptions(leaderboard: LeaderboardEntry[]) {
+  const options = new Set<string>(builtinLeaderboardMetrics);
+  leaderboard.forEach((entry) => {
+    Object.entries(entry.metrics).forEach(([key, value]) => {
+      if (ignoredMetricKeys.has(key)) return;
+      if (typeof value === "number" && Number.isFinite(value)) options.add(key);
+    });
+    if (entry.primary_metric_name) options.add(entry.primary_metric_name);
+  });
+  return [...options].sort((left, right) => {
+    const leftIndex = preferredMetricOrder.indexOf(left);
+    const rightIndex = preferredMetricOrder.indexOf(right);
+    if (leftIndex !== -1 || rightIndex !== -1) {
+      return (leftIndex === -1 ? 999 : leftIndex) - (rightIndex === -1 ? 999 : rightIndex);
+    }
+    return left.localeCompare(right);
+  });
+}
+
+export function metricLabel(metric: string | null | undefined) {
+  return metric ? metric.replace(/_/g, "-").toUpperCase() : "metric";
+}
+
+export function LeaderboardTab({
+  project,
+  specs,
+  artifacts,
+  notebookIndex,
+  leaderboard,
+  pilotDeployments,
+  resultReadout,
+  busy,
+  locale,
+  text,
+  runAction,
+  onAskAgent,
+  onOpenNotebookArtifact
+}: {
+  project: Project;
+  specs: EvaluationSpec[];
+  artifacts: Artifact[];
+  notebookIndex: NotebookIndex | null;
+  leaderboard: LeaderboardEntry[];
+  pilotDeployments: PilotDeploymentRead[];
+  resultReadout: ResultReadout | null;
+  busy: boolean;
+  locale: string;
+  text: LocaleMessages;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
+  onAskAgent: (objective: string) => Promise<AgentChatResponse | void>;
+  onOpenNotebookArtifact: (artifactId: string) => void;
+}) {
+  const splitManifests = artifacts.filter((artifact) => artifact.asset_type === "split_manifest");
+  const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
+
+  async function loadPreview(artifactId: string) {
+    setPreviewLoadingId(artifactId);
+    setPreviewError(null);
+    try {
+      setPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPreviewLoadingId(null);
+    }
+  }
+  const approvedSpecCount = specs.filter((spec) => spec.status === "approved").length;
+  const topEntry = leaderboard[0] ?? null;
+  const leaderboardStatus = leaderboard.length
+    ? approvedSpecCount && splitManifests.length
+      ? "comparable"
+      : "needs context"
+    : "no runs yet";
+  const leaderboardTone: EvidenceReaderMetric["tone"] = leaderboard.length
+    ? approvedSpecCount && splitManifests.length
+      ? "ready"
+      : "warning"
+    : "muted";
+
+  async function analyzeTopRun(entry: LeaderboardEntry) {
+    const job = await api<Job>(`/api/runs/${entry.run_id}/diagnostics`, { method: "POST" });
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Run diagnostics job" });
+    const artifactIds = Array.isArray(completedJob.output.artifact_ids) ? completedJob.output.artifact_ids : [];
+    const preferredArtifactId = typeof artifactIds[1] === "string" ? artifactIds[1] : typeof artifactIds[0] === "string" ? artifactIds[0] : null;
+    if (preferredArtifactId) {
+      await loadPreview(preferredArtifactId);
+    }
+    return completedJob;
+  }
+
+  async function draftTopRunReport(entry: LeaderboardEntry) {
+    const job = await api<Job>(`/api/runs/${entry.run_id}/report`, { method: "POST" });
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Run report job" });
+    const artifactId = textField(completedJob.output.artifact_id);
+    if (artifactId) {
+      await loadPreview(artifactId);
+    }
+    return completedJob;
+  }
+
+  async function materializeTopRunModelEvidence(entry: LeaderboardEntry) {
+    const job = await api<Job>(`/api/runs/${entry.run_id}/model-diagnostics-artifacts`, { method: "POST" });
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Model diagnostics artifacts job" });
+    const artifactId =
+      textField(completedJob.output.model_diagnostics_report_artifact_id) ??
+      textField(completedJob.output.model_diagnostics_artifact_pack_id) ??
+      textField(completedJob.output.feature_importance_artifact_id);
+    if (artifactId) {
+      await loadPreview(artifactId);
+    }
+    return completedJob;
+  }
+
+  async function prepareResultNotebookEvidence() {
+    const job = await api<Job>(`/api/projects/${project.id}/results/notebook-evidence`, { method: "POST" });
+    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Result notebook evidence job" });
+    await openNotebookOrAskAgentToAuthor({
+      completedJob,
+      locale,
+      projectName: project.name,
+      notebookKind: "result evidence",
+      onOpenNotebookArtifact,
+      onAskAgent
+    });
+    return completedJob;
+  }
+
+  const readoutStatus = resultReadout?.status ?? leaderboardStatus;
+  const readoutTone = resultReadoutStatusTone(readoutStatus, leaderboardTone);
+  const metricOptions = leaderboardMetricOptions(leaderboard);
+  const selectedMetric = topEntry?.display_metric_name ?? metricOptions[0] ?? null;
+  const unavailableCount = selectedMetric ? leaderboard.filter((entry) => !entry.display_metric_available).length : 0;
+  const topMetricName = selectedMetric ?? "metric";
+  const decisionReady = booleanField(resultReadout?.decision_report.available);
+  const resultNotebooks = notebooksForLeaderboardResults(notebookIndex, leaderboard);
+
+  async function setLeaderboardMetric(metric: string) {
+    await api(`/api/projects/${project.id}/leaderboard/metric`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ metric })
+    });
+  }
+
+  return (
+    <div className="stack">
+      <section id="result-readout" className="leaderboard-surface" aria-label={text.leaderboardTitle}>
+        <div className="leaderboard-head">
+          <div>
+            <div className="eyebrow">{text.leaderboardTitle}</div>
+            <h2>
+              {leaderboard.length
+                ? text.leaderboardRankedTitle
+                    .replace("{count}", String(leaderboard.length))
+                    .replace("{metric}", metricLabel(topMetricName))
+                : text.leaderboardNoRunsTitle}
+            </h2>
+            <div className="badge-row">
+              <span className={evidenceMetricClass(readoutTone)}>{readoutStatus.replace(/_/g, " ")}</span>
+              <span className={approvedSpecCount ? "badge success" : "badge warning"}>
+                {approvedSpecCount ? text.leaderboardEvaluationReady : text.leaderboardEvaluationMissing}
+              </span>
+              <span className={splitManifests.length ? "badge success" : "badge warning"}>
+                {splitManifests.length ? text.leaderboardValidationReady : text.leaderboardValidationMissing}
+              </span>
+              {unavailableCount ? (
+                <span className="badge warning">{text.leaderboardMissingScore.replace("{count}", String(unavailableCount))}</span>
+              ) : null}
+            </div>
+          </div>
+          <div className="leaderboard-controls">
+            <label>
+              <span>{text.leaderboardMetricSelect}</span>
+              <select
+                disabled={busy || !metricOptions.length}
+                value={selectedMetric ?? ""}
+                onChange={(event) => void runAction(() => setLeaderboardMetric(event.target.value))}
+              >
+                {metricOptions.map((metric) => (
+                  <option key={metric} value={metric}>
+                    {metricLabel(metric)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="secondary-button"
+              disabled={busy}
+              onClick={() => void onAskAgent(`Add or compute a new leaderboard metric for ${project.name}. Keep it as one metric across all runs and update the leaderboard view when available.`)}
+              type="button"
+            >
+              {busy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+              {text.leaderboardAddMetric}
+            </button>
+            <div className="leaderboard-best-score">
+              <span>{text.leaderboardBestScore}</span>
+              <strong>{formatScore(topEntry?.display_metric_value ?? null)}</strong>
+              <small>{topEntry ? `${metricLabel(topMetricName)} · ${leaderboardEntryModelLabel(topEntry)}` : metricLabel(topMetricName)}</small>
+            </div>
+          </div>
+        </div>
+        {leaderboard.length ? (
+          <>
+          {resultNotebooks.length ? (
+            <div className="leaderboard-result-notebooks">
+              <div>
+                <strong>{text.leaderboardResultNotebooks}</strong>
+                <small>{text.leaderboardResultNotebooksBody}</small>
+              </div>
+              <RelatedNotebookLinks
+                notebooks={resultNotebooks}
+                onOpen={onOpenNotebookArtifact}
+                previewLoadingId={previewLoadingId}
+                text={text}
+              />
+            </div>
+          ) : null}
+          <div className="leaderboard-table-wrap">
+            <Table
+              headers={[
+                text.leaderboardHeaderRank,
+                text.leaderboardHeaderModel,
+                text.leaderboardHeaderScore,
+                text.leaderboardHeaderEvaluation,
+                text.leaderboardHeaderEvidence,
+                text.leaderboardHeaderActions
+              ]}
+              rows={leaderboard.map((entry) => [
+                <strong className="leaderboard-rank" key={`${entry.run_id}-rank`}>#{entry.rank}</strong>,
+                <div className="leaderboard-model-cell" key={`${entry.run_id}-model`}>
+                  <strong>{leaderboardEntryModelLabel(entry)}</strong>
+                  {leaderboardEntryDescription(entry) ? <p>{leaderboardEntryDescription(entry)}</p> : null}
+                  {leaderboardEntryFeatureSummary(entry) ? <small>{leaderboardEntryFeatureSummary(entry)}</small> : null}
+                </div>,
+                <div className="leaderboard-score-cell" key={`${entry.run_id}-score`}>
+                  <strong>{formatScore(entry.display_metric_value)}</strong>
+                  <small>{metricLabel(entry.display_metric_name)}</small>
+                </div>,
+                <div className="cell-stack" key={`${entry.run_id}-eval`}>
+                  <span>{entry.evaluation_spec_id ? text.leaderboardEvaluationReady : text.leaderboardEvaluationMissing}</span>
+                  <small>{entry.split_manifest_id ? text.leaderboardValidationReady : text.leaderboardValidationMissing}</small>
+                </div>,
+                <div className="leaderboard-evidence-badges" key={`${entry.run_id}-evidence`}>
+                  <span className={modelDiagnosticsBadgeClass(entry)}>{modelDiagnosticsStatusLabel(entry, text)}</span>
+                  <small>{modelDiagnosticsChecksLabel(entry)}</small>
+                  <span className={decisionReady ? "badge success" : "badge warning"}>
+                    {decisionReady ? text.leaderboardEvidenceReportReady : text.leaderboardEvidenceReportMissing}
+                  </span>
+                  {notebooksForLeaderboardEntry(notebookIndex, entry).length ? (
+                    <RelatedNotebookLinks
+                      notebooks={notebooksForLeaderboardEntry(notebookIndex, entry)}
+                      onOpen={onOpenNotebookArtifact}
+                      previewLoadingId={previewLoadingId}
+                      text={text}
+                      compact
+                    />
+                  ) : (
+                    <RelatedNotebookArtifactLinks
+                      artifactIds={entry.related_notebook_artifact_ids ?? []}
+                      onOpen={onOpenNotebookArtifact}
+                      previewLoadingId={previewLoadingId}
+                      text={text}
+                      compact
+                    />
+                  )}
+                </div>,
+                <div className="row-actions" key={`${entry.run_id}-actions`}>
+                  <button
+                    className="icon-button"
+                    disabled={busy}
+                    onClick={() => void runAction(() => analyzeTopRun(entry))}
+                    title={text.leaderboardActionAnalyzeDiagnostics}
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={busy}
+                    onClick={() => void runAction(() => materializeTopRunModelEvidence(entry))}
+                    title={text.leaderboardActionMaterializeEvidence}
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={busy}
+                    onClick={() => {
+                      const existingNotebook = notebooksForLeaderboardEntry(notebookIndex, entry)[0] ?? resultNotebooks[0] ?? null;
+                      if (existingNotebook) {
+                        onOpenNotebookArtifact(existingNotebook.artifact_ids.notebook);
+                        return;
+                      }
+                      void runAction(prepareResultNotebookEvidence);
+                    }}
+                    title={text.leaderboardActionOpenNotebook}
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={busy}
+                    onClick={() => void runAction(() => draftTopRunReport(entry))}
+                    title={text.leaderboardActionDraftReport}
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
+                  </button>
+                  {entry.pipeline_artifact_id ? (
+                    <a
+                      className="icon-link"
+                      href={`${apiBase}/api/experiment-runs/${entry.run_id}/pipeline-bundle`}
+                      title={text.downloadPipelineBundle}
+                    >
+                      <Download size={16} />
+                    </a>
+                  ) : (
+                    <button className="icon-button" disabled title={text.pipelineBundleUnavailable} type="button">
+                      <Download size={16} />
+                    </button>
+                  )}
+                </div>
+              ])}
+            />
+          </div>
+          </>
+        ) : (
+          <EmptyInline text={text.leaderboardEmpty} />
+        )}
+      </section>
+      <section id="pilot-deployments" className="leaderboard-surface" aria-label={text.pilotDeploymentsTitle}>
+        <div className="leaderboard-head">
+          <div>
+            <div className="eyebrow">{text.pilotDeploymentsTitle}</div>
+            <h2>{text.pilotDeploymentsTitle}</h2>
+            <p>{text.pilotDeploymentsBody}</p>
+          </div>
+        </div>
+        {pilotDeployments.length ? (
+          <div className="leaderboard-table-wrap">
+            <Table
+              headers={[
+                text.pilotDeploymentModel,
+                text.pilotDeploymentStatus,
+                text.pilotDeploymentBatches,
+                text.pilotDeploymentScore,
+                text.pilotDeploymentAsOfViolations,
+                text.pilotDeploymentAudit
+              ]}
+              rows={pilotDeployments.map((deployment) => {
+                const latestReport = deployment.scoring_reports[0] ?? null;
+                const latestAudit = deployment.validation_audits[0] ?? null;
+                return [
+                  <div className="leaderboard-model-cell" key={`${deployment.id}-pipeline`}>
+                    <strong>{pilotDeploymentLabel(deployment, artifacts, text)}</strong>
+                    <small>{formatDate(deployment.started_at)}</small>
+                  </div>,
+                  <span className={deployment.status === "active" ? "badge success" : "badge muted"} key={`${deployment.id}-status`}>
+                    {deployment.status}
+                  </span>,
+                  <div className="cell-stack" key={`${deployment.id}-batches`}>
+                    <span>{text.pilotPredictionCount.replace("{count}", String(deployment.prediction_batches.length))}</span>
+                    <small>{text.pilotOutcomeCount.replace("{count}", String(deployment.outcome_batches.length))}</small>
+                  </div>,
+                  <div className="leaderboard-score-cell" key={`${deployment.id}-score`}>
+                    <strong>{latestReport ? pilotReportMetricSummary(latestReport) : "-"}</strong>
+                    <small>
+                      {latestReport?.matched_rows != null
+                        ? text.pilotMatchedRows.replace("{count}", String(latestReport.matched_rows))
+                        : text.pilotNoScoringReport}
+                    </small>
+                  </div>,
+                  <div className="cell-stack" key={`${deployment.id}-asof`}>
+                    <span>{pilotAsOfViolationSummary(latestReport)}</span>
+                    {latestReport ? (
+                      <button
+                        className="text-button"
+                        type="button"
+                        onClick={() => void loadPreview(latestReport.artifact.id)}
+                      >
+                        {text.openSurface}
+                      </button>
+                    ) : null}
+                  </div>,
+                  <div className="cell-stack" key={`${deployment.id}-audit`}>
+                    <span>{pilotAuditSummary(latestAudit, text)}</span>
+                    {latestAudit?.next_iteration_focus ? <small>{truncateLabel(latestAudit.next_iteration_focus, 96)}</small> : null}
+                    {latestAudit ? (
+                      <button
+                        className="text-button"
+                        type="button"
+                        onClick={() => void loadPreview(latestAudit.artifact.id)}
+                      >
+                        {text.openSurface}
+                      </button>
+                    ) : null}
+                  </div>
+                ];
+              })}
+            />
+          </div>
+        ) : (
+          <EmptyInline text={text.pilotDeploymentsEmpty} />
+        )}
+      </section>
+      {(preview || previewError || previewLoadingId) ? (
+        <Panel title="Selected Run Evidence" icon={<FileText size={18} />}>
+          {previewError ? <div className="banner danger">{previewError}</div> : null}
+          {previewLoadingId ? (
+            <div className="banner muted">
+              <Loader2 className="spin" size={16} />
+              Loading evidence...
+            </div>
+          ) : null}
+          {preview?.preview_available ? (
+            isVisualArtifactPreview(preview) ? (
+              <VisualArtifactPreview preview={preview} text={text} />
+            ) : isHtmlArtifactPreview(preview) ? (
+              <HtmlArtifactPreview preview={preview} text={text} />
+            ) : (
+              <TranslatablePreview preview={preview} text={text} locale={locale} />
+            )
+          ) : (
+            <EmptyInline text={preview?.reason ?? "Select a run action to inspect its diagnostics, model evidence, notebook evidence, or report."} />
+          )}
+        </Panel>
+      ) : null}
+    </div>
+  );
+}
+
+function formatScore(value: number | null) {
+  return value == null || !Number.isFinite(value) ? "-" : value.toFixed(6);
+}
+
+function formatBaseline(metrics: Record<string, unknown>) {
+  const baselineType = metrics.baseline_type;
+  if (typeof baselineType !== "string") return "-";
+  return baselineType.replace(/_/g, " ");
+}
+
+function leaderboardEntryModelLabel(entry: LeaderboardEntry) {
+  const label = entry.model_label?.trim();
+  if (label) return label.replace(/__/g, " · ").replace(/_/g, " ");
+  const modelId = entry.model_id?.trim();
+  if (modelId) return modelId.replace(/__/g, " · ").replace(/_/g, " ");
+  return entry.run_id;
+}
+
+function leaderboardEntryDescription(entry: LeaderboardEntry) {
+  const description = entry.model_description?.trim() || entry.summary_md?.trim();
+  if (description) return truncateLabel(description.replace(/\s+/g, " "), 180);
+  return "";
+}
+
+function leaderboardEntryFeatureSummary(entry: LeaderboardEntry) {
+  const featureSummary = entry.feature_summary?.trim();
+  if (featureSummary) return featureSummary;
+  const baseline = formatBaseline(entry.metrics);
+  return baseline === "-" ? "" : baseline;
+}
+
+const modelDiagnosticCheckLabels: Record<string, string> = {
+  permutation_importance: "permutation",
+  native_feature_importance: "tree/native",
+  partial_dependence: "PDP",
+  shap: "SHAP"
+};
+
+function modelDiagnosticsBadgeClass(entry: LeaderboardEntry) {
+  const status = entry.model_diagnostics?.status ?? "missing";
+  if (status === "ready") return "badge success";
+  if (status === "partial" || status === "registered") return "badge warning";
+  return "badge muted";
+}
+
+function modelDiagnosticsStatusLabel(entry: LeaderboardEntry, text: LocaleMessages) {
+  const status = entry.model_diagnostics?.status ?? "missing";
+  if (status === "ready") return text.modelDiagnosticsReady;
+  if (status === "partial") return text.modelDiagnosticsPartial;
+  if (status === "registered") return text.modelDiagnosticsRegistered;
+  return text.modelDiagnosticsMissing;
+}
+
+function modelDiagnosticsChecksLabel(entry: LeaderboardEntry) {
+  const checks = entry.model_diagnostics?.standard_checks ?? {};
+  const parts = Object.entries(modelDiagnosticCheckLabels).map(([key, label]) => {
+    const status = checks[key]?.status ?? "missing";
+    return `${label}: ${status.replace(/_/g, " ")}`;
+  });
+  return parts.join(" / ");
+}
+
+function pilotDeploymentLabel(deployment: PilotDeploymentRead, artifacts: Artifact[], text: LocaleMessages) {
+  const artifact = artifacts.find((item) => item.id === deployment.pipeline_artifact_id);
+  return artifact?.name ?? text.pilotRegisteredPipeline;
+}
+
+function pilotReportMetricSummary(report: PilotScoringReportRead) {
+  const metricEntries = Object.entries(report.metrics).filter(([, value]) => typeof value === "number" && Number.isFinite(value));
+  if (!metricEntries.length) return "-";
+  const [name, value] = metricEntries[0] as [string, number];
+  return `${metricLabel(name)} ${formatScore(value)}`;
+}
+
+function pilotAsOfViolationSummary(report: PilotScoringReportRead | null) {
+  if (!report) return "-";
+  const count = report.as_of_violations.count;
+  if (typeof count !== "number") return "-";
+  return `${count}`;
+}
+
+function pilotAuditSummary(audit: PilotValidationAuditRead | null, text: LocaleMessages) {
+  if (!audit) return text.pilotDeploymentAuditEmpty;
+  const verdict = audit.scheme_verdict?.trim();
+  const decompositionCount = audit.gap_decomposition.length;
+  if (verdict && decompositionCount) return `${verdict.replace(/_/g, " ")} · ${decompositionCount}`;
+  return verdict ? verdict.replace(/_/g, " ") : text.pilotDeploymentAudit;
+}

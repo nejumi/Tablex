@@ -1,0 +1,146 @@
+{
+  "schema_version": "tablex_h5_preflight.v1",
+  "created_at": "20260707T170226",
+  "project": {
+    "id": "p_24bfcb49f571",
+    "org_id": "local-org",
+    "name": "0120 H5 preflight 20260707T170226",
+    "description": null,
+    "task_type": null,
+    "target_column": null,
+    "primary_dataset_snapshot_id": null,
+    "current_phase": "DRAFT",
+    "status": "active",
+    "autonomy_mode": "approval_based",
+    "created_by": "local-user",
+    "created_at": "2026-07-07T08:02:26.630611",
+    "updated_at": "2026-07-07T08:02:26.630617"
+  },
+  "upload_job": {
+    "id": "job_ac34a56bc4c9",
+    "project_id": "p_24bfcb49f571",
+    "job_type": "upload_data_bundle",
+    "status": "queued",
+    "priority": 50,
+    "attempt_count": 0,
+    "max_attempts": 1,
+    "input": {
+      "file_count": 2,
+      "note": null,
+      "note_present": false,
+      "primary_filename": null,
+      "relational_hint_file_count": 0,
+      "response_locale": "ja-JP",
+      "staged_relational_hint_artifact_ids": [],
+      "staged_table_artifact_ids": [
+        "art_ba90dee92950",
+        "art_36737b870632"
+      ],
+      "table_file_count": 2,
+      "target_column": null
+    },
+    "output": {
+      "assistant_message": "ファイルを受け取りました。Tablexがデータbundleの取り込みとprofileを続けています。",
+      "progress_percent": 5,
+      "progress_stage": "queued_for_ingest",
+      "schema_version": "upload_data_bundle_staging.v1",
+      "staged_relational_hint_artifact_ids": [],
+      "staged_table_artifact_ids": [
+        "art_ba90dee92950",
+        "art_36737b870632"
+      ],
+      "status": "queued_for_ingest"
+    },
+    "context": {},
+    "policy": {
+      "connector_credentials": "not_materialized",
+      "network": "disabled",
+      "purpose": "store_user_supplied_table_bundle_and_relational_evidence",
+      "secret_access": "forbidden"
+    },
+    "dependency_job_ids": [],
+    "error_message": null,
+    "approval_required": false,
+    "approved_by": null,
+    "approved_at": null,
+    "cancelled_by": null,
+    "run_after": null,
+    "locked_by": null,
+    "locked_at": null,
+    "created_at": "2026-07-07T08:02:26.668852+00:00",
+    "updated_at": "2026-07-07T08:02:26.668858+00:00",
+    "started_at": null,
+    "ended_at": null
+  },
+  "columns": {
+    "schema_version": "project_column_catalog.v1",
+    "project_id": "p_24bfcb49f571",
+    "tables": [
+      {
+        "dataset_snapshot_id": "staged:art_ba90dee92950",
+        "artifact_id": "art_ba90dee92950",
+        "source_ref": "events.csv",
+        "row_count": null,
+        "column_count": 5,
+        "is_primary": false,
+        "columns": [
+          "store_id",
+          "date",
+          "demand",
+          "price",
+          "promo"
+        ],
+        "column_details": [
+          {
+            "name": "store_id"
+          },
+          {
+            "name": "date"
+          },
+          {
+            "name": "demand"
+          },
+          {
+            "name": "price"
+          },
+          {
+            "name": "promo"
+          }
+        ]
+      },
+      {
+        "dataset_snapshot_id": "staged:art_36737b870632",
+        "artifact_id": "art_36737b870632",
+        "source_ref": "stores.csv",
+        "row_count": null,
+        "column_count": 3,
+        "is_primary": false,
+        "columns": [
+          "store_id",
+          "region",
+          "opened_at"
+        ],
+        "column_details": [
+          {
+            "name": "store_id"
+          },
+          {
+            "name": "region"
+          },
+          {
+            "name": "opened_at"
+          }
+        ]
+      }
+    ]
+  },
+  "fixture_files": {
+    "events.csv": "store_id,date,demand,price,promo\nS1,2026-01-01,12,2.50,0\nS1,2026-01-02,14,2.45,1\nS2,2026-01-01,9,3.20,0\nS2,2026-01-02,11,3.10,1\n",
+    "stores.csv": "store_id,region,opened_at\nS1,east,2024-02-01\nS2,west,2023-08-15\n"
+  },
+  "assertions": {
+    "upload_status_succeeded": true,
+    "primary_left_unset": true,
+    "target_left_unset": true
+  }
+}

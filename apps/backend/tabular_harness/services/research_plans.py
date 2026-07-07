@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import copy
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -61,20 +63,19 @@ PLAN_TOO_FINE_GRANULARITIES = {
 }
 PLAN_NOTEBOOK_ASSET_TYPES = {
     "analysis_notebook",
-    "notebook_execution_html",
-    "notebook_evidence_html",
+    "marimo_notebook",
 }
+STATIC_NOTEBOOK_HTML_ASSET_TYPES = {"notebook_html", "notebook_execution_html", "notebook_evidence_html"}
 PLAN_REPORT_ASSET_TYPES = {
     "agent_session_report",
     "analysis_report",
-    "notebook_execution_html",
-    "notebook_evidence_html",
     "report",
 }
 PLAN_FIGURE_ASSET_TYPES = {"agent_session_figure", "visualization", "visualization_spec"}
 HARNESS_RESEARCH_PLAN_BOOTSTRAP_SOURCES = {
     "harness_initial_research_plan",
     "harness_dataset_upload",
+    "harness_objective_framing",
 }
 
 
@@ -156,6 +157,7 @@ def harness_initial_research_plan_document(*, project_id: str) -> dict[str, Any]
                 "status": "pending",
                 "target_tab": "Data",
                 "target_anchor": "data-focus",
+                "deliverable_contract": {"expected_outputs": ["notebook"]},
                 "localizations": {
                     "ja-JP": {
                         "title": "データ理解",
@@ -171,6 +173,7 @@ def harness_initial_research_plan_document(*, project_id: str) -> dict[str, Any]
                 "status": "pending",
                 "target_tab": "Insight",
                 "target_anchor": "insights",
+                "deliverable_contract": {"expected_outputs": ["research_findings"]},
                 "localizations": {
                     "ja-JP": {
                         "title": "従来知見の調査",
@@ -257,6 +260,75 @@ def record_harness_dataset_upload_in_research_plan(
             "dataset_snapshot_id": dataset_snapshot_id,
             "artifact_ids": [artifact.id for artifact in verified_artifacts],
         },
+        strict_validation=True,
+    )
+    return result.revision
+
+
+def record_harness_objective_in_research_plan(
+    db: Session,
+    *,
+    project_id: str,
+    objective_label: str | None,
+) -> ResearchPlanRevision | None:
+    cleaned_objective = objective_label.strip() if isinstance(objective_label, str) and objective_label.strip() else None
+    if not cleaned_objective:
+        return None
+    revision = ensure_harness_initial_research_plan_revision(db, project_id=project_id)
+    if not research_plan_revision_is_harness_bootstrap(revision):
+        return None
+
+    document = copy.deepcopy(research_plan_revision_document(revision))
+    raw_blocks = document.get("timeline_blocks")
+    if not isinstance(raw_blocks, list):
+        document = harness_initial_research_plan_document(project_id=project_id)
+        raw_blocks = document["timeline_blocks"]
+    blocks = [block for block in raw_blocks if isinstance(block, dict)]
+    block_by_id = {str(block.get("id") or "").strip(): block for block in blocks}
+    objective = block_by_id.get("objective_framing")
+    if objective is None:
+        return None
+
+    objective_index = blocks.index(objective)
+    for prior_block in blocks[:objective_index]:
+        if research_plan_block_status(prior_block) not in PLAN_TERMINAL_STATUSES:
+            return None
+
+    objective["status"] = "done"
+    objective["subtitle"] = f"Current objective is {cleaned_objective}."
+    objective["target_tab"] = "Home"
+    objective["target_anchor"] = "research-plan"
+    objective["no_output_required"] = True
+    objective["no_output_required_rationale"] = "The structured project objective is stored on the Project record."
+    objective["completion_evidence"] = [
+        {
+            "output_type": "project_setting",
+            "role": "project_objective",
+            "project_field": "target_column",
+            "value": cleaned_objective,
+        }
+    ]
+    objective.setdefault("localizations", {})
+    localizations = objective["localizations"] if isinstance(objective["localizations"], dict) else {}
+    localizations["ja-JP"] = {
+        **(localizations.get("ja-JP") if isinstance(localizations.get("ja-JP"), dict) else {}),
+        "title": "目的設定",
+        "subtitle": f"現在の目的: {cleaned_objective}",
+    }
+    objective["localizations"] = localizations
+
+    for block in blocks[objective_index + 1 :]:
+        if research_plan_block_status(block) not in PLAN_TERMINAL_STATUSES:
+            block["status"] = "active"
+            break
+
+    result = commit_research_plan_revision(
+        db,
+        project_id=project_id,
+        document=document,
+        author_type="harness",
+        reason="Record the structured project objective in the harness-owned ResearchPlan.",
+        metadata={"source": "harness_objective_framing", "objective_label": cleaned_objective},
         strict_validation=True,
     )
     return result.revision
@@ -408,12 +480,22 @@ def set_research_plan_current_work(
     updated_by_type: str = "codex",
     updated_by: str | None = None,
 ) -> ResearchPlanCurrentWork:
-    allowed_statuses = {"active", "pending", "blocked", "waiting", "done", "skipped"}
+    allowed_statuses = PLAN_CURRENT_STATUSES
     if status not in allowed_statuses:
-        raise ValueError(f"Unsupported current_work status: {status}")
+        raise ValueError(
+            f"Unsupported current_work status: {status}. "
+            "current_work represents live presence and must be active, waiting, or blocked. "
+            "Use commit_revision to mark plan nodes pending, done, or skipped."
+        )
     cleaned_node_id = node_id.strip()
     if not cleaned_node_id:
         raise ValueError("node_id is required")
+    cleaned_summary = summary.strip()
+    if not cleaned_summary:
+        raise ValueError(
+            "current_work.summary is required. "
+            "Describe the active work briefly so the visible plan can show what Codex is doing."
+        )
     plan = get_or_create_research_plan(db, project_id=project_id)
     revision = db.get(ResearchPlanRevision, revision_id) if revision_id else None
     if revision_id is not None and (revision is None or revision.research_plan_id != plan.id):
@@ -433,7 +515,7 @@ def set_research_plan_current_work(
     current.revision_id = revision.id if revision is not None else None
     current.node_id = cleaned_node_id[:160]
     current.status = status
-    current.summary = summary.strip()[:4000]
+    current.summary = cleaned_summary[:4000]
     current.expected_outputs_json = dumps_json([str(item).strip()[:400] for item in (expected_outputs or [])[:40]])
     current.updated_by_type = updated_by_type.strip()[:80] or "codex"
     current.updated_by = updated_by.strip()[:160] if isinstance(updated_by, str) and updated_by.strip() else None
@@ -537,30 +619,35 @@ def research_plan_artifact_links(
             .order_by(LineageEdge.created_at.asc())
         ).all()
     )
-    artifact_ids = [edge.to_asset_id for edge in edges if edge.to_asset_type == "artifact"]
-    artifacts = {
-        artifact.id: artifact
-        for artifact in db.scalars(select(Artifact).where(Artifact.id.in_(artifact_ids))).all()
-    } if artifact_ids else {}
-    run_ids = [edge.to_asset_id for edge in edges if edge.to_asset_type == "experiment_run"]
-    runs = {
-        run.id: run
-        for run in db.scalars(select(ExperimentRun).where(ExperimentRun.id.in_(run_ids))).all()
-    } if run_ids else {}
+    artifact_ids = list(dict.fromkeys(edge.to_asset_id for edge in edges if edge.to_asset_type == "artifact"))
+    artifacts: dict[str, Artifact] = {}
+    for chunk in _research_plan_link_id_chunks(artifact_ids):
+        artifacts.update({artifact.id: artifact for artifact in db.scalars(select(Artifact).where(Artifact.id.in_(chunk))).all()})
+    run_ids = list(dict.fromkeys(edge.to_asset_id for edge in edges if edge.to_asset_type == "experiment_run"))
+    runs: dict[str, ExperimentRun] = {}
+    for chunk in _research_plan_link_id_chunks(run_ids):
+        runs.update({run.id: run for run in db.scalars(select(ExperimentRun).where(ExperimentRun.id.in_(chunk))).all()})
     links: list[dict[str, Any]] = []
+    seen_links: set[tuple[str, str, str, str]] = set()
     for edge in edges:
         metadata = loads_json(edge.metadata_json, {})
+        node_id = str(metadata.get("node_id") or "")
+        role = str(metadata.get("role") or "experiment_run")
         if edge.to_asset_type == "experiment_run":
             run = runs.get(edge.to_asset_id)
             params = loads_json(run.params_json, {}) if run is not None else {}
             model_id = params.get("model_id") if isinstance(params, dict) else None
+            link_key = ("experiment_run", node_id, edge.to_asset_id, role)
+            if link_key in seen_links:
+                continue
+            seen_links.add(link_key)
             links.append(
                 {
                     "id": edge.id,
                     "link_type": "experiment_run",
                     "revision_id": revision.id,
-                    "node_id": str(metadata.get("node_id") or ""),
-                    "role": str(metadata.get("role") or "experiment_run"),
+                    "node_id": node_id,
+                    "role": role,
                     "run_id": edge.to_asset_id,
                     "artifact_id": None,
                     "artifact_name": f"{model_id} · {edge.to_asset_id}" if isinstance(model_id, str) and model_id.strip() else edge.to_asset_id,
@@ -573,23 +660,57 @@ def research_plan_artifact_links(
                 }
             )
         else:
-            artifact = artifacts.get(edge.to_asset_id)
+            raw_artifact = artifacts.get(edge.to_asset_id)
+            artifact = research_plan_visible_artifact_for_link(db, raw_artifact)
+            if artifact is None:
+                continue
+            role = str(metadata.get("role") or "evidence")
+            link_key = ("artifact", node_id, artifact.id, role)
+            if link_key in seen_links:
+                continue
+            seen_links.add(link_key)
             links.append(
                 {
                     "id": edge.id,
                     "link_type": "artifact",
                     "revision_id": revision.id,
-                    "node_id": str(metadata.get("node_id") or ""),
-                    "role": str(metadata.get("role") or "evidence"),
-                    "artifact_id": edge.to_asset_id,
-                    "artifact_name": artifact.name if artifact is not None else None,
-                    "asset_type": artifact.asset_type if artifact is not None else None,
-                    "artifact_version": artifact.version if artifact is not None else None,
+                    "node_id": node_id,
+                    "role": role,
+                    "artifact_id": artifact.id,
+                    "artifact_name": artifact.name,
+                    "asset_type": artifact.asset_type,
+                    "artifact_version": artifact.version,
+                    **research_plan_artifact_surface_target(artifact, role=role),
                     "metadata": metadata if isinstance(metadata, dict) else {},
                     "created_at": edge.created_at.isoformat(),
                 }
             )
     return links
+
+
+def _research_plan_link_id_chunks(ids: list[str], chunk_size: int = 500) -> list[list[str]]:
+    return [ids[index : index + chunk_size] for index in range(0, len(ids), chunk_size)]
+
+
+def research_plan_visible_artifact_for_link(db: Session, artifact: Artifact | None) -> Artifact | None:
+    if artifact is None:
+        return None
+    if artifact.asset_type not in STATIC_NOTEBOOK_HTML_ASSET_TYPES:
+        return artifact
+    metadata = loads_json(artifact.metadata_json, {})
+    for key in ("notebook_artifact_id", "analysis_notebook_artifact_id", "source_notebook_artifact_id"):
+        source_id = metadata.get(key)
+        if not isinstance(source_id, str) or not source_id.strip():
+            continue
+        source = db.get(Artifact, source_id)
+        if (
+            source is not None
+            and source.project_id == artifact.project_id
+            and source.asset_type in PLAN_NOTEBOOK_ASSET_TYPES
+            and research_plan_artifact_is_native_marimo_source(source)
+        ):
+            return source
+    return None
 
 
 def request_research_plan_human_attention(
@@ -932,6 +1053,33 @@ def validate_research_plan_document(
                             "Do not reopen completed nodes. Add a new follow-up node if more work is needed.",
                         )
                     )
+            current_contracts = [
+                research_plan_expected_output_types(block)
+                for block in blocks
+                if isinstance(block, dict)
+            ]
+            for previous_index, previous_block in enumerate(previous_blocks):
+                if not isinstance(previous_block, dict):
+                    continue
+                previous_id = research_plan_block_id(previous_block, previous_index)
+                previous_status = research_plan_block_status(previous_block)
+                if previous_status in PLAN_TERMINAL_STATUSES:
+                    continue
+                expected_outputs = research_plan_expected_output_types(previous_block)
+                if not expected_outputs:
+                    continue
+                if previous_id in current_by_id:
+                    continue
+                if any(expected_outputs.issubset(contract) for contract in current_contracts):
+                    continue
+                issues.append(
+                    research_plan_issue(
+                        "open_contract_node_removed",
+                        "/timeline_blocks",
+                        f"Open node `{previous_id}` with expected output(s) was removed: {', '.join(sorted(expected_outputs))}.",
+                        "Keep the node, mark it done/skipped with structured evidence, or add a replacement node whose deliverable_contract.expected_outputs carries the same output classes.",
+                    )
+                )
     return issues
 
 
@@ -949,6 +1097,12 @@ def validate_research_plan_current_work_target(
         raise ValueError(
             f"current_work.node_id `{node_id}` is not present in the active ResearchPlan revision. "
             "Commit a revised plan containing the node first."
+        )
+    node_status = research_plan_block_status(blocks[node_index])
+    if status in PLAN_CURRENT_STATUSES and node_status in PLAN_TERMINAL_STATUSES:
+        raise ValueError(
+            f"current_work.node_id `{node_id}` points to a {node_status} ResearchPlan node. "
+            "Set current_work to the next open node, or commit a follow-up node before declaring active work."
         )
     if status in PLAN_CURRENT_STATUSES:
         for prior_index, prior_block in enumerate(blocks[:node_index]):
@@ -1035,14 +1189,7 @@ def research_plan_block_has_skip_reason(block: dict[str, Any]) -> bool:
 
 
 def missing_research_plan_deliverables(block: dict[str, Any]) -> list[str]:
-    contract = block.get("deliverable_contract")
-    if not isinstance(contract, dict):
-        return []
-    expected_outputs = contract.get("expected_outputs")
-    if not isinstance(expected_outputs, list):
-        return []
-    expected = [normalize_research_plan_output_type(item) for item in expected_outputs]
-    expected = [item for item in expected if item and item != "none"]
+    expected = sorted(research_plan_expected_output_types(block))
     if not expected:
         return []
     evidence_types = research_plan_evidence_output_types(block)
@@ -1059,18 +1206,26 @@ def missing_registered_research_plan_deliverables(
     project_id: str,
     block: dict[str, Any],
 ) -> list[str]:
-    contract = block.get("deliverable_contract")
-    if not isinstance(contract, dict):
-        return []
-    expected_outputs = contract.get("expected_outputs")
-    if not isinstance(expected_outputs, list):
-        return []
-    expected = [normalize_research_plan_output_type(item) for item in expected_outputs]
-    expected = [item for item in expected if item and item != "none"]
+    expected = sorted(research_plan_expected_output_types(block))
     if not expected:
         return []
     verified_types = research_plan_verified_evidence_output_types(db, project_id=project_id, block=block)
     return [output_type for output_type in expected if output_type not in verified_types]
+
+
+def research_plan_expected_output_types(block: dict[str, Any]) -> set[str]:
+    contract = block.get("deliverable_contract")
+    if not isinstance(contract, dict):
+        return set()
+    expected_outputs = contract.get("expected_outputs")
+    if not isinstance(expected_outputs, list):
+        return set()
+    return {
+        output_type
+        for item in expected_outputs
+        for output_type in [normalize_research_plan_output_type(item)]
+        if output_type and output_type != "none"
+    }
 
 
 def normalize_research_plan_output_type(value: Any) -> str:
@@ -1118,9 +1273,11 @@ def research_plan_verified_output_types_for_evidence_item(
 ) -> set[str]:
     verified_types: set[str] = set()
     for run_id in research_plan_evidence_run_ids(item):
-        if research_plan_experiment_run_exists(db, project_id=project_id, run_id=run_id):
+        run = research_plan_experiment_run(db, project_id=project_id, run_id=run_id)
+        if run is not None:
             verified_types.add("experiment_run")
-            verified_types.add("leaderboard_entry")
+            if run.status == "succeeded":
+                verified_types.add("leaderboard_entry")
     artifact = research_plan_evidence_artifact(db, project_id=project_id, item=item)
     if artifact is not None:
         verified_types.update(research_plan_artifact_output_types(artifact))
@@ -1157,8 +1314,14 @@ def research_plan_evidence_run_ids(item: dict[str, Any]) -> list[str]:
 
 
 def research_plan_experiment_run_exists(db: Session, *, project_id: str, run_id: str) -> bool:
+    return research_plan_experiment_run(db, project_id=project_id, run_id=run_id) is not None
+
+
+def research_plan_experiment_run(db: Session, *, project_id: str, run_id: str) -> ExperimentRun | None:
     run = db.get(ExperimentRun, run_id)
-    return run is not None and run.project_id == project_id
+    if run is None or run.project_id != project_id:
+        return None
+    return run
 
 
 def research_plan_evidence_artifact(
@@ -1233,14 +1396,93 @@ def latest_project_artifact_for_workspace_path(
 
 def research_plan_artifact_output_types(artifact: Artifact) -> set[str]:
     asset_type = artifact.asset_type.strip().casefold()
+    raw_asset_type = asset_type.replace("-", "_").replace(" ", "_")
+    normalized_asset_type = normalize_research_plan_type_token(asset_type)
     output_types = {"artifact"}
-    if asset_type in PLAN_NOTEBOOK_ASSET_TYPES:
+    if raw_asset_type:
+        output_types.add(raw_asset_type)
+    if normalized_asset_type and normalized_asset_type != "notebook":
+        output_types.add(normalized_asset_type)
+    if (asset_type in PLAN_NOTEBOOK_ASSET_TYPES or normalized_asset_type == "notebook") and research_plan_artifact_is_native_marimo_source(artifact):
         output_types.add("notebook")
-    if asset_type in PLAN_REPORT_ASSET_TYPES:
+    if asset_type in PLAN_REPORT_ASSET_TYPES or normalized_asset_type == "report":
         output_types.add("report")
-    if asset_type in PLAN_FIGURE_ASSET_TYPES:
+    if asset_type in PLAN_FIGURE_ASSET_TYPES or normalized_asset_type == "visualization":
         output_types.add("visualization")
+    if raw_asset_type == "research_findings_report":
+        output_types.update({"research_findings", "prior_research", "evidence", "report"})
+    if raw_asset_type == "validation_scheme_audit":
+        output_types.update({"validation_audit", "pilot_audit", "evidence", "report"})
+    if raw_asset_type == "pilot_scoring_report":
+        output_types.update({"pilot_scoring", "pilot_report", "evidence", "report"})
+    if raw_asset_type == "prediction_pipeline":
+        output_types.update({"pipeline", "prediction_pipeline", "reproducible_pipeline"})
+    if raw_asset_type == "model_diagnostics_artifact_pack":
+        output_types.update({"model_diagnostics", "model_diagnostics_artifacts", "evidence", "report"})
+    if raw_asset_type == "feature_importance":
+        output_types.update({"model_diagnostics", "native_feature_importance", "feature_importance", "evidence"})
+    if raw_asset_type == "permutation_importance":
+        output_types.update({"model_diagnostics", "permutation_importance", "evidence"})
+    if raw_asset_type == "partial_dependence":
+        output_types.update({"model_diagnostics", "partial_dependence", "pdp", "evidence", "visualization"})
+    if raw_asset_type == "shap_summary":
+        output_types.update({"model_diagnostics", "shap", "shap_summary", "evidence"})
     return output_types
+
+
+def research_plan_artifact_surface_target(artifact: Artifact | None, *, role: str = "") -> dict[str, str]:
+    if artifact is not None and "notebook" in research_plan_artifact_output_types(artifact):
+        return {"target_tab": "Notebooks", "target_anchor": "notebook-native-marimo-top"}
+    normalized_role = normalize_research_plan_type_token(role) if role else ""
+    if artifact is not None and (artifact.asset_type in PLAN_REPORT_ASSET_TYPES or normalized_role == "report"):
+        return {"target_tab": "Assets", "target_anchor": "assets-artifact-preview"}
+    if artifact is not None and (artifact.asset_type in PLAN_FIGURE_ASSET_TYPES or normalized_role == "visualization"):
+        return {"target_tab": "Assets", "target_anchor": "assets-artifact-preview"}
+    return {"target_tab": "Assets", "target_anchor": "assets-artifact-preview"}
+
+
+def research_plan_artifact_is_native_marimo_source(artifact: Artifact) -> bool:
+    try:
+        path = artifact_primary_path(artifact)
+    except (OSError, json.JSONDecodeError, KeyError, IndexError, TypeError):
+        return False
+    if path.suffix.lower() != ".py":
+        return False
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return research_plan_source_is_marimo_notebook(source)
+
+
+def research_plan_source_is_marimo_notebook(source: str) -> bool:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    marimo_module_names: set[str] = set()
+    marimo_app_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "marimo":
+                    marimo_module_names.add(alias.asname or "marimo")
+        elif isinstance(node, ast.ImportFrom) and node.module == "marimo":
+            for alias in node.names:
+                if alias.name == "App":
+                    marimo_app_names.add(alias.asname or "App")
+    if not marimo_module_names and not marimo_app_names:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = node.func
+        if isinstance(callee, ast.Attribute) and callee.attr == "App":
+            if isinstance(callee.value, ast.Name) and callee.value.id in marimo_module_names:
+                return True
+        elif isinstance(callee, ast.Name) and callee.id in marimo_app_names:
+            return True
+    return False
 
 
 def research_plan_evidence_output_types(block: dict[str, Any]) -> set[str]:
@@ -1256,7 +1498,6 @@ def research_plan_evidence_output_types(block: dict[str, Any]) -> set[str]:
                     evidence_types.add(normalize_research_plan_type_token(value))
             if any(isinstance(item.get(key), str) and item.get(key).strip() for key in ("run_id", "experiment_run_id")):
                 evidence_types.add("experiment_run")
-                evidence_types.add("leaderboard_entry")
             if any(isinstance(item.get(key), str) and item.get(key).strip() for key in ("notebook_artifact_id", "notebook_id")):
                 evidence_types.add("notebook")
             if any(isinstance(item.get(key), str) and item.get(key).strip() for key in ("report_id",)):
@@ -1279,7 +1520,6 @@ def research_plan_evidence_output_types(block: dict[str, Any]) -> set[str]:
                     evidence_types.add("report")
                 if "model_result" in lower_path or "leaderboard" in lower_path or "experiment" in lower_path:
                     evidence_types.add("experiment_run")
-                    evidence_types.add("leaderboard_entry")
     return evidence_types
 
 
@@ -1307,8 +1547,17 @@ def normalize_research_plan_type_token(value: str) -> str:
         "chart": "visualization",
         "figure": "visualization",
         "plot": "visualization",
+        "visualization_spec": "visualization",
     }
-    return aliases.get(token, token)
+    if token in aliases:
+        return aliases[token]
+    if token.endswith("_notebook"):
+        return "notebook"
+    if token.endswith("_report"):
+        return "report"
+    if token.endswith(("_figure", "_plot", "_chart", "_visualization")):
+        return "visualization"
+    return token
 
 
 def research_plan_issue(

@@ -3140,6 +3140,7 @@ dependencies = [
     { name = "alembic" },
     { name = "duckdb" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "joblib" },
     { name = "jsonschema" },
     { name = "lightgbm" },
@@ -3154,13 +3155,13 @@ dependencies = [
     { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
     { name = "xgboost", version = "3.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "xgboost", version = "3.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 
 [package.optional-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
@@ -3172,7 +3173,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13" },
     { name = "duckdb", specifier = ">=1.0" },
     { name = "fastapi", specifier = ">=0.111" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "joblib", specifier = ">=1.4" },
     { name = "jsonschema", specifier = ">=4.22" },
     { name = "lightgbm", specifier = ">=4.0" },
@@ -3188,6 +3189,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "types-jsonschema", marker = "extra == 'dev'", specifier = ">=4.22" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
+    { name = "websockets", specifier = ">=12" },
     { name = "xgboost", specifier = ">=2.0" },
 ]
 provides-extras = ["analysis", "dev"]

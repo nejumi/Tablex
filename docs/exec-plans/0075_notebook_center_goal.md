@@ -11,12 +11,12 @@ Make generated analysis notebooks easy to find and choose from inside Tablex. Th
   - total and by-kind notebook counts,
   - recommended notebook,
   - grouped notebook history,
-  - linked source/html/report/manifest/visualization artifact ids,
+  - linked source/report/manifest/visualization artifact ids,
   - coverage flags,
   - next actions.
 - Added Reports tab Notebook Center panel with:
   - recommended notebook card,
-  - preview/download actions,
+  - native marimo open/download actions,
   - compact coverage metrics,
   - recent notebook history table.
 - Added integration coverage for indexing both Data Understanding and Model Diagnostics notebooks.
@@ -26,7 +26,7 @@ Make generated analysis notebooks easy to find and choose from inside Tablex. Th
 - The index is derived from persisted artifacts and Report/VisualizationSpec rows. It does not create new durable state.
 - The recommended notebook favors model diagnostics when available because it is usually more actionable after a run, but data understanding remains the recommended starting point when model notebooks do not exist.
 - Notebook Center keeps the raw Analysis Notebooks artifact table available below the guided panel.
-- The center links to static HTML previews first and falls back to report or source previews when needed.
+- The center opens native marimo source notebooks directly. Static HTML snapshots are not notebook evidence and are not used as fallback.
 
 ## Deferred Work
 

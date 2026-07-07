@@ -2,11 +2,11 @@
 
 ## Objective
 
-Turn generated notebook artifacts from static scaffolds into readable, artifact-backed EDA evidence inside Tablex. The UI should make it obvious where the result appears after a user clicks an action, and Codex should help users navigate what to inspect next instead of exposing a raw artifact shelf.
+Turn generated notebook artifacts into readable, artifact-backed EDA evidence inside Tablex. The UI should make it obvious where the native marimo notebook and linked evidence appear after a user clicks an action, and Codex should help users navigate what to inspect next instead of exposing a raw artifact shelf.
 
 ## Current Scope
 
-- Add controlled `notebook_evidence_bundle`, `notebook_evidence_html`, and `notebook_evidence_svg` artifacts during safe notebook execution capture.
+- Add controlled `notebook_evidence_bundle`, figure/table artifacts, and optional SVG evidence during safe notebook execution capture.
 - Render profile-backed SVG evidence without executing arbitrary marimo cells.
 - Make the Data Understanding notebook review more like a human-readable EDA article:
   - analysis brief,
@@ -17,7 +17,7 @@ Turn generated notebook artifacts from static scaffolds into readable, artifact-
   - Codex follow-up prompts.
 - Move the Notebook tab result viewer next to the primary action so click target and response are spatially connected.
 - Add an interactive Notebook guide that routes questions through harness-owned Agent Chat and returns notebook-specific reading guidance.
-- Keep source notebooks, static review previews, profile-backed evidence, and future executed marimo output clearly separated.
+- Keep source notebooks, profile-backed evidence, and future executed marimo output clearly separated. Static HTML snapshots are not notebook evidence and are not a fallback.
 
 ## Deferred UX / Product Requests Captured
 

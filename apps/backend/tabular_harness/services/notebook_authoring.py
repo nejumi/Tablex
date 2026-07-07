@@ -138,7 +138,7 @@ def build_notebook_authoring_brief(
         "codex_contract": {
             "role": "author_the_notebook_on_the_fly",
             "do_not": [
-                "Do not merely restyle Tablex static HTML.",
+                "Do not produce a decorative shell without project-specific analysis.",
                 "Do not copy public notebook text or structure verbatim.",
                 "Do not hide missing evidence behind decorative charts.",
                 "Do not change EvaluationSpec or SplitManifest.",
@@ -149,7 +149,7 @@ def build_notebook_authoring_brief(
                 f"Write human-facing narrative, markdown, captions, and notebook commentary in locale {response_locale}.",
                 "Write an analyst-readable narrative with findings, evidence, uncertainty, and next actions.",
                 "Generate or request real figures/tables where claims need support.",
-                "Return notebook source, rendered HTML, figure manifest, and report artifacts.",
+                "Return native marimo source, figure manifest, evidence bundle, and report artifacts. Register the marimo source as the notebook artifact.",
             ],
         },
     }
@@ -250,7 +250,6 @@ def notebook_sample_moves(project: Project) -> list[dict[str, str]]:
 def notebook_authoring_context_artifacts(db: Session, project_id: str) -> dict[str, Artifact | None]:
     return {
         "eda_review_bundle": latest_project_artifact(db, project_id, "eda_review_bundle"),
-        "eda_review_html": latest_project_artifact(db, project_id, "eda_review_html"),
         "eda_profile": latest_project_artifact(db, project_id, "eda_profile"),
         "data_quality_gate": latest_project_artifact(db, project_id, "data_quality_gate"),
         "notebook_evidence_bundle": latest_project_artifact(db, project_id, "notebook_evidence_bundle"),

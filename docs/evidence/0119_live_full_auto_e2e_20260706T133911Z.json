@@ -1,0 +1,2125 @@
+{
+  "run_id": "20260706T133911Z",
+  "base": "http://127.0.0.1:8026",
+  "data_dir": "/tmp/tablex-0119-live-e2e-20260706T133911Z",
+  "csv_path": "/tmp/tablex_0119_retail_demand_20260706T133911Z.csv",
+  "events": [
+    {
+      "t": "2026-07-06T13:39:14.440653+00:00",
+      "label": "server_ready",
+      "payload": {
+        "status": "ok"
+      }
+    },
+    {
+      "t": "2026-07-06T13:39:14.508593+00:00",
+      "label": "project_created",
+      "payload": {
+        "id": "p_52b25548b44a",
+        "org_id": "local-org",
+        "name": "0119 live e2e 20260706T133911Z",
+        "description": null,
+        "task_type": null,
+        "target_column": "demand",
+        "current_phase": "DRAFT",
+        "status": "active",
+        "autonomy_mode": "full_auto",
+        "created_by": "local-user",
+        "created_at": "2026-07-06T13:39:14.445709+00:00",
+        "updated_at": "2026-07-06T13:39:14.445714+00:00"
+      }
+    },
+    {
+      "t": "2026-07-06T13:39:14.955767+00:00",
+      "label": "dataset_uploaded",
+      "payload": {
+        "dataset_snapshot": {
+          "id": "ds_3987a5825236",
+          "project_id": "p_52b25548b44a",
+          "artifact_id": "art_e3f55c56d40d",
+          "source_type": "upload",
+          "source_ref": "tablex_0119_retail_demand_20260706T133911Z.csv",
+          "row_count": 270,
+          "column_count": 10,
+          "schema_hash": "a29c807c7a163eebbc0eeb5d09ce6f8f9e96114718f74478b3788dd4235b5df8",
+          "data_hash": "7bffae99d961d13109b43948729d75638986dd63f15006a9dc62ac0e8a5f64fc",
+          "created_at": "2026-07-06T13:39:14.918552+00:00"
+        },
+        "profile_job_id": "job_29eca136cf27"
+      }
+    },
+    {
+      "t": "2026-07-06T13:39:14.982406+00:00",
+      "label": "autonomy_started",
+      "payload": {
+        "job_id": "job_1b2ef6a0d077",
+        "output": {
+          "agent_chat_turn_artifact_id": "art_68928f6e2310",
+          "agent_session_id": "ags_2b8bda84ee79",
+          "assistant_message": "フルオートを開始しました。データの確認、目的の整理、評価設計、分析ノートブック作成へ順に進めます。進行中の内容はこのチャットとアクティビティに表示します。",
+          "created_job_ids": [],
+          "project_id": "p_52b25548b44a",
+          "schema_version": "agent_session_start.v1",
+          "status": "started",
+          "token_usage": {
+            "is_estimate": true,
+            "series": [
+              {
+                "step": "session_created",
+                "tokens": 32
+              },
+              {
+                "step": "codex_starting",
+                "tokens": 48
+              }
+            ],
+            "source": "agent_session_transcript_pending"
+          },
+          "worker_events": [
+            {
+              "active": true,
+              "agent_session_id": "ags_2b8bda84ee79",
+              "created_at": "2026-07-06T13:39:14.973522+00:00",
+              "detail": "プロジェクトの状況を確認し、次の分析ステップを開始しています。",
+              "display_name": "自律分析",
+              "headline": "分析を開始しています",
+              "job_id": "job_1b2ef6a0d077",
+              "job_type": "start_autonomous_loop",
+              "project_id": "p_52b25548b44a",
+              "status": "starting",
+              "target_anchor": "agent-workspace",
+              "target_tab": "Home",
+              "token_usage": {
+                "is_estimate": true,
+                "series": [
+                  {
+                    "step": "session_created",
+                    "tokens": 32
+                  },
+                  {
+                    "step": "codex_starting",
+                    "tokens": 48
+                  }
+                ],
+                "source": "agent_session_transcript_pending"
+              },
+              "updated_at": "2026-07-06T13:39:14.973896+00:00",
+              "worker_id": "main-agent-session"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": "2026-07-06T13:39:35.223819+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 20.2,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 1,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 4,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:39:55.470898+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 40.5,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 1,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 4,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:40:15.708889+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 60.7,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 2,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 4,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:40:35.985622+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 81.0,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 3,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 4,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:40:56.226670+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 101.2,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 3,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 4,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:41:16.470900+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 121.5,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 3,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 4,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:41:36.730929+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 141.7,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 3,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 4,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:41:56.991404+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 162.0,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 3,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 4,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:42:17.239967+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 182.3,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 4,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:42:37.481226+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 202.5,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 4,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:42:57.727501+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 222.7,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 4,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:43:17.973290+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 243.0,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 4,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:43:38.227153+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 263.2,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 4,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:43:58.475927+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 283.5,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 4,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:44:18.724720+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 303.7,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 4,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:44:38.975097+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 324.0,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 4,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:44:59.228573+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 344.2,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 4,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:45:19.479300+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 364.5,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 5,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:45:39.728101+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 384.7,
+        "leaderboard": 0,
+        "notebooks": 0,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 5,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:46:00.221949+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 405.2,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 7,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:46:20.601508+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 425.6,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 9,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:46:41.021436+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 446.0,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 9,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:47:01.472222+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 466.5,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 9,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:47:21.931237+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 486.9,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 9,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:47:42.294527+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 507.3,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 9,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "data_understanding",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:48:02.782757+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 527.8,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 10,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "prior_knowledge_research",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:48:23.294688+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 548.3,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 10,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "prior_knowledge_research",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:48:43.839460+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 568.9,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 10,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "prior_knowledge_research",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:49:04.343411+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 589.4,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 10,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "prior_knowledge_research",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:49:24.877813+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 609.9,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 0,
+        "pilot_reports": 0,
+        "chat_turns": 10,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "prior_knowledge_research",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:49:45.402334+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 630.4,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 12,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "prior_knowledge_research",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:50:05.893779+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 650.9,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 12,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "prior_knowledge_research",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:50:26.402975+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 671.4,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 12,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:50:46.934356+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 692.0,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 13,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:51:07.449856+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 712.5,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 13,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:51:27.969024+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 733.0,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 13,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:51:48.482489+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 753.5,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 13,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:52:09.011320+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 774.0,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 13,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:52:29.536205+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 794.6,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 13,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:52:50.078507+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 815.1,
+        "leaderboard": 0,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 13,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": null
+      }
+    },
+    {
+      "t": "2026-07-06T13:53:10.927272+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 835.9,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 14,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:53:31.708011+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 856.7,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 14,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:53:52.470956+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 877.5,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 14,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:54:13.359423+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 898.4,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 14,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:54:34.220914+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 919.2,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 14,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:54:55.098190+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 940.1,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 14,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:55:15.966225+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 961.0,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 14,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:55:36.747434+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 981.8,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 14,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:55:57.643418+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1002.7,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 15,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:56:18.430760+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1023.4,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 15,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:56:39.299082+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1044.3,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 15,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:57:00.339683+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1065.4,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 15,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:57:21.312084+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1086.3,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 15,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:57:42.204573+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1107.2,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 15,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:58:03.058599+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1128.1,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 15,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:58:23.947725+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1149.0,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 15,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:58:44.974310+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1170.0,
+        "leaderboard": 9,
+        "notebooks": 1,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 16,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:59:06.344980+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1191.4,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 18,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:59:27.285921+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1212.3,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 18,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:59:48.313106+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1233.3,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 20,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:00:09.251381+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1254.3,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 20,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:00:30.237390+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1275.3,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 20,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:00:51.504450+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1296.5,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 21,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:01:12.569076+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1317.6,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 0,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 21,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": null,
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:01:33.717930+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1338.7,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 22,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 0,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:01:33.724598+00:00",
+      "label": "pipeline_bundle_downloaded",
+      "payload": {
+        "run_id": "run_0c271f6b49fb",
+        "bytes": 7029,
+        "zip_magic": "PK"
+      }
+    },
+    {
+      "t": "2026-07-06T14:01:33.732380+00:00",
+      "label": "pilot_deployment_created",
+      "payload": {
+        "id": "pdep_1fd45ff71378",
+        "project_id": "p_52b25548b44a",
+        "pipeline_artifact_id": "art_45c25d4ab012",
+        "model_version_id": null,
+        "experiment_run_id": "run_0c271f6b49fb",
+        "status": "active",
+        "started_at": "2026-07-06T14:01:33.730850+00:00",
+        "notes": null
+      }
+    },
+    {
+      "t": "2026-07-06T14:01:54.900776+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1359.9,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 22,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:02:16.128537+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1381.1,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 22,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:02:37.263346+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1402.3,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 22,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:02:58.410434+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1423.4,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 24,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:03:19.607388+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1444.6,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 24,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:03:40.796795+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1465.8,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 25,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:04:01.925713+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1486.9,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 25,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "evaluation_and_modeling",
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:04:23.022935+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1508.0,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 25,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": null,
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:04:44.252619+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1529.3,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 25,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": null,
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:05:05.357719+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1550.4,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 25,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": null,
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:05:26.566442+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1571.6,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 25,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": null,
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:05:47.690174+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1592.7,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 25,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": null,
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:06:08.770327+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1613.8,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 25,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": null,
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:06:29.935374+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1635.0,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 25,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": null,
+        "plan_blocks": 6,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:06:51.116034+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1656.1,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 27,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "continuation_audit",
+        "plan_blocks": 7,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:07:12.337744+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1677.4,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 27,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "continuation_audit",
+        "plan_blocks": 7,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:07:33.471316+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1698.5,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 27,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "continuation_audit",
+        "plan_blocks": 7,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:07:54.739554+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1719.8,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 27,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "continuation_audit",
+        "plan_blocks": 7,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:08:15.972289+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1741.0,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 27,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "continuation_audit",
+        "plan_blocks": 7,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:08:37.163282+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1762.2,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 27,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": "continuation_audit",
+        "plan_blocks": 7,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:08:58.354288+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1783.4,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 28,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": null,
+        "plan_blocks": 7,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:09:19.581639+00:00",
+      "label": "poll",
+      "payload": {
+        "elapsed_s": 1804.6,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 28,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": null,
+        "plan_blocks": 7,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:09:19.594939+00:00",
+      "label": "autonomy_stopped",
+      "payload": {
+        "job_id": "job_0142458a0880",
+        "status": "succeeded",
+        "output": {
+          "agent_chat_turn_artifact_id": "art_9aa3856d913e",
+          "assistant_message": "Agent loopを停止しました。実行中または待機中の作業は可能な範囲でキャンセルしました。再開すると、最新のProject状態を読み直して続きから動きます。",
+          "cancelled_job_ids": [],
+          "project_id": "p_52b25548b44a",
+          "response_locale": "ja-JP",
+          "schema_version": "autonomous_loop_stop.v1",
+          "stopped_agent_session_id": "ags_2b8bda84ee79",
+          "worker_events": [
+            {
+              "active": false,
+              "created_at": "2026-07-06T14:09:19.587423+00:00",
+              "detail": "Stopped 0 active or queued runner/model job(s).",
+              "display_name": "Full Auto Agent",
+              "headline": "Autonomous activity stopped.",
+              "job_id": "job_0142458a0880",
+              "project_id": "p_52b25548b44a",
+              "status": "cancelled",
+              "target_anchor": "agent-workspace",
+              "target_tab": "Home",
+              "token_usage": {
+                "is_estimate": true,
+                "series": [
+                  {
+                    "step": "stop",
+                    "tokens": 24
+                  },
+                  {
+                    "step": "cancel",
+                    "tokens": 24
+                  }
+                ],
+                "source": "autonomous_stop_event"
+              },
+              "updated_at": "2026-07-06T14:09:19.591428+00:00",
+              "worker_id": "full-auto-loop"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": "2026-07-06T14:09:19.595031+00:00",
+      "label": "final_snapshot",
+      "payload": {
+        "elapsed_s": 1804.6,
+        "leaderboard": 9,
+        "notebooks": 2,
+        "pipelines": 1,
+        "model_diagnostics_packs": 0,
+        "research_findings": 1,
+        "pilot_reports": 0,
+        "chat_turns": 28,
+        "stdout": null,
+        "stderr": null,
+        "turn_state": "agent_running",
+        "current_work": null,
+        "plan_blocks": 7,
+        "pilot_deployments": 1,
+        "top_pipeline_artifact_id": "art_45c25d4ab012",
+        "top_run_id": "run_0c271f6b49fb"
+      }
+    },
+    {
+      "t": "2026-07-06T14:09:19.786650+00:00",
+      "label": "server_log_tail",
+      "payload": "agent-session/raw-transcript?limit=5 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:54330 - \"GET /api/projects/p_52b25548b44a/research-plan/timeline?locale=ja-JP HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:54338 - \"GET /api/projects/p_52b25548b44a/agent-activity HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:54352 - \"GET /api/projects/p_52b25548b44a/pilot-deployments HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55906 - \"GET /api/projects/p_52b25548b44a/agent-activity HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55922 - \"GET /api/projects/p_52b25548b44a/agent-session/raw-transcript?limit=12 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55934 - \"GET /api/projects/p_52b25548b44a/leaderboard HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55946 - \"GET /api/projects/p_52b25548b44a/analysis-notebooks HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55956 - \"GET /api/projects/p_52b25548b44a/artifacts HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55958 - \"GET /api/projects/p_52b25548b44a/agent-chat/history HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55972 - \"GET /api/projects/p_52b25548b44a/agent-session/raw-transcript?limit=5 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55976 - \"GET /api/projects/p_52b25548b44a/research-plan/timeline?locale=ja-JP HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55990 - \"GET /api/projects/p_52b25548b44a/agent-activity HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:56000 - \"GET /api/projects/p_52b25548b44a/pilot-deployments HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:50626 - \"GET /api/projects/p_52b25548b44a/leaderboard HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:50628 - \"GET /api/projects/p_52b25548b44a/analysis-notebooks HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:50640 - \"GET /api/projects/p_52b25548b44a/artifacts HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:50642 - \"GET /api/projects/p_52b25548b44a/agent-chat/history HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:50654 - \"GET /api/projects/p_52b25548b44a/agent-session/raw-transcript?limit=5 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:50662 - \"GET /api/projects/p_52b25548b44a/research-plan/timeline?locale=ja-JP HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:50676 - \"GET /api/projects/p_52b25548b44a/agent-activity HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:50688 - \"GET /api/projects/p_52b25548b44a/pilot-deployments HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:46606 - \"GET /api/projects/p_52b25548b44a/leaderboard HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:46620 - \"GET /api/projects/p_52b25548b44a/analysis-notebooks HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:46624 - \"GET /api/projects/p_52b25548b44a/artifacts HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:46632 - \"GET /api/projects/p_52b25548b44a/agent-chat/history HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:46644 - \"GET /api/projects/p_52b25548b44a/agent-session/raw-transcript?limit=5 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:46658 - \"GET /api/projects/p_52b25548b44a/research-plan/timeline?locale=ja-JP HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:46674 - \"GET /api/projects/p_52b25548b44a/agent-activity HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:46676 - \"GET /api/projects/p_52b25548b44a/pilot-deployments HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:36206 - \"GET /api/projects/p_52b25548b44a/leaderboard HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:37856 - \"GET /api/projects/p_52b25548b44a/analysis-notebooks HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:37862 - \"GET /api/projects/p_52b25548b44a/artifacts HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:37878 - \"GET /api/projects/p_52b25548b44a/agent-chat/history HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:37884 - \"GET /api/projects/p_52b25548b44a/agent-session/raw-transcript?limit=5 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:37898 - \"GET /api/projects/p_52b25548b44a/research-plan/timeline?locale=ja-JP HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:37910 - \"GET /api/projects/p_52b25548b44a/agent-activity HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:37926 - \"GET /api/projects/p_52b25548b44a/pilot-deployments HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:56666 - \"GET /api/projects/p_52b25548b44a/leaderboard HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:56672 - \"GET /api/projects/p_52b25548b44a/analysis-notebooks HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:56678 - \"GET /api/projects/p_52b25548b44a/artifacts HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:56694 - \"GET /api/projects/p_52b25548b44a/agent-chat/history HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:56704 - \"GET /api/projects/p_52b25548b44a/agent-session/raw-transcript?limit=5 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:56712 - \"GET /api/projects/p_52b25548b44a/research-plan/timeline?locale=ja-JP HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:56726 - \"GET /api/projects/p_52b25548b44a/agent-activity HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:56736 - \"GET /api/projects/p_52b25548b44a/pilot-deployments HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:41246 - \"GET /api/projects/p_52b25548b44a/leaderboard HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:41260 - \"GET /api/projects/p_52b25548b44a/analysis-notebooks HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:41262 - \"GET /api/projects/p_52b25548b44a/artifacts HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:41272 - \"GET /api/projects/p_52b25548b44a/agent-chat/history HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:41278 - \"GET /api/projects/p_52b25548b44a/agent-session/raw-transcript?limit=5 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:41280 - \"GET /api/projects/p_52b25548b44a/research-plan/timeline?locale=ja-JP HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:41296 - \"GET /api/projects/p_52b25548b44a/agent-activity HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:41302 - \"GET /api/projects/p_52b25548b44a/pilot-deployments HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:36708 - \"GET /api/projects/p_52b25548b44a/leaderboard HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:36716 - \"GET /api/projects/p_52b25548b44a/analysis-notebooks HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:36718 - \"GET /api/projects/p_52b25548b44a/artifacts HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:36728 - \"GET /api/projects/p_52b25548b44a/agent-chat/history HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:36732 - \"GET /api/projects/p_52b25548b44a/agent-session/raw-transcript?limit=5 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:36734 - \"GET /api/projects/p_52b25548b44a/research-plan/timeline?locale=ja-JP HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:36742 - \"GET /api/projects/p_52b25548b44a/agent-activity HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:36752 - \"GET /api/projects/p_52b25548b44a/pilot-deployments HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:52722 - \"GET /api/projects/p_52b25548b44a/leaderboard HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:52732 - \"GET /api/projects/p_52b25548b44a/analysis-notebooks HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:52748 - \"GET /api/projects/p_52b25548b44a/artifacts HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:52758 - \"GET /api/projects/p_52b25548b44a/agent-chat/history HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:52770 - \"GET /api/projects/p_52b25548b44a/agent-session/raw-transcript?limit=5 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:52774 - \"GET /api/projects/p_52b25548b44a/research-plan/timeline?locale=ja-JP HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:52790 - \"GET /api/projects/p_52b25548b44a/agent-activity HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:52804 - \"GET /api/projects/p_52b25548b44a/pilot-deployments HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55724 - \"GET /api/projects/p_52b25548b44a/leaderboard HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55736 - \"GET /api/projects/p_52b25548b44a/analysis-notebooks HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55748 - \"GET /api/projects/p_52b25548b44a/artifacts HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55750 - \"GET /api/projects/p_52b25548b44a/agent-chat/history HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55764 - \"GET /api/projects/p_52b25548b44a/agent-session/raw-transcript?limit=5 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55772 - \"GET /api/projects/p_52b25548b44a/research-plan/timeline?locale=ja-JP HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55776 - \"GET /api/projects/p_52b25548b44a/agent-activity HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55784 - \"GET /api/projects/p_52b25548b44a/pilot-deployments HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55794 - \"POST /api/projects/p_52b25548b44a/autonomy/stop HTTP/1.1\" 200 OK\nINFO:     Shutting down\nINFO:     Waiting for application shutdown.\nINFO:     Application shutdown complete.\nINFO:     Finished server process [3964249]\n"
+    }
+  ]
+}

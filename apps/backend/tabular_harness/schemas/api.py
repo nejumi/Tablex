@@ -150,6 +150,7 @@ class ProjectRead(BaseModel):
     description: str | None
     task_type: str | None
     target_column: str | None
+    primary_dataset_snapshot_id: str | None
     current_phase: str
     status: str
     autonomy_mode: Literal["approval_based", "full_auto"]
@@ -224,6 +225,7 @@ class ArtifactRead(BaseModel):
     id: str
     project_id: str | None
     asset_type: str
+    surface_role: str = "primary"
     name: str
     version: int
     uri: str
@@ -385,6 +387,7 @@ class DatasetSnapshotRead(BaseModel):
     column_count: int | None
     schema_hash: str
     data_hash: str | None
+    is_primary: bool = False
     created_at: str
 
 
@@ -392,6 +395,13 @@ class DatasetUploadResponse(BaseModel):
     dataset_snapshot: DatasetSnapshotRead
     artifact: ArtifactRead
     profile_job_id: str
+
+
+class ProjectPrimaryDatasetUpdate(BaseModel):
+    dataset_snapshot_id: str | None = None
+    artifact_id: str | None = None
+    target_column: str | None = None
+    locale: str | None = None
 
 
 class BenchmarkImportRequest(BaseModel):

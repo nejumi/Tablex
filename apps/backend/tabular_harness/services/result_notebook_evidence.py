@@ -15,6 +15,8 @@ from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.reporting import leaderboard_sort_key
 
+NATIVE_NOTEBOOK_ASSET_TYPES = ("analysis_notebook", "marimo_notebook")
+
 
 @dataclass(frozen=True)
 class ResultNotebookEvidenceResult:
@@ -24,10 +26,6 @@ class ResultNotebookEvidenceResult:
     authoring_report_artifact: Artifact
     notebook_index: dict[str, Any]
     artifact_ids: list[str]
-
-    @property
-    def preview_artifact_id(self) -> str | None:
-        return None
 
 
 def prepare_result_notebook_evidence(
@@ -68,22 +66,18 @@ def result_notebook_evidence_job_output(result: ResultNotebookEvidenceResult) ->
         "primary_metric_name": metrics.get("primary_metric_name"),
         "primary_metric_value": metrics.get("primary_metric_value"),
         "notebook_generated": False,
-        "capture_created": False,
         "analysis_notebook_artifact_id": None,
-        "notebook_evidence_html_artifact_id": None,
         "notebook_evidence_bundle_artifact_id": None,
         "notebook_evidence_figure_artifact_ids": [],
-        "notebook_execution_manifest_artifact_id": None,
-        "notebook_execution_html_artifact_id": None,
         "notebook_execution_plan_artifact_id": None,
         "agent_task_contract_artifact_id": None,
         "notebook_authoring_brief_artifact_id": result.authoring_brief_artifact.id,
         "notebook_authoring_report_artifact_id": result.authoring_report_artifact.id,
         "recommended_notebook": recommended if isinstance(recommended, dict) else None,
-        "preview_artifact_id": result.preview_artifact_id,
+        "source_artifact_id": None,
         "artifact_ids": result.artifact_ids,
         "execution_status": "awaiting_agent_authored_notebook",
-        "capture_mode": "not_created_by_harness",
+        "source_registration": "awaiting_agent_authored_notebook",
     }
 
 
@@ -106,13 +100,20 @@ def latest_model_diagnostics_notebook_for_run(
     notebooks = list(
         db.scalars(
             select(Artifact)
-            .where(Artifact.project_id == project_id, Artifact.asset_type == "analysis_notebook")
+            .where(Artifact.project_id == project_id, Artifact.asset_type.in_(NATIVE_NOTEBOOK_ASSET_TYPES))
             .order_by(Artifact.created_at.desc())
         ).all()
     )
     for artifact in notebooks:
         metadata = loads_json(artifact.metadata_json, {})
-        if metadata.get("notebook_kind") == "model_diagnostics" and metadata.get("run_id") == run_id:
+        related_run_ids = metadata.get("related_run_ids")
+        if (
+            metadata.get("notebook_kind") == "model_diagnostics"
+            and (
+                metadata.get("run_id") == run_id
+                or (isinstance(related_run_ids, list) and run_id in related_run_ids)
+            )
+        ):
             return artifact
     return None
 

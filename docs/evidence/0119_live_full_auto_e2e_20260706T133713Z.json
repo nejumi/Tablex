@@ -1,0 +1,119 @@
+{
+  "run_id": "20260706T133713Z",
+  "base": "http://127.0.0.1:8026",
+  "data_dir": "/tmp/tablex-0119-live-e2e-20260706T133713Z",
+  "csv_path": "/tmp/tablex_0119_retail_demand_20260706T133713Z.csv",
+  "events": [
+    {
+      "t": "2026-07-06T13:37:18.952447+00:00",
+      "label": "server_ready",
+      "payload": {
+        "status": "ok"
+      }
+    },
+    {
+      "t": "2026-07-06T13:37:19.037501+00:00",
+      "label": "project_created",
+      "payload": {
+        "id": "p_60269e1f1667",
+        "org_id": "local-org",
+        "name": "0119 live e2e 20260706T133713Z",
+        "description": null,
+        "task_type": null,
+        "target_column": "demand",
+        "current_phase": "DRAFT",
+        "status": "active",
+        "autonomy_mode": "full_auto",
+        "created_by": "local-user",
+        "created_at": "2026-07-06T13:37:18.958427+00:00",
+        "updated_at": "2026-07-06T13:37:18.958432+00:00"
+      }
+    },
+    {
+      "t": "2026-07-06T13:37:20.304351+00:00",
+      "label": "dataset_uploaded",
+      "payload": {
+        "dataset_snapshot": {
+          "id": "ds_b2a68fcb2041",
+          "project_id": "p_60269e1f1667",
+          "artifact_id": "art_683ffcd03893",
+          "source_type": "upload",
+          "source_ref": "tablex_0119_retail_demand_20260706T133713Z.csv",
+          "row_count": 270,
+          "column_count": 10,
+          "schema_hash": "a29c807c7a163eebbc0eeb5d09ce6f8f9e96114718f74478b3788dd4235b5df8",
+          "data_hash": "c9f4f5911d360f929a965a9734f59f7709e069c8d87c3e2a04d15ed82faee402",
+          "created_at": "2026-07-06T13:37:20.226313+00:00"
+        },
+        "profile_job_id": "job_447bff38fafb"
+      }
+    },
+    {
+      "t": "2026-07-06T13:37:20.358818+00:00",
+      "label": "autonomy_started",
+      "payload": {
+        "job_id": "job_cd7289876358",
+        "output": {
+          "agent_chat_turn_artifact_id": "art_954a2b63488f",
+          "agent_session_id": "ags_500debf4b275",
+          "assistant_message": "フルオートを開始しました。データの確認、目的の整理、評価設計、分析ノートブック作成へ順に進めます。進行中の内容はこのチャットとアクティビティに表示します。",
+          "created_job_ids": [],
+          "project_id": "p_60269e1f1667",
+          "schema_version": "agent_session_start.v1",
+          "status": "started",
+          "token_usage": {
+            "is_estimate": true,
+            "series": [
+              {
+                "step": "session_created",
+                "tokens": 32
+              },
+              {
+                "step": "codex_starting",
+                "tokens": 48
+              }
+            ],
+            "source": "agent_session_transcript_pending"
+          },
+          "worker_events": [
+            {
+              "active": true,
+              "agent_session_id": "ags_500debf4b275",
+              "created_at": "2026-07-06T13:37:20.340920+00:00",
+              "detail": "プロジェクトの状況を確認し、次の分析ステップを開始しています。",
+              "display_name": "自律分析",
+              "headline": "分析を開始しています",
+              "job_id": "job_cd7289876358",
+              "job_type": "start_autonomous_loop",
+              "project_id": "p_60269e1f1667",
+              "status": "starting",
+              "target_anchor": "agent-workspace",
+              "target_tab": "Home",
+              "token_usage": {
+                "is_estimate": true,
+                "series": [
+                  {
+                    "step": "session_created",
+                    "tokens": 32
+                  },
+                  {
+                    "step": "codex_starting",
+                    "tokens": 48
+                  }
+                ],
+                "source": "agent_session_transcript_pending"
+              },
+              "updated_at": "2026-07-06T13:37:20.341475+00:00",
+              "worker_id": "main-agent-session"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": "2026-07-06T13:37:40.856327+00:00",
+      "label": "server_log_tail",
+      "payload": "INFO:     Started server process [3962952]\nINFO:     Waiting for application startup.\nINFO:     Application startup complete.\nINFO:     Uvicorn running on http://127.0.0.1:8026 (Press CTRL+C to quit)\nINFO:     127.0.0.1:49674 - \"GET /health HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:49678 - \"POST /api/projects HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:49690 - \"POST /api/projects/p_60269e1f1667/datasets/upload HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:49702 - \"POST /api/projects/p_60269e1f1667/autonomy/start HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55046 - \"GET /api/projects/p_60269e1f1667/leaderboard HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55052 - \"GET /api/projects/p_60269e1f1667/analysis-notebooks HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55060 - \"GET /api/projects/p_60269e1f1667/artifacts HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55064 - \"GET /api/projects/p_60269e1f1667/agent-chat/history HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55070 - \"GET /api/projects/p_60269e1f1667/agent-session/raw-transcript?limit=5 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55086 - \"GET /api/projects/p_60269e1f1667/research-plan/timeline?locale=ja-JP HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55100 - \"GET /api/projects/p_60269e1f1667/agent-activity HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:55114 - \"GET /api/projects/p_60269e1f1667/pilot-deployments HTTP/1.1\" 200 OK\nINFO:     Shutting down\nINFO:     Waiting for application shutdown.\nINFO:     Application shutdown complete.\nINFO:     Finished server process [3962952]\n"
+    }
+  ]
+}

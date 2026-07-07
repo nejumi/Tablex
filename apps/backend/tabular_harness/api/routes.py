@@ -1,15 +1,28 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import csv
+import hashlib
 import io
 import json
+import logging
+import math
 import mimetypes
+import os
 import re
+import shutil
+import signal
+import tempfile
 import threading
+import time
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Callable, cast
 
+import httpx
+import websockets
 from fastapi import (
     APIRouter,
     Depends,
@@ -20,9 +33,11 @@ from fastapi import (
     Request,
     Response,
     UploadFile,
+    WebSocket,
 )
 from fastapi.responses import FileResponse, HTMLResponse
-from sqlalchemy import and_, func, select
+from starlette.background import BackgroundTask
+from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -32,6 +47,7 @@ from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
     AgentSession,
+    AgentSupervisorLease,
     AgentTranscriptEvent,
     Answer,
     Artifact,
@@ -50,10 +66,16 @@ from tabular_harness.models.entities import (
     Job,
     LineageEdge,
     ModelVersion,
+    PilotDeployment,
+    PilotOutcomeBatch,
+    PilotPredictionBatch,
     Project,
     Question,
     Report,
     ResearchBrief,
+    ResearchPlan,
+    ResearchPlanCurrentWork,
+    ResearchPlanRevision,
     SemanticCatalog,
     SplitManifest,
     User,
@@ -116,6 +138,7 @@ from tabular_harness.schemas import (
     ProjectCreate,
     ProjectGuidanceRead,
     ProjectOverview,
+    ProjectPrimaryDatasetUpdate,
     ProjectRead,
     ProjectUpdate,
     QuestionAnswerCreate,
@@ -143,11 +166,13 @@ from tabular_harness.services.agent_chat_status import agent_chat_wait_state
 from tabular_harness.services.agent_session_results import (
     experiment_model_id_from_params,
     experiment_result_signature,
+    reconcile_project_experiment_chat_links,
 )
 from tabular_harness.services.agent_sessions import (
     active_main_session,
     append_session_event,
     append_user_instruction_to_workspace_inbox,
+    attention_chat_message,
     chat_update_actions_from_research_plan_evidence,
     chat_update_message_from_text,
     latest_codex_chat_update_at,
@@ -155,9 +180,12 @@ from tabular_harness.services.agent_sessions import (
     latest_main_session,
     latest_project_response_locale,
     maybe_request_codex_progress_update,
+    notebook_artifact_has_declared_context,
     raw_codex_stderr_path,
     raw_codex_transcript_path,
     reconcile_project_notebook_chat_links,
+    reconcile_project_notebook_context_requests,
+    reconcile_project_notebook_quality_requests,
     run_main_agent_session_supervisor,
     session_to_dict,
     start_main_agent_session_supervisor_thread,
@@ -165,11 +193,14 @@ from tabular_harness.services.agent_sessions import (
     stop_main_session,
     supervisor_slot_active,
     transcript_event_to_dict,
+    write_notebook_runtime_failure_to_workspace_inbox,
 )
+from tabular_harness.services.agent_requests.data import record_user_confirmed_task_spec_for_project_edit
 from tabular_harness.services.agent_task_results import list_agent_task_result_summaries
 from tabular_harness.services.analysis_notebooks import (
     build_project_analysis_story,
     build_project_notebook_index,
+    marimo_notebook_source_hash_for_artifact,
 )
 from tabular_harness.services.approach import (
     store_json_artifact,
@@ -238,12 +269,21 @@ from tabular_harness.services.jobs import (
     mark_job_failed,
     mark_job_running,
     mark_job_succeeded,
+    reap_stale_running_jobs,
     retry_job,
 )
 from tabular_harness.services.jobs import (
     cancel_job as cancel_job_service,
 )
 from tabular_harness.services.locales import locale_is_japanese
+from tabular_harness.services.marimo_sessions import (
+    native_marimo_session,
+    native_marimo_target_url,
+    start_or_get_native_marimo_session,
+    stop_native_marimo_session,
+    stop_native_marimo_session_for_artifact,
+    stop_native_marimo_sessions_for_project,
+)
 from tabular_harness.services.metric_preferences import (
     BUILTIN_METRIC_OPTIONS,
     latest_metric_preference,
@@ -257,12 +297,19 @@ from tabular_harness.services.metric_preferences import (
 from tabular_harness.services.metric_preferences import (
     metric_value as preferred_metric_value,
 )
+from tabular_harness.services.model_diagnostics_artifacts import (
+    artifact_ref as model_diagnostics_artifact_ref,
+    latest_run_artifact,
+    load_json_artifact,
+)
 from tabular_harness.services.notebook_authoring import create_notebook_authoring_brief
 from tabular_harness.services.portal import (
     active_job_ids_for_activity,
     build_portal_overview,
     build_project_turn_state,
     create_portal_idea,
+    heartbeat_waiting_child_ids,
+    is_agentish_job,
     list_portal_ideas,
     running_codex_processes_for_project,
     worker_events_from_job,
@@ -279,8 +326,11 @@ from tabular_harness.services.research_plans import (
     ResearchPlanValidationError,
     attach_research_plan_artifact,
     commit_research_plan_revision,
+    latest_research_plan_current_work,
     record_harness_dataset_upload_in_research_plan,
+    record_harness_objective_in_research_plan,
     request_research_plan_human_attention,
+    research_plan_artifact_is_native_marimo_source,
     research_plan_current_work_payload,
     set_research_plan_current_work,
 )
@@ -288,9 +338,95 @@ from tabular_harness.services.result_readout import build_result_readout
 from tabular_harness.worker.jobs import create_default_worker
 
 router = APIRouter()
+LOGGER = logging.getLogger(__name__)
 INTERACTIVE_WORKER_JOB_TYPES = {"agent_chat_turn"}
+NOTEBOOK_NATIVE_MARIMO_ANCHOR = "notebook-native-marimo-top"
+LEGACY_NOTEBOOK_ANCHORS = {"notebook-preview-top"}
+NOTEBOOK_NAVIGATION_ANCHORS = {*LEGACY_NOTEBOOK_ANCHORS, NOTEBOOK_NATIVE_MARIMO_ANCHOR}
+STATIC_NOTEBOOK_HTML_ASSET_TYPES = {"notebook_html", "notebook_execution_html", "notebook_evidence_html"}
 MAIN_SESSION_CHAT_WAITING_STATUS = "waiting_for_agent"
-POWER_STOP_PRESERVED_JOB_TYPES = {"upload_data_bundle"}
+POWER_STOP_PRESERVED_JOB_TYPES = {"upload_data_bundle", "select_primary_table"}
+AUTONOMY_STOP_PROCESS_TERM_GRACE_SECONDS = 2.0
+
+
+def pid_alive_for_autonomy_stop(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def terminate_codex_process_for_autonomy_stop(pid: int) -> dict[str, Any]:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return {"pid": pid, "status": "not_found", "terminated": False, "kill_escalated": False}
+    except PermissionError:
+        return {"pid": pid, "status": "permission_denied", "terminated": False, "kill_escalated": False}
+    except OSError as exc:
+        return {
+            "pid": pid,
+            "status": "terminate_failed",
+            "terminated": False,
+            "kill_escalated": False,
+            "error_type": type(exc).__name__,
+        }
+
+    deadline = time.monotonic() + AUTONOMY_STOP_PROCESS_TERM_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        if not pid_alive_for_autonomy_stop(pid):
+            return {"pid": pid, "status": "terminated", "terminated": True, "kill_escalated": False}
+        time.sleep(0.05)
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return {"pid": pid, "status": "terminated", "terminated": True, "kill_escalated": False}
+    except PermissionError:
+        return {"pid": pid, "status": "kill_permission_denied", "terminated": False, "kill_escalated": True}
+    except OSError as exc:
+        return {
+            "pid": pid,
+            "status": "kill_failed",
+            "terminated": False,
+            "kill_escalated": True,
+            "error_type": type(exc).__name__,
+        }
+
+    if pid_alive_for_autonomy_stop(pid):
+        return {"pid": pid, "status": "still_running", "terminated": False, "kill_escalated": True}
+    return {"pid": pid, "status": "killed", "terminated": True, "kill_escalated": True}
+
+
+def cleanup_project_codex_processes_for_autonomy_stop(project_id: str) -> dict[str, Any]:
+    observed = running_codex_processes_for_project(project_id)
+    results: list[dict[str, Any]] = []
+    seen_pids: set[int] = set()
+    for process in observed:
+        raw_pid = process.get("pid")
+        if not isinstance(raw_pid, int) or raw_pid in seen_pids:
+            continue
+        seen_pids.add(raw_pid)
+        result = terminate_codex_process_for_autonomy_stop(raw_pid)
+        command = process.get("command")
+        if isinstance(command, str) and command:
+            result["command"] = command
+        results.append(result)
+    return {
+        "schema_version": "project_codex_process_cleanup.v1",
+        "project_id": project_id,
+        "observed_count": len(seen_pids),
+        "terminated_count": sum(1 for result in results if result.get("terminated") is True),
+        "remaining_count": sum(1 for result in results if result.get("terminated") is not True),
+        "processes": results,
+    }
+
+
+def set_data_understanding_phase_without_turning_agent_off(project: Project) -> None:
+    if project.current_phase == "AUTONOMOUS_LOOP":
+        return
+    project.current_phase = "UNDERSTANDING_REVIEW"
 
 
 def sqlite_database_is_locked(exc: OperationalError) -> bool:
@@ -780,6 +916,19 @@ def update_project(
         if key == "autonomy_mode" and value is None:
             continue
         setattr(project, key, value)
+    if "target_column" in data:
+        record_user_confirmed_task_spec_for_project_edit(
+            db,
+            store=store,
+            project=project,
+            target_column=project.target_column,
+            table_ref=project.primary_dataset_snapshot_id,
+        )
+        record_harness_objective_in_research_plan(
+            db,
+            project_id=project.id,
+            objective_label=project.target_column,
+        )
     stopped_session = None
     if (
         previous_autonomy_mode == "full_auto"
@@ -788,20 +937,25 @@ def update_project(
     ):
         stopped_session = stop_main_session(db, project)
     project.updated_at = utc_now()
-    session = ensure_project_full_auto_agent_session(
-        db,
-        store=store,
-        project=project,
-        created_by=request_actor_id(request),
-    )
-    if session is not None:
-        start_main_agent_session_supervisor_thread(
-            request.app.state.session_factory,
-            store,
-            project_id=project_id,
-            session_id=session.id,
-            supervisor_runner=run_main_agent_session_supervisor,
+    session = None
+    should_touch_main_agent_session = project.current_phase == "AUTONOMOUS_LOOP" or previous_phase == "AUTONOMOUS_LOOP"
+    if should_touch_main_agent_session:
+        session = ensure_project_full_auto_agent_session(
+            db,
+            store=store,
+            project=project,
+            created_by=request_actor_id(request),
         )
+        if session is not None and request.app.state.settings.api_agent_session_supervisor_enabled:
+            start_main_agent_session_supervisor_thread(
+                request.app.state.session_factory,
+                store,
+                project_id=project_id,
+                session_id=session.id,
+                supervisor_runner=run_main_agent_session_supervisor,
+                turn_timeout_seconds=request.app.state.settings.agent_idle_timeout_seconds,
+                turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
+            )
     if (
         "autonomy_mode" in data
         and project.autonomy_mode in {"approval_based", "full_auto"}
@@ -818,6 +972,32 @@ def update_project(
         )
     db.flush()
     return project_to_dict(project)
+
+
+@router.delete("/api/projects/{project_id}")
+def delete_project(
+    project_id: str,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    org_id = project.org_id
+    stop_main_session(db, project, record_event=False)
+    stopped_marimo_sessions = stop_native_marimo_sessions_for_project(project_id)
+    for job in db.scalars(select(Job).where(Job.project_id == project_id)).all():
+        cancel_job_service(job, cancelled_by=request_actor_id(request))
+    delete_project_rows(db, project_id)
+    db.delete(project)
+    db.flush()
+    db.commit()
+    cleanup = schedule_project_artifact_cleanup(request.app.state.settings, org_id=org_id, project_id=project_id)
+    return {
+        "schema_version": "project_delete.v1",
+        "project_id": project_id,
+        "deleted": True,
+        "stopped_marimo_sessions": stopped_marimo_sessions,
+        "artifact_cleanup": cleanup,
+    }
 
 
 def record_autonomy_control_chat_turn(
@@ -1193,13 +1373,13 @@ def run_autonomy_start_job_background(
                     assistant_message = (
                         f"{assistant_message}\n\n"
                         "右側の Agent Activity に、次に進むための待機中ジョブを表示します。"
-                        "Waiting のカードはまだ実行中ではなく、local worker が拾った時点で Running に変わります。"
+                        "Waiting のカードはまだ実行中ではなく、実行が始まった時点で Running に変わります。"
                     )
                 else:
                     assistant_message = (
                         f"{assistant_message}\n\n"
                         "Agent Activity now shows the queued follow-up work. Cards marked Waiting are not running yet; "
-                        "they switch to Running when the local worker picks them up."
+                        "they switch to Running when execution starts."
                 )
                 output["assistant_message"] = assistant_message
             db.refresh(job)
@@ -1283,6 +1463,11 @@ def ensure_project_full_auto_agent_session(
 ) -> AgentSession | None:
     if project.current_phase != "AUTONOMOUS_LOOP" or project.autonomy_mode != "full_auto":
         return None
+    record_harness_objective_in_research_plan(
+        db,
+        project_id=project.id,
+        objective_label=project.target_column,
+    )
     existing = active_main_session(db, project.id)
     if existing is not None:
         if supervisor_slot_active(existing.id):
@@ -1303,17 +1488,17 @@ def ensure_project_full_auto_agent_session(
                     event_type="unattached_runner_process_detected",
                     role="harness",
                     title="Unattached Codex process detected",
-                    content="Tablex observed a Codex process without an attached supervisor and will recover the same AgentSession.",
+                    content="Tablex observed a Codex process without active supervision and will recover the work state.",
                     payload={"project_id": project.id, "process_count": len(observed_processes)},
                 )
             return existing
         if existing.pid is not None or existing.status == "running":
             already_recorded = existing.last_error == (
-                "No live Codex process was observed; the supervisor will resume the same AgentSession."
+                "No live Codex process was observed; the supervisor will continue the work."
             )
             existing.pid = None
             existing.status = "between_turns"
-            existing.last_error = "No live Codex process was observed; the supervisor will resume the same AgentSession."
+            existing.last_error = "No live Codex process was observed; the supervisor will continue the work."
             existing.updated_at = utc_now()
             if not already_recorded:
                 append_session_event(
@@ -1323,7 +1508,7 @@ def ensure_project_full_auto_agent_session(
                     event_type="stale_runner_pid_cleared",
                     role="harness",
                     title="Stale Codex process reference cleared",
-                    content="Tablex observed Full Auto without a live Codex process and will resume the same AgentSession.",
+                    content="Tablex observed Full Auto without a live Codex process and will continue the work.",
                     payload={"project_id": project.id},
                 )
         return existing
@@ -1407,14 +1592,17 @@ def start_project_autonomy(
             output["agent_chat_turn_artifact_id"] = artifact.id
             job.output_json = dumps_json(output)
             db.commit()
-            start_main_agent_session_supervisor_thread(
-                request.app.state.session_factory,
-                store,
-                project_id=project_id,
-                session_id=session.id,
-                agent_model=payload.agent_model,
-                supervisor_runner=run_main_agent_session_supervisor,
-            )
+            if request.app.state.settings.api_agent_session_supervisor_enabled:
+                start_main_agent_session_supervisor_thread(
+                    request.app.state.session_factory,
+                    store,
+                    project_id=project_id,
+                    session_id=session.id,
+                    agent_model=payload.agent_model,
+                    supervisor_runner=run_main_agent_session_supervisor,
+                    turn_timeout_seconds=request.app.state.settings.agent_idle_timeout_seconds,
+                    turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
+                )
             return job_to_dict(job)
         job = create_job(
             db,
@@ -1515,6 +1703,7 @@ def stop_project_autonomy(
             cancel_job_service(active_job, cancelled_by="tablex-autonomy-power")
             cancelled_ids.append(active_job.id)
         stopped_session = stop_main_session(db, project)
+        codex_process_cleanup = cleanup_project_codex_processes_for_autonomy_stop(project_id)
         project.current_phase = "IDLE"
         project.updated_at = utc_now()
         assistant_message = (
@@ -1531,13 +1720,18 @@ def stop_project_autonomy(
                 "assistant_message": assistant_message,
                 "cancelled_job_ids": cancelled_ids,
                 "stopped_agent_session_id": stopped_session.id if stopped_session is not None else None,
+                "codex_process_cleanup": codex_process_cleanup,
                 "worker_events": [
                     {
                         "worker_id": "full-auto-loop",
                         "display_name": "Full Auto Agent",
                         "status": "cancelled",
                         "headline": "Autonomous activity stopped.",
-                        "detail": f"Stopped {len(cancelled_ids)} active or queued runner/model job(s).",
+                        "detail": (
+                            f"{len(cancelled_ids)}件の実行中または待機中の作業を停止しました。"
+                            if japanese
+                            else f"Stopped {len(cancelled_ids)} active or queued work item(s)."
+                        ),
                         "job_id": job.id,
                         "project_id": project_id,
                         "target_tab": "Home",
@@ -1751,7 +1945,8 @@ def upload_dataset(
     try:
         mark_job_running(job)
         dataset = profile_dataset_artifact(db, store, project, dataset_artifact, effective_target)
-        project.current_phase = "UNDERSTANDING_REVIEW"
+        project.primary_dataset_snapshot_id = dataset.id
+        set_data_understanding_phase_without_turning_agent_off(project)
         project.updated_at = utc_now()
         record_harness_dataset_upload_in_research_plan(
             db,
@@ -1760,12 +1955,17 @@ def upload_dataset(
             dataset_snapshot_id=dataset.id,
             primary_artifact_id=dataset_artifact.id,
         )
+        record_harness_objective_in_research_plan(
+            db,
+            project_id=project_id,
+            objective_label=project.target_column,
+        )
         mark_job_succeeded(job, {"dataset_snapshot_id": dataset.id})
     except Exception as exc:
         mark_job_failed(job, str(exc))
         raise
     return {
-        "dataset_snapshot": dataset_to_dict(dataset),
+        "dataset_snapshot": dataset_to_dict(dataset, primary_dataset_snapshot_id=project.primary_dataset_snapshot_id),
         "artifact": artifact_to_dict(dataset_artifact),
         "profile_job_id": job.id,
     }
@@ -1773,6 +1973,7 @@ def upload_dataset(
 
 TABLE_UPLOAD_SUFFIXES = {".csv", ".parquet"}
 RELATIONAL_HINT_UPLOAD_SUFFIXES = {".png", ".jpg", ".jpeg", ".svg", ".pdf", ".json"}
+MAX_COLUMN_HINT_BYTES = 128 * 1024
 
 
 @router.post("/api/projects/{project_id}/datasets/upload-bundle", response_model=JobRead)
@@ -1828,20 +2029,51 @@ def upload_dataset_bundle(
         },
     )
     try:
-        mark_job_running(job)
-        output = ingest_uploaded_data_bundle(
+        staged_table_artifacts = stage_upload_bundle_files(
             db,
             store=store,
             project=project,
             job=job,
-            table_uploads=table_uploads,
-            hint_uploads=hint_uploads,
-            target_column=target_column,
-            primary_filename=requested_primary,
-            note=note,
-            response_locale=locale,
+            uploads=table_uploads,
+            stage_kind="table",
         )
-        mark_job_succeeded(job, output)
+        staged_hint_artifacts = stage_upload_bundle_files(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            uploads=hint_uploads,
+            stage_kind="relational_hint",
+        )
+        job.input_json = dumps_json(
+            {
+                "file_count": len(files),
+                "table_file_count": len(table_uploads),
+                "relational_hint_file_count": len(hint_uploads),
+                "primary_filename": requested_primary,
+                "target_column": target_column,
+                "note": note,
+                "note_present": bool(note and note.strip()),
+                "response_locale": locale,
+                "staged_table_artifact_ids": [artifact.id for artifact in staged_table_artifacts],
+                "staged_relational_hint_artifact_ids": [artifact.id for artifact in staged_hint_artifacts],
+            }
+        )
+        job.output_json = dumps_json(
+            {
+                "schema_version": "upload_data_bundle_staging.v1",
+                "status": "queued_for_ingest",
+                "progress_stage": "queued_for_ingest",
+                "progress_percent": 5,
+                "staged_table_artifact_ids": [artifact.id for artifact in staged_table_artifacts],
+                "staged_relational_hint_artifact_ids": [artifact.id for artifact in staged_hint_artifacts],
+                "assistant_message": (
+                    "ファイルを受け取りました。Tablexがデータbundleの取り込みとprofileを続けています。"
+                    if locale_is_japanese(locale)
+                    else "Files were received. Tablex is importing and profiling the data bundle."
+                ),
+            }
+        )
     except ValueError as exc:
         mark_job_failed(job, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1849,6 +2081,111 @@ def upload_dataset_bundle(
         mark_job_failed(job, str(exc))
         raise
     return job_to_dict(job)
+
+
+def quick_table_column_names(path: Path) -> list[str]:
+    suffix = path.suffix.lower()
+    try:
+        if suffix == ".csv":
+            with path.open("rb") as handle:
+                sample = handle.read(MAX_COLUMN_HINT_BYTES)
+            if not sample:
+                return []
+            text = sample.decode("utf-8-sig", errors="replace")
+            first_line = text.splitlines()[0] if text.splitlines() else ""
+            return [item.strip() for item in next(csv.reader([first_line]), []) if item.strip()]
+        if suffix == ".parquet":
+            try:
+                import pyarrow.parquet as pq  # type: ignore[import-not-found]
+            except Exception:
+                return []
+            return [str(name).strip() for name in pq.read_schema(path).names if str(name).strip()]
+    except Exception:
+        return []
+    return []
+
+
+def artifact_metadata_column_names(metadata: dict[str, Any]) -> list[str]:
+    raw = metadata.get("column_names")
+    if not isinstance(raw, list):
+        raw = metadata.get("columns")
+    if not isinstance(raw, list):
+        return []
+    return list(dict.fromkeys(str(item).strip() for item in raw if str(item).strip()))
+
+
+def generated_csv_column_names(columns: list[str]) -> bool:
+    if not columns:
+        return False
+    return all(column == f"column{index}" for index, column in enumerate(columns))
+
+
+def generated_csv_column_placeholder(column: str) -> bool:
+    return column.startswith("column") and column.removeprefix("column").isdigit()
+
+
+def metadata_columns_should_override_profile(profile_columns: list[str], metadata_columns: list[str]) -> bool:
+    if not profile_columns or not metadata_columns:
+        return False
+    if generated_csv_column_names(profile_columns):
+        return True
+    non_generated = [column for column in profile_columns if not generated_csv_column_placeholder(column)]
+    return len(non_generated) < len(profile_columns) and non_generated == metadata_columns
+
+
+def stage_upload_bundle_files(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    job: Job,
+    uploads: list[UploadFile],
+    stage_kind: str,
+) -> list[Artifact]:
+    staged: list[Artifact] = []
+    used_names: set[str] = set()
+    for index, upload in enumerate(uploads):
+        suffix = Path(upload.filename or "").suffix.lower()
+        base_name = uploaded_table_name(upload.filename or f"{stage_kind}_{index + 1}{suffix}", used_names)
+        artifact_name = f"upload_bundle_{job.id}_{stage_kind}_{base_name}"
+        version = next_artifact_version(db, project.id, "upload_staging_file", artifact_name)
+        metadata = {
+            "project_id": project.id,
+            "job_id": job.id,
+            "source_filename": upload.filename,
+            "content_type": upload.content_type,
+            "upload_stage_kind": stage_kind,
+            "original_index": index,
+        }
+        artifact_dir, stored, content_hash = store.store_stream(
+            org_id="local-org",
+            project_id=project.id,
+            asset_type="upload_staging_file",
+            name=artifact_name,
+            version=version,
+            filename=upload.filename or f"{base_name}{suffix}",
+            stream=upload.file,
+            metadata=metadata,
+        )
+        artifact = register_artifact(
+            db,
+            project_id=project.id,
+            asset_type="upload_staging_file",
+            name=artifact_name,
+            uri=str(artifact_dir),
+            content_hash=content_hash,
+            size_bytes=stored.size_bytes,
+            metadata={**metadata, "primary_path": str(stored.path)},
+            version=version,
+        )
+        staged.append(artifact)
+        column_names = quick_table_column_names(stored.path)
+        if column_names:
+            update_artifact_metadata(
+                artifact,
+                {"column_names": column_names, "column_count": len(column_names)},
+            )
+    return staged
 
 
 def ingest_uploaded_data_bundle(
@@ -1863,7 +2200,12 @@ def ingest_uploaded_data_bundle(
     primary_filename: str | None,
     note: str | None,
     response_locale: str | None = None,
+    progress_callback: Callable[[str, int, dict[str, Any] | None], None] | None = None,
 ) -> dict[str, Any]:
+    def progress(stage: str, percent: int, detail: dict[str, Any] | None = None) -> None:
+        if progress_callback is not None:
+            progress_callback(stage, percent, detail)
+
     effective_target = target_column or project.target_column
     if target_column and target_column != project.target_column:
         project.target_column = target_column
@@ -1871,11 +2213,17 @@ def ingest_uploaded_data_bundle(
     selected_primary = select_uploaded_primary_table(table_uploads, primary_filename)
     used_table_names: set[str] = set()
     table_records: list[dict[str, Any]] = []
+    dataset_records: list[DatasetSnapshot] = []
     dataset: DatasetSnapshot | None = None
     dataset_artifact: Artifact | None = None
     notebook_artifact_ids: list[str] = []
     notebook_warning: str | None = None
 
+    progress(
+        "storing_tables",
+        15,
+        {"table_file_count": len(table_uploads), "relational_hint_file_count": len(hint_uploads)},
+    )
     for index, upload in enumerate(table_uploads):
         is_primary = upload is selected_primary
         suffix = Path(upload.filename or "").suffix.lower()
@@ -1917,16 +2265,11 @@ def ingest_uploaded_data_bundle(
             },
             version=version,
         )
-        if is_primary:
-            dataset_artifact = artifact
-            dataset = profile_dataset_artifact(
-                db,
-                store,
-                project,
+        column_names = quick_table_column_names(stored.path)
+        if column_names:
+            update_artifact_metadata(
                 artifact,
-                effective_target,
-                source_type="user_upload_bundle",
-                source_ref=upload.filename,
+                {"column_names": column_names, "column_count": len(column_names)},
             )
         table_profile = profile_table_file(
             path=stored.path,
@@ -1938,6 +2281,42 @@ def ingest_uploaded_data_bundle(
         )
         table_profile["artifact_id"] = artifact.id
         table_profile["source_filename"] = upload.filename
+        table_dataset: DatasetSnapshot | None = None
+        if is_primary:
+            progress(
+                "profiling_tables",
+                25,
+                {"current_table": upload.filename, "table_index": index + 1, "table_file_count": len(table_uploads)},
+            )
+            dataset_artifact = artifact
+            dataset = profile_dataset_artifact(
+                db,
+                store,
+                project,
+                artifact,
+                effective_target,
+                source_type="user_upload_bundle",
+                source_ref=upload.filename,
+            )
+            project.primary_dataset_snapshot_id = dataset.id
+            table_dataset = dataset
+        else:
+            table_dataset = create_lightweight_dataset_snapshot_from_table_profile(
+                db,
+                project=project,
+                artifact=artifact,
+                table_profile=table_profile,
+                source_type="user_upload_bundle_table",
+                source_ref=upload.filename,
+            )
+        if table_dataset is not None:
+            dataset_records.append(table_dataset)
+            table_profile["dataset_snapshot_id"] = table_dataset.id
+        progress(
+            "profiling_tables",
+            30 + math.floor(((index + 1) / max(1, len(table_uploads))) * 30),
+            {"current_table": upload.filename, "table_index": index + 1, "table_file_count": len(table_uploads)},
+        )
         table_records.append(
             {
                 "artifact": artifact,
@@ -1945,9 +2324,12 @@ def ingest_uploaded_data_bundle(
                 "profile": table_profile,
                 "is_primary": is_primary,
                 "table_name": table_name,
+                "dataset": table_dataset,
             }
         )
 
+    if hint_uploads:
+        progress("processing_schema_hints", 62, {"relational_hint_file_count": len(hint_uploads)})
     hint_results = []
     for upload in hint_uploads:
         result = create_relational_schema_hint(
@@ -1964,6 +2346,7 @@ def ingest_uploaded_data_bundle(
     relational_catalog_artifact: Artifact | None = None
     manifest_artifact: Artifact | None = None
     if table_records:
+        progress("building_catalog", 70, {"table_count": len(table_records), "relational_hint_count": len(hint_results)})
         relational_catalog = build_uploaded_relational_catalog(
             project=project,
             dataset=dataset,
@@ -2065,6 +2448,7 @@ def ingest_uploaded_data_bundle(
 
     if dataset is not None:
         try:
+            progress("preparing_notebook_context", 86, {"dataset_snapshot_id": dataset.id})
             authoring_result = create_notebook_authoring_brief(
                 db,
                 store=store,
@@ -2078,22 +2462,28 @@ def ingest_uploaded_data_bundle(
             notebook_artifact_ids = [authoring_result.brief_artifact.id, authoring_result.report_artifact.id]
             notebook_warning = "awaiting_agent_authored_notebook"
             notebook_artifact = None
-            notebook_html_artifact = None
             notebook_report_artifact = None
             notebook_manifest_artifact = None
         except ValueError as exc:
             notebook_warning = str(exc)
             notebook_artifact = None
-            notebook_html_artifact = None
             notebook_report_artifact = None
             notebook_manifest_artifact = None
     else:
         notebook_artifact = None
-        notebook_html_artifact = None
         notebook_report_artifact = None
         notebook_manifest_artifact = None
 
-    project.current_phase = "UNDERSTANDING_REVIEW"
+    progress(
+        "finalizing",
+        94,
+        {
+            "dataset_snapshot_id": dataset.id if dataset else None,
+            "dataset_snapshot_ids": [item.id for item in dataset_records],
+            "table_count": len(table_records),
+        },
+    )
+    set_data_understanding_phase_without_turning_agent_off(project)
     project.updated_at = utc_now()
     artifact_ids = [
         artifact.id
@@ -2116,9 +2506,16 @@ def ingest_uploaded_data_bundle(
             dataset_snapshot_id=dataset.id if dataset else None,
             primary_artifact_id=dataset_artifact.id if dataset_artifact else None,
         )
+        record_harness_objective_in_research_plan(
+            db,
+            project_id=project.id,
+            objective_label=project.target_column,
+        )
     return {
         "schema_version": "upload_data_bundle.v1",
         "dataset_snapshot_id": dataset.id if dataset else None,
+        "primary_dataset_snapshot_id": dataset.id if dataset else None,
+        "dataset_snapshot_ids": [item.id for item in dataset_records],
         "dataset_artifact_id": dataset_artifact.id if dataset_artifact else None,
         "artifact_id": dataset_artifact.id if dataset_artifact else (hint_results[0].artifact.id if hint_results else None),
         "artifact_ids": artifact_ids,
@@ -2132,7 +2529,6 @@ def ingest_uploaded_data_bundle(
         "relational_table_bundle_manifest_artifact_id": manifest_artifact.id if manifest_artifact else None,
         "analysis_notebook_artifact_ids": [],
         "analysis_notebook_artifact_id": notebook_artifact.id if notebook_artifact else None,
-        "notebook_html_artifact_id": notebook_html_artifact.id if notebook_html_artifact else None,
         "notebook_report_artifact_id": notebook_report_artifact.id if notebook_report_artifact else None,
         "notebook_run_manifest_artifact_id": notebook_manifest_artifact.id if notebook_manifest_artifact else None,
         "notebook_kind": "data_understanding" if notebook_artifact else None,
@@ -2145,6 +2541,7 @@ def ingest_uploaded_data_bundle(
             target_column=effective_target,
             notebook_artifact_ids=notebook_artifact_ids,
             notebook_warning=notebook_warning,
+            response_locale=response_locale,
         ),
         "aggregate_merge_policy": "Codex runner may design, implement, compare, and reject aggregate/merge strategies inside harness guardrails.",
         "runner_context": {
@@ -2165,11 +2562,32 @@ def upload_bundle_assistant_message(
     target_column: str | None,
     notebook_artifact_ids: list[str],
     notebook_warning: str | None,
+    response_locale: str | None = None,
 ) -> str:
+    japanese = locale_is_japanese(response_locale)
+    if japanese:
+        target_line = f"現在の目的/ターゲットは `{target_column}` です。" if target_column else (
+            "目的/ターゲットは未設定です。Full Autoでは、Codexがアップロード済みデータを見てタスク形状を整理できます。"
+        )
+        notebook_line = (
+            "Notebook作成の文脈を準備しました。Notebook本体はAgentが作成した後に表示されます。"
+            if notebook_artifact_ids
+            else "Notebook作成は、Agentがテーブル構造と目的の文脈を整理した後に始まります。"
+        )
+        return (
+            f"{table_count}件のテーブルファイル"
+            f"{f'と{hint_count}件のER/schema hint' if hint_count else ''}を取り込みました。\n\n"
+            f"{target_line}\n\n"
+            f"{notebook_line}"
+        )
     target_line = f"Objective/target is currently `{target_column}`." if target_column else (
         "Objective/target is still open. Full Auto can ask Codex to review possible task shapes from the uploaded data."
     )
-    notebook_line = "Notebook authoring context is ready. The notebook itself will appear after the agent writes it."
+    notebook_line = (
+        "Notebook authoring context is ready. The notebook itself will appear after the agent writes it."
+        if notebook_artifact_ids
+        else "Notebook authoring will start after the agent has enough table and objective context."
+    )
     return (
         f"Uploaded {table_count} table file(s)"
         f"{f' and {hint_count} ER/schema hint file(s)' if hint_count else ''}.\n\n"
@@ -2185,7 +2603,89 @@ def select_uploaded_primary_table(table_uploads: list[UploadFile], primary_filen
         for upload in table_uploads:
             if upload.filename == primary_filename:
                 return upload
-    return table_uploads[0]
+    return None
+
+
+def create_lightweight_dataset_snapshot_from_table_profile(
+    db: Session,
+    *,
+    project: Project,
+    artifact: Artifact,
+    table_profile: dict[str, Any],
+    source_type: str,
+    source_ref: str | None,
+) -> DatasetSnapshot:
+    schema_payload = table_profile.get("columns") if isinstance(table_profile.get("columns"), list) else []
+    schema_hash = table_profile.get("schema_hash")
+    if not isinstance(schema_hash, str) or not schema_hash.strip():
+        schema_hash = hashlib.sha256(dumps_json(schema_payload).encode("utf-8")).hexdigest()
+    row_count = table_profile.get("row_count")
+    column_count = table_profile.get("column_count")
+    dataset = DatasetSnapshot(
+        id=new_id("ds"),
+        project_id=project.id,
+        artifact_id=artifact.id,
+        source_type=source_type,
+        source_ref=source_ref,
+        row_count=int(row_count) if isinstance(row_count, int) else None,
+        column_count=int(column_count) if isinstance(column_count, int) else None,
+        schema_hash=schema_hash,
+        data_hash=artifact.content_hash,
+    )
+    db.add(dataset)
+    db.flush()
+    raw_columns = table_profile.get("column_profiles")
+    profile_column_names: list[str] = []
+    if isinstance(raw_columns, list):
+        for item in raw_columns:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if isinstance(name, str) and name.strip():
+                profile_column_names.append(name.strip())
+    metadata_columns = artifact_metadata_column_names(loads_json(artifact.metadata_json, {}))
+    semantic_columns: list[dict[str, Any]] = []
+    if metadata_columns_should_override_profile(profile_column_names, metadata_columns):
+        semantic_columns = [{"column_name": name, "physical_type": ""} for name in metadata_columns]
+    elif isinstance(raw_columns, list):
+        for item in raw_columns:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            semantic_columns.append(
+                {
+                    "column_name": name.strip(),
+                    "physical_type": str(item.get("physical_type") or ""),
+                }
+            )
+    if semantic_columns:
+        catalog = SemanticCatalog(
+            id=new_id("scat"),
+            project_id=project.id,
+            dataset_snapshot_id=dataset.id,
+            artifact_id=None,
+            columns_json=dumps_json(semantic_columns),
+        )
+        db.add(catalog)
+    update_artifact_metadata(
+        artifact,
+        {
+            "dataset_snapshot_id": dataset.id,
+            "dataset_snapshot_source_type": source_type,
+        },
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="dataset_snapshot",
+        from_asset_id=dataset.id,
+        to_asset_type="artifact",
+        to_asset_id=artifact.id,
+        relation_type="records_table_artifact",
+    )
+    return dataset
 
 
 def uploaded_table_name(filename: str, used: set[str]) -> str:
@@ -2208,13 +2708,17 @@ def build_uploaded_relational_catalog(
     target_column: str | None,
 ) -> dict[str, Any]:
     table_profiles = [cast(dict[str, Any], record["profile"]) for record in table_records]
-    primary_profile = next((profile for profile in table_profiles if profile.get("is_primary")), table_profiles[0])
-    primary_table_hint = {
-        "path": primary_profile.get("path"),
-        "table_name": primary_profile.get("table_name"),
-        "target_column": target_column,
-        "entity_id_column": first_key_candidate(primary_profile),
-    }
+    primary_profile = next((profile for profile in table_profiles if profile.get("is_primary")), None)
+    primary_table_hint = (
+        {
+            "path": primary_profile.get("path"),
+            "table_name": primary_profile.get("table_name"),
+            "target_column": target_column,
+            "entity_id_column": first_key_candidate(primary_profile),
+        }
+        if primary_profile is not None
+        else {}
+    )
     relationships = infer_relationships(table_profiles, primary_table_hint)
     relationships.extend(additional_shared_column_relationships(table_profiles, relationships))
     target_locations = [
@@ -2239,11 +2743,12 @@ def build_uploaded_relational_catalog(
         "project_id": project.id,
         "dataset_snapshot_id": dataset.id if dataset else None,
         "primary_table": {
-            "table_name": primary_profile.get("table_name"),
-            "selected_path": primary_profile.get("path"),
+            "table_name": primary_profile.get("table_name") if primary_profile else None,
+            "selected_path": primary_profile.get("path") if primary_profile else None,
             "target_column": target_column,
-            "artifact_id": primary_profile.get("artifact_id"),
-            "entity_id_column": primary_table_hint["entity_id_column"],
+            "artifact_id": primary_profile.get("artifact_id") if primary_profile else None,
+            "entity_id_column": primary_table_hint.get("entity_id_column"),
+            "selected": primary_profile is not None,
         },
         "table_count": len(table_profiles),
         "table_limit": len(table_profiles),
@@ -2293,6 +2798,9 @@ def build_uploaded_bundle_manifest(
             "role": "primary_table" if record["is_primary"] else "supporting_table",
             "table_name": record["table_name"],
             "artifact_id": cast(Artifact, record["artifact"]).id,
+            "dataset_snapshot_id": cast(DatasetSnapshot, record["dataset"]).id
+            if record.get("dataset") is not None
+            else None,
             "asset_type": cast(Artifact, record["artifact"]).asset_type,
             "download_url": f"/api/artifacts/{cast(Artifact, record['artifact']).id}/download",
             "preview_url": f"/api/artifacts/{cast(Artifact, record['artifact']).id}/preview",
@@ -2807,17 +3315,171 @@ def run_public_benchmark_workflow(
 
 @router.get("/api/projects/{project_id}/datasets", response_model=list[DatasetSnapshotRead])
 def list_project_datasets(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
-    require_project(db, project_id)
+    project = require_project(db, project_id)
     datasets = db.scalars(
         select(DatasetSnapshot).where(DatasetSnapshot.project_id == project_id).order_by(DatasetSnapshot.created_at.desc())
     ).all()
-    return [dataset_to_dict(item) for item in datasets]
+    primary_id = project.primary_dataset_snapshot_id
+    ordered = sorted(
+        datasets,
+        key=lambda item: (item.id != primary_id, -(item.created_at.timestamp() if item.created_at else 0)),
+    )
+    return [dataset_to_dict(item, primary_dataset_snapshot_id=primary_id) for item in ordered]
+
+
+@router.post("/api/projects/{project_id}/datasets/primary", response_model=DatasetSnapshotRead)
+@router.post("/api/projects/{project_id}/primary-dataset", response_model=DatasetSnapshotRead)
+def set_project_primary_dataset(
+    project_id: str,
+    payload: ProjectPrimaryDatasetUpdate,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    dataset = resolve_project_primary_dataset_update(db, store=store, project=project, payload=payload)
+    project.primary_dataset_snapshot_id = dataset.id
+    if payload.target_column is not None:
+        project.target_column = payload.target_column.strip() or None
+        record_user_confirmed_task_spec_for_project_edit(
+            db,
+            store=store,
+            project=project,
+            target_column=project.target_column,
+            table_ref=dataset.id,
+        )
+    set_data_understanding_phase_without_turning_agent_off(project)
+    project.updated_at = utc_now()
+    artifact = db.get(Artifact, dataset.artifact_id)
+    if artifact is not None:
+        update_artifact_metadata(
+            artifact,
+            {
+                "selected_as_primary_dataset_snapshot_id": dataset.id,
+                "selected_as_project_primary_at": utc_now().isoformat(),
+            },
+        )
+        record_harness_dataset_upload_in_research_plan(
+            db,
+            project_id=project.id,
+            artifact_ids=[artifact.id],
+            dataset_snapshot_id=dataset.id,
+            primary_artifact_id=artifact.id,
+        )
+    record_harness_objective_in_research_plan(
+        db,
+        project_id=project.id,
+        objective_label=project.target_column,
+    )
+    db.flush()
+    return dataset_to_dict(dataset, primary_dataset_snapshot_id=project.primary_dataset_snapshot_id)
+
+
+@router.post("/api/projects/{project_id}/datasets/primary/select", response_model=JobRead)
+def queue_project_primary_dataset_selection(
+    project_id: str,
+    payload: ProjectPrimaryDatasetUpdate,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    validate_project_primary_dataset_selection(db, project=project, payload=payload)
+    job = create_job(
+        db,
+        job_type="select_primary_table",
+        project_id=project.id,
+        input_payload=payload.model_dump(exclude_unset=True),
+        policy={
+            "network": "disabled",
+            "secret_access": "forbidden",
+            "connector_credentials": "not_materialized",
+            "purpose": "profile_and_select_user_chosen_primary_table",
+        },
+    )
+    japanese = locale_is_japanese(payload.locale)
+    job.output_json = dumps_json(
+        {
+            "schema_version": "select_primary_table_progress.v1",
+            "status": "queued",
+            "progress_stage": "queued",
+            "progress_percent": 0,
+            "assistant_message": (
+                "主表の変更を受け付けました。Tablexがテーブル構造を確認して反映します。"
+                if japanese
+                else "Primary table change was queued. Tablex will inspect the table structure and apply it."
+            ),
+        }
+    )
+    return job_to_dict(job)
+
+
+def resolve_project_primary_dataset_update(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    payload: ProjectPrimaryDatasetUpdate,
+) -> DatasetSnapshot:
+    if bool(payload.dataset_snapshot_id) == bool(payload.artifact_id):
+        raise HTTPException(status_code=400, detail="Provide exactly one of dataset_snapshot_id or artifact_id")
+    if payload.dataset_snapshot_id:
+        dataset = db.get(DatasetSnapshot, payload.dataset_snapshot_id)
+        if dataset is None or dataset.project_id != project.id:
+            raise HTTPException(status_code=404, detail="DatasetSnapshot not found for this project")
+        return dataset
+    artifact = db.get(Artifact, payload.artifact_id)
+    if artifact is None or artifact.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Table artifact not found for this project")
+    if artifact.asset_type not in {"dataset_snapshot", "uploaded_supporting_table"}:
+        raise HTTPException(status_code=400, detail="Primary table must be an uploaded table artifact")
+    path = artifact_primary_path(artifact)
+    if path.suffix.lower() not in TABLE_UPLOAD_SUFFIXES:
+        raise HTTPException(status_code=400, detail="Primary table artifact must be CSV or Parquet")
+    existing = db.scalar(
+        select(DatasetSnapshot)
+        .where(DatasetSnapshot.project_id == project.id, DatasetSnapshot.artifact_id == artifact.id)
+        .order_by(DatasetSnapshot.created_at.desc())
+    )
+    if existing is not None:
+        return existing
+    metadata = loads_json(artifact.metadata_json, {})
+    return profile_dataset_artifact(
+        db,
+        store,
+        project,
+        artifact,
+        payload.target_column if payload.target_column is not None else project.target_column,
+        source_type="user_selected_primary_table",
+        source_ref=str(metadata.get("source_filename") or metadata.get("table_name") or artifact.name),
+    )
+
+
+def validate_project_primary_dataset_selection(
+    db: Session,
+    *,
+    project: Project,
+    payload: ProjectPrimaryDatasetUpdate,
+) -> None:
+    if bool(payload.dataset_snapshot_id) == bool(payload.artifact_id):
+        raise HTTPException(status_code=400, detail="Provide exactly one of dataset_snapshot_id or artifact_id")
+    if payload.dataset_snapshot_id:
+        dataset = db.get(DatasetSnapshot, payload.dataset_snapshot_id)
+        if dataset is None or dataset.project_id != project.id:
+            raise HTTPException(status_code=404, detail="DatasetSnapshot not found for this project")
+        return
+    artifact = db.get(Artifact, payload.artifact_id)
+    if artifact is None or artifact.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Table artifact not found for this project")
+    if artifact.asset_type not in {"dataset_snapshot", "uploaded_supporting_table"}:
+        raise HTTPException(status_code=400, detail="Primary table must be an uploaded table artifact")
+    path = artifact_primary_path(artifact)
+    if path.suffix.lower() not in TABLE_UPLOAD_SUFFIXES:
+        raise HTTPException(status_code=400, detail="Primary table artifact must be CSV or Parquet")
 
 
 @router.get("/api/datasets/{dataset_id}", response_model=DatasetSnapshotRead)
 def get_dataset(dataset_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
     dataset = require_dataset(db, dataset_id)
-    return dataset_to_dict(dataset)
+    project = require_project(db, dataset.project_id)
+    return dataset_to_dict(dataset, primary_dataset_snapshot_id=project.primary_dataset_snapshot_id)
 
 
 @router.get("/api/datasets/{dataset_id}/schema", response_model=SemanticCatalogRead)
@@ -2831,6 +3493,172 @@ def get_dataset_schema(dataset_id: str, db: Annotated[Session, Depends(get_sessi
     if catalog is None:
         raise HTTPException(status_code=404, detail="Semantic catalog not found")
     return semantic_catalog_to_dict(catalog)
+
+
+@router.get("/api/projects/{project_id}/data/columns")
+def project_data_columns(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    datasets = db.scalars(
+        select(DatasetSnapshot)
+        .where(DatasetSnapshot.project_id == project.id)
+        .order_by(DatasetSnapshot.created_at.desc())
+    ).all()
+    def column_name(column: Any) -> str | None:
+        if isinstance(column, str):
+            return column.strip() or None
+        if not isinstance(column, dict):
+            return None
+        for key in ("name", "column_name", "id"):
+            value = column.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    def column_detail(column: Any) -> dict[str, Any] | None:
+        name = column_name(column)
+        if not name:
+            return None
+        if not isinstance(column, dict):
+            return {"name": name}
+        detail = {"name": name}
+        for key in ("physical_type", "missing_count", "missing_rate", "unique_count"):
+            value = column.get(key)
+            if isinstance(value, str) and value.strip():
+                detail[key] = value.strip()
+            elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                detail[key] = value
+        return detail
+
+    def columns_from_artifact_file(artifact: Artifact) -> list[str]:
+        metadata = loads_json(artifact.metadata_json, {})
+        metadata_columns = artifact_metadata_column_names(metadata)
+        try:
+            path = artifact_primary_path(artifact)
+        except Exception:
+            return metadata_columns
+        file_columns = quick_table_column_names(path)
+        if metadata_columns_should_override_profile(metadata_columns, file_columns):
+            return file_columns
+        return metadata_columns or file_columns
+
+    def column_details_from_names(columns: list[str]) -> list[dict[str, Any]]:
+        return [{"name": column} for column in columns]
+
+    def columns_from_dataset_file(dataset: DatasetSnapshot) -> list[str]:
+        artifact = db.get(Artifact, dataset.artifact_id)
+        if artifact is None:
+            return []
+        return columns_from_artifact_file(artifact)
+
+    tables: list[dict[str, Any]] = []
+    dataset_artifact_ids: set[str] = set()
+    for dataset in datasets:
+        dataset_artifact_ids.add(dataset.artifact_id)
+        catalog = db.scalar(
+            select(SemanticCatalog)
+            .where(SemanticCatalog.dataset_snapshot_id == dataset.id)
+            .order_by(SemanticCatalog.created_at.desc())
+            .limit(1)
+        )
+        raw_columns = loads_json(catalog.columns_json, []) if catalog is not None else []
+        columns = [name for item in raw_columns if (name := column_name(item))]
+        column_details = [detail for item in raw_columns if (detail := column_detail(item))]
+        file_columns = columns_from_dataset_file(dataset)
+        if not columns or metadata_columns_should_override_profile(columns, file_columns):
+            columns = file_columns
+            column_details = column_details_from_names(columns)
+        tables.append(
+            {
+                "dataset_snapshot_id": dataset.id,
+                "artifact_id": dataset.artifact_id,
+                "source_ref": dataset.source_ref,
+                "row_count": dataset.row_count,
+                "column_count": dataset.column_count,
+                "is_primary": dataset.id == project.primary_dataset_snapshot_id,
+                "columns": list(dict.fromkeys(columns)),
+                "column_details": column_details,
+            }
+        )
+    supporting_table_artifacts = db.scalars(
+        select(Artifact)
+        .where(
+            Artifact.project_id == project.id,
+            Artifact.asset_type == "uploaded_supporting_table",
+        )
+        .order_by(Artifact.created_at.desc())
+    ).all()
+    for artifact in supporting_table_artifacts:
+        if artifact.id in dataset_artifact_ids:
+            continue
+        metadata = loads_json(artifact.metadata_json, {})
+        columns = columns_from_artifact_file(artifact)
+        source_ref = metadata.get("source_filename") or metadata.get("table_name") or artifact.name
+        tables.append(
+            {
+                "dataset_snapshot_id": f"artifact:{artifact.id}",
+                "artifact_id": artifact.id,
+                "source_ref": str(source_ref) if source_ref else artifact.name,
+                "row_count": None,
+                "column_count": len(columns) if columns else None,
+                "is_primary": False,
+                "columns": list(dict.fromkeys(columns)),
+                "column_details": column_details_from_names(list(dict.fromkeys(columns))),
+            }
+        )
+    registered_source_refs = {str(item.get("source_ref")) for item in tables if item.get("source_ref")}
+    active_upload_jobs = db.scalars(
+        select(Job)
+        .where(
+            Job.project_id == project.id,
+            Job.job_type == "upload_data_bundle",
+            Job.status.notin_(["succeeded", "failed", "cancelled", "timed_out"]),
+        )
+        .order_by(Job.created_at.desc())
+        .limit(8)
+    ).all()
+    staged_table_artifact_ids: list[str] = []
+    staged_primary_filenames: set[str] = set()
+    for job in active_upload_jobs:
+        for payload in (loads_json(job.input_json, {}), loads_json(job.output_json, {})):
+            staged_table_artifact_ids.extend(
+                str(item)
+                for item in payload.get("staged_table_artifact_ids", [])
+                if isinstance(item, str) and item.strip()
+            )
+        job_input = loads_json(job.input_json, {})
+        primary_filename = job_input.get("primary_filename")
+        if isinstance(primary_filename, str) and primary_filename.strip():
+            staged_primary_filenames.add(primary_filename.strip())
+    if staged_table_artifact_ids:
+        staged_artifacts = db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.id.in_(list(dict.fromkeys(staged_table_artifact_ids))))
+            .order_by(Artifact.created_at.desc())
+        ).all()
+        for artifact in staged_artifacts:
+            metadata = loads_json(artifact.metadata_json, {})
+            if metadata.get("upload_stage_kind") != "table":
+                continue
+            columns = columns_from_artifact_file(artifact)
+            if not columns:
+                continue
+            source_ref = str(metadata.get("source_filename") or artifact.name)
+            if source_ref in registered_source_refs:
+                continue
+            tables.append(
+                {
+                    "dataset_snapshot_id": f"staged:{artifact.id}",
+                    "artifact_id": artifact.id,
+                    "source_ref": source_ref,
+                    "row_count": None,
+                    "column_count": len(columns),
+                    "is_primary": source_ref in staged_primary_filenames,
+                    "columns": list(dict.fromkeys(columns)),
+                    "column_details": column_details_from_names(list(dict.fromkeys(columns))),
+                }
+            )
+    tables.sort(key=lambda item: (not item["is_primary"], item["source_ref"] or item["dataset_snapshot_id"]))
+    return {"schema_version": "project_column_catalog.v1", "project_id": project.id, "tables": tables}
 
 
 @router.get("/api/datasets/{dataset_id}/sample")
@@ -3418,13 +4246,15 @@ def create_agent_chat_turn(
             progress_event=progress_event,
         )
         db.commit()
-        if should_wake_main_session:
+        if should_wake_main_session and request.app.state.settings.api_agent_session_supervisor_enabled:
             start_main_agent_session_supervisor_thread(
                 request.app.state.session_factory,
                 store,
                 project_id=project_id,
                 session_id=session.id,
                 supervisor_runner=run_main_agent_session_supervisor,
+                turn_timeout_seconds=request.app.state.settings.agent_idle_timeout_seconds,
+                turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
             )
         return response
     job = create_job(
@@ -3717,21 +4547,271 @@ def utc_datetime_or_none(value: datetime | None) -> datetime | None:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
+def normalize_agent_chat_navigation_actions(
+    actions: list[Any],
+    *,
+    db: Session | None = None,
+    project_id: str | None = None,
+    japanese: bool = False,
+) -> list[Any]:
+    normalized: list[Any] = []
+    for action in actions:
+        if not isinstance(action, dict):
+            normalized.append(action)
+            continue
+        normalized_action = normalize_agent_chat_navigation_focus(action)
+        if db is not None and project_id is not None:
+            normalized_action = normalize_agent_chat_notebook_action_artifact(
+                db,
+                project_id=project_id,
+                action=normalized_action,
+                japanese=japanese,
+            )
+        normalized.append(normalized_action)
+    return normalized
+
+
+def normalize_agent_chat_navigation_focus(focus: dict[str, Any]) -> dict[str, Any]:
+    target_anchor = focus.get("target_anchor")
+    if isinstance(target_anchor, str) and target_anchor in NOTEBOOK_NAVIGATION_ANCHORS:
+        return {**focus, "target_tab": "Notebooks", "target_anchor": NOTEBOOK_NATIVE_MARIMO_ANCHOR}
+    return focus
+
+
+def normalize_agent_chat_notebook_action_artifact(
+    db: Session,
+    *,
+    project_id: str,
+    action: dict[str, Any],
+    japanese: bool = False,
+) -> dict[str, Any]:
+    if action.get("target_tab") != "Notebooks":
+        return action
+    artifact_ids: list[str] = []
+    if isinstance(action.get("artifact_id"), str) and action["artifact_id"].strip():
+        artifact_ids.append(action["artifact_id"].strip())
+    raw_artifact_ids = action.get("artifact_ids")
+    if isinstance(raw_artifact_ids, list):
+        artifact_ids.extend(item.strip() for item in raw_artifact_ids if isinstance(item, str) and item.strip())
+    notebook_artifact = first_native_notebook_artifact_for_action(db, project_id=project_id, artifact_ids=artifact_ids)
+    detail = (
+        "保存されたmarimo sourceをnative marimoで開きます。"
+        if japanese
+        else "Open the saved marimo source with native marimo."
+    )
+    if action.get("status") not in {None, "ready"}:
+        detail = (
+            "失敗は隠さず、marimo sourceの修正対象として扱います。"
+            if japanese
+            else "The failure is exposed as a marimo source issue to fix."
+        )
+    if notebook_artifact is None:
+        if action.get("status") not in {None, "ready"}:
+            return {
+                **action,
+                "target_tab": "Notebooks",
+                "target_anchor": NOTEBOOK_NATIVE_MARIMO_ANCHOR,
+                "detail": detail,
+            }
+        return action
+    return {
+        **action,
+        "artifact_id": notebook_artifact.id,
+        "artifact_ids": [notebook_artifact.id],
+        "target_tab": "Notebooks",
+        "target_anchor": NOTEBOOK_NATIVE_MARIMO_ANCHOR,
+        "detail": detail,
+    }
+
+
+def first_native_notebook_artifact_for_action(
+    db: Session,
+    *,
+    project_id: str,
+    artifact_ids: list[str],
+) -> Artifact | None:
+    seen: set[str] = set()
+    for artifact_id in artifact_ids:
+        if artifact_id in seen:
+            continue
+        seen.add(artifact_id)
+        artifact = db.get(Artifact, artifact_id)
+        if artifact is None or artifact.project_id != project_id:
+            continue
+        if research_plan_artifact_is_native_marimo_source(artifact):
+            return artifact
+    return None
+
+
+def normalize_agent_chat_notebook_update_message(
+    payload: dict[str, Any],
+    assistant_message: str,
+    *,
+    japanese: bool,
+) -> str:
+    intent = payload.get("intent") if isinstance(payload.get("intent"), dict) else {}
+    if intent.get("type") != "notebook_artifact_update":
+        return assistant_message
+    brief = payload.get("response_brief") if isinstance(payload.get("response_brief"), dict) else {}
+    has_legacy_preview_reference = any(
+        isinstance(brief.get(key), str) and bool(str(brief.get(key) or "").strip())
+        for key in ("html_artifact_id", "preview_artifact_id")
+    )
+    status = str(brief.get("status") or intent.get("status") or "").strip()
+    if not has_legacy_preview_reference and status != "preview_failed":
+        return assistant_message
+    if status == "preview_failed":
+        return (
+            "分析ノートブックのソースは保存されていますが、marimoで開くには修正が必要です。"
+            if japanese
+            else "The analysis notebook source is saved, but it needs a fix before marimo can open it."
+        )
+    return (
+        "分析ノートブックを保存しました。ここからmarimoで開けます。"
+        if japanese
+        else "The analysis notebook is saved and can be opened from here with marimo."
+    )
+
+
+def normalize_agent_chat_attention_message(
+    payload: dict[str, Any],
+    assistant_message: str,
+    *,
+    japanese: bool,
+) -> str:
+    intent = payload.get("intent") if isinstance(payload.get("intent"), dict) else {}
+    if intent.get("type") != "agent_attention_event":
+        return assistant_message
+    message_kind = str(intent.get("message_kind") or "").strip()
+    if not message_kind:
+        return assistant_message
+    if message_kind == "research_plan_human_attention_requested" and assistant_message.strip():
+        return assistant_message
+    brief = payload.get("response_brief") if isinstance(payload.get("response_brief"), dict) else {}
+    details = brief.get("details") if isinstance(brief.get("details"), dict) else {}
+    return attention_chat_message(message_kind, details=details, japanese=japanese)
+
+
+def normalize_agent_chat_experiment_registration_message(
+    payload: dict[str, Any],
+    assistant_message: str,
+    *,
+    japanese: bool,
+) -> str:
+    intent = payload.get("intent") if isinstance(payload.get("intent"), dict) else {}
+    if intent.get("type") != "experiment_results_registration_failed":
+        return assistant_message
+    if japanese:
+        return (
+            "モデル評価結果はまだLeaderboardに反映していません。"
+            "表示中の順位表はそのまま保持し、分析は続いています。"
+        )
+    return (
+        "The model evaluation results have not been added to the Leaderboard yet. "
+        "The visible ranking is unchanged, and the analysis is continuing."
+    )
+
+
+def normalize_agent_chat_native_marimo_runtime_message(
+    payload: dict[str, Any],
+    assistant_message: str,
+    *,
+    japanese: bool,
+) -> str:
+    intent = payload.get("intent") if isinstance(payload.get("intent"), dict) else {}
+    if intent.get("type") not in {"native_marimo_runtime_failed", "native_marimo_open_failed"}:
+        return assistant_message
+    if intent.get("type") == "native_marimo_open_failed" and japanese:
+        return (
+            "このNotebookをmarimoで開けませんでした。Notebook sourceは保存済みです。"
+            "未完成の表示にはせず、Notebook/runtimeの修正対象として扱います。"
+        )
+    if intent.get("type") == "native_marimo_open_failed":
+        return (
+            "This notebook could not be opened in marimo. The notebook source is still saved. "
+            "It is treated as a notebook/runtime repair target rather than shown as finished."
+        )
+    if japanese:
+        return (
+            "Notebookはnative marimoで開きましたが、実行中にエラーが出ています。"
+            "このNotebook sourceを修正対象として扱い、Codexに修正できる形で詳細を渡しています。"
+        )
+    return (
+        "The notebook opened in native marimo, but it hit a runtime error. "
+        "The source notebook is marked for repair, and Codex has the details it needs to fix it."
+    )
+
+
+def normalize_agent_chat_worker_events(
+    payload: dict[str, Any],
+    *,
+    japanese: bool,
+) -> list[Any]:
+    worker_events = payload.get("worker_events") if isinstance(payload.get("worker_events"), list) else []
+    intent = payload.get("intent") if isinstance(payload.get("intent"), dict) else {}
+    if intent.get("type") not in {"native_marimo_runtime_failed", "native_marimo_open_failed"}:
+        return worker_events
+    detail = (
+        "Notebook sourceの修正が必要です。詳細はRawと修正対象briefに保存しています。"
+        if japanese
+        else "The notebook source needs a repair. Details are saved in Raw and the repair brief."
+    )
+    title = "Notebookを開けません" if japanese else "Notebook open failed"
+    normalized: list[Any] = []
+    for event in worker_events:
+        if not isinstance(event, dict):
+            normalized.append(event)
+            continue
+        human_description = event.get("human_description") if isinstance(event.get("human_description"), dict) else {}
+        normalized.append(
+            {
+                **event,
+                "detail": detail,
+                "human_description": {
+                    **human_description,
+                    "title": human_description.get("title") or title,
+                    "summary": detail,
+                },
+            }
+        )
+    return normalized
+
+
+def normalize_agent_chat_response_brief(payload: dict[str, Any]) -> dict[str, Any] | None:
+    brief = payload.get("response_brief") if isinstance(payload.get("response_brief"), dict) else None
+    if brief is None:
+        return None
+    intent = payload.get("intent") if isinstance(payload.get("intent"), dict) else {}
+    if intent.get("type") != "notebook_artifact_update":
+        return brief
+    normalized = {
+        key: value
+        for key, value in brief.items()
+        if key not in {"html_artifact_id", "preview_artifact_id"}
+    }
+    notebook_artifact_id = normalized.get("notebook_artifact_id")
+    if isinstance(notebook_artifact_id, str) and notebook_artifact_id.strip():
+        normalized.setdefault("source_artifact_id", notebook_artifact_id)
+    return normalized
+
+
 @router.get("/api/projects/{project_id}/agent-chat/history", response_model=list[AgentChatHistoryTurnRead])
 def list_agent_chat_history(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> list[dict[str, Any]]:
     project = require_project(db, project_id)
-    if reconcile_project_notebook_chat_links(db, store=store, project=project):
-        db.flush()
-        db.commit()
     response_locale = latest_project_response_locale(db, project)
+    japanese = locale_is_japanese(response_locale)
     plan_actions, plan_next_focus = chat_update_actions_from_research_plan_evidence(
         db,
         project=project,
-        japanese=locale_is_japanese(response_locale),
+        japanese=japanese,
+    )
+    registered_output_actions, registered_output_next_focus = chat_update_actions_from_registered_output_evidence(
+        db,
+        project=project,
+        japanese=japanese,
     )
     artifacts = list(
         db.scalars(
@@ -3752,28 +4832,66 @@ def list_agent_chat_history(
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        payload = normalize_agent_chat_history_payload(artifact, payload, japanese=japanese)
         if not isinstance(payload, dict) or payload.get("schema_version") != "agent_chat_turn.v1":
+            continue
+        if agent_attention_event_is_resolved(db, project_id=project_id, payload=payload):
             continue
         metadata = loads_json(artifact.metadata_json, {})
         assistant_message = str(payload.get("assistant_message") or "")
         intent = payload.get("intent") if isinstance(payload.get("intent"), dict) else {}
         if intent.get("type") == "autonomous_agent_progress_report":
             assistant_message = chat_update_message_from_text(assistant_message)
+        assistant_message = normalize_agent_chat_notebook_update_message(
+            payload,
+            assistant_message,
+            japanese=japanese,
+        )
+        assistant_message = normalize_agent_chat_attention_message(
+            payload,
+            assistant_message,
+            japanese=japanese,
+        )
+        assistant_message = normalize_agent_chat_experiment_registration_message(
+            payload,
+            assistant_message,
+            japanese=japanese,
+        )
+        assistant_message = normalize_agent_chat_native_marimo_runtime_message(
+            payload,
+            assistant_message,
+            japanese=japanese,
+        )
         if isinstance(metadata.get("job_id"), str):
             seen_job_ids.add(metadata["job_id"])
+        actions = normalize_agent_chat_navigation_actions(
+            payload.get("actions") if isinstance(payload.get("actions"), list) else [],
+            db=db,
+            project_id=project_id,
+            japanese=japanese,
+        )
+        next_focus = normalize_agent_chat_navigation_focus(
+            payload.get("next_focus") if isinstance(payload.get("next_focus"), dict) else {}
+        )
+        next_focus = normalize_agent_chat_notebook_action_artifact(
+            db,
+            project_id=project_id,
+            action=next_focus,
+            japanese=japanese,
+        )
         turn = {
             "schema_version": "agent_chat_turn.v1",
             "project_id": project_id,
             "user_message": str(payload.get("user_message") or ""),
             "assistant_message": assistant_message,
             "intent": intent,
-            "actions": payload.get("actions") if isinstance(payload.get("actions"), list) else [],
+            "actions": actions,
             "action_summary": payload.get("action_summary") if isinstance(payload.get("action_summary"), dict) else {},
-            "response_brief": payload.get("response_brief") if isinstance(payload.get("response_brief"), dict) else None,
+            "response_brief": normalize_agent_chat_response_brief(payload),
             "response_composer": payload.get("response_composer") if isinstance(payload.get("response_composer"), dict) else None,
-            "worker_events": payload.get("worker_events") if isinstance(payload.get("worker_events"), list) else [],
+            "worker_events": normalize_agent_chat_worker_events(payload, japanese=japanese),
             "token_usage": payload.get("token_usage") if isinstance(payload.get("token_usage"), dict) else {},
-            "next_focus": payload.get("next_focus") if isinstance(payload.get("next_focus"), dict) else {},
+            "next_focus": next_focus,
             "artifact_id": artifact.id,
             "job_id": metadata.get("job_id") if isinstance(metadata.get("job_id"), str) else None,
             "created_at": artifact.created_at.isoformat(),
@@ -3877,15 +4995,17 @@ def list_agent_chat_history(
         else:
             turns.append(pending_agent_chat_turn_from_job(db, project_id, job, payload))
     latest_unlinked_update = next((turn for turn in reversed(main_session_update_turns) if not turn.get("actions")), None)
-    if latest_unlinked_update is not None and plan_actions:
-        latest_unlinked_update["actions"] = plan_actions
+    linked_actions = merge_agent_chat_actions(plan_actions, registered_output_actions, limit=3)
+    linked_next_focus = registered_output_next_focus or plan_next_focus
+    if latest_unlinked_update is not None and linked_actions:
+        latest_unlinked_update["actions"] = linked_actions
         response_brief = latest_unlinked_update["response_brief"] if isinstance(latest_unlinked_update["response_brief"], dict) else {}
         latest_unlinked_update["response_brief"] = {
             **response_brief,
-            "linked_action_count": len(plan_actions),
-            "linked_action_source": "research_plan_completion_evidence",
+            "linked_action_count": len(linked_actions),
+            "linked_action_source": "registered_output_evidence",
         }
-        latest_unlinked_update["next_focus"] = plan_next_focus
+        latest_unlinked_update["next_focus"] = linked_next_focus
     paired_update_ids.update({
         str(turn.get("paired_progress_artifact_id"))
         for turn in turns
@@ -3894,7 +5014,181 @@ def list_agent_chat_history(
     turns.extend(
         turn for turn in main_session_update_turns if isinstance(turn.get("artifact_id"), str) and turn["artifact_id"] not in paired_update_ids
     )
-    return compact_agent_chat_history_turns(turns)
+    return compact_agent_chat_history_turns(turns, locale=response_locale, db=db, project_id=project_id)
+
+
+def normalize_agent_chat_history_payload(artifact: Artifact, payload: Any, *, japanese: bool) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("schema_version") == "agent_chat_turn.v1":
+        return payload
+    brief = payload.get("response_brief") if isinstance(payload.get("response_brief"), dict) else {}
+    if brief.get("schema_version") != "experiment_results_registered.v1":
+        return None
+    run_ids = [str(item) for item in brief.get("run_ids", []) if isinstance(item, str) and item.strip()]
+    assistant_message = str(payload.get("assistant_message") or "").strip()
+    if not assistant_message:
+        assistant_message = (
+            f"{len(run_ids)}件のモデル評価をLeaderboardに登録しました。"
+            if japanese
+            else f"Registered {len(run_ids)} model evaluation(s) on the leaderboard."
+        )
+    return {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": artifact.project_id or str(brief.get("project_id") or ""),
+        "user_message": str(payload.get("user_message") or ""),
+        "assistant_message": assistant_message,
+        "intent": {
+            "type": "experiment_results_registered",
+            "source": "main_agent_session_workspace",
+            "status": "ready",
+        },
+        "actions": payload.get("actions") if isinstance(payload.get("actions"), list) else [],
+        "action_summary": payload.get("action_summary") if isinstance(payload.get("action_summary"), dict) else {},
+        "response_brief": brief,
+        "response_composer": payload.get("response_composer")
+        if isinstance(payload.get("response_composer"), dict)
+        else {
+            "schema_version": "agent_response_composer.v1",
+            "mode": "main_agent_session",
+            "status": "harness_fact",
+        },
+        "worker_events": payload.get("worker_events") if isinstance(payload.get("worker_events"), list) else [],
+        "token_usage": payload.get("token_usage")
+        if isinstance(payload.get("token_usage"), dict)
+        else {"source": "not_applicable", "is_estimate": False, "series": []},
+        "next_focus": payload.get("next_focus")
+        if isinstance(payload.get("next_focus"), dict)
+        else {
+            "target_tab": "Leaderboard",
+            "target_anchor": "result-readout",
+            "label": "リーダーボード" if japanese else "Leaderboard",
+        },
+    }
+
+
+def merge_agent_chat_actions(*action_groups: list[dict[str, Any]], limit: int = 3) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for group in action_groups:
+        for action in group:
+            if not isinstance(action, dict):
+                continue
+            key = (
+                str(action.get("target_tab") or ""),
+                str(action.get("target_anchor") or ""),
+                str(action.get("artifact_id") or ""),
+                str(action.get("label") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(action)
+            if len(merged) >= limit:
+                return merged
+    return merged
+
+
+def chat_update_actions_from_registered_output_evidence(
+    db: Session,
+    *,
+    project: Project,
+    japanese: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    actions: list[dict[str, Any]] = []
+    latest_notebooks = list(
+        db.scalars(
+            select(Artifact)
+            .where(
+                Artifact.project_id == project.id,
+                Artifact.asset_type.in_(("analysis_notebook", "marimo_notebook")),
+            )
+            .order_by(Artifact.created_at.desc(), Artifact.version.desc())
+            .limit(12)
+        ).all()
+    )
+    notebook_ids: list[str] = []
+    for artifact in latest_notebooks:
+        if research_plan_artifact_is_native_marimo_source(artifact):
+            notebook_ids.append(artifact.id)
+        if len(notebook_ids) >= 3:
+            break
+    if notebook_ids:
+        actions.append(
+            {
+                "type": "open_surface",
+                "status": "ready",
+                "label": "ノートブックを開く" if japanese else "Open notebooks",
+                "target_tab": "Notebooks",
+                "target_anchor": NOTEBOOK_NATIVE_MARIMO_ANCHOR,
+                "artifact_id": notebook_ids[0],
+                "artifact_ids": notebook_ids,
+                "detail": (
+                    "登録済みのmarimo notebookをnative marimoで開きます。"
+                    if japanese
+                    else "Open the registered marimo notebooks with native marimo."
+                ),
+            }
+        )
+    run_count = db.scalar(
+        select(func.count())
+        .select_from(ExperimentRun)
+        .where(ExperimentRun.project_id == project.id, ExperimentRun.status == "succeeded")
+    )
+    if int(run_count or 0) > 0:
+        actions.append(
+            {
+                "type": "open_surface",
+                "status": "ready",
+                "label": "リーダーボードを見る" if japanese else "Open leaderboard",
+                "target_tab": "Leaderboard",
+                "target_anchor": "result-readout",
+                "detail": (
+                    f"登録済みのモデル評価 {int(run_count or 0)} 件を順位表で確認できます。"
+                    if japanese
+                    else f"Review {int(run_count or 0)} registered model evaluation(s) in the ranked table."
+                ),
+            }
+        )
+    latest_research = db.scalar(
+        select(Artifact)
+        .where(Artifact.project_id == project.id, Artifact.asset_type == "research_findings_report")
+        .order_by(Artifact.created_at.desc())
+        .limit(1)
+    )
+    if latest_research is not None:
+        metadata = loads_json(latest_research.metadata_json, {})
+        topic = metadata.get("topic") if isinstance(metadata.get("topic"), str) else None
+        actions.append(
+            {
+                "type": "open_artifact",
+                "status": "ready",
+                "label": "保存済みの関連調査を開く" if japanese else "Open saved related research",
+                "target_tab": "Assets",
+                "target_anchor": "assets-artifact-preview",
+                "artifact_id": latest_research.id,
+                "artifact_ids": [latest_research.id],
+                "detail": (
+                    f"登録済みの従来知見調査を確認できます。{topic}"
+                    if japanese and topic
+                    else "登録済みの従来知見調査を確認できます。"
+                    if japanese
+                    else f"Open the registered prior-knowledge research. {topic}"
+                    if topic
+                    else "Open the registered prior-knowledge research."
+                ),
+            }
+        )
+    if not actions:
+        return [], None
+    next_focus = actions[-1]
+    return actions, {
+        "target_tab": next_focus.get("target_tab"),
+        "target_anchor": next_focus.get("target_anchor"),
+        "artifact_id": next_focus.get("artifact_id"),
+        "artifact_ids": next_focus.get("artifact_ids", []),
+        "label": next_focus.get("label"),
+    }
 
 
 def matching_main_session_update_for_chat_job(
@@ -4069,10 +5363,22 @@ def pending_agent_chat_turn_from_job(db: Session, project_id: str, job: Job, pay
 def compact_agent_chat_history_turns(
     turns: list[dict[str, Any]],
     *,
+    locale: str = "en-US",
     max_turns: int = 60,
     max_autonomous_progress_turns: int = 12,
+    db: Session | None = None,
+    project_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    ordered = sorted(turns, key=lambda turn: str(turn.get("created_at") or ""))
+    ordered = dedupe_repeated_experiment_registration_failure_turns(
+        dedupe_repeated_experiment_registration_turns(
+            coalesce_adjacent_notebook_update_turns(
+                sorted(turns, key=lambda turn: str(turn.get("created_at") or "")),
+                locale=locale,
+                db=db,
+                project_id=project_id,
+            )
+        )
+    )
     selected_reversed: list[dict[str, Any]] = []
     progress_count = 0
     for turn in reversed(ordered):
@@ -4088,6 +5394,421 @@ def compact_agent_chat_history_turns(
     return list(reversed(selected_reversed))
 
 
+def agent_attention_event_is_resolved(db: Session, *, project_id: str, payload: dict[str, Any]) -> bool:
+    intent = payload.get("intent") if isinstance(payload.get("intent"), dict) else {}
+    if intent.get("type") != "agent_attention_event":
+        return False
+    if intent.get("message_kind") != "notebook_context_registration_needed":
+        return False
+    brief = payload.get("response_brief") if isinstance(payload.get("response_brief"), dict) else {}
+    details = brief.get("details") if isinstance(brief.get("details"), dict) else {}
+    notebook_artifact_ids = [
+        item.strip()
+        for item in details.get("notebook_artifact_ids", [])
+        if isinstance(item, str) and item.strip()
+    ]
+    if not notebook_artifact_ids:
+        return False
+    for artifact_id in notebook_artifact_ids:
+        artifact = db.get(Artifact, artifact_id)
+        if artifact is None or artifact.project_id != project_id:
+            return False
+        if not notebook_artifact_has_declared_context(db, artifact=artifact, include_sibling_versions=True):
+            return False
+    return True
+
+
+def coalesce_adjacent_notebook_update_turns(
+    turns: list[dict[str, Any]],
+    *,
+    locale: str,
+    db: Session | None = None,
+    project_id: str | None = None,
+) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    pending_kind: str | None = None
+
+    def flush_pending() -> None:
+        nonlocal pending, pending_kind
+        if not pending:
+            return
+        if len(pending) > 1 and pending_kind == "notebook_update":
+            compacted.append(group_notebook_update_turns(pending, locale=locale, db=db, project_id=project_id))
+        elif len(pending) > 1 and pending_kind == "native_marimo_runtime_failed":
+            compacted.append(group_native_marimo_runtime_failure_turns(pending, locale=locale))
+        elif len(pending) > 1 and pending_kind == "experiment_registration":
+            compacted.extend(dedupe_experiment_registration_turns(pending))
+        elif len(pending) > 1 and pending_kind == "experiment_registration_failure":
+            compacted.extend(dedupe_repeated_experiment_registration_failure_turns(pending))
+        else:
+            compacted.append(pending[0])
+        pending = []
+        pending_kind = None
+
+    for turn in turns:
+        turn_kind = agent_chat_turn_compaction_kind(turn)
+        if turn_kind:
+            if pending_kind is not None and pending_kind != turn_kind:
+                flush_pending()
+            pending_kind = turn_kind
+            pending.append(turn)
+            continue
+        flush_pending()
+        compacted.append(turn)
+    flush_pending()
+    return compacted
+
+
+def agent_chat_turn_compaction_kind(turn: dict[str, Any]) -> str | None:
+    if agent_chat_turn_is_notebook_update(turn):
+        return "notebook_update"
+    if agent_chat_turn_is_native_marimo_runtime_failure(turn):
+        return "native_marimo_runtime_failed"
+    if agent_chat_turn_is_experiment_registration(turn):
+        return "experiment_registration"
+    if agent_chat_turn_is_experiment_registration_failure(turn):
+        return "experiment_registration_failure"
+    return None
+
+
+def agent_chat_turn_is_notebook_update(turn: dict[str, Any]) -> bool:
+    intent = turn.get("intent") if isinstance(turn.get("intent"), dict) else {}
+    if intent.get("type") != "notebook_artifact_update":
+        return False
+    brief = turn.get("response_brief") if isinstance(turn.get("response_brief"), dict) else {}
+    return isinstance(brief.get("notebook_artifact_id"), str) and bool(brief.get("notebook_artifact_id"))
+
+
+def agent_chat_turn_is_native_marimo_runtime_failure(turn: dict[str, Any]) -> bool:
+    intent = turn.get("intent") if isinstance(turn.get("intent"), dict) else {}
+    if intent.get("type") != "native_marimo_runtime_failed":
+        return False
+    brief = turn.get("response_brief") if isinstance(turn.get("response_brief"), dict) else {}
+    return isinstance(brief.get("notebook_artifact_id"), str) and bool(brief.get("notebook_artifact_id"))
+
+
+def agent_chat_turn_is_experiment_registration(turn: dict[str, Any]) -> bool:
+    intent = turn.get("intent") if isinstance(turn.get("intent"), dict) else {}
+    return intent.get("type") == "experiment_results_registered"
+
+
+def agent_chat_turn_is_experiment_registration_failure(turn: dict[str, Any]) -> bool:
+    intent = turn.get("intent") if isinstance(turn.get("intent"), dict) else {}
+    return intent.get("type") == "experiment_results_registration_failed"
+
+
+def experiment_registration_turn_key(turn: dict[str, Any]) -> str:
+    brief = turn.get("response_brief") if isinstance(turn.get("response_brief"), dict) else {}
+    run_ids = brief.get("run_ids")
+    if not isinstance(run_ids, list):
+        surfaces = turn.get("visible_surfaces") if isinstance(turn.get("visible_surfaces"), dict) else {}
+        leaderboard = surfaces.get("leaderboard") if isinstance(surfaces.get("leaderboard"), dict) else {}
+        run_ids = leaderboard.get("run_ids")
+    cleaned_run_ids = sorted({str(item).strip() for item in run_ids if isinstance(item, str) and item.strip()}) if isinstance(run_ids, list) else []
+    if cleaned_run_ids:
+        return json.dumps(
+            {
+                "run_ids": cleaned_run_ids,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    result_set_fingerprint = brief.get("result_set_fingerprint")
+    if isinstance(result_set_fingerprint, str) and result_set_fingerprint.strip():
+        return f"result-set:{result_set_fingerprint.strip()}"
+    fingerprint = brief.get("notification_fingerprint")
+    if isinstance(fingerprint, str) and fingerprint.strip():
+        return f"notification:{fingerprint.strip()}"
+    return "message:" + str(turn.get("assistant_message") or "").strip()
+
+
+def dedupe_experiment_registration_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    order: list[str] = []
+    by_key: dict[str, dict[str, Any]] = {}
+    for turn in turns:
+        key = experiment_registration_turn_key(turn)
+        if key not in by_key:
+            order.append(key)
+        by_key[key] = turn
+    return [by_key[key] for key in order]
+
+
+def dedupe_repeated_experiment_registration_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest_index_by_key: dict[str, int] = {}
+    merged_actions_by_key: dict[str, list[dict[str, Any]]] = {}
+    latest_turn_by_key: dict[str, dict[str, Any]] = {}
+    for index, turn in enumerate(turns):
+        if not agent_chat_turn_is_experiment_registration(turn):
+            continue
+        key = experiment_registration_turn_key(turn)
+        actions = turn.get("actions") if isinstance(turn.get("actions"), list) else []
+        merged_actions_by_key[key] = merge_agent_chat_actions(
+            actions,
+            merged_actions_by_key.get(key, []),
+            limit=6,
+        )
+        latest_index_by_key[key] = index
+        latest_turn_by_key[key] = turn
+
+    if not latest_index_by_key:
+        return turns
+
+    deduped: list[dict[str, Any]] = []
+    for index, turn in enumerate(turns):
+        if not agent_chat_turn_is_experiment_registration(turn):
+            deduped.append(turn)
+            continue
+        key = experiment_registration_turn_key(turn)
+        if latest_index_by_key.get(key) != index:
+            continue
+        latest = dict(latest_turn_by_key[key])
+        latest["actions"] = merged_actions_by_key.get(key, latest.get("actions", []))
+        deduped.append(latest)
+    return deduped
+
+
+def experiment_registration_failure_turn_key(turn: dict[str, Any]) -> str:
+    brief = turn.get("response_brief") if isinstance(turn.get("response_brief"), dict) else {}
+    fingerprint = brief.get("failure_fingerprint")
+    if isinstance(fingerprint, str) and fingerprint.strip():
+        return f"failure:{fingerprint.strip()}"
+    operation = brief.get("operation")
+    error_type = brief.get("error_type")
+    error_message = brief.get("error_message")
+    if all(isinstance(value, str) and value.strip() for value in [operation, error_type, error_message]):
+        payload = {
+            "operation": str(operation),
+            "error_type": str(error_type),
+            "error_message": str(error_message),
+        }
+        return "failure:" + hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+    return "message:" + str(turn.get("assistant_message") or "").strip()
+
+
+def dedupe_repeated_experiment_registration_failure_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest_index_by_key: dict[str, int] = {}
+    latest_turn_by_key: dict[str, dict[str, Any]] = {}
+    for index, turn in enumerate(turns):
+        if not agent_chat_turn_is_experiment_registration_failure(turn):
+            continue
+        key = experiment_registration_failure_turn_key(turn)
+        latest_index_by_key[key] = index
+        latest_turn_by_key[key] = turn
+    if not latest_index_by_key:
+        return turns
+    deduped: list[dict[str, Any]] = []
+    for index, turn in enumerate(turns):
+        if not agent_chat_turn_is_experiment_registration_failure(turn):
+            deduped.append(turn)
+            continue
+        key = experiment_registration_failure_turn_key(turn)
+        if latest_index_by_key.get(key) == index:
+            deduped.append(latest_turn_by_key[key])
+    return deduped
+
+
+def group_notebook_update_turns(
+    turns: list[dict[str, Any]],
+    *,
+    locale: str,
+    db: Session | None = None,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    first = turns[0]
+    last = turns[-1]
+    japanese = locale_is_japanese(locale)
+    action_order: list[str] = []
+    actions_by_key: dict[str, dict[str, Any]] = {}
+    notebook_artifact_ids: list[str] = []
+    seen_action_keys: set[str] = set()
+    source_artifact_ids: list[str] = []
+    source_event_indexes: list[int] = []
+    for turn in turns:
+        artifact_id = turn.get("artifact_id")
+        if isinstance(artifact_id, str) and artifact_id.strip():
+            source_artifact_ids.append(artifact_id)
+        brief = turn.get("response_brief") if isinstance(turn.get("response_brief"), dict) else {}
+        notebook_artifact_id = brief.get("notebook_artifact_id")
+        if isinstance(notebook_artifact_id, str) and notebook_artifact_id.strip() and notebook_artifact_id not in notebook_artifact_ids:
+            notebook_artifact_ids.append(notebook_artifact_id)
+        source_event = brief.get("source_transcript_event") if isinstance(brief.get("source_transcript_event"), dict) else {}
+        event_index = source_event.get("event_index")
+        if isinstance(event_index, int):
+            source_event_indexes.append(event_index)
+        for action in turn.get("actions") if isinstance(turn.get("actions"), list) else []:
+            if not isinstance(action, dict):
+                continue
+            action_key = str(action.get("artifact_id") or action.get("label") or len(actions))
+            if action_key not in seen_action_keys:
+                seen_action_keys.add(action_key)
+                action_order.append(action_key)
+            actions_by_key[action_key] = action
+    actions = [actions_by_key[key] for key in action_order if key in actions_by_key]
+    notebook_artifact_ids = representative_notebook_artifact_ids(
+        db,
+        project_id=project_id,
+        artifact_ids=notebook_artifact_ids,
+    )
+    if db is not None and project_id and notebook_artifact_ids:
+        allowed_artifact_ids = set(notebook_artifact_ids)
+        actions = [
+            action
+            for action in actions
+            if not isinstance(action.get("artifact_id"), str) or action.get("artifact_id") in allowed_artifact_ids
+        ]
+    count = len(notebook_artifact_ids) or len(turns)
+    if count == 1 and len(turns) > 1:
+        assistant_message = (
+            "分析ノートブックを更新しました。最新版をここからmarimoで開けます。"
+            if japanese
+            else "The analysis notebook was updated. Open the latest version from here with marimo."
+        )
+    else:
+        assistant_message = (
+            f"分析ノートブック{count}件の最新版をここからmarimoで開けます。"
+            if japanese
+            else f"The latest version of {count} analysis notebook(s) can be opened from here with marimo."
+        )
+    grouped = {
+        **last,
+        "user_message": "",
+        "assistant_message": assistant_message,
+        "intent": {
+            **(last.get("intent") if isinstance(last.get("intent"), dict) else {}),
+            "type": "notebook_artifact_update",
+            "grouped": True,
+            "grouped_turn_count": len(turns),
+        },
+        "actions": actions,
+        "response_brief": {
+            "schema_version": "notebook_artifact_update_group.v1",
+            "status": "source_saved",
+            "grouped_turn_count": len(turns),
+            "notebook_count": count,
+            "notebook_artifact_ids": notebook_artifact_ids,
+            "source_artifact_ids": source_artifact_ids,
+            "source_transcript_event_indexes": source_event_indexes,
+        },
+        "artifact_id": f"notebook_update_group_{source_artifact_ids[0] if source_artifact_ids else 'first'}_{source_artifact_ids[-1] if source_artifact_ids else 'last'}",
+        "created_at": last.get("created_at") or first.get("created_at"),
+    }
+    if actions:
+        grouped["next_focus"] = actions[-1]
+    return grouped
+
+
+def group_native_marimo_runtime_failure_turns(
+    turns: list[dict[str, Any]],
+    *,
+    locale: str,
+) -> dict[str, Any]:
+    first = turns[0]
+    last = turns[-1]
+    japanese = locale_is_japanese(locale)
+    notebook_artifact_ids: list[str] = []
+    source_artifact_ids: list[str] = []
+    actions: list[dict[str, Any]] = []
+    seen_action_keys: set[str] = set()
+    latest_error_summary = ""
+    for turn in turns:
+        artifact_id = turn.get("artifact_id")
+        if isinstance(artifact_id, str) and artifact_id.strip():
+            source_artifact_ids.append(artifact_id)
+        brief = turn.get("response_brief") if isinstance(turn.get("response_brief"), dict) else {}
+        notebook_artifact_id = brief.get("notebook_artifact_id")
+        if isinstance(notebook_artifact_id, str) and notebook_artifact_id.strip() and notebook_artifact_id not in notebook_artifact_ids:
+            notebook_artifact_ids.append(notebook_artifact_id)
+        error_summary = brief.get("error_summary")
+        if isinstance(error_summary, str) and error_summary.strip():
+            latest_error_summary = error_summary.strip()
+        for action in turn.get("actions") if isinstance(turn.get("actions"), list) else []:
+            if not isinstance(action, dict):
+                continue
+            action_key = str(action.get("artifact_id") or action.get("label") or len(actions))
+            if action_key in seen_action_keys:
+                continue
+            seen_action_keys.add(action_key)
+            actions.append(action)
+    if len(notebook_artifact_ids) == 1:
+        assistant_message = (
+            "同じNotebookでruntime errorが続いています。最新版をここから確認できます。"
+            if japanese
+            else "The same notebook is still reporting runtime errors. Open the latest failure from here."
+        )
+    else:
+        count = len(notebook_artifact_ids) or len(turns)
+        assistant_message = (
+            f"Notebook {count}件でruntime errorが出ています。ここから修正対象を確認できます。"
+            if japanese
+            else f"{count} notebook(s) are reporting runtime errors. Open the repair targets from here."
+        )
+    if latest_error_summary:
+        assistant_message = f"{assistant_message}\n\n{latest_error_summary}"
+    grouped = {
+        **last,
+        "user_message": "",
+        "assistant_message": assistant_message,
+        "intent": {
+            **(last.get("intent") if isinstance(last.get("intent"), dict) else {}),
+            "type": "native_marimo_runtime_failed",
+            "grouped": True,
+            "grouped_turn_count": len(turns),
+        },
+        "actions": actions,
+        "response_brief": {
+            "schema_version": "native_marimo_runtime_failed_group.v1",
+            "status": "needs_attention",
+            "grouped_turn_count": len(turns),
+            "notebook_count": len(notebook_artifact_ids) or len(turns),
+            "notebook_artifact_ids": notebook_artifact_ids,
+            "source_artifact_ids": source_artifact_ids,
+            "error_summary": latest_error_summary,
+        },
+        "artifact_id": f"native_marimo_runtime_failure_group_{source_artifact_ids[0] if source_artifact_ids else 'first'}_{source_artifact_ids[-1] if source_artifact_ids else 'last'}",
+        "created_at": last.get("created_at") or first.get("created_at"),
+    }
+    if actions:
+        grouped["next_focus"] = actions[-1]
+    return grouped
+
+
+def representative_notebook_artifact_ids(
+    db: Session | None,
+    *,
+    project_id: str | None,
+    artifact_ids: list[str],
+) -> list[str]:
+    if db is None or not project_id or not artifact_ids:
+        return artifact_ids
+    artifacts = {
+        artifact.id: artifact
+        for artifact in db.scalars(
+            select(Artifact).where(Artifact.project_id == project_id, Artifact.id.in_(artifact_ids))
+        ).all()
+    }
+    if not artifacts:
+        return artifact_ids
+    grouped: dict[tuple[str, str], Artifact] = {}
+    order: list[tuple[str, str]] = []
+    for artifact_id in artifact_ids:
+        artifact = artifacts.get(artifact_id)
+        if artifact is None:
+            continue
+        key = (artifact.asset_type, artifact.name)
+        if key not in grouped:
+            order.append(key)
+            grouped[key] = artifact
+            continue
+        current = grouped[key]
+        if (artifact.version, artifact.created_at, artifact.id) >= (current.version, current.created_at, current.id):
+            grouped[key] = artifact
+    representatives = [grouped[key].id for key in order if key in grouped]
+    return representatives or artifact_ids
+
+
 @router.get("/api/projects/{project_id}/research-plan/timeline")
 def get_research_plan_timeline(
     project_id: str,
@@ -4095,6 +5816,12 @@ def get_research_plan_timeline(
     locale: str | None = None,
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
+    record_harness_objective_in_research_plan(
+        db,
+        project_id=project.id,
+        objective_label=project.target_column,
+    )
+    db.flush()
     response_locale = (
         locale.strip()
         if isinstance(locale, str) and locale.strip()
@@ -4508,11 +6235,11 @@ def prepare_planned_agent_workspace_endpoint(
 ) -> dict[str, Any]:
     contract_artifact = db.get(Artifact, artifact_id)
     if contract_artifact is None:
-        raise HTTPException(status_code=404, detail="AgentTaskContract artifact not found")
+        raise HTTPException(status_code=404, detail="Codex work request artifact not found")
     if contract_artifact.asset_type != "agent_task_contract":
         raise HTTPException(status_code=400, detail="Artifact is not an agent_task_contract")
     if contract_artifact.project_id is None:
-        raise HTTPException(status_code=400, detail="AgentTaskContract artifact is not project-scoped")
+        raise HTTPException(status_code=400, detail="Codex work request artifact is not project-scoped")
     project = require_project(db, contract_artifact.project_id)
     job = create_job(
         db,
@@ -4536,11 +6263,11 @@ def review_agent_task_readiness_endpoint(
 ) -> dict[str, Any]:
     contract_artifact = db.get(Artifact, artifact_id)
     if contract_artifact is None:
-        raise HTTPException(status_code=404, detail="AgentTaskContract artifact not found")
+        raise HTTPException(status_code=404, detail="Codex work request artifact not found")
     if contract_artifact.asset_type != "agent_task_contract":
         raise HTTPException(status_code=400, detail="Artifact is not an agent_task_contract")
     if contract_artifact.project_id is None:
-        raise HTTPException(status_code=400, detail="AgentTaskContract artifact is not project-scoped")
+        raise HTTPException(status_code=400, detail="Codex work request artifact is not project-scoped")
     project = require_project(db, contract_artifact.project_id)
     job = create_job(
         db,
@@ -4564,11 +6291,11 @@ def run_planned_agent_task_stub_endpoint(
 ) -> dict[str, Any]:
     contract_artifact = db.get(Artifact, artifact_id)
     if contract_artifact is None:
-        raise HTTPException(status_code=404, detail="AgentTaskContract artifact not found")
+        raise HTTPException(status_code=404, detail="Codex work request artifact not found")
     if contract_artifact.asset_type != "agent_task_contract":
         raise HTTPException(status_code=400, detail="Artifact is not an agent_task_contract")
     if contract_artifact.project_id is None:
-        raise HTTPException(status_code=400, detail="AgentTaskContract artifact is not project-scoped")
+        raise HTTPException(status_code=400, detail="Codex work request artifact is not project-scoped")
     project = require_project(db, contract_artifact.project_id)
     job = create_job(
         db,
@@ -4593,11 +6320,11 @@ def run_planned_agent_task_codex_endpoint(
 ) -> dict[str, Any]:
     contract_artifact = db.get(Artifact, artifact_id)
     if contract_artifact is None:
-        raise HTTPException(status_code=404, detail="AgentTaskContract artifact not found")
+        raise HTTPException(status_code=404, detail="Codex work request artifact not found")
     if contract_artifact.asset_type != "agent_task_contract":
         raise HTTPException(status_code=400, detail="Artifact is not an agent_task_contract")
     if contract_artifact.project_id is None:
-        raise HTTPException(status_code=400, detail="AgentTaskContract artifact is not project-scoped")
+        raise HTTPException(status_code=400, detail="Codex work request artifact is not project-scoped")
     project = require_project(db, contract_artifact.project_id)
     job = create_job(
         db,
@@ -4899,7 +6626,7 @@ def prepare_result_notebook_evidence_endpoint(
             "external_network_access": "disabled",
             "connector_credentials_materialized": False,
             "secrets_materialized": False,
-            "execution_mode": "generate_and_safe_static_capture",
+            "execution_mode": "prepare_native_marimo_source_context",
             "executes_notebook_code": False,
             "execution": "queued_worker",
         },
@@ -4939,7 +6666,7 @@ def preview_report(report_id: str, db: Annotated[Session, Depends(get_session)])
     path = artifact_primary_path(artifact)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file not found")
-    return artifact_preview_to_dict(artifact, path, limit_bytes=artifact_preview_limit_bytes(artifact, path))
+    return artifact_preview_to_dict(artifact, path, limit_bytes=artifact_preview_limit_bytes(artifact, path), db=db)
 
 
 @router.get("/api/reports/{report_id}/download")
@@ -5063,12 +6790,8 @@ def generate_data_understanding_notebook_endpoint(
 def list_project_analysis_notebooks(
     project_id: str,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
-    if reconcile_project_notebook_chat_links(db, store=store, project=project):
-        db.flush()
-        db.commit()
     return build_project_notebook_index(db, project)
 
 
@@ -5089,8 +6812,8 @@ def plan_analysis_notebook_execution_endpoint(
     notebook_artifact = db.get(Artifact, artifact_id)
     if notebook_artifact is None:
         raise HTTPException(status_code=404, detail="Analysis notebook artifact not found")
-    if notebook_artifact.asset_type != "analysis_notebook":
-        raise HTTPException(status_code=400, detail="Artifact is not an analysis_notebook")
+    if notebook_artifact.asset_type not in {"analysis_notebook", "marimo_notebook"}:
+        raise HTTPException(status_code=400, detail="Artifact is not a native marimo notebook source artifact")
     if notebook_artifact.project_id is None:
         raise HTTPException(status_code=400, detail="Analysis notebook artifact must be project-scoped")
     require_project(db, notebook_artifact.project_id)
@@ -5111,35 +6834,505 @@ def plan_analysis_notebook_execution_endpoint(
     return job_to_dict(job)
 
 
-@router.post("/api/analysis-notebooks/{artifact_id}/execution-capture", response_model=JobRead)
-def capture_analysis_notebook_execution_endpoint(
+@router.post("/api/analysis-notebooks/{artifact_id}/marimo-session")
+def start_native_marimo_session_endpoint(
     artifact_id: str,
+    request: Request,
     db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+    restart: bool = Query(False),
 ) -> dict[str, Any]:
     notebook_artifact = db.get(Artifact, artifact_id)
     if notebook_artifact is None:
         raise HTTPException(status_code=404, detail="Analysis notebook artifact not found")
-    if notebook_artifact.asset_type != "analysis_notebook":
-        raise HTTPException(status_code=400, detail="Artifact is not an analysis_notebook")
-    if notebook_artifact.project_id is None:
-        raise HTTPException(status_code=400, detail="Analysis notebook artifact must be project-scoped")
-    require_project(db, notebook_artifact.project_id)
-    job = create_job(
+    if notebook_artifact.asset_type not in {"analysis_notebook", "marimo_notebook"}:
+        raise HTTPException(status_code=400, detail="Artifact is not a marimo source notebook")
+    if notebook_artifact.project_id is not None:
+        require_project(db, notebook_artifact.project_id)
+    if restart:
+        stop_native_marimo_session_for_artifact(notebook_artifact.id)
+    try:
+        session = start_or_get_native_marimo_session(
+            artifact=notebook_artifact,
+            settings=request.app.state.settings,
+        )
+    except (FileNotFoundError, RuntimeError, TimeoutError, ValueError) as exc:
+        if notebook_artifact.project_id is not None:
+            project = require_project(db, notebook_artifact.project_id)
+            record_native_marimo_open_failure_chat_turn(
+                db,
+                store=store,
+                project=project,
+                notebook_artifact=notebook_artifact,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            db.commit()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return session.to_dict()
+
+
+@router.get("/api/marimo-sessions/{session_id}")
+def get_native_marimo_session_endpoint(
+    session_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    session = native_marimo_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Native marimo session is not running")
+    payload = session.to_dict()
+    runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+    error_excerpt = runtime.get("error_excerpt") if isinstance(runtime, dict) else None
+    if isinstance(error_excerpt, str) and error_excerpt.strip() and session.project_id is not None:
+        notebook_artifact = db.get(Artifact, session.artifact_id)
+        project = db.get(Project, session.project_id)
+        if notebook_artifact is not None and project is not None:
+            if payload.get("status") == "failed":
+                artifact = record_native_marimo_open_failure_chat_turn(
+                    db,
+                    store=store,
+                    project=project,
+                    notebook_artifact=notebook_artifact,
+                    error_type="RuntimeError",
+                    error_message=error_excerpt,
+                )
+            else:
+                artifact = record_native_marimo_runtime_failure_chat_turn(
+                    db,
+                    store=store,
+                    project=project,
+                    notebook_artifact=notebook_artifact,
+                    error_message=error_excerpt,
+                )
+            if artifact is not None:
+                db.commit()
+    return payload
+
+
+@router.delete("/api/marimo-sessions/{session_id}")
+def stop_native_marimo_session_endpoint(session_id: str) -> dict[str, Any]:
+    stopped = stop_native_marimo_session(session_id)
+    return {"schema_version": "native_marimo_session_stop.v1", "session_id": session_id, "stopped": stopped}
+
+
+def record_native_marimo_runtime_failure_chat_turn(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    notebook_artifact: Artifact,
+    error_message: str,
+) -> Artifact | None:
+    error_summary = summarize_runtime_error_for_chat(error_message)
+    notebook_source_hash = marimo_notebook_source_hash_for_artifact(notebook_artifact)
+    source_hash_key = notebook_source_hash[:16] if notebook_source_hash is not None else "unknown_source"
+    digest = hashlib.sha1(f"{notebook_artifact.id}:runtime:{source_hash_key}:{error_message}".encode()).hexdigest()[:12]
+    source_key = f"native_marimo_runtime_failure:{notebook_artifact.id}:{source_hash_key}:{digest}"
+    if native_marimo_failure_chat_turn_exists(
         db,
-        job_type="capture_notebook_execution",
-        project_id=notebook_artifact.project_id,
-        input_payload={"analysis_notebook_artifact_id": notebook_artifact.id},
-        policy={
-            "external_network_access": "not_granted_by_harness",
-            "connector_credentials_materialized": False,
-            "secrets_materialized": False,
-            "execution_mode": "marimo_html_export_with_static_compile_precheck",
-            "executes_notebook_code": True,
-            "python_compile_only": False,
-            "execution": "queued_worker",
+        project=project,
+        source="native_marimo_runtime_failure",
+        source_key=source_key,
+    ):
+        return None
+
+    session = active_main_session(db, project.id) or latest_main_session(db, project.id)
+    if session is not None and session.workspace_path:
+        write_notebook_runtime_failure_to_workspace_inbox(
+            Path(session.workspace_path),
+            notebook_artifact=notebook_artifact,
+            error_message=f"RuntimeError: {error_message}",
+        )
+
+    response_locale = latest_project_response_locale(db, project)
+    japanese = locale_is_japanese(response_locale)
+    if japanese:
+        assistant_message = (
+            "Notebookはnative marimoで開きましたが、実行中にruntime errorが出ています。"
+            "このNotebook sourceを修正対象として扱い、Codexに修正できる形で詳細を渡しています。"
+        )
+        action_label = "Notebookを修正対象として開く"
+        action_detail = "native marimoでruntime errorを確認できます。"
+        next_label = "Notebook"
+    else:
+        assistant_message = (
+            "The notebook opened in native marimo, but marimo reported runtime errors. "
+            "Treat this notebook source as the repair target; Codex has the details it needs to fix it."
+        )
+        action_label = "Open notebook for repair"
+        action_detail = "Open the native marimo notebook and inspect the runtime error."
+        next_label = "Notebook"
+
+    response = {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": project.id,
+        "user_message": "",
+        "assistant_message": assistant_message,
+        "intent": {
+            "type": "native_marimo_runtime_failed",
+            "source": "native_marimo_session",
+            "status": "needs_attention",
+        },
+        "actions": [
+            {
+                "type": "open_artifact",
+                "status": "needs_attention",
+                "label": action_label,
+                "target_tab": "Notebooks",
+                "target_anchor": NOTEBOOK_NATIVE_MARIMO_ANCHOR,
+                "detail": action_detail,
+                "artifact_id": notebook_artifact.id,
+                "artifact_ids": [notebook_artifact.id],
+            }
+        ],
+        "action_summary": {},
+        "response_brief": {
+            "schema_version": "native_marimo_runtime_failed.v1",
+            "agent_session_id": session.id if session is not None else None,
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_source_hash": notebook_source_hash,
+            "error_type": "RuntimeError",
+            "error_message": error_message[:4000],
+            "error_summary": error_summary,
+        },
+        "response_composer": {
+            "schema_version": "agent_response_composer.v1",
+            "mode": "harness_observation",
+            "status": "harness_fact",
+        },
+        "worker_events": [
+            {
+                "worker_id": f"native-marimo-runtime-{notebook_artifact.id}",
+                "display_name": "marimo Notebook",
+                "status": "needs_attention",
+                "headline": "Notebook runtime error" if not japanese else "Notebook runtime error",
+                "detail": error_summary,
+                "job_type": "native_marimo_session",
+                "project_id": project.id,
+                "project_name": project.name,
+                "target_tab": "Notebooks",
+                "target_anchor": NOTEBOOK_NATIVE_MARIMO_ANCHOR,
+                "artifact_id": notebook_artifact.id,
+                "artifact_ids": [notebook_artifact.id],
+                "active": False,
+                "human_description": {
+                    "source": "native_marimo_session",
+                    "title": "Notebook runtime error",
+                    "summary": error_summary,
+                },
+                "token_usage": {"source": "not_applicable", "is_estimate": False, "series": []},
+            }
+        ],
+        "token_usage": {"source": "not_applicable", "is_estimate": False, "series": []},
+        "next_focus": {
+            "target_tab": "Notebooks",
+            "target_anchor": NOTEBOOK_NATIVE_MARIMO_ANCHOR,
+            "artifact_id": notebook_artifact.id,
+            "artifact_ids": [notebook_artifact.id],
+            "label": next_label,
+        },
+    }
+    return store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="agent_chat_turn",
+        name=f"native_marimo_runtime_failure_{notebook_artifact.id}_{digest}",
+        filename="agent_chat_turn.json",
+        payload=response,
+        metadata={
+            "project_id": project.id,
+            "agent_session_id": session.id if session is not None else None,
+            "notebook_artifact_id": notebook_artifact.id,
+            "notebook_source_hash": notebook_source_hash,
+            "source": "native_marimo_runtime_failure",
+            "source_key": source_key,
+            "status": "failed",
         },
     )
-    return job_to_dict(job)
+
+
+def summarize_runtime_error_for_chat(error_message: str, *, limit: int = 900) -> str:
+    stripped = error_message.strip()
+    if len(stripped) <= limit:
+        return stripped
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    first_line = lines[0] if lines else stripped[:limit]
+    terminal_line = next(
+        (
+            line
+            for line in reversed(lines)
+            if line != "..." and not line.startswith("[E ")
+        ),
+        lines[-1] if lines else stripped[-limit:],
+    )
+    summary = first_line if terminal_line == first_line else f"{first_line}\n...\n{terminal_line}"
+    if len(summary) <= limit:
+        return summary
+    return f"{summary[: max(0, limit - 4)].rstrip()}\n..."
+
+
+def record_native_marimo_open_failure_chat_turn(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    notebook_artifact: Artifact,
+    error_type: str,
+    error_message: str,
+) -> Artifact | None:
+    digest = hashlib.sha1(f"{notebook_artifact.id}:{error_type}:{error_message}".encode()).hexdigest()[:12]
+    source_key = f"native_marimo_open_failure:{notebook_artifact.id}:{digest}"
+    if native_marimo_failure_chat_turn_exists(
+        db,
+        project=project,
+        source="native_marimo_open_failure",
+        source_key=source_key,
+    ):
+        return None
+
+    session = active_main_session(db, project.id) or latest_main_session(db, project.id)
+    if session is not None and session.workspace_path:
+        write_notebook_runtime_failure_to_workspace_inbox(
+            Path(session.workspace_path),
+            notebook_artifact=notebook_artifact,
+            error_message=f"{error_type}: {error_message}",
+        )
+
+    response_locale = latest_project_response_locale(db, project)
+    japanese = locale_is_japanese(response_locale)
+    if japanese:
+        assistant_message = (
+            "このNotebookをmarimoで開けませんでした。Notebook sourceは保存済みです。"
+            "未完成の表示にはせず、Notebook/runtimeの修正対象として扱います。"
+        )
+        action_label = "Notebookを開く"
+        action_detail = "native marimoで再度開きます。失敗する場合は修正対象として扱います。"
+        next_label = "Notebook"
+    else:
+        assistant_message = (
+            "This notebook could not be opened in marimo. The notebook source is still saved. "
+            "It is treated as a notebook/runtime repair target rather than shown as finished."
+        )
+        action_label = "Open notebook"
+        action_detail = "Try opening the native marimo notebook again. If it still fails, it remains marked for repair."
+        next_label = "Notebook"
+
+    response = {
+        "schema_version": "agent_chat_turn.v1",
+        "project_id": project.id,
+        "user_message": "",
+        "assistant_message": assistant_message,
+        "intent": {
+            "type": "native_marimo_open_failed",
+            "source": "native_marimo_session",
+            "status": "needs_attention",
+        },
+        "actions": [
+            {
+                "type": "open_artifact",
+                "status": "needs_attention",
+                "label": action_label,
+                "target_tab": "Notebooks",
+                "target_anchor": NOTEBOOK_NATIVE_MARIMO_ANCHOR,
+                "detail": action_detail,
+                "artifact_id": notebook_artifact.id,
+                "artifact_ids": [notebook_artifact.id],
+            }
+        ],
+        "action_summary": {},
+        "response_brief": {
+            "schema_version": "native_marimo_open_failed.v1",
+            "agent_session_id": session.id if session is not None else None,
+            "notebook_artifact_id": notebook_artifact.id,
+            "error_type": error_type,
+            "error_message": error_message[:1200],
+        },
+        "response_composer": {
+            "schema_version": "agent_response_composer.v1",
+            "mode": "harness_observation",
+            "status": "harness_fact",
+        },
+        "worker_events": [
+            {
+                "worker_id": f"native-marimo-{notebook_artifact.id}",
+                "display_name": "marimo Notebook",
+                "status": "needs_attention",
+                "headline": "Notebookを開けません" if japanese else "Notebook open failed",
+                "detail": (
+                    "Notebook sourceの修正が必要です。詳細はRawと修正対象briefに保存しています。"
+                    if japanese
+                    else "The notebook source needs a repair. Details are saved in Raw and the repair brief."
+                ),
+                "job_type": "native_marimo_session",
+                "project_id": project.id,
+                "project_name": project.name,
+                "target_tab": "Notebooks",
+                "target_anchor": NOTEBOOK_NATIVE_MARIMO_ANCHOR,
+                "artifact_id": notebook_artifact.id,
+                "artifact_ids": [notebook_artifact.id],
+                "active": False,
+                "human_description": {
+                    "source": "native_marimo_session",
+                    "title": "Notebookを開けません" if japanese else "Notebook open failed",
+                    "summary": (
+                        "Notebook sourceの修正が必要です。"
+                        if japanese
+                        else "The notebook source needs a repair."
+                    ),
+                },
+                "token_usage": {"source": "not_applicable", "is_estimate": False, "series": []},
+            }
+        ],
+        "token_usage": {"source": "not_applicable", "is_estimate": False, "series": []},
+        "next_focus": {
+            "target_tab": "Notebooks",
+            "target_anchor": NOTEBOOK_NATIVE_MARIMO_ANCHOR,
+            "artifact_id": notebook_artifact.id,
+            "artifact_ids": [notebook_artifact.id],
+            "label": next_label,
+        },
+    }
+    return store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="agent_chat_turn",
+        name=f"native_marimo_open_failure_{notebook_artifact.id}_{digest}",
+        filename="agent_chat_turn.json",
+        payload=response,
+        metadata={
+            "project_id": project.id,
+            "agent_session_id": session.id if session is not None else None,
+            "notebook_artifact_id": notebook_artifact.id,
+            "source": "native_marimo_open_failure",
+            "source_key": source_key,
+            "status": "failed",
+        },
+    )
+
+
+def native_marimo_failure_chat_turn_exists(
+    db: Session,
+    *,
+    project: Project,
+    source: str,
+    source_key: str,
+) -> bool:
+    recent = db.scalars(
+        select(Artifact)
+        .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+        .order_by(Artifact.created_at.desc())
+        .limit(100)
+    ).all()
+    for artifact in recent:
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("source") == source and metadata.get("source_key") == source_key:
+            return True
+    return False
+
+
+@router.api_route(
+    "/api/marimo-sessions/{session_id}/proxy",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+)
+@router.api_route(
+    "/api/marimo-sessions/{session_id}/proxy/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+)
+async def proxy_native_marimo_http(
+    session_id: str,
+    request: Request,
+    path: str = "",
+) -> Response:
+    session = native_marimo_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Native marimo session is not running")
+    if session.to_dict().get("status") != "running":
+        raise HTTPException(status_code=503, detail="Native marimo session is not ready")
+    target_url = native_marimo_target_url(session, path, request.url.query)
+    request_headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower()
+        not in {
+            "host",
+            "content-length",
+            "connection",
+            "keep-alive",
+            "proxy-authenticate",
+            "proxy-authorization",
+            "te",
+            "trailers",
+            "transfer-encoding",
+            "upgrade",
+        }
+    }
+    async with httpx.AsyncClient(follow_redirects=False, timeout=None) as client:
+        proxied = await client.request(
+            request.method,
+            target_url,
+            content=await request.body(),
+            headers=request_headers,
+        )
+    response_headers = {
+        key: value
+        for key, value in proxied.headers.items()
+        if key.lower()
+        not in {
+            "content-encoding",
+            "content-length",
+            "connection",
+            "keep-alive",
+            "proxy-authenticate",
+            "proxy-authorization",
+            "te",
+            "trailers",
+            "transfer-encoding",
+            "upgrade",
+        }
+    }
+    return Response(
+        content=proxied.content,
+        status_code=proxied.status_code,
+        headers=response_headers,
+        media_type=proxied.headers.get("content-type"),
+    )
+
+
+@router.websocket("/api/marimo-sessions/{session_id}/proxy/{path:path}")
+async def proxy_native_marimo_websocket(websocket: WebSocket, session_id: str, path: str = "") -> None:
+    session = native_marimo_session(session_id)
+    if session is None or session.to_dict().get("status") != "running":
+        await websocket.close(code=4404)
+        return
+    await websocket.accept()
+    target_url = native_marimo_target_url(session, path, websocket.scope.get("query_string", b"").decode("utf-8"))
+    target_url = target_url.replace("http://", "ws://", 1)
+    try:
+        async with websockets.connect(target_url) as marimo_socket:
+            async def client_to_marimo() -> None:
+                while True:
+                    message = await websocket.receive()
+                    if "text" in message:
+                        await marimo_socket.send(message["text"])
+                    elif "bytes" in message:
+                        await marimo_socket.send(message["bytes"])
+                    elif message.get("type") == "websocket.disconnect":
+                        await marimo_socket.close()
+                        break
+
+            async def marimo_to_client() -> None:
+                async for message in marimo_socket:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            await asyncio.gather(client_to_marimo(), marimo_to_client())
+    except Exception:
+        await websocket.close()
 
 
 @router.get("/api/projects/{project_id}/insights", response_model=list[InsightRead])
@@ -5250,7 +7443,10 @@ def plan_baseline_strategy_endpoint(
 
 
 @router.get("/api/projects/{project_id}/runs")
-def list_runs(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+def list_runs(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> list[dict[str, Any]]:
     require_project(db, project_id)
     runs = db.scalars(select(ExperimentRun).where(ExperimentRun.project_id == project_id).order_by(ExperimentRun.started_at.desc())).all()
     return [
@@ -5374,8 +7570,11 @@ def generate_run_analysis_notebook_endpoint(
 
 
 @router.get("/api/projects/{project_id}/leaderboard")
-def leaderboard(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
-    require_project(db, project_id)
+def leaderboard(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> list[dict[str, Any]]:
+    project = require_project(db, project_id)
     runs = db.scalars(
         select(ExperimentRun).where(ExperimentRun.project_id == project_id, ExperimentRun.status == "succeeded")
     ).all()
@@ -5408,12 +7607,19 @@ def leaderboard(project_id: str, db: Annotated[Session, Depends(get_session)]) -
     if display_metric is None:
         display_metric = str(BUILTIN_METRIC_OPTIONS[0]["name"])
     sorted_runs = sorted(runs, key=lambda run: leaderboard_sort_key_for_metric(run, display_metric))
+    notebook_index = build_project_notebook_index(db, project)
     return [
         {
             "rank": index + 1,
             "run_id": run.id,
             "status": run.status,
             "runner_type": run.runner_type,
+            "model_id": model_id or None,
+            "model_label": leaderboard_model_label(params, model_id=model_id) or None,
+            "model_description": leaderboard_model_description(params, summary_md=run.summary_md, model_id=model_id),
+            "features_used": leaderboard_features_used(params),
+            "feature_summary": leaderboard_feature_summary(params, metrics),
+            "summary_md": run.summary_md,
             "primary_metric_name": metrics.get("primary_metric_name"),
             "primary_metric_value": metrics.get("primary_metric_value"),
             "display_metric_name": display_metric,
@@ -5424,11 +7630,692 @@ def leaderboard(project_id: str, db: Annotated[Session, Depends(get_session)]) -
             "evaluation_spec_id": run.evaluation_spec_id,
             "split_manifest_id": run.split_manifest_id,
             "model_version_id": run.model_version_id,
+            "pipeline_artifact_id": (
+                pipeline_artifact.id
+                if (pipeline_artifact := experiment_run_pipeline_artifact(db, run, params=params)) is not None
+                else None
+            ),
+            "model_diagnostics": leaderboard_model_diagnostics(db, run),
+            "related_notebook_artifact_ids": leaderboard_related_notebook_artifact_ids(
+                notebook_index,
+                run_id=run.id,
+                model_version_id=run.model_version_id,
+            ),
+            "related_notebooks": leaderboard_related_notebooks(
+                notebook_index,
+                run_id=run.id,
+                model_version_id=run.model_version_id,
+            ),
         }
         for index, run in enumerate(sorted_runs)
         for metrics in [loads_json(run.metrics_json, {})]
+        for params in [loads_json(run.params_json, {})]
+        for model_id in [leaderboard_model_id(params, metrics)]
         for display_metric_value in [preferred_metric_value(metrics, display_metric)]
     ]
+
+
+def leaderboard_model_diagnostics(db: Session, run: ExperimentRun) -> dict[str, Any]:
+    artifact_by_key = {
+        "model_diagnostics_artifact_pack": latest_run_artifact(db, run, "model_diagnostics_artifact_pack"),
+        "native_feature_importance": latest_run_artifact(db, run, "feature_importance"),
+        "permutation_importance": latest_run_artifact(db, run, "permutation_importance"),
+        "partial_dependence": latest_run_artifact(db, run, "partial_dependence"),
+        "shap": latest_run_artifact(db, run, "shap_summary"),
+        "report": latest_run_artifact(db, run, "model_diagnostics_artifact_report"),
+    }
+    pack_payload = load_json_artifact(artifact_by_key["model_diagnostics_artifact_pack"])
+    availability = pack_payload.get("availability") if isinstance(pack_payload, dict) and isinstance(pack_payload.get("availability"), dict) else {}
+    standard_checks = {
+        "permutation_importance": diagnostic_check_status(
+            availability.get("permutation_importance"),
+            artifact_by_key["permutation_importance"],
+        ),
+        "native_feature_importance": diagnostic_check_status(
+            availability.get("native_feature_importance"),
+            artifact_by_key["native_feature_importance"],
+        ),
+        "partial_dependence": diagnostic_check_status(
+            availability.get("partial_dependence"),
+            artifact_by_key["partial_dependence"],
+        ),
+        "shap": diagnostic_check_status(availability.get("shap"), artifact_by_key["shap"]),
+    }
+    ready_count = sum(1 for item in standard_checks.values() if item["status"] == "ready")
+    if artifact_by_key["model_diagnostics_artifact_pack"] is not None:
+        status = "ready" if ready_count else "registered"
+    elif any(artifact is not None for artifact in artifact_by_key.values()):
+        status = "partial"
+    else:
+        status = "missing"
+    return {
+        "schema_version": "leaderboard_model_diagnostics.v1",
+        "status": status,
+        "standard_checks": standard_checks,
+        "availability": availability,
+        "artifact_refs": {
+            key: model_diagnostics_artifact_ref(artifact)
+            for key, artifact in artifact_by_key.items()
+            if artifact is not None
+        },
+    }
+
+
+def diagnostic_check_status(raw_status: Any, artifact: Artifact | None) -> dict[str, Any]:
+    status = str(raw_status or ("ready" if artifact is not None else "missing")).strip()
+    if not status:
+        status = "missing"
+    return {
+        "status": status,
+        "artifact_id": artifact.id if artifact is not None else None,
+    }
+
+
+@router.get("/api/experiment-runs/{run_id}/pipeline-bundle")
+def download_experiment_run_pipeline_bundle(
+    run_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> FileResponse:
+    run = db.get(ExperimentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="ExperimentRun not found")
+    require_project(db, run.project_id)
+    artifact = experiment_run_pipeline_artifact(db, run, params=loads_json(run.params_json, {}))
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Prediction pipeline bundle is not registered for this run")
+    path = artifact_primary_path(artifact)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Prediction pipeline bundle file not found")
+    response_path = clean_pipeline_bundle_for_download(path)
+    background = None
+    if response_path != path:
+        background = BackgroundTask(lambda target=response_path: target.unlink(missing_ok=True))
+    return FileResponse(path=response_path, filename=path.name, media_type="application/zip", background=background)
+
+
+def clean_pipeline_bundle_for_download(path: Path) -> Path:
+    if not zipfile.is_zipfile(path):
+        return path
+    with zipfile.ZipFile(path) as source:
+        names = source.namelist()
+        if all(pipeline_archive_member_is_downloadable(name) for name in names):
+            return path
+        handle = tempfile.NamedTemporaryFile(prefix="tablex-pipeline-bundle-", suffix=".zip", delete=False)
+        clean_path = Path(handle.name)
+        handle.close()
+        try:
+            with zipfile.ZipFile(clean_path, "w", compression=zipfile.ZIP_DEFLATED) as target:
+                for info in source.infolist():
+                    if not pipeline_archive_member_is_downloadable(info.filename):
+                        continue
+                    target.writestr(info, source.read(info.filename))
+        except Exception:
+            clean_path.unlink(missing_ok=True)
+            raise
+        return clean_path
+
+
+def pipeline_archive_member_is_downloadable(name: str) -> bool:
+    parts = [part for part in Path(name).parts if part not in {"", "."}]
+    if any(part in {".tablex_smoke", "__pycache__"} for part in parts):
+        return False
+    if name.endswith((".pyc", ".pyo")):
+        return False
+    return True
+
+
+@router.post("/api/projects/{project_id}/pipelines/{artifact_id}/predict", response_model=JobRead)
+def run_prediction_pipeline_endpoint(
+    project_id: str,
+    artifact_id: str,
+    payload: dict[str, Any],
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    artifact = db.get(Artifact, artifact_id)
+    if artifact is None or artifact.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Prediction pipeline artifact not found")
+    if artifact.asset_type != "prediction_pipeline":
+        raise HTTPException(status_code=400, detail="Artifact is not a prediction pipeline")
+    dataset_snapshot_id = payload.get("dataset_snapshot_id")
+    input_artifact_id = payload.get("input_artifact_id")
+    history_artifact_id = payload.get("history_artifact_id")
+    if not isinstance(dataset_snapshot_id, str) and not isinstance(input_artifact_id, str):
+        raise HTTPException(status_code=400, detail="dataset_snapshot_id or input_artifact_id is required")
+    job = create_job(
+        db,
+        job_type="run_prediction_pipeline",
+        project_id=project.id,
+        input_payload={
+            "pipeline_artifact_id": artifact.id,
+            "dataset_snapshot_id": dataset_snapshot_id if isinstance(dataset_snapshot_id, str) else None,
+            "input_artifact_id": input_artifact_id if isinstance(input_artifact_id, str) else None,
+            "history_artifact_id": history_artifact_id if isinstance(history_artifact_id, str) else None,
+            "timeout_seconds": payload.get("timeout_seconds") if isinstance(payload.get("timeout_seconds"), int) else 300,
+        },
+        policy={
+            "execution": "queued_worker",
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+        },
+    )
+    return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/pilot-deployments")
+def create_pilot_deployment_endpoint(
+    project_id: str,
+    payload: dict[str, Any],
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    pipeline_artifact_id = payload.get("pipeline_artifact_id")
+    if not isinstance(pipeline_artifact_id, str) or not pipeline_artifact_id.strip():
+        raise HTTPException(status_code=400, detail="pipeline_artifact_id is required")
+    pipeline_artifact = db.get(Artifact, pipeline_artifact_id)
+    if pipeline_artifact is None or pipeline_artifact.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Prediction pipeline artifact not found")
+    if pipeline_artifact.asset_type != "prediction_pipeline":
+        raise HTTPException(status_code=400, detail="Artifact is not a prediction pipeline")
+    deployment = PilotDeployment(
+        id=new_id("pdep"),
+        project_id=project.id,
+        pipeline_artifact_id=pipeline_artifact.id,
+        model_version_id=payload.get("model_version_id") if isinstance(payload.get("model_version_id"), str) else None,
+        experiment_run_id=payload.get("experiment_run_id") if isinstance(payload.get("experiment_run_id"), str) else None,
+        status="active",
+        notes=payload.get("notes") if isinstance(payload.get("notes"), str) else None,
+    )
+    db.add(deployment)
+    db.flush()
+    return pilot_deployment_to_dict(deployment)
+
+
+@router.get("/api/projects/{project_id}/pilot-deployments")
+def list_pilot_deployments_endpoint(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    deployments = db.scalars(
+        select(PilotDeployment)
+        .where(PilotDeployment.project_id == project.id)
+        .order_by(PilotDeployment.started_at.desc())
+    ).all()
+    deployment_ids = [deployment.id for deployment in deployments]
+    prediction_batches = (
+        db.scalars(
+            select(PilotPredictionBatch)
+            .where(PilotPredictionBatch.deployment_id.in_(deployment_ids))
+            .order_by(PilotPredictionBatch.created_at.desc())
+        ).all()
+        if deployment_ids
+        else []
+    )
+    outcome_batches = (
+        db.scalars(
+            select(PilotOutcomeBatch)
+            .where(PilotOutcomeBatch.deployment_id.in_(deployment_ids))
+            .order_by(PilotOutcomeBatch.ingested_at.desc())
+        ).all()
+        if deployment_ids
+        else []
+    )
+    scoring_reports = (
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "pilot_scoring_report")
+            .order_by(Artifact.created_at.desc())
+        ).all()
+    )
+    validation_audits = (
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "validation_scheme_audit")
+            .order_by(Artifact.created_at.desc())
+        ).all()
+    )
+    reports_by_deployment: dict[str, list[dict[str, Any]]] = {deployment.id: [] for deployment in deployments}
+    for artifact in scoring_reports:
+        metadata = loads_json(artifact.metadata_json, {})
+        deployment_id = metadata.get("deployment_id")
+        if isinstance(deployment_id, str) and deployment_id in reports_by_deployment:
+            reports_by_deployment[deployment_id].append(pilot_scoring_report_to_dict(artifact))
+    audits_by_deployment: dict[str, list[dict[str, Any]]] = {deployment.id: [] for deployment in deployments}
+    for artifact in validation_audits:
+        metadata = loads_json(artifact.metadata_json, {})
+        deployment_id = metadata.get("deployment_id")
+        if isinstance(deployment_id, str) and deployment_id in audits_by_deployment:
+            audits_by_deployment[deployment_id].append(pilot_validation_audit_to_dict(artifact))
+    predictions_by_deployment: dict[str, list[dict[str, Any]]] = {deployment.id: [] for deployment in deployments}
+    for batch in prediction_batches:
+        predictions_by_deployment.setdefault(batch.deployment_id, []).append(pilot_prediction_batch_to_dict(batch))
+    outcomes_by_deployment: dict[str, list[dict[str, Any]]] = {deployment.id: [] for deployment in deployments}
+    for batch in outcome_batches:
+        outcomes_by_deployment.setdefault(batch.deployment_id, []).append(pilot_outcome_batch_to_dict(batch))
+    return {
+        "schema_version": "pilot_deployment_index.v1",
+        "project_id": project.id,
+        "deployments": [
+            {
+                **pilot_deployment_to_dict(deployment),
+                "prediction_batches": predictions_by_deployment.get(deployment.id, []),
+                "outcome_batches": outcomes_by_deployment.get(deployment.id, []),
+                "scoring_reports": reports_by_deployment.get(deployment.id, []),
+                "validation_audits": audits_by_deployment.get(deployment.id, []),
+            }
+            for deployment in deployments
+        ],
+    }
+
+
+@router.post("/api/pilot-deployments/{deployment_id}/predict", response_model=JobRead)
+def run_pilot_prediction_endpoint(
+    deployment_id: str,
+    payload: dict[str, Any],
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    deployment = db.get(PilotDeployment, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=404, detail="Pilot deployment not found")
+    require_project(db, deployment.project_id)
+    dataset_snapshot_id = payload.get("dataset_snapshot_id")
+    input_artifact_id = payload.get("input_artifact_id")
+    history_artifact_id = payload.get("history_artifact_id")
+    if not isinstance(dataset_snapshot_id, str) and not isinstance(input_artifact_id, str):
+        raise HTTPException(status_code=400, detail="dataset_snapshot_id or input_artifact_id is required")
+    job = create_job(
+        db,
+        job_type="run_prediction_pipeline",
+        project_id=deployment.project_id,
+        input_payload={
+            "deployment_id": deployment.id,
+            "pipeline_artifact_id": deployment.pipeline_artifact_id,
+            "dataset_snapshot_id": dataset_snapshot_id if isinstance(dataset_snapshot_id, str) else None,
+            "input_artifact_id": input_artifact_id if isinstance(input_artifact_id, str) else None,
+            "history_artifact_id": history_artifact_id if isinstance(history_artifact_id, str) else None,
+            "as_of": payload.get("as_of") if isinstance(payload.get("as_of"), str) else utc_now().isoformat(),
+            "timeout_seconds": payload.get("timeout_seconds") if isinstance(payload.get("timeout_seconds"), int) else 300,
+        },
+        policy={
+            "execution": "queued_worker",
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+        },
+    )
+    return job_to_dict(job)
+
+
+@router.post("/api/pilot-deployments/{deployment_id}/outcomes", response_model=JobRead)
+def register_pilot_outcomes_endpoint(
+    deployment_id: str,
+    payload: dict[str, Any],
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    deployment = db.get(PilotDeployment, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=404, detail="Pilot deployment not found")
+    project = require_project(db, deployment.project_id)
+    outcomes_artifact_id = payload.get("outcomes_artifact_id")
+    if not isinstance(outcomes_artifact_id, str) or not outcomes_artifact_id.strip():
+        raise HTTPException(status_code=400, detail="outcomes_artifact_id is required")
+    outcomes_artifact = db.get(Artifact, outcomes_artifact_id.strip())
+    if outcomes_artifact is None or outcomes_artifact.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Outcome artifact not found")
+    requested_join_keys = payload.get("join_keys")
+    if requested_join_keys is not None and not isinstance(requested_join_keys, list):
+        raise HTTPException(status_code=400, detail="join_keys must be an array when provided")
+    join_keys = [
+        item.strip()
+        for item in (requested_join_keys or [])
+        if isinstance(item, str) and item.strip()
+    ]
+    outcome_batch = PilotOutcomeBatch(
+        id=new_id("pout"),
+        deployment_id=deployment.id,
+        outcomes_artifact_id=outcomes_artifact.id,
+        join_keys_json=dumps_json(join_keys),
+    )
+    db.add(outcome_batch)
+    db.flush()
+    job = create_job(
+        db,
+        job_type="score_pilot_outcomes",
+        project_id=project.id,
+        input_payload={
+            "deployment_id": deployment.id,
+            "outcome_batch_id": outcome_batch.id,
+            "prediction_batch_id": payload.get("prediction_batch_id")
+            if isinstance(payload.get("prediction_batch_id"), str)
+            else None,
+            "join_keys": join_keys,
+            "prediction_column": payload.get("prediction_column")
+            if isinstance(payload.get("prediction_column"), str)
+            else None,
+            "actual_column": payload.get("actual_column") if isinstance(payload.get("actual_column"), str) else None,
+            "observed_at_column": payload.get("observed_at_column")
+            if isinstance(payload.get("observed_at_column"), str)
+            else None,
+        },
+        policy={
+            "execution": "queued_worker",
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+        },
+    )
+    return job_to_dict(job)
+
+
+def pilot_deployment_to_dict(deployment: PilotDeployment) -> dict[str, Any]:
+    return {
+        "id": deployment.id,
+        "project_id": deployment.project_id,
+        "pipeline_artifact_id": deployment.pipeline_artifact_id,
+        "model_version_id": deployment.model_version_id,
+        "experiment_run_id": deployment.experiment_run_id,
+        "status": deployment.status,
+        "started_at": deployment.started_at.isoformat(),
+        "notes": deployment.notes,
+    }
+
+
+def pilot_prediction_batch_to_dict(batch: PilotPredictionBatch) -> dict[str, Any]:
+    return {
+        "id": batch.id,
+        "deployment_id": batch.deployment_id,
+        "as_of": batch.as_of.isoformat(),
+        "input_artifact_id": batch.input_artifact_id,
+        "predictions_artifact_id": batch.predictions_artifact_id,
+        "row_count": batch.row_count,
+        "created_at": batch.created_at.isoformat(),
+    }
+
+
+def pilot_outcome_batch_to_dict(batch: PilotOutcomeBatch) -> dict[str, Any]:
+    return {
+        "id": batch.id,
+        "deployment_id": batch.deployment_id,
+        "outcomes_artifact_id": batch.outcomes_artifact_id,
+        "join_keys": loads_json(batch.join_keys_json, []),
+        "matched_rows": batch.matched_rows,
+        "ingested_at": batch.ingested_at.isoformat(),
+    }
+
+
+def pilot_scoring_report_to_dict(artifact: Artifact) -> dict[str, Any]:
+    metadata = loads_json(artifact.metadata_json, {})
+    preview: dict[str, Any] = {}
+    try:
+        preview = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+    except Exception:
+        preview = {}
+    return {
+        "artifact": artifact_to_dict(artifact),
+        "deployment_id": metadata.get("deployment_id"),
+        "prediction_batch_id": metadata.get("prediction_batch_id"),
+        "outcome_batch_id": metadata.get("outcome_batch_id"),
+        "metrics": preview.get("metrics") if isinstance(preview.get("metrics"), dict) else {},
+        "matched_rows": preview.get("matched_rows"),
+        "metric_count": preview.get("metric_count"),
+        "as_of_violations": preview.get("as_of_violations") if isinstance(preview.get("as_of_violations"), dict) else {},
+    }
+
+
+def pilot_validation_audit_to_dict(artifact: Artifact) -> dict[str, Any]:
+    metadata = loads_json(artifact.metadata_json, {})
+    preview: dict[str, Any] = {}
+    try:
+        preview = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+    except Exception:
+        preview = {}
+    preview_report_ids = preview.get("scoring_report_artifact_ids")
+    metadata_report_ids = metadata.get("scoring_report_artifact_ids")
+    scoring_report_artifact_ids = preview_report_ids if isinstance(preview_report_ids, list) else metadata_report_ids
+    return {
+        "artifact": artifact_to_dict(artifact),
+        "deployment_id": metadata.get("deployment_id"),
+        "scheme_verdict": preview.get("scheme_verdict") if isinstance(preview.get("scheme_verdict"), str) else metadata.get("scheme_verdict"),
+        "next_iteration_focus": preview.get("next_iteration_focus")
+        if isinstance(preview.get("next_iteration_focus"), str)
+        else None,
+        "gap_decomposition": preview.get("gap_decomposition") if isinstance(preview.get("gap_decomposition"), list) else [],
+        "scoring_report_artifact_ids": scoring_report_artifact_ids if isinstance(scoring_report_artifact_ids, list) else [],
+    }
+
+
+def leaderboard_related_notebook_artifact_ids(
+    notebook_index: dict[str, Any],
+    *,
+    run_id: str,
+    model_version_id: str | None,
+) -> list[str]:
+    return [
+        str(item["artifact_id"])
+        for item in leaderboard_related_notebooks(
+            notebook_index,
+            run_id=run_id,
+            model_version_id=model_version_id,
+        )
+        if item.get("openable") is True
+    ]
+
+
+def leaderboard_related_notebooks(
+    notebook_index: dict[str, Any],
+    *,
+    run_id: str,
+    model_version_id: str | None,
+) -> list[dict[str, Any]]:
+    items = notebook_index.get("items") if isinstance(notebook_index, dict) else None
+    if not isinstance(items, list):
+        return []
+    output: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        related_run_ids = item.get("related_run_ids")
+        matches_run = item.get("run_id") == run_id or (
+            isinstance(related_run_ids, list) and run_id in related_run_ids
+        )
+        matches_model = bool(model_version_id and item.get("model_version_id") == model_version_id)
+        if not matches_run and not matches_model:
+            continue
+        artifact_ids = item.get("artifact_ids")
+        if not isinstance(artifact_ids, dict):
+            continue
+        notebook_artifact_id = artifact_ids.get("notebook")
+        if not isinstance(notebook_artifact_id, str) or not notebook_artifact_id or notebook_artifact_id in seen:
+            continue
+        seen.add(notebook_artifact_id)
+        coverage = item.get("coverage") if isinstance(item.get("coverage"), dict) else {}
+        native_marimo_status = str(coverage.get("native_marimo_status") or "")
+        status = str(item.get("status") or "")
+        output.append(
+            {
+                "artifact_id": notebook_artifact_id,
+                "title": item.get("title"),
+                "notebook_kind": item.get("notebook_kind"),
+                "status": status,
+                "native_marimo_status": native_marimo_status,
+                "needs_attention": status == "needs_attention" or native_marimo_status == "runtime_error",
+                "openable": True,
+                "run_id": item.get("run_id"),
+                "model_version_id": item.get("model_version_id"),
+                "related_run_ids": related_run_ids if isinstance(related_run_ids, list) else [],
+                "recommendation_score": item.get("recommendation_score"),
+            }
+        )
+    return sorted(output, key=lambda item: leaderboard_related_notebook_sort_key(item, run_id=run_id, model_version_id=model_version_id))
+
+
+def leaderboard_related_notebook_sort_key(
+    item: dict[str, Any],
+    *,
+    run_id: str,
+    model_version_id: str | None,
+) -> tuple[int, int, int, int, float]:
+    status = str(item.get("status") or "")
+    native_marimo_status = str(item.get("native_marimo_status") or "")
+    needs_attention = status == "needs_attention" or native_marimo_status == "runtime_error"
+    notebook_kind = str(item.get("notebook_kind") or "")
+    if notebook_kind in {"model_diagnostics", "model_comparison"}:
+        kind_rank = 0
+    elif notebook_kind == "data_understanding":
+        kind_rank = 2
+    else:
+        kind_rank = 1
+    related_run_ids = item.get("related_run_ids")
+    if item.get("run_id") == run_id:
+        run_rank = 0
+    elif isinstance(related_run_ids, list) and run_id in related_run_ids:
+        run_rank = 1
+    elif model_version_id and item.get("model_version_id") == model_version_id:
+        run_rank = 1
+    else:
+        run_rank = 2
+    recommendation_score = item.get("recommendation_score")
+    score = float(recommendation_score) if isinstance(recommendation_score, (int, float)) else 0.0
+    created_at = str(item.get("created_at") or "")
+    return (1 if needs_attention else 0, kind_rank, run_rank, 0 if created_at else 1, -score)
+
+
+def leaderboard_model_id(params: dict[str, Any], metrics: dict[str, Any]) -> str:
+    model_id = experiment_model_id_from_params(params)
+    if model_id:
+        return model_id
+    for key in ("baseline_type", "model_id", "model_type", "estimator", "algorithm"):
+        value = metrics.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def leaderboard_model_label(params: dict[str, Any], *, model_id: str) -> str:
+    for key in ("model_label", "display_name", "title", "label", "model_name"):
+        value = params.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    raw = params.get("raw")
+    if isinstance(raw, dict):
+        for key in ("model_label", "display_name", "title", "label", "model_name"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return model_id
+
+
+def leaderboard_model_description(params: dict[str, Any], *, summary_md: str | None, model_id: str) -> str:
+    for source in (params, params.get("raw") if isinstance(params.get("raw"), dict) else {}):
+        if not isinstance(source, dict):
+            continue
+        for key in ("model_description", "description", "summary", "interpretation"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    if isinstance(summary_md, str) and summary_md.strip() and summary_md.strip() != model_id:
+        return summary_md.strip()
+    return ""
+
+
+def leaderboard_feature_summary(params: dict[str, Any], metrics: dict[str, Any]) -> str | None:
+    for source in (params, params.get("raw") if isinstance(params.get("raw"), dict) else {}):
+        if not isinstance(source, dict):
+            continue
+        value = source.get("feature_summary")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        features = source.get("features_used")
+        if isinstance(features, list) and features:
+            text_features = [str(feature).strip() for feature in features if str(feature).strip()]
+            if text_features:
+                return ", ".join(text_features[:6]) + ("…" if len(text_features) > 6 else "")
+        structured_parts = [
+            ("feature policy", source.get("feature_policy")),
+            ("split", source.get("split")),
+            ("fold", source.get("fold")),
+        ]
+        summary_parts = [
+            f"{label}: {pretty_structured_value(value)}"
+            for label, value in structured_parts
+            if isinstance(value, str) and value.strip()
+        ]
+        if summary_parts:
+            return " / ".join(summary_parts)
+    feature_count = metrics.get("feature_count")
+    if isinstance(feature_count, int | float) and not isinstance(feature_count, bool):
+        return f"{int(feature_count)} features"
+    return None
+
+
+def leaderboard_features_used(params: dict[str, Any]) -> list[str]:
+    for source in (params, params.get("raw") if isinstance(params.get("raw"), dict) else {}):
+        if not isinstance(source, dict):
+            continue
+        features = source.get("features_used")
+        if isinstance(features, list):
+            text_features = [str(feature).strip() for feature in features if str(feature).strip()]
+            if text_features:
+                return text_features
+    return []
+
+
+def experiment_run_pipeline_artifact(db: Session, run: ExperimentRun, *, params: dict[str, Any]) -> Artifact | None:
+    candidate_ids: list[str] = []
+    for source in (params, params.get("raw") if isinstance(params.get("raw"), dict) else {}):
+        if not isinstance(source, dict):
+            continue
+        for key in ("pipeline_artifact_id", "prediction_pipeline_artifact_id", "pipeline_bundle_artifact_id"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                candidate_ids.append(value.strip())
+    for artifact_id in dict.fromkeys(candidate_ids):
+        artifact = db.get(Artifact, artifact_id)
+        if artifact is not None and artifact.project_id == run.project_id and artifact.asset_type == "prediction_pipeline":
+            return artifact
+
+    linked_edges = db.scalars(
+        select(LineageEdge)
+        .where(
+            LineageEdge.project_id == run.project_id,
+            LineageEdge.from_asset_type == "experiment_run",
+            LineageEdge.from_asset_id == run.id,
+            LineageEdge.to_asset_type == "artifact",
+            LineageEdge.relation_type.in_(
+                [
+                    "materializes_prediction_pipeline",
+                    "registered_prediction_pipeline",
+                    "prediction_pipeline",
+                ]
+            ),
+        )
+        .order_by(LineageEdge.created_at.desc())
+    ).all()
+    for edge in linked_edges:
+        artifact = db.get(Artifact, edge.to_asset_id)
+        if artifact is not None and artifact.project_id == run.project_id and artifact.asset_type == "prediction_pipeline":
+            return artifact
+
+    project_pipelines = db.scalars(
+        select(Artifact)
+        .where(Artifact.project_id == run.project_id, Artifact.asset_type == "prediction_pipeline")
+        .order_by(Artifact.created_at.desc())
+    ).all()
+    for artifact in project_pipelines:
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("experiment_run_id") == run.id or metadata.get("run_id") == run.id:
+            return artifact
+        run_ids = metadata.get("experiment_run_ids")
+        if isinstance(run_ids, list) and run.id in run_ids:
+            return artifact
+    return None
+
+
+def pretty_structured_value(value: str) -> str:
+    return value.strip().replace("__", " / ").replace("_", " ")
 
 
 @router.post("/api/projects/{project_id}/leaderboard/metric")
@@ -5525,7 +8412,7 @@ def list_artifacts(
         if limit is not None:
             query = query.limit(max(1, min(limit, 5000)))
         artifacts = db.scalars(query).all()
-    return [artifact_to_dict(item) for item in artifacts]
+    return [artifact_to_dict(item) for item in artifacts if item.asset_type not in STATIC_NOTEBOOK_HTML_ASSET_TYPES]
 
 
 @router.get("/api/artifacts/{artifact_id}", response_model=ArtifactRead)
@@ -5533,6 +8420,7 @@ def get_artifact(artifact_id: str, db: Annotated[Session, Depends(get_session)])
     artifact = db.get(Artifact, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
+    reject_static_notebook_html_artifact(artifact)
     return artifact_to_dict(artifact)
 
 
@@ -5541,10 +8429,35 @@ def download_artifact(artifact_id: str, db: Annotated[Session, Depends(get_sessi
     artifact = db.get(Artifact, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
+    reject_static_notebook_html_artifact(artifact)
     path = artifact_primary_path(artifact)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file not found")
     return FileResponse(path=path, filename=path.name)
+
+
+def reject_static_notebook_html_artifact(artifact: Artifact) -> None:
+    if artifact.asset_type in STATIC_NOTEBOOK_HTML_ASSET_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Static HTML notebook snapshots are not Tablex artifacts. Save and open the native marimo Python source instead.",
+        )
+
+
+def reject_non_native_notebook_preview(artifact: Artifact) -> None:
+    if artifact.asset_type in STATIC_NOTEBOOK_HTML_ASSET_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Static HTML notebook snapshots are not notebook artifacts. Open the native marimo source notebook instead.",
+        )
+    if artifact.asset_type not in {"analysis_notebook", "marimo_notebook"}:
+        return
+    if research_plan_artifact_is_native_marimo_source(artifact):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail="Analysis notebook preview requires a native marimo Python source. Static HTML notebook snapshots are not previewed.",
+    )
 
 
 @router.get("/api/artifacts/{artifact_id}/inline-preview")
@@ -5552,6 +8465,7 @@ def inline_preview_artifact(artifact_id: str, db: Annotated[Session, Depends(get
     artifact = db.get(Artifact, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
+    reject_non_native_notebook_preview(artifact)
     path = artifact_primary_path(artifact)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file not found")
@@ -5582,10 +8496,11 @@ def preview_artifact(artifact_id: str, db: Annotated[Session, Depends(get_sessio
     artifact = db.get(Artifact, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
+    reject_non_native_notebook_preview(artifact)
     path = artifact_primary_path(artifact)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file not found")
-    return artifact_preview_to_dict(artifact, path, limit_bytes=artifact_preview_limit_bytes(artifact, path))
+    return artifact_preview_to_dict(artifact, path, limit_bytes=artifact_preview_limit_bytes(artifact, path), db=db)
 
 
 @router.post("/api/artifacts/{artifact_id}/translate", response_model=JobRead)
@@ -5630,6 +8545,8 @@ def list_lineage(project_id: str, db: Annotated[Session, Depends(get_session)]) 
 @router.get("/api/projects/{project_id}/jobs", response_model=list[JobRead])
 def list_project_jobs(project_id: str, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
     require_project(db, project_id)
+    if reap_stale_running_jobs(db):
+        db.commit()
     jobs = db.scalars(select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc())).all()
     return [job_to_dict(item) for item in jobs]
 
@@ -5642,8 +8559,7 @@ def get_project_agent_activity(
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
-    if reconcile_project_notebook_chat_links(db, store=store, project=project):
-        db.flush()
+    if reap_stale_running_jobs(db):
         db.commit()
     recovered_session = ensure_project_full_auto_agent_session(
         db,
@@ -5654,27 +8570,58 @@ def get_project_agent_activity(
     if recovered_session is not None:
         db.flush()
         db.commit()
-        if not supervisor_slot_active(recovered_session.id):
+        if (
+            request.app.state.settings.api_agent_session_supervisor_enabled
+            and not supervisor_slot_active(recovered_session.id)
+        ):
             start_main_agent_session_supervisor_thread(
                 request.app.state.session_factory,
                 store,
                 project_id=project_id,
                 session_id=recovered_session.id,
                 supervisor_runner=run_main_agent_session_supervisor,
+                turn_timeout_seconds=request.app.state.settings.agent_idle_timeout_seconds,
+                turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
             )
     jobs = list(
         db.scalars(
             select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc()).limit(30)
         ).all()
     )
+    project_agent_powered_on = project.current_phase == "AUTONOMOUS_LOOP"
+    observable_when_powered_off = {"starting", "running", "approval_required", "waiting_for_agent"}
     active_job_ids = active_job_ids_for_activity(jobs)
+    if not project_agent_powered_on:
+        active_job_ids = {
+            job.id
+            for job in jobs
+            if job.id in active_job_ids and (not is_agentish_job(job.job_type) or job.status in observable_when_powered_off)
+        }
+    heartbeat_waiting_on_active_ids = {
+        job.id
+        for job in jobs
+        if job.job_type == "continue_autonomous_session"
+        and any(child_id in active_job_ids for child_id in heartbeat_waiting_child_ids(job))
+    }
     workers = [
         event
         for job in jobs
         for event in worker_events_from_job(job, project_name=project.name, active_job_ids=active_job_ids)
     ]
+    workers.extend(recent_agent_chat_worker_events(db, project_id=project_id, project_name=project.name))
+    if not project_agent_powered_on:
+        workers = [
+            worker
+            for worker in workers
+            if (
+                not is_agentish_job(str(worker.get("job_type") or ""))
+                or str(worker.get("status") or "") in observable_when_powered_off
+                or str(worker.get("job_id") or "") in heartbeat_waiting_on_active_ids
+            )
+        ]
     session = active_main_session(db, project_id) or latest_main_session(db, project_id)
     raw_observation = raw_transcript_observation_for_session(session)
+    session_has_process = False
     if session is not None:
         session_processes = running_codex_processes_for_project(project_id)
         session_has_process = bool(session_processes)
@@ -5685,30 +8632,49 @@ def get_project_agent_activity(
         running_quietly = session_has_process and heartbeat_age_seconds is not None and heartbeat_age_seconds >= 120
         retry_state = latest_agent_session_retry_state(db, session.id)
         retry_state_payload = agent_session_retry_state_payload(retry_state)
+        live_session_statuses = {"starting", "running", "between_turns", "waiting_for_runner"}
+        stale_live_status_while_powered_off = (
+            not project_agent_powered_on
+            and not session_has_process
+            and session.status in live_session_statuses
+        )
         session_display_status = (
-            "running"
+            "stopped"
+            if stale_live_status_while_powered_off
+            else "running"
             if session.status == "running" and session_has_process
             else "between_turns"
             if session.status == "running"
             else session.status
         )
-        session_active = session_has_process or session.status in {"starting", "between_turns", "waiting_for_runner"}
+        session_active = session_has_process or (
+            project_agent_powered_on and session.status in {"starting", "between_turns", "waiting_for_runner"}
+        )
         retry_delay = retry_state.get("retry_delay_seconds") if retry_state else None
         japanese = locale_is_japanese(response_locale)
         retry_detail = (
             (
-                f"Codex runnerをまだ使えません。同じセッションを約{int(retry_delay)}秒後に再試行します。"
+                f"Codex runnerをまだ使えません。作業状態を保持し、約{int(retry_delay)}秒後に再試行します。"
                 if japanese
-                else f"Codex runner is not ready; Tablex will retry this same session in about {retry_delay}s."
+                else f"Codex runner is not ready; Tablex will retry the work in about {retry_delay}s."
             )
             if isinstance(retry_delay, int | float)
             else (
-                "Codex runnerをまだ使えません。同じセッションを継続して再試行します。"
+                "Codex runnerをまだ使えません。作業状態を保持して再試行します。"
                 if japanese
-                else "Codex runner is not ready; Tablex will keep retrying this same session."
+                else "Codex runner is not ready; Tablex will keep retrying the work."
             )
         )
-        current_focus = latest_agent_session_activity_focus(db, project_id=project_id, session_id=session.id)
+        include_current_work_focus = (
+            project.current_phase == "AUTONOMOUS_LOOP"
+            and session.status in {"starting", "running", "between_turns", "waiting_for_runner"}
+        )
+        current_focus = latest_agent_session_activity_focus(
+            db,
+            project_id=project_id,
+            session_id=session.id,
+            include_current_work=include_current_work_focus,
+        )
         current_summary = current_focus.get("summary") if current_focus else None
         current_target_tab = current_focus.get("target_tab") if current_focus else None
         current_target_anchor = current_focus.get("target_anchor") if current_focus else None
@@ -5722,20 +8688,37 @@ def get_project_agent_activity(
             else "No live Codex process is observed yet. Full Auto is preparing the next turn."
         )
         fallback_detail = (
-            "コンテキスト準備、分析、または次のworker待ちです。"
+            "コンテキスト準備、分析、または次の実行開始待ちです。"
             if japanese
-            else "Preparing context, running analysis, or waiting for the next available worker."
+            else "Preparing context, running analysis, or waiting for the next execution slot."
         )
         progress_wait_detail = (
             "Projectはまだアクティブです。次のstepが始まるとここに進捗が出ます。"
             if japanese
             else "The project is still active. Progress will appear here when the next step starts."
         )
+        powered_off_detail = "Agent loopはOFFです。" if japanese else "The agent loop is off."
+        powered_off_process_detail = (
+            "Agent loopはOFFですが、Codex processがまだ観測されています。"
+            if japanese
+            else "The agent loop is off, but a Codex process is still observed."
+        )
         running_headline = "静かに作業中" if japanese else "Codex is running quietly"
         working_headline = "Codexが作業中" if japanese else "Codex is working"
         retry_headline = "Codex runnerを再試行予定" if japanese else "Codex runner retry scheduled"
         continue_headline = "Full Autoは継続します" if japanese else "Full Auto will continue"
+        powered_off_headline = "Agent loopはOFF" if japanese else "Agent loop is off"
+        powered_off_process_headline = (
+            "停止後のCodex processを観測中"
+            if japanese
+            else "Codex process still observed after stop"
+        )
         headline = (
+            powered_off_process_headline
+            if not project_agent_powered_on and session_has_process
+            else powered_off_headline
+            if not project_agent_powered_on
+            else
             running_headline
             if running_quietly
             else working_headline
@@ -5744,12 +8727,16 @@ def get_project_agent_activity(
             if session.status == "waiting_for_runner"
             else continue_headline
         )
-        if session_has_process:
+        if not project_agent_powered_on and session_has_process:
+            session_detail = f"{powered_off_process_detail}{heartbeat_phrase}"
+        elif not project_agent_powered_on:
+            session_detail = powered_off_detail
+        elif session_has_process:
             session_detail = f"{current_summary or running_detail}{heartbeat_phrase}"
         elif session.status == "waiting_for_runner":
             session_detail = retry_detail
         elif session.status == "running":
-            session_detail = preparing_detail
+            session_detail = current_summary or preparing_detail
         else:
             session_detail = (
                 current_summary
@@ -5762,52 +8749,63 @@ def get_project_agent_activity(
                 session=session,
                 locale=response_locale,
             )
-        workers.insert(
-            0,
-            {
-                "worker_id": "main-agent-session",
-                "display_name": display_name,
-                "status": session_display_status,
-                "headline": headline,
-                "detail": session_detail,
-                "job_id": None,
-                "job_type": "agent_session",
-                "project_id": project_id,
-                "project_name": project.name,
-                "agent_session_id": session.id,
-                "target_tab": current_target_tab or "Home",
-                "target_anchor": current_target_anchor or "agent-workspace",
-                "artifact_id": current_artifact_id,
-                "artifact_ids": current_artifact_ids if isinstance(current_artifact_ids, list) else [],
-                "created_at": session.created_at.isoformat(),
-                "updated_at": session.updated_at.isoformat(),
-                "started_at": session.started_at.isoformat() if session.started_at else None,
-                "run_after": None,
-                "active": session_active,
-                "last_output_at": last_codex_output_at.isoformat() if last_codex_output_at else None,
-                "last_output_seconds_ago": heartbeat_age_seconds,
-                "raw_transcript": raw_observation,
-                "retry_state": retry_state_payload,
-                "human_description": {
-                    "source": "agent_session",
-                    "title": display_name,
-                    "summary": current_summary or session_detail,
+        include_session_worker = project_agent_powered_on or session_has_process or session_display_status not in {
+            "stopped",
+            "cancelled",
+        }
+        if include_session_worker:
+            workers.insert(
+                0,
+                {
+                    "worker_id": "main-agent-session",
+                    "display_name": display_name,
+                    "status": session_display_status,
+                    "headline": headline,
+                    "detail": session_detail,
+                    "job_id": None,
+                    "job_type": "agent_session",
+                    "project_id": project_id,
+                    "project_name": project.name,
+                    "agent_session_id": session.id,
+                    "target_tab": current_target_tab or "Home",
+                    "target_anchor": current_target_anchor or "agent-workspace",
+                    "artifact_id": current_artifact_id,
+                    "artifact_ids": current_artifact_ids if isinstance(current_artifact_ids, list) else [],
+                    "created_at": session.created_at.isoformat(),
+                    "updated_at": session.updated_at.isoformat(),
+                    "started_at": session.started_at.isoformat() if session.started_at else None,
+                    "run_after": None,
+                    "active": session_active,
+                    "last_output_at": last_codex_output_at.isoformat() if last_codex_output_at else None,
+                    "last_output_seconds_ago": heartbeat_age_seconds,
+                    "raw_transcript": raw_observation,
+                    "retry_state": retry_state_payload,
+                    "human_description": {
+                        "source": "agent_session",
+                        "title": display_name,
+                        "summary": current_summary or session_detail,
+                    },
+                    "token_usage": {
+                        "source": "codex_cli_transcript",
+                        "is_estimate": True,
+                        "series": [
+                            {"step": "session", "tokens": max(32, session.turn_index * 32)},
+                            {"step": session.status, "tokens": max(64, session.turn_index * 64)},
+                        ],
+                    },
                 },
-                "token_usage": {
-                    "source": "codex_cli_transcript",
-                    "is_estimate": True,
-                    "series": [
-                        {"step": "session", "tokens": max(32, session.turn_index * 32)},
-                        {"step": session.status, "tokens": max(64, session.turn_index * 64)},
-                    ],
-                },
-            },
-        )
+            )
+    if session is not None:
+        workers = suppress_resolved_agent_availability_workers(workers, session_id=session.id)
     workers = merge_activity_workers(workers)
     active_workers = [worker for worker in workers if worker.get("active")]
     turn_state = build_project_turn_state(project, jobs, workers, active_job_ids=active_job_ids)
     visible_workers = visible_activity_workers(workers, now=utc_now())
-    if session is not None and session.status in {"starting", "running", "between_turns", "waiting_for_runner"}:
+    if (
+        project_agent_powered_on
+        and session is not None
+        and session.status in {"starting", "running", "between_turns", "waiting_for_runner"}
+    ):
         observed_processes = list(turn_state.get("codex_processes") or [])
         session_has_process = bool(observed_processes)
         last_codex_output_at = latest_codex_transcript_output_at(db, session_id=session.id)
@@ -5819,7 +8817,7 @@ def get_project_agent_activity(
         elif session.status == "waiting_for_runner":
             turn_detail = session_detail
         elif session.status == "running":
-            turn_detail = preparing_detail
+            turn_detail = current_summary or preparing_detail
         else:
             turn_detail = (
                 current_summary
@@ -5852,6 +8850,144 @@ def get_project_agent_activity(
     }
 
 
+def suppress_resolved_agent_availability_workers(workers: list[dict[str, Any]], *, session_id: str) -> list[dict[str, Any]]:
+    availability_prefix = f"agent-availability-{session_id}-"
+    return [
+        worker
+        for worker in workers
+        if not (
+            str(worker.get("worker_id") or "").startswith(availability_prefix)
+            and str(worker.get("status") or "") == "recovering"
+        )
+    ]
+
+
+def recent_agent_chat_worker_events(
+    db: Session,
+    *,
+    project_id: str,
+    project_name: str,
+    limit: int = 12,
+) -> list[dict[str, Any]]:
+    artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project_id, Artifact.asset_type == "agent_chat_turn")
+            .order_by(Artifact.created_at.desc())
+            .limit(limit)
+        ).all()
+    )
+    worker_events: list[dict[str, Any]] = []
+    for artifact in artifacts:
+        try:
+            payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+        except (OSError, TypeError, ValueError) as exc:
+            worker_events.append(
+                {
+                    "worker_id": f"chat-artifact-read-issue-{artifact.id}",
+                    "display_name": "Agent Chat artifact needs repair",
+                    "status": "failed",
+                    "headline": "Saved chat turn could not be read",
+                    "detail": f"Artifact {artifact.id} is saved but its agent_chat_turn JSON could not be parsed.",
+                    "job_id": None,
+                    "job_type": "artifact_read_issue",
+                    "project_id": project_id,
+                    "project_name": project_name,
+                    "target_tab": "Assets",
+                    "target_anchor": "assets-artifact-preview",
+                    "artifact_id": artifact.id,
+                    "artifact_ids": [artifact.id],
+                    "created_at": artifact.created_at.isoformat(),
+                    "updated_at": artifact.created_at.isoformat(),
+                    "started_at": None,
+                    "run_after": None,
+                    "active": False,
+                    "human_description": {
+                        "source": "artifact_read_issue",
+                        "title": "Saved chat turn could not be read",
+                        "summary": f"Artifact {artifact.id} is saved but its agent_chat_turn JSON could not be parsed.",
+                        "detail": str(exc),
+                    },
+                    "token_usage": {"source": "not_applicable", "is_estimate": False, "series": []},
+                    "source_chat_artifact_id": artifact.id,
+                }
+            )
+            continue
+        events = payload.get("worker_events")
+        if not isinstance(events, list):
+            continue
+        for index, event in enumerate(events):
+            if not isinstance(event, dict):
+                continue
+            normalized = normalize_agent_chat_worker_event(
+                event,
+                db=db,
+                project_id=project_id,
+                project_name=project_name,
+                source_artifact=artifact,
+                index=index,
+            )
+            if normalized is not None:
+                worker_events.append(normalized)
+    return worker_events
+
+
+def normalize_agent_chat_worker_event(
+    event: dict[str, Any],
+    *,
+    db: Session,
+    project_id: str,
+    project_name: str,
+    source_artifact: Artifact,
+    index: int,
+) -> dict[str, Any] | None:
+    worker_id = str(event.get("worker_id") or f"chat-worker-{source_artifact.id}-{index}").strip()
+    display_name = str(event.get("display_name") or event.get("headline") or "Agent update").strip()
+    status = str(event.get("status") or "succeeded").strip()
+    if not worker_id or not display_name:
+        return None
+    job_id = str(event.get("job_id")).strip() if isinstance(event.get("job_id"), str) else None
+    job_status: str | None = None
+    if job_id:
+        job = db.get(Job, job_id)
+        if job is not None and job.project_id == project_id:
+            job_status = job.status
+    if job_status in TERMINAL_STATUSES:
+        status = job_status
+        active = False
+    else:
+        active = bool(event.get("active")) if isinstance(event.get("active"), bool) else status in {"running", "approval_required"}
+    timestamp = source_artifact.created_at.isoformat()
+    token_usage = event.get("token_usage") if isinstance(event.get("token_usage"), dict) else {}
+    if not token_usage:
+        token_usage = {"source": "not_applicable", "is_estimate": False, "series": []}
+    return {
+        "worker_id": worker_id,
+        "display_name": display_name,
+        "status": status,
+        "headline": str(event.get("headline") or display_name),
+        "detail": str(event.get("detail") or ""),
+        "job_id": job_id,
+        "job_type": str(event.get("job_type") or "agent_chat_turn"),
+        "project_id": project_id,
+        "project_name": project_name,
+        "target_tab": event.get("target_tab") if isinstance(event.get("target_tab"), str) else None,
+        "target_anchor": event.get("target_anchor") if isinstance(event.get("target_anchor"), str) else None,
+        "artifact_id": event.get("artifact_id") if isinstance(event.get("artifact_id"), str) else None,
+        "artifact_ids": [item for item in event.get("artifact_ids", []) if isinstance(item, str)]
+        if isinstance(event.get("artifact_ids"), list)
+        else [],
+        "created_at": str(event.get("created_at") or timestamp),
+        "updated_at": str(event.get("updated_at") or timestamp),
+        "started_at": event.get("started_at") if isinstance(event.get("started_at"), str) else None,
+        "run_after": event.get("run_after") if isinstance(event.get("run_after"), str) else None,
+        "active": active,
+        "human_description": event.get("human_description") if isinstance(event.get("human_description"), dict) else None,
+        "token_usage": token_usage,
+        "source_chat_artifact_id": source_artifact.id,
+    }
+
+
 def seconds_since_timestamp(value: datetime | None, *, now: datetime) -> int | None:
     if value is None:
         return None
@@ -5860,13 +8996,27 @@ def seconds_since_timestamp(value: datetime | None, *, now: datetime) -> int | N
     return max(0, int((now.astimezone(timezone.utc) - value.astimezone(timezone.utc)).total_seconds()))
 
 
-def latest_agent_session_activity_focus(db: Session, *, project_id: str, session_id: str, limit: int = 280) -> dict[str, str | None] | None:
+def latest_agent_session_activity_focus(
+    db: Session,
+    *,
+    project_id: str,
+    session_id: str,
+    limit: int = 280,
+    include_current_work: bool = True,
+) -> dict[str, Any] | None:
     accepted_chat_sources = {
         "main_codex_session_chat_update",
         "main_agent_session_attention",
         "main_agent_session_experiment_registration",
         "main_agent_session_notebook_update",
+        "main_agent_session_research_registration",
+        "native_marimo_open_failure",
+        "native_marimo_runtime_failure",
     }
+    project = db.get(Project, project_id)
+    response_locale = latest_project_response_locale(db, project) if project is not None else "en-US"
+    japanese = locale_is_japanese(response_locale)
+    candidates: list[tuple[datetime, dict[str, Any]]] = []
     chat_artifacts = list(
         db.scalars(
             select(Artifact)
@@ -5881,36 +9031,275 @@ def latest_agent_session_activity_focus(db: Session, *, project_id: str, session
             continue
         try:
             payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
-        except OSError:
+        except (OSError, TypeError, ValueError):
             continue
         message = payload.get("assistant_message")
         if isinstance(message, str) and message.strip():
-            target = activity_target_from_chat_payload(payload)
-            return {
-                "summary": compact_activity_summary(message, limit=limit),
-                **target,
-            }
+            normalized_message = normalize_agent_chat_notebook_update_message(
+                payload,
+                message,
+                japanese=japanese,
+            )
+            normalized_message = normalize_agent_chat_attention_message(
+                payload,
+                normalized_message,
+                japanese=japanese,
+            )
+            normalized_message = normalize_agent_chat_experiment_registration_message(
+                payload,
+                normalized_message,
+                japanese=japanese,
+            )
+            normalized_message = normalize_agent_chat_native_marimo_runtime_message(
+                payload,
+                normalized_message,
+                japanese=japanese,
+            )
+            target = activity_target_from_chat_payload(db, project_id=project_id, payload=payload, japanese=japanese)
+            candidates.append(
+                (
+                    utc_datetime_or_none(artifact.created_at) or artifact.created_at,
+                    {"summary": compact_activity_summary(normalized_message, limit=limit), **target},
+                )
+            )
 
-    events = list(
+    current_work = latest_research_plan_current_work(db, project_id=project_id) if include_current_work else None
+    current_work_payload = research_plan_current_work_payload(current_work)
+    if current_work_payload is not None:
+        current_summary = human_activity_summary_or_none(str(current_work_payload.get("summary") or ""))
+        current_node = str(current_work_payload.get("node_id") or "").strip()
+        current_status = str(current_work_payload.get("status") or "").strip()
+        if current_summary:
+            summary_parts = [current_summary]
+            if current_node and current_status:
+                summary_parts.append(f"{current_node} · {current_status}")
+            updated_at = getattr(current_work, "updated_at", None)
+            candidates.append(
+                (
+                    utc_datetime_or_none(updated_at) or utc_now(),
+                    {
+                        "summary": compact_activity_summary(" — ".join(summary_parts), limit=limit),
+                        "target_tab": "Home",
+                        "target_anchor": "research-plan",
+                        "artifact_id": None,
+                        "artifact_ids": [],
+                    },
+                )
+            )
+
+    research_plan_events = list(
         db.scalars(
             select(AgentTranscriptEvent)
             .where(
                 AgentTranscriptEvent.session_id == session_id,
-                AgentTranscriptEvent.source == "codex_cli",
-                AgentTranscriptEvent.content.is_not(None),
+                AgentTranscriptEvent.source == "tablex_sidecar",
+                AgentTranscriptEvent.event_type.in_(
+                    ("research_plan_request_succeeded", "research_plan_request_failed")
+                ),
             )
             .order_by(AgentTranscriptEvent.event_index.desc())
-            .limit(20)
+            .limit(5)
         ).all()
     )
-    for event in events:
-        if event.content and event.content.strip() and not event.content.strip().startswith("usage:"):
-            return {
-                "summary": compact_activity_summary(event.content, limit=limit),
-                "target_tab": None,
-                "target_anchor": None,
-            }
-    return None
+    for event in research_plan_events:
+        payload = loads_json(event.payload_json, {})
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        revision_id = str(result.get("revision_id") or "").strip()
+        current_work_result = result.get("current_work") if isinstance(result.get("current_work"), dict) else {}
+        node_id = str(result.get("node_id") or current_work_result.get("node_id") or "").strip()
+        if event.event_type == "research_plan_request_failed":
+            if japanese:
+                summary = "作業計画の表示はまだ更新していません。分析は続いています。"
+            else:
+                summary = "The visible work plan has not been updated yet. The analysis is still running."
+            candidates.append(
+                (
+                    utc_datetime_or_none(event.created_at) or event.created_at,
+                    {
+                        "summary": compact_activity_summary(summary, limit=limit),
+                        "target_tab": "Home",
+                        "target_anchor": "research-plan",
+                        "artifact_id": None,
+                        "artifact_ids": [],
+                    },
+                )
+            )
+            continue
+        if japanese:
+            summary = "Research Planを更新しました。"
+            if node_id:
+                summary += f" 現在地: {node_id}"
+        else:
+            summary = "The Research Plan was updated."
+            if node_id:
+                summary += f" Current node: {node_id}"
+        candidates.append(
+            (
+                utc_datetime_or_none(event.created_at) or event.created_at,
+                {
+                    "summary": compact_activity_summary(summary, limit=limit),
+                    "target_tab": "Home",
+                    "target_anchor": "research-plan",
+                    "artifact_id": None,
+                    "artifact_ids": [],
+                    "research_plan_revision_id": revision_id or None,
+                },
+            )
+        )
+
+    experiment_result_events = list(
+        db.scalars(
+            select(AgentTranscriptEvent)
+            .where(
+                AgentTranscriptEvent.session_id == session_id,
+                AgentTranscriptEvent.source == "tablex_sidecar",
+                AgentTranscriptEvent.event_type.in_(
+                    ("experiment_result_request_succeeded", "experiment_result_request_failed")
+                ),
+            )
+            .order_by(AgentTranscriptEvent.event_index.desc())
+            .limit(5)
+        ).all()
+    )
+    for event in experiment_result_events:
+        payload = loads_json(event.payload_json, {})
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        registered_run_ids = [
+            item for item in result.get("registered_run_ids", []) if isinstance(item, str) and item.strip()
+        ] if isinstance(result.get("registered_run_ids"), list) else []
+        if event.event_type == "experiment_result_request_succeeded":
+            if japanese:
+                summary = f"モデル評価結果をLeaderboardに登録しました。{len(registered_run_ids)}件のrunを比較できます。"
+            else:
+                summary = f"Experiment results were registered on the Leaderboard. {len(registered_run_ids)} run(s) are comparable."
+            candidates.append(
+                (
+                    utc_datetime_or_none(event.created_at) or event.created_at,
+                    {
+                        "summary": compact_activity_summary(summary, limit=limit),
+                        "target_tab": "Leaderboard",
+                        "target_anchor": "result-readout",
+                        "artifact_id": None,
+                        "artifact_ids": [],
+                        "run_ids": registered_run_ids,
+                    },
+                )
+            )
+            continue
+        if japanese:
+            summary = "モデル評価結果はまだLeaderboardに反映していません。表示中の順位表はそのまま保持し、分析は続いています。"
+        else:
+            summary = "The model evaluation results have not been added to the Leaderboard yet. The visible ranking is unchanged, and the analysis is continuing."
+        candidates.append(
+            (
+                utc_datetime_or_none(event.created_at) or event.created_at,
+                {
+                    "summary": compact_activity_summary(summary, limit=limit),
+                    "target_tab": "Home",
+                    "target_anchor": "agent-workspace",
+                    "artifact_id": None,
+                    "artifact_ids": [],
+                },
+            )
+        )
+
+    notebook_request_events = list(
+        db.scalars(
+            select(AgentTranscriptEvent)
+            .where(
+                AgentTranscriptEvent.session_id == session_id,
+                AgentTranscriptEvent.source == "tablex_sidecar",
+                AgentTranscriptEvent.event_type.in_(("notebook_request_succeeded", "notebook_request_failed")),
+            )
+            .order_by(AgentTranscriptEvent.event_index.desc())
+            .limit(5)
+        ).all()
+    )
+    for event in notebook_request_events:
+        payload = loads_json(event.payload_json, {})
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        notebook_artifact_id = str(result.get("notebook_artifact_id") or event.artifact_id or "").strip()
+        plan_node_id = str(result.get("research_plan_node_id") or "").strip()
+        if event.event_type == "notebook_request_succeeded":
+            if japanese:
+                summary = "marimo notebookを登録しました。Tablex内のnative marimo viewerで開けます。"
+                if plan_node_id:
+                    summary += f" ResearchPlan: {plan_node_id}"
+            else:
+                summary = "A marimo notebook was registered and can be opened in the native Tablex viewer."
+                if plan_node_id:
+                    summary += f" ResearchPlan: {plan_node_id}"
+            candidates.append(
+                (
+                    utc_datetime_or_none(event.created_at) or event.created_at,
+                    {
+                        "summary": compact_activity_summary(summary, limit=limit),
+                        "target_tab": "Notebooks",
+                        "target_anchor": "notebook-native-marimo-top",
+                        "artifact_id": notebook_artifact_id or None,
+                        "artifact_ids": [notebook_artifact_id] if notebook_artifact_id else [],
+                    },
+                )
+            )
+            continue
+        if japanese:
+            summary = "marimo notebookはまだ登録していません。未完成のNotebookとしては表示せず、分析は続いています。"
+        else:
+            summary = "The marimo notebook has not been registered yet. It is not shown as complete, and the analysis is continuing."
+        candidates.append(
+            (
+                utc_datetime_or_none(event.created_at) or event.created_at,
+                {
+                    "summary": compact_activity_summary(summary, limit=limit),
+                    "target_tab": "Notebooks",
+                    "target_anchor": "notebook-native-marimo-top",
+                    "artifact_id": None,
+                    "artifact_ids": [],
+                },
+            )
+        )
+
+    pilot_observation_events = list(
+        db.scalars(
+            select(AgentTranscriptEvent)
+            .where(
+                AgentTranscriptEvent.session_id == session_id,
+                AgentTranscriptEvent.source == "tablex_sidecar",
+                AgentTranscriptEvent.event_type == "pilot_observation_available",
+            )
+            .order_by(AgentTranscriptEvent.event_index.desc())
+            .limit(5)
+        ).all()
+    )
+    for event in pilot_observation_events:
+        payload = loads_json(event.payload_json, {})
+        report_artifact_id = str(payload.get("pilot_scoring_report_artifact_id") or event.artifact_id or "").strip()
+        matched_rows = payload.get("matched_rows")
+        metric_count = payload.get("metric_count")
+        if japanese:
+            summary = "仮運用の観察結果が届きました。Codexがvalidation schemeの監査と次の改善サイクルに使えます。"
+            if isinstance(metric_count, int) and isinstance(matched_rows, int):
+                summary += f" 突合 {matched_rows}行 / scoring {metric_count}行。"
+        else:
+            summary = "A pilot observation is available. Codex can use it to audit the validation scheme and continue the next improvement cycle."
+            if isinstance(metric_count, int) and isinstance(matched_rows, int):
+                summary += f" Matched {matched_rows} row(s); scored {metric_count} row(s)."
+        candidates.append(
+            (
+                utc_datetime_or_none(event.created_at) or event.created_at,
+                {
+                    "summary": compact_activity_summary(summary, limit=limit),
+                    "target_tab": "Leaderboard",
+                    "target_anchor": "pilot",
+                    "artifact_id": report_artifact_id or None,
+                    "artifact_ids": [report_artifact_id] if report_artifact_id else [],
+                },
+            )
+        )
+
+    if not candidates:
+        return None
+    return max(candidates, key=lambda candidate: candidate[0])[1]
 
 
 def latest_agent_session_activity_summary(db: Session, *, project_id: str, session_id: str, limit: int = 280) -> str | None:
@@ -5918,10 +9307,46 @@ def latest_agent_session_activity_summary(db: Session, *, project_id: str, sessi
     return focus.get("summary") if focus else None
 
 
-def activity_target_from_chat_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def human_activity_summary_or_none(message: str) -> str | None:
+    text = message.strip()
+    if not text:
+        return None
+    lowered = text.lower()
+    command_prefixes = (
+        "/bin/bash",
+        "bash ",
+        "python ",
+        "python3 ",
+        ".tablex/bin/python",
+        "$ ",
+    )
+    if lowered.startswith(command_prefixes):
+        return None
+    if text.startswith("{") and '"schema_version"' in text:
+        return None
+    if "schema_version" in lowered and "operation" in lowered and ".tablex/requests" in lowered:
+        return None
+    if lowered.startswith("usage:"):
+        return None
+    return text
+
+
+def activity_target_from_chat_payload(
+    db: Session,
+    *,
+    project_id: str,
+    payload: dict[str, Any],
+    japanese: bool = False,
+) -> dict[str, Any]:
     actions = payload.get("actions")
     if isinstance(actions, list):
-        for action in actions:
+        normalized_actions = normalize_agent_chat_navigation_actions(
+            actions,
+            db=db,
+            project_id=project_id,
+            japanese=japanese,
+        )
+        for action in normalized_actions:
             if not isinstance(action, dict):
                 continue
             target_tab = action.get("target_tab")
@@ -5930,9 +9355,15 @@ def activity_target_from_chat_payload(payload: dict[str, Any]) -> dict[str, Any]
             target_anchor = action.get("target_anchor")
             artifact_id = action.get("artifact_id")
             artifact_ids = action.get("artifact_ids")
+            normalized_anchor = normalize_agent_chat_navigation_focus(
+                {
+                    "target_tab": target_tab.strip(),
+                    "target_anchor": target_anchor.strip() if isinstance(target_anchor, str) and target_anchor.strip() else None,
+                }
+            ).get("target_anchor")
             return {
                 "target_tab": target_tab.strip(),
-                "target_anchor": target_anchor.strip() if isinstance(target_anchor, str) and target_anchor.strip() else None,
+                "target_anchor": normalized_anchor if isinstance(normalized_anchor, str) and normalized_anchor.strip() else None,
                 "artifact_id": artifact_id.strip() if isinstance(artifact_id, str) and artifact_id.strip() else None,
                 "artifact_ids": [item for item in artifact_ids if isinstance(item, str) and item.strip()]
                 if isinstance(artifact_ids, list)
@@ -5940,14 +9371,31 @@ def activity_target_from_chat_payload(payload: dict[str, Any]) -> dict[str, Any]
             }
     next_focus = payload.get("next_focus")
     if isinstance(next_focus, dict):
+        next_focus = normalize_agent_chat_navigation_focus(next_focus)
+        next_focus = normalize_agent_chat_notebook_action_artifact(
+            db,
+            project_id=project_id,
+            action=next_focus,
+            japanese=japanese,
+        )
         target_tab = next_focus.get("target_tab")
         if isinstance(target_tab, str) and target_tab.strip():
             target_anchor = next_focus.get("target_anchor")
+            artifact_id = next_focus.get("artifact_id")
+            artifact_ids = next_focus.get("artifact_ids")
+            normalized_anchor = normalize_agent_chat_navigation_focus(
+                {
+                    "target_tab": target_tab.strip(),
+                    "target_anchor": target_anchor.strip() if isinstance(target_anchor, str) and target_anchor.strip() else None,
+                }
+            ).get("target_anchor")
             return {
                 "target_tab": target_tab.strip(),
-                "target_anchor": target_anchor.strip() if isinstance(target_anchor, str) and target_anchor.strip() else None,
-                "artifact_id": None,
-                "artifact_ids": [],
+                "target_anchor": normalized_anchor if isinstance(normalized_anchor, str) and normalized_anchor.strip() else None,
+                "artifact_id": artifact_id.strip() if isinstance(artifact_id, str) and artifact_id.strip() else None,
+                "artifact_ids": [item for item in artifact_ids if isinstance(item, str) and item.strip()]
+                if isinstance(artifact_ids, list)
+                else [],
             }
     return {"target_tab": None, "target_anchor": None, "artifact_id": None, "artifact_ids": []}
 
@@ -6506,6 +9954,153 @@ def store_and_register_text(
     )
 
 
+def delete_project_rows(db: Session, project_id: str) -> None:
+    artifact_ids = select(Artifact.id).where(Artifact.project_id == project_id)
+    question_ids = select(Question.id).where(Question.project_id == project_id)
+    assumption_ids = select(Assumption.id).where(Assumption.project_id == project_id)
+    evidence_ids = select(Evidence.id).where(Evidence.project_id == project_id)
+    agent_session_ids = select(AgentSession.id).where(AgentSession.project_id == project_id)
+    asset_version_ids = [
+        item
+        for item in db.scalars(
+            select(AssetVersion.id).where(
+                (AssetVersion.created_from_project_id == project_id)
+                | (AssetVersion.artifact_id.in_(artifact_ids))
+            )
+        ).all()
+    ]
+    affected_asset_ids = (
+        [
+            item
+            for item in db.scalars(
+                select(AssetVersion.asset_id).where(AssetVersion.id.in_(asset_version_ids))
+            ).all()
+        ]
+        if asset_version_ids
+        else []
+    )
+
+    db.execute(delete(AssetReference).where(AssetReference.source_id == project_id))
+    if asset_version_ids:
+        db.execute(delete(AssetReference).where(AssetReference.target_asset_version_id.in_(asset_version_ids)))
+        db.execute(delete(AssetVersion).where(AssetVersion.id.in_(asset_version_ids)))
+        for asset_id in set(affected_asset_ids):
+            asset = db.get(Asset, asset_id)
+            if asset is None:
+                continue
+            latest_version = db.scalar(
+                select(AssetVersion)
+                .where(AssetVersion.asset_id == asset_id)
+                .order_by(AssetVersion.created_at.desc())
+            )
+            asset.latest_version_id = latest_version.id if latest_version is not None else None
+            if latest_version is None:
+                asset.status = "deleted"
+    db.execute(delete(AgentSupervisorLease).where(AgentSupervisorLease.session_id.in_(agent_session_ids)))
+    db.execute(delete(AgentTranscriptEvent).where(AgentTranscriptEvent.project_id == project_id))
+    db.execute(delete(AgentSession).where(AgentSession.project_id == project_id))
+    db.execute(delete(Job).where(Job.project_id == project_id))
+    db.execute(delete(ResearchPlanCurrentWork).where(ResearchPlanCurrentWork.project_id == project_id))
+    db.execute(
+        update(ResearchPlanRevision)
+        .where(ResearchPlanRevision.project_id == project_id)
+        .values(parent_revision_id=None, source_artifact_id=None)
+    )
+    db.execute(delete(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project_id))
+    db.execute(delete(ResearchPlan).where(ResearchPlan.project_id == project_id))
+    db.execute(delete(LineageEdge).where(LineageEdge.project_id == project_id))
+    db.execute(delete(Idea).where(Idea.project_id == project_id))
+    db.execute(delete(ResearchBrief).where(ResearchBrief.project_id == project_id))
+    db.execute(delete(ModelVersion).where(ModelVersion.project_id == project_id))
+    db.execute(delete(ExperimentRun).where(ExperimentRun.project_id == project_id))
+    db.execute(delete(SplitManifest).where(SplitManifest.project_id == project_id))
+    db.execute(delete(EvaluationSpec).where(EvaluationSpec.project_id == project_id))
+    db.execute(delete(EvaluationCandidate).where(EvaluationCandidate.project_id == project_id))
+    db.execute(delete(Insight).where(Insight.project_id == project_id))
+    db.execute(delete(VisualizationSpec).where(VisualizationSpec.project_id == project_id))
+    db.execute(delete(Report).where(Report.project_id == project_id))
+    db.execute(delete(AssumptionEvidenceLink).where(AssumptionEvidenceLink.assumption_id.in_(assumption_ids)))
+    db.execute(delete(AssumptionEvidenceLink).where(AssumptionEvidenceLink.evidence_id.in_(evidence_ids)))
+    db.execute(delete(Answer).where(Answer.question_id.in_(question_ids)))
+    db.execute(delete(Question).where(Question.project_id == project_id))
+    db.execute(delete(Assumption).where(Assumption.project_id == project_id))
+    db.execute(delete(Evidence).where(Evidence.project_id == project_id))
+    db.execute(delete(SemanticCatalog).where(SemanticCatalog.project_id == project_id))
+    db.execute(delete(DatasetSnapshot).where(DatasetSnapshot.project_id == project_id))
+    db.execute(delete(Artifact).where(Artifact.project_id == project_id))
+
+
+def schedule_project_artifact_cleanup(settings: Any, *, org_id: str, project_id: str) -> dict[str, Any]:
+    targets = project_artifact_cleanup_targets(settings, org_id=org_id, project_id=project_id)
+    thread = threading.Thread(
+        target=remove_project_artifact_roots,
+        kwargs={"settings": settings, "targets": targets},
+        name=f"tablex-project-artifact-cleanup-{project_id}",
+        daemon=True,
+    )
+    try:
+        thread.start()
+    except RuntimeError as exc:
+        LOGGER.exception("Failed to schedule artifact cleanup for deleted project %s.", project_id)
+        return {
+            "status": "failed_to_schedule",
+            "target_count": len(targets),
+            "error": str(exc),
+        }
+    return {
+        "status": "scheduled",
+        "target_count": len(targets),
+    }
+
+
+def project_artifact_cleanup_targets(settings: Any, *, org_id: str, project_id: str) -> list[Path]:
+    return [
+        settings.artifact_root / org_id / project_id,
+        settings.artifact_root / "agent_sessions" / project_id,
+        settings.artifact_root / "_workspaces" / project_id,
+    ]
+
+
+def remove_project_artifact_roots(settings: Any, *, targets: list[Path]) -> None:
+    allowed_roots = [
+        settings.artifact_root.resolve(),
+    ]
+    seen: set[Path] = set()
+    for candidate in targets:
+        try:
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            remove_path_if_under_allowed_roots(resolved, allowed_roots)
+        except OSError:
+            LOGGER.exception("Failed to remove project artifact path %s.", candidate)
+
+
+def remove_project_artifact_directories(settings: Any, project: Project, artifact_dirs: list[Path]) -> None:
+    del artifact_dirs
+    targets = project_artifact_cleanup_targets(settings, org_id=project.org_id, project_id=project.id)
+    remove_project_artifact_roots(settings, targets=targets)
+
+
+def remove_path_if_under_allowed_roots(path: Path, allowed_roots: list[Path]) -> None:
+    resolved = path.resolve()
+    if not any(path_is_under(resolved, root) for root in allowed_roots):
+        return
+    if resolved.is_dir():
+        shutil.rmtree(resolved, ignore_errors=True)
+    elif resolved.exists():
+        resolved.unlink(missing_ok=True)
+
+
+def path_is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def require_project(db: Session, project_id: str) -> Project:
     project = db.get(Project, project_id)
     if project is None:
@@ -6535,6 +10130,11 @@ def require_eval_spec(db: Session, spec_id: str) -> EvaluationSpec:
 
 
 def latest_dataset(db: Session, project_id: str) -> DatasetSnapshot | None:
+    project = db.get(Project, project_id)
+    if project is not None and project.primary_dataset_snapshot_id:
+        primary = db.get(DatasetSnapshot, project.primary_dataset_snapshot_id)
+        if primary is not None and primary.project_id == project_id:
+            return primary
     return db.scalar(
         select(DatasetSnapshot).where(DatasetSnapshot.project_id == project_id).order_by(DatasetSnapshot.created_at.desc())
     )
@@ -6660,6 +10260,7 @@ def project_to_dict(project: Project) -> dict[str, Any]:
         "description": project.description,
         "task_type": project.task_type,
         "target_column": project.target_column,
+        "primary_dataset_snapshot_id": project.primary_dataset_snapshot_id,
         "current_phase": project.current_phase,
         "status": project.status,
         "autonomy_mode": project.autonomy_mode,
@@ -6669,7 +10270,7 @@ def project_to_dict(project: Project) -> dict[str, Any]:
     }
 
 
-def dataset_to_dict(dataset: DatasetSnapshot) -> dict[str, Any]:
+def dataset_to_dict(dataset: DatasetSnapshot, *, primary_dataset_snapshot_id: str | None = None) -> dict[str, Any]:
     return {
         "id": dataset.id,
         "project_id": dataset.project_id,
@@ -6680,6 +10281,7 @@ def dataset_to_dict(dataset: DatasetSnapshot) -> dict[str, Any]:
         "column_count": dataset.column_count,
         "schema_hash": dataset.schema_hash,
         "data_hash": dataset.data_hash,
+        "is_primary": dataset.id == primary_dataset_snapshot_id,
         "created_at": dataset.created_at.isoformat(),
     }
 
@@ -6950,19 +10552,18 @@ def model_validation_to_dict(db: Session, job: Job, model_version_id: str) -> di
 def artifact_preview_limit_bytes(artifact: Artifact, path: Path) -> int:
     if path.suffix.lower() in {".html", ".htm"}:
         return 5_000_000
-    if artifact.asset_type in {
-        "notebook_html",
-        "notebook_execution_html",
-        "notebook_evidence_html",
-        "eda_review_html",
-    }:
-        return 5_000_000
     if artifact.asset_type == "relational_catalog":
         return 500_000
     return 20_000
 
 
-def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 20_000) -> dict[str, Any]:
+def artifact_preview_to_dict(
+    artifact: Artifact,
+    path: Path,
+    limit_bytes: int = 20_000,
+    *,
+    db: Session | None = None,
+) -> dict[str, Any]:
     suffix = path.suffix.lower()
     visual_suffixes = {
         ".gif": "image/gif",
@@ -6993,6 +10594,61 @@ def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 
         "filename": path.name,
         "size_bytes": artifact.size_bytes,
     }
+    if artifact.asset_type == "research_findings_report" and suffix == ".json":
+        try:
+            payload = loads_json(path.read_text(encoding="utf-8"), {})
+        except (OSError, UnicodeDecodeError, ValueError):
+            payload = {}
+        rich_preview = research_findings_rich_markdown_preview(db, payload) if isinstance(payload, dict) else None
+        if rich_preview:
+            return {
+                **base,
+                "content_type": "md",
+                "preview_available": True,
+                "preview": rich_preview,
+                "truncated": False,
+                "reason": None,
+            }
+        preview = research_findings_markdown_preview(payload) if isinstance(payload, dict) else None
+        if preview:
+            return {
+                **base,
+                "content_type": "md",
+                "preview_available": True,
+                "preview": preview,
+                "truncated": False,
+                "reason": None,
+            }
+    if artifact.asset_type == "pilot_scoring_report" and suffix == ".json":
+        try:
+            payload = loads_json(path.read_text(encoding="utf-8"), {})
+        except (OSError, UnicodeDecodeError, ValueError):
+            payload = {}
+        preview = pilot_scoring_markdown_preview(payload) if isinstance(payload, dict) else None
+        if preview:
+            return {
+                **base,
+                "content_type": "md",
+                "preview_available": True,
+                "preview": preview,
+                "truncated": False,
+                "reason": None,
+            }
+    if artifact.asset_type == "validation_scheme_audit" and suffix == ".json":
+        try:
+            payload = loads_json(path.read_text(encoding="utf-8"), {})
+        except (OSError, UnicodeDecodeError, ValueError):
+            payload = {}
+        preview = validation_scheme_audit_markdown_preview(payload) if isinstance(payload, dict) else None
+        if preview:
+            return {
+                **base,
+                "content_type": "md",
+                "preview_available": True,
+                "preview": preview,
+                "truncated": False,
+                "reason": None,
+            }
     if suffix in visual_suffixes:
         return {
             **base,
@@ -7051,6 +10707,177 @@ def artifact_preview_to_dict(artifact: Artifact, path: Path, limit_bytes: int = 
         "truncated": truncated,
         "reason": None,
     }
+
+
+def research_findings_rich_markdown_preview(db: Session | None, payload: dict[str, Any]) -> str | None:
+    if db is None:
+        return None
+    artifact_id = str(payload.get("rich_report_artifact_id") or "").strip()
+    if not artifact_id:
+        return None
+    artifact = db.get(Artifact, artifact_id)
+    if artifact is None:
+        return None
+    try:
+        path = artifact_primary_path(artifact)
+        markdown = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    metadata = loads_json(artifact.metadata_json, {})
+    references = metadata.get("figure_references")
+    if not isinstance(references, list):
+        return markdown
+    replacements = {
+        str(item.get("markdown_reference") or ""): f"/api/artifacts/{item.get('artifact_id')}/download"
+        for item in references
+        if isinstance(item, dict)
+        and isinstance(item.get("markdown_reference"), str)
+        and item.get("markdown_reference")
+        and isinstance(item.get("artifact_id"), str)
+        and item.get("artifact_id")
+    }
+    if not replacements:
+        return markdown
+
+    def replace(match: re.Match[str]) -> str:
+        reference = match.group(1).strip()
+        replacement = replacements.get(reference)
+        if not replacement:
+            return match.group(0)
+        return match.group(0).replace(f"({reference}", f"({replacement}", 1)
+
+    return re.sub(r"!\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)", replace, markdown)
+
+
+def research_findings_markdown_preview(payload: dict[str, Any]) -> str | None:
+    topic = str(payload.get("topic") or "").strip()
+    sources = payload.get("sources") if isinstance(payload.get("sources"), list) else []
+    findings = payload.get("findings") if isinstance(payload.get("findings"), list) else []
+    no_findings = payload.get("no_findings") if isinstance(payload.get("no_findings"), dict) else None
+    if not topic and not sources and not findings and no_findings is None:
+        return None
+    lines = ["# Research findings"]
+    if topic:
+        lines.extend(["", f"**Topic:** {topic}"])
+    if no_findings is not None:
+        rationale = str(no_findings.get("rationale") or "").strip()
+        queries = [str(item).strip() for item in no_findings.get("searched_queries", []) if isinstance(item, str) and item.strip()] if isinstance(no_findings.get("searched_queries"), list) else []
+        lines.extend(["", "## No findings recorded"])
+        if rationale:
+            lines.append(rationale)
+        if queries:
+            lines.extend(["", "Searched queries:"])
+            lines.extend(f"- {query}" for query in queries)
+        return "\n".join(lines).strip() + "\n"
+    if sources:
+        lines.extend(["", "## Sources"])
+        for index, source in enumerate(sources):
+            if not isinstance(source, dict):
+                continue
+            title = str(source.get("title") or f"Source {index + 1}").strip()
+            url = str(source.get("url") or "").strip()
+            source_type = str(source.get("source_type") or "").strip()
+            retrieved_at = str(source.get("retrieved_at") or "").strip()
+            label = f"[{index}] {title}"
+            if url:
+                label = f"[{index}] [{title}]({url})"
+            suffix_parts = [part for part in (source_type, retrieved_at) if part]
+            lines.append(f"- {label}{' — ' + ' · '.join(suffix_parts) if suffix_parts else ''}")
+            key_claims = source.get("key_claims") if isinstance(source.get("key_claims"), list) else []
+            for claim in key_claims:
+                if isinstance(claim, str) and claim.strip():
+                    lines.append(f"  - {claim.strip()}")
+            reliability_notes = str(source.get("reliability_notes") or "").strip()
+            if reliability_notes:
+                lines.append(f"  - Reliability notes: {reliability_notes}")
+    if findings:
+        lines.extend(["", "## Findings"])
+        for index, finding in enumerate(findings, start=1):
+            if not isinstance(finding, dict):
+                continue
+            claim = str(finding.get("claim") or f"Finding {index}").strip()
+            lines.append(f"{index}. {claim}")
+            source_indexes = finding.get("source_indexes") if isinstance(finding.get("source_indexes"), list) else []
+            if source_indexes:
+                lines.append(f"   - Sources: {', '.join(str(item) for item in source_indexes)}")
+            implication = str(finding.get("implication_for_project") or "").strip()
+            if implication:
+                lines.append(f"   - Project implication: {implication}")
+            action = str(finding.get("recommended_action") or "").strip()
+            if action:
+                lines.append(f"   - Recommended action: {action}")
+    return "\n".join(lines).strip() + "\n"
+
+
+def pilot_scoring_markdown_preview(payload: dict[str, Any]) -> str | None:
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    matched_rows = payload.get("matched_rows")
+    metric_count = payload.get("metric_count")
+    as_of_violations = payload.get("as_of_violations") if isinstance(payload.get("as_of_violations"), dict) else {}
+    period = payload.get("period") if isinstance(payload.get("period"), dict) else {}
+    if not metrics and matched_rows is None and metric_count is None and not as_of_violations and not period:
+        return None
+    lines = ["# Pilot scoring report"]
+    summary_parts: list[str] = []
+    if isinstance(matched_rows, int | float):
+        summary_parts.append(f"{matched_rows:g} matched rows")
+    if isinstance(metric_count, int | float):
+        summary_parts.append(f"{metric_count:g} metrics")
+    if summary_parts:
+        lines.extend(["", " · ".join(summary_parts)])
+    if metrics:
+        lines.extend(["", "## Metrics"])
+        for name, value in metrics.items():
+            if isinstance(value, int | float):
+                lines.append(f"- {name}: {value:g}")
+            elif isinstance(value, str) and value.strip():
+                lines.append(f"- {name}: {value.strip()}")
+    violation_count = as_of_violations.get("count")
+    if isinstance(violation_count, int | float):
+        lines.extend(["", "## As-of checks", f"- Violations: {violation_count:g}"])
+    if period:
+        start = str(period.get("start") or "").strip()
+        end = str(period.get("end") or "").strip()
+        if start or end:
+            lines.extend(["", "## Period", f"- Start: {start or '-'}", f"- End: {end or '-'}"])
+    return "\n".join(lines).strip() + "\n"
+
+
+def validation_scheme_audit_markdown_preview(payload: dict[str, Any]) -> str | None:
+    verdict = str(payload.get("scheme_verdict") or "").strip()
+    next_focus = str(payload.get("next_iteration_focus") or "").strip()
+    gap_decomposition = payload.get("gap_decomposition") if isinstance(payload.get("gap_decomposition"), list) else []
+    hypotheses = payload.get("hypotheses") if isinstance(payload.get("hypotheses"), list) else []
+    if not verdict and not next_focus and not gap_decomposition and not hypotheses:
+        return None
+    lines = ["# Validation scheme audit"]
+    if verdict:
+        lines.extend(["", f"**Verdict:** {verdict.replace('_', ' ')}"])
+    if next_focus:
+        lines.extend(["", "## Next iteration focus", next_focus])
+    if gap_decomposition:
+        lines.extend(["", "## Gap decomposition"])
+        for index, item in enumerate(gap_decomposition, start=1):
+            if not isinstance(item, dict):
+                continue
+            component = str(item.get("component") or f"component {index}").strip().replace("_", " ")
+            lines.append(f"{index}. {component}")
+            for label, key in (("Evidence", "evidence"), ("Magnitude", "magnitude"), ("Confidence", "confidence")):
+                value = str(item.get(key) or "").strip()
+                if value:
+                    lines.append(f"   - {label}: {value}")
+    if hypotheses:
+        lines.extend(["", "## Hypotheses"])
+        for index, item in enumerate(hypotheses, start=1):
+            if not isinstance(item, dict):
+                continue
+            statement = str(item.get("statement") or f"Hypothesis {index}").strip()
+            lines.append(f"{index}. {statement}")
+            for label, key in (("Test plan", "test_plan"), ("Expected evidence", "expected_evidence")):
+                value = str(item.get(key) or "").strip()
+                if value:
+                    lines.append(f"   - {label}: {value}")
+    return "\n".join(lines).strip() + "\n"
 
 
 def inline_local_html_assets(artifact: Artifact, path: Path, html: str, max_preview_bytes: int = 5_000_000) -> str:

@@ -82,6 +82,7 @@ LOSS_METRICS = {
     for option in BUILTIN_METRIC_OPTIONS
     if option["direction"] == "lower_is_better"
 } | {"mape", "mean_absolute_error"}
+LOWER_IS_BETTER_METRIC_PARTS = {"rmse", "mae", "mse", "msle", "mape", "smape", "loss", "error"}
 
 
 def normalize_metric_name(metric: str) -> str:
@@ -173,6 +174,16 @@ def leaderboard_sort_key_for_metric(run: ExperimentRun, metric: str | None) -> t
     value = metric_value(metrics, metric)
     if value is None:
         return (1, 0.0)
-    if name in LOSS_METRICS:
+    if metric_lower_is_better(name):
         return (0, value)
     return (0, -value)
+
+
+def metric_lower_is_better(metric: str | None) -> bool:
+    if not metric:
+        return False
+    normalized = normalize_metric_name(metric)
+    if normalized in LOSS_METRICS:
+        return True
+    parts = {part for part in normalized.split("_") if part}
+    return bool(parts & LOWER_IS_BETTER_METRIC_PARTS)

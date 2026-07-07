@@ -17,7 +17,9 @@ Recommended sections:
 7. Evaluation boundary: known EvaluationSpec/SplitManifest and what claims are or are not allowed.
 8. Appendix: raw profile tables, source artifacts, execution notes, and reproduction commands.
 
-Use Plotly, matplotlib, seaborn, Altair, DuckDB, Polars, pandas, or scikit-learn as appropriate. Prefer libraries already installed in the Tablex environment. If a better library is missing, record the requested dependency and fallback output instead of silently degrading.
+Use Plotly, matplotlib, seaborn, Altair, DuckDB, Polars, pandas, or scikit-learn as appropriate. Prefer libraries already installed in the Tablex environment. If a better library is missing, record the requested dependency and the missing analysis explicitly instead of silently degrading.
+
+Human-facing Tablex notebooks must contain visual diagnostics. Text and tables alone are not acceptable for data understanding or model diagnostics. Choose chart types from the evidence: bar charts for categorical distributions and slice metrics, line charts for time or ordered trajectories, scatter/hexbin plots for relationships and residuals, histograms or ECDFs for target and error distributions, heatmaps for missingness/correlation/confusion matrices, and small multiples for entity/group comparisons. For model diagnostics, use the standard interpretation stack when technically supported: permutation importance, native tree-based feature importance, partial dependence for the most important features, SHAP inspection, residual/error slices, and representative prediction examples. If a diagnostic is not possible from the available artifacts or runtime, register that limitation in the fixed `quality_manifest.model_diagnostics` check list instead of leaving the gap invisible.
 
 ## UI-Ready Artifacts
 
@@ -84,9 +86,13 @@ Write compact JSON artifacts alongside the notebook so Tablex can render ideas a
 ## Execution And Export
 
 - Keep notebook code reproducible and executable from the project workspace.
-- Prefer deterministic sample limits for expensive plots.
-- Export HTML when the environment supports it, for example `marimo export html notebooks/grandmaster_eda.py -o reports/grandmaster_eda.html`.
-- If export fails, keep the source notebook, error note, and partial figures as artifacts.
+- Prefer deterministic sample limits and precomputed summary artifacts for expensive plots; notebooks should visualize and explain, not rerun long training loops on open.
+- Marimo cells form a reactive graph. Public variables assigned or returned by cells must be unique across the notebook. Use underscore-prefixed private names for repeated temporaries such as `_mo`, `_fig`, `_ax`, `_table`, and `_data`; do not define public `fig`, `mo`, `pd`, or `np` in multiple cells.
+- Keep shared imports in one setup cell and return the shared modules for downstream cells, or use private aliases inside a cell. Avoid copy-pasting the same import/temporary pattern across cells when it would create duplicate public definitions.
+- Build figures from `.tablex/data` links or cached summary artifacts, with deterministic sampling for large tables. A notebook should open quickly in native marimo while still showing real visual diagnostics.
+- For Japanese or other non-Latin labels, prefer Plotly/HTML-rendered text when it gives reliable glyph rendering in the Tablex viewer. If matplotlib is the right tool and `japanize_matplotlib` is available in the runtime, import it before drawing Japanese labels; if it is unavailable, keep the figure useful and state the font limitation instead of shipping garbled labels.
+- Register the native marimo Python source through Tablex. Do not use static HTML snapshots as notebook previews or fallbacks.
+- If native marimo fails, keep the source notebook and error note as repair targets. Do not mark the notebook as complete until the source opens.
 - Do not mark a notebook as complete if cells were never executed. If execution was impossible, make that the main caveat.
 
 ## Writing Style

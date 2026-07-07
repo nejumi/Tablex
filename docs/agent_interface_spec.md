@@ -68,8 +68,9 @@ After those anchors, Codex may add, remove, reorder, branch, or refine plan bloc
 marimo notebooks are first-class Tablex assets.
 
 - Notebook source must be authored by Codex or another AgentRunner, not by backend templates.
-- Tablex may create authoring briefs, validate source, execute controlled captures, export HTML, store figures, and register lineage.
-- Rendered notebook HTML should open in the in-product viewer from Chat, Data, Leaderboard, Assets, and related model/run views.
+- Tablex may create authoring briefs, validate source, start native marimo sessions, store figures and supporting artifacts, and register lineage.
+- The native marimo source is the notebook artifact of record. Static HTML snapshots are not notebook evidence and must not be used as a fallback that hides notebook/runtime failures.
+- Native marimo notebooks should open in-product from Chat, Data, Leaderboard, Assets, ResearchPlan, and related model/run views.
 - Notebook language follows the user's locale because notebooks are both model context and human-facing reports.
 
 ## Skills And Research
@@ -77,6 +78,17 @@ marimo notebooks are first-class Tablex assets.
 Skills are equipment for Codex, not fixed recipes. Prior-knowledge research is complete only when Codex returns source-backed findings, a synthesis notebook/report, a reusable Skill, or an explicit no-finding decision.
 
 Kaggle, arXiv, web, and domain research should be stored as Evidence/Insight/Report/Skill assets when used. The harness may manage safe download/probe plumbing, but interpretation belongs to Codex.
+
+## Pilot Phase
+
+Pilot Phase is a forward observation loop layered on top of a registered prediction pipeline.
+
+- Tablex may start a pilot deployment for a registered `prediction_pipeline` artifact, run prediction batches, ingest outcome batches, join by declared keys, and compute fixed metrics from prediction/outcome pairs.
+- When a pipeline declares history requirements, Tablex passes the registered history artifact to `predict.py`; feature construction such as lags or rolling windows remains inside the prediction pipeline.
+- Tablex records the scoring result as a `pilot_scoring_report` artifact and stores lineage to the prediction batch, outcome batch, and deployment context.
+- Tablex does not interpret validation drift, target mismatch, leakage, or model failure causes in harness code. It notifies the main Codex session that a scoring report is available.
+- Codex is responsible for registering a `validation_scheme_audit` through the Pilot request protocol, including the verdict, gap decomposition, hypotheses, and next iteration focus.
+- When Full Auto is ON, pilot observations should flow back into the same continuing main session so Codex can update Research Plan and continue the data understanding, research, modeling, and reporting loop without being split into a separate ticket.
 
 ## Observability
 

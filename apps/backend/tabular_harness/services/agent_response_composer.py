@@ -221,7 +221,7 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
             "Use agent_session_context and recent_raw_transcript_events when explaining what Codex is doing now.",
             "Use current_chat_delivery when present: the user's message has already been delivered to the running analysis, and this response should explain that state without blocking it.",
             "Use recent_conversation_turns so the reply can follow the user's ongoing conversation.",
-            "If response_shortcut is btw_status_explanation, act as a sidecar: explain current progress without changing the main session.",
+            "If response_shortcut is btw_status_explanation, explain current progress without changing the main session.",
             "If the work only created a plan or contract, say so naturally and state the next useful move.",
             "",
         ]

@@ -1,0 +1,162 @@
+{
+  "run_id": "20260706T063451Z",
+  "base": "http://127.0.0.1:8022",
+  "csv_path": "/tmp/tablex_0119_current_salary_20260706T063451Z.csv",
+  "events": [
+    {
+      "t": "2026-07-06T06:34:51.786294+00:00",
+      "label": "project_created",
+      "payload": {
+        "id": "p_db4e2c5cca9c",
+        "org_id": "local-org",
+        "name": "0119 current full auto smoke 20260706T063451Z",
+        "description": "Isolated current-code Full Auto verification smoke.",
+        "task_type": null,
+        "target_column": "salary",
+        "current_phase": "DRAFT",
+        "status": "active",
+        "autonomy_mode": "full_auto",
+        "created_by": "local-user",
+        "created_at": "2026-07-06T06:34:51.700690+00:00",
+        "updated_at": "2026-07-06T06:34:51.700697+00:00"
+      }
+    },
+    {
+      "t": "2026-07-06T06:34:52.027643+00:00",
+      "label": "dataset_uploaded",
+      "payload": {
+        "dataset_snapshot": {
+          "id": "ds_908dbfe0c6de",
+          "project_id": "p_db4e2c5cca9c",
+          "artifact_id": "art_5f006ce1e940",
+          "source_type": "upload",
+          "source_ref": "tablex_0119_current_salary_20260706T063451Z.csv",
+          "row_count": 90,
+          "column_count": 11,
+          "schema_hash": "ab11a4e4efa0d48fbf45d83425b73a4fa7ed69e26b75172e75ddade0c5fa358a",
+          "data_hash": "fb793b765eb35fdb1ae30949ceadcc8cfca65a09080d49a0194898a30531432c",
+          "created_at": "2026-07-06T06:34:51.988956+00:00"
+        },
+        "artifact": {
+          "id": "art_5f006ce1e940",
+          "project_id": "p_db4e2c5cca9c",
+          "asset_type": "dataset_snapshot",
+          "surface_role": "primary",
+          "name": "uploaded_dataset",
+          "version": 1,
+          "uri": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/dataset_snapshot/uploaded_dataset/v1",
+          "content_hash": "fb793b765eb35fdb1ae30949ceadcc8cfca65a09080d49a0194898a30531432c",
+          "size_bytes": 12672,
+          "metadata": {
+            "primary_path": "/tmp/tablex-0119-current-e2e/artifacts/local-org/p_db4e2c5cca9c/dataset_snapshot/uploaded_dataset/v1/tablex_0119_current_salary_20260706T063451Z.csv",
+            "project_id": "p_db4e2c5cca9c",
+            "source_filename": "tablex_0119_current_salary_20260706T063451Z.csv"
+          },
+          "created_at": "2026-07-06T06:34:51.796863+00:00"
+        },
+        "profile_job_id": "job_22e9d095f0ce"
+      }
+    },
+    {
+      "t": "2026-07-06T06:34:52.055576+00:00",
+      "label": "autonomy_started",
+      "payload": {
+        "id": "job_555cdb1c1813",
+        "project_id": "p_db4e2c5cca9c",
+        "job_type": "start_autonomous_loop",
+        "status": "succeeded",
+        "priority": 50,
+        "attempt_count": 0,
+        "max_attempts": 1,
+        "input": {
+          "agent_model": null,
+          "agent_session_id": "ags_ca234205801d",
+          "autonomy_mode": "full_auto",
+          "locale": "ja-JP",
+          "requested_runner_mode": "codex_cli",
+          "runner_mode": "codex_cli",
+          "utility_model": null
+        },
+        "output": {
+          "agent_chat_turn_artifact_id": "art_936dc5368085",
+          "agent_session_id": "ags_ca234205801d",
+          "assistant_message": "フルオートを開始しました。データの確認、目的の整理、評価設計、分析ノートブック作成へ順に進めます。進行中の内容はこのチャットとアクティビティに表示します。",
+          "created_job_ids": [],
+          "project_id": "p_db4e2c5cca9c",
+          "schema_version": "agent_session_start.v1",
+          "status": "started",
+          "token_usage": {
+            "is_estimate": true,
+            "series": [
+              {
+                "step": "session_created",
+                "tokens": 32
+              },
+              {
+                "step": "codex_starting",
+                "tokens": 48
+              }
+            ],
+            "source": "agent_session_transcript_pending"
+          },
+          "worker_events": [
+            {
+              "active": true,
+              "agent_session_id": "ags_ca234205801d",
+              "created_at": "2026-07-06T06:34:52.046895+00:00",
+              "detail": "プロジェクトの状況を確認し、次の分析ステップを開始しています。",
+              "display_name": "自律分析",
+              "headline": "分析を開始しています",
+              "job_id": "job_555cdb1c1813",
+              "job_type": "start_autonomous_loop",
+              "project_id": "p_db4e2c5cca9c",
+              "status": "starting",
+              "target_anchor": "agent-workspace",
+              "target_tab": "Home",
+              "token_usage": {
+                "is_estimate": true,
+                "series": [
+                  {
+                    "step": "session_created",
+                    "tokens": 32
+                  },
+                  {
+                    "step": "codex_starting",
+                    "tokens": 48
+                  }
+                ],
+                "source": "agent_session_transcript_pending"
+              },
+              "updated_at": "2026-07-06T06:34:52.047369+00:00",
+              "worker_id": "main-agent-session"
+            }
+          ]
+        },
+        "context": {},
+        "policy": {
+          "autonomy_mode": "full_auto",
+          "connector_credentials": "not_materialized",
+          "control_record_only": true,
+          "main_execution_state": "agent_session",
+          "production_write": "forbidden",
+          "requested_runner_mode": "codex_cli",
+          "runner_mode": "codex_cli",
+          "secret_access": "forbidden"
+        },
+        "dependency_job_ids": [],
+        "error_message": null,
+        "approval_required": false,
+        "approved_by": null,
+        "approved_at": null,
+        "cancelled_by": null,
+        "run_after": null,
+        "locked_by": null,
+        "locked_at": null,
+        "created_at": "2026-07-06T06:34:52.046895+00:00",
+        "updated_at": "2026-07-06T06:34:52.050129+00:00",
+        "started_at": null,
+        "ended_at": "2026-07-06T06:34:52.047482+00:00"
+      }
+    }
+  ]
+}

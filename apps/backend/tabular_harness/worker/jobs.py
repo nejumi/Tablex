@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import replace
+import csv
+import math
+import subprocess
+import sys
+import zipfile
+from contextlib import ExitStack
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -8,8 +15,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.config import Settings, get_settings
-from tabular_harness.core.json import loads_json
+from tabular_harness.core.ids import new_id
+from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
+    AgentSession,
     Artifact,
     DatasetSnapshot,
     EvaluationSpec,
@@ -17,6 +26,9 @@ from tabular_harness.models.entities import (
     Idea,
     Job,
     ModelVersion,
+    PilotDeployment,
+    PilotOutcomeBatch,
+    PilotPredictionBatch,
     Project,
     Question,
     Report,
@@ -30,10 +42,7 @@ from tabular_harness.services.agent_context import prepare_idea_agent_context_pa
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
 from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
-from tabular_harness.services.analysis_notebooks import (
-    create_notebook_execution_capture,
-    create_notebook_execution_plan,
-)
+from tabular_harness.services.analysis_notebooks import create_notebook_execution_plan
 from tabular_harness.services.approach import (
     create_decision_dashboard,
     create_research_plan,
@@ -105,10 +114,15 @@ from tabular_harness.services.experiment_lifecycle import (
     draft_run_report,
 )
 from tabular_harness.services.jobs import JOB_TYPES, create_job
+from tabular_harness.services.agent_inbox import write_inbox_entry
 from tabular_harness.services.kaggle_probe import (
     download_kaggle_selected_files,
     fetch_kaggle_competition_inventory,
     probe_kaggle_benchmark_access,
+)
+from tabular_harness.services.research_plans import (
+    record_harness_dataset_upload_in_research_plan,
+    record_harness_objective_in_research_plan,
 )
 from tabular_harness.services.model_diagnostics_artifacts import (
     materialize_model_diagnostics_artifacts,
@@ -150,6 +164,19 @@ from tabular_harness.services.translation import translate_artifact
 from tabular_harness.worker.runner import JobHandler, SyncWorker
 
 INITIAL_JOB_TYPES = tuple(sorted(JOB_TYPES))
+
+
+@dataclass
+class StagedUploadFile:
+    filename: str
+    content_type: str | None
+    file: Any
+
+
+def set_data_understanding_phase_without_turning_agent_off(project: Project) -> None:
+    if project.current_phase == "AUTONOMOUS_LOOP":
+        return
+    project.current_phase = "UNDERSTANDING_REVIEW"
 
 
 def stub_job_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
@@ -301,6 +328,262 @@ def upload_relational_schema_hint_handler(db: Session, job: Job, store: LocalArt
         "parsed_table_count": result.summary["parsed_table_count"],
         "parsed_relationship_count": result.summary["parsed_relationship_count"],
     }
+
+
+def upload_data_bundle_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "upload_data_bundle")
+    table_artifact_ids = require_string_list(payload.get("staged_table_artifact_ids"), "upload_data_bundle", "staged_table_artifact_ids")
+    hint_artifact_ids = require_string_list(
+        payload.get("staged_relational_hint_artifact_ids"), "upload_data_bundle", "staged_relational_hint_artifact_ids"
+    )
+    primary_filename = payload.get("primary_filename") if isinstance(payload.get("primary_filename"), str) else None
+    target_column = payload.get("target_column") if isinstance(payload.get("target_column"), str) else None
+    note = payload.get("note") if isinstance(payload.get("note"), str) else None
+    response_locale = payload.get("response_locale") if isinstance(payload.get("response_locale"), str) else None
+
+    def progress(stage: str, percent: int, detail: dict[str, Any] | None = None) -> None:
+        update_upload_data_bundle_progress(
+            db,
+            job,
+            stage=stage,
+            percent=percent,
+            response_locale=response_locale,
+            detail=detail,
+        )
+
+    progress(
+        "opening_staged_files",
+        5,
+        {"table_file_count": len(table_artifact_ids), "relational_hint_file_count": len(hint_artifact_ids)},
+    )
+    staged_artifacts: list[Artifact] = []
+    with ExitStack() as stack:
+        table_uploads: list[StagedUploadFile] = []
+        hint_uploads: list[StagedUploadFile] = []
+        for artifact_id in table_artifact_ids:
+            artifact = staged_upload_artifact_for_job(db, project, artifact_id, "table")
+            staged_artifacts.append(artifact)
+            metadata = loads_json(artifact.metadata_json, {})
+            path = artifact_primary_path(artifact)
+            table_uploads.append(
+                StagedUploadFile(
+                    filename=str(metadata.get("source_filename") or path.name),
+                    content_type=str(metadata.get("content_type") or "") or None,
+                    file=stack.enter_context(path.open("rb")),
+                )
+            )
+        for artifact_id in hint_artifact_ids:
+            artifact = staged_upload_artifact_for_job(db, project, artifact_id, "relational_hint")
+            staged_artifacts.append(artifact)
+            metadata = loads_json(artifact.metadata_json, {})
+            path = artifact_primary_path(artifact)
+            hint_uploads.append(
+                StagedUploadFile(
+                    filename=str(metadata.get("source_filename") or path.name),
+                    content_type=str(metadata.get("content_type") or "") or None,
+                    file=stack.enter_context(path.open("rb")),
+                )
+            )
+        from tabular_harness.api.routes import ingest_uploaded_data_bundle
+
+        output = ingest_uploaded_data_bundle(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            table_uploads=cast(Any, table_uploads),
+            hint_uploads=cast(Any, hint_uploads),
+            target_column=target_column,
+            primary_filename=primary_filename,
+            note=note,
+            response_locale=response_locale,
+            progress_callback=progress,
+        )
+    output["staging_artifact_ids"] = [artifact.id for artifact in staged_artifacts]
+    return output
+
+
+def select_primary_table_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "select_primary_table")
+    dataset_snapshot_id = payload.get("dataset_snapshot_id") if isinstance(payload.get("dataset_snapshot_id"), str) else None
+    artifact_id = payload.get("artifact_id") if isinstance(payload.get("artifact_id"), str) else None
+    target_column_present = "target_column" in payload
+    target_column = payload.get("target_column") if isinstance(payload.get("target_column"), str) else None
+    response_locale = payload.get("locale") if isinstance(payload.get("locale"), str) else None
+
+    def progress(stage: str, percent: int, detail: dict[str, Any] | None = None) -> None:
+        update_select_primary_table_progress(
+            db,
+            job,
+            stage=stage,
+            percent=percent,
+            response_locale=response_locale,
+            detail=detail,
+        )
+
+    if bool(dataset_snapshot_id) == bool(artifact_id):
+        raise ValueError("select_primary_table requires exactly one of dataset_snapshot_id or artifact_id")
+
+    progress("validating", 10, {"dataset_snapshot_id": dataset_snapshot_id, "artifact_id": artifact_id})
+    if dataset_snapshot_id:
+        dataset = db.get(DatasetSnapshot, dataset_snapshot_id)
+        if dataset is None or dataset.project_id != project.id:
+            raise ValueError("DatasetSnapshot not found for this project")
+    else:
+        artifact = db.get(Artifact, artifact_id)
+        if artifact is None or artifact.project_id != project.id:
+            raise ValueError("Table artifact not found for this project")
+        if artifact.asset_type not in {"dataset_snapshot", "uploaded_supporting_table"}:
+            raise ValueError("Primary table must be an uploaded table artifact")
+        path = artifact_primary_path(artifact)
+        if path.suffix.lower() not in {".csv", ".parquet"}:
+            raise ValueError("Primary table artifact must be CSV or Parquet")
+        existing = db.scalar(
+            select(DatasetSnapshot)
+            .where(DatasetSnapshot.project_id == project.id, DatasetSnapshot.artifact_id == artifact.id)
+            .order_by(DatasetSnapshot.created_at.desc())
+        )
+        if existing is not None:
+            dataset = existing
+        else:
+            metadata = loads_json(artifact.metadata_json, {})
+            progress("profiling", 35, {"artifact_id": artifact.id, "source_filename": metadata.get("source_filename")})
+            dataset = profile_dataset_artifact(
+                db,
+                store,
+                project,
+                artifact,
+                target_column if target_column_present else project.target_column,
+                source_type="user_selected_primary_table",
+                source_ref=str(metadata.get("source_filename") or metadata.get("table_name") or artifact.name),
+            )
+
+    progress("applying", 82, {"dataset_snapshot_id": dataset.id})
+    project.primary_dataset_snapshot_id = dataset.id
+    if target_column_present:
+        project.target_column = target_column.strip() if target_column else None
+    set_data_understanding_phase_without_turning_agent_off(project)
+    project.updated_at = utc_now()
+    artifact = db.get(Artifact, dataset.artifact_id)
+    if artifact is not None:
+        metadata = loads_json(artifact.metadata_json, {})
+        artifact.metadata_json = dumps_json(
+            {
+                **metadata,
+                "selected_as_primary_dataset_snapshot_id": dataset.id,
+                "selected_as_project_primary_at": utc_now().isoformat(),
+            }
+        )
+        record_harness_dataset_upload_in_research_plan(
+            db,
+            project_id=project.id,
+            artifact_ids=[artifact.id],
+            dataset_snapshot_id=dataset.id,
+            primary_artifact_id=artifact.id,
+        )
+    record_harness_objective_in_research_plan(
+        db,
+        project_id=project.id,
+        objective_label=project.target_column,
+    )
+    progress("finalizing", 100, {"dataset_snapshot_id": dataset.id, "target_column": project.target_column})
+    return {
+        "schema_version": "select_primary_table.v1",
+        "dataset_snapshot_id": dataset.id,
+        "artifact_id": dataset.artifact_id,
+        "target_column": project.target_column,
+        "assistant_message": (
+            "主表を更新しました。列候補と目的設定は新しい主表を基準に表示されます。"
+            if response_locale and response_locale.lower().startswith("ja")
+            else "Primary table updated. Column choices and objective controls now use the selected table."
+        ),
+    }
+
+
+def update_upload_data_bundle_progress(
+    db: Session,
+    job: Job,
+    *,
+    stage: str,
+    percent: int,
+    response_locale: str | None,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    japanese = response_locale.lower().startswith("ja") if response_locale else False
+    labels = {
+        "opening_staged_files": ("アップロード済みファイルを開いています", "Opening received files"),
+        "storing_tables": ("テーブルをartifactとして保存しています", "Storing table artifacts"),
+        "profiling_tables": ("テーブル構造とprofileを作成しています", "Profiling table structure"),
+        "processing_schema_hints": ("ER/schema hintを登録しています", "Processing ER/schema hints"),
+        "building_catalog": ("複数テーブルのcatalogを作成しています", "Building table catalog"),
+        "preparing_notebook_context": ("データ理解notebookの作成文脈を準備しています", "Preparing notebook context"),
+        "finalizing": ("データ取り込みを完了しています", "Finalizing data intake"),
+    }
+    ja_label, en_label = labels.get(stage, ("データ取り込みを進めています", "Importing data"))
+    existing = loads_json(job.output_json, {})
+    output = {
+        **existing,
+        "schema_version": "upload_data_bundle_progress.v1",
+        "status": "running",
+        "progress_stage": stage,
+        "progress_percent": max(0, min(100, int(percent))),
+        "assistant_message": ja_label if japanese else en_label,
+        "progress_detail": detail or {},
+    }
+    job.output_json = dumps_json(output)
+    job.updated_at = utc_now()
+    db.commit()
+
+
+def update_select_primary_table_progress(
+    db: Session,
+    job: Job,
+    *,
+    stage: str,
+    percent: int,
+    response_locale: str | None,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    japanese = response_locale.lower().startswith("ja") if response_locale else False
+    labels = {
+        "validating": ("選択した主表を確認しています", "Checking the selected primary table"),
+        "profiling": ("主表の列とprofileを作成しています", "Profiling the selected primary table"),
+        "applying": ("主表の設定を反映しています", "Applying the primary table selection"),
+        "finalizing": ("主表の変更を完了しています", "Finalizing the primary table change"),
+    }
+    ja_label, en_label = labels.get(stage, ("主表の変更を進めています", "Updating the primary table"))
+    existing = loads_json(job.output_json, {})
+    job.output_json = dumps_json(
+        {
+            **existing,
+            "schema_version": "select_primary_table_progress.v1",
+            "status": "running" if percent < 100 else "succeeded",
+            "progress_stage": stage,
+            "progress_percent": max(0, min(100, int(percent))),
+            "assistant_message": ja_label if japanese else en_label,
+            "progress_detail": detail or {},
+        }
+    )
+    job.updated_at = utc_now()
+    db.commit()
+
+
+def staged_upload_artifact_for_job(db: Session, project: Project, artifact_id: str, stage_kind: str) -> Artifact:
+    artifact = db.get(Artifact, artifact_id)
+    if artifact is None or artifact.project_id != project.id:
+        raise ValueError(f"upload_data_bundle staged {stage_kind} artifact not found")
+    metadata = loads_json(artifact.metadata_json, {})
+    if artifact.asset_type != "upload_staging_file" or metadata.get("upload_stage_kind") != stage_kind:
+        raise ValueError(f"upload_data_bundle staged {stage_kind} artifact has an invalid type")
+    return artifact
+
+
+def require_string_list(value: Any, job_type: str, field_name: str) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise ValueError(f"{job_type} requires {field_name}")
+    return list(value)
 
 
 def report_to_dict_for_worker(report: Report) -> dict[str, Any]:
@@ -639,7 +922,7 @@ def import_benchmark_dataset_for_worker(
         to_asset_id=relational_catalog_artifact.id,
         relation_type="summarizes_bundle",
     )
-    project.current_phase = "UNDERSTANDING_REVIEW"
+    set_data_understanding_phase_without_turning_agent_off(project)
     project.updated_at = utc_now()
     return {
         "benchmark": benchmark,
@@ -1444,7 +1727,7 @@ def profile_dataset_handler(db: Session, job: Job, store: LocalArtifactStore) ->
         source_type=source_type or "upload",
         source_ref=source_ref,
     )
-    project.current_phase = "UNDERSTANDING_REVIEW"
+    set_data_understanding_phase_without_turning_agent_off(project)
     project.updated_at = utc_now()
     return {
         "dataset_snapshot_id": dataset.id,
@@ -1674,7 +1957,6 @@ def run_eda_review_handler(db: Session, job: Job, store: LocalArtifactStore) -> 
         "schema_version": result.review["schema_version"],
         "dataset_snapshot_id": dataset.id,
         "eda_review_bundle_artifact_id": result.bundle_artifact.id,
-        "eda_review_html_artifact_id": result.html_artifact.id,
         "eda_review_report_id": result.report.id,
         "eda_review_report_artifact_id": result.report_artifact.id,
         "visualization_id": result.visualization.id,
@@ -1782,7 +2064,7 @@ def create_notebook_authoring_brief_handler(db: Session, job: Job, store: LocalA
                 headline="Notebook authoring brief prepared",
                 detail="Registered source-backed guidance for Codex-authored notebook work.",
                 target_tab="Assets",
-                target_anchor="notebooks",
+                target_anchor="asset-notebooks",
             )
         ],
     }
@@ -1809,7 +2091,6 @@ def prepare_data_understanding_notebook_authoring_handler(
         "notebook_kind": "data_understanding",
         "response_locale": response_locale,
         "analysis_notebook_artifact_id": None,
-        "notebook_html_artifact_id": None,
         "notebook_authoring_brief_artifact_id": result.brief_artifact.id,
         "notebook_authoring_report_artifact_id": result.report_artifact.id,
         "notebook_run_manifest_artifact_id": None,
@@ -1825,7 +2106,7 @@ def prepare_data_understanding_notebook_authoring_handler(
                 headline="Data-understanding notebook context prepared",
                 detail="Registered the Codex authoring brief; the notebook itself remains Codex-authored.",
                 target_tab="Assets",
-                target_anchor="notebooks",
+                target_anchor="asset-notebooks",
             )
         ],
     }
@@ -1889,43 +2170,6 @@ def plan_notebook_execution_handler(db: Session, job: Job, store: LocalArtifactS
                 status="succeeded",
                 headline="Notebook execution plan created",
                 detail="Registered the execution contract and plan without running notebook code.",
-            )
-        ],
-    }
-
-
-def capture_notebook_execution_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
-    notebook_artifact = notebook_artifact_for_job(db, job, "capture_notebook_execution")
-    result = create_notebook_execution_capture(db, store=store, notebook_artifact=notebook_artifact)
-    return {
-        "schema_version": result.manifest["schema_version"],
-        "notebook_kind": result.manifest["notebook_kind"],
-        "analysis_notebook_artifact_id": notebook_artifact.id,
-        "notebook_execution_manifest_artifact_id": result.manifest_artifact.id,
-        "notebook_execution_report_id": result.report.id,
-        "notebook_execution_report_artifact_id": result.report_artifact.id,
-        "notebook_execution_html_artifact_id": result.html_artifact.id,
-        "notebook_figure_manifest_artifact_id": result.figure_manifest_artifact.id,
-        "notebook_execution_source_artifact_id": result.source_artifact.id,
-        "notebook_evidence_bundle_artifact_id": result.evidence_bundle_artifact.id
-        if result.evidence_bundle_artifact
-        else None,
-        "notebook_evidence_html_artifact_id": result.evidence_html_artifact.id
-        if result.evidence_html_artifact
-        else None,
-        "notebook_evidence_figure_artifact_ids": [artifact.id for artifact in result.figure_artifacts],
-        "notebook_execution_plan_artifact_id": result.plan_artifact.id,
-        "agent_task_contract_artifact_id": result.contract_artifact.id,
-        "artifact_ids": result.artifact_ids,
-        "execution_status": result.manifest["execution_status"],
-        "capture_mode": result.manifest["capture_mode"],
-        "worker_events": [
-            notebook_worker_event(
-                job,
-                notebook_artifact,
-                status="succeeded",
-                headline="Notebook execution captured",
-                detail="Registered the notebook execution manifest, report, preview HTML, and source snapshot.",
             )
         ],
     }
@@ -2143,7 +2387,6 @@ def prepare_model_diagnostics_notebook_authoring_handler(
         "run_id": run.id,
         "model_version_id": run.model_version_id,
         "analysis_notebook_artifact_id": None,
-        "notebook_html_artifact_id": None,
         "notebook_run_manifest_artifact_id": None,
         "notebook_report_id": None,
         "notebook_report_artifact_id": None,
@@ -2161,7 +2404,7 @@ def prepare_model_diagnostics_notebook_authoring_handler(
                 headline="Model diagnostics notebook context prepared",
                 detail="Registered the Codex authoring brief for this run's diagnostics notebook.",
                 target_tab="Assets",
-                target_anchor="notebooks",
+                target_anchor="asset-notebooks",
             )
         ],
     }
@@ -2204,6 +2447,8 @@ def materialize_model_diagnostics_artifacts_handler(
         "feature_importance_artifact_id": result.artifact_ids[0],
         "permutation_importance_artifact_id": result.artifact_ids[1],
         "visualization_artifact_id": result.artifact_ids[4],
+        "partial_dependence_artifact_id": result.artifact_ids[5],
+        "shap_summary_artifact_id": result.artifact_ids[6],
         "availability": result.diagnostics.get("availability", {}),
         "insight_id": result.insight_id,
         "evidence_id": result.evidence_id,
@@ -2248,6 +2493,713 @@ def validate_model_package_handler(db: Session, job: Job, store: LocalArtifactSt
     }
 
 
+def register_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "register_prediction_pipeline")
+    session_id = payload.get("agent_session_id")
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise ValueError("register_prediction_pipeline requires agent_session_id")
+    session = db.get(AgentSession, session_id.strip())
+    if session is None or session.project_id != project.id:
+        raise ValueError("AgentSession for prediction pipeline registration not found")
+    workspace = Path(session.workspace_path).resolve()
+    if not workspace.exists() or not workspace.is_dir():
+        raise ValueError("AgentSession workspace for prediction pipeline registration not found")
+    ack_path = workspace_relative_path_for_job(
+        workspace,
+        payload.get("ack_workspace_relative_path"),
+        "register_prediction_pipeline",
+        field_name="ack_workspace_relative_path",
+    )
+    request_relative_path = payload.get("request_workspace_relative_path")
+    request_id = require_job_string(payload, "request_id", "register_prediction_pipeline")
+    operation = require_job_string(payload, "operation", "register_prediction_pipeline")
+    request_hash = require_job_string(payload, "request_hash", "register_prediction_pipeline")
+    request_payload = payload.get("payload")
+    if not isinstance(request_payload, dict):
+        raise ValueError("register_prediction_pipeline payload must contain a request payload object")
+
+    from tabular_harness.services.agent_requests.pipelines import (
+        PIPELINE_ACK_SCHEMA_VERSION,
+        execute_pipeline_registration_request,
+        pipeline_tool_error_payload,
+        write_pipeline_tool_ack,
+    )
+    from tabular_harness.services.agent_sessions import append_session_event
+
+    try:
+        compatibility_warnings = payload.get("compatibility_warnings")
+        result = execute_pipeline_registration_request(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            workspace=workspace,
+            request_id=request_id,
+            payload=request_payload,
+            compatibility_warnings=compatibility_warnings if isinstance(compatibility_warnings, list) else None,
+        )
+    except Exception as exc:
+        ack = {
+            "schema_version": PIPELINE_ACK_SCHEMA_VERSION,
+            "request_id": request_id,
+            "operation": operation,
+            "status": "failed",
+            "job_id": job.id,
+            "request_hash": request_hash,
+            "processed_at": utc_now().isoformat(),
+            "error": pipeline_tool_error_payload(exc),
+        }
+        write_pipeline_tool_ack(ack_path, ack)
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="pipeline_request_failed",
+            role="harness",
+            title="Prediction pipeline request failed",
+            content=str(exc),
+            payload={**ack, "workspace_relative_path": request_relative_path},
+            update_heartbeat=False,
+        )
+        return {
+            "schema_version": "prediction_pipeline_registration_job.v1",
+            "job_status": "failed",
+            "status": "failed",
+            "error_message": str(exc),
+            "request_id": request_id,
+            "ack_workspace_relative_path": str(ack_path.relative_to(workspace)),
+        }
+
+    ack = {
+        "schema_version": PIPELINE_ACK_SCHEMA_VERSION,
+        "request_id": request_id,
+        "operation": operation,
+        "status": "succeeded",
+        "job_id": job.id,
+        "request_hash": request_hash,
+        "processed_at": utc_now().isoformat(),
+        "result": result,
+    }
+    write_pipeline_tool_ack(ack_path, ack)
+    append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="pipeline_request_succeeded",
+        role="harness",
+        title="Prediction pipeline registered",
+        content=f"Processed pipeline request `{operation}` from `{request_relative_path}`.",
+        payload=ack,
+        artifact_id=result.get("pipeline_artifact_id"),
+        update_heartbeat=False,
+    )
+    return {
+        "schema_version": "prediction_pipeline_registration_job.v1",
+        "status": "succeeded",
+        "request_id": request_id,
+        "pipeline_artifact_id": result.get("pipeline_artifact_id"),
+        "experiment_run_ids": result.get("experiment_run_ids", []),
+        "smoke_validation": result.get("smoke_validation"),
+        "metric_reproduction": result.get("metric_reproduction"),
+        "ack_workspace_relative_path": str(ack_path.relative_to(workspace)),
+    }
+
+
+def require_job_string(payload: dict[str, Any], field_name: str, job_type: str) -> str:
+    value = payload.get(field_name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{job_type} requires {field_name}")
+    return value.strip()
+
+
+def workspace_relative_path_for_job(workspace: Path, value: Any, job_type: str, *, field_name: str) -> Path:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{job_type} requires {field_name}")
+    candidate = Path(value.strip())
+    if candidate.is_absolute():
+        raise ValueError(f"{field_name} must be relative to the AgentSession workspace")
+    resolved = (workspace / candidate).resolve()
+    try:
+        resolved.relative_to(workspace)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} escapes the AgentSession workspace") from exc
+    return resolved
+
+
+def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "run_prediction_pipeline")
+    pipeline_artifact_id = payload.get("pipeline_artifact_id")
+    if not isinstance(pipeline_artifact_id, str) or not pipeline_artifact_id.strip():
+        raise ValueError("run_prediction_pipeline requires pipeline_artifact_id")
+    pipeline_artifact = db.get(Artifact, pipeline_artifact_id)
+    if pipeline_artifact is None or pipeline_artifact.project_id != project.id:
+        raise ValueError("Prediction pipeline artifact not found")
+    if pipeline_artifact.asset_type != "prediction_pipeline":
+        raise ValueError("Artifact is not a prediction_pipeline")
+
+    input_path = prediction_input_path_for_job(db, project=project, payload=payload)
+    history_path = prediction_history_path_for_job(db, project=project, payload=payload)
+    run_dir = (get_settings().data_dir / "_pipeline_runs" / job.id).resolve()
+    extract_dir = run_dir / "pipeline"
+    output_path = run_dir / "predictions.csv"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(artifact_primary_path(pipeline_artifact)) as archive:
+        archive.extractall(extract_dir)
+    predict_path = extract_dir / "predict.py"
+    if not predict_path.exists():
+        raise ValueError("Pipeline bundle does not contain predict.py")
+    runtime_python = sys.executable
+    runtime_isolated = False
+    requirements_hash = None
+    requirements_path = extract_dir / "requirements.txt"
+    if requirements_path.exists():
+        from tabular_harness.services.agent_requests.pipelines import (
+            ensure_prediction_pipeline_smoke_python,
+            prediction_pipeline_requirements_hash,
+            validate_pipeline_requirements_file,
+        )
+
+        validate_pipeline_requirements_file(requirements_path)
+        runtime_python = str(ensure_prediction_pipeline_smoke_python(requirements_path))
+        runtime_isolated = True
+        requirements_hash = prediction_pipeline_requirements_hash(requirements_path)
+    command = [runtime_python, str(predict_path), "--input", str(input_path), "--output", str(output_path)]
+    if history_path is not None:
+        command.extend(["--history", str(history_path)])
+    completed = subprocess.run(
+        command,
+        cwd=str(extract_dir),
+        capture_output=True,
+        text=True,
+        timeout=int(payload.get("timeout_seconds") or 300),
+        check=False,
+    )
+    if completed.returncode != 0:
+        stderr_tail = (completed.stderr or completed.stdout or "")[-4000:]
+        raise RuntimeError(f"Prediction pipeline failed with exit code {completed.returncode}: {stderr_tail}")
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise ValueError("Prediction pipeline did not create a non-empty predictions.csv")
+    version = next_artifact_version(db, project.id, "prediction_batch", f"prediction_batch_{job.id}")
+    target_dir, stored, content_hash = store.store_existing_file(
+        org_id=project.org_id,
+        project_id=project.id,
+        asset_type="prediction_batch",
+        name=f"prediction_batch_{job.id}",
+        version=version,
+        source_path=output_path,
+        filename="predictions.csv",
+        metadata={
+            "project_id": project.id,
+            "pipeline_artifact_id": pipeline_artifact.id,
+            "job_id": job.id,
+            "input_dataset_snapshot_id": payload.get("dataset_snapshot_id"),
+            "input_artifact_id": payload.get("input_artifact_id"),
+            "history_artifact_id": payload.get("history_artifact_id"),
+            "primary_path": str(output_path),
+            "runtime_isolated": runtime_isolated,
+            "python_executable": runtime_python,
+            "requirements_hash": requirements_hash,
+        },
+    )
+    prediction_artifact = register_artifact(
+        db,
+        project_id=project.id,
+        asset_type="prediction_batch",
+        name=f"prediction_batch_{job.id}",
+        uri=str(target_dir),
+        content_hash=content_hash,
+        size_bytes=stored.size_bytes,
+        metadata={
+            "project_id": project.id,
+            "pipeline_artifact_id": pipeline_artifact.id,
+            "job_id": job.id,
+            "input_dataset_snapshot_id": payload.get("dataset_snapshot_id"),
+            "input_artifact_id": payload.get("input_artifact_id"),
+            "history_artifact_id": payload.get("history_artifact_id"),
+            "primary_path": str(target_dir / "predictions.csv"),
+            "runtime_isolated": runtime_isolated,
+            "python_executable": runtime_python,
+            "requirements_hash": requirements_hash,
+        },
+        version=version,
+        org_id=project.org_id,
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=pipeline_artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=prediction_artifact.id,
+        relation_type="produces_prediction_batch",
+        metadata={"job_id": job.id},
+    )
+    deployment_id = payload.get("deployment_id")
+    pilot_prediction_batch_id = None
+    if isinstance(deployment_id, str) and deployment_id.strip():
+        deployment = db.get(PilotDeployment, deployment_id.strip())
+        if deployment is None or deployment.project_id != project.id:
+            raise ValueError("PilotDeployment not found")
+        input_artifact_id = payload.get("input_artifact_id")
+        if not isinstance(input_artifact_id, str) or not input_artifact_id.strip():
+            dataset_snapshot_id = payload.get("dataset_snapshot_id")
+            dataset = db.get(DatasetSnapshot, dataset_snapshot_id) if isinstance(dataset_snapshot_id, str) else None
+            input_artifact_id = dataset.artifact_id if dataset is not None else None
+        if not isinstance(input_artifact_id, str) or not input_artifact_id.strip():
+            raise ValueError("Pilot prediction batch requires an input artifact")
+        as_of = parse_iso_datetime(payload.get("as_of")) or utc_now()
+        row_count = count_csv_data_rows(output_path)
+        batch = PilotPredictionBatch(
+            id=new_id("ppb"),
+            deployment_id=deployment.id,
+            as_of=as_of,
+            input_artifact_id=input_artifact_id,
+            predictions_artifact_id=prediction_artifact.id,
+            row_count=row_count,
+        )
+        db.add(batch)
+        pilot_prediction_batch_id = batch.id
+    return {
+        "schema_version": "prediction_pipeline_job.v1",
+        "prediction_batch_artifact_id": prediction_artifact.id,
+        "pilot_prediction_batch_id": pilot_prediction_batch_id,
+        "artifact_id": prediction_artifact.id,
+        "artifact_ids": [pipeline_artifact.id, prediction_artifact.id],
+        "row_source": str(input_path),
+        "runtime_isolated": runtime_isolated,
+        "python_executable": runtime_python,
+        "requirements_hash": requirements_hash,
+    }
+
+
+def prediction_input_path_for_job(db: Session, *, project: Project, payload: dict[str, Any]) -> Path:
+    dataset_snapshot_id = payload.get("dataset_snapshot_id")
+    input_artifact_id = payload.get("input_artifact_id")
+    artifact: Artifact | None = None
+    if isinstance(dataset_snapshot_id, str) and dataset_snapshot_id.strip():
+        dataset = db.get(DatasetSnapshot, dataset_snapshot_id.strip())
+        if dataset is None or dataset.project_id != project.id:
+            raise ValueError("DatasetSnapshot for prediction input not found")
+        artifact = db.get(Artifact, dataset.artifact_id)
+    elif isinstance(input_artifact_id, str) and input_artifact_id.strip():
+        artifact = db.get(Artifact, input_artifact_id.strip())
+        if artifact is not None and artifact.project_id != project.id:
+            raise ValueError("Input artifact belongs to a different project")
+    else:
+        raise ValueError("run_prediction_pipeline requires dataset_snapshot_id or input_artifact_id")
+    if artifact is None:
+        raise ValueError("Prediction input artifact not found")
+    path = artifact_primary_path(artifact)
+    if not path.exists() or not path.is_file():
+        raise ValueError("Prediction input file not found")
+    return path
+
+
+def prediction_history_path_for_job(db: Session, *, project: Project, payload: dict[str, Any]) -> Path | None:
+    history_artifact_id = payload.get("history_artifact_id")
+    if not isinstance(history_artifact_id, str) or not history_artifact_id.strip():
+        return None
+    artifact = db.get(Artifact, history_artifact_id.strip())
+    if artifact is None or artifact.project_id != project.id:
+        raise ValueError("Prediction history artifact not found")
+    path = artifact_primary_path(artifact)
+    if not path.exists() or not path.is_file():
+        raise ValueError("Prediction history file not found")
+    return path
+
+
+def parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def count_csv_data_rows(path: Path) -> int | None:
+    try:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            line_count = sum(1 for _ in handle)
+    except OSError:
+        return None
+    return max(line_count - 1, 0)
+
+
+def score_pilot_outcomes_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project = project_for_job(db, job, "score_pilot_outcomes")
+    deployment_id = payload.get("deployment_id")
+    outcome_batch_id = payload.get("outcome_batch_id")
+    if not isinstance(deployment_id, str) or not deployment_id.strip():
+        raise ValueError("score_pilot_outcomes requires deployment_id")
+    if not isinstance(outcome_batch_id, str) or not outcome_batch_id.strip():
+        raise ValueError("score_pilot_outcomes requires outcome_batch_id")
+    deployment = db.get(PilotDeployment, deployment_id.strip())
+    if deployment is None or deployment.project_id != project.id:
+        raise ValueError("PilotDeployment not found")
+    outcome_batch = db.get(PilotOutcomeBatch, outcome_batch_id.strip())
+    if outcome_batch is None or outcome_batch.deployment_id != deployment.id:
+        raise ValueError("PilotOutcomeBatch not found")
+
+    prediction_batch = pilot_prediction_batch_for_scoring(db, deployment=deployment, payload=payload)
+    prediction_artifact = db.get(Artifact, prediction_batch.predictions_artifact_id)
+    outcome_artifact = db.get(Artifact, outcome_batch.outcomes_artifact_id)
+    pipeline_artifact = db.get(Artifact, deployment.pipeline_artifact_id)
+    if prediction_artifact is None or prediction_artifact.project_id != project.id:
+        raise ValueError("Pilot prediction artifact not found")
+    if outcome_artifact is None or outcome_artifact.project_id != project.id:
+        raise ValueError("Pilot outcome artifact not found")
+    if pipeline_artifact is None or pipeline_artifact.project_id != project.id:
+        raise ValueError("Prediction pipeline artifact not found")
+
+    manifest = pipeline_manifest_from_bundle(pipeline_artifact)
+    output_contract = manifest.get("output_contract") if isinstance(manifest, dict) else {}
+    if not isinstance(output_contract, dict):
+        output_contract = {}
+    join_keys = pilot_join_keys(outcome_batch, output_contract=output_contract, payload=payload)
+    prediction_column = string_or_none(payload.get("prediction_column")) or string_or_none(
+        output_contract.get("prediction_column")
+    )
+    actual_column = string_or_none(payload.get("actual_column")) or project.target_column
+    if not prediction_column:
+        raise ValueError("Prediction column is required")
+    if not actual_column:
+        raise ValueError("Actual/outcome column is required")
+
+    prediction_rows = read_csv_dict_rows(artifact_primary_path(prediction_artifact))
+    outcome_rows = read_csv_dict_rows(artifact_primary_path(outcome_artifact))
+    scoring = score_joined_prediction_outcomes(
+        prediction_rows=prediction_rows,
+        outcome_rows=outcome_rows,
+        join_keys=join_keys,
+        prediction_column=prediction_column,
+        actual_column=actual_column,
+        observed_at_column=string_or_none(payload.get("observed_at_column")),
+        prediction_as_of=prediction_batch.as_of,
+    )
+    outcome_batch.matched_rows = scoring["matched_rows"]
+    report_payload = {
+        "schema_version": "pilot_scoring_report.v1",
+        "deployment_id": deployment.id,
+        "prediction_batch_id": prediction_batch.id,
+        "outcome_batch_id": outcome_batch.id,
+        "pipeline_artifact_id": pipeline_artifact.id,
+        "as_of": prediction_batch.as_of.isoformat(),
+        "join_keys": join_keys,
+        "prediction_column": prediction_column,
+        "actual_column": actual_column,
+        "observed_at_column": string_or_none(payload.get("observed_at_column")),
+        **scoring,
+    }
+    report_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="pilot_scoring_report",
+        name=f"pilot_scoring_report_{deployment.id}_{job.id}",
+        filename="pilot_scoring_report.json",
+        payload=report_payload,
+        metadata={
+            "project_id": project.id,
+            "deployment_id": deployment.id,
+            "prediction_batch_id": prediction_batch.id,
+            "outcome_batch_id": outcome_batch.id,
+            "pipeline_artifact_id": pipeline_artifact.id,
+            "job_id": job.id,
+        },
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=prediction_artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=report_artifact.id,
+        relation_type="scores_prediction_batch",
+        metadata={"job_id": job.id, "deployment_id": deployment.id},
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=outcome_artifact.id,
+        to_asset_type="artifact",
+        to_asset_id=report_artifact.id,
+        relation_type="scores_outcome_batch",
+        metadata={"job_id": job.id, "deployment_id": deployment.id},
+    )
+    notified_session_id = notify_main_agent_session_of_pilot_report(
+        db,
+        project=project,
+        report_artifact=report_artifact,
+        report_payload=report_payload,
+    )
+    if notified_session_id is not None and project.autonomy_mode == "full_auto" and project.current_phase != "AUTONOMOUS_LOOP":
+        project.current_phase = "AUTONOMOUS_LOOP"
+        project.updated_at = utc_now()
+    output = {
+        "schema_version": "pilot_outcome_scoring_job.v1",
+        "pilot_scoring_report_artifact_id": report_artifact.id,
+        "pilot_prediction_batch_id": prediction_batch.id,
+        "pilot_outcome_batch_id": outcome_batch.id,
+        "matched_rows": scoring["matched_rows"],
+        "metric_count": scoring["metric_count"],
+        "metrics": scoring["metrics"],
+        "as_of_violations": scoring["as_of_violations"],
+        "notified_agent_session_id": notified_session_id,
+        "artifact_id": report_artifact.id,
+        "artifact_ids": [prediction_artifact.id, outcome_artifact.id, report_artifact.id],
+        "worker_events": [
+            project_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Pilot scoring report registered",
+                detail="Prediction and outcome batches were matched and scored.",
+                target_tab="Leaderboard",
+                target_anchor="pilot",
+            )
+        ],
+    }
+    continuation_job = maybe_queue_autonomous_session_continuation(
+        db,
+        project=project,
+        job=job,
+        reason="pilot_scoring_report_available",
+    )
+    if continuation_job is not None:
+        output["session_continuation_job_id"] = continuation_job.id
+    return output
+
+
+def pilot_prediction_batch_for_scoring(
+    db: Session,
+    *,
+    deployment: PilotDeployment,
+    payload: dict[str, Any],
+) -> PilotPredictionBatch:
+    prediction_batch_id = string_or_none(payload.get("prediction_batch_id"))
+    if prediction_batch_id:
+        batch = db.get(PilotPredictionBatch, prediction_batch_id)
+        if batch is None or batch.deployment_id != deployment.id:
+            raise ValueError("PilotPredictionBatch not found")
+        return batch
+    batch = db.scalar(
+        select(PilotPredictionBatch)
+        .where(PilotPredictionBatch.deployment_id == deployment.id)
+        .order_by(PilotPredictionBatch.created_at.desc())
+        .limit(1)
+    )
+    if batch is None:
+        raise ValueError("No PilotPredictionBatch is available for this deployment")
+    return batch
+
+
+def pipeline_manifest_from_bundle(pipeline_artifact: Artifact) -> dict[str, Any]:
+    bundle_path = artifact_primary_path(pipeline_artifact)
+    with zipfile.ZipFile(bundle_path) as archive:
+        try:
+            with archive.open("pipeline_manifest.json") as handle:
+                return loads_json(handle.read().decode("utf-8"), {})
+        except KeyError as exc:
+            raise ValueError("Prediction pipeline bundle does not contain pipeline_manifest.json") from exc
+
+
+def string_or_none(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def pilot_join_keys(
+    outcome_batch: PilotOutcomeBatch,
+    *,
+    output_contract: dict[str, Any],
+    payload: dict[str, Any],
+) -> list[str]:
+    requested = payload.get("join_keys")
+    if isinstance(requested, list):
+        join_keys = [item.strip() for item in requested if isinstance(item, str) and item.strip()]
+    else:
+        join_keys = [item for item in loads_json(outcome_batch.join_keys_json, []) if isinstance(item, str) and item.strip()]
+    if not join_keys:
+        id_columns = output_contract.get("id_columns")
+        if isinstance(id_columns, list):
+            join_keys = [item.strip() for item in id_columns if isinstance(item, str) and item.strip()]
+    if not join_keys:
+        raise ValueError("join_keys are required for pilot outcome scoring")
+    return join_keys
+
+
+def read_csv_dict_rows(path: Path) -> list[dict[str, str]]:
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames is None:
+                raise ValueError(f"{path.name} is missing a CSV header")
+            return [dict(row) for row in reader]
+    except OSError as exc:
+        raise ValueError(f"Could not read CSV artifact {path}") from exc
+
+
+def score_joined_prediction_outcomes(
+    *,
+    prediction_rows: list[dict[str, str]],
+    outcome_rows: list[dict[str, str]],
+    join_keys: list[str],
+    prediction_column: str,
+    actual_column: str,
+    observed_at_column: str | None,
+    prediction_as_of: datetime,
+) -> dict[str, Any]:
+    ensure_csv_columns(prediction_rows, join_keys + [prediction_column], "predictions")
+    ensure_csv_columns(outcome_rows, join_keys + [actual_column], "outcomes")
+    if observed_at_column:
+        ensure_csv_columns(outcome_rows, [observed_at_column], "outcomes")
+    predictions_by_key = {csv_join_key(row, join_keys): row for row in prediction_rows}
+    matched_rows = 0
+    metric_count = 0
+    absolute_errors: list[float] = []
+    squared_errors: list[float] = []
+    as_of_violation_count = 0
+    unparseable_observed_at_rows = 0
+    normalized_prediction_as_of = ensure_utc_datetime(prediction_as_of)
+    for outcome in outcome_rows:
+        key = csv_join_key(outcome, join_keys)
+        prediction = predictions_by_key.get(key)
+        if prediction is None:
+            continue
+        matched_rows += 1
+        if observed_at_column:
+            observed_at = parse_iso_datetime(outcome.get(observed_at_column))
+            if observed_at is None:
+                unparseable_observed_at_rows += 1
+            elif observed_at <= normalized_prediction_as_of:
+                as_of_violation_count += 1
+        predicted = parse_float(prediction.get(prediction_column))
+        actual = parse_float(outcome.get(actual_column))
+        if predicted is None or actual is None:
+            continue
+        error = predicted - actual
+        metric_count += 1
+        absolute_errors.append(abs(error))
+        squared_errors.append(error * error)
+    if metric_count == 0:
+        raise ValueError("No numeric prediction/outcome pairs were available for scoring")
+    return {
+        "prediction_row_count": len(prediction_rows),
+        "outcome_row_count": len(outcome_rows),
+        "matched_rows": matched_rows,
+        "metric_count": metric_count,
+        "metrics": {
+            "mae": sum(absolute_errors) / metric_count,
+            "rmse": math.sqrt(sum(squared_errors) / metric_count),
+        },
+        "as_of_violations": {
+            "count": as_of_violation_count,
+            "unparseable_observed_at_rows": unparseable_observed_at_rows,
+        },
+    }
+
+
+def ensure_csv_columns(rows: list[dict[str, str]], columns: list[str], label: str) -> None:
+    if not rows:
+        raise ValueError(f"{label} CSV contains no data rows")
+    available = set(rows[0].keys())
+    missing = [column for column in columns if column not in available]
+    if missing:
+        raise ValueError(f"{label} CSV is missing required column(s): {', '.join(missing)}")
+
+
+def csv_join_key(row: dict[str, str], join_keys: list[str]) -> tuple[str, ...]:
+    return tuple(str(row.get(key, "")) for key in join_keys)
+
+
+def parse_float(value: Any) -> float | None:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def ensure_utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def notify_main_agent_session_of_pilot_report(
+    db: Session,
+    *,
+    project: Project,
+    report_artifact: Artifact,
+    report_payload: dict[str, Any],
+) -> str | None:
+    session = db.scalar(
+        select(AgentSession)
+        .where(
+            AgentSession.project_id == project.id,
+            AgentSession.status.in_(
+                ["starting", "running", "between_turns", "waiting_for_runner", "recovering", "idle", "completed"]
+            ),
+        )
+        .order_by(AgentSession.updated_at.desc())
+        .limit(1)
+    )
+    if session is None or not session.workspace_path:
+        return None
+    session_workspace = Path(session.workspace_path)
+    observation_dir = session_workspace / ".tablex" / "pilot_observations"
+    observation_dir.mkdir(parents=True, exist_ok=True)
+    report_workspace_path = observation_dir / f"{report_artifact.id}.json"
+    try:
+        report_workspace_path.write_bytes(artifact_primary_path(report_artifact).read_bytes())
+    except OSError:
+        report_workspace_path.write_text(dumps_json(report_payload) + "\n", encoding="utf-8")
+    notice_payload = {
+        "schema_version": "tablex_pilot_observation_notice.v1",
+        "pilot_scoring_report_artifact_id": report_artifact.id,
+        "pilot_scoring_report_workspace_path": str(report_workspace_path.relative_to(session_workspace)),
+        "deployment_id": report_payload.get("deployment_id"),
+        "prediction_batch_id": report_payload.get("prediction_batch_id"),
+        "outcome_batch_id": report_payload.get("outcome_batch_id"),
+        "metrics": report_payload.get("metrics"),
+        "as_of_violations": report_payload.get("as_of_violations"),
+        "matched_rows": report_payload.get("matched_rows"),
+        "metric_count": report_payload.get("metric_count"),
+    }
+    notice_path = write_inbox_entry(
+        session_workspace,
+        kind="observation",
+        entry_type="pilot_observation_available",
+        payload=notice_payload,
+        content=dumps_json(notice_payload) + "\n",
+        title="Pilot observation available",
+    )
+    from tabular_harness.services.agent_sessions import append_session_event
+
+    append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="pilot_observation_available",
+        role="harness",
+        title="Pilot observation available",
+        content="A pilot scoring report was delivered to the main session inbox.",
+        payload={**notice_payload, "workspace_relative_path": str(notice_path.relative_to(session_workspace))},
+        artifact_id=report_artifact.id,
+        update_heartbeat=False,
+    )
+    return session.id
+
+
 def project_for_job(db: Session, job: Job, job_type: str) -> Project:
     if job.project_id is None:
         raise ValueError(f"{job_type} requires a project_id")
@@ -2274,10 +3226,10 @@ def notebook_artifact_for_job(db: Session, job: Job, job_type: str) -> Artifact:
     artifact = db.get(Artifact, artifact_id) if isinstance(artifact_id, str) else None
     if artifact is None:
         raise ValueError("Analysis notebook artifact not found")
-    if artifact.asset_type != "analysis_notebook":
-        raise ValueError(f"{job_type} requires an analysis_notebook artifact")
+    if artifact.asset_type not in {"analysis_notebook", "marimo_notebook"}:
+        raise ValueError(f"{job_type} requires a native marimo notebook source artifact")
     if artifact.project_id is None:
-        raise ValueError(f"{job_type} requires a project-scoped analysis_notebook artifact")
+        raise ValueError(f"{job_type} requires a project-scoped native marimo notebook source artifact")
     if job.project_id is not None and artifact.project_id != job.project_id:
         raise ValueError(f"{job_type} project does not match the analysis notebook artifact")
     return artifact
@@ -2346,15 +3298,15 @@ def notebook_worker_event(
     detail: str,
 ) -> dict[str, Any]:
     return {
-        "worker_id": "notebook-execution",
-        "display_name": "Notebook Worker",
+        "worker_id": "marimo-notebook",
+        "display_name": "marimo Notebook",
         "status": status,
         "headline": headline,
         "detail": detail,
         "job_id": job.id,
         "project_id": notebook_artifact.project_id,
         "target_tab": "Assets",
-        "target_anchor": "notebooks",
+        "target_anchor": "asset-notebooks",
         "created_at": job.created_at.isoformat(),
         "updated_at": utc_now().isoformat(),
         "active": status in {"queued", "running"},
@@ -2363,8 +3315,8 @@ def notebook_worker_event(
             "is_estimate": True,
             "series": [
                 {"step": "validate notebook", "tokens": 40},
-                {"step": "capture preview", "tokens": 120},
-                {"step": "register artifacts", "tokens": 80},
+                {"step": "register native source", "tokens": 120},
+                {"step": "link artifacts", "tokens": 80},
             ],
         },
     }
@@ -2766,8 +3718,8 @@ def train_model_candidates_handler(db: Session, job: Job, store: LocalArtifactSt
                     ]
                 ),
                 "job_id": job.id,
-                "target_tab": "Leaderboard" if successes else "Experiments",
-                "target_anchor": "result-readout" if successes else None,
+                "target_tab": "Leaderboard",
+                "target_anchor": "result-readout",
                 "created_at": job.created_at.isoformat(),
                 "updated_at": utc_now().isoformat(),
                 "active": False,
@@ -3156,6 +4108,8 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["save_autonomous_decision_brief"] = save_autonomous_decision_brief_handler
     handlers["compare_guided_journey_snapshots"] = compare_guided_journey_snapshots_handler
     handlers["upload_relational_schema_hint"] = upload_relational_schema_hint_handler
+    handlers["upload_data_bundle"] = upload_data_bundle_handler
+    handlers["select_primary_table"] = select_primary_table_handler
     handlers["translate_tier3_content"] = translate_tier3_content_handler
     handlers["generate_user_avatar_candidates"] = generate_user_avatar_candidates_handler
     handlers["download_public_benchmark_archive"] = download_public_benchmark_archive_handler
@@ -3190,7 +4144,6 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["prepare_data_understanding_notebook_authoring"] = prepare_data_understanding_notebook_authoring_handler
     handlers["plan_agent_task"] = plan_agent_task_handler
     handlers["plan_notebook_execution"] = plan_notebook_execution_handler
-    handlers["capture_notebook_execution"] = capture_notebook_execution_handler
     handlers["prepare_result_notebook_evidence"] = prepare_result_notebook_evidence_handler
     handlers["generate_decision_report"] = generate_decision_report_handler
     handlers["draft_project_report"] = draft_project_report_handler
@@ -3202,6 +4155,9 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["analyze_evaluation_diagnostics"] = analyze_evaluation_diagnostics_handler
     handlers["materialize_model_diagnostics_artifacts"] = materialize_model_diagnostics_artifacts_handler
     handlers["validate_model_package"] = validate_model_package_handler
+    handlers["register_prediction_pipeline"] = register_prediction_pipeline_handler
+    handlers["run_prediction_pipeline"] = run_prediction_pipeline_handler
+    handlers["score_pilot_outcomes"] = score_pilot_outcomes_handler
     handlers["prepare_model_diagnostics_notebook_authoring"] = prepare_model_diagnostics_notebook_authoring_handler
     handlers["plan_baseline_strategy"] = plan_baseline_strategy_handler
     handlers["run_baseline"] = run_baseline_handler

@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import ast
 import csv
+import hashlib
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
-import time
 from dataclasses import dataclass
-from html import escape
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -18,11 +17,12 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.ids import new_id
-from tabular_harness.core.json import dumps_json, loads_json
+from tabular_harness.core.json import loads_json
 from tabular_harness.models.entities import (
     Artifact,
     DatasetSnapshot,
     ExperimentRun,
+    LineageEdge,
     ModelVersion,
     Project,
     Report,
@@ -31,9 +31,7 @@ from tabular_harness.models.entities import (
 )
 from tabular_harness.services.agent_task_planner import validate_agent_task_contract
 from tabular_harness.services.approach import (
-    latest_project_artifact,
     store_json_artifact,
-    store_text_artifact,
 )
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
@@ -50,7 +48,6 @@ class AnalysisNotebookResult:
     notebook: dict[str, Any]
     report: Report
     notebook_artifact: Artifact
-    html_artifact: Artifact
     manifest_artifact: Artifact
     report_artifact: Artifact
     authoring_brief_artifact: Artifact | None
@@ -62,7 +59,6 @@ class ModelDiagnosticsNotebookResult:
     notebook: dict[str, Any]
     report: Report
     notebook_artifact: Artifact
-    html_artifact: Artifact
     manifest_artifact: Artifact
     report_artifact: Artifact
     visualization: VisualizationSpec
@@ -80,23 +76,6 @@ class NotebookExecutionPlanResult:
 
 
 @dataclass(frozen=True)
-class NotebookExecutionCaptureResult:
-    manifest: dict[str, Any]
-    report: Report
-    manifest_artifact: Artifact
-    report_artifact: Artifact
-    html_artifact: Artifact
-    figure_manifest_artifact: Artifact
-    source_artifact: Artifact
-    evidence_bundle_artifact: Artifact | None
-    evidence_html_artifact: Artifact | None
-    figure_artifacts: list[Artifact]
-    plan_artifact: Artifact
-    contract_artifact: Artifact
-    artifact_ids: list[str]
-
-
-@dataclass
 class NotebookArtifactLookup:
     by_asset_type: dict[str, list[Artifact]]
     by_session_id: dict[str, list[Artifact]]
@@ -111,17 +90,11 @@ class NotebookArtifactLookup:
 NOTEBOOK_INDEX_ASSET_TYPES = {
     "analysis_notebook",
     "marimo_notebook",
-    "notebook_html",
     "notebook_run_manifest",
     "notebook_report",
     "notebook_execution_plan",
-    "notebook_execution_manifest",
-    "notebook_execution_report",
-    "notebook_execution_html",
-    "notebook_execution_source",
     "notebook_figure_manifest",
     "notebook_evidence_bundle",
-    "notebook_evidence_html",
     "notebook_evidence_svg",
     "agent_task_contract",
     "visualization_spec",
@@ -149,7 +122,10 @@ def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any
     project_artifacts = list_latest_notebook_index_artifacts(db, project.id)
     artifact_lookup = _build_notebook_artifact_lookup(project_artifacts)
     notebook_artifacts = [
-        artifact for artifact in project_artifacts if artifact.asset_type in {"analysis_notebook", "marimo_notebook"}
+        artifact
+        for artifact in project_artifacts
+        if artifact.asset_type in {"analysis_notebook", "marimo_notebook"}
+        and _notebook_index_has_native_marimo_source_or_unchecked(artifact)
     ]
     reports = list(
         db.scalars(
@@ -179,6 +155,7 @@ def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any
         for notebook_artifact in notebook_artifacts
     ]
     items_by_created = sorted(items, key=lambda item: str(item["created_at"]), reverse=True)
+    items_by_recommendation = sorted(items, key=_notebook_index_display_sort_key)
     counts_by_kind: dict[str, int] = {}
     for item in items_by_created:
         kind = str(item["notebook_kind"])
@@ -191,16 +168,15 @@ def build_project_notebook_index(db: Session, project: Project) -> dict[str, Any
         "counts": {
             "total": len(items_by_created),
             "by_kind": counts_by_kind,
-            "with_html_preview": sum(1 for item in items_by_created if item["coverage"]["has_html_preview"]),
+            "with_native_source": len(items_by_created),
             "with_report": sum(1 for item in items_by_created if item["coverage"]["has_report"]),
             "with_visualization": sum(1 for item in items_by_created if item["coverage"]["has_visualization"]),
             "with_execution_plan": sum(1 for item in items_by_created if item["coverage"]["has_execution_plan"]),
-            "with_execution_capture": sum(1 for item in items_by_created if item["coverage"]["has_execution_capture"]),
         },
         "recommended_notebook": recommended,
-        "groups": _notebook_groups(items_by_created),
-        "items": items_by_created,
-        "next_actions": _notebook_index_next_actions(project, items_by_created, recommended=recommended),
+        "groups": _notebook_groups(items_by_recommendation),
+        "items": items_by_recommendation,
+        "next_actions": _notebook_index_next_actions(project, items_by_recommendation, recommended=recommended),
     }
 
 
@@ -241,7 +217,6 @@ def build_project_analysis_story(db: Session, project: Project) -> dict[str, Any
         candidate
         for candidate in [
             _analysis_story_from_notebook(db, project, notebook_index),
-            _analysis_story_from_eda_review(db, project),
         ]
         if candidate is not None
     ]
@@ -254,15 +229,14 @@ def build_project_analysis_story(db: Session, project: Project) -> dict[str, Any
             "available": False,
             "story": None,
             "empty_state": {
-                "headline": "Create the first readable analysis story.",
+                "headline": "Create the first native marimo analysis notebook.",
                 "reason": (
-                    "No Data Review or analysis notebook evidence is available yet. Start with harness-owned EDA, "
-                    "then let Codex extend the notebook when the next question is clear."
+                    "No native marimo analysis notebook is registered for this project yet. Let Codex author and "
+                    "register the first notebook so Tablex can open it through the native marimo viewer."
                 ),
                 "primary_action": {
-                    "label": "Run EDA Review",
-                    "action_type": "api",
-                    "endpoint": "/api/datasets/{dataset_snapshot_id}/eda-review",
+                    "label": "Start Full Auto",
+                    "action_type": "start_autonomous_loop",
                     "target_tab": "Notebooks",
                 },
             },
@@ -290,11 +264,8 @@ def _analysis_story_from_notebook(
     project: Project,
     notebook_index: dict[str, Any],
 ) -> dict[str, Any] | None:
-    items = [cast(dict[str, Any], item) for item in _list_value(notebook_index.get("items"))]
     recommended = _dict_value(notebook_index.get("recommended_notebook")) or None
-    fallback_data = next((item for item in items if str(item.get("notebook_kind")) == "data_understanding"), None)
-    diverted = bool(recommended and _story_item_is_empty_diagnostics(recommended) and fallback_data is not None)
-    selected_item = fallback_data if diverted else recommended
+    selected_item = recommended
     if selected_item is None:
         return None
     notebook_artifact = db.get(Artifact, str(selected_item["notebook_artifact_id"]))
@@ -303,13 +274,6 @@ def _analysis_story_from_notebook(
     summary = _notebook_artifact_context_summary(notebook_artifact)
     brief = _dict_value(summary.get("analysis_brief"))
     linked_artifact_ids = _dict_value(selected_item.get("artifact_ids"))
-    evidence_html = _latest_artifact_for_metadata(
-        db,
-        project.id,
-        "notebook_evidence_html",
-        "notebook_artifact_id",
-        notebook_artifact.id,
-    )
     evidence_figures = _artifacts_for_metadata(
         db,
         project.id,
@@ -317,16 +281,7 @@ def _analysis_story_from_notebook(
         "notebook_artifact_id",
         notebook_artifact.id,
     )
-    preview_artifact_id = (
-        evidence_html.id
-        if evidence_html is not None
-        else _first_text_value(
-            linked_artifact_ids.get("execution_html"),
-            linked_artifact_ids.get("html_preview"),
-            linked_artifact_ids.get("report_artifact"),
-            linked_artifact_ids.get("notebook"),
-        )
-    )
+    source_artifact_id = notebook_artifact.id
     read_order = _analysis_story_read_order(brief.get("read_this_first"))
     story_cards = _analysis_story_cards(summary.get("visual_story_cards"))
     playbook = _analysis_story_playbook(summary.get("eda_playbook") or summary.get("review_playbook"))
@@ -336,13 +291,9 @@ def _analysis_story_from_notebook(
     caveats = _notebook_story_caveats(
         brief=brief,
         selected_item=selected_item,
-        diverted_from_empty_diagnostics=diverted,
+        notebook_quality_issue=_story_item_is_empty_diagnostics(selected_item),
     )
     selection_score = int(selected_item.get("recommendation_score") or 0)
-    if evidence_html is not None:
-        selection_score += 35
-    if diverted:
-        selection_score += 20
     return {
         "source_type": "analysis_notebook",
         "headline": _story_headline(
@@ -351,16 +302,12 @@ def _analysis_story_from_notebook(
             fallback="Read the recommended analysis notebook.",
         ),
         "deck": str(summary.get("overview") or selected_item.get("recommendation_reason") or ""),
-        "why_this_story": (
-            "Tablex is routing around an empty diagnostics notebook and returning to Data Understanding first."
-            if diverted
-            else str(selected_item.get("recommendation_reason") or "This notebook has the strongest current analysis evidence.")
-        ),
+        "why_this_story": str(selected_item.get("recommendation_reason") or "This notebook has the strongest current analysis evidence."),
         "selected_source": {
             "source_type": "analysis_notebook",
             "title": str(selected_item.get("title") or "Analysis Notebook"),
             "artifact_id": notebook_artifact.id,
-            "preview_artifact_id": preview_artifact_id,
+            "source_artifact_id": source_artifact_id,
             "report_id": selected_item.get("report_id"),
             "notebook_kind": selected_item.get("notebook_kind"),
             "status": selected_item.get("content", {}).get("readiness")
@@ -377,11 +324,9 @@ def _analysis_story_from_notebook(
         "codex_prompts": codex_prompts[:4],
         "primary_action": _notebook_story_primary_action(
             selected_item=selected_item,
-            preview_artifact_id=preview_artifact_id,
-            evidence_html=evidence_html,
         ),
         "figure_refs": _artifact_refs(evidence_figures[:6]),
-        "raw_artifacts": _story_raw_artifact_refs(db, project.id, notebook_artifact, linked_artifact_ids, evidence_html, evidence_figures),
+        "raw_artifacts": _story_raw_artifact_refs(db, project.id, notebook_artifact, linked_artifact_ids, evidence_figures),
         "metrics": {
             "quality_score": selected_item.get("content", {}).get("quality_score")
             if isinstance(selected_item.get("content"), dict)
@@ -394,88 +339,13 @@ def _analysis_story_from_notebook(
     }
 
 
-def _analysis_story_from_eda_review(db: Session, project: Project) -> dict[str, Any] | None:
-    bundle_artifact = latest_project_artifact(db, project.id, "eda_review_bundle")
-    review = _read_json_artifact(bundle_artifact)
-    if bundle_artifact is None or not review:
-        return None
-    summary = _dict_value(review.get("summary"))
-    html_artifact = _latest_artifact_for_metadata(
-        db,
-        project.id,
-        "eda_review_html",
-        "eda_review_bundle_artifact_id",
-        bundle_artifact.id,
-    )
-    report_artifact = _latest_artifact_for_metadata(
-        db,
-        project.id,
-        "eda_review_report",
-        "eda_review_bundle_artifact_id",
-        bundle_artifact.id,
-    )
-    figure_artifacts = _artifacts_for_metadata(
-        db,
-        project.id,
-        "eda_review_svg",
-        "eda_review_bundle_artifact_id",
-        bundle_artifact.id,
-    )
-    quality_score = int(summary.get("quality_score") or 0)
-    preview_artifact_id = html_artifact.id if html_artifact is not None else report_artifact.id if report_artifact else bundle_artifact.id
-    return {
-        "source_type": "eda_review",
-        "headline": _story_headline(summary.get("headline"), None, fallback="Read the latest Data Review."),
-        "deck": (
-            f"{int(summary.get('row_count') or 0):,} rows, {int(summary.get('column_count') or 0):,} columns, "
-            f"objective {summary.get('target_column') or 'not selected'}."
-        ),
-        "why_this_story": (
-            "The Data Review is harness-controlled DuckDB analysis with figures, findings, read order, and Codex prompts. "
-            "Use it as the first human-readable analysis surface before scanning raw artifacts."
-        ),
-        "selected_source": {
-            "source_type": "eda_review",
-            "title": "Data Review",
-            "artifact_id": bundle_artifact.id,
-            "preview_artifact_id": preview_artifact_id,
-            "report_id": _latest_report_id_for_artifact(db, report_artifact),
-            "notebook_kind": None,
-            "status": summary.get("severity") or "review",
-            "created_at": bundle_artifact.created_at.isoformat(),
-            "reason": "Latest harness-controlled EDA review.",
-        },
-        "read_order": _analysis_story_read_order(review.get("read_this_first")),
-        "visual_story_cards": _analysis_story_cards(review.get("story_cards")),
-        "evidence_cards": _eda_review_evidence_cards(review),
-        "playbook": _analysis_story_playbook(review.get("playbook")),
-        "caveats": _eda_review_caveats(review),
-        "codex_prompts": _string_list(review.get("codex_next_prompts"))[:4],
-        "primary_action": {
-            "label": "Open Data Review",
-            "action_type": "preview",
-            "artifact_id": preview_artifact_id,
-            "target_tab": "Notebooks",
-        },
-        "figure_refs": _artifact_refs(figure_artifacts[:6]),
-        "raw_artifacts": _artifact_refs([bundle_artifact, *[item for item in [html_artifact, report_artifact] if item is not None], *figure_artifacts[:6]]),
-        "metrics": {
-            "quality_score": quality_score,
-            "read_order_count": len(_list_value(review.get("read_this_first"))),
-            "story_card_count": len(_list_value(review.get("story_cards"))),
-            "figure_count": len(figure_artifacts),
-        },
-        "selection_score": 85 + min(35, quality_score // 2) + (20 if html_artifact is not None else 0),
-    }
-
-
 def _analysis_story_source_summary(story: dict[str, Any]) -> dict[str, Any]:
     selected = _dict_value(story.get("selected_source"))
     return {
         "source_type": story.get("source_type"),
         "title": selected.get("title"),
         "artifact_id": selected.get("artifact_id"),
-        "preview_artifact_id": selected.get("preview_artifact_id"),
+        "source_artifact_id": selected.get("source_artifact_id"),
         "status": selected.get("status"),
         "reason": selected.get("reason"),
     }
@@ -487,8 +357,8 @@ def create_notebook_execution_plan(
     store: LocalArtifactStore,
     notebook_artifact: Artifact,
 ) -> NotebookExecutionPlanResult:
-    if notebook_artifact.asset_type != "analysis_notebook":
-        raise ValueError("Artifact is not an analysis_notebook")
+    if notebook_artifact.asset_type not in {"analysis_notebook", "marimo_notebook"}:
+        raise ValueError("Artifact is not a native marimo notebook source artifact")
     if notebook_artifact.project_id is None:
         raise ValueError("Analysis notebook artifact must be project-scoped")
     project = _require_project(db, notebook_artifact.project_id)
@@ -571,390 +441,6 @@ def create_notebook_execution_plan(
     )
 
 
-def create_notebook_execution_capture(
-    db: Session,
-    *,
-    store: LocalArtifactStore,
-    notebook_artifact: Artifact,
-) -> NotebookExecutionCaptureResult:
-    if notebook_artifact.asset_type != "analysis_notebook":
-        raise ValueError("Artifact is not an analysis_notebook")
-    if notebook_artifact.project_id is None:
-        raise ValueError("Analysis notebook artifact must be project-scoped")
-    project = _require_project(db, notebook_artifact.project_id)
-    metadata = loads_json(notebook_artifact.metadata_json, {})
-    notebook_kind = str(metadata.get("notebook_kind") or "unknown")
-    linked_artifacts = _linked_notebook_artifacts(db, project.id, notebook_artifact)
-    plan_artifact = _latest_artifact_for_metadata(
-        db, project.id, "notebook_execution_plan", "notebook_artifact_id", notebook_artifact.id
-    )
-    contract_artifact = _latest_artifact_for_metadata(
-        db, project.id, "agent_task_contract", "notebook_artifact_id", notebook_artifact.id
-    )
-    plan_created = False
-    if plan_artifact is None or contract_artifact is None:
-        plan_result = create_notebook_execution_plan(db, store=store, notebook_artifact=notebook_artifact)
-        plan_artifact = plan_result.plan_artifact
-        contract_artifact = plan_result.contract_artifact
-        plan_created = True
-    linked_artifacts["execution_plan"] = plan_artifact
-    linked_artifacts["agent_task_contract"] = contract_artifact
-
-    notebook_source = _read_text_artifact(notebook_artifact)
-    source_validation = _validate_marimo_notebook_source(notebook_source)
-    if not source_validation["is_capture_eligible"]:
-        raise ValueError("Only valid marimo analysis notebooks can be captured by the local execution path")
-    compile_result = run_notebook_static_compile(notebook_source)
-    marimo_export_result = (
-        run_marimo_html_export(notebook_artifact, notebook_source)
-        if compile_result["status"] == "succeeded"
-        else {
-            "schema_version": "marimo_html_export.v1",
-            "status": "skipped",
-            "reason": "python_compile_failed",
-            "html": None,
-        }
-    )
-    execution_status = notebook_execution_status(compile_result, marimo_export_result)
-    capture_mode = (
-        "marimo_html_export"
-        if marimo_export_result["status"] == "succeeded"
-        else "safe_static_capture"
-    )
-    generated_at = utc_now().isoformat()
-    suffix = new_id("nbcap")
-    evidence_capture = create_notebook_evidence_artifacts(
-        db,
-        store,
-        project=project,
-        notebook_artifact=notebook_artifact,
-        notebook_kind=notebook_kind,
-        notebook_source=notebook_source,
-        linked_artifacts=linked_artifacts,
-        suffix=suffix,
-        generated_at=generated_at,
-        execution_status=execution_status,
-    )
-    figure_manifest = build_notebook_figure_manifest(
-        project=project,
-        notebook_artifact=notebook_artifact,
-        notebook_kind=notebook_kind,
-        compile_result=compile_result,
-        generated_at=generated_at,
-        rendered_figures=evidence_capture["figures"],
-    )
-    figure_manifest_artifact = store_json_artifact(
-        db,
-        store,
-        project_id=project.id,
-        asset_type="notebook_figure_manifest",
-        name=f"notebook_figure_manifest_{suffix}",
-        filename="notebook_figure_manifest.json",
-        payload=figure_manifest,
-        metadata={
-            "project_id": project.id,
-            "notebook_artifact_id": notebook_artifact.id,
-            "notebook_kind": notebook_kind,
-            "execution_status": execution_status,
-            "capture_mode": capture_mode,
-        },
-    )
-    source_artifact = store_text_artifact(
-        db,
-        store,
-        project_id=project.id,
-        asset_type="notebook_execution_source",
-        name=f"notebook_execution_source_{suffix}",
-        filename="updated_notebook.py",
-        text=notebook_source,
-        metadata={
-            "project_id": project.id,
-            "notebook_artifact_id": notebook_artifact.id,
-            "notebook_kind": notebook_kind,
-            "execution_status": execution_status,
-            "capture_mode": capture_mode,
-        },
-    )
-    manifest = build_notebook_execution_manifest(
-        project=project,
-        notebook_artifact=notebook_artifact,
-        notebook_kind=notebook_kind,
-        linked_artifacts=linked_artifacts,
-        source_validation=source_validation,
-        compile_result=compile_result,
-        marimo_export_result=marimo_export_result,
-        execution_status=execution_status,
-        generated_at=generated_at,
-        plan_created=plan_created,
-        output_artifacts={
-            "notebook_figure_manifest_artifact_id": figure_manifest_artifact.id,
-            "notebook_execution_source_artifact_id": source_artifact.id,
-            "notebook_evidence_bundle_artifact_id": evidence_capture["bundle_artifact"].id
-            if evidence_capture["bundle_artifact"]
-            else None,
-            "notebook_evidence_html_artifact_id": evidence_capture["html_artifact"].id
-            if evidence_capture["html_artifact"]
-            else None,
-            "notebook_evidence_figure_artifact_ids": [
-                artifact.id for artifact in evidence_capture["figure_artifacts"]
-            ],
-        },
-    )
-    html = (
-        str(marimo_export_result["html"])
-        if marimo_export_result["status"] == "succeeded" and marimo_export_result.get("html")
-        else render_notebook_execution_html_preview(manifest, notebook_source)
-    )
-    html_artifact = store_text_artifact(
-        db,
-        store,
-        project_id=project.id,
-        asset_type="notebook_execution_html",
-        name=f"notebook_execution_preview_{suffix}",
-        filename="notebook_execution_preview.html",
-        text=html,
-        metadata={
-            "project_id": project.id,
-            "notebook_artifact_id": notebook_artifact.id,
-            "notebook_kind": notebook_kind,
-            "execution_status": execution_status,
-            "capture_mode": capture_mode,
-            "content_type": "text/html",
-        },
-    )
-    report_md = render_notebook_execution_report(manifest, html_artifact.id, figure_manifest_artifact.id, source_artifact.id)
-    report_artifact = store_text_artifact(
-        db,
-        store,
-        project_id=project.id,
-        asset_type="notebook_execution_report",
-        name=f"notebook_execution_report_{suffix}",
-        filename="notebook_execution_report.md",
-        text=report_md,
-        metadata={
-            "project_id": project.id,
-            "notebook_artifact_id": notebook_artifact.id,
-            "notebook_kind": notebook_kind,
-            "execution_status": execution_status,
-            "capture_mode": capture_mode,
-            "notebook_execution_html_artifact_id": html_artifact.id,
-        },
-    )
-    report = Report(
-        id=new_id("rpt"),
-        project_id=project.id,
-        report_type="notebook_execution",
-        title="Notebook Execution Capture Report",
-        summary=str(manifest["summary"]["headline"]),
-        artifact_id=report_artifact.id,
-        source_asset_ids_json=dumps_json(
-            [
-                {"asset_type": "artifact", "asset_id": notebook_artifact.id},
-                {"asset_type": "artifact", "asset_id": plan_artifact.id},
-                {"asset_type": "artifact", "asset_id": contract_artifact.id},
-            ]
-        ),
-        status="ready",
-        created_by_type="system",
-    )
-    db.add(report)
-    db.flush()
-    manifest["outputs"].update(
-        {
-            "notebook_execution_html_artifact_id": html_artifact.id,
-            "notebook_execution_report_id": report.id,
-            "notebook_execution_report_artifact_id": report_artifact.id,
-        }
-    )
-    manifest_artifact = store_json_artifact(
-        db,
-        store,
-        project_id=project.id,
-        asset_type="notebook_execution_manifest",
-        name=f"notebook_execution_manifest_{suffix}",
-        filename="notebook_execution_manifest.json",
-        payload=manifest,
-        metadata={
-            "project_id": project.id,
-            "notebook_artifact_id": notebook_artifact.id,
-            "notebook_kind": notebook_kind,
-            "execution_status": execution_status,
-            "capture_mode": capture_mode,
-            "notebook_execution_html_artifact_id": html_artifact.id,
-            "notebook_execution_report_id": report.id,
-            "notebook_execution_report_artifact_id": report_artifact.id,
-        },
-    )
-    _record_notebook_execution_capture_lineage(
-        db,
-        project=project,
-        notebook_artifact=notebook_artifact,
-        linked_artifacts=[artifact for artifact in linked_artifacts.values() if artifact is not None],
-        manifest_artifact=manifest_artifact,
-        report=report,
-        report_artifact=report_artifact,
-        html_artifact=html_artifact,
-        figure_manifest_artifact=figure_manifest_artifact,
-        source_artifact=source_artifact,
-        evidence_artifacts=[
-            artifact
-            for artifact in [
-                evidence_capture["bundle_artifact"],
-                evidence_capture["html_artifact"],
-                *evidence_capture["figure_artifacts"],
-            ]
-            if artifact is not None
-        ],
-    )
-    artifact_ids = [
-        manifest_artifact.id,
-        report_artifact.id,
-        html_artifact.id,
-        figure_manifest_artifact.id,
-        source_artifact.id,
-        *[artifact.id for artifact in evidence_capture["figure_artifacts"]],
-    ]
-    if evidence_capture["bundle_artifact"]:
-        artifact_ids.append(evidence_capture["bundle_artifact"].id)
-    if evidence_capture["html_artifact"]:
-        artifact_ids.append(evidence_capture["html_artifact"].id)
-    return NotebookExecutionCaptureResult(
-        manifest=manifest,
-        report=report,
-        manifest_artifact=manifest_artifact,
-        report_artifact=report_artifact,
-        html_artifact=html_artifact,
-        figure_manifest_artifact=figure_manifest_artifact,
-        source_artifact=source_artifact,
-        evidence_bundle_artifact=evidence_capture["bundle_artifact"],
-        evidence_html_artifact=evidence_capture["html_artifact"],
-        figure_artifacts=evidence_capture["figure_artifacts"],
-        plan_artifact=plan_artifact,
-        contract_artifact=contract_artifact,
-        artifact_ids=artifact_ids,
-    )
-
-
-def create_notebook_evidence_artifacts(
-    db: Session,
-    store: LocalArtifactStore,
-    *,
-    project: Project,
-    notebook_artifact: Artifact,
-    notebook_kind: str,
-    notebook_source: str,
-    linked_artifacts: dict[str, Artifact | None],
-    suffix: str,
-    generated_at: str,
-    execution_status: str,
-) -> dict[str, Any]:
-    context = extract_notebook_context(notebook_source)
-    summary = context.get("summary") if isinstance(context.get("summary"), dict) else {}
-    if not summary:
-        return {
-            "bundle_artifact": None,
-            "html_artifact": None,
-            "figure_artifacts": [],
-            "figures": [],
-        }
-
-    figure_specs = build_notebook_evidence_figure_specs(
-        project=project,
-        notebook_artifact=notebook_artifact,
-        notebook_kind=notebook_kind,
-        summary=cast(dict[str, Any], summary),
-        generated_at=generated_at,
-    )
-    figure_artifacts: list[Artifact] = []
-    figure_refs: list[dict[str, Any]] = []
-    for spec in figure_specs:
-        artifact = store_text_artifact(
-            db,
-            store,
-            project_id=project.id,
-            asset_type="notebook_evidence_svg",
-            name=f"{spec['figure_id']}_{suffix}",
-            filename=f"{spec['figure_id']}.svg",
-            text=str(spec["svg"]),
-            metadata={
-                "project_id": project.id,
-                "notebook_artifact_id": notebook_artifact.id,
-                "notebook_kind": notebook_kind,
-                "execution_status": execution_status,
-                "capture_mode": "safe_profile_evidence_render",
-                "figure_id": spec["figure_id"],
-                "content_type": "image/svg+xml",
-            },
-        )
-        figure_artifacts.append(artifact)
-        figure_refs.append(
-            {
-                "slot": spec["figure_id"],
-                "figure_id": spec["figure_id"],
-                "title": spec["title"],
-                "description": spec["description"],
-                "artifact_id": artifact.id,
-                "asset_type": artifact.asset_type,
-                "content_type": "image/svg+xml",
-                "render_status": "rendered_from_profile_artifacts",
-                "runtime_execution_status": "static_preview",
-            }
-        )
-
-    bundle = build_notebook_evidence_bundle(
-        project=project,
-        notebook_artifact=notebook_artifact,
-        notebook_kind=notebook_kind,
-        summary=cast(dict[str, Any], summary),
-        linked_artifacts=linked_artifacts,
-        figures=figure_refs,
-        generated_at=generated_at,
-        execution_status=execution_status,
-    )
-    bundle_artifact = store_json_artifact(
-        db,
-        store,
-        project_id=project.id,
-        asset_type="notebook_evidence_bundle",
-        name=f"notebook_evidence_bundle_{suffix}",
-        filename="notebook_evidence_bundle.json",
-        payload=bundle,
-        metadata={
-            "project_id": project.id,
-            "notebook_artifact_id": notebook_artifact.id,
-            "notebook_kind": notebook_kind,
-            "execution_status": execution_status,
-            "capture_mode": "safe_profile_evidence_render",
-            "figure_count": len(figure_refs),
-        },
-    )
-    html = render_notebook_evidence_html(bundle, figure_specs)
-    html_artifact = store_text_artifact(
-        db,
-        store,
-        project_id=project.id,
-        asset_type="notebook_evidence_html",
-        name=f"notebook_evidence_preview_{suffix}",
-        filename="notebook_evidence_preview.html",
-        text=html,
-        metadata={
-            "project_id": project.id,
-            "notebook_artifact_id": notebook_artifact.id,
-            "notebook_kind": notebook_kind,
-            "execution_status": execution_status,
-            "capture_mode": "safe_profile_evidence_render",
-            "notebook_evidence_bundle_artifact_id": bundle_artifact.id,
-            "content_type": "text/html",
-        },
-    )
-    return {
-        "bundle_artifact": bundle_artifact,
-        "html_artifact": html_artifact,
-        "figure_artifacts": figure_artifacts,
-        "figures": figure_refs,
-    }
-
-
 def extract_notebook_context(source: str) -> dict[str, Any]:
     marker = "context = "
     start = source.find(marker)
@@ -966,611 +452,6 @@ def extract_notebook_context(source: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return value if isinstance(value, dict) else {}
-
-
-def build_notebook_evidence_bundle(
-    *,
-    project: Project,
-    notebook_artifact: Artifact,
-    notebook_kind: str,
-    summary: dict[str, Any],
-    linked_artifacts: dict[str, Artifact | None],
-    figures: list[dict[str, Any]],
-    generated_at: str,
-    execution_status: str,
-) -> dict[str, Any]:
-    return {
-        "schema_version": "notebook_evidence_bundle.v1",
-        "project_id": project.id,
-        "notebook_artifact_id": notebook_artifact.id,
-        "notebook_kind": notebook_kind,
-        "generated_at": generated_at,
-        "capture_mode": "safe_profile_evidence_render",
-        "execution_status": execution_status,
-        "runtime_execution_status": "static_preview",
-        "summary": {
-            "title": summary.get("title"),
-            "overview": summary.get("overview"),
-            "primary_metric_name": summary.get("primary_metric_name"),
-            "primary_metric_value": summary.get("primary_metric_value"),
-            "eda_quality_score": summary.get("eda_quality_score"),
-            "target_readiness": summary.get("target_readiness"),
-            "result_interpretation": summary.get("result_interpretation", {}),
-            "metric_comparison": summary.get("metric_comparison", {}),
-            "sanity_floor": summary.get("sanity_floor", {}),
-            "model_diagnostics_artifacts": summary.get("model_diagnostics_artifacts", {}),
-            "figure_count": len(figures),
-            "guardrail_count": len(summary.get("evaluation_guardrails", []))
-            if isinstance(summary.get("evaluation_guardrails"), list)
-            else 0,
-            "analysis_question_count": len(summary.get("analysis_questions", []))
-            if isinstance(summary.get("analysis_questions"), list)
-            else 0,
-        },
-        "figures": figures,
-        "tables": {
-            "analysis_brief": summary.get("analysis_brief", {}),
-            "result_interpretation": summary.get("result_interpretation", {}),
-            "metric_comparison": summary.get("metric_comparison", {}),
-            "sanity_floor": summary.get("sanity_floor", {}),
-            "model_diagnostics_artifacts": summary.get("model_diagnostics_artifacts", {}),
-            "quality_rubric": summary.get("quality_rubric", []),
-            "analysis_storyboard": summary.get("analysis_storyboard", []),
-            "eda_playbook": summary.get("eda_playbook", []),
-            "visual_story_cards": summary.get("visual_story_cards", []),
-            "feature_family_summary": summary.get("feature_family_summary", []),
-            "evaluation_guardrails": summary.get("evaluation_guardrails", []),
-            "analysis_questions": summary.get("analysis_questions", []),
-            "codex_navigation_prompts": summary.get("codex_navigation_prompts", []),
-            "feature_review_sections": summarize_feature_review_sections(summary.get("feature_review_sections")),
-        },
-        "linked_artifacts": _linked_artifact_refs(linked_artifacts),
-        "safety_policy": {
-            "arbitrary_notebook_code_executed": False,
-            "marimo_cells_executed": False,
-            "external_network_accessed": False,
-            "connector_credentials_materialized": False,
-            "secrets_materialized": False,
-            "render_source": "embedded_notebook_context_and_profile_artifacts",
-        },
-    }
-
-
-def summarize_feature_review_sections(value: object) -> dict[str, Any]:
-    sections = value if isinstance(value, dict) else {}
-    output: dict[str, Any] = {}
-    for key, rows in sections.items():
-        if not isinstance(rows, list):
-            continue
-        output[str(key)] = {
-            "count": len(rows),
-            "columns": [
-                {
-                    "name": str(row.get("name") or ""),
-                    "semantic_type": str(row.get("semantic_type") or "unknown"),
-                    "role": str(row.get("role") or "feature"),
-                    "missing_rate": _float_value(row.get("missing_rate")),
-                    "unique_count": int(row.get("unique_count") or 0),
-                }
-                for row in rows[:12]
-                if isinstance(row, dict)
-            ],
-        }
-    return output
-
-
-def build_notebook_evidence_figure_specs(
-    *,
-    project: Project,
-    notebook_artifact: Artifact,
-    notebook_kind: str,
-    summary: dict[str, Any],
-    generated_at: str,
-) -> list[dict[str, str]]:
-    if notebook_kind == "model_diagnostics":
-        prediction_summary = _dict_value(summary.get("prediction_summary"))
-        score_bins = [
-            cast(dict[str, Any], item)
-            for item in _list_value(prediction_summary.get("score_bins"))
-            if isinstance(item, dict)
-        ]
-        feature_rows = [
-            cast(dict[str, Any], item)
-            for item in _list_value(summary.get("feature_family_rows"))
-            if isinstance(item, dict)
-        ]
-        findings = [
-            cast(dict[str, Any], item)
-            for item in _list_value(summary.get("findings"))
-            if isinstance(item, dict)
-        ]
-        model_artifacts = _dict_value(summary.get("model_diagnostics_artifacts"))
-        native_top_features = [
-            cast(dict[str, Any], item)
-            for item in _list_value(_dict_value(model_artifacts.get("native_feature_importance")).get("top_features"))
-            if isinstance(item, dict)
-        ]
-        permutation_top_features = [
-            cast(dict[str, Any], item)
-            for item in _list_value(_dict_value(model_artifacts.get("permutation_importance")).get("top_features"))
-            if isinstance(item, dict)
-        ]
-        return [
-            {
-                "figure_id": "diagnostics_readiness",
-                "title": "Diagnostics Readiness",
-                "description": "Whether the model notebook has enough evidence for human review.",
-                "svg": svg_metric_cards(
-                    title="Diagnostics readiness",
-                    rows=[
-                        {
-                            "label": "Primary metric",
-                            "value": f"{summary.get('primary_metric_name') or 'metric'}={_format_metric(summary.get('primary_metric_value'))}",
-                            "detail": "approved EvaluationSpec metric",
-                        },
-                        {
-                            "label": "Predictions",
-                            "value": f"{int(prediction_summary.get('row_count') or 0):,}",
-                            "detail": "validation rows summarized",
-                        },
-                        {
-                            "label": "Diagnostics",
-                            "value": str(summary.get("evidence_readiness") or "unknown").replace("_", " "),
-                            "detail": str(summary.get("diagnostics_coverage") or "coverage not recorded")[:72],
-                        },
-                        {
-                            "label": "Quality",
-                            "value": str(summary.get("evidence_quality_score") or 0),
-                            "detail": f"{len(findings)} finding(s), {len(feature_rows)} feature families",
-                        },
-                    ],
-                ),
-            },
-            {
-                "figure_id": "feature_family_inventory",
-                "title": "Feature Family Inventory",
-                "description": "Feature families reported by the model run.",
-                "svg": svg_bar_chart(
-                    title="Feature family inventory",
-                    rows=[
-                        {"label": str(row.get("family") or "unknown"), "value": int(row.get("count") or 0)}
-                        for row in feature_rows
-                    ],
-                    value_format="integer",
-                    empty_message="Feature-family counts are not available for this run yet.",
-                ),
-            },
-            {
-                "figure_id": "native_feature_importance",
-                "title": "Native Feature Importance",
-                "description": "Top stored-model feature importances when the model package exposes them.",
-                "svg": svg_bar_chart(
-                    title="Native feature importance",
-                    rows=[
-                        {
-                            "label": str(row.get("feature_name") or "feature")[:80],
-                            "value": _float_value(row.get("importance")),
-                        }
-                        for row in native_top_features[:12]
-                    ],
-                    value_format="float",
-                    empty_message="Native feature importance is not available yet. Materialize model diagnostics artifacts first.",
-                ),
-            },
-            {
-                "figure_id": "permutation_importance",
-                "title": "Permutation Importance",
-                "description": "Bounded validation-split permutation deltas for the stored model package.",
-                "svg": svg_bar_chart(
-                    title="Permutation importance",
-                    rows=[
-                        {
-                            "label": str(row.get("feature_name") or "feature")[:80],
-                            "value": _float_value(row.get("importance_delta")),
-                        }
-                        for row in permutation_top_features[:12]
-                    ],
-                    value_format="float",
-                    empty_message="Permutation importance is not available yet. Materialize model diagnostics artifacts first.",
-                ),
-            },
-            {
-                "figure_id": "prediction_score_bins",
-                "title": "Prediction Score Bins",
-                "description": "Prediction score distribution when prediction artifacts are available.",
-                "svg": svg_bar_chart(
-                    title="Prediction score bins",
-                    rows=[
-                        {"label": str(row.get("bin") or "bin"), "value": int(row.get("count") or 0)}
-                        for row in score_bins
-                    ],
-                    value_format="integer",
-                    empty_message="Prediction score bins are not available. Persist validation predictions before reading model behavior.",
-                ),
-            },
-            {
-                "figure_id": "diagnostics_attention_counts",
-                "title": "Diagnostics Attention Counts",
-                "description": "Finding severity counts for the next model-review action.",
-                "svg": svg_bar_chart(
-                    title="Diagnostics attention counts",
-                    rows=[
-                        {"label": severity, "value": count}
-                        for severity, count in _count_rows(findings, "severity")
-                    ],
-                    value_format="integer",
-                    empty_message="No findings are available yet.",
-                ),
-            },
-        ]
-    if notebook_kind != "data_understanding":
-        return [
-            {
-                "figure_id": "notebook_evidence_summary",
-                "title": "Notebook Evidence Summary",
-                "description": "Evidence rendered from available notebook context.",
-                "svg": svg_message_chart(
-                    title="Notebook evidence",
-                    message="No specialized evidence renderer exists for this notebook kind yet.",
-                    subtitle=f"Project {project.name} | Notebook {notebook_artifact.id} | {generated_at}",
-                ),
-            }
-        ]
-
-    columns = [cast(dict[str, Any], item) for item in _list_value(summary.get("columns")) if isinstance(item, dict)]
-    target = _dict_value(summary.get("target_readiness"))
-    feature_sections = _dict_value(summary.get("feature_review_sections"))
-    top_missing = [cast(dict[str, Any], item) for item in _list_value(feature_sections.get("top_missing")) if isinstance(item, dict)]
-    target_top_values = [cast(dict[str, Any], item) for item in _list_value(target.get("top_values")) if isinstance(item, dict)]
-    feature_family_summary = [
-        cast(dict[str, Any], item) for item in _list_value(summary.get("feature_family_summary")) if isinstance(item, dict)
-    ]
-    findings = [cast(dict[str, Any], item) for item in _list_value(summary.get("findings")) if isinstance(item, dict)]
-    guardrails = [
-        cast(dict[str, Any], item) for item in _list_value(summary.get("evaluation_guardrails")) if isinstance(item, dict)
-    ]
-    return [
-        {
-            "figure_id": "feature_family_counts",
-            "title": "Feature Family Counts",
-            "description": "Semantic feature-family counts for choosing analysis tactics.",
-            "svg": svg_bar_chart(
-                title="Feature family counts",
-                rows=[
-                    {"label": str(row.get("family") or "unknown"), "value": int(row.get("count") or 0)}
-                    for row in feature_family_summary
-                    if isinstance(row, dict)
-                ],
-                value_format="integer",
-            ),
-        },
-        {
-            "figure_id": "top_missing_columns_bar",
-            "title": "Top Missing Columns",
-            "description": "Highest missing-rate columns from the profiled dataset.",
-            "svg": svg_bar_chart(
-                title="Top missing columns",
-                rows=[
-                    {"label": str(row.get("name") or ""), "value": _float_value(row.get("missing_rate"))}
-                    for row in top_missing
-                ][:12],
-                value_format="percent",
-            ),
-        },
-        {
-            "figure_id": "semantic_type_role_mix",
-            "title": "Semantic Type Mix",
-            "description": "Column semantic-type counts inferred from names and physical types.",
-            "svg": svg_bar_chart(
-                title="Semantic type mix",
-                rows=[
-                    {"label": label, "value": count}
-                    for label, count in _count_rows([row for row in columns if isinstance(row, dict)], "semantic_type")
-                ],
-                value_format="integer",
-            ),
-        },
-        {
-            "figure_id": "target_profile_summary",
-            "title": "Target Profile Summary",
-            "description": "Top target values when a target is selected; otherwise a target-readiness reminder.",
-            "svg": svg_bar_chart(
-                title="Target value distribution",
-                rows=[
-                    {"label": str(row.get("value") or "null"), "value": int(row.get("count") or 0)}
-                    for row in target_top_values
-                ],
-                value_format="integer",
-                empty_message=str(target.get("summary") or "No target selected yet."),
-            ),
-        },
-        {
-            "figure_id": "risk_attention_counts",
-            "title": "Risk Attention Counts",
-            "description": "Counts of findings and guardrails that deserve human/Codex attention.",
-            "svg": svg_bar_chart(
-                title="Risk attention counts",
-                rows=[
-                    {
-                        "label": "high findings",
-                        "value": len(
-                            [
-                                item
-                                for item in findings
-                                if str(item.get("severity") or "") in {"high", "blocking"}
-                            ]
-                        ),
-                    },
-                    {"label": "all findings", "value": len(findings)},
-                    {
-                        "label": "high guardrails",
-                        "value": len(
-                            [
-                                item
-                                for item in guardrails
-                                if str(item.get("risk") or "") in {"high", "blocking"}
-                            ]
-                        ),
-                    },
-                    {"label": "all guardrails", "value": len(guardrails)},
-                ],
-                value_format="integer",
-            ),
-        },
-        {
-            "figure_id": "feature_review_queue_counts",
-            "title": "Feature Review Queue Counts",
-            "description": "Counts of columns queued for focused human/Codex review.",
-            "svg": svg_bar_chart(
-                title="Feature review queues",
-                rows=[
-                    {
-                        "label": label,
-                        "value": len(items) if isinstance(items, list) else 0,
-                    }
-                    for label, items in feature_sections.items()
-                ],
-                value_format="integer",
-            ),
-        },
-    ]
-
-
-def svg_bar_chart(
-    *,
-    title: str,
-    rows: list[dict[str, Any]],
-    value_format: str,
-    empty_message: str = "No data available yet.",
-) -> str:
-    width = 900
-    row_height = 34
-    top = 74
-    left = 230
-    right = 64
-    chart_width = width - left - right
-    normalized_rows: list[tuple[str, float]] = [
-        (str(row.get("label") or ""), max(0.0, _float_value(row.get("value"))))
-        for row in rows
-        if str(row.get("label") or "")
-    ][:14]
-    height = max(220, top + max(1, len(normalized_rows)) * row_height + 42)
-    max_value = max((value for _, value in normalized_rows), default=0.0)
-    body: list[str] = []
-    if not normalized_rows or max_value <= 0:
-        body.append(f'<text x="{left}" y="{top + 38}" fill="#52606f" font-size="18">{escape(empty_message)}</text>')
-    else:
-        for index, (label, value) in enumerate(normalized_rows):
-            y = top + index * row_height
-            bar_width = max(4.0, value / max_value * chart_width)
-            body.extend(
-                [
-                    f'<text x="24" y="{y + 21}" fill="#20304f" font-size="15">{escape(label[:34])}</text>',
-                    f'<rect x="{left}" y="{y}" width="{bar_width:.1f}" height="22" rx="6" fill="url(#bar)"/>',
-                    f'<text x="{left + bar_width + 8:.1f}" y="{y + 17}" fill="#52606f" font-size="13">{escape(format_svg_value(value, value_format))}</text>',
-                ]
-            )
-    return svg_chart_shell(title=title, width=width, height=height, body="\n".join(body))
-
-
-def svg_metric_cards(*, title: str, rows: list[dict[str, Any]]) -> str:
-    width = 900
-    card_width = 196
-    card_height = 118
-    gap = 18
-    left = 28
-    top = 76
-    normalized_rows = [
-        {
-            "label": str(row.get("label") or "Metric")[:30],
-            "value": str(row.get("value") or "-")[:32],
-            "detail": str(row.get("detail") or "")[:84],
-        }
-        for row in rows[:4]
-    ]
-    body: list[str] = []
-    if not normalized_rows:
-        body.append('<text x="42" y="120" fill="#52606f" font-size="18">No model diagnostic evidence is available yet.</text>')
-    for index, row in enumerate(normalized_rows):
-        x = left + index * (card_width + gap)
-        detail_lines = wrap_svg_text(row["detail"], 34, 2)
-        body.extend(
-            [
-                f'<rect x="{x}" y="{top}" width="{card_width}" height="{card_height}" rx="14" fill="#ffffff" stroke="#dbe3f3"/>',
-                f'<text x="{x + 16}" y="{top + 30}" fill="#52606f" font-size="13" font-weight="700">{escape(row["label"])}</text>',
-                f'<text x="{x + 16}" y="{top + 62}" fill="#10183f" font-size="20" font-weight="800">{escape(row["value"])}</text>',
-            ]
-        )
-        for line_index, line in enumerate(detail_lines):
-            body.append(
-                f'<text x="{x + 16}" y="{top + 88 + line_index * 18}" fill="#52606f" font-size="12">{escape(line)}</text>'
-            )
-    return svg_chart_shell(title=title, width=width, height=230, body="\n".join(body))
-
-
-def svg_message_chart(*, title: str, message: str, subtitle: str) -> str:
-    body = (
-        f'<text x="42" y="108" fill="#20304f" font-size="22">{escape(message)}</text>'
-        f'<text x="42" y="146" fill="#52606f" font-size="14">{escape(subtitle)}</text>'
-    )
-    return svg_chart_shell(title=title, width=900, height=220, body=body)
-
-
-def svg_chart_shell(*, title: str, width: int, height: int, body: str) -> str:
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" aria-label="{escape(title)}">
-  <defs>
-    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
-      <stop stop-color="#f8fbff"/>
-      <stop offset="1" stop-color="#eef8f6"/>
-    </linearGradient>
-    <linearGradient id="bar" x1="0" x2="1">
-      <stop stop-color="#18b8a6"/>
-      <stop offset="1" stop-color="#3867f3"/>
-    </linearGradient>
-  </defs>
-  <rect width="{width}" height="{height}" rx="18" fill="url(#bg)"/>
-  <text x="24" y="42" fill="#10183f" font-size="24" font-weight="700">{escape(title)}</text>
-  {body}
-</svg>'''
-
-
-def format_svg_value(value: float, value_format: str) -> str:
-    if value_format == "percent":
-        return f"{value:.1%}"
-    if value_format == "integer":
-        return f"{int(round(value)):,}"
-    return f"{value:.4g}"
-
-
-def wrap_svg_text(value: str, width: int, max_lines: int) -> list[str]:
-    words = value.split()
-    lines: list[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        if len(candidate) <= width:
-            current = candidate
-            continue
-        if current:
-            lines.append(current)
-        current = word[:width]
-        if len(lines) >= max_lines:
-            break
-    if current and len(lines) < max_lines:
-        lines.append(current)
-    if len(lines) == max_lines and words:
-        joined = " ".join(words)
-        if len(joined) > sum(len(line) for line in lines):
-            lines[-1] = f"{lines[-1].rstrip('.')[: max(0, width - 3)]}..."
-    return lines
-
-
-def render_notebook_evidence_html(bundle: dict[str, Any], figure_specs: list[dict[str, str]]) -> str:
-    summary = cast(dict[str, Any], bundle["summary"])
-    tables = cast(dict[str, Any], bundle["tables"])
-    notebook_kind = str(bundle.get("notebook_kind") or "analysis")
-    kind_label = notebook_kind.replace("_", " ").title()
-    playbook_title = "EDA playbook" if notebook_kind == "data_understanding" else "Review playbook"
-    brief = _dict_value(tables.get("analysis_brief"))
-    read_order = [
-        cast(dict[str, Any], item) for item in _list_value(brief.get("read_this_first")) if isinstance(item, dict)
-    ]
-    playbook = [cast(dict[str, Any], item) for item in _list_value(tables.get("eda_playbook")) if isinstance(item, dict)]
-    story_cards = [
-        cast(dict[str, Any], item) for item in _list_value(tables.get("visual_story_cards")) if isinstance(item, dict)
-    ]
-    prompts = _list_value(tables.get("codex_navigation_prompts"))
-    questions = _list_value(tables.get("analysis_questions"))
-    interpretation = _dict_value(tables.get("result_interpretation") or summary.get("result_interpretation"))
-    guardrails = [
-        cast(dict[str, Any], item) for item in _list_value(tables.get("evaluation_guardrails")) if isinstance(item, dict)
-    ]
-    figures_html = "".join(
-        f'<section class="panel"><h2>{escape(spec["title"])}</h2><p>{escape(spec["description"])}</p>{spec["svg"]}</section>'
-        for spec in figure_specs
-    )
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tablex Notebook Evidence Review</title>
-  <style>
-    :root {{ color-scheme: light dark; --ink:#10183f; --muted:#53617d; --line:#dbe3f3; --panel:#fff; --wash:#f4f9fb; --teal:#18b8a6; }}
-    body {{ margin:0; background:linear-gradient(180deg,#f8fbff 0%,#eef8f6 100%); color:var(--ink); font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }}
-    main {{ display:grid; gap:18px; padding:28px; }}
-    h1 {{ margin:0; font-size:30px; letter-spacing:0; }}
-    h2 {{ margin:0 0 10px; font-size:16px; }}
-    p {{ color:var(--muted); line-height:1.55; }}
-    svg {{ width:100%; height:auto; display:block; }}
-    .eyebrow {{ color:var(--teal); font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }}
-    .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }}
-    .panel {{ border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.88); padding:16px; box-shadow:0 16px 42px rgba(34,48,88,.08); overflow:hidden; }}
-    .hero {{ display:grid; grid-template-columns:minmax(0,1fr) 220px; gap:18px; align-items:start; }}
-    .brief {{ border-left:5px solid var(--teal); background:var(--wash); border-radius:10px; padding:14px; }}
-    .story-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }}
-    .story-card {{ border:1px solid var(--line); border-radius:10px; background:var(--wash); padding:12px; }}
-    .result-callout {{ border:1px solid var(--line); border-left:5px solid var(--teal); border-radius:10px; background:#fff; padding:14px; }}
-    .result-callout strong {{ display:block; margin-bottom:8px; font-size:18px; }}
-    .story-card strong,.playbook-row strong {{ display:block; margin-bottom:6px; }}
-    .playbook-row {{ border-left:4px solid var(--teal); margin:8px 0; padding:10px 12px; background:var(--wash); border-radius:8px; }}
-    .prompt {{ display:inline-block; margin:4px; border:1px solid var(--line); border-radius:999px; background:var(--wash); padding:7px 10px; color:var(--ink); font-size:12px; font-weight:700; }}
-    .metric strong {{ display:block; font-size:22px; overflow-wrap:anywhere; }}
-    .metric span,.tiny {{ color:var(--muted); font-size:12px; }}
-    .finding {{ border-left:4px solid var(--teal); padding:10px 12px; background:var(--wash); border-radius:8px; margin:8px 0; }}
-    @media (max-width: 720px) {{ .hero {{ grid-template-columns:1fr; }} }}
-    @media (prefers-color-scheme: dark) {{ :root {{ --ink:#eef4ff; --muted:#aab6d3; --line:#2e3a5b; --wash:#17213a; }} body {{ background:#0c1225; }} .panel {{ background:rgba(17,24,47,.9); box-shadow:none; }} }}
-  </style>
-</head>
-<body>
-  <main>
-    <header class="hero">
-      <div>
-        <div class="eyebrow">Notebook Evidence Review · {escape(kind_label)}</div>
-        <h1>{escape(str(summary.get("title") or "EDA evidence bundle"))}</h1>
-        <p>{escape(str(brief.get("headline") or summary.get("overview") or ""))}</p>
-      </div>
-      <div class="brief">
-        <strong>{escape(str(brief.get("decision_state") or "review"))}</strong>
-        <p>{escape(str(brief.get("profile_boundary") or "Profile boundary is recorded in the source artifacts."))}</p>
-      </div>
-    </header>
-    <section class="grid">
-      {_metric_card("Figures", summary.get("figure_count", 0))}
-      {_metric_card("Guardrails", summary.get("guardrail_count", 0))}
-      {_metric_card("Questions", summary.get("analysis_question_count", 0))}
-      {_metric_card("Runtime", _status_display(bundle["runtime_execution_status"]))}
-    </section>
-    {_result_interpretation_html(interpretation)}
-    <section class="panel">
-      <h2>Read this first</h2>
-      <p>{escape(str(brief.get("why_it_matters") or ""))}</p>
-      {_read_order_rows(read_order)}
-    </section>
-    <section class="panel">
-      <h2>Visual story cards</h2>
-      <div class="story-grid">{_story_card_rows(story_cards)}</div>
-    </section>
-    <section class="panel">
-      <h2>{escape(playbook_title)}</h2>
-      {_playbook_rows(playbook)}
-    </section>
-    {figures_html}
-    <section class="panel">
-      <h2>Evaluation guardrails</h2>
-      {_guardrail_rows(guardrails)}
-    </section>
-    <section class="panel">
-      <h2>Analysis questions</h2>
-      {"".join(f'<div class="finding">{escape(str(item))}</div>' for item in questions) or "<p>No questions generated.</p>"}
-    </section>
-    <section class="panel">
-      <h2>Ask Codex next</h2>
-      {"".join(f'<span class="prompt">{escape(str(item))}</span>' for item in prompts) or "<p>No prompts generated.</p>"}
-    </section>
-  </main>
-</body>
-</html>"""
 
 
 def create_model_diagnostics_notebook(
@@ -1640,14 +521,157 @@ def _read_text_artifact(artifact: Artifact) -> str:
         raise ValueError(f"Artifact content is not readable: {artifact.id}") from exc
 
 
+def _notebook_index_accepts_native_marimo_source(artifact: Artifact) -> bool:
+    validation = _notebook_source_validation_for_index(artifact)
+    if validation is None:
+        return True
+    return bool(validation.get("is_valid_marimo_notebook"))
+
+
+def _notebook_index_has_native_marimo_source_or_unchecked(artifact: Artifact) -> bool:
+    validation = _notebook_source_validation_for_index(artifact)
+    if validation is None:
+        return True
+    return bool(validation.get("is_native_marimo_source"))
+
+
+def _notebook_source_validation_for_index(artifact: Artifact) -> dict[str, Any] | None:
+    try:
+        source_path = source_notebook_path_for_export(artifact)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if source_path is None or not source_path.exists():
+        return None
+    try:
+        source = source_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return _validate_marimo_notebook_source(source)
+
+
+def assert_valid_marimo_notebook_artifact_source(artifact: Artifact) -> None:
+    validation = marimo_notebook_source_validation_for_artifact(artifact)
+    if validation.get("is_valid_marimo_notebook") is True:
+        return
+    errors = validation.get("errors")
+    if isinstance(errors, list) and errors:
+        raise ValueError("Referenced notebook artifact is not a valid native marimo source: " + "; ".join(map(str, errors)))
+    checks = validation.get("checks")
+    raise ValueError(f"Referenced notebook artifact is not a valid native marimo source: {checks}")
+
+
+def marimo_notebook_source_validation_for_artifact(artifact: Artifact) -> dict[str, Any]:
+    source_path = source_notebook_path_for_export(artifact)
+    if source_path is None or not source_path.exists():
+        raise ValueError("Referenced notebook artifact source file was not found")
+    try:
+        source = source_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError("Referenced notebook artifact source file is not readable") from exc
+    return _validate_marimo_notebook_source(source)
+
+
+def assert_marimo_notebook_runtime_preflight(artifact: Artifact, *, timeout_seconds: int = 60) -> dict[str, Any]:
+    result = marimo_notebook_runtime_preflight_for_artifact(artifact, timeout_seconds=timeout_seconds)
+    if result.get("ok") is True:
+        return result
+    error_summary = str(result.get("error_summary") or result.get("stderr") or result.get("stdout") or "unknown runtime error")
+    raise ValueError("Referenced notebook artifact failed native marimo runtime preflight: " + error_summary)
+
+
+def marimo_notebook_runtime_preflight_for_artifact(artifact: Artifact, *, timeout_seconds: int = 60) -> dict[str, Any]:
+    if not marimo_available():
+        return {
+            "schema_version": "marimo_notebook_runtime_preflight.v1",
+            "ok": False,
+            "error_type": "MarimoUnavailable",
+            "error_summary": "marimo is not installed in the backend environment.",
+        }
+    source_path = source_notebook_path_for_export(artifact)
+    if source_path is None or not source_path.exists():
+        return {
+            "schema_version": "marimo_notebook_runtime_preflight.v1",
+            "ok": False,
+            "error_type": "FileNotFoundError",
+            "error_summary": "Notebook source file was not found.",
+        }
+    workdir = source_notebook_working_dir_for_export(artifact, source_path) or source_path.parent
+    with tempfile.TemporaryDirectory(prefix="tablex_marimo_preflight_") as temp_dir_text:
+        temp_dir = Path(temp_dir_text)
+        output_path = temp_dir / "preflight.html"
+        command = [
+            sys.executable,
+            "-m",
+            "marimo",
+            "export",
+            "html",
+            str(source_path),
+            "-o",
+            str(output_path),
+            "--no-include-code",
+            "--force",
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(workdir),
+                env=notebook_export_env(temp_dir),
+                text=True,
+                capture_output=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "schema_version": "marimo_notebook_runtime_preflight.v1",
+                "ok": False,
+                "error_type": "TimeoutExpired",
+                "error_summary": f"marimo runtime preflight exceeded {timeout_seconds} seconds.",
+                "stdout": _excerpt(exc.stdout, 2000),
+                "stderr": _excerpt(exc.stderr, 4000),
+                "command": command_for_manifest(command),
+                "working_dir": str(workdir),
+            }
+        stderr = _excerpt(completed.stderr, 4000)
+        stdout = _excerpt(completed.stdout, 2000)
+        ok = completed.returncode == 0 and output_path.exists()
+        return {
+            "schema_version": "marimo_notebook_runtime_preflight.v1",
+            "ok": ok,
+            "return_code": completed.returncode,
+            "error_type": None if ok else "RuntimeError",
+            "error_summary": None if ok else _compact_marimo_preflight_error(stderr or stdout),
+            "stdout": stdout,
+            "stderr": stderr,
+            "command": command_for_manifest(command),
+            "working_dir": str(workdir),
+        }
+
+
+def _compact_marimo_preflight_error(value: str, limit: int = 1600) -> str:
+    text = value.strip()
+    if not text:
+        return "marimo runtime preflight failed without stderr output."
+    traceback_start = text.rfind("Traceback (most recent call last):")
+    if traceback_start >= 0:
+        text = text[traceback_start:]
+    if len(text) <= limit:
+        return text
+    head_limit = max(400, limit // 2)
+    tail_limit = max(400, limit - head_limit)
+    return text[:head_limit].rstrip() + "\n...\n" + text[-tail_limit:].lstrip()
+
+
 def _validate_marimo_notebook_source(source: str) -> dict[str, Any]:
     checks = _marimo_source_checks(source)
     is_marimo_notebook = all(checks[key] for key in ("imports_marimo", "defines_marimo_app"))
+    errors = _marimo_source_validation_errors(checks)
     return {
         "schema_version": "marimo_notebook_source_validation.v1",
-        "is_valid_marimo_notebook": is_marimo_notebook,
-        "is_capture_eligible": is_marimo_notebook,
+        "is_valid_marimo_notebook": is_marimo_notebook and not errors,
+        "is_native_marimo_source": is_marimo_notebook,
         "checks": checks,
+        "errors": errors,
     }
 
 
@@ -1657,6 +681,10 @@ def _marimo_source_checks(source: str) -> dict[str, Any]:
         "defines_marimo_app": False,
         "has_main_run_guard": 'if __name__ == "__main__"' in source,
         "mentions_artifact_policy": "EvaluationSpec" in source and "SplitManifest" in source,
+        "has_duplicate_public_cell_definitions": False,
+        "duplicate_public_cell_definitions": [],
+        "visual_call_count": 0,
+        "visual_call_kinds": [],
     }
     try:
         tree = ast.parse(source)
@@ -1687,140 +715,201 @@ def _marimo_source_checks(source: str) -> dict[str, Any]:
         elif isinstance(callee, ast.Name) and callee.id in marimo_app_names:
             checks["defines_marimo_app"] = True
             break
+    duplicate_definitions = _duplicate_marimo_public_cell_definitions(tree)
+    if duplicate_definitions:
+        checks["has_duplicate_public_cell_definitions"] = True
+        checks["duplicate_public_cell_definitions"] = duplicate_definitions
+    visual_call_kinds = _marimo_visual_call_kinds(tree)
+    checks["visual_call_count"] = len(visual_call_kinds)
+    checks["visual_call_kinds"] = sorted(set(visual_call_kinds))
     return checks
 
 
-def run_notebook_static_compile(source: str, timeout_seconds: int = 15) -> dict[str, Any]:
-    started = time.monotonic()
-    with tempfile.TemporaryDirectory(prefix="tablex_notebook_capture_") as tmp_dir:
-        notebook_path = f"{tmp_dir}/notebook.py"
-        with open(notebook_path, "w", encoding="utf-8") as handle:
-            handle.write(source)
-        try:
-            completed = subprocess.run(
-                [sys.executable, "-I", "-m", "py_compile", notebook_path],
-                cwd=tmp_dir,
-                env={"PYTHONHASHSEED": "0"},
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            return {
-                "schema_version": "notebook_static_compile.v1",
-                "status": "timed_out",
-                "returncode": None,
-                "duration_ms": int((time.monotonic() - started) * 1000),
-                "timeout_seconds": timeout_seconds,
-                "stdout_excerpt": _excerpt(exc.stdout),
-                "stderr_excerpt": _excerpt(exc.stderr),
-                "isolated_python": True,
-                "executed_user_code": False,
-            }
-    return {
-        "schema_version": "notebook_static_compile.v1",
-        "status": "succeeded" if completed.returncode == 0 else "failed",
-        "returncode": completed.returncode,
-        "duration_ms": int((time.monotonic() - started) * 1000),
-        "timeout_seconds": timeout_seconds,
-        "stdout_excerpt": _excerpt(completed.stdout),
-        "stderr_excerpt": _excerpt(completed.stderr),
-        "isolated_python": True,
-        "executed_user_code": False,
-    }
+def _marimo_source_validation_errors(checks: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    parse_error = checks.get("parse_error")
+    if parse_error:
+        errors.append(f"source did not parse as Python: {parse_error}")
+    if not checks.get("imports_marimo"):
+        errors.append("source does not import marimo")
+    if not checks.get("defines_marimo_app"):
+        errors.append("source does not define a marimo App")
+    duplicate_definitions = checks.get("duplicate_public_cell_definitions")
+    if isinstance(duplicate_definitions, list):
+        for item in duplicate_definitions:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            lines = item.get("lines")
+            errors.append(f"marimo public variable `{name}` is defined in multiple cells at lines {lines}")
+    return errors
 
 
-def run_marimo_html_export(
-    notebook_artifact: Artifact,
-    source: str,
-    timeout_seconds: int = 120,
-) -> dict[str, Any]:
-    started = time.monotonic()
-    if not marimo_available():
-        return {
-            "schema_version": "marimo_html_export.v1",
-            "status": "skipped",
-            "reason": "marimo_not_installed",
-            "returncode": None,
-            "duration_ms": int((time.monotonic() - started) * 1000),
-            "stdout_excerpt": "",
-            "stderr_excerpt": "marimo is not installed in the backend environment.",
-            "html": None,
-        }
-    with tempfile.TemporaryDirectory(prefix="tablex_marimo_export_") as tmp_dir:
-        tmp_path = Path(tmp_dir)
-        notebook_path = source_notebook_path_for_export(notebook_artifact)
-        cwd = notebook_path.parent if notebook_path is not None else tmp_path
-        export_path = tmp_path / "notebook.html"
-        if notebook_path is None:
-            notebook_path = tmp_path / "notebook.py"
-            notebook_path.write_text(source, encoding="utf-8")
-        command = [
-            sys.executable,
-            "-m",
-            "marimo",
-            "export",
-            "html",
-            str(notebook_path),
-            "--no-include-code",
-            "--no-sandbox",
-            "--force",
-            "-o",
-            str(export_path),
-        ]
-        try:
-            completed = subprocess.run(
-                command,
-                cwd=str(cwd),
-                env=notebook_export_env(cwd),
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            return {
-                "schema_version": "marimo_html_export.v1",
-                "status": "timed_out",
-                "reason": "marimo_export_timeout",
-                "returncode": None,
-                "duration_ms": int((time.monotonic() - started) * 1000),
-                "timeout_seconds": timeout_seconds,
-                "command": command_for_manifest(command),
-                "cwd": str(cwd),
-                "stdout_excerpt": _excerpt(exc.stdout),
-                "stderr_excerpt": _excerpt(exc.stderr),
-                "html": None,
-            }
-        html = export_path.read_text(encoding="utf-8") if completed.returncode == 0 and export_path.exists() else None
-        return {
-            "schema_version": "marimo_html_export.v1",
-            "status": "succeeded" if completed.returncode == 0 and html else "failed",
-            "reason": None if completed.returncode == 0 and html else "marimo_export_failed",
-            "returncode": completed.returncode,
-            "duration_ms": int((time.monotonic() - started) * 1000),
-            "timeout_seconds": timeout_seconds,
-            "command": command_for_manifest(command),
-            "cwd": str(cwd),
-            "stdout_excerpt": _excerpt(completed.stdout),
-            "stderr_excerpt": _excerpt(completed.stderr),
-            "html": html,
-        }
+def _duplicate_marimo_public_cell_definitions(tree: ast.AST) -> list[dict[str, Any]]:
+    definitions_by_name: dict[str, list[int]] = {}
+    for cell in _marimo_cell_functions(tree):
+        collector = _MarimoCellPublicDefinitionCollector()
+        for statement in cell.body:
+            collector.visit(statement)
+        cell_definitions: dict[str, int] = {}
+        for name, line_number in collector.definitions:
+            if name.startswith("_"):
+                continue
+            cell_definitions.setdefault(name, line_number)
+        for name, line_number in cell_definitions.items():
+            definitions_by_name.setdefault(name, []).append(line_number)
+    duplicates: list[dict[str, Any]] = []
+    for name, lines in sorted(definitions_by_name.items()):
+        unique_lines = sorted(set(lines))
+        if len(unique_lines) > 1:
+            duplicates.append({"name": name, "lines": unique_lines})
+    return duplicates
 
 
-def notebook_execution_status(
-    compile_result: dict[str, Any],
-    marimo_export_result: dict[str, Any],
-) -> str:
-    if compile_result["status"] != "succeeded":
-        return "static_capture_failed"
-    marimo_status = str(marimo_export_result.get("status") or "unknown")
-    if marimo_status == "succeeded":
-        return "marimo_export_succeeded"
-    if marimo_status == "skipped":
-        return "static_capture_succeeded"
-    return "marimo_export_failed"
+def _marimo_cell_functions(tree: ast.AST) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    cells: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if any(_decorator_is_marimo_cell(decorator) for decorator in node.decorator_list):
+            cells.append(node)
+    return cells
+
+
+def _decorator_is_marimo_cell(decorator: ast.expr) -> bool:
+    candidate = decorator.func if isinstance(decorator, ast.Call) else decorator
+    return isinstance(candidate, ast.Attribute) and candidate.attr == "cell"
+
+
+def _marimo_visual_call_kinds(tree: ast.AST) -> list[str]:
+    aliases = _import_aliases(tree)
+    kinds: list[str] = []
+    plotly_express_aliases = aliases.get("plotly.express", set()) | {"px"}
+    plotly_go_aliases = aliases.get("plotly.graph_objects", set()) | {"go"}
+    matplotlib_aliases = aliases.get("matplotlib.pyplot", set()) | {"plt"}
+    seaborn_aliases = aliases.get("seaborn", set()) | {"sns"}
+    altair_aliases = aliases.get("altair", set()) | {"alt"}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = node.func
+        if not isinstance(callee, ast.Attribute):
+            continue
+        root_name = _attribute_root_name(callee)
+        if root_name in plotly_express_aliases:
+            kinds.append(f"plotly.express.{callee.attr}")
+        elif root_name in plotly_go_aliases:
+            kinds.append(f"plotly.graph_objects.{callee.attr}")
+        elif root_name in matplotlib_aliases:
+            kinds.append(f"matplotlib.pyplot.{callee.attr}")
+        elif root_name in seaborn_aliases:
+            kinds.append(f"seaborn.{callee.attr}")
+        elif root_name in altair_aliases or callee.attr in {"mark_bar", "mark_line", "mark_point", "mark_circle", "mark_area", "mark_rect"}:
+            kinds.append(f"altair.{callee.attr}")
+        elif callee.attr in {"plot", "hist", "boxplot", "scatter"}:
+            kinds.append(f"pandas.{callee.attr}")
+    return kinds
+
+
+def _import_aliases(tree: ast.AST) -> dict[str, set[str]]:
+    aliases: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                aliases.setdefault(alias.name, set()).add(alias.asname or alias.name.split(".", 1)[0])
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                aliases.setdefault(f"{node.module}.{alias.name}", set()).add(alias.asname or alias.name)
+    return aliases
+
+
+def _attribute_root_name(node: ast.Attribute) -> str | None:
+    current: ast.AST = node
+    while isinstance(current, ast.Attribute):
+        current = current.value
+    return current.id if isinstance(current, ast.Name) else None
+
+
+class _MarimoCellPublicDefinitionCollector(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.definitions: list[tuple[str, int]] = []
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self.definitions.append(((alias.asname or alias.name.split(".", 1)[0]), node.lineno))
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            self.definitions.append(((alias.asname or alias.name), node.lineno))
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        for target in node.targets:
+            self.definitions.extend((name, node.lineno) for name in _assignment_target_names(target))
+        self.visit(node.value)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self.definitions.extend((name, node.lineno) for name in _assignment_target_names(node.target))
+        if node.value is not None:
+            self.visit(node.value)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        self.definitions.extend((name, node.lineno) for name in _assignment_target_names(node.target))
+        self.visit(node.value)
+
+    def visit_For(self, node: ast.For) -> None:
+        self.definitions.extend((name, node.lineno) for name in _assignment_target_names(node.target))
+        self.visit(node.iter)
+        for statement in node.body:
+            self.visit(statement)
+        for statement in node.orelse:
+            self.visit(statement)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        self.visit_For(node)
+
+    def visit_With(self, node: ast.With) -> None:
+        for item in node.items:
+            self.visit(item.context_expr)
+            if item.optional_vars is not None:
+                self.definitions.extend((name, node.lineno) for name in _assignment_target_names(item.optional_vars))
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+        self.visit_With(node)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name:
+            self.definitions.append((node.name, node.lineno))
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.definitions.append((node.name, node.lineno))
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.definitions.append((node.name, node.lineno))
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.definitions.append((node.name, node.lineno))
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        return
+
+
+def _assignment_target_names(target: ast.AST) -> list[str]:
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names: list[str] = []
+        for element in target.elts:
+            names.extend(_assignment_target_names(element))
+        return names
+    if isinstance(target, ast.Starred):
+        return _assignment_target_names(target.value)
+    return []
 
 
 def marimo_available() -> bool:
@@ -1838,6 +927,39 @@ def marimo_available() -> bool:
 
 
 def source_notebook_path_for_export(notebook_artifact: Artifact) -> Path | None:
+    workspace_info = agent_session_notebook_workspace_info(notebook_artifact)
+    if workspace_info is not None:
+        candidate, _session_root = workspace_info
+        if candidate.exists():
+            return candidate
+    primary = artifact_primary_path(notebook_artifact)
+    return primary.resolve() if primary.exists() else None
+
+
+def marimo_notebook_source_hash_for_artifact(notebook_artifact: Artifact) -> str | None:
+    try:
+        source_path = source_notebook_path_for_export(notebook_artifact)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if source_path is None or not source_path.exists():
+        return None
+    try:
+        return hashlib.sha256(source_path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def source_notebook_working_dir_for_export(notebook_artifact: Artifact, notebook_path: Path | None = None) -> Path | None:
+    workspace_info = agent_session_notebook_workspace_info(notebook_artifact)
+    if workspace_info is not None:
+        _candidate, session_root = workspace_info
+        if session_root.exists():
+            return session_root
+    resolved_notebook_path = notebook_path or source_notebook_path_for_export(notebook_artifact)
+    return resolved_notebook_path.parent.resolve() if resolved_notebook_path is not None else None
+
+
+def agent_session_notebook_workspace_info(notebook_artifact: Artifact) -> tuple[Path, Path] | None:
     metadata = loads_json(notebook_artifact.metadata_json, {})
     primary = artifact_primary_path(notebook_artifact)
     workspace_relative_path = metadata.get("workspace_relative_path")
@@ -1856,8 +978,8 @@ def source_notebook_path_for_export(notebook_artifact: Artifact) -> Path | None:
             except ValueError:
                 candidate = None
             if candidate is not None and candidate.exists():
-                return candidate
-    return primary.resolve() if primary.exists() else None
+                return candidate, session_root
+    return None
 
 
 def artifact_store_root_from_primary_path(artifact: Artifact, primary_path: Path) -> Path | None:
@@ -1878,8 +1000,17 @@ def notebook_export_env(workspace: Path) -> dict[str, str]:
     }
     isolated_home = workspace / ".tablex_marimo_home"
     isolated_home.mkdir(parents=True, exist_ok=True)
+    mpl_config_dir = workspace / ".tablex_matplotlib"
+    xdg_config_home = workspace / ".tablex_config"
+    xdg_cache_home = workspace / ".tablex_cache"
+    mpl_config_dir.mkdir(parents=True, exist_ok=True)
+    xdg_config_home.mkdir(parents=True, exist_ok=True)
+    xdg_cache_home.mkdir(parents=True, exist_ok=True)
     env["HOME"] = str(isolated_home)
     env["MPLBACKEND"] = "Agg"
+    env["MPLCONFIGDIR"] = str(mpl_config_dir)
+    env["XDG_CONFIG_HOME"] = str(xdg_config_home)
+    env["XDG_CACHE_HOME"] = str(xdg_cache_home)
     env["TABLEX_NOTEBOOK_RENDER"] = "1"
     return env
 
@@ -1892,7 +1023,11 @@ def _excerpt(value: object, limit: int = 4000) -> str:
     if value is None:
         return ""
     text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
-    return text[:limit]
+    if len(text) <= limit:
+        return text
+    head_limit = max(400, limit // 2)
+    tail_limit = max(400, limit - head_limit)
+    return text[:head_limit].rstrip() + "\n...\n" + text[-tail_limit:].lstrip()
 
 
 def _model_diagnostics_source_artifacts(
@@ -2008,8 +1143,9 @@ def _notebook_index_context_links(
     dataset_snapshot_id: str | None,
     run_id: str | None,
     model_version_id: str | None,
+    context_source: str | None = None,
 ) -> dict[str, str | None]:
-    context_source = "metadata" if any((dataset_snapshot_id, run_id, model_version_id)) else "none"
+    context_source = context_source or ("metadata" if any((dataset_snapshot_id, run_id, model_version_id)) else "none")
     run: ExperimentRun | None = None
     model_version: ModelVersion | None = None
 
@@ -2030,6 +1166,11 @@ def _notebook_index_context_links(
         if dataset_snapshot is not None:
             dataset_snapshot_id = dataset_snapshot.id
             context_source = "unique_project_dataset"
+
+    if not dataset_snapshot_id and str(context_source or "").startswith("research_plan_node"):
+        dataset_snapshot = _unique_project_dataset_snapshot(db, project.id)
+        if dataset_snapshot is not None:
+            dataset_snapshot_id = dataset_snapshot.id
 
     if notebook_kind == "model_diagnostics" and not run_id and not model_version_id:
         unique_run = _unique_project_experiment_run(db, project.id)
@@ -2090,6 +1231,130 @@ def _unique_project_model_version(db: Session, project_id: str) -> ModelVersion 
     return candidates[0] if len(candidates) == 1 else None
 
 
+def _notebook_context_links_from_research_plan_edges(
+    db: Session,
+    project: Project,
+    notebook_artifact: Artifact,
+) -> dict[str, Any]:
+    notebook_edges = list(
+        db.scalars(
+            select(LineageEdge)
+            .where(
+                LineageEdge.project_id == project.id,
+                LineageEdge.to_asset_type == "artifact",
+                LineageEdge.to_asset_id == notebook_artifact.id,
+                LineageEdge.relation_type == "supports_plan_node",
+            )
+            .order_by(LineageEdge.created_at.desc())
+            .limit(20)
+        ).all()
+    )
+    node_refs: list[dict[str, str]] = []
+    for notebook_edge in notebook_edges:
+        metadata = loads_json(notebook_edge.metadata_json, {})
+        node_id = str(metadata.get("node_id") or "").strip()
+        research_plan_id = str(metadata.get("research_plan_id") or "").strip()
+        revision_id = str(metadata.get("revision_id") or notebook_edge.from_asset_id or "").strip()
+        if not node_id:
+            continue
+        node_refs.append(
+            {
+                "node_id": node_id,
+                "research_plan_id": research_plan_id,
+                "revision_id": revision_id,
+            }
+        )
+
+    def _empty_context(context_source: str = "none") -> dict[str, Any]:
+        return {
+            "dataset_snapshot_id": None,
+            "run_id": None,
+            "model_version_id": None,
+            "context_link_source": context_source,
+            "research_plan_id": None,
+            "research_plan_node_id": None,
+            "related_run_ids": [],
+        }
+
+    if not node_refs:
+        return _empty_context()
+
+    def _single_value(values: list[str]) -> str | None:
+        unique_values = {value for value in values if value}
+        return next(iter(unique_values)) if len(unique_values) == 1 else None
+
+    research_plan_id = _single_value([ref["research_plan_id"] for ref in node_refs])
+    node_id = _single_value([ref["node_id"] for ref in node_refs])
+    run_edges = list(
+        db.scalars(
+            select(LineageEdge)
+            .where(
+                LineageEdge.project_id == project.id,
+                LineageEdge.from_asset_type == "research_plan_revision",
+                LineageEdge.to_asset_type == "experiment_run",
+                LineageEdge.relation_type == "supports_plan_node",
+            )
+            .order_by(LineageEdge.created_at.desc())
+            .limit(1000)
+        ).all()
+    )
+    candidate_run_ids: list[str] = []
+    for ref in node_refs:
+        for run_edge in run_edges:
+            run_metadata = loads_json(run_edge.metadata_json, {})
+            edge_node_id = str(run_metadata.get("node_id") or "").strip()
+            edge_research_plan_id = str(run_metadata.get("research_plan_id") or "").strip()
+            edge_revision_id = str(run_metadata.get("revision_id") or run_edge.from_asset_id or "").strip()
+            same_node = edge_node_id == ref["node_id"]
+            same_plan = bool(ref["research_plan_id"]) and edge_research_plan_id == ref["research_plan_id"]
+            same_revision = bool(ref["revision_id"]) and edge_revision_id == ref["revision_id"]
+            if same_node and (same_plan or same_revision) and run_edge.to_asset_id not in candidate_run_ids:
+                candidate_run_ids.append(run_edge.to_asset_id)
+
+    if not candidate_run_ids:
+        context = _empty_context("research_plan_node")
+        context["research_plan_id"] = research_plan_id
+        context["research_plan_node_id"] = node_id
+        return context
+
+    runs = [
+        run
+        for run_id in candidate_run_ids
+        if (run := db.get(ExperimentRun, run_id)) is not None and run.project_id == project.id
+    ]
+    if not runs:
+        return _empty_context()
+
+    dataset_ids = {run.dataset_snapshot_id for run in runs if run.dataset_snapshot_id}
+    dataset_snapshot_id = next(iter(dataset_ids)) if len(dataset_ids) == 1 else None
+
+    if len(runs) != 1:
+        return {
+            "dataset_snapshot_id": dataset_snapshot_id,
+            "run_id": None,
+            "model_version_id": None,
+            "context_link_source": "research_plan_node_runs",
+            "research_plan_id": research_plan_id,
+            "research_plan_node_id": node_id,
+            "related_run_ids": [run.id for run in runs],
+        }
+
+    run = runs[0]
+    model_version_id = run.model_version_id
+    if not model_version_id:
+        model_version = _model_version_for_run(db, run)
+        model_version_id = model_version.id if model_version is not None else None
+    return {
+        "dataset_snapshot_id": run.dataset_snapshot_id,
+        "run_id": run.id,
+        "model_version_id": model_version_id,
+        "context_link_source": "research_plan_node",
+        "research_plan_id": research_plan_id,
+        "research_plan_node_id": node_id,
+        "related_run_ids": [run.id],
+    }
+
+
 def _notebook_index_item(
     db: Session,
     project: Project,
@@ -2101,9 +1366,6 @@ def _notebook_index_item(
 ) -> dict[str, Any]:
     metadata = loads_json(notebook_artifact.metadata_json, {})
     notebook_kind = str(metadata.get("notebook_kind") or _infer_notebook_kind_from_artifact(notebook_artifact, metadata))
-    html_artifact = _latest_artifact_for_metadata_cached(
-        db, project.id, "notebook_html", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
-    )
     manifest_artifact = _latest_artifact_for_metadata_cached(
         db, project.id, "notebook_run_manifest", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
@@ -2119,62 +1381,49 @@ def _notebook_index_item(
     agent_task_contract_artifact = _latest_artifact_for_metadata_cached(
         db, project.id, "agent_task_contract", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    execution_manifest_artifact = _latest_artifact_for_metadata_cached(
-        db, project.id, "notebook_execution_manifest", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
-    )
-    execution_report_artifact = _latest_artifact_for_metadata_cached(
-        db, project.id, "notebook_execution_report", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
-    )
-    execution_html_artifact = _latest_artifact_for_metadata_cached(
-        db, project.id, "notebook_execution_html", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
-    )
     figure_manifest_artifact = _latest_artifact_for_metadata_cached(
         db, project.id, "notebook_figure_manifest", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
-    execution_source_artifact = _latest_artifact_for_metadata_cached(
-        db, project.id, "notebook_execution_source", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
-    )
     evidence_bundle_artifact = _latest_artifact_for_metadata_cached(
         db, project.id, "notebook_evidence_bundle", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
-    )
-    evidence_html_artifact = _latest_artifact_for_metadata_cached(
-        db, project.id, "notebook_evidence_html", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
     evidence_figure_artifacts = _artifacts_for_metadata_cached(
         db, project.id, "notebook_evidence_svg", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
     session_linked = _agent_session_notebook_artifacts(db, project.id, notebook_artifact, notebook_kind, artifact_lookup)
-    html_artifact = html_artifact or session_linked["html_preview"]
     report_artifact = report_artifact or session_linked["report_artifact"]
     manifest_artifact = manifest_artifact or session_linked["manifest"]
     figure_manifest_artifact = figure_manifest_artifact or session_linked["figure_manifest"]
     evidence_bundle_artifact = evidence_bundle_artifact or session_linked["evidence_bundle"]
-    evidence_html_artifact = evidence_html_artifact or session_linked["evidence_html"]
     evidence_figure_artifacts = _unique_artifacts([*evidence_figure_artifacts, *session_linked["evidence_figures"]])
-    readable_preview_artifact = evidence_html_artifact or execution_html_artifact or html_artifact
     report = reports_by_artifact_id.get(report_artifact.id) if report_artifact else None
     visualization = visualizations_by_artifact_id.get(visualization_artifact.id) if visualization_artifact else None
-    execution_metadata = loads_json(execution_manifest_artifact.metadata_json, {}) if execution_manifest_artifact else {}
     related_metadata_sources = [
         metadata,
-        execution_metadata,
         loads_json(report_artifact.metadata_json, {}) if report_artifact else {},
-        loads_json(execution_report_artifact.metadata_json, {}) if execution_report_artifact else {},
-        loads_json(execution_html_artifact.metadata_json, {}) if execution_html_artifact else {},
         loads_json(figure_manifest_artifact.metadata_json, {}) if figure_manifest_artifact else {},
         loads_json(evidence_bundle_artifact.metadata_json, {}) if evidence_bundle_artifact else {},
-        loads_json(evidence_html_artifact.metadata_json, {}) if evidence_html_artifact else {},
-        loads_json(execution_source_artifact.metadata_json, {}) if execution_source_artifact else {},
         loads_json(agent_task_contract_artifact.metadata_json, {}) if agent_task_contract_artifact else {},
         loads_json(execution_plan_artifact.metadata_json, {}) if execution_plan_artifact else {},
     ]
+    metadata_dataset_snapshot_id = _first_metadata_text(related_metadata_sources, "dataset_snapshot_id")
+    metadata_run_id = _first_metadata_text(related_metadata_sources, "run_id")
+    metadata_model_version_id = _first_metadata_text(related_metadata_sources, "model_version_id")
+    metadata_related_run_ids = _first_metadata_string_list(related_metadata_sources, "related_run_ids")
+    research_plan_context = _notebook_context_links_from_research_plan_edges(db, project, notebook_artifact)
+    context_source = (
+        "metadata"
+        if any((metadata_dataset_snapshot_id, metadata_run_id, metadata_model_version_id, metadata_related_run_ids))
+        else research_plan_context["context_link_source"]
+    )
     context_links = _notebook_index_context_links(
         db,
         project,
         notebook_kind=notebook_kind,
-        dataset_snapshot_id=_first_metadata_text(related_metadata_sources, "dataset_snapshot_id"),
-        run_id=_first_metadata_text(related_metadata_sources, "run_id"),
-        model_version_id=_first_metadata_text(related_metadata_sources, "model_version_id"),
+        dataset_snapshot_id=metadata_dataset_snapshot_id or research_plan_context["dataset_snapshot_id"],
+        run_id=metadata_run_id or research_plan_context["run_id"],
+        model_version_id=metadata_model_version_id or research_plan_context["model_version_id"],
+        context_source=context_source,
     )
     dataset_snapshot_id = context_links["dataset_snapshot_id"]
     run_id = context_links["run_id"]
@@ -2185,66 +1434,117 @@ def _notebook_index_item(
         content = _agent_session_notebook_content_signal(
             notebook_kind=notebook_kind,
             current=content,
-            html_artifact=html_artifact,
             report_artifact=report_artifact,
             figure_manifest_artifact=figure_manifest_artifact,
             evidence_bundle_artifact=evidence_bundle_artifact,
             evidence_figure_artifacts=evidence_figure_artifacts,
             visual_story_artifact=session_linked["visual_story_cards"],
         )
-    execution_status = str(metadata.get("execution_status") or execution_metadata.get("execution_status") or "unknown")
+    execution_status = str(metadata.get("execution_status") or "unknown")
+    source_validation = _notebook_source_validation_for_index(notebook_artifact)
+    source_validation_errors = (
+        [str(item) for item in source_validation.get("errors", [])]
+        if isinstance(source_validation, dict) and isinstance(source_validation.get("errors"), list)
+        else []
+    )
+    latest_runtime_failure = _latest_native_marimo_runtime_failure(db, project.id, notebook_artifact.id)
+    if latest_runtime_failure is not None:
+        native_marimo_status = "runtime_error"
+    elif isinstance(source_validation, dict) and source_validation.get("is_valid_marimo_notebook") is False:
+        native_marimo_status = "source_error"
+    else:
+        native_marimo_status = "source_registered"
+    quality_manifest = metadata.get("notebook_quality_manifest") if isinstance(metadata.get("notebook_quality_manifest"), dict) else None
+    manifest_key_findings = quality_manifest.get("key_findings") if isinstance(quality_manifest, dict) else None
+    manifest_read_order = quality_manifest.get("read_order") if isinstance(quality_manifest, dict) else None
+    if isinstance(quality_manifest, dict) and str(content.get("readiness") or "") in {"source_only", "unknown"}:
+        manifest_figure_count = int(quality_manifest.get("figure_count") or 0)
+        if manifest_figure_count > 0 and manifest_key_findings and manifest_read_order:
+            content = {
+                **content,
+                "readiness": "narrative_ready" if notebook_kind == "data_understanding" else "evidence_ready",
+                "quality_score": max(int(content.get("quality_score") or 0), 70),
+                "read_order_count": max(int(content.get("read_order_count") or 0), len(manifest_read_order)),
+                "story_card_count": max(int(content.get("story_card_count") or 0), len(manifest_key_findings)),
+                "evidence_figure_count": max(int(content.get("evidence_figure_count") or 0), manifest_figure_count),
+            }
+    notebook_quality_status = str(metadata.get("notebook_quality_status") or "")
+    if not isinstance(quality_manifest, dict):
+        notebook_quality_status = notebook_quality_status or "needs_manifest"
+    elif int(quality_manifest.get("figure_count") or 0) <= 0:
+        notebook_quality_status = "needs_figures"
+    elif not manifest_key_findings or not manifest_read_order:
+        notebook_quality_status = "needs_manifest_detail"
     coverage = {
-        "has_html_preview": readable_preview_artifact is not None,
-        "has_legacy_html_preview": html_artifact is not None,
+        "has_native_source": True,
         "has_manifest": manifest_artifact is not None,
+        "has_quality_manifest": isinstance(quality_manifest, dict),
+        "notebook_quality_status": notebook_quality_status or None,
         "has_report": report_artifact is not None,
         "has_visualization": visualization_artifact is not None and visualization is not None,
         "has_execution_plan": execution_plan_artifact is not None,
-        "has_execution_capture": execution_manifest_artifact is not None,
-        "has_execution_report": execution_report_artifact is not None,
-        "has_execution_html": execution_html_artifact is not None,
-        "has_evidence_html": evidence_html_artifact is not None,
+        "has_execution_report": False,
         "has_evidence_bundle": evidence_bundle_artifact is not None,
         "evidence_figure_count": len(evidence_figure_artifacts),
+        "declared_figure_count": int(quality_manifest.get("figure_count") or 0) if isinstance(quality_manifest, dict) else 0,
+        "declared_table_count": int(quality_manifest.get("table_count") or 0) if isinstance(quality_manifest, dict) else 0,
+        "declared_finding_count": len(manifest_key_findings) if isinstance(manifest_key_findings, list) else 0,
+        "declared_read_order_count": len(manifest_read_order) if isinstance(manifest_read_order, list) else 0,
         "has_figure_manifest": figure_manifest_artifact is not None,
         "execution_status": execution_status,
-        "execution_capture_status": str(execution_metadata.get("execution_status") or "not_captured"),
+        "native_marimo_status": native_marimo_status,
+        "native_marimo_source_validation": source_validation,
+        "native_marimo_source_errors": source_validation_errors,
+        "native_marimo_error_artifact_id": latest_runtime_failure.id if latest_runtime_failure is not None else None,
         "content_readiness": content["readiness"],
         "content_quality_score": content["quality_score"],
     }
     recommendation_score = _notebook_recommendation_score(notebook_kind, coverage, metadata, content)
+    title = _notebook_display_title(notebook_kind, metadata, quality_manifest)
+    related_run_ids = _unique_texts([*metadata_related_run_ids, *research_plan_context["related_run_ids"]])
     return {
         "notebook_artifact_id": notebook_artifact.id,
         "notebook_kind": notebook_kind,
-        "title": _notebook_title(notebook_kind),
-        "status": _notebook_index_status(execution_status, readable_preview_artifact),
+        "title": title,
+        "status": _notebook_index_status(
+            execution_status,
+            native_marimo_status=native_marimo_status,
+            notebook_quality_status=notebook_quality_status,
+        ),
         "created_at": notebook_artifact.created_at.isoformat(),
         "dataset_snapshot_id": dataset_snapshot_id,
         "run_id": run_id,
         "model_version_id": model_version_id,
         "context_link_source": context_links["context_link_source"],
+        "research_plan_id": research_plan_context["research_plan_id"],
+        "research_plan_node_id": research_plan_context["research_plan_node_id"],
+        "related_run_ids": related_run_ids,
+        "related_context": {
+            "dataset_snapshot_id": dataset_snapshot_id,
+            "run_id": run_id,
+            "model_version_id": model_version_id,
+            "context_link_source": context_links["context_link_source"],
+            "research_plan_id": research_plan_context["research_plan_id"],
+            "research_plan_node_id": research_plan_context["research_plan_node_id"],
+            "related_run_ids": related_run_ids,
+        },
         "artifact_ids": {
             "notebook": notebook_artifact.id,
-            "html_preview": html_artifact.id if html_artifact else None,
-            "preview": readable_preview_artifact.id if readable_preview_artifact else None,
+            "source": notebook_artifact.id,
             "manifest": manifest_artifact.id if manifest_artifact else None,
             "report_artifact": report_artifact.id if report_artifact else None,
             "visualization_artifact": visualization_artifact.id if visualization_artifact else None,
             "execution_plan": execution_plan_artifact.id if execution_plan_artifact else None,
             "agent_task_contract": agent_task_contract_artifact.id if agent_task_contract_artifact else None,
-            "execution_manifest": execution_manifest_artifact.id if execution_manifest_artifact else None,
-            "execution_report": execution_report_artifact.id if execution_report_artifact else None,
-            "execution_html": execution_html_artifact.id if execution_html_artifact else None,
             "figure_manifest": figure_manifest_artifact.id if figure_manifest_artifact else None,
-            "execution_source": execution_source_artifact.id if execution_source_artifact else None,
             "evidence_bundle": evidence_bundle_artifact.id if evidence_bundle_artifact else None,
-            "evidence_html": evidence_html_artifact.id if evidence_html_artifact else None,
             "evidence_figures": [artifact.id for artifact in evidence_figure_artifacts[:NOTEBOOK_INDEX_FIGURE_ID_LIMIT]],
         },
-        "preview_artifact_id": readable_preview_artifact.id if readable_preview_artifact else None,
+        "source_artifact_id": notebook_artifact.id,
         "report_id": report.id if report else None,
         "visualization_id": visualization.id if visualization else None,
         "coverage": coverage,
+        "quality_manifest": quality_manifest,
         "content": content,
         "recommendation_score": recommendation_score,
         "recommendation_reason": _notebook_recommendation_reason(notebook_kind, coverage, content),
@@ -2259,12 +1559,78 @@ def _first_metadata_text(metadata_sources: list[dict[str, Any]], key: str) -> st
     return None
 
 
-def _notebook_index_status(execution_status: str, readable_preview_artifact: Artifact | None) -> str:
+def _first_metadata_string_list(metadata_sources: list[dict[str, Any]], key: str) -> list[str]:
+    for metadata in metadata_sources:
+        value = metadata.get(key)
+        if not isinstance(value, list):
+            continue
+        strings = [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
+        if strings:
+            return _unique_texts(strings)
+    return []
+
+
+def _unique_texts(values: list[str]) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        output.append(text)
+    return output
+
+
+def _notebook_index_status(
+    execution_status: str,
+    *,
+    native_marimo_status: str = "source_registered",
+    notebook_quality_status: str = "",
+) -> str:
+    if native_marimo_status == "runtime_error":
+        return "needs_attention"
+    if native_marimo_status == "source_error":
+        return "needs_attention"
+    if notebook_quality_status.startswith("needs_"):
+        return "needs_attention"
     if execution_status == "unknown":
         return "ready"
-    if execution_status in {"marimo_export_failed", "static_capture_succeeded"} and readable_preview_artifact is not None:
-        return "static_preview_ready"
     return execution_status
+
+
+def _latest_native_marimo_runtime_failure(db: Session, project_id: str, notebook_artifact_id: str) -> Artifact | None:
+    candidates = db.scalars(
+        select(Artifact)
+        .where(
+            Artifact.project_id == project_id,
+            Artifact.asset_type == "agent_chat_turn",
+        )
+        .order_by(Artifact.created_at.desc())
+        .limit(200)
+    ).all()
+    current_source_hash: str | None = None
+    current_source_hash_loaded = False
+    for artifact in candidates:
+        metadata = loads_json(artifact.metadata_json, {})
+        failure_source_hash = metadata.get("notebook_source_hash")
+        if (
+            metadata.get("source") != "native_marimo_runtime_failure"
+            or metadata.get("notebook_artifact_id") != notebook_artifact_id
+        ):
+            continue
+        if not current_source_hash_loaded:
+            notebook_artifact = db.get(Artifact, notebook_artifact_id)
+            current_source_hash = (
+                marimo_notebook_source_hash_for_artifact(notebook_artifact) if notebook_artifact is not None else None
+            )
+            current_source_hash_loaded = True
+        if (
+            current_source_hash is None
+            or (isinstance(failure_source_hash, str) and failure_source_hash == current_source_hash)
+        ):
+            return artifact
+    return None
 
 
 def _linked_notebook_artifacts(
@@ -2277,10 +1643,6 @@ def _linked_notebook_artifacts(
     session_linked = _agent_session_notebook_artifacts(db, project_id, notebook_artifact, notebook_kind)
     return {
         "notebook": notebook_artifact,
-        "html_preview": _latest_artifact_for_metadata(
-            db, project_id, "notebook_html", "notebook_artifact_id", notebook_artifact.id
-        )
-        or session_linked["html_preview"],
         "manifest": _latest_artifact_for_metadata(
             db, project_id, "notebook_run_manifest", "notebook_artifact_id", notebook_artifact.id
         )
@@ -2336,9 +1698,6 @@ def _agent_session_notebook_artifacts(
             if loads_json(artifact.metadata_json, {}).get("agent_session_id") == session_id
         ]
     return {
-        "html_preview": _best_agent_session_artifact(
-            artifacts, role="html_preview", notebook_stem=notebook_stem, notebook_kind=notebook_kind, artifact_lookup=artifact_lookup
-        ),
         "manifest": _best_agent_session_artifact(
             artifacts, role="manifest", notebook_stem=notebook_stem, notebook_kind=notebook_kind, artifact_lookup=artifact_lookup
         ),
@@ -2351,9 +1710,6 @@ def _agent_session_notebook_artifacts(
         "evidence_bundle": _best_agent_session_artifact(
             artifacts, role="evidence_bundle", notebook_stem=notebook_stem, notebook_kind=notebook_kind, artifact_lookup=artifact_lookup
         ),
-        "evidence_html": _best_agent_session_artifact(
-            artifacts, role="evidence_html", notebook_stem=notebook_stem, notebook_kind=notebook_kind, artifact_lookup=artifact_lookup
-        ),
         "visual_story_cards": _best_agent_session_artifact(
             artifacts, role="visual_story_cards", notebook_stem=notebook_stem, notebook_kind=notebook_kind, artifact_lookup=artifact_lookup
         ),
@@ -2363,12 +1719,10 @@ def _agent_session_notebook_artifacts(
 
 def _empty_agent_session_notebook_artifacts() -> dict[str, Any]:
     return {
-        "html_preview": None,
         "manifest": None,
         "report_artifact": None,
         "figure_manifest": None,
         "evidence_bundle": None,
-        "evidence_html": None,
         "visual_story_cards": None,
         "evidence_figures": [],
     }
@@ -2441,10 +1795,6 @@ def _agent_session_artifact_link_score(
         value = f"{workspace_path} {name}"
     else:
         value = artifact_text
-    if role == "html_preview":
-        if not workspace_path.endswith(".html"):
-            return 0
-        return _session_notebook_score(value, notebook_stem, notebook_kind) + (20 if "static" in value or "preview" in value else 0)
     if role == "manifest":
         if "generated_artifact_manifest" in value or value.endswith("manifest.json"):
             return _session_notebook_score(value, notebook_stem, notebook_kind)
@@ -2462,8 +1812,6 @@ def _agent_session_artifact_link_score(
         return 100 if "notebook_figure_manifest" in value else 0
     if role == "evidence_bundle":
         return 100 if "notebook_evidence_bundle" in value else 0
-    if role == "evidence_html":
-        return 100 if "notebook_evidence" in value and workspace_path.endswith(".html") else 0
     if role == "visual_story_cards":
         return 100 if "visual_story_cards" in value else 0
     return 0
@@ -2512,7 +1860,7 @@ def build_notebook_execution_plan_payload(
             "external_network_default": "disabled",
             "connector_credentials_materialized": False,
             "secrets_materialized": False,
-            "artifact_capture_required": True,
+            "artifact_registration_required": True,
             "human_review_required": True,
         },
         "linked_artifacts": _linked_artifact_refs(linked_artifacts),
@@ -2544,7 +1892,7 @@ def build_notebook_execution_contract(
         "project_id": project.id,
         "objective": (
             "Review, safely execute or extend the generated marimo analysis notebook in a controlled workspace. "
-            "Capture every useful output as Tablex artifacts and preserve EvaluationSpec, SplitManifest, and credential boundaries."
+            "Register every useful output as Tablex artifacts and preserve EvaluationSpec, SplitManifest, and credential boundaries."
         ),
         "inputs": {
             "schema_version": "notebook_execution_contract.v1",
@@ -2573,7 +1921,7 @@ def build_notebook_execution_contract(
             "Run or inspect notebook code only inside the controlled workspace.",
             "Do not read secrets, connector credentials, or local files outside materialized context.",
             "Preserve EvaluationSpec and SplitManifest; do not recompute metrics on ad hoc splits.",
-            "Register exported HTML, figure manifests, reports, metrics, and updated notebooks as artifacts.",
+            "Register figure manifests, reports, metrics, and updated marimo notebooks as artifacts.",
             "Keep feature importance, permutation importance, partial dependence, and calibration claims evidence-backed.",
         ],
         "forbidden_actions": [
@@ -2606,17 +1954,12 @@ def notebook_execution_required_outputs() -> list[dict[str, Any]]:
         {
             "path": "reports/notebook_execution_report.md",
             "schema": "markdown_report.v1",
-            "description": "Narrative report covering notebook execution, findings, caveats, and recommended follow-up.",
+            "description": "Narrative report covering findings, caveats, runtime assumptions, and recommended follow-up.",
         },
         {
             "path": "artifacts/notebook_execution_manifest.json",
             "schema": "notebook_execution_manifest.v1",
-            "description": "Executed cells, runtime package versions, captured outputs, and safety policy result.",
-        },
-        {
-            "path": "artifacts/notebook_export.html",
-            "schema": "html_report.v1",
-            "description": "Self-contained or workbench-renderable notebook HTML export.",
+            "description": "Runtime package versions, checked cells, generated outputs, and safety policy result.",
         },
         {
             "path": "artifacts/notebook_figure_manifest.json",
@@ -2648,494 +1991,6 @@ def _linked_artifact_refs(linked_artifacts: dict[str, Artifact | None]) -> list[
     return refs
 
 
-def build_notebook_figure_manifest(
-    *,
-    project: Project,
-    notebook_artifact: Artifact,
-    notebook_kind: str,
-    compile_result: dict[str, Any],
-    generated_at: str,
-    rendered_figures: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    expected_figures = {
-        "data_understanding": [
-            "feature_family_counts",
-            "top_missing_columns_bar",
-            "semantic_type_role_mix",
-            "target_profile_summary",
-            "risk_attention_counts",
-            "feature_review_queue_counts",
-        ],
-        "model_diagnostics": [
-            "diagnostics_readiness",
-            "feature_family_inventory",
-            "prediction_score_bins",
-            "diagnostics_attention_counts",
-        ],
-    }.get(notebook_kind, ["notebook_generated_figures"])
-    rendered = rendered_figures or []
-    rendered_slots = {str(item.get("slot") or item.get("figure_id") or "") for item in rendered}
-    return {
-        "schema_version": "notebook_figure_manifest.v1",
-        "project_id": project.id,
-        "notebook_artifact_id": notebook_artifact.id,
-        "notebook_kind": notebook_kind,
-        "generated_at": generated_at,
-        "capture_mode": "safe_static_capture",
-        "status": "profile_evidence_rendered" if rendered else "planned_figures_only",
-        "runtime_execution_status": "deferred",
-        "profile_evidence_render_status": "rendered" if rendered else "not_rendered",
-        "compile_status": compile_result["status"],
-        "figures": rendered,
-        "expected_figure_slots": [
-            {
-                "slot": slot,
-                "status": "rendered_from_profile_artifacts" if slot in rendered_slots else "not_rendered",
-                "reason": (
-                    "Rendered by the harness from notebook/profile artifacts without executing marimo cells."
-                    if slot in rendered_slots
-                    else "Static capture validates notebook source but does not execute marimo cells."
-                ),
-            }
-            for slot in expected_figures
-        ],
-    }
-
-
-def build_notebook_execution_manifest(
-    *,
-    project: Project,
-    notebook_artifact: Artifact,
-    notebook_kind: str,
-    linked_artifacts: dict[str, Artifact | None],
-    source_validation: dict[str, Any],
-    compile_result: dict[str, Any],
-    marimo_export_result: dict[str, Any],
-    execution_status: str,
-    generated_at: str,
-    plan_created: bool,
-    output_artifacts: dict[str, Any],
-) -> dict[str, Any]:
-    return {
-        "schema_version": "notebook_execution_manifest.v1",
-        "project_id": project.id,
-        "notebook_artifact_id": notebook_artifact.id,
-        "notebook_kind": notebook_kind,
-        "generated_at": generated_at,
-        "capture_mode": "marimo_html_export"
-        if marimo_export_result.get("status") == "succeeded"
-        else "safe_static_capture",
-        "execution_status": execution_status,
-        "summary": {
-            "headline": _notebook_execution_headline(execution_status, compile_result),
-            "runtime_execution_status": marimo_export_result.get("status", "unknown"),
-            "python_compile_status": compile_result["status"],
-            "marimo_export_status": marimo_export_result.get("status"),
-            "plan_created_by_capture": plan_created,
-            "profile_evidence_render_status": "rendered"
-            if output_artifacts.get("notebook_evidence_bundle_artifact_id")
-            else "not_available",
-            "profile_evidence_figure_count": len(output_artifacts.get("notebook_evidence_figure_artifact_ids", []))
-            if isinstance(output_artifacts.get("notebook_evidence_figure_artifact_ids"), list)
-            else 0,
-        },
-        "safety_policy": {
-            "arbitrary_notebook_code_executed": marimo_export_result.get("status") != "skipped",
-            "python_compile_only": marimo_export_result.get("status") == "skipped",
-            "marimo_html_export_attempted": marimo_export_result.get("status") != "skipped",
-            "harness_profile_evidence_rendered": bool(output_artifacts.get("notebook_evidence_bundle_artifact_id")),
-            "marimo_cells_executed": marimo_export_result.get("status") == "succeeded",
-            "python_isolated_mode": marimo_export_result.get("status") == "skipped",
-            "external_network_accessed": "not_observed",
-            "connector_credentials_materialized": False,
-            "secrets_materialized": False,
-            "local_files_outside_workspace_materialized": False,
-            "human_review_required_before_full_execution": True,
-        },
-        "source_validation": source_validation,
-        "static_compile": compile_result,
-        "marimo_export": {
-            key: value for key, value in marimo_export_result.items() if key != "html"
-        },
-        "linked_artifacts": _linked_artifact_refs(linked_artifacts),
-        "outputs": {
-            **output_artifacts,
-            "notebook_execution_html_artifact_id": None,
-            "notebook_execution_report_id": None,
-            "notebook_execution_report_artifact_id": None,
-        },
-        "next_runner_steps": [
-            "Open the rendered marimo HTML in the Tablex notebook viewer."
-            if marimo_export_result.get("status") == "succeeded"
-            else "Fix marimo export blockers, then capture executed HTML as an artifact.",
-            "Capture generated figures and tables with source-cell lineage.",
-            "Preserve EvaluationSpec and SplitManifest when adding diagnostics.",
-        ],
-    }
-
-
-def _notebook_execution_headline(execution_status: str, compile_result: dict[str, Any]) -> str:
-    if execution_status == "marimo_export_succeeded":
-        return "Notebook was executed by marimo and exported as an in-product HTML report."
-    if execution_status == "static_capture_succeeded":
-        return "Notebook source passed isolated Python syntax validation; marimo runtime execution is deferred."
-    if execution_status == "marimo_export_failed":
-        return "Notebook source compiled, but marimo HTML export failed; inspect the export stderr."
-    if compile_result["status"] == "timed_out":
-        return "Notebook source syntax validation timed out in the controlled static capture path."
-    return "Notebook source did not pass isolated Python syntax validation; inspect stderr before runner execution."
-
-
-def render_notebook_execution_html_preview(manifest: dict[str, Any], notebook_source: str | None = None) -> str:
-    markdown_cells = extract_marimo_markdown_cells(notebook_source or "")
-    if markdown_cells:
-        return render_marimo_source_reader_html(manifest, markdown_cells)
-    summary = manifest["summary"]
-    safety = manifest["safety_policy"]
-    compile_result = manifest["static_compile"]
-    source_validation = manifest["source_validation"]
-    linked_artifacts = cast(list[dict[str, Any]], manifest["linked_artifacts"])
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tablex Notebook Execution Capture</title>
-  <style>
-    :root {{
-      color-scheme: light dark;
-      --ink: #10183f;
-      --muted: #53617d;
-      --line: #dbe3f3;
-      --wash: #f4f9fb;
-      --teal: #18b8a6;
-      --blue: #3867f3;
-      --rose: #d84c6f;
-      --amber: #f4a62a;
-    }}
-    body {{
-      margin: 0;
-      color: var(--ink);
-      background: linear-gradient(180deg, #f8fbff 0%, #eef8f6 100%);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }}
-    main {{ display: grid; gap: 18px; padding: 28px; }}
-    h1 {{ margin: 0; font-size: 29px; letter-spacing: 0; }}
-    h2 {{ margin: 0 0 10px; font-size: 16px; }}
-    p {{ color: var(--muted); line-height: 1.55; }}
-    .eyebrow {{ color: var(--teal); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }}
-    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }}
-    .panel {{ border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.88); padding: 16px; box-shadow: 0 16px 42px rgba(34, 48, 88, .08); }}
-    .metric strong {{ display: block; font-size: 22px; overflow-wrap: anywhere; }}
-    .metric span, .tiny {{ color: var(--muted); font-size: 12px; }}
-    .badge-row {{ display: flex; flex-wrap: wrap; gap: 8px; }}
-    .badge {{ border: 1px solid var(--line); border-radius: 999px; padding: 6px 9px; background: var(--wash); font-size: 12px; font-weight: 700; }}
-    .badge.good {{ color: #0f6848; }}
-    .badge.warn {{ color: var(--amber); }}
-    .badge.fail {{ color: var(--rose); }}
-    code, pre {{ background: #eef3ff; border-radius: 6px; }}
-    code {{ padding: 2px 5px; }}
-    pre {{ max-height: 260px; overflow: auto; padding: 12px; white-space: pre-wrap; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-    th, td {{ text-align: left; border-bottom: 1px solid var(--line); padding: 8px; overflow-wrap: anywhere; }}
-    @media (prefers-color-scheme: dark) {{
-      :root {{ --ink: #eef4ff; --muted: #aab6d3; --line: #2e3a5b; --wash: #17213a; }}
-      body {{ background: #0c1225; }}
-      .panel {{ background: rgba(17,24,47,.9); box-shadow: none; }}
-      code, pre {{ background: #1e2a48; }}
-    }}
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div class="eyebrow">Notebook Execution Capture</div>
-      <h1>{escape(str(summary["headline"]))}</h1>
-      <p>This capture validates the generated marimo notebook source and records runner boundaries before full execution. It does not execute notebook cells or access external dashboards.</p>
-    </header>
-    <section class="grid">
-      {_metric_card("Status", _status_display(manifest["execution_status"]))}
-      {_metric_card("Notebook kind", manifest["notebook_kind"])}
-      {_metric_card("Compile", _status_display(compile_result["status"]))}
-      {_metric_card("Runtime", _status_display(summary["runtime_execution_status"]))}
-      {_metric_card("Evidence figures", summary.get("profile_evidence_figure_count", 0))}
-    </section>
-    <section class="panel">
-      <h2>Profile evidence capture</h2>
-      <p>Static preview evidence was rendered from linked project artifacts.</p>
-      <div class="badge-row">
-        <span class="badge">{escape(_status_display(summary.get("profile_evidence_render_status", "not_available")))}</span>
-        <span class="badge">static preview</span>
-      </div>
-    </section>
-    <section class="panel">
-      <h2>Safety boundary</h2>
-      {_html_table([{"policy": key, "value": value} for key, value in safety.items()], ["policy", "value"])}
-    </section>
-    <section class="grid">
-      <div class="panel">
-        <h2>Source validation</h2>
-        {_html_table([{"check": key, "value": value} for key, value in source_validation["checks"].items()], ["check", "value"])}
-      </div>
-      <div class="panel">
-        <h2>Linked artifacts</h2>
-        {_html_table(linked_artifacts, ["role", "asset_type", "artifact_id"])}
-      </div>
-    </section>
-    <section class="panel">
-      <h2>Compile stderr</h2>
-      <pre>{escape(str(compile_result.get("stderr_excerpt") or "No stderr."))}</pre>
-    </section>
-  </main>
-</body>
-</html>"""
-
-
-def extract_marimo_markdown_cells(source: str) -> list[str]:
-    if not source.strip():
-        return []
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return []
-    visitor = MarimoMarkdownCellVisitor()
-    visitor.visit(tree)
-    visitor.cells.sort(key=lambda item: item[0])
-    return [text for _, text in visitor.cells]
-
-
-class MarimoMarkdownCellVisitor(ast.NodeVisitor):
-    def __init__(self) -> None:
-        self.cells: list[tuple[int, str]] = []
-        self.control_depth = 0
-
-    def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
-        if self.control_depth == 0 and node.args and is_marimo_markdown_call(node):
-            first_arg = node.args[0]
-            if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
-                text = first_arg.value.strip()
-                if text:
-                    self.cells.append((getattr(node, "lineno", 0), text))
-        self.generic_visit(node)
-
-    def visit_If(self, node: ast.If) -> None:  # noqa: N802
-        self._visit_control_node(node)
-
-    def visit_For(self, node: ast.For) -> None:  # noqa: N802
-        self._visit_control_node(node)
-
-    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:  # noqa: N802
-        self._visit_control_node(node)
-
-    def visit_While(self, node: ast.While) -> None:  # noqa: N802
-        self._visit_control_node(node)
-
-    def visit_Try(self, node: ast.Try) -> None:  # noqa: N802
-        self._visit_control_node(node)
-
-    def visit_With(self, node: ast.With) -> None:  # noqa: N802
-        self._visit_control_node(node)
-
-    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:  # noqa: N802
-        self._visit_control_node(node)
-
-    def _visit_control_node(self, node: ast.AST) -> None:
-        self.control_depth += 1
-        try:
-            self.generic_visit(node)
-        finally:
-            self.control_depth -= 1
-
-
-def is_marimo_markdown_call(node: ast.Call) -> bool:
-    callee = node.func
-    return isinstance(callee, ast.Attribute) and callee.attr == "md"
-
-
-def render_marimo_source_reader_html(manifest: dict[str, Any], markdown_cells: list[str]) -> str:
-    summary = manifest["summary"]
-    linked_artifacts = cast(list[dict[str, Any]], manifest["linked_artifacts"])
-    marimo_export = cast(dict[str, Any], manifest.get("marimo_export") or {})
-    body = "\n".join(markdown_to_html_fragment(cell) for cell in markdown_cells)
-    return f"""<!doctype html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Notebook Reader</title>
-  <style>
-    :root {{
-      color-scheme: light;
-      --ink: #10183f;
-      --muted: #53617d;
-      --line: #dbe3f3;
-      --wash: #f4f9fb;
-      --teal: #18b8a6;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      background: #ffffff;
-      color: var(--ink);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }}
-    main {{ max-width: 980px; margin: 0 auto; padding: 32px 28px 44px; }}
-    .notebook-body {{ display: grid; gap: 18px; }}
-    .markdown-cell {{
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-      padding: 18px 20px;
-      box-shadow: 0 14px 36px rgba(34, 48, 88, .08);
-    }}
-    h1, h2, h3 {{ letter-spacing: 0; color: var(--ink); }}
-    h1 {{ margin: 0 0 12px; font-size: 30px; }}
-    h2 {{ margin: 0 0 10px; font-size: 21px; }}
-    h3 {{ margin: 0 0 8px; font-size: 17px; }}
-    p, li {{ color: var(--muted); line-height: 1.65; font-size: 15px; }}
-    p {{ margin: 0 0 10px; }}
-    ul {{ margin: 8px 0 0; padding-left: 22px; }}
-    code {{ border-radius: 6px; background: #eef3ff; padding: 2px 5px; color: #20315f; }}
-    details {{
-      margin-top: 22px;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: var(--wash);
-      padding: 14px 16px;
-    }}
-    summary {{ cursor: pointer; font-weight: 800; color: var(--ink); }}
-    pre {{ white-space: pre-wrap; overflow: auto; max-height: 220px; color: var(--muted); }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }}
-    th, td {{ border-bottom: 1px solid var(--line); padding: 8px; text-align: left; overflow-wrap: anywhere; }}
-  </style>
-</head>
-<body>
-  <main id="notebook-preview-top">
-    <section class="notebook-body">
-      {body}
-    </section>
-    <details>
-      <summary>Render diagnostics</summary>
-      <p>{escape(str(summary.get("headline") or ""))}</p>
-      <p>marimo export: <code>{escape(str(marimo_export.get("status") or "unknown"))}</code></p>
-      <pre>{escape(str(marimo_export.get("stderr_excerpt") or ""))}</pre>
-      {_html_table(linked_artifacts, ["role", "asset_type", "artifact_id"])}
-    </details>
-  </main>
-</body>
-</html>"""
-
-
-def markdown_to_html_fragment(markdown: str) -> str:
-    lines = markdown.splitlines()
-    html_parts: list[str] = ['<article class="markdown-cell">']
-    in_list = False
-    paragraph: list[str] = []
-
-    def flush_paragraph() -> None:
-        nonlocal paragraph
-        if paragraph:
-            html_parts.append(f"<p>{inline_markdown(' '.join(paragraph))}</p>")
-            paragraph = []
-
-    def close_list() -> None:
-        nonlocal in_list
-        if in_list:
-            html_parts.append("</ul>")
-            in_list = False
-
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line:
-            flush_paragraph()
-            close_list()
-            continue
-        if line.startswith("### "):
-            flush_paragraph()
-            close_list()
-            html_parts.append(f"<h3>{inline_markdown(line[4:])}</h3>")
-        elif line.startswith("## "):
-            flush_paragraph()
-            close_list()
-            html_parts.append(f"<h2>{inline_markdown(line[3:])}</h2>")
-        elif line.startswith("# "):
-            flush_paragraph()
-            close_list()
-            html_parts.append(f"<h1>{inline_markdown(line[2:])}</h1>")
-        elif line.startswith("- "):
-            flush_paragraph()
-            if not in_list:
-                html_parts.append("<ul>")
-                in_list = True
-            html_parts.append(f"<li>{inline_markdown(line[2:])}</li>")
-        else:
-            paragraph.append(line)
-    flush_paragraph()
-    close_list()
-    html_parts.append("</article>")
-    return "\n".join(html_parts)
-
-
-def inline_markdown(text: str) -> str:
-    escaped = escape(text)
-    return re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
-
-
-def render_notebook_execution_report(
-    manifest: dict[str, Any],
-    html_artifact_id: str,
-    figure_manifest_artifact_id: str,
-    source_artifact_id: str,
-) -> str:
-    compile_result = manifest["static_compile"]
-    safety = manifest["safety_policy"]
-    safety_lines = [f"- {key}: `{value}`" for key, value in safety.items()]
-    return "\n".join(
-        [
-            "# Notebook Execution Capture Report",
-            "",
-            str(manifest["summary"]["headline"]),
-            "",
-            "## Scope",
-            "",
-            f"- Capture mode: `{manifest['capture_mode']}`",
-            f"- Notebook artifact: `{manifest['notebook_artifact_id']}`",
-            f"- Notebook kind: `{manifest['notebook_kind']}`",
-            f"- marimo HTML export: `{manifest['summary'].get('marimo_export_status')}`",
-            "- Python validation: `python -I -m py_compile` in a temporary workspace.",
-            "",
-            "## Safety Policy",
-            "",
-            *safety_lines,
-            "",
-            "## Compile Result",
-            "",
-            f"- Status: `{compile_result['status']}`",
-            f"- Return code: `{compile_result['returncode']}`",
-            f"- Duration: `{compile_result['duration_ms']} ms`",
-            f"- Stderr excerpt: `{compile_result.get('stderr_excerpt') or 'none'}`",
-            "",
-            "## Profile Evidence Capture",
-            "",
-            f"- Render status: `{manifest['summary'].get('profile_evidence_render_status', 'not_available')}`",
-            f"- Figure count: `{manifest['summary'].get('profile_evidence_figure_count', 0)}`",
-            f"- Notebook cells executed: `{manifest['safety_policy'].get('marimo_cells_executed')}`",
-            "",
-            "## Captured Artifacts",
-            "",
-            f"- HTML preview: `{html_artifact_id}`",
-            f"- Figure manifest: `{figure_manifest_artifact_id}`",
-            f"- Notebook source copy: `{source_artifact_id}`",
-            f"- Evidence bundle: `{manifest['outputs'].get('notebook_evidence_bundle_artifact_id') or 'not available'}`",
-            f"- Evidence HTML: `{manifest['outputs'].get('notebook_evidence_html_artifact_id') or 'not available'}`",
-            "",
-            "## Next Runner Steps",
-            "",
-            *[f"- {item}" for item in manifest["next_runner_steps"]],
-        ]
-    )
-
-
 def _notebook_recommendation_score(
     notebook_kind: str,
     coverage: dict[str, Any],
@@ -3143,20 +1998,18 @@ def _notebook_recommendation_score(
     content: dict[str, Any],
 ) -> int:
     score = 20
+    if coverage.get("native_marimo_status") == "runtime_error":
+        score -= 120
     if notebook_kind == "model_diagnostics":
         score += 10
     if notebook_kind == "data_understanding":
         score += 35
-    if coverage.get("has_html_preview"):
-        score += 20
     if coverage.get("has_report"):
         score += 10
     if coverage.get("has_visualization"):
         score += 10
     if coverage.get("has_execution_plan"):
         score += 6
-    if coverage.get("has_execution_capture"):
-        score += 14
     if metadata.get("run_id"):
         score += 8
     if coverage.get("execution_status") == "generated_not_executed":
@@ -3183,6 +2036,26 @@ def _recommended_notebook(items: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(items, key=lambda item: (int(item["recommendation_score"]), str(item["created_at"])))
 
 
+def _notebook_index_display_sort_key(item: dict[str, Any]) -> tuple[int, int, float]:
+    status = str(item.get("status") or "")
+    coverage = item.get("coverage") if isinstance(item.get("coverage"), dict) else {}
+    needs_attention = status == "needs_attention" or coverage.get("native_marimo_status") == "runtime_error"
+    return (
+        1 if needs_attention else 0,
+        -int(item.get("recommendation_score") or 0),
+        -iso_datetime_timestamp(item.get("created_at")),
+    )
+
+
+def iso_datetime_timestamp(value: Any) -> float:
+    if not isinstance(value, str) or not value.strip():
+        return 0.0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
 def _notebook_groups(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     labels = {
         "model_diagnostics": "Model diagnostics",
@@ -3199,7 +2072,7 @@ def _notebook_groups(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "notebook_kind": kind,
                 "title": labels[kind],
                 "count": len(group_items),
-                "latest_created_at": group_items[0]["created_at"],
+                "latest_created_at": max(str(item["created_at"]) for item in group_items),
                 "items": group_items,
             }
         )
@@ -3222,25 +2095,6 @@ def _notebook_index_next_actions(
                 "reason": "Start with profile, target, missingness, and assumption context before model analysis.",
             }
         )
-    uncaptured = recommended if recommended and not recommended["coverage"].get("has_execution_capture") else None
-    if uncaptured is None:
-        uncaptured = next(
-            (
-                item
-                for item in items
-                if item["notebook_kind"] in {"data_understanding", "model_diagnostics"}
-                and not item["coverage"].get("has_execution_capture")
-            ),
-            None,
-        )
-    if uncaptured is not None:
-        actions.append(
-            {
-                "label": "Capture notebook execution evidence",
-                "endpoint": f"/api/analysis-notebooks/{uncaptured['artifact_ids']['notebook']}/execution-capture",
-                "reason": "Create a safe static capture manifest, report, HTML preview, and figure manifest before full notebook execution.",
-            }
-        )
     if "model_diagnostics" not in kinds:
         actions.append(
             {
@@ -3252,9 +2106,9 @@ def _notebook_index_next_actions(
     if not actions:
         actions.append(
             {
-                "label": "Open the recommended notebook evidence",
+                "label": "Open the recommended marimo notebook",
                 "endpoint": None,
-                "reason": "The notebook index already has data understanding, model diagnostics, and execution capture coverage.",
+                "reason": "The notebook index already has project notebooks; open the source through native marimo.",
             }
         )
     return actions
@@ -3324,22 +2178,16 @@ def _notebook_story_caveats(
     *,
     brief: dict[str, Any],
     selected_item: dict[str, Any],
-    diverted_from_empty_diagnostics: bool,
+    notebook_quality_issue: bool,
 ) -> list[str]:
     caveats: list[str] = []
-    if diverted_from_empty_diagnostics:
-        caveats.append("A model diagnostics notebook exists, but metric or prediction evidence is missing, so it is not promoted.")
+    if notebook_quality_issue:
+        caveats.append("This notebook is linked directly, but its metric or prediction evidence is incomplete and should be repaired.")
     profile_boundary = str(brief.get("profile_boundary") or "").strip()
     if profile_boundary:
         caveats.append(profile_boundary)
     caveats.extend(_string_list(brief.get("top_risks"))[:3])
-    coverage = _dict_value(selected_item.get("coverage"))
-    if coverage.get("has_execution_capture"):
-        caveats.append("Static preview evidence is available for in-product review.")
-    else:
-        caveats.append("Static preview evidence is not yet linked for this notebook.")
-    if not coverage.get("has_html_preview"):
-        caveats.append("No in-product preview artifact is linked yet; use controlled generation or capture before treating it as a report.")
+    caveats.append("Notebook source is linked; runtime issues should surface when native marimo opens it.")
     return _dedupe_strings(caveats)[:5]
 
 
@@ -3367,10 +2215,10 @@ def _notebook_evidence_cards(item: dict[str, Any], figure_artifacts: list[Artifa
             "why_read": str(item.get("recommendation_reason") or ""),
         },
         {
-            "title": "Evidence capture",
-            "status": "ready" if coverage.get("has_execution_capture") else "missing",
+            "title": "Notebook source",
+            "status": "ready",
             "signal": f"{len(figure_artifacts)} figure(s)",
-            "why_read": "Captured figures and HTML keep the notebook readable inside Tablex.",
+            "why_read": "Open the source artifact through native marimo; supporting figures remain secondary evidence.",
         },
         {
             "title": "Runner boundary",
@@ -3409,27 +2257,11 @@ def _eda_review_evidence_cards(review: dict[str, Any]) -> list[dict[str, str]]:
 def _notebook_story_primary_action(
     *,
     selected_item: dict[str, Any],
-    preview_artifact_id: str | None,
-    evidence_html: Artifact | None,
 ) -> dict[str, Any]:
-    if preview_artifact_id and evidence_html is not None:
-        return {
-            "label": "Open evidence review",
-            "action_type": "preview",
-            "artifact_id": preview_artifact_id,
-            "target_tab": "Notebooks",
-        }
-    if selected_item.get("coverage", {}).get("has_execution_capture") and preview_artifact_id:
-        return {
-            "label": "Open current review",
-            "action_type": "preview",
-            "artifact_id": preview_artifact_id,
-            "target_tab": "Notebooks",
-        }
     return {
-        "label": "Capture readable evidence",
-        "action_type": "api",
-        "endpoint": f"/api/analysis-notebooks/{selected_item['notebook_artifact_id']}/execution-capture",
+        "label": "Open notebook",
+        "action_type": "open_native_marimo",
+        "artifact_id": str(selected_item["notebook_artifact_id"]),
         "target_tab": "Notebooks",
     }
 
@@ -3439,7 +2271,6 @@ def _story_raw_artifact_refs(
     project_id: str,
     notebook_artifact: Artifact,
     linked_artifact_ids: dict[str, Any],
-    evidence_html: Artifact | None,
     evidence_figures: list[Artifact],
 ) -> list[dict[str, Any]]:
     artifacts: list[Artifact] = [notebook_artifact]
@@ -3449,8 +2280,6 @@ def _story_raw_artifact_refs(
         artifact = db.get(Artifact, artifact_id)
         if artifact is not None and artifact.project_id == project_id:
             artifacts.append(artifact)
-    if evidence_html is not None:
-        artifacts.append(evidence_html)
     artifacts.extend(evidence_figures[:6])
     return _artifact_refs(_unique_artifacts(artifacts))
 
@@ -3529,6 +2358,30 @@ def _first_text_value(*values: object) -> str | None:
     return None
 
 
+def _notebook_display_title(
+    notebook_kind: str,
+    metadata: dict[str, Any],
+    quality_manifest: dict[str, Any] | None,
+) -> str:
+    metadata_title = _first_text_value(metadata.get("title"), metadata.get("display_name"), metadata.get("label"))
+    if metadata_title is not None:
+        return metadata_title
+    if isinstance(quality_manifest, dict):
+        purpose = _first_text_value(quality_manifest.get("notebook_purpose"), quality_manifest.get("visual_summary"))
+        if purpose is not None:
+            return purpose
+        read_order = quality_manifest.get("read_order")
+        if isinstance(read_order, list):
+            for item in read_order:
+                if isinstance(item, dict):
+                    label = _first_text_value(item.get("label"), item.get("section"), item.get("title"))
+                    if label is not None:
+                        return label
+                elif isinstance(item, str) and item.strip():
+                    return item.strip()
+    return _notebook_title(notebook_kind)
+
+
 def _notebook_title(notebook_kind: str) -> str:
     if notebook_kind == "model_diagnostics":
         return "Model Diagnostics Notebook"
@@ -3539,6 +2392,8 @@ def _notebook_title(notebook_kind: str) -> str:
 
 def _notebook_recommendation_reason(notebook_kind: str, coverage: dict[str, Any], content: dict[str, Any]) -> str:
     readiness = str(content.get("readiness") or "unknown")
+    if coverage.get("native_marimo_status") == "runtime_error":
+        return "This notebook source is registered, but native marimo reported a runtime error. Repair it before treating it as the primary read."
     if notebook_kind == "model_diagnostics" and readiness == "not_ready":
         return "Model diagnostics exists, but it is not useful yet because metric, prediction, or diagnostic evidence is missing."
     if notebook_kind == "model_diagnostics" and readiness == "partial_review":
@@ -3547,13 +2402,9 @@ def _notebook_recommendation_reason(notebook_kind: str, coverage: dict[str, Any]
         return "Evidence-rich model review: metrics, prediction coverage, and diagnostics are available enough for a first read."
     if notebook_kind == "data_understanding" and readiness in {"evidence_ready", "narrative_ready"}:
         return "Best starting point: Data Understanding has narrative, story cards, playbook, and evidence figures."
-    if coverage.get("has_execution_capture"):
-        return "Most complete notebook evidence: preview, report, execution plan, and safe static capture are available."
     if notebook_kind == "data_understanding":
         return "Best starting point before target, evaluation, or feature decisions."
-    if coverage.get("has_html_preview"):
-        return "Preview is available inside the workbench."
-    return "Notebook source exists, but preview/report coverage is incomplete."
+    return "Notebook source exists and should open through native marimo."
 
 
 def _notebook_artifact_context_summary(notebook_artifact: Artifact) -> dict[str, Any]:
@@ -3616,7 +2467,6 @@ def _agent_session_notebook_content_signal(
     *,
     notebook_kind: str,
     current: dict[str, Any],
-    html_artifact: Artifact | None,
     report_artifact: Artifact | None,
     figure_manifest_artifact: Artifact | None,
     evidence_bundle_artifact: Artifact | None,
@@ -3629,12 +2479,11 @@ def _agent_session_notebook_content_signal(
     visual_story = _read_json_artifact(visual_story_artifact)
     claims = _list_value(evidence_bundle.get("claims"))
     bundle_figures = _list_value(evidence_bundle.get("figures"))
-    story_cards = _list_value(visual_story.get("cards"))
+    story_cards = _list_value(visual_story.get("cards")) if isinstance(visual_story, dict) else _list_value(visual_story)
     figure_count = max(len(bundle_figures), len(evidence_figure_artifacts), 1 if figure_manifest_artifact is not None else 0)
     quality_score = min(
         100,
         int(current.get("quality_score") or 0)
-        + (20 if html_artifact is not None else 0)
         + (15 if report_artifact is not None else 0)
         + min(24, len(claims) * 6)
         + min(24, figure_count * 4)
@@ -5281,130 +4130,6 @@ def _source_asset_ids(
     return sources
 
 
-def _record_lineage(
-    db: Session,
-    project: Project,
-    dataset: DatasetSnapshot,
-    source_artifacts: list[Artifact],
-    notebook_artifact: Artifact,
-    html_artifact: Artifact,
-    manifest_artifact: Artifact,
-    report: Report,
-    report_artifact: Artifact,
-) -> None:
-    create_lineage_edge(
-        db,
-        project_id=project.id,
-        from_asset_type="dataset_snapshot",
-        from_asset_id=dataset.id,
-        to_asset_type="artifact",
-        to_asset_id=notebook_artifact.id,
-        relation_type="informs",
-    )
-    for artifact in source_artifacts:
-        create_lineage_edge(
-            db,
-            project_id=project.id,
-            from_asset_type="artifact",
-            from_asset_id=artifact.id,
-            to_asset_type="artifact",
-            to_asset_id=notebook_artifact.id,
-            relation_type="informs",
-        )
-    for artifact in [html_artifact, manifest_artifact, report_artifact]:
-        create_lineage_edge(
-            db,
-            project_id=project.id,
-            from_asset_type="artifact",
-            from_asset_id=notebook_artifact.id,
-            to_asset_type="artifact",
-            to_asset_id=artifact.id,
-            relation_type="produces",
-        )
-    create_lineage_edge(
-        db,
-        project_id=project.id,
-        from_asset_type="report",
-        from_asset_id=report.id,
-        to_asset_type="artifact",
-        to_asset_id=report_artifact.id,
-        relation_type="materializes",
-    )
-
-
-def _record_model_notebook_lineage(
-    db: Session,
-    project: Project,
-    run: ExperimentRun,
-    model_version: ModelVersion | None,
-    source_artifacts: list[Artifact],
-    notebook_artifact: Artifact,
-    html_artifact: Artifact,
-    manifest_artifact: Artifact,
-    report: Report,
-    report_artifact: Artifact,
-    visualization: VisualizationSpec,
-    visualization_artifact: Artifact,
-) -> None:
-    create_lineage_edge(
-        db,
-        project_id=project.id,
-        from_asset_type="experiment_run",
-        from_asset_id=run.id,
-        to_asset_type="artifact",
-        to_asset_id=notebook_artifact.id,
-        relation_type="diagnoses",
-    )
-    if model_version is not None:
-        create_lineage_edge(
-            db,
-            project_id=project.id,
-            from_asset_type="model_version",
-            from_asset_id=model_version.id,
-            to_asset_type="artifact",
-            to_asset_id=notebook_artifact.id,
-            relation_type="informs",
-        )
-    for artifact in source_artifacts:
-        create_lineage_edge(
-            db,
-            project_id=project.id,
-            from_asset_type="artifact",
-            from_asset_id=artifact.id,
-            to_asset_type="artifact",
-            to_asset_id=notebook_artifact.id,
-            relation_type="informs",
-        )
-    for artifact in [html_artifact, manifest_artifact, report_artifact, visualization_artifact]:
-        create_lineage_edge(
-            db,
-            project_id=project.id,
-            from_asset_type="artifact",
-            from_asset_id=notebook_artifact.id,
-            to_asset_type="artifact",
-            to_asset_id=artifact.id,
-            relation_type="produces",
-        )
-    create_lineage_edge(
-        db,
-        project_id=project.id,
-        from_asset_type="report",
-        from_asset_id=report.id,
-        to_asset_type="artifact",
-        to_asset_id=report_artifact.id,
-        relation_type="materializes",
-    )
-    create_lineage_edge(
-        db,
-        project_id=project.id,
-        from_asset_type="artifact",
-        from_asset_id=notebook_artifact.id,
-        to_asset_type="visualization_spec",
-        to_asset_id=visualization.id,
-        relation_type="summarizes",
-    )
-
-
 def _record_notebook_execution_plan_lineage(
     db: Session,
     *,
@@ -5464,69 +4189,6 @@ def _record_notebook_execution_plan_lineage(
     )
 
 
-def _record_notebook_execution_capture_lineage(
-    db: Session,
-    *,
-    project: Project,
-    notebook_artifact: Artifact,
-    linked_artifacts: list[Artifact],
-    manifest_artifact: Artifact,
-    report: Report,
-    report_artifact: Artifact,
-    html_artifact: Artifact,
-    figure_manifest_artifact: Artifact,
-    source_artifact: Artifact,
-    evidence_artifacts: list[Artifact],
-) -> None:
-    outputs = [
-        manifest_artifact,
-        report_artifact,
-        html_artifact,
-        figure_manifest_artifact,
-        source_artifact,
-        *evidence_artifacts,
-    ]
-    for artifact in linked_artifacts:
-        create_lineage_edge(
-            db,
-            project_id=project.id,
-            from_asset_type="artifact",
-            from_asset_id=artifact.id,
-            to_asset_type="artifact",
-            to_asset_id=manifest_artifact.id,
-            relation_type="informs",
-        )
-    for artifact in outputs:
-        create_lineage_edge(
-            db,
-            project_id=project.id,
-            from_asset_type="artifact",
-            from_asset_id=notebook_artifact.id,
-            to_asset_type="artifact",
-            to_asset_id=artifact.id,
-            relation_type="captures_execution_as",
-        )
-    create_lineage_edge(
-        db,
-        project_id=project.id,
-        from_asset_type="report",
-        from_asset_id=report.id,
-        to_asset_type="artifact",
-        to_asset_id=report_artifact.id,
-        relation_type="materializes",
-    )
-    for artifact in [report_artifact, html_artifact, figure_manifest_artifact, source_artifact, *evidence_artifacts]:
-        create_lineage_edge(
-            db,
-            project_id=project.id,
-            from_asset_type="artifact",
-            from_asset_id=manifest_artifact.id,
-            to_asset_type="artifact",
-            to_asset_id=artifact.id,
-            relation_type="documents",
-        )
-
-
 def _execution_policy() -> dict[str, Any]:
     return {
         "external_dashboard_required": False,
@@ -5534,7 +4196,7 @@ def _execution_policy() -> dict[str, Any]:
         "connector_credentials_embedded": False,
         "secrets_embedded": False,
         "notebook_execution": "not_executed_by_generation_endpoint",
-        "artifact_capture_required": True,
+        "artifact_registration_required": True,
         "runner_role": "editable_analysis_surface_under_harness_control",
     }
 
@@ -5608,292 +4270,6 @@ def _metric_cell(value: object) -> str:
     if value is None:
         return "-"
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
-
-
-def _status_display(value: object) -> str:
-    raw = str(value or "").strip()
-    labels = {
-        "succeeded": "Ready",
-        "success": "Ready",
-        "passed": "Passed",
-        "failed": "Failed",
-        "error": "Error",
-        "deferred": "Deferred",
-        "unknown": "Unknown",
-        "not_available": "Not available",
-        "rendered": "Rendered",
-        "rendered_from_profile_artifacts": "Rendered",
-        "static_preview": "Static preview",
-        "safe_static_capture": "Static preview",
-        "marimo_html_export": "HTML export",
-    }
-    return labels.get(raw, raw.replace("_", " ").strip().capitalize() if raw else "-")
-
-
-def _metric_card(label: str, value: object) -> str:
-    return f'<div class="panel metric"><span>{escape(label)}</span><strong>{escape(str(value))}</strong></div>'
-
-
-def _html_table(rows: list[dict[str, Any]], keys: list[str]) -> str:
-    if not rows:
-        return "<p>No rows available.</p>"
-    head = "".join(f"<th>{escape(key)}</th>" for key in keys)
-    body = []
-    for row in rows[:16]:
-        cells = "".join(f"<td>{escape(str(row.get(key, '-')))}</td>" for key in keys)
-        body.append(f"<tr>{cells}</tr>")
-    return f"<table><thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table>"
-
-
-def _bar_rows(rows: list[dict[str, Any]], label_key: str, value_key: str) -> str:
-    if not rows:
-        return "<p>No rows available.</p>"
-    values = [_float_value(row.get(value_key)) for row in rows]
-    max_value = max(values, default=0.0)
-    output = []
-    for row, value in zip(rows, values, strict=True):
-        width = 0.0 if max_value <= 0 else max(4.0, value / max_value * 100)
-        output.append(
-            '<div class="bar-row">'
-            f'<code>{escape(str(row.get(label_key) or ""))}</code>'
-            f'<div class="bar-track"><div class="bar" style="width:{width:.1f}%"></div></div>'
-            f"<span>{escape(_format_metric(value))}</span>"
-            "</div>"
-        )
-    return "".join(output)
-
-
-def _badge_rows(rows: list[tuple[str, int]]) -> str:
-    if not rows:
-        return '<span class="badge">No data</span>'
-    return "".join(f'<span class="badge">{escape(label)}: {count}</span>' for label, count in rows)
-
-
-def _missing_rows(rows: list[dict[str, Any]]) -> str:
-    if not rows:
-        return "<p>No missingness profile is available.</p>"
-    output = []
-    for row in rows:
-        rate = max(0.0, min(1.0, _float_value(row.get("missing_rate"))))
-        output.append(
-            '<div class="bar-row">'
-            f'<code>{escape(str(row.get("name") or ""))}</code>'
-            f'<div class="bar-track"><div class="bar" style="width:{rate * 100:.1f}%"></div></div>'
-            f"<span>{rate:.1%}</span>"
-            "</div>"
-        )
-    return "".join(output)
-
-
-def _finding_rows(findings: list[dict[str, Any]]) -> str:
-    if not findings:
-        return "<p>No additional findings were detected in this view.</p>"
-    output = []
-    for item in findings:
-        severity = str(item.get("severity") or "info")
-        output.append(
-            f'<div class="finding {escape(severity)}">'
-            f"<strong>{escape(severity.upper())}</strong>"
-            f"<p>{escape(str(item.get('message') or ''))}</p>"
-            f'<div class="tiny">{escape(str(item.get("next_action") or ""))}</div>'
-            "</div>"
-        )
-    return "".join(output)
-
-
-def _rubric_rows(rubric: list[dict[str, Any]]) -> str:
-    if not rubric:
-        return "<p>No rubric available.</p>"
-    output = []
-    for item in rubric:
-        status = str(item.get("status") or "unknown")
-        output.append(
-            f'<div class="finding {escape(status)}">'
-            f"<strong>{escape(str(item.get('area') or 'Quality area'))}</strong>"
-            f"<p>{escape(str(item.get('evidence') or 'No evidence yet.'))}</p>"
-            f'<div class="tiny">{escape(status)} · {escape(str(item.get("upgrade_path") or ""))}</div>'
-            "</div>"
-        )
-    return "".join(output)
-
-
-def _storyboard_rows(storyboard: list[dict[str, Any]]) -> str:
-    if not storyboard:
-        return "<p>No storyboard available.</p>"
-    output = []
-    for item in storyboard:
-        output.append(
-            '<div class="finding">'
-            f"<strong>{escape(str(item.get('section') or 'Section'))}</strong>"
-            f"<p>{escape(str(item.get('question') or ''))}</p>"
-            f'<div class="tiny">{escape(str(item.get("artifact_expectation") or ""))}</div>'
-            "</div>"
-        )
-    return "".join(output)
-
-
-def _guardrail_rows(guardrails: list[dict[str, Any]]) -> str:
-    if not guardrails:
-        return "<p>No guardrails available.</p>"
-    output = []
-    for item in guardrails:
-        risk = str(item.get("risk") or "medium")
-        output.append(
-            f'<div class="finding {escape(risk)}">'
-            f"<strong>{escape(str(item.get('guardrail') or 'Guardrail'))}</strong>"
-            f"<p>{escape(str(item.get('detail') or ''))}</p>"
-            f'<div class="tiny">{escape(risk)} · {escape(str(item.get("status") or ""))}</div>'
-            "</div>"
-        )
-    return "".join(output)
-
-
-def _result_interpretation_html(interpretation: dict[str, Any]) -> str:
-    if not interpretation:
-        return ""
-    comparison = _dict_value(interpretation.get("metric_comparison"))
-    comparison_line = ""
-    if comparison:
-        comparison_line = (
-            f"<p><strong>Sanity floor:</strong> "
-            f"{escape(str(comparison.get('metric_name') or 'primary metric'))} "
-            f"{escape(_format_metric(comparison.get('current_value')))} vs "
-            f"{escape(_format_metric(comparison.get('floor_value')))} "
-            f"({escape(_format_signed_metric(comparison.get('delta')))}).</p>"
-        )
-    return (
-        '<section class="panel result-callout">'
-        "<h2>Result interpretation</h2>"
-        f"<strong>{escape(str(interpretation.get('headline') or 'Review result evidence'))}</strong>"
-        f"<p>{escape(str(interpretation.get('narrative') or 'No interpretation recorded.'))}</p>"
-        f"{comparison_line}"
-        f"<p><strong>Next one action:</strong> {escape(str(interpretation.get('next_action') or 'Choose one focused follow-up.'))}</p>"
-        "</section>"
-    )
-
-
-def _read_order_rows(rows: list[dict[str, Any]]) -> str:
-    if not rows:
-        return "<p>No preferred read order is available for this view.</p>"
-    output = []
-    for index, item in enumerate(rows[:6], start=1):
-        output.append(
-            '<div class="playbook-row">'
-            f"<strong>{index}. {escape(str(item.get('title') or 'Review item'))}</strong>"
-            f"<p>{escape(str(item.get('why') or ''))}</p>"
-            f'<div class="tiny">{escape(str(item.get("artifact_hint") or ""))}</div>'
-            "</div>"
-        )
-    return "".join(output)
-
-
-def _story_card_rows(rows: list[dict[str, Any]]) -> str:
-    if not rows:
-        return "<p>No visual story cards are available for this view.</p>"
-    output = []
-    for item in rows[:8]:
-        output.append(
-            '<div class="story-card">'
-            f"<strong>{escape(str(item.get('title') or 'Story card'))}</strong>"
-            f'<span class="badge">{escape(str(item.get("status") or "review"))}</span>'
-            f"<p>{escape(str(item.get('why_read') or ''))}</p>"
-            f'<div class="tiny">{escape(str(item.get("signal") or ""))}</div>'
-            "</div>"
-        )
-    return "".join(output)
-
-
-def _playbook_rows(rows: list[dict[str, Any]]) -> str:
-    if not rows:
-        return "<p>No EDA playbook is available for this view.</p>"
-    output = []
-    for item in rows:
-        output.append(
-            '<div class="playbook-row">'
-            f"<strong>{escape(str(item.get('stage') or 'EDA stage'))}</strong>"
-            f"<p>{escape(str(item.get('reader_question') or ''))}</p>"
-            f'<div class="tiny">Evidence: {escape(str(item.get("current_evidence") or ""))}</div>'
-            f'<div class="tiny">Codex: {escape(str(item.get("codex_followup") or ""))}</div>'
-            "</div>"
-        )
-    return "".join(output)
-
-
-def _feature_family_html_rows(rows: list[dict[str, Any]]) -> str:
-    if not rows:
-        return "<p>No feature family summary available.</p>"
-    output = []
-    max_count = max((int(row.get("count") or 0) for row in rows if isinstance(row, dict)), default=0)
-    for row in rows[:12]:
-        count = int(row.get("count") or 0)
-        width = 0.0 if max_count <= 0 else max(4.0, count / max_count * 100)
-        examples = ", ".join(str(item) for item in row.get("examples", [])[:5]) if isinstance(row.get("examples"), list) else ""
-        output.append(
-            '<div class="bar-row">'
-            f'<code>{escape(str(row.get("family") or "unknown"))}</code>'
-            f'<div class="bar-track"><div class="bar" style="width:{width:.1f}%"></div></div>'
-            f"<span>{count}</span>"
-            f'<div class="tiny span-all">{escape(examples)}</div>'
-            "</div>"
-        )
-    return "".join(output)
-
-
-def _target_readiness_html(target: dict[str, Any]) -> str:
-    if not target:
-        return "<p>No target readiness summary available.</p>"
-    badges = [
-        f'<span class="badge">status: {escape(str(target.get("status") or "unknown"))}</span>',
-        f'<span class="badge">unique: {escape(str(target.get("unique_count", "-")))}</span>',
-        f'<span class="badge">missing: {escape(str(target.get("missing_count", "-")))}</span>',
-    ]
-    return (
-        f"<p>{escape(str(target.get('summary') or 'No target summary.'))}</p>"
-        f"<p><strong>Metric note:</strong> {escape(str(target.get('metric_note') or ''))}</p>"
-        f'<div class="badge-row">{"".join(badges)}</div>'
-    )
-
-
-def _feature_queue_rows(feature_sections: dict[str, list[dict[str, Any]]]) -> str:
-    if not feature_sections:
-        return "<p>No feature queues available.</p>"
-    labels = {
-        "top_missing": "Missingness",
-        "high_cardinality": "High cardinality",
-        "identifier_or_group": "Identifier/group",
-        "datetime": "Datetime",
-        "text": "Text",
-        "leakage_suspects": "Leakage suspects",
-    }
-    blocks = []
-    for key, label in labels.items():
-        rows = feature_sections.get(key) or []
-        names = ", ".join(str(row.get("name") or "") for row in rows[:6]) or "none"
-        blocks.append(
-            '<div class="finding">'
-            f"<strong>{escape(label)}</strong>"
-            f"<p>{escape(names)}</p>"
-            f'<div class="tiny">{len(rows)} queued column(s)</div>'
-            "</div>"
-        )
-    return f'<div class="findings">{"".join(blocks)}</div>'
-
-
-def _target_values_text(target: dict[str, Any]) -> str:
-    values = target.get("top_values") if isinstance(target.get("top_values"), list) else []
-    if not values:
-        return "No target value counts are available yet."
-    return "; ".join(
-        f"{item.get('value')}: {item.get('count')}" for item in values[:8] if isinstance(item, dict)
-    )
-
-
-def _count_rows(rows: list[dict[str, Any]], field: str) -> list[tuple[str, int]]:
-    counts: dict[str, int] = {}
-    for row in rows:
-        value = str(row.get(field) or "unknown")
-        counts[value] = counts.get(value, 0) + 1
-    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:12]
 
 
 def _float_value(value: object) -> float:

@@ -374,7 +374,6 @@ def build_data_review_section(
                 "eda_profile": profile_artifact,
                 "data_quality_gate": quality_artifact,
                 "eda_review_report": artifacts_by_type.get("eda_review_report"),
-                "eda_review_html": artifacts_by_type.get("eda_review_html"),
             }
         ),
         "human_summary": data_review_summary(status, latest_dataset, findings, quality_score),
@@ -483,17 +482,16 @@ def build_notebook_section(notebook_index: dict[str, Any]) -> dict[str, Any]:
     counts = dict_value(notebook_index.get("counts"))
     recommended = dict_value(notebook_index.get("recommended_notebook"))
     items = list_value(notebook_index.get("items"))
-    has_capture = int(counts.get("with_execution_capture") or 0) > 0
+    source_count = int(counts.get("with_native_source") or counts.get("total") or 0)
     has_notebook = int(counts.get("total") or 0) > 0
     content_quality = recommended.get("content_quality_score")
-    status = "ready" if has_capture else "partial" if has_notebook else "missing"
+    status = "ready" if source_count > 0 else "partial" if has_notebook else "missing"
     if isinstance(content_quality, (int, float)) and content_quality < 50:
         status = "needs_attention"
     return {
         "status": status,
         "notebook_count": int(counts.get("total") or len(items)),
-        "captured_count": int(counts.get("with_execution_capture") or 0),
-        "html_preview_count": int(counts.get("with_html_preview") or 0),
+        "source_count": source_count,
         "recommended_notebook": recommended or None,
         "next_actions": list_value(notebook_index.get("next_actions"))[:5],
         "human_summary": notebook_summary(status, recommended, counts),
@@ -644,7 +642,7 @@ def build_decision_next_actions(
     elif experiment_section["status"] == "partial":
         actions.append(action(82, "Generate run diagnostics", "Metrics need diagnostics, slices, and prediction evidence before decision use.", "Experiments"))
     if notebook_section["status"] in {"missing", "partial", "needs_attention"}:
-        actions.append(action(75, "Generate or capture notebook evidence", "Human-readable analysis should sit next to model evidence in Tablex.", "Notebooks"))
+        actions.append(action(75, "Register notebook evidence", "Human-readable marimo analysis should sit next to model evidence in Tablex.", "Notebooks"))
     if runner_section["status"] == "missing":
         actions.append(action(68, "Prepare a controlled Codex runner task", "Use Codex for flexible approach selection while preserving harness evidence boundaries.", "Approach"))
     if citations_section["status"] != "ready":
@@ -790,7 +788,7 @@ def render_decision_report_v1(bundle: dict[str, Any]) -> str:
         lines,
         {
             "Notebooks": sections["notebooks"]["notebook_count"],
-            "Captured": sections["notebooks"]["captured_count"],
+            "Native sources": sections["notebooks"]["source_count"],
             "Recommended notebook": recommended.get("title"),
             "Recommendation reason": recommended.get("recommendation_reason"),
         },
@@ -877,7 +875,6 @@ def decision_report_source_assets(
         "evaluation_diagnostics",
         "run_report",
         "notebook_evidence_bundle",
-        "notebook_evidence_html",
         "source_citation_manifest",
         "citation_audit_report",
         "agent_task_contract",
@@ -1197,11 +1194,11 @@ def experiment_summary(best_run: ExperimentRun | None, metrics: dict[str, Any], 
 
 def notebook_summary(status: str, recommended: dict[str, Any], counts: dict[str, Any]) -> str:
     total = int(counts.get("total") or 0)
-    captured = int(counts.get("with_execution_capture") or 0)
+    source_count = int(counts.get("with_native_source") or total)
     if total == 0:
         return "No analysis notebook evidence is available yet."
     title = recommended.get("title") or "recommended notebook"
-    return f"Notebook evidence is {status}: {total} notebooks exist, {captured} have capture evidence, and `{title}` is recommended."
+    return f"Notebook evidence is {status}: {total} notebooks exist, {source_count} open through native marimo, and `{title}` is recommended."
 
 
 def runner_summary(status: str, latest: dict[str, Any] | None, successful: list[dict[str, Any]]) -> str:

@@ -46,7 +46,6 @@ class EdaReviewResult:
     review: dict[str, Any]
     report: Report
     bundle_artifact: Artifact
-    html_artifact: Artifact
     report_artifact: Artifact
     visualization: VisualizationSpec
     visualization_artifact: Artifact
@@ -118,24 +117,7 @@ def create_dataset_eda_review(
         )
         for figure in cast(list[dict[str, Any]], review["figures"])
     ]
-    html = render_eda_review_html(review)
-    html_artifact = store_text_artifact(
-        db,
-        store,
-        project_id=project.id,
-        asset_type="eda_review_html",
-        name=f"eda_review_html_{suffix}",
-        filename="eda_review.html",
-        text=html,
-        metadata={
-            "project_id": project.id,
-            "dataset_snapshot_id": dataset.id,
-            "eda_review_bundle_artifact_id": bundle_artifact.id,
-            "content_type": "text/html",
-            "figure_count": len(figure_artifacts),
-        },
-    )
-    report_md = render_eda_review_report(review, bundle_artifact.id, html_artifact.id)
+    report_md = render_eda_review_report(review, bundle_artifact.id)
     report_artifact = store_text_artifact(
         db,
         store,
@@ -148,7 +130,6 @@ def create_dataset_eda_review(
             "project_id": project.id,
             "dataset_snapshot_id": dataset.id,
             "eda_review_bundle_artifact_id": bundle_artifact.id,
-            "eda_review_html_artifact_id": html_artifact.id,
         },
     )
     report = Report(
@@ -183,7 +164,6 @@ def create_dataset_eda_review(
         metadata_json=dumps_json(
             {
                 "dataset_snapshot_id": dataset.id,
-                "html_artifact_id": html_artifact.id,
                 "figure_artifact_ids": [artifact.id for artifact in figure_artifacts],
             }
         ),
@@ -209,7 +189,7 @@ def create_dataset_eda_review(
     )
     db.add_all([evidence, insight])
     db.flush()
-    for artifact in [bundle_artifact, html_artifact, report_artifact, visualization_artifact, *figure_artifacts]:
+    for artifact in [bundle_artifact, report_artifact, visualization_artifact, *figure_artifacts]:
         create_lineage_edge(
             db,
             project_id=project.id,
@@ -222,7 +202,6 @@ def create_dataset_eda_review(
         )
     artifact_ids = [
         bundle_artifact.id,
-        html_artifact.id,
         report_artifact.id,
         visualization_artifact.id,
         *[artifact.id for artifact in figure_artifacts],
@@ -231,7 +210,6 @@ def create_dataset_eda_review(
         review=review,
         report=report,
         bundle_artifact=bundle_artifact,
-        html_artifact=html_artifact,
         report_artifact=report_artifact,
         visualization=visualization,
         visualization_artifact=visualization_artifact,
@@ -984,7 +962,7 @@ def build_eda_visualization_spec(review: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def render_eda_review_report(review: dict[str, Any], bundle_artifact_id: str, html_artifact_id: str) -> str:
+def render_eda_review_report(review: dict[str, Any], bundle_artifact_id: str) -> str:
     summary = cast(dict[str, Any], review["summary"])
     findings = cast(list[dict[str, str]], review["findings"])
     prompts = cast(list[str], review["codex_next_prompts"])
@@ -998,7 +976,6 @@ def render_eda_review_report(review: dict[str, Any], bundle_artifact_id: str, ht
             "",
             f"- DatasetSnapshot: `{review['dataset_snapshot_id']}`",
             f"- Bundle artifact: `{bundle_artifact_id}`",
-            f"- HTML artifact: `{html_artifact_id}`",
             f"- Target: `{summary.get('target_column') or '-'}`",
             f"- Quality score: `{summary.get('quality_score')}`",
             "",
@@ -1010,143 +987,6 @@ def render_eda_review_report(review: dict[str, Any], bundle_artifact_id: str, ht
             "",
             *[f"- {item}" for item in prompts],
         ]
-    )
-
-
-def render_eda_review_html(review: dict[str, Any]) -> str:
-    summary = cast(dict[str, Any], review["summary"])
-    read_order = cast(list[dict[str, str]], review["read_this_first"])
-    story_cards = cast(list[dict[str, str]], review["story_cards"])
-    playbook = cast(list[dict[str, str]], review["playbook"])
-    findings = cast(list[dict[str, str]], review["findings"])
-    figures = cast(list[dict[str, Any]], review["figures"])
-    prompts = cast(list[str], review["codex_next_prompts"])
-    figures_html = "".join(
-        f'<section class="panel figure"><h2>{escape(str(item["title"]))}</h2><p>{escape(str(item["description"]))}</p>{item["svg"]}</section>'
-        for item in figures
-    )
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tablex Data Review</title>
-  <style>
-    :root {{ color-scheme: light dark; --ink:#10183f; --muted:#52617d; --line:#dbe3f3; --wash:#f4f9fb; --teal:#18b8a6; --blue:#3867f3; --rose:#d84c6f; --amber:#f4a62a; }}
-    body {{ margin:0; color:var(--ink); background:linear-gradient(180deg,#f8fbff 0%,#eef8f6 100%); font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }}
-    main {{ display:grid; gap:18px; padding:28px; }}
-    h1 {{ margin:0; font-size:32px; letter-spacing:0; max-width:980px; }}
-    h2 {{ margin:0 0 10px; font-size:17px; }}
-    p {{ color:var(--muted); line-height:1.55; }}
-    svg {{ display:block; width:100%; height:auto; }}
-    .eyebrow {{ color:var(--teal); font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }}
-    .panel {{ border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.9); padding:16px; box-shadow:0 16px 42px rgba(34,48,88,.08); overflow:hidden; }}
-    .hero {{ display:grid; grid-template-columns:minmax(0,1fr) 240px; gap:18px; align-items:start; }}
-    .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }}
-    .metric strong {{ display:block; font-size:24px; overflow-wrap:anywhere; }}
-    .metric span,.tiny {{ color:var(--muted); font-size:12px; }}
-    .story-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }}
-    .story-card,.playbook-row,.finding {{ border-left:4px solid var(--teal); background:var(--wash); border-radius:8px; padding:11px 12px; }}
-    .story-card.blocked,.finding.high {{ border-color:var(--rose); }}
-    .finding.medium {{ border-color:var(--amber); }}
-    .playbook-row {{ margin:8px 0; }}
-    .prompt {{ display:inline-block; border:1px solid var(--line); border-radius:999px; padding:7px 10px; margin:4px; background:var(--wash); font-size:12px; font-weight:700; }}
-    @media (max-width:720px) {{ .hero {{ grid-template-columns:1fr; }} main {{ padding:18px; }} }}
-    @media (prefers-color-scheme: dark) {{ :root {{ --ink:#eef4ff; --muted:#aab6d3; --line:#2e3a5b; --wash:#17213a; }} body {{ background:#0c1225; }} .panel {{ background:rgba(17,24,47,.9); box-shadow:none; }} }}
-  </style>
-</head>
-<body>
-  <main>
-    <header class="hero">
-      <div>
-        <div class="eyebrow">Tablex Data Review</div>
-        <h1>{escape(str(summary["headline"]))}</h1>
-        <p>Harness-controlled EDA from the uploaded dataset artifact. This is generated inside Tablex, not from an external dashboard.</p>
-      </div>
-      <section class="panel">
-        <div class="eyebrow">Review State</div>
-        <p><strong>{escape(str(summary.get("severity") or "info"))}</strong></p>
-        <p>Target: {escape(str(summary.get("target_column") or "not selected"))}</p>
-      </section>
-    </header>
-    <section class="grid">
-      {metric_card("Quality score", summary.get("quality_score"))}
-      {metric_card("Rows", summary.get("row_count"))}
-      {metric_card("Columns", summary.get("column_count"))}
-      {metric_card("Figures", summary.get("figure_count"))}
-    </section>
-    <section class="panel">
-      <h2>Read this first</h2>
-      {read_order_rows(read_order)}
-    </section>
-    <section class="panel">
-      <h2>Visual story cards</h2>
-      <div class="story-grid">{story_card_rows(story_cards)}</div>
-    </section>
-    {figures_html}
-    <section class="panel">
-      <h2>Findings</h2>
-      {finding_rows(findings)}
-    </section>
-    <section class="panel">
-      <h2>Review playbook</h2>
-      {playbook_rows(playbook)}
-    </section>
-    <section class="panel">
-      <h2>Ask Codex next</h2>
-      {"".join(f'<span class="prompt">{escape(item)}</span>' for item in prompts)}
-    </section>
-  </main>
-</body>
-</html>"""
-
-
-def metric_card(label: str, value: object) -> str:
-    return f'<div class="panel metric"><span>{escape(label)}</span><strong>{escape(format_value(value))}</strong></div>'
-
-
-def read_order_rows(rows: list[dict[str, str]]) -> str:
-    return "".join(
-        '<div class="playbook-row">'
-        f"<strong>{index}. {escape(item['title'])}</strong>"
-        f"<p>{escape(item['why'])}</p>"
-        f"<div class=\"tiny\">{escape(item['artifact_hint'])}</div>"
-        "</div>"
-        for index, item in enumerate(rows, start=1)
-    )
-
-
-def story_card_rows(rows: list[dict[str, str]]) -> str:
-    return "".join(
-        f'<div class="story-card {escape(item["status"])}">'
-        f"<strong>{escape(item['title'])}</strong>"
-        f"<p>{escape(item['why_read'])}</p>"
-        f"<div class=\"tiny\">{escape(item['signal'])}</div>"
-        "</div>"
-        for item in rows
-    )
-
-
-def finding_rows(rows: list[dict[str, str]]) -> str:
-    return "".join(
-        f'<div class="finding {escape(item["severity"])}">'
-        f"<strong>{escape(item['title'])}</strong>"
-        f"<p>{escape(item['message'])}</p>"
-        f"<div class=\"tiny\">Next: {escape(item['next_action'])}</div>"
-        "</div>"
-        for item in rows
-    )
-
-
-def playbook_rows(rows: list[dict[str, str]]) -> str:
-    return "".join(
-        '<div class="playbook-row">'
-        f"<strong>{escape(item['stage'])}</strong>"
-        f"<p>{escape(item['reader_question'])}</p>"
-        f"<div class=\"tiny\">Evidence: {escape(item['current_evidence'])}</div>"
-        f"<div class=\"tiny\">Codex: {escape(item['codex_followup'])}</div>"
-        "</div>"
-        for item in rows
     )
 
 

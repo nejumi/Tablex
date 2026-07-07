@@ -256,6 +256,7 @@ def artifact_to_dict(artifact: Artifact) -> dict[str, Any]:
         "id": artifact.id,
         "project_id": artifact.project_id,
         "asset_type": artifact.asset_type,
+        "surface_role": artifact_surface_role(artifact.asset_type),
         "name": artifact.name,
         "version": artifact.version,
         "uri": artifact.uri,
@@ -264,3 +265,24 @@ def artifact_to_dict(artifact: Artifact) -> dict[str, Any]:
         "metadata": loads_json(artifact.metadata_json, {}),
         "created_at": artifact.created_at.isoformat(),
     }
+
+
+def artifact_surface_role(asset_type: str) -> str:
+    if asset_type in {"notebook_html", "notebook_execution_html", "notebook_evidence_html"}:
+        return "hidden"
+    if asset_type in {"analysis_notebook", "marimo_notebook"}:
+        return "notebook"
+    if asset_type in {
+        "agent_chat_turn",
+        "agent_session_transcript",
+        "agent_session_log",
+        "agent_task_contract",
+        "notebook_run_manifest",
+        "notebook_report",
+        "notebook_execution_plan",
+        "notebook_figure_manifest",
+        "notebook_evidence_bundle",
+        "notebook_evidence_svg",
+    }:
+        return "supporting"
+    return "primary"

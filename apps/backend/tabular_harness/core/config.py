@@ -23,6 +23,11 @@ class Settings:
     google_auth_enabled: bool = False
     google_client_id: str | None = None
     api_agent_session_supervisor_enabled: bool = True
+    agent_idle_timeout_seconds: int = 15 * 60
+    agent_turn_start_silence_timeout_seconds: int = 5 * 60
+    agent_session_network_enabled: bool = True
+    agent_session_web_search_enabled: bool = True
+    notebook_data_copy_max_bytes: int = 128 * 1024 * 1024
     local_worker_enabled: bool = True
     local_worker_interval_seconds: float = 1.0
     local_worker_max_jobs_per_wake: int = 3
@@ -53,6 +58,13 @@ def get_settings() -> Settings:
         google_auth_enabled=bool_env("TABLEX_GOOGLE_AUTH_ENABLED", False),
         google_client_id=os.getenv("TABLEX_GOOGLE_CLIENT_ID") or None,
         api_agent_session_supervisor_enabled=bool_env("TABLEX_API_AGENT_SESSION_SUPERVISOR_ENABLED", True),
+        agent_idle_timeout_seconds=int(os.getenv("TABLEX_AGENT_IDLE_TIMEOUT_SECONDS", str(15 * 60))),
+        agent_turn_start_silence_timeout_seconds=int(
+            os.getenv("TABLEX_AGENT_TURN_START_SILENCE_TIMEOUT_SECONDS", str(5 * 60))
+        ),
+        agent_session_network_enabled=bool_env("TABLEX_AGENT_SESSION_NETWORK_ENABLED", True),
+        agent_session_web_search_enabled=bool_env("TABLEX_AGENT_SESSION_WEB_SEARCH_ENABLED", True),
+        notebook_data_copy_max_bytes=int(os.getenv("TABLEX_NOTEBOOK_DATA_COPY_MAX_BYTES", str(128 * 1024 * 1024))),
         local_worker_enabled=bool_env("TABLEX_LOCAL_WORKER_ENABLED", True),
         local_worker_interval_seconds=float(os.getenv("TABLEX_LOCAL_WORKER_INTERVAL_SECONDS", "1.0")),
         local_worker_max_jobs_per_wake=int(os.getenv("TABLEX_LOCAL_WORKER_MAX_JOBS_PER_WAKE", "3")),
