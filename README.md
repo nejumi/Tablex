@@ -169,6 +169,14 @@ Browser golden-slice smoke:
 node apps/frontend/e2e/golden_slice_smoke.mjs
 ```
 
+Live Full Auto research/pilot audit smoke:
+
+```bash
+node apps/frontend/e2e/live_full_auto_research_pilot_smoke.mjs
+```
+
+This runs a real Codex session with live web research in an isolated temporary data directory and writes audit evidence under `output/live/`.
+
 Frontend lint:
 
 ```bash

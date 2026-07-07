@@ -56,6 +56,38 @@ Artifacts:
 - `output/playwright/0121_i6_notebook_from_leaderboard.png`
 - `output/playwright/0121_i6_leaderboard_pilot.png`
 
+## Live Full Auto Evidence
+
+Command:
+
+```bash
+node apps/frontend/e2e/live_full_auto_research_pilot_smoke.mjs
+```
+
+Result:
+
+```text
+status: passed_recovered_from_live_run_db
+project_id: p_8d5d818b1cd4
+agent_session_id: ags_6e37f258b692
+research_findings_report: art_f9ba1b08b1ca
+research_markdown_report: art_c10f02dc13c7
+pilot_scoring_report: art_0fe54db0889e
+validation_scheme_audit: art_5ecbb0403a27
+validation audit verdict: partially_confirmed
+```
+
+Evidence artifact:
+
+- `output/live/0121_i6_live_full_auto_research_pilot_passed_recovered_20260707T185948Z.json`
+
+Notes:
+
+- The live run used a real Codex main session with network-enabled workspace sandbox and `web_search="live"`.
+- The research report registered 4 sources and 5 findings with a linked rich Markdown report.
+- The pilot loop registered prediction, outcome scoring, and a Codex-authored validation audit linked to the scoring report.
+- The first live smoke command completed the product path but the smoke assertion initially expected only `scoring_report_artifact_ids`; the registered audit payload uses `pilot_scoring_report_artifact_id`. The smoke now accepts both current and legacy shapes.
+
 ## Evidence Grades
 
 Grades used for Tablex audit evidence:
@@ -78,7 +110,7 @@ Grades used for Tablex audit evidence:
 | Leaderboard row shows model description and exposes pipeline bundle download. | U/B | `docs/evidence/0121_i4_deliverable_expectations.md`, `output/playwright/0121_i6_leaderboard_pilot.png`, `output/playwright/0121_i6_golden_slice_result.json` |
 | Pilot prediction batch and pilot scoring path are visible in-product. | U/B | `output/playwright/0121_i6_leaderboard_pilot.png`, `output/playwright/0121_i6_golden_slice_result.json` |
 | Live Full Auto can proceed from primary-free upload into Codex-authored task-shape work. | L | `docs/evidence/0120_h5_live_e2e_after_artifact_primary_fix_20260707T185042.json`, `docs/evidence/0120_h5_resume_after_primary_p_244186adcdec_20260707T185645.json` |
-| Live Full Auto has a clean source-backed research findings plus pilot loop recording after I1-I6. | Gap | Existing 0119/0120 live files contain partial Full Auto, notebook, leaderboard, and pipeline observations. A clean post-I6 `L` run covering source-backed research findings and pilot loop remains to be recorded. |
+| Live Full Auto has a clean source-backed research findings plus pilot loop recording after I1-I6. | L | `output/live/0121_i6_live_full_auto_research_pilot_passed_recovered_20260707T185948Z.json` |
 
 ## Verification
 
@@ -102,7 +134,15 @@ node apps/frontend/e2e/golden_slice_smoke.mjs
 
 Result: passed with exit code 0.
 
+Live smoke:
+
+```bash
+node apps/frontend/e2e/live_full_auto_research_pilot_smoke.mjs
+```
+
+Result: live run evidence recorded with grade `L`.
+
 ## Follow-Up For Next Audit
 
-- Record one fresh post-I6 `L` run with real Codex that includes source-backed research findings, rich report, notebook, leaderboard, pipeline bundle, pilot prediction, pilot outcome scoring, and validation audit.
-- Keep the browser smoke deterministic; do not replace it with a live Codex run.
+- Keep the deterministic browser smoke separate from live Codex runs.
+- Add a scheduled or manually-triggered longer demo capture after marimo and asset IA changes, rather than widening this audit smoke.

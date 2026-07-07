@@ -570,6 +570,14 @@ node apps/frontend/e2e/golden_slice_smoke.mjs
 
 The smoke starts isolated backend, frontend, worker, and native marimo processes with a temporary data directory. It covers primary-free upload, Chat-to-notebook opening, Leaderboard-to-notebook opening, pipeline bundle download, pilot prediction, and pilot scoring. Evidence screenshots and JSON are written under `output/playwright/`.
 
+Live Full Auto research/pilot audit smoke:
+
+```bash
+node apps/frontend/e2e/live_full_auto_research_pilot_smoke.mjs
+```
+
+This smoke starts an isolated backend with a real Codex main session, network-enabled workspace sandbox, and live web research. It records source-backed research, linked rich report, pilot prediction/scoring, and Codex-authored validation audit evidence under `output/live/`. Keep this separate from the deterministic browser smoke; it is intended for audit-grade live evidence, not fast PR feedback.
+
 ## Alembic
 
 The application creates tables on startup for MVP convenience. Alembic is configured for explicit migration workflows:
