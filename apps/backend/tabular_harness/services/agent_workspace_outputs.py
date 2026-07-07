@@ -17,7 +17,9 @@ from tabular_harness.services.agent_outputs import (
     should_register_session_output,
     should_skip_session_output,
 )
-from tabular_harness.services.agent_requests.research_plan import research_plan_request_failure_attention_key
+from tabular_harness.services.agent_requests.research_plan import (
+    research_plan_request_failure_attention_key,
+)
 from tabular_harness.services.agent_session_chat import (
     agent_session_attention_chat_turn_exists,
     attach_registered_session_notebooks_to_current_research_plan,
@@ -35,8 +37,15 @@ from tabular_harness.services.agent_session_inbox import (
 )
 from tabular_harness.services.agent_transcript import append_session_event
 from tabular_harness.services.agent_workspace import latest_project_response_locale
-from tabular_harness.services.artifacts import LocalArtifactStore, next_artifact_version, register_artifact
-from tabular_harness.services.research_plans import ResearchPlanValidationError, commit_research_plan_artifact_revision
+from tabular_harness.services.artifacts import (
+    LocalArtifactStore,
+    next_artifact_version,
+    register_artifact,
+)
+from tabular_harness.services.research_plans import (
+    ResearchPlanValidationError,
+    commit_research_plan_artifact_revision,
+)
 
 
 def latest_session_artifact_for_workspace_path(
@@ -87,6 +96,8 @@ def ingest_session_workspace_outputs_impl(
     process_model_diagnostics_tool_requests_fn: Callable[..., None],
     process_pipeline_tool_requests_fn: Callable[..., None],
     process_pilot_tool_requests_fn: Callable[..., None],
+    process_deliverable_tool_requests_fn: Callable[..., None],
+    maybe_write_open_deliverable_expectation_observation_fn: Callable[..., None],
     ingest_registered_session_experiment_artifacts_fn: Callable[..., None],
 ) -> None:
     if not project_session_still_registered_fn(db, project_id=project.id, session_id=session.id):
@@ -276,6 +287,9 @@ def ingest_session_workspace_outputs_impl(
     process_pilot_tool_requests_fn(db, store=store, project=project, session=session, workspace=workspace)
     if not project_session_still_registered_fn(db, project_id=project.id, session_id=session.id):
         return
+    process_deliverable_tool_requests_fn(db, store=store, project=project, session=session, workspace=workspace)
+    if not project_session_still_registered_fn(db, project_id=project.id, session_id=session.id):
+        return
     ingest_registered_session_experiment_artifacts_fn(db, store=store, project=project, session=session)
     if not project_session_still_registered_fn(db, project_id=project.id, session_id=session.id):
         return
@@ -286,6 +300,12 @@ def ingest_session_workspace_outputs_impl(
         register_pending_agent_session_notebooks(db, store=store, project=project, session=session)
     request_context_for_auto_registered_notebooks(db, store=store, project=project, session=session, workspace=workspace)
     request_quality_repair_for_session_notebooks(db, store=store, project=project, session=session, workspace=workspace)
+    maybe_write_open_deliverable_expectation_observation_fn(
+        db,
+        project=project,
+        session=session,
+        workspace=workspace,
+    )
 
 
 def register_rejected_session_output(

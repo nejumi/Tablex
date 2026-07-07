@@ -312,6 +312,31 @@ class ExperimentRun(Base):
     created_by: Mapped[str | None] = mapped_column(String, default="local-user")
 
 
+class DeliverableExpectation(Base):
+    __tablename__ = "deliverable_expectations"
+    __table_args__ = (
+        UniqueConstraint("project_id", "kind", "subject_ref"),
+        Index("ix_deliverable_expectations_project_status", "project_id", "status", "created_at"),
+        Index("ix_deliverable_expectations_project_subject", "project_id", "subject_ref"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String, ForeignKey("projects.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    subject_ref: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="open", nullable=False)
+    created_from: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    fulfilled_by_artifact_id: Mapped[str | None] = mapped_column(String, ForeignKey("artifacts.id"))
+    fulfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    waived_rationale: Mapped[str | None] = mapped_column(Text)
+    notification_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
 class ResearchPlan(Base):
     __tablename__ = "research_plans"
     __table_args__ = (

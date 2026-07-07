@@ -34,6 +34,11 @@ from tabular_harness.services.agent_requests.data import (
     data_acks_dir,
     data_requests_dir,
 )
+from tabular_harness.services.agent_requests.deliverables import (
+    DELIVERABLE_REQUEST_SCHEMA_VERSION,
+    deliverable_acks_dir,
+    deliverable_requests_dir,
+)
 from tabular_harness.services.agent_requests.model_diagnostics import (
     MODEL_DIAGNOSTIC_CHECK_NAMES,
     MODEL_DIAGNOSTIC_CHECK_STATUSES,
@@ -46,15 +51,15 @@ from tabular_harness.services.agent_requests.notebooks import (
     notebook_acks_dir,
     notebook_requests_dir,
 )
-from tabular_harness.services.agent_requests.pipelines import (
-    PIPELINE_REQUEST_SCHEMA_VERSION,
-    pipeline_acks_dir,
-    pipeline_requests_dir,
-)
 from tabular_harness.services.agent_requests.pilot import (
     PILOT_REQUEST_SCHEMA_VERSION,
     pilot_acks_dir,
     pilot_requests_dir,
+)
+from tabular_harness.services.agent_requests.pipelines import (
+    PIPELINE_REQUEST_SCHEMA_VERSION,
+    pipeline_acks_dir,
+    pipeline_requests_dir,
 )
 from tabular_harness.services.agent_requests.research import (
     RESEARCH_REQUEST_SCHEMA_VERSION,
@@ -65,9 +70,14 @@ from tabular_harness.services.agent_requests.research_plan import (
     research_plan_acks_dir,
     research_plan_requests_dir,
 )
-from tabular_harness.services.agent_session_results import experiment_acks_dir, experiment_requests_dir
+from tabular_harness.services.agent_session_results import (
+    experiment_acks_dir,
+    experiment_requests_dir,
+)
 from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
-from tabular_harness.services.research_plan_timeline import research_plan_contract_validation_summary
+from tabular_harness.services.research_plan_timeline import (
+    research_plan_contract_validation_summary,
+)
 from tabular_harness.services.research_plans import (
     ResearchPlanValidationError,
     commit_research_plan_artifact_revision,
@@ -126,6 +136,8 @@ def prepare_session_workspace(
     pipeline_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     pilot_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
     pilot_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
+    deliverable_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
+    deliverable_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     model_diagnostics_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
     model_diagnostics_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     notebook_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
@@ -845,6 +857,26 @@ def build_session_context(
                             "expected_metrics": [],
                             "runtime": {"python": ">=3.11", "timeout_seconds_predict": 120},
                         },
+                    },
+                },
+            },
+            "deliverable_tool_requests": {
+                "request_dir": ".tablex/requests/deliverables",
+                "ack_dir": ".tablex/acks/deliverables",
+                "schema_version": DELIVERABLE_REQUEST_SCHEMA_VERSION,
+                "operations": ["waive_deliverable"],
+                "description": (
+                    "Use this fixed JSON request/ack channel only when an expected deliverable is intentionally unnecessary. "
+                    "Tablex does not block work on open expectations; it keeps them visible until the matching artifact is "
+                    "registered or Codex waives the expectation with a rationale."
+                ),
+                "example_request": {
+                    "schema_version": DELIVERABLE_REQUEST_SCHEMA_VERSION,
+                    "request_id": "waive_non_applicable_deliverable_001",
+                    "operation": "waive_deliverable",
+                    "payload": {
+                        "expectation_id": "deliv_current",
+                        "rationale": "This output is not applicable because the corresponding model family does not expose it.",
                     },
                 },
             },

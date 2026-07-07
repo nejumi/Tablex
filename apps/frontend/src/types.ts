@@ -938,6 +938,18 @@ export type LeaderboardEntry = {
   split_manifest_id: string | null;
   model_version_id: string | null;
   pipeline_artifact_id?: string | null;
+  deliverable_expectations?: Array<{
+    id: string;
+    kind: string;
+    subject_ref: string;
+    status: string;
+    created_from: string;
+    fulfilled_by_artifact_id?: string | null;
+    waived_rationale?: string | null;
+    metadata?: Record<string, unknown>;
+    created_at: string;
+    updated_at: string;
+  }>;
   model_diagnostics?: {
     schema_version: string;
     status: string;

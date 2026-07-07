@@ -253,6 +253,7 @@ from tabular_harness.services.benchmarks import (
 )
 from tabular_harness.services.dataset_profile import profile_dataset_artifact
 from tabular_harness.services.decision_reporting import current_decision_report_payload
+from tabular_harness.services.deliverable_expectations import deliverable_expectations_for_run_ids
 from tabular_harness.services.evaluation import (
     approve_spec,
     candidate_to_dict,
@@ -7646,6 +7647,11 @@ def leaderboard(
         display_metric = str(BUILTIN_METRIC_OPTIONS[0]["name"])
     sorted_runs = sorted(runs, key=lambda run: leaderboard_sort_key_for_metric(run, display_metric))
     notebook_index = build_project_notebook_index(db, project)
+    deliverable_expectations_by_run = deliverable_expectations_for_run_ids(
+        db,
+        project_id=project_id,
+        run_ids=[run.id for run in sorted_runs],
+    )
     return [
         {
             "rank": index + 1,
@@ -7673,6 +7679,7 @@ def leaderboard(
                 if (pipeline_artifact := experiment_run_pipeline_artifact(db, run, params=params)) is not None
                 else None
             ),
+            "deliverable_expectations": deliverable_expectations_by_run.get(run.id, []),
             "model_diagnostics": leaderboard_model_diagnostics(db, run),
             "related_notebook_artifact_ids": leaderboard_related_notebook_artifact_ids(
                 notebook_index,

@@ -98,6 +98,9 @@ from tabular_harness.services.benchmarks import (
 from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.dataset_profile import profile_dataset_artifact
 from tabular_harness.services.decision_reporting import create_decision_report_v1
+from tabular_harness.services.deliverable_expectations import (
+    fulfill_run_pipeline_bundle_expectations,
+)
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
 from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
@@ -2624,6 +2627,15 @@ def register_prediction_pipeline_handler(db: Session, job: Job, store: LocalArti
         artifact_id=result.get("pipeline_artifact_id"),
         update_heartbeat=False,
     )
+    pipeline_artifact_id = result.get("pipeline_artifact_id")
+    experiment_run_ids = result.get("experiment_run_ids")
+    if isinstance(pipeline_artifact_id, str) and isinstance(experiment_run_ids, list):
+        fulfill_run_pipeline_bundle_expectations(
+            db,
+            project=project,
+            run_ids=[item for item in experiment_run_ids if isinstance(item, str)],
+            pipeline_artifact_id=pipeline_artifact_id,
+        )
     return {
         "schema_version": "prediction_pipeline_registration_job.v1",
         "status": "succeeded",

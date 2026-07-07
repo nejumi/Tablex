@@ -41,6 +41,178 @@ from tabular_harness.models.entities import (
     User,
     utc_now,
 )
+from tabular_harness.services.agent_inbox import inbox_processed_path, list_inbox_entries
+from tabular_harness.services.agent_notebook_quality import (
+    notebook_quality_feedback_from_metadata,
+)
+from tabular_harness.services.agent_notebook_registration import (
+    apply_notebook_request_metadata,
+    notebook_artifact_from_request,
+    notebook_registration_chat_status,
+    notebook_registration_visible_surfaces,
+)
+from tabular_harness.services.agent_outputs import (
+    asset_type_for_session_output,
+    is_chat_update_path,
+    metadata_for_session_output,
+    notebook_kind_for_session_output,
+    session_output_artifact_name,
+    session_output_rejection_message_kind,
+    session_output_rejection_reason,
+    should_register_session_output,
+    should_skip_session_output,
+)
+from tabular_harness.services.agent_prompting import build_turn_prompt, session_protocol_text
+from tabular_harness.services.agent_requests.data import (
+    DATA_REQUEST_SCHEMA_VERSION,
+    TASK_SPEC_SCHEMA_VERSION,
+    data_acks_dir,
+    data_requests_dir,
+)
+from tabular_harness.services.agent_requests.data import (
+    process_data_tool_requests as process_data_tool_requests_impl,
+)
+from tabular_harness.services.agent_requests.deliverables import (
+    DELIVERABLE_ACK_SCHEMA_VERSION,
+    DELIVERABLE_REQUEST_SCHEMA_VERSION,
+)
+from tabular_harness.services.agent_requests.deliverables import (
+    process_deliverable_tool_requests as process_deliverable_tool_requests_impl,
+)
+from tabular_harness.services.agent_requests.model_diagnostics import (
+    MODEL_DIAGNOSTICS_ACK_SCHEMA_VERSION,
+    MODEL_DIAGNOSTICS_REQUEST_SCHEMA_VERSION,
+    model_diagnostics_acks_dir,
+    model_diagnostics_request_rejection_path,
+    model_diagnostics_requests_dir,
+)
+from tabular_harness.services.agent_requests.model_diagnostics import (
+    process_model_diagnostics_tool_requests as process_model_diagnostics_tool_requests_impl,
+)
+from tabular_harness.services.agent_requests.notebooks import (
+    NOTEBOOK_REQUEST_SCHEMA_VERSION,
+    notebook_acks_dir,
+    notebook_requests_dir,
+)
+from tabular_harness.services.agent_requests.notebooks import (
+    process_notebook_tool_requests as process_notebook_tool_requests_impl,
+)
+from tabular_harness.services.agent_requests.pilot import (
+    PILOT_ACK_SCHEMA_VERSION,
+    PILOT_REQUEST_SCHEMA_VERSION,
+    pilot_acks_dir,
+    pilot_request_rejection_path,
+    pilot_requests_dir,
+)
+from tabular_harness.services.agent_requests.pilot import (
+    process_pilot_tool_requests as process_pilot_tool_requests_impl,
+)
+from tabular_harness.services.agent_requests.pipelines import (
+    PIPELINE_ACK_SCHEMA_VERSION,
+    PIPELINE_REQUEST_SCHEMA_VERSION,
+    PipelineToolValidationError,
+    ensure_prediction_pipeline_smoke_python,
+    execute_pipeline_registration_request,
+    normalize_pipeline_manifest,
+    pipeline_acks_dir,
+    pipeline_metric_reproduction_summary,
+    pipeline_requests_dir,
+    pipeline_tool_error_payload,
+    pipeline_tool_issue,
+    prediction_pipeline_requirements_hash,
+    require_manifest_column_name,
+    require_nonempty_string,
+    resolve_workspace_relative_path,
+    resolve_workspace_relative_path_allowing_symlink_target,
+    smoke_validate_prediction_pipeline,
+    smoke_value_for_manifest_dtype,
+    validate_pipeline_requirements_file,
+    write_pipeline_tool_ack,
+)
+from tabular_harness.services.agent_requests.pipelines import (
+    process_pipeline_tool_requests as process_pipeline_tool_requests_impl,
+)
+from tabular_harness.services.agent_requests.research import (
+    RESEARCH_REQUEST_SCHEMA_VERSION,
+    research_acks_dir,
+    research_request_rejection_path,
+    research_requests_dir,
+)
+from tabular_harness.services.agent_requests.research import (
+    process_research_tool_requests as process_research_tool_requests_impl,
+)
+from tabular_harness.services.agent_requests.research_plan import (
+    RESEARCH_PLAN_ACK_SCHEMA_VERSION,
+    RESEARCH_PLAN_REQUEST_SCHEMA_VERSION,
+    research_plan_acks_dir,
+    research_plan_request_failure_attention_key,
+    research_plan_requests_dir,
+)
+from tabular_harness.services.agent_requests.research_plan import (
+    process_research_plan_tool_requests as process_research_plan_tool_requests_impl,
+)
+from tabular_harness.services.agent_session_chat import (
+    agent_session_attention_chat_turn_exists,
+    agent_session_notebook_registration_event_exists,
+    annotate_agent_chat_turn_with_source_event,
+    attach_notebook_artifacts_to_current_research_plan,
+    attach_registered_session_notebooks_to_current_research_plan,
+    attention_chat_message,
+    chat_update_actions_from_research_plan_evidence,
+    chat_update_message_from_text,
+    latest_agent_session_notebook_registration_event,
+    maybe_defer_agent_session_notebook_registration,
+    maybe_register_chat_update_from_workspace_output,
+    notebook_artifact_has_declared_context,
+    notebook_runtime_failure_retry_due,
+    reconcile_project_notebook_chat_links,
+    reconcile_project_notebook_context_requests,
+    reconcile_project_notebook_quality_requests,
+    register_agent_session_attention_chat_turn,
+    register_agent_session_notebook_chat_turn,
+    register_agent_session_notebook_chat_turn_from_registration_event,
+    register_agent_session_notebook_source_output,
+    register_pending_agent_session_notebooks,
+    register_research_registration_chat_turn,
+    request_context_for_auto_registered_notebooks,
+    request_quality_repair_for_session_notebooks,
+)
+from tabular_harness.services.agent_session_inbox import (
+    append_user_instruction_to_workspace_inbox,
+    build_default_goal_text,
+    data_framing_request_path,
+    latest_research_plan_contract_request_event,
+    latest_user_instruction_path,
+    notebook_context_request_path,
+    notebook_quality_repair_path,
+    notebook_request_rejection_path,
+    notebook_runtime_failure_path,
+    progress_request_path,
+    research_plan_artifact_rejection_path,
+    research_plan_contract_issue_hash,
+    research_plan_contract_request_path,
+    research_plan_current_work_request_path,
+    research_plan_request_rejection_path,
+    session_output_rejection_path,
+    task_spec_request_path,
+    user_instructions_inbox_path,
+    write_notebook_context_request_to_workspace_inbox,
+    write_notebook_quality_repair_to_workspace_inbox,
+    write_notebook_request_rejection_to_workspace_inbox,
+    write_notebook_runtime_failure_to_workspace_inbox,
+    write_progress_request_to_workspace_inbox,
+    write_research_plan_artifact_rejection_to_workspace_inbox,
+    write_research_plan_contract_request_to_workspace_inbox,
+    write_research_plan_current_work_request_to_workspace_inbox,
+    write_research_plan_request_rejection_to_workspace_inbox,
+    write_session_output_rejection_to_workspace_inbox,
+)
+from tabular_harness.services.agent_session_results import (
+    experiment_acks_dir,
+    experiment_requests_dir,
+    ingest_registered_session_experiment_artifacts,
+    process_experiment_result_requests,
+)
 from tabular_harness.services.agent_supervisor import (
     ACTIVE_SESSION_STATUSES,
     MAIN_AGENT_IDLE_TIMEOUT_SECONDS,
@@ -67,19 +239,29 @@ from tabular_harness.services.agent_supervisor import (
     renew_supervisor_lease,
     retry_delay_seconds,
     start_supervisor_lease_heartbeat,
+    stop_main_session,
     supervisor_lease_active,
     supervisor_lease_lost_event_is_set,
     supervisor_slot_active,
-    stop_main_session,
     terminate_stale_codex_process,
 )
-from tabular_harness.services.agent_session_results import (
-    experiment_acks_dir,
-    experiment_requests_dir,
-    ingest_registered_session_experiment_artifacts,
-    process_experiment_result_requests,
+from tabular_harness.services.agent_task_spec_nudge import (
+    maybe_request_data_framing_update,
+    maybe_request_task_spec_update,
 )
-from tabular_harness.services.agent_inbox import inbox_processed_path, list_inbox_entries
+from tabular_harness.services.agent_transcript import (
+    _TRANSCRIPT_EVENT_NEXT_INDEX,
+    StreamFileTailer,
+    append_codex_stream_line,
+    append_codex_stream_lines,
+    append_runner_stream_to_workspace,
+    append_session_event,
+    codex_jsonl_event_type,
+    publish_raw_codex_transcript_snapshot,
+    reserve_transcript_event_indexes,
+    session_to_dict,
+    transcript_event_to_dict,
+)
 from tabular_harness.services.agent_workspace import (
     CODEX_RAW_TRANSCRIPT_FILENAME,
     CODEX_STDERR_LOG_FILENAME,
@@ -95,167 +277,6 @@ from tabular_harness.services.agent_workspace_outputs import (
     ingest_session_workspace_outputs_impl,
     latest_session_artifact_for_workspace_path,
 )
-from tabular_harness.services.agent_transcript import (
-    StreamFileTailer,
-    _TRANSCRIPT_EVENT_NEXT_INDEX,
-    append_codex_stream_line,
-    append_codex_stream_lines,
-    append_runner_stream_to_workspace,
-    append_session_event,
-    codex_jsonl_event_type,
-    publish_raw_codex_transcript_snapshot,
-    reserve_transcript_event_indexes,
-    session_to_dict,
-    transcript_event_to_dict,
-)
-from tabular_harness.services.agent_task_spec_nudge import (
-    maybe_request_data_framing_update,
-    maybe_request_task_spec_update,
-)
-from tabular_harness.services.agent_session_inbox import (
-    append_user_instruction_to_workspace_inbox,
-    build_default_goal_text,
-    data_framing_request_path,
-    latest_research_plan_contract_request_event,
-    latest_user_instruction_path,
-    notebook_context_request_path,
-    notebook_quality_repair_path,
-    notebook_request_rejection_path,
-    notebook_runtime_failure_path,
-    progress_request_path,
-    research_plan_artifact_rejection_path,
-    research_plan_contract_request_path,
-    research_plan_contract_issue_hash,
-    research_plan_current_work_request_path,
-    research_plan_request_rejection_path,
-    session_output_rejection_path,
-    task_spec_request_path,
-    user_instructions_inbox_path,
-    write_notebook_context_request_to_workspace_inbox,
-    write_notebook_quality_repair_to_workspace_inbox,
-    write_notebook_request_rejection_to_workspace_inbox,
-    write_notebook_runtime_failure_to_workspace_inbox,
-    write_progress_request_to_workspace_inbox,
-    write_research_plan_artifact_rejection_to_workspace_inbox,
-    write_research_plan_contract_request_to_workspace_inbox,
-    write_research_plan_current_work_request_to_workspace_inbox,
-    write_research_plan_request_rejection_to_workspace_inbox,
-    write_session_output_rejection_to_workspace_inbox,
-)
-from tabular_harness.services.agent_outputs import (
-    asset_type_for_session_output,
-    is_chat_update_path,
-    metadata_for_session_output,
-    notebook_kind_for_session_output,
-    session_output_artifact_name,
-    session_output_rejection_message_kind,
-    session_output_rejection_reason,
-    should_register_session_output,
-    should_skip_session_output,
-)
-from tabular_harness.services.agent_prompting import build_turn_prompt, session_protocol_text
-from tabular_harness.services.agent_session_chat import (
-    agent_session_attention_chat_turn_exists,
-    agent_session_notebook_registration_event_exists,
-    annotate_agent_chat_turn_with_source_event,
-    attach_notebook_artifacts_to_current_research_plan,
-    attach_registered_session_notebooks_to_current_research_plan,
-    attention_chat_message,
-    chat_update_actions_from_research_plan_evidence,
-    chat_update_message_from_text,
-    notebook_artifact_has_declared_context,
-    latest_agent_session_notebook_registration_event,
-    maybe_register_chat_update_from_workspace_output,
-    maybe_defer_agent_session_notebook_registration,
-    notebook_runtime_failure_retry_due,
-    register_agent_session_notebook_chat_turn_from_registration_event,
-    register_pending_agent_session_notebooks,
-    request_context_for_auto_registered_notebooks,
-    request_quality_repair_for_session_notebooks,
-    register_agent_session_attention_chat_turn,
-    register_agent_session_notebook_chat_turn,
-    register_agent_session_notebook_source_output,
-    register_research_registration_chat_turn,
-    reconcile_project_notebook_chat_links,
-    reconcile_project_notebook_context_requests,
-    reconcile_project_notebook_quality_requests,
-)
-from tabular_harness.services.agent_requests.data import (
-    DATA_REQUEST_SCHEMA_VERSION,
-    TASK_SPEC_SCHEMA_VERSION,
-    data_acks_dir,
-    data_requests_dir,
-    process_data_tool_requests as process_data_tool_requests_impl,
-)
-from tabular_harness.services.agent_requests.model_diagnostics import (
-    MODEL_DIAGNOSTICS_ACK_SCHEMA_VERSION,
-    MODEL_DIAGNOSTICS_REQUEST_SCHEMA_VERSION,
-    model_diagnostics_acks_dir,
-    model_diagnostics_request_rejection_path,
-    model_diagnostics_requests_dir,
-    process_model_diagnostics_tool_requests as process_model_diagnostics_tool_requests_impl,
-)
-from tabular_harness.services.agent_requests.notebooks import (
-    NOTEBOOK_REQUEST_SCHEMA_VERSION,
-    notebook_acks_dir,
-    notebook_requests_dir,
-    process_notebook_tool_requests as process_notebook_tool_requests_impl,
-)
-from tabular_harness.services.agent_requests.pipelines import (
-    PIPELINE_ACK_SCHEMA_VERSION,
-    PIPELINE_REQUEST_SCHEMA_VERSION,
-    PipelineToolValidationError,
-    ensure_prediction_pipeline_smoke_python,
-    execute_pipeline_registration_request,
-    normalize_pipeline_manifest,
-    pipeline_acks_dir,
-    pipeline_metric_reproduction_summary,
-    pipeline_tool_error_payload,
-    pipeline_tool_issue,
-    prediction_pipeline_requirements_hash,
-    pipeline_requests_dir,
-    process_pipeline_tool_requests as process_pipeline_tool_requests_impl,
-    require_manifest_column_name,
-    require_nonempty_string,
-    resolve_workspace_relative_path,
-    resolve_workspace_relative_path_allowing_symlink_target,
-    smoke_value_for_manifest_dtype,
-    smoke_validate_prediction_pipeline,
-    validate_pipeline_requirements_file,
-    write_pipeline_tool_ack,
-)
-from tabular_harness.services.agent_notebook_registration import (
-    apply_notebook_request_metadata,
-    notebook_artifact_from_request,
-    notebook_registration_chat_status,
-    notebook_registration_visible_surfaces,
-)
-from tabular_harness.services.agent_requests.pilot import (
-    PILOT_ACK_SCHEMA_VERSION,
-    PILOT_REQUEST_SCHEMA_VERSION,
-    pilot_acks_dir,
-    pilot_request_rejection_path,
-    pilot_requests_dir,
-    process_pilot_tool_requests as process_pilot_tool_requests_impl,
-)
-from tabular_harness.services.agent_requests.research import (
-    RESEARCH_REQUEST_SCHEMA_VERSION,
-    research_acks_dir,
-    research_request_rejection_path,
-    research_requests_dir,
-    process_research_tool_requests as process_research_tool_requests_impl,
-)
-from tabular_harness.services.agent_requests.research_plan import (
-    RESEARCH_PLAN_ACK_SCHEMA_VERSION,
-    RESEARCH_PLAN_REQUEST_SCHEMA_VERSION,
-    research_plan_acks_dir,
-    research_plan_request_failure_attention_key,
-    research_plan_requests_dir,
-    process_research_plan_tool_requests as process_research_plan_tool_requests_impl,
-)
-from tabular_harness.services.agent_notebook_quality import (
-    notebook_quality_feedback_from_metadata,
-)
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
@@ -265,6 +286,10 @@ from tabular_harness.services.artifacts import (
     register_artifact,
 )
 from tabular_harness.services.dataset_profile import profile_dataset_artifact
+from tabular_harness.services.deliverable_expectations import (
+    fulfill_run_model_diagnostics_notebook_expectations,
+    maybe_write_open_deliverable_expectation_observation,
+)
 from tabular_harness.services.jobs import TERMINAL_STATUSES as TERMINAL_JOB_STATUSES
 from tabular_harness.services.jobs import mark_job_succeeded
 from tabular_harness.services.locales import locale_is_japanese
@@ -1836,6 +1861,24 @@ def process_pilot_tool_requests(
     )
 
 
+def process_deliverable_tool_requests(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    session: AgentSession,
+    workspace: Path,
+) -> None:
+    del store
+    process_deliverable_tool_requests_impl(
+        db,
+        project=project,
+        session=session,
+        workspace=workspace,
+        append_session_event_fn=append_session_event,
+    )
+
+
 def process_notebook_tool_requests(
     db: Session,
     *,
@@ -1879,6 +1922,20 @@ def execute_notebook_registration_request(
         notebook_artifact=notebook_artifact,
         payload=payload,
     )
+    if context_links.get("notebook_kind") == "model_diagnostics":
+        run_ids = []
+        run_id = context_links.get("run_id")
+        if isinstance(run_id, str) and run_id.strip():
+            run_ids.append(run_id)
+        related_run_ids = context_links.get("related_run_ids")
+        if isinstance(related_run_ids, list):
+            run_ids.extend(item for item in related_run_ids if isinstance(item, str))
+        fulfill_run_model_diagnostics_notebook_expectations(
+            db,
+            project=project,
+            run_ids=run_ids,
+            notebook_artifact_id=notebook_artifact.id,
+        )
     node_id = str(payload.get("research_plan_node_id") or "").strip() or None
     revision_id = str(payload.get("revision_id") or "").strip() or None
     linked_plan_node_id = attach_notebook_artifacts_to_current_research_plan(
@@ -1942,6 +1999,8 @@ def ingest_session_workspace_outputs(
         process_model_diagnostics_tool_requests_fn=process_model_diagnostics_tool_requests,
         process_pipeline_tool_requests_fn=process_pipeline_tool_requests,
         process_pilot_tool_requests_fn=process_pilot_tool_requests,
+        process_deliverable_tool_requests_fn=process_deliverable_tool_requests,
+        maybe_write_open_deliverable_expectation_observation_fn=maybe_write_open_deliverable_expectation_observation,
         ingest_registered_session_experiment_artifacts_fn=ingest_registered_session_experiment_artifacts,
     )
 

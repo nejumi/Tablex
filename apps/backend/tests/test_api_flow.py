@@ -35,6 +35,7 @@ from tabular_harness.models.entities import (
     Artifact,
     AssetReference,
     DatasetSnapshot,
+    DeliverableExpectation,
     EvaluationCandidate,
     EvaluationSpec,
     ExperimentRun,
@@ -52,9 +53,12 @@ from tabular_harness.models.entities import (
 )
 from tabular_harness.schemas import AgentResult
 from tabular_harness.services.agent_inbox import list_inbox_entries
+from tabular_harness.services.agent_requests.deliverables import process_deliverable_tool_requests
+from tabular_harness.services.agent_session_results import process_experiment_result_requests
 from tabular_harness.services.agent_sessions import (
     append_runner_stream_to_workspace,
     append_session_event,
+    execute_notebook_registration_request,
     ingest_session_workspace_outputs,
     latest_user_instruction_path,
     maybe_register_chat_update_from_workspace_output,
@@ -72,6 +76,10 @@ from tabular_harness.services.artifacts import (
     artifact_primary_path,
     next_artifact_version,
     register_artifact,
+)
+from tabular_harness.services.deliverable_expectations import (
+    fulfill_run_pipeline_bundle_expectations,
+    maybe_write_open_deliverable_expectation_observation,
 )
 from tabular_harness.services.jobs import (
     acquire_next_job,
@@ -1561,6 +1569,341 @@ def test_artifact_preview_includes_one_hop_lineage(tmp_path: Path) -> None:
     assert lineage["inputs"][0]["label"] == "source_data"
     assert lineage["outputs"][0]["asset_id"] == output_id
     assert lineage["outputs"][0]["endpoint_asset_type"] == "decision_report"
+
+
+def model_diagnostics_quality_manifest() -> dict[str, Any]:
+    return {
+        "schema_version": "tablex_notebook_quality_manifest.v1",
+        "figure_count": 3,
+        "table_count": 1,
+        "key_findings": ["Diagnostics notebook registered for the model run."],
+        "read_order": [{"label": "diagnostics"}],
+        "data_sources_used": ["leaderboard run"],
+        "limitations": ["Synthetic test notebook."],
+        "model_diagnostics": {
+            "schema_version": "tablex_model_diagnostics_manifest.v1",
+            "checks": [
+                {"name": "permutation_importance", "status": "included", "evidence": ["test"]},
+                {"name": "native_feature_importance", "status": "included", "evidence": ["test"]},
+                {"name": "partial_dependence", "status": "included", "evidence": ["test"]},
+                {"name": "shap", "status": "included", "evidence": ["test"]},
+            ],
+        },
+    }
+
+
+def test_deliverable_expectation_flow_from_runs_to_model_notebook(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    app = cast(Any, client.app)
+    workspace = tmp_path / "agent_workspace"
+    experiments_dir = workspace / ".tablex" / "requests" / "experiments"
+    experiments_dir.mkdir(parents=True)
+    request_path = experiments_dir / "register_runs_001.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tablex_experiment_result_request.v1",
+                "request_id": "register_runs_001",
+                "operation": "register_runs",
+                "payload": {
+                    "runs": [
+                        {
+                            "model_id": "fold_safe_baseline",
+                            "model_description": "Fold-safe baseline.",
+                            "features_used": ["x"],
+                            "primary_metric_name": "roc_auc",
+                            "metrics": {"roc_auc": 0.7},
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with app.state.session_factory() as db:
+        project = Project(id="p_deliverable_flow", name="Deliverable flow")
+        db.add(project)
+        db.flush()
+        session = AgentSession(
+            id="ags_deliverable_flow",
+            project_id=project.id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Register runs and notebook.",
+            workspace_path=str(workspace),
+        )
+        db.add(session)
+        db.flush()
+
+        runs = process_experiment_result_requests(
+            db,
+            store=app.state.artifact_store,
+            project=project,
+            session=session,
+            workspace=workspace,
+            append_event=append_session_event,
+        )
+        assert len(runs) == 1
+        run_id = runs[0].id
+        expectation = db.scalar(
+            select(DeliverableExpectation).where(
+                DeliverableExpectation.project_id == project.id,
+                DeliverableExpectation.kind == "model_diagnostics_notebook",
+                DeliverableExpectation.subject_ref == f"experiment_run:{run_id}",
+            )
+        )
+        assert expectation is not None
+        assert expectation.status == "open"
+
+        notebook = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project.id,
+            asset_type="analysis_notebook",
+            name="model_diagnostics_notebook",
+            filename="model_diagnostics.py",
+            text=(
+                "import marimo\n\n"
+                "app = marimo.App()\n\n"
+                "@app.cell\n"
+                "def _():\n"
+                "    import matplotlib.pyplot as plt\n"
+                "    _fig, _ax = plt.subplots()\n"
+                "    _ax.bar([1, 2], [3, 4])\n"
+                "    return _fig,\n"
+            ),
+            metadata={"project_id": project.id},
+        )
+        execute_notebook_registration_request(
+            db,
+            store=app.state.artifact_store,
+            project=project,
+            session=session,
+            workspace=workspace,
+            payload={
+                "artifact_id": notebook.id,
+                "notebook_kind": "model_diagnostics",
+                "run_id": run_id,
+                "quality_manifest": model_diagnostics_quality_manifest(),
+            },
+        )
+
+        db.refresh(expectation)
+        assert expectation.status == "fulfilled"
+        assert expectation.fulfilled_by_artifact_id == notebook.id
+        db.commit()
+
+    leaderboard_response = client.get("/api/projects/p_deliverable_flow/leaderboard")
+    assert leaderboard_response.status_code == 200
+    row = leaderboard_response.json()[0]
+    assert row["deliverable_expectations"][0]["status"] == "fulfilled"
+    assert row["deliverable_expectations"][0]["fulfilled_by_artifact_id"] == notebook.id
+
+
+def test_pipeline_bundle_fulfills_deliverable_expectation(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = Project(id="p_pipeline_deliverable", name="Pipeline deliverable")
+        db.add(project)
+        db.flush()
+        run = ExperimentRun(
+            id="run_pipeline_deliverable",
+            project_id=project.id,
+            runner_type="codex_main_session",
+            status="succeeded",
+            params_json=json.dumps(
+                {
+                    "model_id": "pipeline_model",
+                    "model_description": "Pipeline model.",
+                    "features_used": ["x"],
+                }
+            ),
+            metrics_json=json.dumps({"primary_metric_name": "roc_auc", "primary_metric_value": 0.71}),
+        )
+        pipeline = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project.id,
+            asset_type="prediction_pipeline",
+            name="pipeline_deliverable_bundle",
+            filename="pipeline.zip",
+            text="pipeline",
+            metadata={"experiment_run_ids": [run.id]},
+        )
+        db.add(run)
+        db.flush()
+
+        expectations = fulfill_run_pipeline_bundle_expectations(
+            db,
+            project=project,
+            run_ids=[run.id],
+            pipeline_artifact_id=pipeline.id,
+        )
+        db.commit()
+
+    assert len(expectations) == 1
+    assert expectations[0].kind == "pipeline_bundle"
+    assert expectations[0].status == "fulfilled"
+    assert expectations[0].fulfilled_by_artifact_id == pipeline.id
+
+
+def test_waive_deliverable_requires_rationale_and_updates_expectation(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    app = cast(Any, client.app)
+    workspace = tmp_path / "agent_workspace"
+    request_dir = workspace / ".tablex" / "requests" / "deliverables"
+    request_dir.mkdir(parents=True)
+
+    with app.state.session_factory() as db:
+        project = Project(id="p_deliverable_waive", name="Deliverable waive")
+        db.add(project)
+        db.flush()
+        session = AgentSession(
+            id="ags_deliverable_waive",
+            project_id=project.id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Waive deliverable.",
+            workspace_path=str(workspace),
+        )
+        expectation = DeliverableExpectation(
+            id="deliv_waive_target",
+            project_id=project.id,
+            kind="model_diagnostics_notebook",
+            subject_ref="experiment_run:run_missing_notebook",
+            status="open",
+            created_from="test",
+        )
+        db.add_all([session, expectation])
+        db.flush()
+
+        (request_dir / "missing_rationale.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "tablex_deliverable_request.v1",
+                    "request_id": "missing_rationale",
+                    "operation": "waive_deliverable",
+                    "payload": {"expectation_id": expectation.id},
+                }
+            ),
+            encoding="utf-8",
+        )
+        process_deliverable_tool_requests(
+            db,
+            project=project,
+            session=session,
+            workspace=workspace,
+            append_session_event_fn=append_session_event,
+        )
+        failed_ack = json.loads(
+            (workspace / ".tablex" / "acks" / "deliverables" / "missing_rationale.ack.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert failed_ack["status"] == "failed"
+        assert "rationale" in failed_ack["error"]["message"]
+        db.refresh(expectation)
+        assert expectation.status == "open"
+
+        (request_dir / "waive_ok.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "tablex_deliverable_request.v1",
+                    "request_id": "waive_ok",
+                    "operation": "waive_deliverable",
+                    "payload": {
+                        "expectation_id": expectation.id,
+                        "rationale": "A diagnostics notebook is not applicable for this synthetic run.",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        process_deliverable_tool_requests(
+            db,
+            project=project,
+            session=session,
+            workspace=workspace,
+            append_session_event_fn=append_session_event,
+        )
+        succeeded_ack = json.loads(
+            (workspace / ".tablex" / "acks" / "deliverables" / "waive_ok.ack.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert succeeded_ack["status"] == "succeeded"
+        db.refresh(expectation)
+        assert expectation.status == "waived"
+        assert expectation.waived_rationale == "A diagnostics notebook is not applicable for this synthetic run."
+        db.commit()
+
+
+def test_open_deliverable_expectation_observation_is_sent_once(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    app = cast(Any, client.app)
+    workspace = tmp_path / "agent_workspace"
+    (workspace / ".tablex" / "inbox").mkdir(parents=True)
+    observed_at = utc_now()
+    with app.state.session_factory() as db:
+        project = Project(id="p_deliverable_observation", name="Deliverable observation")
+        db.add(project)
+        db.flush()
+        session = AgentSession(
+            id="ags_deliverable_observation",
+            project_id=project.id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Observe deliverables.",
+            workspace_path=str(workspace),
+        )
+        expectation = DeliverableExpectation(
+            id="deliv_observation_target",
+            project_id=project.id,
+            kind="model_diagnostics_notebook",
+            subject_ref="experiment_run:run_waiting_for_notebook",
+            status="open",
+            created_from="test",
+            created_at=observed_at - timedelta(minutes=31),
+            updated_at=observed_at - timedelta(minutes=31),
+        )
+        db.add_all([session, expectation])
+        db.flush()
+
+        first = maybe_write_open_deliverable_expectation_observation(
+            db,
+            project=project,
+            session=session,
+            workspace=workspace,
+            now=observed_at,
+        )
+        second = maybe_write_open_deliverable_expectation_observation(
+            db,
+            project=project,
+            session=session,
+            workspace=workspace,
+            now=observed_at + timedelta(minutes=5),
+        )
+        db.refresh(expectation)
+        db.commit()
+
+    inbox_entries = list_inbox_entries(workspace)
+    deliverable_entries = [
+        item for item in inbox_entries if item.get("type") == "deliverable_expectations_open"
+    ]
+    assert len(first) == 1
+    assert second == []
+    assert expectation.notification_sent_at is not None
+    assert expectation.notification_sent_at.replace(tzinfo=timezone.utc) == observed_at
+    assert len(deliverable_entries) == 1
+    assert deliverable_entries[0]["payload"]["open_expectations"][0]["id"] == "deliv_observation_target"
 
 
 def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -> None:

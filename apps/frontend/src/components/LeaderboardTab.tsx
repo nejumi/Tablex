@@ -612,6 +612,14 @@ export function LeaderboardTab({
                 <div className="leaderboard-evidence-badges" key={`${entry.run_id}-evidence`}>
                   <span className={modelDiagnosticsBadgeClass(entry)}>{modelDiagnosticsStatusLabel(entry, text)}</span>
                   <small>{modelDiagnosticsChecksLabel(entry)}</small>
+                  {openDeliverableExpectations(entry).length ? (
+                    <span className="badge warning" title={deliverableExpectationsTitle(entry, text)}>
+                      {text.deliverableExpectationsOpen.replace(
+                        "{count}",
+                        String(openDeliverableExpectations(entry).length)
+                      )}
+                    </span>
+                  ) : null}
                   <span className={decisionReady ? "badge success" : "badge warning"}>
                     {decisionReady ? text.leaderboardEvidenceReportReady : text.leaderboardEvidenceReportMissing}
                   </span>
@@ -866,6 +874,24 @@ function modelDiagnosticsChecksLabel(entry: LeaderboardEntry) {
     return `${label}: ${status.replace(/_/g, " ")}`;
   });
   return parts.join(" / ");
+}
+
+function openDeliverableExpectations(entry: LeaderboardEntry) {
+  return (entry.deliverable_expectations ?? []).filter((item) => item.status === "open");
+}
+
+function deliverableExpectationsTitle(entry: LeaderboardEntry, text: LocaleMessages) {
+  return openDeliverableExpectations(entry)
+    .map((item) => deliverableExpectationKindLabel(item.kind, text))
+    .join(" / ");
+}
+
+function deliverableExpectationKindLabel(kind: string, text: LocaleMessages) {
+  if (kind === "model_diagnostics_notebook") return text.deliverableExpectationModelDiagnosticsNotebook;
+  if (kind === "pipeline_bundle") return text.deliverableExpectationPipelineBundle;
+  if (kind === "validation_audit") return text.deliverableExpectationValidationAudit;
+  if (kind === "research_findings") return text.deliverableExpectationResearchFindings;
+  return kind.replace(/_/g, " ");
 }
 
 function relatedOutputItemsForLeaderboardEntry(

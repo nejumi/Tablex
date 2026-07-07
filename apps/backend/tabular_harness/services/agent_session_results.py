@@ -27,13 +27,20 @@ from tabular_harness.models.entities import (
     User,
     utc_now,
 )
+from tabular_harness.services.agent_inbox import (
+    latest_inbox_entry_path,
+    list_inbox_entries,
+    write_inbox_entry,
+)
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
     artifact_primary_path,
     create_lineage_edge,
 )
-from tabular_harness.services.agent_inbox import latest_inbox_entry_path, list_inbox_entries, write_inbox_entry
+from tabular_harness.services.deliverable_expectations import (
+    create_run_model_diagnostics_notebook_expectations,
+)
 from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.metric_preferences import (
     leaderboard_sort_key_for_metric,
@@ -245,6 +252,12 @@ def process_experiment_result_requests(
                 )
             model_diagnostics_notebook = experiment_model_diagnostics_notebook_status(db, project=project, runs=runs)
             if model_diagnostics_notebook["status"] != "ready":
+                create_run_model_diagnostics_notebook_expectations(
+                    db,
+                    project=project,
+                    runs=runs,
+                    created_from=f"register_runs:{request_id}",
+                )
                 write_model_diagnostics_notebook_request_to_workspace_inbox(
                     workspace,
                     runs=runs,
@@ -467,6 +480,12 @@ def ingest_registered_session_experiment_artifacts(
                 )
             diagnostics_notebook_status = experiment_model_diagnostics_notebook_status(db, project=project, runs=runs)
             if workspace is not None and diagnostics_notebook_status["status"] != "ready":
+                create_run_model_diagnostics_notebook_expectations(
+                    db,
+                    project=project,
+                    runs=runs,
+                    created_from=f"artifact:{artifact.id}",
+                )
                 write_model_diagnostics_notebook_request_to_workspace_inbox(
                     workspace,
                     runs=runs,
