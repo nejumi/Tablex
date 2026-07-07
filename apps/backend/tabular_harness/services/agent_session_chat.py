@@ -21,6 +21,7 @@ from tabular_harness.models.entities import (
     LineageEdge,
     ModelVersion,
     Project,
+    ResearchPlanRevision,
     utc_now,
 )
 from tabular_harness.services.agent_notebook_quality import notebook_quality_feedback_from_metadata
@@ -83,7 +84,7 @@ def register_research_registration_chat_turn(
     no_findings = research_payload.get("no_findings") if isinstance(research_payload.get("no_findings"), dict) else None
     if no_findings is not None:
         assistant_message = (
-            f"従来知見の調査結果を保存しました。今回は追加で採用する知見なしとして記録されています。"
+            "従来知見の調査結果を保存しました。今回は追加で採用する知見なしとして記録されています。"
             if japanese
             else "The prior-knowledge research result was saved. Codex recorded that no additional finding should be adopted from this pass."
         )
@@ -1561,8 +1562,8 @@ def attention_chat_message(message_kind: str, *, details: dict[str, Any], japane
         )
     if message_kind == "runner_unavailable":
         if japanese:
-            return "分析エージェントをまだ起動できません。作業状態を保持し、再試行します。"
-        return "The analysis agent is not available yet. The work state is preserved and will retry."
+            return "分析エージェントをまだ起動できません。作業状態は保持されています。"
+        return "The analysis agent is not available yet. The work state is preserved."
     if message_kind == "turn_recovery":
         if japanese:
             return "作業プロセスが一度停止しました。Full AutoはONのまま、同じ状態から続けます。"

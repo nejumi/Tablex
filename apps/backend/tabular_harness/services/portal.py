@@ -23,6 +23,12 @@ PORTAL_IN_PROGRESS_PHASES = {
     "UNDERSTANDING_REVIEW",
 }
 QUEUED_WORKER_ACTIVITY_WINDOW = timedelta(minutes=5)
+DATA_INTAKE_ACTIVITY_JOB_TYPES = {
+    "upload_data_bundle",
+    "import_benchmark_dataset",
+}
+TERMINAL_ACTIVITY_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}
+PORTAL_TERMINAL_DATA_INTAKE_ACTIVITY_LIMIT = 5
 
 
 def build_portal_overview(db: Session) -> dict[str, Any]:
@@ -45,9 +51,13 @@ def build_portal_overview(db: Session) -> dict[str, Any]:
     }
     active_project_ids.update(project.id for project in projects if portal_project_in_progress(project))
     project_names = {project.id: project.name for project in projects}
+    activity_jobs = limit_terminal_data_intake_jobs_for_activity(
+        recent_jobs,
+        limit=PORTAL_TERMINAL_DATA_INTAKE_ACTIVITY_LIMIT,
+    )
     activity = [
         event
-        for job in recent_jobs
+        for job in activity_jobs
         for event in worker_events_from_job(job, project_name=project_names.get(job.project_id or ""))
     ][:12]
     project_rows = [
@@ -184,6 +194,18 @@ def build_recent_updates(projects: list[Project], jobs: list[Job], artifacts: li
             }
         )
     return sorted(updates, key=lambda item: str(item["created_at"]), reverse=True)[:12]
+
+
+def limit_terminal_data_intake_jobs_for_activity(jobs: list[Job], *, limit: int) -> list[Job]:
+    visible: list[Job] = []
+    terminal_data_intake_count = 0
+    for job in jobs:
+        if job.job_type in DATA_INTAKE_ACTIVITY_JOB_TYPES and job.status in TERMINAL_ACTIVITY_STATUSES:
+            terminal_data_intake_count += 1
+            if terminal_data_intake_count > limit:
+                continue
+        visible.append(job)
+    return visible
 
 
 def portal_job_title(job_type: str) -> str:
@@ -390,8 +412,8 @@ def build_project_turn_state(
             **base,
             "state": "stale_runner",
             "owner": "system",
-            "label": "Runner state needs attention",
-            "detail": "A Codex job is marked running, but no local codex exec process is observed for this project.",
+            "label": "Work status needs attention",
+            "detail": "Work is marked running, but no active execution is observed for this project.",
             "input_attention": False,
             "confidence": "observed",
             "active_job_id": job.id,
@@ -406,7 +428,7 @@ def build_project_turn_state(
             "state": "agent_running",
             "owner": "agent",
             "label": "Codex is working",
-            "detail": str(worker.get("detail") if worker else "A Tablex worker or Codex process is active."),
+            "detail": str(worker.get("detail") if worker else "Project work is active."),
             "input_attention": False,
             "confidence": "observed",
             "active_job_id": worker.get("job_id") if worker else job.id if job else None,
@@ -432,7 +454,7 @@ def build_project_turn_state(
             "state": "agent_scheduled",
             "owner": "agent",
             "label": "Codex will resume automatically",
-            "detail": "Full Auto is between turns; the next heartbeat is scheduled.",
+            "detail": "Full Auto is preparing the next step.",
             "input_attention": False,
             "confidence": "observed",
             "active_job_id": job.id,
@@ -445,7 +467,7 @@ def build_project_turn_state(
             "state": "needs_attention",
             "owner": "system",
             "label": "No live agent turn observed",
-            "detail": "Full Auto is on, but no active Codex process, worker, approval, or scheduled heartbeat is currently observed.",
+            "detail": "Full Auto is on, but no active work is currently observed.",
             "input_attention": False,
             "confidence": "observed",
         }
@@ -454,7 +476,7 @@ def build_project_turn_state(
         "state": "waiting_for_user",
         "owner": "user",
         "label": "Waiting for you",
-        "detail": "Codex is not running for this project. Send a message or press Start when ready.",
+        "detail": "Waiting for your next input: add test data, add outcomes, or send an instruction.",
         "input_attention": True,
         "confidence": "observed",
     }

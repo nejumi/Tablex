@@ -442,6 +442,41 @@ def test_visible_activity_workers_hide_old_terminal_cards() -> None:
     assert [worker["worker_id"] for worker in workers] == ["recent", "queued", "session"]
 
 
+def test_visible_activity_workers_limit_terminal_upload_import_cards() -> None:
+    now = utc_now()
+    recent_time = (now - timedelta(seconds=4)).isoformat()
+    worker_payloads = [
+        {
+            "worker_id": f"upload-{index}",
+            "job_type": "upload_data_bundle" if index % 2 == 0 else "import_benchmark_dataset",
+            "status": "succeeded",
+            "updated_at": recent_time,
+            "active": False,
+        }
+        for index in range(7)
+    ]
+    worker_payloads.append(
+        {
+            "worker_id": "model-report",
+            "job_type": "train_model_candidates",
+            "status": "succeeded",
+            "updated_at": recent_time,
+            "active": False,
+        }
+    )
+
+    workers = visible_activity_workers(worker_payloads, now=now)
+
+    assert [worker["worker_id"] for worker in workers if str(worker.get("worker_id", "")).startswith("upload-")] == [
+        "upload-0",
+        "upload-1",
+        "upload-2",
+        "upload-3",
+        "upload-4",
+    ]
+    assert any(worker["worker_id"] == "model-report" for worker in workers)
+
+
 def test_merge_activity_workers_keeps_subagent_cards_distinct() -> None:
     now = utc_now()
     old_time = (now - timedelta(seconds=30)).isoformat()
@@ -702,6 +737,53 @@ def test_agent_chat_history_compaction_dedupes_experiment_registration_notices()
     assert compacted[0]["artifact_id"] == "art_progress_between"
     assert compacted[1]["artifact_id"] == "art_chat_latest"
     assert [action["label"] for action in compacted[1]["actions"]] == ["リーダーボードを開く", "根拠アセットを見る"]
+
+
+def test_agent_chat_history_compaction_dedupes_identical_progress_reports() -> None:
+    repeated_message = (
+        "同じセッションを再開し、文脈、目標、直近成果物を確認しました。"
+        "現時点で追加できる可逆的分析はありません。"
+    )
+    turns = [
+        {
+            "created_at": f"2026-07-07T09:0{index}:00",
+            "user_message": "",
+            "assistant_message": repeated_message,
+            "intent": {"type": "autonomous_agent_progress_report", "status": "ready"},
+            "actions": [{"type": "open_surface", "label": "ノートブックを開く", "target_tab": "Notebooks"}],
+            "response_brief": {"schema_version": "progress.v1", "source_event_index": index},
+            "artifact_id": f"art_progress_{index}",
+        }
+        for index in range(3)
+    ]
+
+    compacted = compact_agent_chat_history_turns(turns, locale="ja-JP")
+
+    assert len(compacted) == 1
+    assert compacted[0]["artifact_id"] == "art_progress_2"
+    assert compacted[0]["assistant_message"] == repeated_message
+
+
+def test_agent_chat_history_compaction_dedupes_identical_attention_turns() -> None:
+    repeated_message = "モデル評価結果はまだLeaderboardに反映していません。作業は継続中です。"
+    turns = [
+        {
+            "created_at": f"2026-07-07T10:0{index}:00",
+            "user_message": "",
+            "assistant_message": repeated_message,
+            "intent": {"type": "agent_attention_event", "status": "needs_attention", "message_kind": "model_results_pending"},
+            "actions": [{"type": "open_surface", "label": "状況を見る", "target_tab": "Home"}],
+            "response_brief": {"schema_version": "attention.v1", "source_event_index": index},
+            "artifact_id": f"art_attention_{index}",
+        }
+        for index in range(3)
+    ]
+
+    compacted = compact_agent_chat_history_turns(turns, locale="ja-JP")
+
+    assert len(compacted) == 1
+    assert compacted[0]["artifact_id"] == "art_attention_2"
+    assert compacted[0]["assistant_message"] == repeated_message
 
 
 def test_agent_chat_history_compaction_replaces_legacy_experiment_registration_state() -> None:
@@ -2238,6 +2320,61 @@ def test_agent_activity_turn_state_waits_for_user_when_no_agent_work_is_observed
     assert turn_state["owner"] == "user"
     assert turn_state["input_attention"] is True
     assert "local_process_table.codex_exec" in turn_state["sources"]
+
+
+def test_agent_activity_completed_plan_waits_for_new_input_options(tmp_path: Path) -> None:
+    client = make_client(tmp_path, api_agent_session_supervisor_enabled=False)
+
+    project_response = client.post("/api/projects", json={"name": "Completed wait options"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "IDLE"
+        project.autonomy_mode = "full_auto"
+        session = AgentSession(
+            id="ags_completed_wait_options",
+            project_id=project_id,
+            session_type="main_autonomous",
+            status="completed",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Completed available work.",
+            created_at=utc_now() - timedelta(minutes=10),
+            started_at=utc_now() - timedelta(minutes=10),
+            ended_at=utc_now() - timedelta(minutes=1),
+        )
+        db.add(session)
+        commit_research_plan_revision(
+            db,
+            project_id=project_id,
+            document={
+                "schema_version": "research_plan.v2",
+                "project_id": project_id,
+                "timeline_blocks": [
+                    {
+                        "id": "current_work_done",
+                        "title": "Current work done",
+                        "granularity": "chapter",
+                        "status": "done",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="No further reversible work is available without new input.",
+        )
+        db.commit()
+
+    activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
+    assert activity_response.status_code == 200
+    activity = activity_response.json()
+    assert activity["active_count"] == 0
+    assert activity["turn_state"]["state"] == "waiting_for_user"
+    assert "test data" in activity["turn_state"]["detail"]
+    assert "outcomes" in activity["turn_state"]["detail"]
+    assert "instruction" in activity["turn_state"]["detail"]
 
 
 def test_agent_activity_surfaces_malformed_agent_chat_turn_without_crashing(tmp_path: Path) -> None:
@@ -5993,15 +6130,16 @@ def test_agent_activity_surfaces_runner_retry_state(tmp_path: Path, monkeypatch:
     assert activity_response.status_code == 200
     activity = activity_response.json()
     assert activity["turn_state"]["state"] == "agent_scheduled"
-    assert activity["turn_state"]["label"] == "Codex runner retry scheduled"
+    assert activity["turn_state"]["label"] == "Waiting to resume"
     assert "120s" in activity["turn_state"]["detail"]
+    assert "runner" not in activity["turn_state"]["label"].lower()
     assert activity["turn_state"]["retry_state"]["event_type"] == "runner_retry_scheduled"
     assert activity["turn_state"]["retry_state"]["event_index"] == 0
     assert activity["turn_state"]["retry_state"]["created_at"]
     assert activity["turn_state"]["retry_state"]["retry_delay_seconds"] == 120
     assert activity["turn_state"]["retry_state"]["failure_kind"] == "runner_unavailable"
     assert activity["workers"][0]["status"] == "waiting_for_runner"
-    assert activity["workers"][0]["headline"] == "Codex runner retry scheduled"
+    assert activity["workers"][0]["headline"] == "Waiting to resume"
     assert activity["workers"][0]["retry_state"]["retry_delay_seconds"] == 120
     assert activity["workers"][0]["retry_state"]["failure_kind"] == "runner_unavailable"
 
@@ -8872,6 +9010,55 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path, monkeypatch: A
     recent_updates = overview["recent_updates"]
     assert all("agent_chat_turn" not in update["title"] for update in recent_updates)
     assert all("agent_chat_turn" not in update["summary"] for update in recent_updates)
+
+
+def test_portal_overview_limits_terminal_upload_import_activity_cards(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Portal intake history"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    now = utc_now()
+    with app.state.session_factory() as db:
+        for index in range(7):
+            job_type = "upload_data_bundle" if index % 2 == 0 else "import_benchmark_dataset"
+            job = create_job(db, job_type=job_type, project_id=project_id)
+            observed_at = now - timedelta(seconds=index)
+            job.status = "succeeded"
+            job.created_at = observed_at
+            job.updated_at = observed_at
+            job.started_at = observed_at
+            job.ended_at = observed_at
+            job.output_json = json.dumps(
+                {
+                    "worker_events": [
+                        {
+                            "worker_id": f"intake-{index}",
+                            "status": "succeeded",
+                            "headline": "Data import finished",
+                            "detail": "Data import finished",
+                            "created_at": observed_at.isoformat(),
+                            "updated_at": observed_at.isoformat(),
+                        }
+                    ]
+                }
+            )
+        db.commit()
+
+    overview_response = client.get("/api/portal/overview")
+    assert overview_response.status_code == 200
+    activity = overview_response.json()["agent_activity"]
+    intake_ids = [
+        event["worker_id"]
+        for event in activity
+        if event.get("job_type") in {"upload_data_bundle", "import_benchmark_dataset"}
+    ]
+
+    assert intake_ids == ["intake-0", "intake-1", "intake-2", "intake-3", "intake-4"]
+    jobs_response = client.get(f"/api/projects/{project_id}/jobs")
+    assert jobs_response.status_code == 200
+    assert len([job for job in jobs_response.json() if job["job_type"] in {"upload_data_bundle", "import_benchmark_dataset"}]) == 7
+
 
 def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")

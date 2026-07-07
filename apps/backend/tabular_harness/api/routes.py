@@ -5408,13 +5408,15 @@ def compact_agent_chat_history_turns(
     db: Session | None = None,
     project_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    ordered = dedupe_repeated_experiment_registration_failure_turns(
-        dedupe_repeated_experiment_registration_turns(
-            coalesce_adjacent_notebook_update_turns(
-                sorted(turns, key=lambda turn: str(turn.get("created_at") or "")),
-                locale=locale,
-                db=db,
-                project_id=project_id,
+    ordered = dedupe_consecutive_identical_agent_chat_turns(
+        dedupe_repeated_experiment_registration_failure_turns(
+            dedupe_repeated_experiment_registration_turns(
+                coalesce_adjacent_notebook_update_turns(
+                    sorted(turns, key=lambda turn: str(turn.get("created_at") or "")),
+                    locale=locale,
+                    db=db,
+                    project_id=project_id,
+                )
             )
         )
     )
@@ -5535,6 +5537,63 @@ def agent_chat_turn_is_experiment_registration(turn: dict[str, Any]) -> bool:
 def agent_chat_turn_is_experiment_registration_failure(turn: dict[str, Any]) -> bool:
     intent = turn.get("intent") if isinstance(turn.get("intent"), dict) else {}
     return intent.get("type") == "experiment_results_registration_failed"
+
+
+def agent_chat_identical_assistant_turn_key(turn: dict[str, Any]) -> str | None:
+    user_message = str(turn.get("user_message") or "").strip()
+    assistant_message = str(turn.get("assistant_message") or "").strip()
+    if user_message or not assistant_message:
+        return None
+    intent = turn.get("intent") if isinstance(turn.get("intent"), dict) else {}
+    actions = turn.get("actions") if isinstance(turn.get("actions"), list) else []
+    action_key = [
+        {
+            "type": str(action.get("type") or ""),
+            "status": str(action.get("status") or ""),
+            "label": str(action.get("label") or ""),
+            "target_tab": str(action.get("target_tab") or ""),
+            "target_anchor": str(action.get("target_anchor") or ""),
+            "artifact_id": str(action.get("artifact_id") or ""),
+            "run_id": str(action.get("run_id") or ""),
+        }
+        for action in actions
+        if isinstance(action, dict)
+    ]
+    return json.dumps(
+        {
+            "assistant_message": assistant_message,
+            "intent_type": str(intent.get("type") or ""),
+            "intent_status": str(intent.get("status") or ""),
+            "message_kind": str(intent.get("message_kind") or ""),
+            "actions": action_key,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def dedupe_consecutive_identical_agent_chat_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    previous_key: str | None = None
+    previous_index: int | None = None
+    for turn in turns:
+        key = agent_chat_identical_assistant_turn_key(turn)
+        if key is not None and key == previous_key and previous_index is not None:
+            previous_turn = deduped[previous_index]
+            latest = dict(turn)
+            previous_actions = previous_turn.get("actions") if isinstance(previous_turn.get("actions"), list) else []
+            latest_actions = latest.get("actions") if isinstance(latest.get("actions"), list) else []
+            latest["actions"] = merge_agent_chat_actions(latest_actions, previous_actions, limit=6)
+            deduped[previous_index] = latest
+            continue
+        deduped.append(turn)
+        if key is None:
+            previous_key = None
+            previous_index = None
+        else:
+            previous_key = key
+            previous_index = len(deduped) - 1
+    return deduped
 
 
 def experiment_registration_turn_key(turn: dict[str, Any]) -> str:
@@ -8699,15 +8758,15 @@ def get_project_agent_activity(
         japanese = locale_is_japanese(response_locale)
         retry_detail = (
             (
-                f"Codex runnerをまだ使えません。作業状態を保持し、約{int(retry_delay)}秒後に再試行します。"
+                f"分析エージェントをまだ起動できません。作業状態を保持し、約{int(retry_delay)}秒後に再開します。"
                 if japanese
-                else f"Codex runner is not ready; Tablex will retry the work in about {retry_delay}s."
+                else f"The analysis agent is not ready yet; work will resume in about {retry_delay}s."
             )
             if isinstance(retry_delay, int | float)
             else (
-                "Codex runnerをまだ使えません。作業状態を保持して再試行します。"
+                "分析エージェントをまだ起動できません。作業状態を保持して再開します。"
                 if japanese
-                else "Codex runner is not ready; Tablex will keep retrying the work."
+                else "The analysis agent is not ready yet; the work state is preserved."
             )
         )
         include_current_work_focus = (
@@ -8728,9 +8787,9 @@ def get_project_agent_activity(
         display_name = "自律分析" if japanese else "Autonomous Analyst"
         running_detail = "CodexがProject workspaceで作業中です。" if japanese else "Codex is running in the project workspace now."
         preparing_detail = (
-            "実行中のCodex processはまだ観測されていません。Full Autoは次のturnを準備しています。"
+            "次の作業を準備しています。"
             if japanese
-            else "No live Codex process is observed yet. Full Auto is preparing the next turn."
+            else "Full Auto is preparing the next step."
         )
         fallback_detail = (
             "コンテキスト準備、分析、または次の実行開始待ちです。"
@@ -8744,19 +8803,19 @@ def get_project_agent_activity(
         )
         powered_off_detail = "Agent loopはOFFです。" if japanese else "The agent loop is off."
         powered_off_process_detail = (
-            "Agent loopはOFFですが、Codex processがまだ観測されています。"
+            "Agent loopはOFFですが、停止処理中の作業がまだ残っています。"
             if japanese
-            else "The agent loop is off, but a Codex process is still observed."
+            else "The agent loop is off, but stopped work is still settling."
         )
         running_headline = "静かに作業中" if japanese else "Codex is running quietly"
         working_headline = "Codexが作業中" if japanese else "Codex is working"
-        retry_headline = "Codex runnerを再試行予定" if japanese else "Codex runner retry scheduled"
-        continue_headline = "Full Autoは継続します" if japanese else "Full Auto will continue"
+        retry_headline = "再開待ち" if japanese else "Waiting to resume"
+        continue_headline = "次の作業を準備中" if japanese else "Preparing the next step"
         powered_off_headline = "Agent loopはOFF" if japanese else "Agent loop is off"
         powered_off_process_headline = (
-            "停止後のCodex processを観測中"
+            "停止処理を確認中"
             if japanese
-            else "Codex process still observed after stop"
+            else "Stop is still settling"
         )
         headline = (
             powered_off_process_headline
@@ -9540,6 +9599,25 @@ def visible_activity_workers(workers: list[dict[str, Any]], *, now: datetime) ->
         updated_at = parse_worker_event_time(worker.get("updated_at") or worker.get("created_at"))
         if updated_at is not None and (now - updated_at).total_seconds() <= 15:
             visible.append(worker)
+    return limit_terminal_data_intake_activity_workers(visible, limit=5)
+
+
+def limit_terminal_data_intake_activity_workers(workers: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    visible: list[dict[str, Any]] = []
+    terminal_data_intake_count = 0
+    for worker in workers:
+        job_type = str(worker.get("job_type") or "")
+        status = str(worker.get("status") or "")
+        if job_type in {"upload_data_bundle", "import_benchmark_dataset"} and status in {
+            "succeeded",
+            "failed",
+            "cancelled",
+            "timed_out",
+        }:
+            terminal_data_intake_count += 1
+            if terminal_data_intake_count > limit:
+                continue
+        visible.append(worker)
     return visible
 
 
