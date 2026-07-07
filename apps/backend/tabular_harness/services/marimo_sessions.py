@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -28,7 +29,6 @@ from tabular_harness.services.analysis_notebooks import (
 MARIMO_SOURCE_ASSET_TYPES = {"analysis_notebook", "marimo_notebook"}
 SESSION_TTL_SECONDS = 60 * 60
 FAILED_SESSION_TTL_SECONDS = 10 * 60
-STARTUP_WAIT_SECONDS = 8.0
 
 
 @dataclass
@@ -46,6 +46,7 @@ class NativeMarimoSession:
     last_accessed_at: datetime
     stdout_path: Path
     stderr_path: Path
+    source_hash: str
 
     def to_dict(self) -> dict[str, Any]:
         runtime_error = self.runtime_error_excerpt()
@@ -60,6 +61,7 @@ class NativeMarimoSession:
             "status": status,
             "started_at": self.started_at.isoformat(),
             "last_accessed_at": self.last_accessed_at.isoformat(),
+            "source_hash": self.source_hash,
             "runtime": {
                 "has_error": runtime_error is not None,
                 "error_excerpt": runtime_error,
@@ -109,16 +111,23 @@ def start_or_get_native_marimo_session(
         raise FileNotFoundError("Notebook source file was not found.")
     if notebook_path.suffix.lower() != ".py":
         raise ValueError("Native marimo sessions require a Python marimo source file.")
+    source_hash = _file_sha256(notebook_path)
     notebook_cwd = source_notebook_working_dir_for_export(artifact, notebook_path) or notebook_path.parent
 
     with _lock:
-        _cleanup_locked()
+        _cleanup_locked(settings=settings)
         existing_id = _session_id_by_artifact_id.get(artifact.id)
         existing = _sessions_by_id.get(existing_id or "")
         if existing is not None and existing.is_alive():
-            existing.last_accessed_at = datetime.now(timezone.utc)
-            return existing
+            if existing.source_hash == source_hash:
+                existing.last_accessed_at = datetime.now(timezone.utc)
+                return existing
+            _terminate_process(existing.process)
+            _remove_session_locked(existing)
+        elif existing is not None:
+            _remove_session_locked(existing)
 
+        _enforce_session_limit_locked(settings=settings)
         session_id = new_id("mos")
         port = _free_port()
         base_url = f"/api/marimo-sessions/{session_id}/proxy"
@@ -174,6 +183,7 @@ def start_or_get_native_marimo_session(
             last_accessed_at=datetime.now(timezone.utc),
             stdout_path=stdout_path,
             stderr_path=stderr_path,
+            source_hash=source_hash,
         )
         _sessions_by_id[session.id] = session
         _session_id_by_artifact_id[artifact.id] = session.id
@@ -206,6 +216,14 @@ def stop_native_marimo_session(session_id: str) -> bool:
         _terminate_process(session.process)
         _remove_session_locked(session)
         return True
+
+
+def cleanup_native_marimo_sessions(*, settings: Settings) -> int:
+    with _lock:
+        before = len(_sessions_by_id)
+        _cleanup_locked(settings=settings)
+        _enforce_session_limit_locked(settings=settings)
+        return max(0, before - len(_sessions_by_id))
 
 
 def stop_native_marimo_session_for_artifact(artifact_id: str) -> bool:
@@ -267,24 +285,6 @@ def stop_orphaned_native_marimo_processes(*, settings: Settings) -> int:
     return stopped
 
 
-def _wait_for_startup(session: NativeMarimoSession) -> None:
-    deadline = time.monotonic() + STARTUP_WAIT_SECONDS
-    last_error: Exception | None = None
-    while time.monotonic() < deadline:
-        if not session.is_alive():
-            stderr_excerpt = _tail_text(session.stderr_path, 4000)
-            raise RuntimeError(f"marimo process exited during startup. {stderr_excerpt}".strip())
-        try:
-            if _http_ready(session, timeout=0.5):
-                return
-        except Exception as exc:  # noqa: BLE001
-            last_error = exc
-            time.sleep(0.15)
-    if last_error is not None:
-        raise TimeoutError(f"marimo did not become ready: {last_error}")
-    raise TimeoutError("marimo did not become ready.")
-
-
 def _http_ready(session: NativeMarimoSession, timeout: float = 0.05) -> bool:
     try:
         with urllib.request.urlopen(
@@ -296,7 +296,8 @@ def _http_ready(session: NativeMarimoSession, timeout: float = 0.05) -> bool:
         return False
 
 
-def _cleanup_locked() -> None:
+def _cleanup_locked(*, settings: Settings) -> None:
+    del settings
     now = datetime.now(timezone.utc)
     for session in list(_sessions_by_id.values()):
         age = (now - session.last_accessed_at).total_seconds()
@@ -305,6 +306,17 @@ def _cleanup_locked() -> None:
             _remove_session_locked(session)
         elif not session.is_alive() and age > FAILED_SESSION_TTL_SECONDS:
             _remove_session_locked(session)
+
+
+def _enforce_session_limit_locked(*, settings: Settings) -> None:
+    max_sessions = max(1, int(settings.marimo_max_sessions))
+    alive_sessions = [session for session in _sessions_by_id.values() if session.is_alive()]
+    if len(alive_sessions) < max_sessions:
+        return
+    removable = sorted(alive_sessions, key=lambda session: session.last_accessed_at)
+    for session in removable[: max(0, len(alive_sessions) - max_sessions + 1)]:
+        _terminate_process(session.process)
+        _remove_session_locked(session)
 
 
 def _remove_session_locked(session: NativeMarimoSession) -> None:
@@ -358,6 +370,14 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def _file_sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def _tail_text(path: Path, limit: int) -> str:

@@ -58,6 +58,7 @@ JOB_TYPES = {
     "create_notebook_authoring_brief",
     "prepare_data_understanding_notebook_authoring",
     "prepare_model_diagnostics_notebook_authoring",
+    "prewarm_native_marimo_session",
     "generate_data_understanding_notebook",
     "generate_model_diagnostics_notebook",
     "materialize_model_diagnostics_artifacts",

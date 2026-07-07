@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from tabular_harness.core.json import loads_json
 from tabular_harness.models.entities import AgentSession, Project, utc_now
 from tabular_harness.services.artifacts import LocalArtifactStore
+from tabular_harness.services.jobs import create_job
 
 SESSION_INTERNAL_DIR = ".tablex"
 SESSION_REQUESTS_DIR = "requests"
@@ -94,6 +95,17 @@ def process_notebook_tool_requests(
             )
             if compatibility_warnings:
                 result["compatibility_warnings"] = compatibility_warnings
+            notebook_artifact_id = result.get("notebook_artifact_id")
+            if isinstance(notebook_artifact_id, str) and notebook_artifact_id.strip():
+                create_job(
+                    db,
+                    job_type="prewarm_native_marimo_session",
+                    project_id=project.id,
+                    input_payload={"analysis_notebook_artifact_id": notebook_artifact_id.strip()},
+                    priority=20,
+                    max_attempts=1,
+                    created_by="tablex",
+                )
             ack = {
                 "schema_version": NOTEBOOK_ACK_SCHEMA_VERSION,
                 "request_id": request_id,

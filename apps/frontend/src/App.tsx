@@ -9291,8 +9291,8 @@ function NotebooksTab({
     await openNativeMarimoArtifact(item.artifact_ids.notebook);
   }, [openNativeMarimoArtifact]);
 
-  const restartNativeMarimoArtifact = React.useCallback((artifactId: string) => {
-    void openNativeMarimoArtifact(artifactId, { restart: true });
+  const restartNativeMarimoArtifact = React.useCallback(async (artifactId: string) => {
+    await openNativeMarimoArtifact(artifactId, { restart: true });
   }, [openNativeMarimoArtifact]);
 
   async function generateDataNotebook() {

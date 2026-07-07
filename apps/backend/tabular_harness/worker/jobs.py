@@ -39,6 +39,7 @@ from tabular_harness.models.entities import (
 from tabular_harness.services.adaptive_strategy import create_adaptive_strategy_brief
 from tabular_harness.services.agent_chat import handle_agent_chat_turn
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
+from tabular_harness.services.agent_inbox import write_inbox_entry
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
 from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
@@ -114,15 +115,15 @@ from tabular_harness.services.experiment_lifecycle import (
     draft_run_report,
 )
 from tabular_harness.services.jobs import JOB_TYPES, create_job
-from tabular_harness.services.agent_inbox import write_inbox_entry
 from tabular_harness.services.kaggle_probe import (
     download_kaggle_selected_files,
     fetch_kaggle_competition_inventory,
     probe_kaggle_benchmark_access,
 )
-from tabular_harness.services.research_plans import (
-    record_harness_dataset_upload_in_research_plan,
-    record_harness_objective_in_research_plan,
+from tabular_harness.services.marimo_sessions import (
+    cleanup_native_marimo_sessions,
+    marimo_available,
+    start_or_get_native_marimo_session,
 )
 from tabular_harness.services.model_diagnostics_artifacts import (
     materialize_model_diagnostics_artifacts,
@@ -152,6 +153,10 @@ from tabular_harness.services.relational_feature_recipe import build_relational_
 from tabular_harness.services.reporting import (
     create_project_visualization_dashboard,
     generate_project_insights,
+)
+from tabular_harness.services.research_plans import (
+    record_harness_dataset_upload_in_research_plan,
+    record_harness_objective_in_research_plan,
 )
 from tabular_harness.services.research_runner import run_research_source_pack_local_stub
 from tabular_harness.services.research_sources import create_research_source_pack
@@ -2175,6 +2180,31 @@ def plan_notebook_execution_handler(db: Session, job: Job, store: LocalArtifactS
     }
 
 
+def prewarm_native_marimo_session_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    del store
+    settings = get_settings()
+    cleaned_session_count = cleanup_native_marimo_sessions(settings=settings)
+    notebook_artifact = notebook_artifact_for_job(db, job, "prewarm_native_marimo_session")
+    if not marimo_available():
+        return {
+            "schema_version": "native_marimo_prewarm.v1",
+            "status": "skipped",
+            "reason": "marimo_unavailable",
+            "analysis_notebook_artifact_id": notebook_artifact.id,
+            "cleaned_session_count": cleaned_session_count,
+        }
+    session = start_or_get_native_marimo_session(artifact=notebook_artifact, settings=settings)
+    return {
+        "schema_version": "native_marimo_prewarm.v1",
+        "status": "ready",
+        "analysis_notebook_artifact_id": notebook_artifact.id,
+        "session_id": session.id,
+        "session_status": session.status(),
+        "source_hash": session.source_hash,
+        "cleaned_session_count": cleaned_session_count,
+    }
+
+
 def prepare_result_notebook_evidence_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
     project = project_for_job(db, job, "prepare_result_notebook_evidence")
     result = prepare_result_notebook_evidence(db, store=store, project=project)
@@ -4144,6 +4174,7 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["prepare_data_understanding_notebook_authoring"] = prepare_data_understanding_notebook_authoring_handler
     handlers["plan_agent_task"] = plan_agent_task_handler
     handlers["plan_notebook_execution"] = plan_notebook_execution_handler
+    handlers["prewarm_native_marimo_session"] = prewarm_native_marimo_session_handler
     handlers["prepare_result_notebook_evidence"] = prepare_result_notebook_evidence_handler
     handlers["generate_decision_report"] = generate_decision_report_handler
     handlers["draft_project_report"] = draft_project_report_handler

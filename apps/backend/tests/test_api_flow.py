@@ -26,8 +26,6 @@ from tabular_harness.api.routes import (
     summarize_runtime_error_for_chat,
     visible_activity_workers,
 )
-from tabular_harness.services.analysis_notebooks import marimo_notebook_source_hash_for_artifact
-from tabular_harness.services.agent_inbox import list_inbox_entries
 from tabular_harness.core.config import Settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
@@ -53,6 +51,7 @@ from tabular_harness.models.entities import (
     utc_now,
 )
 from tabular_harness.schemas import AgentResult
+from tabular_harness.services.agent_inbox import list_inbox_entries
 from tabular_harness.services.agent_sessions import (
     append_runner_stream_to_workspace,
     append_session_event,
@@ -66,8 +65,14 @@ from tabular_harness.services.agent_sessions import (
     register_agent_session_attention_chat_turn,
     user_instructions_inbox_path,
 )
+from tabular_harness.services.analysis_notebooks import marimo_notebook_source_hash_for_artifact
 from tabular_harness.services.approach import store_json_artifact, store_text_artifact
-from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path, next_artifact_version, register_artifact
+from tabular_harness.services.artifacts import (
+    LocalArtifactStore,
+    artifact_primary_path,
+    next_artifact_version,
+    register_artifact,
+)
 from tabular_harness.services.jobs import (
     acquire_next_job,
     create_job,
@@ -3179,7 +3184,7 @@ def test_leaderboard_metric_direction_handles_derived_loss_names() -> None:
     assert metric_lower_is_better("roc_auc") is False
 
 
-def test_leaderboard_reconciles_existing_run_into_chat_and_plan_links(
+def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -3447,19 +3452,14 @@ def test_leaderboard_reconciles_existing_run_into_chat_and_plan_links(
     experiment_turns = [
         turn for turn in history_response.json() if turn["intent"].get("type") == "experiment_results_registered"
     ]
-    assert len(experiment_turns) == 1
-    turn = experiment_turns[0]
-    assert turn["actions"][0]["target_tab"] == "Leaderboard"
-    assert turn["actions"][0]["target_anchor"] == "result-readout"
-    assert turn["response_brief"]["run_ids"] == ["run_leaderboard_reconcile"]
-    assert turn["response_brief"]["research_plan_node_ids"] == ["modeling"]
+    assert experiment_turns == []
 
     second_history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
     assert second_history_response.status_code == 200
     second_turns = [
         turn for turn in second_history_response.json() if turn["intent"].get("type") == "experiment_results_registered"
     ]
-    assert len(second_turns) == 1
+    assert second_turns == []
     with app.state.session_factory() as db:
         chat_artifacts = list(
             db.scalars(
@@ -3471,7 +3471,7 @@ def test_leaderboard_reconciles_existing_run_into_chat_and_plan_links(
             for artifact in chat_artifacts
             if loads_json(artifact.metadata_json, {}).get("source") == "main_agent_session_experiment_registration"
         ]
-        assert len(registration_artifacts) == 1
+        assert registration_artifacts == []
 
 
 def test_pipeline_bundle_download_omits_validation_cache_files(tmp_path: Path) -> None:
@@ -4546,7 +4546,7 @@ def test_agent_chat_history_rewrites_legacy_notebook_preview_action_to_native_so
     assert "html_artifact_id" not in turn["response_brief"]
 
 
-def test_agent_chat_history_reconciles_existing_source_only_session_notebook(
+def test_agent_chat_history_keeps_source_only_session_notebook_read_only(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -4603,13 +4603,7 @@ def test_agent_chat_history_reconciles_existing_source_only_session_notebook(
         if item["intent"].get("type") == "notebook_artifact_update"
         and item["response_brief"]["notebook_artifact_id"] == notebook_artifact.id
     ]
-    assert len(notebook_turns) == 1
-    turn = notebook_turns[0]
-    assert turn["intent"]["status"] == "quality_needs_attention"
-    assert turn["actions"][0]["target_tab"] == "Notebooks"
-    assert turn["actions"][0]["target_anchor"] == "notebook-native-marimo-top"
-    assert turn["actions"][0]["artifact_id"] == notebook_artifact.id
-    assert turn["response_brief"]["status"] == "quality_needs_attention"
+    assert notebook_turns == []
 
     second_history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
     assert second_history_response.status_code == 200
@@ -4620,7 +4614,7 @@ def test_agent_chat_history_reconciles_existing_source_only_session_notebook(
         if item["intent"].get("type") == "notebook_artifact_update"
         and item["response_brief"]["notebook_artifact_id"] == notebook_artifact.id
     ]
-    assert len(second_notebook_turns) == 1
+    assert second_notebook_turns == []
 
 
 def test_agent_chat_history_hides_resolved_notebook_context_attention(
@@ -4741,7 +4735,7 @@ def test_agent_chat_history_hides_resolved_notebook_context_attention(
     ]
 
 
-def test_agent_activity_reconciles_existing_source_only_notebook_context(
+def test_agent_activity_keeps_source_only_notebook_context_read_only(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -4794,8 +4788,8 @@ def test_agent_activity_reconciles_existing_source_only_notebook_context(
     context_entries = [
         entry for entry in list_inbox_entries(workspace) if entry["kind"] == "request" and entry["type"] == "notebook_context_request"
     ]
-    assert len(context_entries) == 1
-    assert notebook_artifact.id in context_entries[0]["content"]
+    assert context_entries == []
+    assert all(notebook_artifact.id not in entry["content"] for entry in context_entries)
 
     history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
     assert history_response.status_code == 200
@@ -4804,10 +4798,7 @@ def test_agent_activity_reconciles_existing_source_only_notebook_context(
         for item in history_response.json()
         if item["intent"].get("message_kind") == "notebook_context_registration_needed"
     ]
-    assert len(context_turns) == 1
-    assert context_turns[0]["actions"][0]["target_tab"] == "Notebooks"
-    assert context_turns[0]["actions"][0]["target_anchor"] == "notebook-native-marimo-top"
-    assert notebook_artifact.id in context_turns[0]["response_brief"]["details"]["notebook_artifact_ids"]
+    assert context_turns == []
 
 
 def test_native_marimo_open_failure_is_recorded_in_chat_and_inbox(
@@ -5385,6 +5376,7 @@ def test_native_marimo_runtime_error_excerpt_prefers_traceback(tmp_path: Path) -
         last_accessed_at=utc_now(),
         stdout_path=tmp_path / "stdout.log",
         stderr_path=stderr_path,
+        source_hash="test_source_hash",
     )
 
     excerpt = session.runtime_error_excerpt()
@@ -5416,6 +5408,7 @@ def test_native_marimo_session_reports_starting_without_blocking(tmp_path: Path,
         last_accessed_at=utc_now(),
         stdout_path=stdout_path,
         stderr_path=stderr_path,
+        source_hash="test_source_hash",
     )
     monkeypatch.setattr(marimo_sessions_module, "_http_ready", lambda _session, timeout=0.05: False)
 

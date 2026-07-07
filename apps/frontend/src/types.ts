@@ -125,6 +125,7 @@ export type NativeMarimoSession = {
   status: string;
   started_at: string;
   last_accessed_at: string;
+  source_hash: string;
   runtime?: {
     has_error: boolean;
     error_excerpt: string | null;

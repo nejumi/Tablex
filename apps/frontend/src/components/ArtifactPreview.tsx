@@ -446,21 +446,35 @@ export function NativeMarimoFrame({
   onRestart
 }: {
   session: NativeMarimoSession;
-  onRestart?: (artifactId: string) => void;
+  onRestart?: (artifactId: string) => Promise<void> | void;
 }) {
   const { text } = React.useContext(LocaleContext);
   const [sessionStatus, setSessionStatus] = React.useState(session);
   const [sessionUnavailable, setSessionUnavailable] = React.useState(false);
+  const [recovering, setRecovering] = React.useState(false);
+  const [recoverAttempt, setRecoverAttempt] = React.useState(0);
   const [expanded, setExpanded] = React.useState(false);
   const url = sessionStatus.proxy_url.startsWith("/api/") ? `${apiBase}${sessionStatus.proxy_url}` : sessionStatus.proxy_url;
   const runtimeError = sessionStatus.runtime?.has_error ? sessionStatus.runtime.error_excerpt : null;
   const nativeStatus = sessionStatus.status;
   const sessionStarting = nativeStatus === "starting";
   const sessionFailed = nativeStatus === "failed";
-  const showFrame = nativeStatus === "running" && !sessionUnavailable && !sessionFailed;
+  const showFrame = nativeStatus === "running" && !sessionUnavailable && !sessionFailed && !recovering;
+  const restartSession = React.useCallback(async () => {
+    if (!onRestart) return;
+    setRecovering(true);
+    setSessionUnavailable(false);
+    try {
+      await onRestart(session.artifact_id);
+    } finally {
+      setRecovering(false);
+    }
+  }, [onRestart, session.artifact_id]);
   React.useEffect(() => {
     setSessionStatus(session);
     setSessionUnavailable(false);
+    setRecovering(false);
+    setRecoverAttempt(0);
   }, [session]);
   React.useEffect(() => {
     let stopped = false;
@@ -472,7 +486,15 @@ export function NativeMarimoFrame({
           setSessionUnavailable(false);
         }
       } catch {
-        if (!stopped) setSessionUnavailable(true);
+        if (stopped) return;
+        setSessionUnavailable(true);
+        if (onRestart && recoverAttempt === 0) {
+          setRecoverAttempt(1);
+          setRecovering(true);
+          void Promise.resolve(onRestart(session.artifact_id)).finally(() => {
+            if (!stopped) setRecovering(false);
+          });
+        }
       }
     }
     const initialTimer = window.setTimeout(refreshSessionStatus, 600);
@@ -482,7 +504,7 @@ export function NativeMarimoFrame({
       window.clearTimeout(initialTimer);
       window.clearInterval(interval);
     };
-  }, [session.session_id, sessionStatus.status]);
+  }, [onRestart, recoverAttempt, session.artifact_id, session.session_id, sessionStatus.status]);
   React.useEffect(() => {
     if (!expanded) return;
     function closeOnEscape(event: KeyboardEvent) {
@@ -500,8 +522,8 @@ export function NativeMarimoFrame({
         </div>
         <div className="row-actions">
           {onRestart ? (
-            <button className="secondary-button" onClick={() => onRestart(session.artifact_id)} type="button">
-              <RefreshCw size={16} />
+            <button className="secondary-button" disabled={recovering} onClick={() => void restartSession()} type="button">
+              {recovering ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
               {text.notebookNativeMarimoRestart}
             </button>
           ) : null}
@@ -523,7 +545,13 @@ export function NativeMarimoFrame({
           </details>
         </div>
       ) : null}
-      {sessionUnavailable ? (
+      {recovering ? (
+        <div className="banner subtle native-marimo-runtime-error">
+          <Loader2 className="spin" size={16} />
+          <strong>{text.notebookNativeMarimoRecovering}</strong>
+        </div>
+      ) : null}
+      {sessionUnavailable && !recovering ? (
         <div className="banner danger native-marimo-runtime-error">
           <strong>{text.notebookNativeMarimoError}</strong>
           <span>{text.notebookNativeMarimoUnavailable}</span>
@@ -552,8 +580,8 @@ export function NativeMarimoFrame({
             </div>
             <div className="row-actions">
               {onRestart ? (
-                <button className="secondary-button" onClick={() => onRestart(session.artifact_id)} type="button">
-                  <RefreshCw size={16} />
+                <button className="secondary-button" disabled={recovering} onClick={() => void restartSession()} type="button">
+                  {recovering ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
                   {text.notebookNativeMarimoRestart}
                 </button>
               ) : null}
@@ -574,7 +602,12 @@ export function NativeMarimoFrame({
               </details>
             </div>
           ) : null}
-          {sessionUnavailable ? (
+          {recovering ? (
+            <div className="banner subtle native-marimo-runtime-error expanded">
+              <Loader2 className="spin" size={16} />
+              <strong>{text.notebookNativeMarimoRecovering}</strong>
+            </div>
+          ) : sessionUnavailable ? (
             <div className="banner danger native-marimo-runtime-error expanded">
               <strong>{text.notebookNativeMarimoError}</strong>
               <span>{text.notebookNativeMarimoUnavailable}</span>
