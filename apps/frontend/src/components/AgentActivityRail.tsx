@@ -479,7 +479,7 @@ function isRunningWorkerStatus(status: string) {
 
 const QUEUED_WORKER_ACTIVITY_TTL_MS = 5 * 60 * 1000;
 const TRANSIENT_WORKER_ACTIVITY_TTL_MS = 15 * 1000;
-const FINISHED_WORKER_ACTIVITY_TTL_MS = 24 * 60 * 60 * 1000;
+const FINISHED_WORKER_ACTIVITY_TTL_MS = 8 * 1000;
 
 function isTerminalWorkerStatus(status: string) {
   return ["succeeded", "failed", "cancelled", "timed_out"].includes(status);
@@ -614,10 +614,6 @@ export function humanizeLabel(value: string) {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function isTerminalJob(job: Job) {
-  return ["succeeded", "failed", "cancelled", "timed_out"].includes(job.status);
 }
 
 function isMainAgentReplyWaitJob(job: Job) {

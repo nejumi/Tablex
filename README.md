@@ -163,6 +163,12 @@ Frontend build:
 npm --prefix apps/frontend run build
 ```
 
+Browser golden-slice smoke:
+
+```bash
+node apps/frontend/e2e/golden_slice_smoke.mjs
+```
+
 Frontend lint:
 
 ```bash
