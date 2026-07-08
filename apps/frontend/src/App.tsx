@@ -11580,15 +11580,20 @@ const assetTypeCategoryMap: Record<string, AssetCategoryKey> = {
   notebook_run_manifest: "notebooks",
   decision_dashboard: "reports",
   decision_report: "reports",
+  decision_report_bundle: "reports",
   report: "reports",
   run_report: "reports",
+  agent_session_report: "reports",
   agent_task_report: "reports",
   understanding_report: "reports",
   model_diagnostics_artifact_report: "reports",
+  agent_session_figure: "notebooks",
   feature_importance: "model_prediction",
   permutation_importance: "model_prediction",
   model_diagnostics_artifact_pack: "model_prediction",
   prediction_pipeline: "model_prediction",
+  prediction_input: "model_prediction",
+  prediction_batch: "model_prediction",
   pilot_prediction_batch: "model_prediction",
   pilot_outcome_batch: "model_prediction",
   pilot_scoring_report: "model_prediction",
@@ -11716,6 +11721,30 @@ function artifactSearchText(
     .toLowerCase();
 }
 
+const assetSearchPriorityByType: Record<string, number> = {
+  analysis_notebook: 0,
+  marimo_notebook: 0,
+  decision_report: 0,
+  run_report: 0,
+  agent_session_report: 0,
+  research_findings_report: 0,
+  prediction_pipeline: 0,
+  prediction_batch: 0,
+  pilot_prediction_batch: 0,
+  pilot_scoring_report: 0,
+  pilot_validation_audit: 0,
+  dataset_snapshot: 1,
+  uploaded_table: 1,
+  uploaded_supporting_table: 1,
+  split_manifest: 1,
+  evaluation_spec: 1,
+  evaluation_candidate: 1
+};
+
+function assetInventorySearchPriority(artifact: Artifact): number {
+  return assetSearchPriorityByType[artifact.asset_type] ?? (assetCategoryForArtifact(artifact) === "other" ? 3 : 2);
+}
+
 function formatContractModes(idea: Idea) {
   const inputs = idea.agent_task_contract.inputs;
   if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) return "-";
@@ -11837,18 +11866,24 @@ function AssetsTab({
   const notebookItems = React.useMemo(() => preferredNotebookItems(notebookIndex), [notebookIndex]);
   const planNodeOptions = React.useMemo(() => researchPlanTimeline?.blocks ?? [], [researchPlanTimeline]);
   const visibleArtifactRows = React.useMemo(
-    () =>
-      artifacts
-        .filter((artifact) => {
-          const category = assetCategoryForArtifact(artifact);
-          const matchesCategory = assetCategoryFilter === "all" || category === assetCategoryFilter;
-          const query = assetSearch.trim().toLowerCase();
-          const matchesSearch = !query || artifactSearchText(artifact, researchPlanTimeline, text).includes(query);
-          const nodeIds = assetResearchPlanNodeIds(artifact, researchPlanTimeline);
-          const matchesPlan = assetPlanFilter === "all" || nodeIds.has(assetPlanFilter);
-          return matchesCategory && matchesSearch && matchesPlan;
-        })
-        .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime()),
+    () => {
+      const query = assetSearch.trim().toLowerCase();
+      const filtered = artifacts.filter((artifact) => {
+        const category = assetCategoryForArtifact(artifact);
+        const matchesCategory = assetCategoryFilter === "all" || category === assetCategoryFilter;
+        const matchesSearch = !query || artifactSearchText(artifact, researchPlanTimeline, text).includes(query);
+        const nodeIds = assetResearchPlanNodeIds(artifact, researchPlanTimeline);
+        const matchesPlan = assetPlanFilter === "all" || nodeIds.has(assetPlanFilter);
+        return matchesCategory && matchesSearch && matchesPlan;
+      });
+      return filtered.sort((left, right) => {
+        if (query || assetCategoryFilter !== "all" || assetPlanFilter !== "all") {
+          const priorityDelta = assetInventorySearchPriority(left) - assetInventorySearchPriority(right);
+          if (priorityDelta !== 0) return priorityDelta;
+        }
+        return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+      });
+    },
     [artifacts, assetCategoryFilter, assetPlanFilter, assetSearch, researchPlanTimeline, text]
   );
   const handledPreviewRequestRef = React.useRef<number | null>(null);
@@ -11872,8 +11907,110 @@ function AssetsTab({
     void loadPreview(previewRequest.artifactId);
   }, [previewRequest]);
 
+  const assetInventoryPanel = (
+    <Panel title={text.projectAssetsTitle} icon={<Library size={18} />}>
+      <div className="asset-inventory-controls">
+        <label>
+          <span>{text.assetSearchLabel}</span>
+          <input
+            value={assetSearch}
+            onChange={(event) => setAssetSearch(event.target.value)}
+            placeholder={text.assetSearchPlaceholder}
+          />
+        </label>
+        <label>
+          <span>{text.assetCategoryFilter}</span>
+          <select
+            value={assetCategoryFilter}
+            onChange={(event) => setAssetCategoryFilter(event.target.value as AssetCategoryKey | "all")}
+          >
+            {assetCategoryOrder.map((key) => (
+              <option key={key} value={key}>
+                {assetCategoryLabel(key, text)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{text.assetPlanNodeFilter}</span>
+          <select value={assetPlanFilter} onChange={(event) => setAssetPlanFilter(event.target.value)}>
+            <option value="all">{text.assetPlanNodeAll}</option>
+            {planNodeOptions.map((block) => (
+              <option key={block.id} value={block.id}>
+                {block.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="badge muted">{visibleArtifactRows.length} / {artifacts.length}</span>
+      </div>
+      {visibleArtifactRows.length ? (
+        <Table
+          headers={[
+            text.assetTableOutput,
+            text.assetCategoryTable,
+            text.assetTableCreated,
+            text.assetTableOrigin,
+            text.artifactTableSize,
+            text.artifactTableActions
+          ]}
+          rows={visibleArtifactRows.slice(0, 160).map((artifact) => {
+            const linkedNotebook = preferredNotebookForArtifact(notebookIndex, artifact.id);
+            const planNodeIds = Array.from(assetResearchPlanNodeIds(artifact, researchPlanTimeline));
+            return [
+              <div className="cell-stack" key={`${artifact.id}-name`}>
+                <span>{artifactDisplayTitle(artifact)}</span>
+                <small>{artifactDetailLine(artifact)}</small>
+                {linkedNotebook ? <small>{text.relatedNotebooks}: {conciseNotebookTitle(linkedNotebook.title)}</small> : null}
+              </div>,
+              <span className="badge" key={`${artifact.id}-category`}>
+                {assetCategoryLabel(assetCategoryForArtifact(artifact), text)}
+              </span>,
+              formatDate(artifact.created_at),
+              <div className="cell-stack" key={`${artifact.id}-origin`}>
+                <span>{artifactOriginLabel(artifact, researchPlanTimeline, text)}</span>
+                {planNodeIds.length ? <small>{planNodeIds.slice(0, 2).join(", ")}</small> : null}
+              </div>,
+              formatBytes(artifact.size_bytes),
+              <div className="row-actions" key={artifact.id}>
+                {linkedNotebook ? (
+                  <button
+                    className="icon-button"
+                    onClick={() => onOpenNotebookArtifact(linkedNotebook.artifact_ids.notebook)}
+                    title={text.openNotebookInMarimo}
+                  >
+                    <BookOpen size={16} />
+                  </button>
+                ) : null}
+                <button
+                  className="icon-button"
+                  disabled={previewLoadingId === artifact.id}
+                  onClick={() => void loadPreview(artifact.id)}
+                  title={text.previewArtifact}
+                >
+                  {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                </button>
+                <a
+                  className="icon-link"
+                  href={`${apiBase}/api/artifacts/${artifact.id}/download`}
+                  title={text.downloadArtifact}
+                >
+                  <Download size={16} />
+                </a>
+              </div>
+            ];
+          })}
+        />
+      ) : (
+        <EmptyInline text={text.projectAssetsEmpty} />
+      )}
+      {visibleArtifactRows.length > 160 ? <EmptyInline text={text.assetInventoryLimited.replace("{count}", String(visibleArtifactRows.length - 160))} /> : null}
+    </Panel>
+  );
+
   return (
     <div className="stack">
+      {assetInventoryPanel}
       <Panel title="Model Versions" icon={<Layers size={18} />}>
         {modelVersions.length ? (
           <Table
@@ -11977,104 +12114,6 @@ function AssetsTab({
         ) : (
           <EmptyInline text={text.notebookEmpty} />
         )}
-      </Panel>
-      <Panel title={text.projectAssetsTitle} icon={<Library size={18} />}>
-        <div className="asset-inventory-controls">
-          <label>
-            <span>{text.assetSearchLabel}</span>
-            <input
-              value={assetSearch}
-              onChange={(event) => setAssetSearch(event.target.value)}
-              placeholder={text.assetSearchPlaceholder}
-            />
-          </label>
-          <label>
-            <span>{text.assetCategoryFilter}</span>
-            <select
-              value={assetCategoryFilter}
-              onChange={(event) => setAssetCategoryFilter(event.target.value as AssetCategoryKey | "all")}
-            >
-              {assetCategoryOrder.map((key) => (
-                <option key={key} value={key}>
-                  {assetCategoryLabel(key, text)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>{text.assetPlanNodeFilter}</span>
-            <select value={assetPlanFilter} onChange={(event) => setAssetPlanFilter(event.target.value)}>
-              <option value="all">{text.assetPlanNodeAll}</option>
-              {planNodeOptions.map((block) => (
-                <option key={block.id} value={block.id}>
-                  {block.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="badge muted">{visibleArtifactRows.length} / {artifacts.length}</span>
-        </div>
-        {visibleArtifactRows.length ? (
-          <Table
-            headers={[
-              text.assetTableOutput,
-              text.assetCategoryTable,
-              text.assetTableCreated,
-              text.assetTableOrigin,
-              text.artifactTableSize,
-              text.artifactTableActions
-            ]}
-            rows={visibleArtifactRows.slice(0, 160).map((artifact) => {
-              const linkedNotebook = preferredNotebookForArtifact(notebookIndex, artifact.id);
-              const planNodeIds = Array.from(assetResearchPlanNodeIds(artifact, researchPlanTimeline));
-              return [
-                <div className="cell-stack" key={`${artifact.id}-name`}>
-                  <span>{artifactDisplayTitle(artifact)}</span>
-                  <small>{artifactDetailLine(artifact)}</small>
-                  {linkedNotebook ? <small>{text.relatedNotebooks}: {conciseNotebookTitle(linkedNotebook.title)}</small> : null}
-                </div>,
-                <span className="badge" key={`${artifact.id}-category`}>
-                  {assetCategoryLabel(assetCategoryForArtifact(artifact), text)}
-                </span>,
-                formatDate(artifact.created_at),
-                <div className="cell-stack" key={`${artifact.id}-origin`}>
-                  <span>{artifactOriginLabel(artifact, researchPlanTimeline, text)}</span>
-                  {planNodeIds.length ? <small>{planNodeIds.slice(0, 2).join(", ")}</small> : null}
-                </div>,
-                formatBytes(artifact.size_bytes),
-                <div className="row-actions" key={artifact.id}>
-                  {linkedNotebook ? (
-                    <button
-                      className="icon-button"
-                      onClick={() => onOpenNotebookArtifact(linkedNotebook.artifact_ids.notebook)}
-                      title={text.openNotebookInMarimo}
-                    >
-                      <BookOpen size={16} />
-                    </button>
-                  ) : null}
-                  <button
-                    className="icon-button"
-                    disabled={previewLoadingId === artifact.id}
-                    onClick={() => void loadPreview(artifact.id)}
-                    title={text.previewArtifact}
-                  >
-                    {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-                  </button>
-                  <a
-                    className="icon-link"
-                    href={`${apiBase}/api/artifacts/${artifact.id}/download`}
-                    title={text.downloadArtifact}
-                  >
-                    <Download size={16} />
-                  </a>
-                </div>
-              ];
-            })}
-          />
-        ) : (
-          <EmptyInline text={text.projectAssetsEmpty} />
-        )}
-        {visibleArtifactRows.length > 160 ? <EmptyInline text={text.assetInventoryLimited.replace("{count}", String(visibleArtifactRows.length - 160))} /> : null}
       </Panel>
       <LibraryTab
         project={project}

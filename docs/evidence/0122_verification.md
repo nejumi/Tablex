@@ -175,7 +175,7 @@ Known remaining J8 evidence/work:
 
 ## J7 Canonical Asset Inventory
 
-Status: first UI/API slice complete.
+Status: canonical inventory slice complete.
 
 Implemented:
 
@@ -184,8 +184,11 @@ Implemented:
 - Internal `asset_type` is no longer a primary column; it is retained as detail text with the version in the output cell.
 - Search now includes title, name, id, category, type detail, and origin text.
 - Rows are sorted newest-first in the UI.
+- The canonical inventory now appears first in the Assets tab before secondary model/notebook/library panels.
+- Search/filter results prioritize human-openable deliverables such as notebooks, reports, and prediction pipelines over supporting records with the same search terms.
 - Origin is displayed from fixed artifact metadata and research-plan links: plan node, dataset, run, model, job, workspace path, or project fallback.
 - Supporting records remain visible through the same inventory rather than being hidden behind a separate default-excluded surface.
+- `prediction_input`, `prediction_batch`, `decision_report_bundle`, `agent_session_report`, and notebook figure artifacts now map to human categories instead of falling through to Other.
 
 Verification:
 
@@ -195,12 +198,19 @@ Verification:
   - Result: passed
 - U: `git diff --check`
   - Result: passed
+- B: Assets search found the data-understanding notebook artifact as a Notebooks-row before its supporting marimo session JSON record.
+  - Evidence: `docs/evidence/playwright/0122_j7_assets_search_data_notebook_artifact.png`
+- B: Assets search found the final summary markdown report as a Reports-row.
+  - Evidence: `docs/evidence/playwright/0122_j7_assets_search_report.png`
+- B: Assets search found the relational LightGBM prediction pipeline as a Models and predictions-row before the supporting zip output record.
+  - Evidence: `docs/evidence/playwright/0122_j7_assets_search_pipeline.png`
+- B: Assets report preview rendered the final summary markdown with headings, prose, and a model metric table in the same surface.
+  - Evidence: `docs/evidence/playwright/0122_j7_assets_report_markdown_preview.png`
 
 Known remaining J7 evidence/work:
 
-- B: browser evidence for finding a data-understanding notebook, final report, and pipeline from Assets search is still pending.
 - Insights/Reports still need to be folded into the same canonical inventory as filter presets.
-- Markdown report preview with inline figure handling needs a targeted verification pass.
+- Inline image handling for markdown reports with embedded relative figures still needs a dedicated artifact fixture.
 
 ## J5 Modeling Strategy As Skill Equipment
 
