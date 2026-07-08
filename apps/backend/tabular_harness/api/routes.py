@@ -89,6 +89,8 @@ from tabular_harness.schemas import (
     AgentChatCreate,
     AgentChatHistoryTurnRead,
     AgentChatRead,
+    AgentConsoleMessageCreate,
+    AgentConsoleMessageRead,
     AgentRawTranscriptRead,
     AgentSessionRead,
     AgentTaskPlanCreate,
@@ -4375,6 +4377,93 @@ def create_agent_chat_turn(
 
 def is_sidecar_chat_request(message: str) -> bool:
     return message.strip().lower() == "/btw"
+
+
+@router.post("/api/projects/{project_id}/agent-session/console-message", response_model=AgentConsoleMessageRead)
+def send_agent_console_message(
+    project_id: str,
+    payload: AgentConsoleMessageCreate,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    session = active_main_session(db, project_id) or latest_main_session(db, project_id)
+    if session is None:
+        raise HTTPException(status_code=409, detail="Start Full Auto before using the Codex Console.")
+    if session.status == "stopped":
+        raise HTTPException(status_code=409, detail="The agent power is off. Start Full Auto before sending console input.")
+    if session.status in {"failed", "gave_up"}:
+        raise HTTPException(status_code=409, detail=f"The main session is {session.status}; start Full Auto before sending console input.")
+    woke_session = False
+    if session.status == "completed":
+        session.status = "between_turns"
+        session.pid = None
+        session.ended_at = None
+        session.updated_at = utc_now()
+        project.current_phase = "AUTONOMOUS_LOOP"
+        project.autonomy_mode = "full_auto"
+        project.updated_at = utc_now()
+        woke_session = True
+    message = payload.message.strip()
+    event = append_session_event(
+        db,
+        session,
+        source="user",
+        event_type="user_instruction",
+        role="user",
+        title="Console instruction",
+        content=message,
+        payload={
+            "locale": payload.locale,
+            "channel": "console",
+            "delivery": "direct_console_to_main_agent_session",
+        },
+    )
+    append_user_instruction_to_workspace_inbox(
+        session,
+        event=event,
+        message=message,
+        locale=payload.locale,
+        channel="console",
+    )
+    maybe_request_codex_progress_update(
+        db,
+        session=session,
+        locale=payload.locale,
+        stale_after_seconds=0,
+        min_interval_seconds=0,
+        trigger="console_message",
+        user_message=message,
+    )
+    should_wake_main_session = (
+        project.current_phase == "AUTONOMOUS_LOOP"
+        and session.status in {"starting", "between_turns", "waiting_for_runner"}
+        and not supervisor_slot_active(session.id)
+    )
+    db.commit()
+    if should_wake_main_session and request.app.state.settings.api_agent_session_supervisor_enabled:
+        start_main_agent_session_supervisor_thread(
+            request.app.state.session_factory,
+            store,
+            project_id=project_id,
+            session_id=session.id,
+            supervisor_runner=run_main_agent_session_supervisor,
+            turn_timeout_seconds=request.app.state.settings.agent_idle_timeout_seconds,
+            turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
+        )
+    return {
+        "schema_version": "agent_console_message.v1",
+        "project_id": project.id,
+        "session_id": session.id,
+        "status": session.status,
+        "delivered": True,
+        "woke_session": woke_session,
+        "transcript_event_id": event.id,
+        "transcript_event_index": event.event_index,
+        "inbox_delivery": "workspace_inbox_and_transcript",
+        "message": message,
+    }
 
 
 def queued_main_session_chat_response(

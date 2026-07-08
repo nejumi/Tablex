@@ -438,6 +438,7 @@ import type {
   AgentChatAction,
   AgentActionSummary,
   AgentChatResponse,
+  AgentConsoleMessageResponse,
   AgentChatHistoryTurn,
   AgentChatMessage,
   AgentConversationTurn,
@@ -505,6 +506,13 @@ function tabFromString(value: string | null | undefined, fallback: Tab): Tab {
   if (value === "Library" || value === "Lineage") return "Assets";
   const match = tabItems.find((item) => item.id === value);
   return match ? match.id : fallback;
+}
+
+function agentConsoleDisabledReason(agentSession: AgentSession | null, text: LocaleMessages): string | null {
+  if (!agentSession) return text.rawAgentConsoleStartRequired;
+  if (agentSession.status === "stopped") return text.rawAgentConsolePowerOff;
+  if (agentSession.status === "failed" || agentSession.status === "gave_up") return text.rawAgentConsoleUnavailable;
+  return null;
 }
 
 function normalizeNavigationTarget(targetTab: Tab, targetAnchor?: string | null): { targetTab: Tab; targetAnchor?: string | null } {
@@ -2873,6 +2881,27 @@ function ProjectDetail({
     await submitAgentChat(objective);
   }
 
+  async function submitAgentConsoleMessage(message: string): Promise<void> {
+    const trimmed = message.trim();
+    if (!trimmed) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api<AgentConsoleMessageResponse>(`/api/projects/${project.id}/agent-session/console-message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: trimmed, locale: displayLocale })
+      });
+      await refreshAgentActivity();
+      await refresh();
+      await onProjectChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function changeAutonomyMode(nextMode: AutonomyMode): Promise<void> {
     const currentMode = effectiveProject.autonomy_mode ?? "approval_based";
     if (nextMode === currentMode) return;
@@ -3185,6 +3214,7 @@ function ProjectDetail({
           agentRawTranscript={agentRawTranscript}
           dataUploadDraft={dataUploadDraft}
           onSubmitAgentChat={submitAgentChatWithoutResponse}
+          onSubmitAgentConsole={submitAgentConsoleMessage}
           onActionOpen={openAgentChatAction}
           onOpenMemoryItem={openHomeMemoryItem}
           onTabChange={onTabChange}
@@ -3210,7 +3240,8 @@ function ProjectDetail({
           submitShortcut={resolveChatSubmitShortcut(userSettings)}
           turnState={turnState}
           scrollResetKey={`${project.id}:${agentSession?.id ?? "no-agent-session"}`}
-          onSubmit={submitAgentChatWithoutResponse}
+          consoleDisabledReason={agentConsoleDisabledReason(agentSession, text)}
+          onSubmit={submitAgentConsoleMessage}
         />
       )}
       {tab === "Overview" && (
@@ -3516,6 +3547,7 @@ function HomeTab({
   agentRawTranscript,
   dataUploadDraft,
   onSubmitAgentChat,
+  onSubmitAgentConsole,
   onActionOpen,
   onOpenMemoryItem,
   onTabChange,
@@ -3558,6 +3590,7 @@ function HomeTab({
   agentRawTranscript: AgentRawTranscript | null;
   dataUploadDraft: DataUploadDraft;
   onSubmitAgentChat: (objective: string) => Promise<void>;
+  onSubmitAgentConsole: (objective: string) => Promise<void>;
   onActionOpen: (action: AgentChatAction) => void;
   onOpenMemoryItem: (item: HomeMemoryItem) => void;
   onTabChange: (tab: Tab) => void;
@@ -3836,7 +3869,8 @@ function HomeTab({
               submitShortcut={submitShortcut}
               turnState={turnState}
               scrollResetKey={agentWorkspaceScrollResetKey}
-              onSubmit={onSubmitAgentChat}
+              consoleDisabledReason={agentConsoleDisabledReason(agentSession, text)}
+              onSubmit={onSubmitAgentConsole}
             />
           )}
         </div>

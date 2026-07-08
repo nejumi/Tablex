@@ -791,6 +791,24 @@ class AgentChatCreate(BaseModel):
     utility_model: str | None = None
 
 
+class AgentConsoleMessageCreate(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    locale: str | None = None
+
+
+class AgentConsoleMessageRead(BaseModel):
+    schema_version: str
+    project_id: str
+    session_id: str
+    status: str
+    delivered: bool
+    woke_session: bool
+    transcript_event_id: str
+    transcript_event_index: int
+    inbox_delivery: str
+    message: str
+
+
 class AgentChatHistoryTurnRead(BaseModel):
     schema_version: str
     project_id: str

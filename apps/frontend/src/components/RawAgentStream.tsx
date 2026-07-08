@@ -90,6 +90,7 @@ export function RawAgentStream({
   submitShortcut,
   turnState,
   scrollResetKey,
+  consoleDisabledReason,
   onSubmit
 }: {
   busy: boolean;
@@ -100,6 +101,7 @@ export function RawAgentStream({
   submitShortcut: ChatSubmitShortcut;
   turnState: TurnState;
   scrollResetKey: string;
+  consoleDisabledReason?: string | null;
   onSubmit: (objective: string) => Promise<void>;
 }) {
   const [draft, setDraft] = React.useState("");
@@ -121,10 +123,11 @@ export function RawAgentStream({
   const activeRawLineKey = latestRawLine ? `${latestRawLine.stream}-${latestRawLine.line_number}` : null;
   const rawTurnIsActive = turnState.owner === "agent" && turnState.state === "agent_running";
   const rawScroll = useStickyBottomScroll<HTMLDivElement>(rawKey, scrollResetKey);
+  const consoleDisabled = busy || Boolean(consoleDisabledReason);
 
   async function submitDraft() {
     const objective = draft.trim();
-    if (!objective) return;
+    if (!objective || consoleDisabled) return;
     setDraft("");
     await onSubmit(objective);
   }
@@ -135,7 +138,7 @@ export function RawAgentStream({
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (!shouldSubmitTextarea(event, submitShortcut) || busy || !draft.trim()) return;
+    if (!shouldSubmitTextarea(event, submitShortcut) || consoleDisabled || !draft.trim()) return;
     event.preventDefault();
     void submitDraft();
   }
@@ -178,6 +181,7 @@ export function RawAgentStream({
           </div>
         ) : null}
       </div>
+      <p className="raw-agent-console-hint">{text.rawAgentConsoleHint}</p>
       <TurnStateBar text={text} locale={locale} turnState={turnState} />
       <div className="raw-agent-log" ref={rawScroll.ref} onScroll={rawScroll.onScroll} onWheel={rawScroll.onWheel}>
         {rawLines.length ? (
@@ -212,12 +216,13 @@ export function RawAgentStream({
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={text.agentChatPlaceholder}
+          placeholder={consoleDisabledReason ?? text.rawAgentConsolePlaceholder}
+          disabled={consoleDisabled}
           rows={3}
         />
-        <button className="primary-button" disabled={busy || !draft.trim()} type="submit">
+        <button className="primary-button" disabled={consoleDisabled || !draft.trim()} type="submit">
           {busy ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
-          {text.createAgentTaskContract}
+          {text.rawAgentConsoleSend}
         </button>
       </form>
     </div>
@@ -408,4 +413,3 @@ function rawDetailText(value: unknown): string {
     return String(value);
   }
 }
-

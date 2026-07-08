@@ -656,6 +656,19 @@ export type AgentRawTranscript = {
   updated_at: string | null;
 };
 
+export type AgentConsoleMessageResponse = {
+  schema_version: "agent_console_message.v1";
+  project_id: string;
+  session_id: string;
+  status: string;
+  delivered: boolean;
+  woke_session: boolean;
+  transcript_event_id: string;
+  transcript_event_index: number;
+  inbox_delivery: string;
+  message: string;
+};
+
 export type AgentRawTranscriptLine = {
   line_number: number;
   text: string;

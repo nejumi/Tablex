@@ -141,6 +141,7 @@ def append_user_instruction_to_workspace_inbox(
     event: AgentTranscriptEvent,
     message: str,
     locale: str | None,
+    channel: str = "chat",
 ) -> None:
     if not session.workspace_path:
         return
@@ -153,6 +154,7 @@ def append_user_instruction_to_workspace_inbox(
         "event_index": event.event_index,
         "created_at": event.created_at.isoformat(),
         "locale": locale,
+        "channel": channel,
         "message": message,
     }
     try:

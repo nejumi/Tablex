@@ -1748,6 +1748,13 @@ textarea {
   text-transform: none;
 }
 
+.raw-agent-console-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
 .raw-agent-log {
   display: grid;
   gap: 8px;

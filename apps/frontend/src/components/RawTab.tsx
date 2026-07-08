@@ -24,6 +24,7 @@ export function RawTab({
   submitShortcut,
   turnState,
   scrollResetKey,
+  consoleDisabledReason,
   onSubmit
 }: {
   busy: boolean;
@@ -37,6 +38,7 @@ export function RawTab({
   submitShortcut: ChatSubmitShortcut;
   turnState: TurnState;
   scrollResetKey: string;
+  consoleDisabledReason?: string | null;
   onSubmit: (objective: string) => Promise<void>;
 }) {
   const rawAgentEvents = buildRawAgentEvents(messages, jobs, agentTranscriptEvents, agentSession);
@@ -51,6 +53,7 @@ export function RawTab({
         submitShortcut={submitShortcut}
         turnState={turnState}
         scrollResetKey={scrollResetKey}
+        consoleDisabledReason={consoleDisabledReason}
         onSubmit={onSubmit}
       />
     </section>
