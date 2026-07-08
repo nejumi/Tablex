@@ -4397,6 +4397,24 @@ td {
   table-layout: fixed;
 }
 
+.leaderboard-prediction-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  padding: 14px;
+}
+
+.leaderboard-prediction-panel h3,
+.leaderboard-prediction-panel p {
+  margin: 0;
+}
+
+.leaderboard-prediction-panel .field {
+  max-width: 560px;
+}
+
 .leaderboard-table-wrap th:nth-child(1),
 .leaderboard-table-wrap td:nth-child(1) {
   width: 64px;

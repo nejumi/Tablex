@@ -89,3 +89,28 @@ Known remaining J3 evidence/work:
 - The response-composer `handoff_to_main_session` schema is still pending for non-Full-Auto cases where the composer needs main-session inspection before answering.
 - Provenance labels distinguishing saved-state replies from main-session replies are still pending.
 - Full fake-runner and live-project verification for inspection requests is still pending.
+
+## J4 Prediction UX
+
+Status: first UI slice complete.
+
+Implemented:
+
+- Leaderboard rows with registered prediction pipelines now expose a "predict with this model" action.
+- The prediction panel stays inside the Leaderboard surface and does not add a new tab.
+- The first slice lets the user choose an existing `DatasetSnapshot`, queues the existing `run_prediction_pipeline` worker job, runs it, registers the prediction batch artifact, previews it, and offers a predictions download link.
+- Rows without a registered prediction pipeline keep the action disabled.
+
+Verification:
+
+- U: `npm run build` in `apps/frontend`
+  - Result: passed
+- U: `git diff --check`
+  - Result: passed
+
+Known remaining J4 evidence/work:
+
+- B: browser evidence for the Leaderboard prediction panel is still pending.
+- D&D upload directly inside the prediction drawer is still pending.
+- `pipeline_manifest.v1` `input_contract.required_tables` and `--input-dir` multi-table prediction flow are still pending.
+- Fixed-format validation report for column/dtype mismatch in the drawer is still pending.

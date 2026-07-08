@@ -3413,6 +3413,7 @@ function ProjectDetail({
         <LeaderboardTab
           project={effectiveProject}
           specs={specs}
+          datasets={datasets}
           artifacts={artifacts}
           notebookIndex={notebookIndex}
           leaderboard={leaderboard}

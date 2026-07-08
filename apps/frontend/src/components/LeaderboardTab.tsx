@@ -1,5 +1,5 @@
 import React from "react";
-import { BarChart3, Download, FileText, ListChecks, Loader2, MessageSquare, PieChart, Plus } from "lucide-react";
+import { BarChart3, Download, FileText, ListChecks, Loader2, MessageSquare, PieChart, Play, Plus } from "lucide-react";
 import type { LocaleMessages } from "../copy";
 import { ArtifactLineagePanel } from "./ArtifactLineagePanel";
 import { RelatedNotebookLinks, notebooksForLeaderboardEntry, notebooksForLeaderboardResults } from "./NotebookLinks";
@@ -8,6 +8,7 @@ import type {
   AgentChatResponse,
   Artifact,
   ArtifactPreview,
+  DatasetSnapshot,
   EvaluationSpec,
   EvidenceReaderMetric,
   Job,
@@ -391,6 +392,7 @@ export function metricLabel(metric: string | null | undefined) {
 export function LeaderboardTab({
   project,
   specs,
+  datasets,
   artifacts,
   notebookIndex,
   leaderboard,
@@ -405,6 +407,7 @@ export function LeaderboardTab({
 }: {
   project: Project;
   specs: EvaluationSpec[];
+  datasets: DatasetSnapshot[];
   artifacts: Artifact[];
   notebookIndex: NotebookIndex | null;
   leaderboard: LeaderboardEntry[];
@@ -421,6 +424,9 @@ export function LeaderboardTab({
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
+  const [predictionEntry, setPredictionEntry] = React.useState<LeaderboardEntry | null>(null);
+  const [predictionDatasetId, setPredictionDatasetId] = React.useState<string>("");
+  const [predictionResultArtifactId, setPredictionResultArtifactId] = React.useState<string | null>(null);
 
   async function loadPreview(artifactId: string) {
     setPreviewLoadingId(artifactId);
@@ -432,6 +438,25 @@ export function LeaderboardTab({
     } finally {
       setPreviewLoadingId(null);
     }
+  }
+
+  React.useEffect(() => {
+    if (!predictionDatasetId && datasets.length) {
+      setPredictionDatasetId(datasets[0].id);
+    }
+  }, [datasets, predictionDatasetId]);
+
+  async function runPredictionForEntry(entry: LeaderboardEntry) {
+    if (!entry.pipeline_artifact_id || !predictionDatasetId) return;
+    const job = await api<Job>(`/api/projects/${project.id}/pipelines/${entry.pipeline_artifact_id}/predict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataset_snapshot_id: predictionDatasetId })
+    });
+    const completed = await runQueuedJobAndWait(job, { label: text.leaderboardActionPredict });
+    const artifactId = textField(completed.output.artifact_id) ?? textField(completed.output.prediction_batch_artifact_id);
+    setPredictionResultArtifactId(artifactId);
+    if (artifactId) await loadPreview(artifactId);
   }
   const approvedSpecCount = specs.filter((spec) => spec.status === "approved").length;
   const topEntry = leaderboard[0] ?? null;
@@ -678,6 +703,18 @@ export function LeaderboardTab({
                   >
                     {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
                   </button>
+                  <button
+                    className="icon-button"
+                    disabled={busy || !entry.pipeline_artifact_id}
+                    onClick={() => {
+                      setPredictionEntry(entry);
+                      setPredictionResultArtifactId(null);
+                    }}
+                    title={entry.pipeline_artifact_id ? text.leaderboardActionPredict : text.pipelineBundleUnavailable}
+                    type="button"
+                  >
+                    {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                  </button>
                   {entry.pipeline_artifact_id ? (
                     <a
                       className="icon-link"
@@ -695,6 +732,50 @@ export function LeaderboardTab({
               ])}
             />
           </div>
+          {predictionEntry ? (
+            <div className="leaderboard-prediction-panel">
+              <div>
+                <div className="eyebrow">{text.predictionDrawerTitle}</div>
+                <h3>{leaderboardEntryModelLabel(predictionEntry)}</h3>
+                <p>{text.predictionDrawerBody}</p>
+              </div>
+              {datasets.length ? (
+                <label className="field">
+                  <span>{text.predictionInputDataset}</span>
+                  <select value={predictionDatasetId} onChange={(event) => setPredictionDatasetId(event.target.value)}>
+                    {datasets.map((dataset) => (
+                      <option key={dataset.id} value={dataset.id}>
+                        {dataset.source_ref ?? dataset.id} · {dataset.row_count ?? "-"} rows
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <EmptyInline text={text.predictionNoDatasets} />
+              )}
+              <div className="button-row">
+                <button
+                  className="primary-button"
+                  disabled={busy || !predictionEntry.pipeline_artifact_id || !predictionDatasetId}
+                  onClick={() => void runAction(() => runPredictionForEntry(predictionEntry))}
+                  type="button"
+                >
+                  {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                  {text.predictionRun}
+                </button>
+                <button className="secondary-button" type="button" onClick={() => setPredictionEntry(null)}>
+                  {text.close}
+                </button>
+                {predictionResultArtifactId ? (
+                  <a className="secondary-button" href={`${apiBase}/api/artifacts/${predictionResultArtifactId}/download`}>
+                    <Download size={16} />
+                    {text.predictionDownload}
+                  </a>
+                ) : null}
+              </div>
+              {predictionResultArtifactId ? <span className="badge success">{text.predictionCompleted}</span> : null}
+            </div>
+          ) : null}
           </>
         ) : (
           <EmptyInline text={text.leaderboardEmpty} />
