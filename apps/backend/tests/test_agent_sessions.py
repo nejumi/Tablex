@@ -10,10 +10,10 @@ from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import tabular_harness.services.agent_sessions as agent_sessions_module
 import tabular_harness.services.agent_notebook_quality as agent_notebook_quality_module
 import tabular_harness.services.agent_requests.pipelines as pipeline_requests_module
 import tabular_harness.services.agent_requests.research_plan as research_plan_requests_module
+import tabular_harness.services.agent_sessions as agent_sessions_module
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 from tabular_harness.core.json import dumps_json, loads_json
@@ -25,8 +25,8 @@ from tabular_harness.models.entities import (
     Artifact,
     Base,
     DatasetSnapshot,
-    Evidence,
     EvaluationSpec,
+    Evidence,
     ExperimentRun,
     Job,
     LineageEdge,
@@ -42,6 +42,12 @@ from tabular_harness.models.entities import (
     User,
     utc_now,
 )
+from tabular_harness.services.agent_inbox import (
+    inbox_processed_path,
+    list_inbox_entries,
+    mark_inbox_entry_processed,
+    write_inbox_entry,
+)
 from tabular_harness.services.agent_session_results import (
     experiment_acks_dir,
     experiment_artifact_rejection_path,
@@ -52,16 +58,9 @@ from tabular_harness.services.agent_session_results import (
     model_diagnostics_artifact_request_path,
     model_diagnostics_notebook_request_path,
     pipeline_registration_request_path,
-    register_experiment_result_failure_chat_turn,
     register_experiment_registration_chat_turn,
+    register_experiment_result_failure_chat_turn,
     restore_registered_session_experiment_visibility,
-)
-from tabular_harness.services.model_diagnostics_artifacts import latest_run_artifact
-from tabular_harness.services.agent_inbox import (
-    inbox_processed_path,
-    list_inbox_entries,
-    mark_inbox_entry_processed,
-    write_inbox_entry,
 )
 from tabular_harness.services.agent_sessions import (
     CODEX_RAW_TRANSCRIPT_FILENAME,
@@ -86,8 +85,8 @@ from tabular_harness.services.agent_sessions import (
     maybe_request_codex_progress_update,
     maybe_request_codex_progress_update_safely,
     maybe_request_data_framing_update,
-    maybe_request_research_plan_current_work_update,
     maybe_request_research_plan_contract_revision,
+    maybe_request_research_plan_current_work_update,
     maybe_request_task_spec_update,
     metadata_for_session_output,
     model_diagnostics_acks_dir,
@@ -100,11 +99,11 @@ from tabular_harness.services.agent_sessions import (
     notebook_requests_dir,
     pause_main_session_after_completed_plan,
     pause_main_session_after_completed_plan_safely,
-    pipeline_acks_dir,
-    pipeline_requests_dir,
     pilot_acks_dir,
     pilot_request_rejection_path,
     pilot_requests_dir,
+    pipeline_acks_dir,
+    pipeline_requests_dir,
     prepare_session_workspace,
     progress_request_path,
     publish_raw_codex_transcript_snapshot,
@@ -114,38 +113,37 @@ from tabular_harness.services.agent_sessions import (
     register_agent_session_notebook_source_output,
     release_supervisor_lease,
     renew_supervisor_lease,
+    research_acks_dir,
     research_plan_acks_dir,
     research_plan_artifact_rejection_path,
     research_plan_contract_request_path,
     research_plan_current_work_request_path,
     research_plan_request_rejection_path,
     research_plan_requests_dir,
-    research_acks_dir,
     research_request_rejection_path,
     research_requests_dir,
     reserve_transcript_event_indexes,
     run_codex_cli_turn_streaming,
     session_output_artifact_name,
     session_protocol_text,
-    task_spec_request_path,
     should_register_session_output,
     start_active_main_session_supervisors,
     start_main_agent_session_supervisor_thread,
     start_supervisor_lease_heartbeat,
     supervisor_slot_active,
+    task_spec_request_path,
 )
 from tabular_harness.services.analysis_notebooks import build_project_notebook_index
 from tabular_harness.services.approach import store_text_artifact
-from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path, next_artifact_version, register_artifact
-from tabular_harness.services.jobs import create_job
-from tabular_harness.services.result_notebook_evidence import latest_model_diagnostics_notebook_for_run
-from tabular_harness.services.research_plan_timeline import build_research_plan_timeline_response
-from tabular_harness.worker.jobs import (
-    register_prediction_pipeline_handler,
-    run_prediction_pipeline_handler,
-    score_pilot_outcomes_handler,
+from tabular_harness.services.artifacts import (
+    LocalArtifactStore,
+    artifact_primary_path,
+    next_artifact_version,
+    register_artifact,
 )
-from tabular_harness.worker.runner import SyncWorker
+from tabular_harness.services.jobs import create_job
+from tabular_harness.services.model_diagnostics_artifacts import latest_run_artifact
+from tabular_harness.services.research_plan_timeline import build_research_plan_timeline_response
 from tabular_harness.services.research_plans import (
     ResearchPlanValidationError,
     commit_research_plan_revision,
@@ -154,7 +152,15 @@ from tabular_harness.services.research_plans import (
     record_harness_objective_in_research_plan,
     set_research_plan_current_work,
 )
-
+from tabular_harness.services.result_notebook_evidence import (
+    latest_model_diagnostics_notebook_for_run,
+)
+from tabular_harness.worker.jobs import (
+    register_prediction_pipeline_handler,
+    run_prediction_pipeline_handler,
+    score_pilot_outcomes_handler,
+)
+from tabular_harness.worker.runner import SyncWorker
 
 VISUAL_MARIMO_NOTEBOOK_SOURCE = """import marimo
 
@@ -345,6 +351,23 @@ def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path
             column_count=2,
             schema_hash="runtime_schema",
         )
+        store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="eda_profile",
+            name="runtime_profile",
+            filename="profile.json",
+            text=dumps_json(
+                {
+                    "schema_version": "eda_profile.v1",
+                    "profile_mode": "full",
+                    "column_stat_scope": "full",
+                    "sample_rows": [{"x": 1, "y": 2}],
+                }
+            ),
+            metadata={"project_id": project.id, "dataset_snapshot_id": dataset.id},
+        )
         session = AgentSession(
             id="as_runtime",
             project_id=project.id,
@@ -378,7 +401,15 @@ def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path
     data_manifest = loads_json((workspace / ".tablex" / "data_manifest.json").read_text(encoding="utf-8"), {})
     assert data_manifest["schema_version"] == "tablex_session_data_manifest.v1"
     assert data_manifest["root"] == ".tablex/data"
+    assert data_manifest["cache_root"] == ".tablex/cache"
     assert "readable" in data_manifest["guarantee"]
+    manifest_dataset = data_manifest["datasets"][0]
+    assert manifest_dataset["fast_paths"]["profile_json"] == ".tablex/cache/dataset_profiles/ds_runtime__profile.json"
+    assert manifest_dataset["fast_paths"]["sample_rows_json"] == ".tablex/cache/dataset_samples/ds_runtime__sample_rows.json"
+    assert manifest_dataset["fast_paths"]["sample_rows_csv"] == ".tablex/cache/dataset_samples/ds_runtime__sample_rows.csv"
+    assert (workspace / manifest_dataset["fast_paths"]["profile_json"]).exists()
+    assert (workspace / manifest_dataset["fast_paths"]["sample_rows_json"]).exists()
+    assert (workspace / manifest_dataset["fast_paths"]["sample_rows_csv"]).read_text(encoding="utf-8").splitlines()[0] == "x,y"
     context = loads_json((workspace / ".tablex" / "context.json").read_text(encoding="utf-8"), {})
     assert context["agent_capabilities"]["network_access_enabled"] is True
     assert context["agent_capabilities"]["web_search_enabled"] is True
@@ -430,9 +461,11 @@ def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path
     assert "pilot observation envelope" in pilot_contract["observation_contract"]
     assert context["datasets"][0]["workspace_relative_path"] == ".tablex/data/ds_runtime__train.csv"
     assert context["dataset_access"]["root"] == ".tablex/data"
+    assert context["dataset_access"]["cache_root"] == ".tablex/cache"
     assert "native marimo" in context["dataset_access"]["guarantee"]
     assert context["dataset_access"]["datasets"][0]["dataset_snapshot_id"] == "ds_runtime"
     assert context["dataset_access"]["datasets"][0]["workspace_relative_path"] == ".tablex/data/ds_runtime__train.csv"
+    assert context["dataset_access"]["datasets"][0]["fast_paths"]["sample_rows_csv"] == ".tablex/cache/dataset_samples/ds_runtime__sample_rows.csv"
     assert context["dataset_access"]["files"][0]["workspace_relative_path"] == ".tablex/data/ds_runtime__train.csv"
 
 

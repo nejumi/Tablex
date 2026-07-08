@@ -97,6 +97,52 @@ def test_prewarm_native_marimo_session_job_is_registered() -> None:
     assert "prewarm_native_marimo_session" in handlers
 
 
+def test_wait_for_native_marimo_session_ready_polls_until_http_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(marimo_sessions, "marimo_available", lambda: True)
+    monkeypatch.setattr(marimo_sessions.subprocess, "Popen", FakeMarimoProcess)
+    artifact, _ = notebook_artifact(tmp_path, artifact_id="art_warm", source="print('warm')\n")
+    settings = marimo_settings(tmp_path)
+    session = marimo_sessions.start_or_get_native_marimo_session(artifact=artifact, settings=settings)
+    calls = {"count": 0}
+
+    def fake_http_ready(_session: marimo_sessions.NativeMarimoSession, timeout: float = 0.05) -> bool:
+        del timeout
+        calls["count"] += 1
+        return calls["count"] >= 3
+
+    monkeypatch.setattr(marimo_sessions, "_http_ready", fake_http_ready)
+
+    ready = marimo_sessions.wait_for_native_marimo_session_ready(
+        session,
+        timeout_seconds=1.0,
+        poll_seconds=0.01,
+    )
+
+    assert ready is True
+    assert calls["count"] == 3
+
+
+def test_wait_for_native_marimo_session_ready_stops_when_process_exits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(marimo_sessions, "marimo_available", lambda: True)
+    monkeypatch.setattr(marimo_sessions.subprocess, "Popen", FakeMarimoProcess)
+    artifact, _ = notebook_artifact(tmp_path, artifact_id="art_failed", source="print('failed')\n")
+    settings = marimo_settings(tmp_path)
+    session = marimo_sessions.start_or_get_native_marimo_session(artifact=artifact, settings=settings)
+    session.process.returncode = 1
+
+    ready = marimo_sessions.wait_for_native_marimo_session_ready(
+        session,
+        timeout_seconds=1.0,
+        poll_seconds=0.01,
+    )
+
+    assert ready is False
+
+
 def notebook_artifact(tmp_path: Path, *, artifact_id: str, source: str) -> tuple[Artifact, Path]:
     source_path = tmp_path / f"{artifact_id}.py"
     source_path.write_text(source, encoding="utf-8")

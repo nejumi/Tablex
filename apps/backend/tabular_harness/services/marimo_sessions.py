@@ -29,6 +29,9 @@ from tabular_harness.services.analysis_notebooks import (
 MARIMO_SOURCE_ASSET_TYPES = {"analysis_notebook", "marimo_notebook"}
 SESSION_TTL_SECONDS = 60 * 60
 FAILED_SESSION_TTL_SECONDS = 10 * 60
+NATIVE_MARIMO_OPEN_READY_TIMEOUT_SECONDS = 10.0
+NATIVE_MARIMO_PREWARM_READY_TIMEOUT_SECONDS = 20.0
+NATIVE_MARIMO_READY_POLL_SECONDS = 0.2
 
 
 @dataclass
@@ -197,6 +200,23 @@ def native_marimo_session(session_id: str) -> NativeMarimoSession | None:
             return None
         session.last_accessed_at = datetime.now(timezone.utc)
         return session
+
+
+def wait_for_native_marimo_session_ready(
+    session: NativeMarimoSession,
+    *,
+    timeout_seconds: float,
+    poll_seconds: float = NATIVE_MARIMO_READY_POLL_SECONDS,
+) -> bool:
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while time.monotonic() <= deadline:
+        if not session.is_alive():
+            return False
+        if _http_ready(session, timeout=min(0.5, max(0.05, poll_seconds))):
+            session.last_accessed_at = datetime.now(timezone.utc)
+            return True
+        time.sleep(max(0.05, poll_seconds))
+    return session.is_alive() and _http_ready(session, timeout=0.5)
 
 
 def native_marimo_target_url(session: NativeMarimoSession, path: str, query: str = "") -> str:

@@ -9444,9 +9444,7 @@ function NotebooksTab({
     prewarmed.add(artifactId);
     void api<NativeMarimoSession>(`/api/analysis-notebooks/${artifactId}/marimo-session`, {
       method: "POST"
-    }).catch(() => {
-      prewarmed.delete(artifactId);
-    });
+    }).catch(() => undefined);
   }, []);
 
   React.useEffect(() => {
@@ -9454,6 +9452,16 @@ function NotebooksTab({
     autoPreviewedArtifactRef.current = storyNotebook.artifact_ids.notebook;
     prewarmNativeMarimoArtifact(storyNotebook.artifact_ids.notebook);
   }, [prewarmNativeMarimoArtifact, storyNotebook]);
+
+  React.useEffect(() => {
+    const notebookArtifactIds = notebookItems
+      .filter((item) => !notebookNeedsAttention(item))
+      .map((item) => item.artifact_ids.notebook)
+      .filter((artifactId) => artifactId.trim());
+    for (const artifactId of notebookArtifactIds.slice(0, 3)) {
+      prewarmNativeMarimoArtifact(artifactId);
+    }
+  }, [notebookItems, prewarmNativeMarimoArtifact]);
 
   React.useEffect(() => {
     if (!previewRequest || previewRequest.targetTab !== "Notebooks") return;

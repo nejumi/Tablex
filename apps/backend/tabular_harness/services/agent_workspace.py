@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import importlib.metadata as importlib_metadata
 import json
 import re
@@ -89,7 +90,10 @@ from tabular_harness.services.research_plans import (
 SESSION_INTERNAL_DIR = ".tablex"
 SESSION_INBOX_DIR = "inbox"
 SESSION_BIN_DIR = "bin"
+SESSION_CACHE_DIR = "cache"
 SESSION_DATA_DIR = "data"
+SESSION_DATASET_PROFILE_CACHE_DIR = "dataset_profiles"
+SESSION_DATASET_SAMPLE_CACHE_DIR = "dataset_samples"
 SESSION_DATA_MANIFEST_FILENAME = "data_manifest.json"
 SESSION_PROTOCOL_FILENAME = "PROTOCOL.md"
 SESSION_REQUESTS_DIR = "requests"
@@ -170,9 +174,14 @@ def ensure_session_python_shims(workspace: Path) -> None:
 
 def ensure_session_dataset_links(db: Session, *, workspace: Path, project_id: str) -> list[dict[str, Any]]:
     data_dir = workspace / SESSION_INTERNAL_DIR / SESSION_DATA_DIR
+    cache_dir = workspace / SESSION_INTERNAL_DIR / SESSION_CACHE_DIR
+    sample_cache_dir = cache_dir / SESSION_DATASET_SAMPLE_CACHE_DIR
+    profile_cache_dir = cache_dir / SESSION_DATASET_PROFILE_CACHE_DIR
     settings = get_settings()
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
+        sample_cache_dir.mkdir(parents=True, exist_ok=True)
+        profile_cache_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
         return []
     datasets = list(
@@ -182,6 +191,7 @@ def ensure_session_dataset_links(db: Session, *, workspace: Path, project_id: st
     )
     manifest: list[dict[str, Any]] = []
     used_names: set[str] = set()
+    profile_artifacts_by_dataset_id = latest_profile_artifacts_by_dataset_id(db, project_id=project_id)
     for dataset in datasets:
         artifact = db.get(Artifact, dataset.artifact_id) if dataset.artifact_id else None
         if artifact is None:
@@ -218,6 +228,13 @@ def ensure_session_dataset_links(db: Session, *, workspace: Path, project_id: st
                 materialization = "copy"
             except OSError:
                 continue
+        fast_paths = materialize_dataset_fast_paths(
+            workspace=workspace,
+            dataset=dataset,
+            profile_artifact=profile_artifacts_by_dataset_id.get(dataset.id),
+            sample_cache_dir=sample_cache_dir,
+            profile_cache_dir=profile_cache_dir,
+        )
         manifest.append(
             {
                 "dataset_snapshot_id": dataset.id,
@@ -229,6 +246,11 @@ def ensure_session_dataset_links(db: Session, *, workspace: Path, project_id: st
                 "workspace_relative_path": str(target.relative_to(workspace)),
                 "source_artifact_path": str(source_path),
                 "materialization": materialization,
+                "fast_paths": fast_paths,
+                "notebook_load_strategy": (
+                    "Use fast_paths.profile_json and fast_paths.sample_rows_json/sample_rows_csv for native marimo "
+                    "initial rendering. Use workspace_relative_path for deliberate full-data scans or model training."
+                ),
             }
         )
     manifest_path = workspace / SESSION_INTERNAL_DIR / SESSION_DATA_MANIFEST_FILENAME
@@ -238,9 +260,15 @@ def ensure_session_dataset_links(db: Session, *, workspace: Path, project_id: st
                 {
                     "schema_version": "tablex_session_data_manifest.v1",
                     "root": f"{SESSION_INTERNAL_DIR}/{SESSION_DATA_DIR}",
+                    "cache_root": f"{SESSION_INTERNAL_DIR}/{SESSION_CACHE_DIR}",
                     "guarantee": (
                         "These paths are relative to the AgentSession workspace and are readable from registered "
                         "marimo notebooks when Tablex starts the native marimo runtime."
+                    ),
+                    "notebook_load_strategy": (
+                        "Prefer per-dataset fast_paths for the first native marimo render. They contain cached profile "
+                        "and deterministic sample rows from registered Tablex artifacts. Read full data only when the "
+                        "notebook needs a full scan."
                     ),
                     "datasets": manifest,
                 },
@@ -252,6 +280,101 @@ def ensure_session_dataset_links(db: Session, *, workspace: Path, project_id: st
     except OSError:
         pass
     return manifest
+
+
+def latest_profile_artifacts_by_dataset_id(db: Session, *, project_id: str) -> dict[str, Artifact]:
+    artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project_id, Artifact.asset_type == "eda_profile")
+            .order_by(Artifact.created_at.desc())
+            .limit(200)
+        ).all()
+    )
+    by_dataset_id: dict[str, Artifact] = {}
+    for artifact in artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        dataset_id = metadata.get("dataset_snapshot_id")
+        if isinstance(dataset_id, str) and dataset_id.strip() and dataset_id not in by_dataset_id:
+            by_dataset_id[dataset_id] = artifact
+    return by_dataset_id
+
+
+def materialize_dataset_fast_paths(
+    *,
+    workspace: Path,
+    dataset: DatasetSnapshot,
+    profile_artifact: Artifact | None,
+    sample_cache_dir: Path,
+    profile_cache_dir: Path,
+) -> dict[str, Any]:
+    if profile_artifact is None:
+        return {}
+    try:
+        profile_path = artifact_primary_path(profile_artifact).resolve()
+        profile = loads_json(profile_path.read_text(encoding="utf-8"), {})
+    except (OSError, KeyError, IndexError, json.JSONDecodeError):
+        return {}
+    if not isinstance(profile, dict):
+        return {}
+
+    fast_paths: dict[str, Any] = {
+        "profile_artifact_id": profile_artifact.id,
+        "profile_mode": profile.get("profile_mode"),
+        "column_stat_scope": profile.get("column_stat_scope"),
+    }
+    profile_cache_path = profile_cache_dir / f"{dataset.id}__profile.json"
+    if write_text_if_changed(profile_cache_path, json.dumps(profile, ensure_ascii=False, indent=2) + "\n"):
+        fast_paths["profile_json"] = str(profile_cache_path.relative_to(workspace))
+
+    sample_rows = profile.get("sample_rows")
+    if isinstance(sample_rows, list) and sample_rows:
+        rows = [row for row in sample_rows if isinstance(row, dict)]
+        if rows:
+            sample_json_path = sample_cache_dir / f"{dataset.id}__sample_rows.json"
+            sample_csv_path = sample_cache_dir / f"{dataset.id}__sample_rows.csv"
+            sample_payload = {
+                "schema_version": "tablex_dataset_sample_rows.v1",
+                "dataset_snapshot_id": dataset.id,
+                "profile_artifact_id": profile_artifact.id,
+                "row_count": len(rows),
+                "rows": rows,
+            }
+            if write_text_if_changed(sample_json_path, json.dumps(sample_payload, ensure_ascii=False, indent=2) + "\n"):
+                fast_paths["sample_rows_json"] = str(sample_json_path.relative_to(workspace))
+            if write_sample_rows_csv(sample_csv_path, rows):
+                fast_paths["sample_rows_csv"] = str(sample_csv_path.relative_to(workspace))
+            fast_paths["sample_row_count"] = len(rows)
+    return fast_paths
+
+
+def write_text_if_changed(path: Path, text: str) -> bool:
+    try:
+        if path.exists() and path.read_text(encoding="utf-8") == text:
+            return True
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return True
+    except OSError:
+        return False
+
+
+def write_sample_rows_csv(path: Path, rows: list[dict[str, Any]]) -> bool:
+    columns: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in columns:
+                columns.append(str(key))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({key: row.get(key) for key in columns})
+        return True
+    except OSError:
+        return False
 
 
 def python_runtime_context(workspace: Path) -> dict[str, Any]:
@@ -471,6 +594,7 @@ def build_session_context(
         ],
         "dataset_access": {
             "root": f"{SESSION_INTERNAL_DIR}/{SESSION_DATA_DIR}",
+            "cache_root": f"{SESSION_INTERNAL_DIR}/{SESSION_CACHE_DIR}",
             "manifest_path": str(Path(session.workspace_path or "") / SESSION_INTERNAL_DIR / SESSION_DATA_MANIFEST_FILENAME),
             "manifest_relative_path": f"{SESSION_INTERNAL_DIR}/{SESSION_DATA_MANIFEST_FILENAME}",
             "data_dir": str(Path(session.workspace_path or "") / SESSION_INTERNAL_DIR / SESSION_DATA_DIR),
@@ -483,8 +607,10 @@ def build_session_context(
                 "can read them directly."
             ),
             "instruction": (
-                "Use dataset_access.datasets[*].workspace_relative_path from the session workspace when notebooks or scripts need "
-                "to read project data. These are Tablex-managed links or copies of registered DatasetSnapshot artifacts."
+                "For native marimo notebooks, use dataset_access.datasets[*].fast_paths profile/sample files for the first "
+                "render whenever possible. Use workspace_relative_path for deliberate full-data scans, modeling scripts, "
+                "or when a visualization truly needs the full table. These paths are Tablex-managed links, copies, or "
+                "cache files in the session workspace."
             ),
         },
         "recent_artifacts": [
@@ -948,8 +1074,9 @@ def build_session_context(
                             "`mo`, `pd`, `np`, or `fig` variables in multiple cells."
                         ),
                         (
-                            "Read data from `.tablex/data` or cached artifacts and render lightweight figures from "
-                            "deterministic samples or summaries so native marimo opens quickly."
+                            "For the first visible render, prefer dataset_access.datasets[*].fast_paths profile/sample "
+                            "files over full table reads. Read full data from `.tablex/data` only for deliberate scans "
+                            "or modeling steps, and cache summaries for repeated native marimo rendering."
                         ),
                     ],
                     "example_request": {

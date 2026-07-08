@@ -124,9 +124,11 @@ from tabular_harness.services.kaggle_probe import (
     probe_kaggle_benchmark_access,
 )
 from tabular_harness.services.marimo_sessions import (
+    NATIVE_MARIMO_PREWARM_READY_TIMEOUT_SECONDS,
     cleanup_native_marimo_sessions,
     marimo_available,
     start_or_get_native_marimo_session,
+    wait_for_native_marimo_session_ready,
 )
 from tabular_harness.services.model_diagnostics_artifacts import (
     materialize_model_diagnostics_artifacts,
@@ -2197,12 +2199,17 @@ def prewarm_native_marimo_session_handler(db: Session, job: Job, store: LocalArt
             "cleaned_session_count": cleaned_session_count,
         }
     session = start_or_get_native_marimo_session(artifact=notebook_artifact, settings=settings)
+    ready = wait_for_native_marimo_session_ready(
+        session,
+        timeout_seconds=NATIVE_MARIMO_PREWARM_READY_TIMEOUT_SECONDS,
+    )
     return {
         "schema_version": "native_marimo_prewarm.v1",
-        "status": "ready",
+        "status": "ready" if ready else session.status(),
         "analysis_notebook_artifact_id": notebook_artifact.id,
         "session_id": session.id,
         "session_status": session.status(),
+        "ready": ready,
         "source_hash": session.source_hash,
         "cleaned_session_count": cleaned_session_count,
     }

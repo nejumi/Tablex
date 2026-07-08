@@ -277,12 +277,14 @@ from tabular_harness.services.jobs import (
 )
 from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.marimo_sessions import (
+    NATIVE_MARIMO_OPEN_READY_TIMEOUT_SECONDS,
     native_marimo_session,
     native_marimo_target_url,
     start_or_get_native_marimo_session,
     stop_native_marimo_session,
     stop_native_marimo_session_for_artifact,
     stop_native_marimo_sessions_for_project,
+    wait_for_native_marimo_session_ready,
 )
 from tabular_harness.services.metric_preferences import (
     BUILTIN_METRIC_OPTIONS,
@@ -6939,6 +6941,7 @@ def start_native_marimo_session_endpoint(
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
     restart: bool = Query(False),
+    wait_ready: bool = Query(True),
 ) -> dict[str, Any]:
     notebook_artifact = db.get(Artifact, artifact_id)
     if notebook_artifact is None:
@@ -6954,6 +6957,11 @@ def start_native_marimo_session_endpoint(
             artifact=notebook_artifact,
             settings=request.app.state.settings,
         )
+        if wait_ready and hasattr(session, "is_alive"):
+            wait_for_native_marimo_session_ready(
+                session,
+                timeout_seconds=NATIVE_MARIMO_OPEN_READY_TIMEOUT_SECONDS,
+            )
     except (FileNotFoundError, RuntimeError, TimeoutError, ValueError) as exc:
         if notebook_artifact.project_id is not None:
             project = require_project(db, notebook_artifact.project_id)

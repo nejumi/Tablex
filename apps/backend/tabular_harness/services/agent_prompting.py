@@ -105,7 +105,7 @@ This file is runner-facing protocol, not a user-facing report. Read it together 
 ## Notebooks And Reports
 - Native marimo Python source is the notebook artifact of record. Save human-facing notebooks under `notebooks/` or `outputs/notebooks/`, then submit `.tablex/requests/notebooks/` with `schema_version: "tablex_notebook_request.v1"` and operation `register_notebook`.
 - Include `research_plan_node_id` when the notebook belongs to a visible plan node, and include dataset/run/model links when applicable so Data, Leaderboard, Assets, Chat, and ResearchPlan can open the same native notebook.
-- Human-facing data-understanding and model-diagnostics notebooks must contain meaningful visual diagnostics, not only markdown and tables. Use cached summaries or deterministic samples so native marimo opens quickly.
+- Human-facing data-understanding and model-diagnostics notebooks must contain meaningful visual diagnostics, not only markdown and tables. Use `dataset_access.datasets[*].fast_paths` cached profile/sample files for the first visible render, and read full `.tablex/data` tables only when a full scan is deliberate.
 - Marimo public variables must be unique across the notebook. Use underscore-prefixed temporaries such as `_mo`, `_fig`, `_ax`, `_table`, and `_data` for repeated scratch values.
 - Register model diagnostics artifacts through `.tablex/requests/model_diagnostics/` before marking model diagnostics complete. Standard checks are permutation importance, native/tree feature importance when applicable, partial dependence for important features, and SHAP when supported; otherwise declare the fixed not-applicable or unavailable status with a reason.
 
