@@ -4415,6 +4415,27 @@ td {
   max-width: 560px;
 }
 
+.prediction-contract {
+  display: grid;
+  gap: 10px;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.table-wrap.compact table {
+  min-width: 760px;
+}
+
+.table-wrap.compact th,
+.table-wrap.compact td {
+  padding: 7px 9px;
+}
+
 .leaderboard-table-wrap th:nth-child(1),
 .leaderboard-table-wrap td:nth-child(1) {
   width: 64px;

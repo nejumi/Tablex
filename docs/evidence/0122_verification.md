@@ -106,9 +106,12 @@ Implemented:
 - The prediction panel stays inside the Leaderboard surface and does not add a new tab.
 - The first slice lets the user choose an existing `DatasetSnapshot`, queues the existing `run_prediction_pipeline` worker job, runs it, registers the prediction batch artifact, previews it, and offers a predictions download link.
 - Rows without a registered prediction pipeline keep the action disabled.
+- `pipeline_manifest.v1` now accepts normalized `input_contract.required_tables` declarations, and Leaderboard rows expose the pipeline input contract so the prediction drawer can show expected columns and required tables before execution.
 
 Verification:
 
+- U/A: `.venv/bin/pytest apps/backend/tests/test_api_flow.py::test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links apps/backend/tests/test_agent_sessions.py::test_pipeline_manifest_normalizes_required_tables_contract -q`
+  - Result: `2 passed, 1 warning`
 - U: `npm run build` in `apps/frontend`
   - Result: passed
 - U: `git diff --check`
@@ -117,7 +120,7 @@ Verification:
 Known remaining J4 evidence/work:
 
 - B: browser evidence for the Leaderboard prediction panel is still pending.
-- D&D upload directly inside the prediction drawer is still pending.
+- D&D upload directly inside the prediction drawer and `--input-dir` execution for multi-table prediction are still pending.
 - `pipeline_manifest.v1` `input_contract.required_tables` and `--input-dir` multi-table prediction flow are still pending.
 - Fixed-format validation report for column/dtype mismatch in the drawer is still pending.
 

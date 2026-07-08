@@ -7857,11 +7857,8 @@ def leaderboard(
             "evaluation_grade": leaderboard_evaluation_grade(db, run),
             "evaluation_grade_reason": leaderboard_evaluation_grade_reason(db, run),
             "model_version_id": run.model_version_id,
-            "pipeline_artifact_id": (
-                pipeline_artifact.id
-                if (pipeline_artifact := experiment_run_pipeline_artifact(db, run, params=params)) is not None
-                else None
-            ),
+            "pipeline_artifact_id": pipeline_artifact.id if pipeline_artifact is not None else None,
+            "pipeline_input_contract": leaderboard_pipeline_input_contract(pipeline_artifact),
             "deliverable_expectations": deliverable_expectations_by_run.get(run.id, []),
             "model_diagnostics": leaderboard_model_diagnostics(db, run),
             "related_notebook_artifact_ids": leaderboard_related_notebook_artifact_ids(
@@ -7879,6 +7876,7 @@ def leaderboard(
         for metrics in [loads_json(run.metrics_json, {})]
         for params in [loads_json(run.params_json, {})]
         for model_id in [leaderboard_model_id(params, metrics)]
+        for pipeline_artifact in [experiment_run_pipeline_artifact(db, run, params=params)]
         for display_metric_value in [preferred_metric_value(metrics, display_metric)]
     ]
 
@@ -8572,6 +8570,64 @@ def experiment_run_pipeline_artifact(db: Session, run: ExperimentRun, *, params:
         if isinstance(run_ids, list) and run.id in run_ids:
             return artifact
     return None
+
+
+def leaderboard_pipeline_input_contract(artifact: Artifact | None) -> dict[str, Any] | None:
+    if artifact is None:
+        return None
+    metadata = loads_json(artifact.metadata_json, {})
+    manifest = metadata.get("pipeline_manifest")
+    if not isinstance(manifest, dict):
+        return None
+    input_contract = manifest.get("input_contract")
+    if not isinstance(input_contract, dict):
+        return None
+    inference_format = input_contract.get("inference_format")
+    columns: list[dict[str, Any]] = []
+    if isinstance(inference_format, dict) and isinstance(inference_format.get("columns"), list):
+        for item in inference_format.get("columns") or []:
+            if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                continue
+            columns.append(
+                {
+                    "name": item["name"],
+                    "dtype": item.get("dtype") if isinstance(item.get("dtype"), str) else None,
+                    "required": item.get("required") is not False,
+                }
+            )
+    required_tables: list[dict[str, Any]] = []
+    if isinstance(input_contract.get("required_tables"), list):
+        for item in input_contract.get("required_tables") or []:
+            if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                continue
+            table_columns: list[dict[str, Any]] = []
+            if isinstance(item.get("columns"), list):
+                for column in item.get("columns") or []:
+                    if isinstance(column, dict) and isinstance(column.get("name"), str):
+                        table_columns.append(
+                            {
+                                "name": column["name"],
+                                "dtype": column.get("dtype") if isinstance(column.get("dtype"), str) else None,
+                                "required": column.get("required") is not False,
+                            }
+                        )
+            required_tables.append(
+                {
+                    "name": item["name"],
+                    "role": item.get("role") if isinstance(item.get("role"), str) else None,
+                    "columns": table_columns,
+                    "join_keys": [str(value) for value in item.get("join_keys") or [] if isinstance(value, str)],
+                    "as_of_column": item.get("as_of_column") if isinstance(item.get("as_of_column"), str) else None,
+                    "history_window": item.get("history_window") if isinstance(item.get("history_window"), str) else None,
+                    "optional": item.get("optional") is True,
+                }
+            )
+    history_requirements = input_contract.get("history_requirements")
+    return {
+        "columns": columns,
+        "required_tables": required_tables,
+        "history_requirements": history_requirements if isinstance(history_requirements, dict) else None,
+    }
 
 
 def pretty_structured_value(value: str) -> str:

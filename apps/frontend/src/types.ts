@@ -955,6 +955,19 @@ export type LeaderboardEntry = {
   evaluation_grade_reason?: string | null;
   model_version_id: string | null;
   pipeline_artifact_id?: string | null;
+  pipeline_input_contract?: {
+    columns: Array<{ name: string; dtype?: string | null; required?: boolean }>;
+    required_tables: Array<{
+      name: string;
+      role?: string | null;
+      columns: Array<{ name: string; dtype?: string | null; required?: boolean }>;
+      join_keys?: string[];
+      as_of_column?: string | null;
+      history_window?: string | null;
+      optional?: boolean;
+    }>;
+    history_requirements?: Record<string, unknown> | null;
+  } | null;
   deliverable_expectations?: Array<{
     id: string;
     kind: string;

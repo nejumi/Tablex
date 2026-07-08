@@ -6060,6 +6060,48 @@ def test_pipeline_request_registers_prediction_pipeline_and_links_run(tmp_path: 
         assert edge is not None
 
 
+def test_pipeline_manifest_normalizes_required_tables_contract() -> None:
+    manifest = {
+        "schema_version": "pipeline_manifest.v1",
+        "input_contract": {
+            "inference_format": {"columns": ["x"]},
+            "required_tables": [
+                {
+                    "name": "application",
+                    "role": "primary",
+                    "columns": ["x", {"name": "row_id", "dtype": "string", "required": False}],
+                    "join_keys": ["row_id"],
+                },
+                {
+                    "name": "bureau",
+                    "role": "history",
+                    "columns": [{"name": "balance", "dtype": "float"}],
+                    "join_keys": ["row_id"],
+                    "as_of_column": "event_time",
+                    "history_window": "365d",
+                    "optional": True,
+                },
+            ],
+        },
+        "output_contract": {"columns": ["prediction"], "prediction_column": "prediction"},
+        "training": {},
+        "runtime": {},
+    }
+
+    normalized, warnings = pipeline_requests_module.normalize_pipeline_manifest(manifest)
+
+    assert "pipeline_manifest.input_contract.inference_format.string_columns_normalized" in warnings
+    tables = normalized["input_contract"]["required_tables"]
+    assert tables[0]["columns"] == [
+        {"name": "x", "dtype": "string", "required": True},
+        {"name": "row_id", "dtype": "string", "required": False},
+    ]
+    assert tables[1]["role"] == "history"
+    assert tables[1]["as_of_column"] == "event_time"
+    assert tables[1]["history_window"] == "365d"
+    assert tables[1]["optional"] is True
+
+
 def test_pipeline_request_accepts_top_level_codex_aliases(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)

@@ -531,7 +531,54 @@ def normalize_pipeline_input_contract(
                 "notes": "normalized from top-level history_requirements",
             }
             warnings.append("pipeline_manifest.history_requirements_array_normalized")
+    required_tables = input_contract.get("required_tables")
+    if required_tables is not None:
+        normalized_tables, table_issues = normalize_pipeline_required_tables(required_tables)
+        input_contract["required_tables"] = normalized_tables
+        issues.extend(table_issues)
     return warnings, issues
+
+
+def normalize_pipeline_required_tables(value: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not isinstance(value, list):
+        return [], [{"pointer": "pipeline_manifest.input_contract.required_tables", "message": "must be an array when provided"}]
+    normalized: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
+    valid_roles = {"primary", "supporting", "history"}
+    for index, item in enumerate(value):
+        pointer = f"pipeline_manifest.input_contract.required_tables/{index}"
+        if not isinstance(item, dict):
+            issues.append({"pointer": pointer, "message": "must be an object"})
+            continue
+        table = dict(item)
+        name = table.get("name")
+        if not isinstance(name, str) or not name.strip():
+            issues.append({"pointer": f"{pointer}.name", "message": "is required"})
+        else:
+            table["name"] = name.strip()
+        role = table.get("role")
+        if not isinstance(role, str) or role.strip() not in valid_roles:
+            issues.append({"pointer": f"{pointer}.role", "message": f"must be one of {sorted(valid_roles)}"})
+        else:
+            table["role"] = role.strip()
+        columns = table.get("columns")
+        if not isinstance(columns, list):
+            issues.append({"pointer": f"{pointer}.columns", "message": "must be an array"})
+        else:
+            normalized_columns, _column_warning, column_issues = normalize_pipeline_column_specs(
+                columns,
+                pointer=f"{pointer}.columns",
+                default_required=True,
+            )
+            table["columns"] = normalized_columns
+            issues.extend(column_issues)
+        table["join_keys"] = string_items(table.get("join_keys"))
+        for optional_key in ("as_of_column", "history_window"):
+            optional_value = table.get(optional_key)
+            table[optional_key] = optional_value.strip() if isinstance(optional_value, str) and optional_value.strip() else None
+        table["optional"] = bool(table.get("optional"))
+        normalized.append(table)
+    return normalized, issues
 
 
 def normalize_pipeline_output_contract(output_contract: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:

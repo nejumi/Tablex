@@ -203,6 +203,10 @@ function EmptyInline({ text }: { text: string }) {
   return <div className="empty-inline">{text}</div>;
 }
 
+function predictionColumnText(column: { name: string; dtype?: string | null; required?: boolean }) {
+  return [column.name, column.dtype, column.required === false ? "optional" : "required"].filter(Boolean).join(" · ");
+}
+
 function isHtmlArtifactPreview(preview: ArtifactPreview | null): boolean {
   if (!preview?.preview_available) return false;
   const filename = preview.filename.toLowerCase();
@@ -739,6 +743,55 @@ export function LeaderboardTab({
                 <h3>{leaderboardEntryModelLabel(predictionEntry)}</h3>
                 <p>{text.predictionDrawerBody}</p>
               </div>
+              {predictionEntry.pipeline_input_contract ? (
+                <div className="prediction-contract">
+                  {predictionEntry.pipeline_input_contract.columns.length ? (
+                    <div>
+                      <strong>{text.predictionExpectedColumns}</strong>
+                      <div className="chip-row">
+                        {predictionEntry.pipeline_input_contract.columns.map((column) => (
+                          <span className="badge muted" key={column.name}>
+                            {predictionColumnText(column)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {predictionEntry.pipeline_input_contract.required_tables.length ? (
+                    <div>
+                      <strong>{text.predictionRequiredTables}</strong>
+                      <div className="table-wrap compact">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>{text.artifactTableName}</th>
+                              <th>{text.predictionTableRole}</th>
+                              <th>{text.predictionExpectedColumns}</th>
+                              <th>{text.predictionJoinKeys}</th>
+                              <th>{text.predictionAsOfColumn}</th>
+                              <th>{text.predictionHistoryWindow}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {predictionEntry.pipeline_input_contract.required_tables.map((table) => (
+                              <tr key={table.name}>
+                                <td>{table.name}</td>
+                                <td>{table.role ?? "-"}</td>
+                                <td>{table.columns.map((column) => predictionColumnText(column)).join(", ") || "-"}</td>
+                                <td>{table.join_keys?.join(", ") || "-"}</td>
+                                <td>{table.as_of_column ?? "-"}</td>
+                                <td>{table.history_window ?? "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <EmptyInline text={text.predictionNoContract} />
+              )}
               {datasets.length ? (
                 <label className="field">
                   <span>{text.predictionInputDataset}</span>

@@ -3851,6 +3851,40 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
                 "notebook_kind": "model_diagnostics",
             },
         )
+        pipeline_manifest = {
+            "schema_version": "pipeline_manifest.v1",
+            "input_contract": {
+                "inference_format": {
+                    "columns": [
+                        {"name": "x", "dtype": "float", "required": True},
+                        {"name": "row_id", "dtype": "string", "required": False},
+                    ]
+                },
+                "required_tables": [
+                    {
+                        "name": "application",
+                        "role": "primary",
+                        "columns": [{"name": "x", "dtype": "float", "required": True}],
+                        "join_keys": ["row_id"],
+                        "as_of_column": None,
+                        "history_window": None,
+                        "optional": False,
+                    },
+                    {
+                        "name": "history",
+                        "role": "history",
+                        "columns": [{"name": "hist_x", "dtype": "float", "required": True}],
+                        "join_keys": ["row_id"],
+                        "as_of_column": "event_time",
+                        "history_window": "365d",
+                        "optional": True,
+                    },
+                ],
+            },
+            "output_contract": {"prediction_column": "prediction", "columns": [{"name": "prediction", "dtype": "float"}]},
+            "training": {},
+            "runtime": {},
+        }
         pipeline_bundle = store_text_artifact(
             db,
             app.state.artifact_store,
@@ -3859,7 +3893,7 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
             name="hierarchical_median_pipeline",
             filename="pipeline_bundle.zip",
             text="zip placeholder",
-            metadata={"experiment_run_ids": ["run_leaderboard_reconcile"]},
+            metadata={"experiment_run_ids": ["run_leaderboard_reconcile"], "pipeline_manifest": pipeline_manifest},
         )
         prediction_input_artifact = store_text_artifact(
             db,
@@ -3934,6 +3968,12 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
     assert leaderboard_row["feature_summary"] == "pay period, experience, work type"
     assert leaderboard_row["summary_md"] == "Recovered model comparison result."
     assert leaderboard_row["pipeline_artifact_id"] == pipeline_bundle.id
+    assert leaderboard_row["pipeline_input_contract"]["columns"] == [
+        {"name": "x", "dtype": "float", "required": True},
+        {"name": "row_id", "dtype": "string", "required": False},
+    ]
+    assert leaderboard_row["pipeline_input_contract"]["required_tables"][0]["name"] == "application"
+    assert leaderboard_row["pipeline_input_contract"]["required_tables"][1]["as_of_column"] == "event_time"
     assert leaderboard_row["related_notebook_artifact_ids"] == [notebook.id]
     assert len(leaderboard_row["related_notebooks"]) == 1
     related_notebook = leaderboard_row["related_notebooks"][0]
