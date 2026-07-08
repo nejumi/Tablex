@@ -229,6 +229,29 @@ function agentChatOutcomeLabel(outcome: string | null | undefined) {
   return normalized.replace(/_/g, " ");
 }
 
+function agentReplyProvenanceLabel(
+  composer: Record<string, unknown> | null | undefined,
+  text: LocaleMessages
+): string | null {
+  if (!composer) return null;
+  const mode = textField(composer.mode);
+  const status = textField(composer.status);
+  if (mode === "main_codex_session" || status === "waiting_for_agent") return text.agentReplyProvenanceMainSession;
+  if (mode === "autonomy_control_event" || mode === "autonomy_control_backfill" || mode === "explicit_ui_control") {
+    return text.agentReplyProvenanceStatusUpdate;
+  }
+  if (
+    mode === "codex_cli" ||
+    mode === "codex_cli_if_available" ||
+    mode === "structured_fallback" ||
+    mode === "fallback" ||
+    textField(composer.raw_surface) === "codex_exec"
+  ) {
+    return text.agentReplyProvenanceSavedState;
+  }
+  return null;
+}
+
 function isActiveAgentTurn(turn: AgentConversationTurn): boolean {
   if (!turn.assistant) return Boolean(turn.user?.transient);
   const status = String(turn.assistant.responseComposer?.status ?? "");
@@ -458,6 +481,7 @@ function AgentConversationTurnCard({
   const outcome = active ? "pending" : assistant?.actionSummary?.outcome;
   const outcomeLabel = active ? text.agentReplyPending : agentChatOutcomeLabel(outcome);
   const statusClass = agentChatOutcomeClass(outcome);
+  const provenanceLabel = assistant ? agentReplyProvenanceLabel(assistant.responseComposer, text) : null;
   const visibleActions = visibleAgentChatActions(assistant);
   const waitObservationItems = active ? agentChatWaitObservationItems(assistant?.responseBrief, text) : [];
   const latestCodexMessage = active ? agentChatWaitLatestCodexMessage(assistant?.responseBrief) : null;
@@ -487,6 +511,7 @@ function AgentConversationTurnCard({
             <div className="chat-message-meta">
               <span>{active ? text.agentReplyPendingTitle : text.tableeAnswered}</span>
               {outcomeLabel ? <small className={statusClass}>{outcomeLabel}</small> : null}
+              {provenanceLabel ? <small className="badge muted">{provenanceLabel}</small> : null}
             </div>
             <div className={`chat-bubble assistant ${active ? "pending" : ""}`}>
               {assistant.text.split("\n").map((line, index) => (

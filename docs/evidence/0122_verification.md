@@ -76,6 +76,7 @@ Implemented:
 - Agent Chat now reuses a completed Full Auto main session instead of falling back to the auxiliary response composer when the project remains in full-auto mode.
 - Agent Chat now starts a missing Full Auto main session when the project is already in `AUTONOMOUS_LOOP`, instead of falling back to the auxiliary response composer.
 - A Chat turn delivered to a completed main session moves that session to `between_turns`, moves the project back to `AUTONOMOUS_LOOP`, writes the user instruction into transcript/inbox, and returns a `waiting_for_agent` main-session wait state.
+- Chat assistant messages now display a provenance label that distinguishes main-session answers, saved-record answers, and status updates from fixed composer metadata.
 
 Verification:
 
@@ -87,7 +88,6 @@ Verification:
 Known remaining J3 evidence/work:
 
 - The response-composer `handoff_to_main_session` schema is still pending for non-Full-Auto cases where the composer needs main-session inspection before answering.
-- Provenance labels distinguishing saved-state replies from main-session replies are still pending.
 - Full fake-runner and live-project verification for inspection requests is still pending.
 
 ## J4 Prediction UX
