@@ -14,6 +14,7 @@ def test_response_composer_model_uses_utility_model_when_set() -> None:
 def test_response_composer_model_skips_default_values() -> None:
     assert response_composer_model({"model_preferences": {"utility_model": "default"}}) is None
     assert response_composer_model({"model_preferences": {"utility_model": "codex-default"}}) is None
+    assert response_composer_model({"model_preferences": {"utility_model": "utility-default"}}) is None
     assert response_composer_model({"model_preferences": {"utility_model": ""}}) is None
 
 
@@ -24,9 +25,10 @@ def test_btw_is_explicit_sidecar_status_shortcut() -> None:
 
 
 def test_codex_unavailable_message_does_not_expose_unfinished_placeholder_copy() -> None:
-    message = codex_unavailable_message({"response_locale": "Japanese", "composer_warning": "timeout"})
+    message = codex_unavailable_message({"response_locale": "Japanese", "composer_warning": "Codex CLI exited with 1."})
 
     assert "まだ実行" not in message
     assert "まだ生成" not in message
+    assert "Codex CLI exited" not in message
     assert "入力は保存済み" in message
     assert "Raw" in message

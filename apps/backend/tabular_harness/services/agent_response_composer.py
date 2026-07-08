@@ -71,48 +71,21 @@ def compose_agent_chat_response(
             return AgentResponseComposition(
                 message=codex_response.message,
                 brief=brief,
-                composer={
-                    "schema_version": "agent_response_composer.v1",
-                    "mode": "codex_cli",
-                    "status": "succeeded",
-                    "raw_surface": "codex_exec",
-                    "model": response_composer_model(brief),
-                    "command": codex_response.command,
-                    "prompt_preamble": codex_response.prompt_preamble,
-                    "timeout_seconds": codex_response.timeout_seconds,
-                    "exit_code": codex_response.exit_code,
-                    "duration_ms": codex_response.duration_ms,
-                    "stdout_tail": codex_response.stdout_tail,
-                    "stderr_tail": codex_response.stderr_tail,
-                    "events": codex_response.events,
-                    "event_count": codex_response.event_count,
-                    "jsonl_tail": codex_response.jsonl_tail,
-                },
+                composer=codex_composer_metadata(mode="codex_cli", status="succeeded", brief=brief, result=codex_response),
             )
         brief["composer_warning"] = codex_response.failure_reason or "Codex CLI response composition was unavailable."
-        if mode == "codex_cli":
-            return AgentResponseComposition(
-                message=codex_unavailable_message(brief),
+        return AgentResponseComposition(
+            message=codex_unavailable_message(brief)
+            if mode == "codex_cli"
+            else response_composer_fallback_message(fallback_message, brief),
+            brief=brief,
+            composer=codex_composer_metadata(
+                mode=mode,
+                status=codex_response.status if mode == "codex_cli" else "fallback",
                 brief=brief,
-                composer={
-                    "schema_version": "agent_response_composer.v1",
-                    "mode": "codex_cli",
-                    "status": codex_response.status,
-                    "failure_reason": codex_response.failure_reason,
-                    "raw_surface": "codex_exec",
-                    "model": response_composer_model(brief),
-                    "command": codex_response.command,
-                    "prompt_preamble": codex_response.prompt_preamble,
-                    "timeout_seconds": codex_response.timeout_seconds,
-                    "exit_code": codex_response.exit_code,
-                    "duration_ms": codex_response.duration_ms,
-                    "stdout_tail": codex_response.stdout_tail,
-                    "stderr_tail": codex_response.stderr_tail,
-                    "events": codex_response.events,
-                    "event_count": codex_response.event_count,
-                    "jsonl_tail": codex_response.jsonl_tail,
-                },
-            )
+                result=codex_response,
+            ),
+        )
 
     return AgentResponseComposition(
         message=codex_unavailable_message(brief) if mode in {"codex_cli", "codex_cli_if_available"} else fallback_message,
@@ -125,6 +98,33 @@ def compose_agent_chat_response(
             "failure_reason": brief.get("composer_warning"),
         },
     )
+
+
+def codex_composer_metadata(
+    *,
+    mode: str,
+    status: str,
+    brief: dict[str, Any],
+    result: CodexCompositionResult,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "agent_response_composer.v1",
+        "mode": mode,
+        "status": status,
+        "failure_reason": result.failure_reason,
+        "raw_surface": "codex_exec",
+        "model": response_composer_model(brief),
+        "command": result.command,
+        "prompt_preamble": result.prompt_preamble,
+        "timeout_seconds": result.timeout_seconds,
+        "exit_code": result.exit_code,
+        "duration_ms": result.duration_ms,
+        "stdout_tail": result.stdout_tail,
+        "stderr_tail": result.stderr_tail,
+        "events": result.events,
+        "event_count": result.event_count,
+        "jsonl_tail": result.jsonl_tail,
+    }
 
 
 def build_human_response_brief(
@@ -388,7 +388,7 @@ def response_composer_model(brief: dict[str, Any]) -> str | None:
     if not isinstance(utility_model, str):
         return None
     normalized = utility_model.strip()
-    if not normalized or normalized in {"default", "codex-default"}:
+    if not normalized or normalized in {"default", "codex-default", "utility-default"}:
         return None
     return normalized
 
@@ -397,18 +397,30 @@ def response_shortcut_for_message(user_message: str) -> str | None:
     return "btw_status_explanation" if user_message.strip().lower() == "/btw" else None
 
 
+def response_composer_fallback_message(fallback_message: str, brief: dict[str, Any]) -> str:
+    locale = str(brief.get("response_locale") or "")
+    if locale_is_japanese(locale):
+        return (
+            f"{fallback_message}\n\n"
+            "補助的な返答生成は一時的に使えなかったため、保存済みのProject状態から確認できる範囲で答えています。"
+        )
+    return (
+        f"{fallback_message}\n\n"
+        "The auxiliary response composer was temporarily unavailable, so this answer is limited to saved project state."
+    )
+
+
 def codex_unavailable_message(brief: dict[str, Any]) -> str:
     locale = str(brief.get("response_locale") or "")
-    warning = str(brief.get("composer_warning") or "Codex response composition is unavailable.")
     if locale_is_japanese(locale):
         return (
             "この返答はCodexで生成できませんでした。"
-            f"理由: {warning}\n"
+            "返答生成用のCodex起動に失敗しました。\n"
             "入力は保存済みです。Full AutoがONの場合はCodexへ渡され、進行はChat、Raw、Agent Activityに反映されます。"
         )
     return (
         "I could not generate this reply with Codex. "
-        f"Reason: {warning}\n"
+        "The Codex process used for response composition failed to start or complete.\n"
         "Your input was saved. If Full Auto is on, it will be delivered to Codex and reflected in Chat, Raw, and Agent Activity."
     )
 
