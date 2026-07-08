@@ -1140,26 +1140,52 @@ def _recommended_focus(project: Project, counts: dict[str, int], state: dict[str
         )
 
     if int(state["approved_evaluation_spec_count"]) == 0:
-        if counts["evaluation_candidates"] == 0:
+        successful_run_count = int(state["successful_run_count"])
+        if successful_run_count > 0:
+            primary_action = _navigate_action(
+                "review_unlocked_model_evaluation",
+                "Review evaluation boundary",
+                "Evaluation",
+            )
+            title = "Review the evaluation boundary for existing model results"
+            reason = (
+                "Model results exist, but they are not linked to an approved EvaluationSpec or SplitManifest. "
+                "Treat them as provisional until the evaluation boundary is registered."
+            )
+            evidence = [
+                f"{successful_run_count} successful runs",
+                f"{counts['evaluation_candidates']} candidates",
+                f"{state['approved_evaluation_spec_count']} approved specs",
+            ]
+        elif counts["evaluation_candidates"] == 0:
             primary_action = _endpoint_action(
                 "compare_evaluation_scenarios",
                 "Compare evaluation scenarios",
                 "Evaluation",
                 f"/api/projects/{project.id}/evaluation/compare",
             )
+            title = "Lock a reliable evaluation design"
+            reason = "Modeling and agent work should stay downstream of EvaluationSpec and SplitManifest constraints."
+            evidence = [
+                f"{counts['evaluation_candidates']} candidates",
+                f"{state['approved_evaluation_spec_count']} approved specs",
+            ]
         else:
             primary_action = _navigate_action("review_evaluation_candidates", "Review evaluation candidates", "Evaluation")
+            title = "Lock a reliable evaluation design"
+            reason = "Modeling and agent work should stay downstream of EvaluationSpec and SplitManifest constraints."
+            evidence = [
+                f"{counts['evaluation_candidates']} candidates",
+                f"{state['approved_evaluation_spec_count']} approved specs",
+            ]
         return _focus(
             focus_key="evaluation",
             target_tab="Evaluation",
-            title="Lock a reliable evaluation design",
-            reason="Modeling and agent work should stay downstream of EvaluationSpec and SplitManifest constraints.",
+            title=title,
+            reason=reason,
             risk_level="high",
             confidence=0.88,
-            evidence=[
-                f"{counts['evaluation_candidates']} candidates",
-                f"{state['approved_evaluation_spec_count']} approved specs",
-            ],
+            evidence=evidence,
             primary_action=primary_action,
             secondary_actions=[
                 _navigate_action("review_assumptions_before_eval", "Review Assumptions", "Assumptions"),

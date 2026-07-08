@@ -7237,6 +7237,56 @@ def test_project_guidance_recommends_next_focus(tmp_path: Path) -> None:
     assert "Guided Journey Comparison" in comparison_preview_response.json()["preview"]
 
 
+def test_project_guidance_surfaces_unlocked_evaluation_when_runs_exist(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    project_response = client.post("/api/projects", json={"name": "Guided model gap"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload",
+        files={"file": ("guided_model_gap.csv", b"feature,target\n1,0\n2,1\n3,0\n4,1\n", "text/csv")},
+        data={"target_column": "target"},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="understanding_report",
+            name="understanding",
+            filename="understanding.md",
+            text="# Understanding\n\nDataset has been reviewed.",
+            metadata={"project_id": project_id},
+        )
+        db.add(
+            ExperimentRun(
+                id="run_unlocked_eval",
+                project_id=project_id,
+                runner_type="codex_main_session",
+                status="succeeded",
+                metrics_json=json.dumps({"primary_metric_name": "roc_auc", "primary_metric_value": 0.7}),
+                summary_md="Model run registered before formal evaluation adoption.",
+                created_by="local-user",
+            )
+        )
+        db.commit()
+
+    guidance_response = client.get(f"/api/projects/{project_id}/guidance")
+    assert guidance_response.status_code == 200, guidance_response.text
+    focus = guidance_response.json()["recommended_focus"]
+    assert focus["focus_key"] == "evaluation"
+    assert focus["title"] == "Review the evaluation boundary for existing model results"
+    assert focus["primary_action"]["id"] == "review_unlocked_model_evaluation"
+    assert focus["primary_action"]["action_type"] == "navigate"
+    assert focus["primary_action"]["target_tab"] == "Evaluation"
+    assert focus["primary_action"]["label"] != "Compare evaluation scenarios"
+
+
 def test_guidance_and_result_helpers_count_marimo_notebook_as_native_notebook(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
