@@ -279,6 +279,86 @@ def test_agent_evaluation_generate_split_request_queues_job(tmp_path: Path) -> N
     assert output["split_manifest_id"]
 
 
+def test_agent_evaluation_request_can_be_promoted_approved_and_split(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    project_id, dataset_id = upload_project_dataset(client)
+    workspace = tmp_path / "workspace_integrated"
+    request_dir = workspace / ".tablex" / "requests" / "evaluation"
+    request_dir.mkdir(parents=True)
+    (request_dir / "propose_stratified_auc.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tablex_evaluation_request.v1",
+                "request_id": "propose_stratified_auc",
+                "operation": "propose_evaluation",
+                "payload": {
+                    "dataset_snapshot_id": dataset_id,
+                    "objective_metric": {"name": "ROC-AUC", "direction": "higher_is_better"},
+                    "secondary_metrics": ["log_loss", "pr_auc"],
+                    "split_policy": {
+                        "kind": "stratified",
+                        "params": {"stratify_column": "target", "seed": 20260709, "test_fraction": 0.25},
+                    },
+                    "rationale": "Use a fold-safe stratified validation contract for the binary target.",
+                    "provisional_assumption": "No external validation file is available.",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        session = AgentSession(
+            id="ags_eval_integrated",
+            project_id=project_id,
+            goal_text="Propose and lock evaluation",
+            status="running",
+            workspace_path=str(workspace),
+        )
+        db.add(session)
+        db.flush()
+        process_evaluation_tool_requests(
+            db,
+            store=app.state.artifact_store,
+            project=project,
+            session=session,
+            workspace=workspace,
+        )
+        candidate = db.scalar(
+            select(EvaluationCandidate).where(
+                EvaluationCandidate.project_id == project_id,
+                EvaluationCandidate.scenario_id == "codex_propose_stratified_auc",
+            )
+        )
+        assert candidate is not None
+        assert candidate.primary_metric == "roc_auc"
+        assert candidate.split_type == "stratified"
+        assert candidate.stratify_column == "target"
+        candidate_id = candidate.id
+        db.commit()
+
+    promote_response = client.post(f"/api/evaluation-candidates/{candidate_id}/promote")
+    assert promote_response.status_code == 200, promote_response.text
+    spec_id = promote_response.json()["id"]
+    approve_response = client.post(f"/api/evaluation-specs/{spec_id}/approve")
+    assert approve_response.status_code == 200, approve_response.text
+    split_response = client.post(f"/api/evaluation-specs/{spec_id}/generate-split")
+    assert split_response.status_code == 200, split_response.text
+    split_output = run_worker_job(client, split_response.json()["id"])
+
+    split_manifest_response = client.get(f"/api/split-manifests/{split_output['split_manifest_id']}")
+    assert split_manifest_response.status_code == 200, split_manifest_response.text
+    split_manifest = split_manifest_response.json()
+    assert split_manifest["evaluation_spec_id"] == spec_id
+    assert split_manifest["summary"]["split_type"] == "stratified"
+    assert split_manifest["train_count"] > 0
+    assert split_manifest["valid_count"] > 0
+
+
 def test_leaderboard_marks_runs_formal_or_provisional(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_id, _dataset_id = upload_project_dataset(client)

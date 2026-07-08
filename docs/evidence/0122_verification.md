@@ -28,17 +28,19 @@ Implemented:
 Verification:
 
 - U/A: `.venv/bin/pytest apps/backend/tests/test_agent_evaluation_requests.py apps/backend/tests/test_evaluation_splits.py -q`
-  - Result: `8 passed, 1 warning`
+  - Result: `9 passed, 1 warning`
 - U: `npm run build` in `apps/frontend`
   - Result: passed
 - U: `git diff --check`
   - Result: passed
+- B: Playwright opened Home Credit Test5 Leaderboard and captured provisional internal-validation labeling, missing evaluation-design and validation-evidence badges.
+  - Evidence: `docs/evidence/playwright/0122_j1_leaderboard_provisional_badges.png`
 
 Known remaining J1 evidence/work:
 
-- B: browser evidence for provisional/formal leaderboard labeling is still pending.
 - L: live flow from Chat/Console instruction to proposal, approval, split generation, and formal rerun is still pending.
-- Full directive coverage for `time`, `fold_column`, and `fixed_file` proposal paths now has targeted request-path tests. Generated split execution remains covered for the group split path.
+- Full directive coverage for `time`, `fold_column`, and `fixed_file` proposal paths now has targeted request-path tests.
+- The Codex request → EvaluationCandidate → promoted/approved EvaluationSpec → SplitManifest generation path has an integrated test for a stratified split proposal.
 
 ## J2 Codex Console
 
