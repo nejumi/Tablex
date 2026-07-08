@@ -1452,7 +1452,11 @@ def test_project_artifacts_include_surface_roles_for_assets_ui(tmp_path: Path) -
             name="human_report",
             filename="report.json",
             payload={"status": "ready"},
-            metadata={},
+            metadata={
+                "title": "Human report",
+                "research_plan_node_id": "node_summary",
+                "dataset_snapshot_id": "ds_demo",
+            },
         )
         notebook = store_json_artifact(
             db,
@@ -1493,6 +1497,12 @@ def test_project_artifacts_include_surface_roles_for_assets_ui(tmp_path: Path) -
     assert roles_by_id[notebook.id] == "notebook"
     assert roles_by_id[chat_turn.id] == "supporting"
     assert static_html.id not in roles_by_id
+    report_payload = next(item for item in response.json() if item["id"] == report.id)
+    assert report_payload["name"] == "human_report"
+    assert report_payload["created_at"]
+    assert report_payload["metadata"]["title"] == "Human report"
+    assert report_payload["metadata"]["research_plan_node_id"] == "node_summary"
+    assert report_payload["metadata"]["dataset_snapshot_id"] == "ds_demo"
 
     direct_static_response = client.get(f"/api/artifacts/{static_html.id}")
     assert direct_static_response.status_code == 400

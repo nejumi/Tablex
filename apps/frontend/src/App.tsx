@@ -11648,6 +11648,64 @@ function assetCategoryLabel(key: AssetCategoryKey | "all", text: LocaleMessages)
   return text.assetCategoryOther;
 }
 
+function artifactDisplayTitle(artifact: Artifact): string {
+  for (const key of ["title", "display_name", "report_title", "notebook_title", "model_label", "label"]) {
+    const value = textField(artifact.metadata[key]);
+    if (value) return value;
+  }
+  return artifact.name;
+}
+
+function artifactDetailLine(artifact: Artifact): string {
+  return `${artifact.asset_type} · v${artifact.version}`;
+}
+
+function artifactOriginLabel(
+  artifact: Artifact,
+  timeline: ResearchPlanTimelineResponse | null,
+  text: LocaleMessages
+): string {
+  const planNodeIds = Array.from(assetResearchPlanNodeIds(artifact, timeline));
+  if (planNodeIds.length) {
+    const planTitles = planNodeIds
+      .map((nodeId) => timeline?.blocks.find((block) => block.id === nodeId)?.title ?? nodeId)
+      .filter(Boolean)
+      .slice(0, 2);
+    if (planTitles.length) return `${text.assetOriginPlan}: ${planTitles.join(", ")}`;
+  }
+  const datasetId = textField(artifact.metadata.dataset_snapshot_id) ?? textField(artifact.metadata.dataset_id);
+  if (datasetId) return `${text.assetOriginDataset}: ${datasetId}`;
+  const runId =
+    textField(artifact.metadata.run_id) ??
+    textField(artifact.metadata.experiment_run_id) ??
+    textField(artifact.metadata.best_run_id);
+  if (runId) return `${text.assetOriginRun}: ${runId}`;
+  const modelVersionId = textField(artifact.metadata.model_version_id);
+  if (modelVersionId) return `${text.assetOriginModel}: ${modelVersionId}`;
+  const jobId = textField(artifact.metadata.job_id);
+  if (jobId) return `${text.assetOriginJob}: ${jobId}`;
+  const workspacePath = textField(artifact.metadata.workspace_relative_path);
+  if (workspacePath) return workspacePath;
+  return text.assetOriginProject;
+}
+
+function artifactSearchText(
+  artifact: Artifact,
+  timeline: ResearchPlanTimelineResponse | null,
+  text: LocaleMessages
+): string {
+  return [
+    artifact.id,
+    artifact.name,
+    artifact.asset_type,
+    artifactDisplayTitle(artifact),
+    assetCategoryLabel(assetCategoryForArtifact(artifact), text),
+    artifactOriginLabel(artifact, timeline, text)
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
 function formatContractModes(idea: Idea) {
   const inputs = idea.agent_task_contract.inputs;
   if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) return "-";
@@ -11770,20 +11828,18 @@ function AssetsTab({
   const planNodeOptions = React.useMemo(() => researchPlanTimeline?.blocks ?? [], [researchPlanTimeline]);
   const visibleArtifactRows = React.useMemo(
     () =>
-      artifacts.filter((artifact) => {
-        const category = assetCategoryForArtifact(artifact);
-        const matchesCategory = assetCategoryFilter === "all" || category === assetCategoryFilter;
-        const query = assetSearch.trim().toLowerCase();
-        const matchesSearch =
-          !query ||
-          artifact.name.toLowerCase().includes(query) ||
-          artifact.asset_type.toLowerCase().includes(query) ||
-          artifact.id.toLowerCase().includes(query);
-        const nodeIds = assetResearchPlanNodeIds(artifact, researchPlanTimeline);
-        const matchesPlan = assetPlanFilter === "all" || nodeIds.has(assetPlanFilter);
-        return matchesCategory && matchesSearch && matchesPlan;
-      }),
-    [artifacts, assetCategoryFilter, assetPlanFilter, assetSearch, researchPlanTimeline]
+      artifacts
+        .filter((artifact) => {
+          const category = assetCategoryForArtifact(artifact);
+          const matchesCategory = assetCategoryFilter === "all" || category === assetCategoryFilter;
+          const query = assetSearch.trim().toLowerCase();
+          const matchesSearch = !query || artifactSearchText(artifact, researchPlanTimeline, text).includes(query);
+          const nodeIds = assetResearchPlanNodeIds(artifact, researchPlanTimeline);
+          const matchesPlan = assetPlanFilter === "all" || nodeIds.has(assetPlanFilter);
+          return matchesCategory && matchesSearch && matchesPlan;
+        })
+        .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime()),
+    [artifacts, assetCategoryFilter, assetPlanFilter, assetSearch, researchPlanTimeline, text]
   );
   const handledPreviewRequestRef = React.useRef<number | null>(null);
 
@@ -11951,10 +12007,10 @@ function AssetsTab({
         {visibleArtifactRows.length ? (
           <Table
             headers={[
+              text.assetTableOutput,
               text.assetCategoryTable,
-              text.artifactTableType,
-              text.artifactTableName,
-              text.artifactTableVersion,
+              text.assetTableCreated,
+              text.assetTableOrigin,
               text.artifactTableSize,
               text.artifactTableActions
             ]}
@@ -11962,16 +12018,19 @@ function AssetsTab({
               const linkedNotebook = preferredNotebookForArtifact(notebookIndex, artifact.id);
               const planNodeIds = Array.from(assetResearchPlanNodeIds(artifact, researchPlanTimeline));
               return [
-                assetCategoryLabel(assetCategoryForArtifact(artifact), text),
-                <div className="cell-stack" key={`${artifact.id}-type`}>
-                  <span>{artifact.asset_type}</span>
-                  {planNodeIds.length ? <small>{planNodeIds.slice(0, 2).join(", ")}</small> : null}
-                </div>,
                 <div className="cell-stack" key={`${artifact.id}-name`}>
-                  <span>{artifact.name}</span>
+                  <span>{artifactDisplayTitle(artifact)}</span>
+                  <small>{artifactDetailLine(artifact)}</small>
                   {linkedNotebook ? <small>{text.relatedNotebooks}: {conciseNotebookTitle(linkedNotebook.title)}</small> : null}
                 </div>,
-                `v${artifact.version}`,
+                <span className="badge" key={`${artifact.id}-category`}>
+                  {assetCategoryLabel(assetCategoryForArtifact(artifact), text)}
+                </span>,
+                formatDate(artifact.created_at),
+                <div className="cell-stack" key={`${artifact.id}-origin`}>
+                  <span>{artifactOriginLabel(artifact, researchPlanTimeline, text)}</span>
+                  {planNodeIds.length ? <small>{planNodeIds.slice(0, 2).join(", ")}</small> : null}
+                </div>,
                 formatBytes(artifact.size_bytes),
                 <div className="row-actions" key={artifact.id}>
                   {linkedNotebook ? (

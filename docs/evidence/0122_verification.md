@@ -134,3 +134,32 @@ Known remaining J8 evidence/work:
 - Browser-side Playwright/network timing is still required; backend readiness does not explain the reported slow UI by itself.
 - Prewarm-on-link-display and iframe unmount avoidance are still pending.
 - Notebook authoring contract checks for top-level full-data loads are still pending.
+
+## J7 Canonical Asset Inventory
+
+Status: first UI/API slice complete.
+
+Implemented:
+
+- The Assets table now treats the asset list as the canonical inventory instead of a type-first stock list.
+- The primary table columns are now output title, human category, created time, origin, size, and actions.
+- Internal `asset_type` is no longer a primary column; it is retained as detail text with the version in the output cell.
+- Search now includes title, name, id, category, type detail, and origin text.
+- Rows are sorted newest-first in the UI.
+- Origin is displayed from fixed artifact metadata and research-plan links: plan node, dataset, run, model, job, workspace path, or project fallback.
+- Supporting records remain visible through the same inventory rather than being hidden behind a separate default-excluded surface.
+
+Verification:
+
+- U/A: `.venv/bin/pytest apps/backend/tests/test_api_flow.py::test_project_artifacts_include_surface_roles_for_assets_ui -q`
+  - Result: `1 passed, 1 warning`
+- U: `npm run build` in `apps/frontend`
+  - Result: passed
+- U: `git diff --check`
+  - Result: passed
+
+Known remaining J7 evidence/work:
+
+- B: browser evidence for finding a data-understanding notebook, final report, and pipeline from Assets search is still pending.
+- Insights/Reports still need to be folded into the same canonical inventory as filter presets.
+- Markdown report preview with inline figure handling needs a targeted verification pass.
