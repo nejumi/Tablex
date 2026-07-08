@@ -803,6 +803,7 @@ export function LeaderboardTab({
                 <strong className="leaderboard-rank" key={`${entry.run_id}-rank`}>#{entry.rank}</strong>,
                 <div className="leaderboard-model-cell" key={`${entry.run_id}-model`}>
                   <strong>{leaderboardEntryModelLabel(entry)}</strong>
+                  {entry.model_family ? <span className="badge muted">{entry.model_family.replace(/_/g, " ")}</span> : null}
                   {leaderboardEntryDescription(entry) ? <p>{leaderboardEntryDescription(entry)}</p> : null}
                   {leaderboardEntryFeatureSummary(entry) ? <small>{leaderboardEntryFeatureSummary(entry)}</small> : null}
                 </div>,

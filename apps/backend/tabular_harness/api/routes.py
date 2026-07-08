@@ -7841,6 +7841,7 @@ def leaderboard(
             "runner_type": run.runner_type,
             "model_id": model_id or None,
             "model_label": leaderboard_model_label(params, model_id=model_id) or None,
+            "model_family": leaderboard_model_family(params) or None,
             "model_description": leaderboard_model_description(params, summary_md=run.summary_md, model_id=model_id),
             "features_used": leaderboard_features_used(params),
             "feature_summary": leaderboard_feature_summary(params, metrics),
@@ -8556,6 +8557,16 @@ def leaderboard_model_label(params: dict[str, Any], *, model_id: str) -> str:
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return model_id
+
+
+def leaderboard_model_family(params: dict[str, Any]) -> str | None:
+    for source in (params, params.get("raw") if isinstance(params.get("raw"), dict) else {}):
+        if not isinstance(source, dict):
+            continue
+        value = source.get("model_family")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def leaderboard_model_description(params: dict[str, Any], *, summary_md: str | None, model_id: str) -> str:

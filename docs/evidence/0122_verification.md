@@ -222,12 +222,17 @@ Implemented:
 - Registered `tablex_modeling_strategy` as a library Skill and equipped it by default for new projects.
 - The Skill covers sanity floors, linear models, tree ensembles, relational aggregation, text/mixed-type models, calibration, ensembling, foundation tabular models, time-aware models, target-free analysis, diagnostics, and prediction pipeline packaging.
 - Added runtime facts for `catboost`, `tabpfn`, `torch`, and `nvidia-smi` availability to `.tablex/context.json`.
+- Leaderboard rows now expose and display optional Codex-submitted `model_family` metadata when present, without inferring model type in harness code.
 - No new model-selection logic, diversity gate, entity, or request type was added.
 
 Verification:
 
 - U/A: `.venv/bin/pytest apps/backend/tests/test_api_flow.py::test_default_asset_seeding_includes_modeling_and_llm_skills apps/backend/tests/test_agent_sessions.py::test_prepare_session_workspace_exposes_backend_python_runtime apps/backend/tests/test_api_flow.py::test_password_auth_protects_api_and_persists_user_settings -q`
   - Result: `3 passed, 1 warning`
+- U/A: `.venv/bin/pytest apps/backend/tests/test_api_flow.py::test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links -q`
+  - Result: `1 passed, 1 warning`
+- U: `npm run build` in `apps/frontend`
+  - Result: passed
 - U: `git diff --check`
   - Result: passed
 
@@ -235,7 +240,6 @@ Known remaining J5 evidence/work:
 
 - Ensemble pipeline registration and prediction E2E proof is still pending.
 - TabPFN or another foundation tabular model live trial remains pending and should happen only after the evaluation contract UX is usable.
-- Leaderboard display of optional `model_family` still needs a focused pass.
 
 ## J6 LLM Feature Augmentation Skill
 

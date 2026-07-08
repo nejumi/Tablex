@@ -3926,6 +3926,7 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
                     "source_artifact_id": source_artifact.id,
                     "source_key": "existing_structured_model_results:hierarchical_median",
                     "model_id": "hierarchical_median",
+                    "model_family": "median_baseline",
                     "model_description": "Hierarchical median grouped by pay period and experience.",
                     "features_used": ["pay_period", "experience_level", "work_type"],
                     "feature_summary": "pay period, experience, work type",
@@ -3963,6 +3964,7 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
     assert leaderboard_row["run_id"] == "run_leaderboard_reconcile"
     assert leaderboard_row["model_id"] == "hierarchical_median"
     assert leaderboard_row["model_label"] == "hierarchical_median"
+    assert leaderboard_row["model_family"] == "median_baseline"
     assert leaderboard_row["model_description"] == "Hierarchical median grouped by pay period and experience."
     assert leaderboard_row["features_used"] == ["pay_period", "experience_level", "work_type"]
     assert leaderboard_row["feature_summary"] == "pay period, experience, work type"

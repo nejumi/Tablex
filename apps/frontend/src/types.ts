@@ -938,6 +938,7 @@ export type LeaderboardEntry = {
   runner_type: string;
   model_id: string | null;
   model_label: string | null;
+  model_family?: string | null;
   model_description?: string | null;
   features_used?: string[];
   feature_summary?: string | null;
