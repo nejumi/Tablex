@@ -309,6 +309,8 @@ Recent confusion:
 - The user expects Chat to be a real operating surface for Codex. If the instruction is answerable from saved project state, Chat should answer directly. If it requires artifact/code inspection, Chat should dispatch or wake the main Codex session, show that it is checking, and return the Codex-authored result. It should not act like a non-executing proxy.
 - The user also expects natural-language Chat instructions to be sufficient for evaluation setup, for example "Use ROC-AUC" or "Use a stratified 5-fold split" or "Group by customer id." Codex should turn that into a schema-validated EvaluationSpec/SplitManifest proposal and Tablex should validate fixed fields. Chat should not merely explain that the Evaluation tab exists.
 - Raw should feel like the same kind of live Codex surface the user is using in this development conversation: the unmediated main Codex session transcript, with enough structure to inspect tool calls, messages, files, and failures. In exceptional/debug situations, the user should be able to send a direct message to that main session from Raw, explicitly bypassing the humanized Chat layer while still preserving safety boundaries and transcript history.
+- The current product still appears to treat Raw mostly as a log viewer. That is a product-contract miss, not just a missing convenience feature. The user had explicitly asked for Raw to be the living Codex surface; if the implemented Raw cannot be used to inspect and directly steer the main Codex session when needed, Tablex is still falling short of the intended agent interface.
+- The desired separation is: Chat for normal human-facing accountability and guidance; Raw for the live main Codex console/transcript; Activity for observed jobs, process state, failures, and retries. If Chat abstraction fails, the user must have a way to reach the real session rather than being trapped behind an auxiliary response composer.
 
 Please audit:
 
@@ -324,6 +326,11 @@ Please audit:
 - Whether Raw should expose a direct "send to main Codex session" input separate from normal Chat, with clear wording that it targets the live Full Auto session transcript.
 - Whether that Raw direct-input mode should be available only when a main session exists, and whether it should wake/restart a completed or waiting session.
 - Whether Raw direct-input should be visually and semantically distinct from Chat so normal users are not forced into low-level debugging, while power users can intervene when the Chat abstraction fails.
+- Whether Raw should be renamed or framed as "Codex Console", "Live Codex", or another name that better communicates that it is the real main session surface rather than an inert log.
+- Whether direct Raw input should append a user transcript event, write the session inbox entry, request a progress/result update, and surface the resulting Codex answer in both Raw and Chat with clear provenance.
+- Whether the direct Raw input path should bypass auxiliary response composition entirely.
+- Whether there are cases where direct Raw input must be disabled for safety, and what exact safety boundary justifies that.
+- Whether existing tests prove that a Raw direct message reaches the main session and produces a paired transcript/result, or whether a browser E2E is needed.
 - Whether `POST /api/projects/{project_id}/agent-chat` should always route action-bearing user requests to the main session when Full Auto is on, and whether a completed/idle main session should be restarted for user-requested inspection work.
 - Whether the current pairing model of `agent_chat_turn` jobs to later `chat_update.md` artifacts is too indirect for "please check and report" interactions.
 - Whether Chat needs an explicit "checked by main session" / "answered from saved state only" provenance label that is human-friendly and not implementation jargon.
