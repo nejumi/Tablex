@@ -208,3 +208,41 @@ def test_agent_chat_starts_missing_full_auto_main_session(tmp_path: Path) -> Non
         )
         assert event is not None
         assert Path(session.workspace_path or "").exists()
+
+
+def test_agent_chat_starts_full_auto_main_session_from_idle_phase(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_id = create_project(client)
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.autonomy_mode = "full_auto"
+        project.current_phase = "IDLE"
+        db.commit()
+
+    response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "暫定評価の分割方法を確認して報告してください", "locale": "ja-JP"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["response_composer"]["mode"] == "main_codex_session"
+    assert body["response_composer"]["status"] == "waiting_for_agent"
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        assert project.current_phase == "AUTONOMOUS_LOOP"
+        session = db.scalar(select(AgentSession).where(AgentSession.project_id == project_id))
+        assert session is not None
+        assert session.status in {"starting", "between_turns"}
+        event = db.scalar(
+            select(AgentTranscriptEvent).where(
+                AgentTranscriptEvent.session_id == session.id,
+                AgentTranscriptEvent.source == "user",
+                AgentTranscriptEvent.event_type == "user_instruction",
+            )
+        )
+        assert event is not None
+        assert loads_json(event.payload_json, {})["delivery"] == "queued_for_main_agent_session"

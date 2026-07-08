@@ -4222,8 +4222,7 @@ def create_agent_chat_turn(
             project.updated_at = utc_now()
             session = latest_session
         elif (
-            project.current_phase == "AUTONOMOUS_LOOP"
-            and project.autonomy_mode == "full_auto"
+            project.autonomy_mode == "full_auto"
             and (latest_session is None or latest_session.status != "stopped")
         ):
             session = start_or_resume_main_session(
@@ -4235,6 +4234,8 @@ def create_agent_chat_turn(
                 runner_kind="codex_cli",
                 created_by=request_actor_id(request),
             )
+            project.current_phase = "AUTONOMOUS_LOOP"
+            project.updated_at = utc_now()
     if session is not None and not sidecar_only:
         event = append_session_event(
             db,

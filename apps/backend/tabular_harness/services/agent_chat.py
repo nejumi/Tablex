@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sqlalchemy import func, select
@@ -83,6 +83,15 @@ def handle_agent_chat_turn(
         agent_model=agent_model,
         utility_model=utility_model,
     )
+    current_delivery = conversation_context.get("current_chat_delivery")
+    if composition.handoff_to_main_session and not isinstance(current_delivery, dict):
+        composition = replace(
+            composition,
+            message=render_handoff_requires_main_session_message(
+                response_locale,
+                composition.handoff_reason,
+            ),
+        )
     token_series = estimate_token_series(message, actions)
     response = {
         "schema_version": "agent_chat_turn.v1",
@@ -551,6 +560,16 @@ def render_conversation_fallback_message(
         f"and the target is {target}. The next useful surface is {target_tab}: {next_label}. "
         "This chat turn did not mutate evaluation, split, training, leaderboard, or artifact-producing workflows by text alone."
     )
+
+
+def render_handoff_requires_main_session_message(locale: str | None, reason: str | None) -> str:
+    if locale_is_japanese(locale):
+        if reason:
+            return f"この確認は保存済みの記録だけでは完了できません。Full Autoを開始すると、Codexが直接確認して返答できます。理由: {reason}"
+        return "この確認は保存済みの記録だけでは完了できません。Full Autoを開始すると、Codexが直接確認して返答できます。"
+    if reason:
+        return f"This cannot be answered from saved project records alone. Start Full Auto so Codex can check it directly. Reason: {reason}"
+    return "This cannot be answered from saved project records alone. Start Full Auto so Codex can check it directly."
 
 
 def conversation_next_focus(conversation_context: dict[str, Any]) -> dict[str, Any]:

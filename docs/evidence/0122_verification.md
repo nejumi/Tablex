@@ -75,20 +75,26 @@ Implemented:
 
 - Agent Chat now reuses a completed Full Auto main session instead of falling back to the auxiliary response composer when the project remains in full-auto mode.
 - Agent Chat now starts a missing Full Auto main session when the project is already in `AUTONOMOUS_LOOP`, instead of falling back to the auxiliary response composer.
+- Agent Chat now also starts a missing Full Auto main session when the project is `full_auto` but still in an idle phase, keeping Chat aligned with the power state.
 - A Chat turn delivered to a completed main session moves that session to `between_turns`, moves the project back to `AUTONOMOUS_LOOP`, writes the user instruction into transcript/inbox, and returns a `waiting_for_agent` main-session wait state.
 - Chat assistant messages now display a provenance label that distinguishes main-session answers, saved-record answers, and status updates from fixed composer metadata.
+- The auxiliary composer prompt and parser now support a structured `handoff_to_main_session` decision for cases where saved project records are not enough. This does not add filesystem or execution ability to the auxiliary composer.
 
 Verification:
 
-- U/A: `.venv/bin/pytest apps/backend/tests/test_agent_console_message.py -q`
-  - Result: `4 passed, 1 warning`
+- U/A: `.venv/bin/pytest apps/backend/tests/test_agent_response_composer.py apps/backend/tests/test_agent_console_message.py -q`
+  - Result: `11 passed, 1 warning`
+- U: `.venv/bin/python -m py_compile apps/backend/tabular_harness/services/agent_response_composer.py apps/backend/tabular_harness/services/agent_chat.py apps/backend/tabular_harness/api/routes.py`
+  - Result: passed
+- U/A: `.venv/bin/pytest apps/backend/tests/test_agent_response_composer.py apps/backend/tests/test_agent_console_message.py apps/backend/tests/test_agent_evaluation_requests.py apps/backend/tests/test_evaluation_splits.py apps/backend/tests/test_api_flow.py::test_project_artifacts_include_surface_roles_for_assets_ui apps/backend/tests/test_api_flow.py::test_default_asset_seeding_includes_modeling_and_llm_skills apps/backend/tests/test_api_flow.py::test_password_auth_protects_api_and_persists_user_settings apps/backend/tests/test_agent_sessions.py::test_prepare_session_workspace_exposes_backend_python_runtime -q`
+  - Result: `20 passed, 1 warning`
 - U: `npm run build` in `apps/frontend`
   - Result: passed
 
 Known remaining J3 evidence/work:
 
-- The response-composer `handoff_to_main_session` schema is still pending for non-Full-Auto cases where the composer needs main-session inspection before answering.
 - Full fake-runner and live-project verification for inspection requests is still pending.
+- Non-Full-Auto handoff currently returns an honest "start Full Auto" response instead of starting execution.
 
 ## J4 Prediction UX
 
