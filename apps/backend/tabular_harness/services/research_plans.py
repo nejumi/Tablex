@@ -65,6 +65,16 @@ PLAN_NOTEBOOK_ASSET_TYPES = {
     "analysis_notebook",
     "marimo_notebook",
 }
+PLAN_DISPLAY_TITLE_FIELDS = ("title",)
+PLAN_DISPLAY_DETAIL_FIELDS = (
+    "subtitle",
+    "summary",
+    "description",
+    "why_it_matters",
+    "next_action",
+    "notes",
+    "done_criteria",
+)
 STATIC_NOTEBOOK_HTML_ASSET_TYPES = {"notebook_html", "notebook_execution_html", "notebook_evidence_html"}
 PLAN_REPORT_ASSET_TYPES = {
     "agent_session_report",
@@ -1025,6 +1035,11 @@ def validate_research_plan_document(
                 for index, block in enumerate(blocks)
                 if isinstance(block, dict)
             }
+            current_index_by_id = {
+                research_plan_block_id(block, index): index
+                for index, block in enumerate(blocks)
+                if isinstance(block, dict)
+            }
             for previous_index, previous_block in enumerate(previous_blocks):
                 if not isinstance(previous_block, dict):
                     continue
@@ -1051,6 +1066,31 @@ def validate_research_plan_document(
                             "/timeline_blocks",
                             f"Previously completed node `{previous_id}` was changed from {previous_status} to {current_status}.",
                             "Do not reopen completed nodes. Add a new follow-up node if more work is needed.",
+                        )
+                    )
+                current_index = current_index_by_id.get(previous_id, 0)
+                if research_plan_has_display_text(
+                    previous_block,
+                    PLAN_DISPLAY_TITLE_FIELDS,
+                ) and not research_plan_has_display_text(current_block, PLAN_DISPLAY_TITLE_FIELDS):
+                    issues.append(
+                        research_plan_issue(
+                            "completed_node_title_erased",
+                            f"/timeline_blocks/{current_index}/title",
+                            f"Previously completed node `{previous_id}` had a display title, but the new revision removes it.",
+                            "Keep completed node display titles non-empty. Add a superseding node if the wording needs to change.",
+                        )
+                    )
+                if research_plan_has_display_text(
+                    previous_block,
+                    PLAN_DISPLAY_DETAIL_FIELDS,
+                ) and not research_plan_has_display_text(current_block, PLAN_DISPLAY_DETAIL_FIELDS):
+                    issues.append(
+                        research_plan_issue(
+                            "completed_node_display_text_erased",
+                            f"/timeline_blocks/{current_index}/subtitle",
+                            f"Previously completed node `{previous_id}` had display detail text, but the new revision removes it.",
+                            "Keep a non-empty subtitle, summary, description, why_it_matters, next_action, notes, or done_criteria field for completed nodes that already had user-visible detail.",
                         )
                     )
             current_contracts = [
@@ -1147,6 +1187,60 @@ def research_plan_block_granularity(block: dict[str, Any]) -> str:
         if isinstance(raw_value, str) and raw_value.strip():
             return raw_value.strip().casefold().replace("-", "_").replace(" ", "_")
     return ""
+
+
+def research_plan_has_display_text(block: dict[str, Any], field_keys: tuple[str, ...]) -> bool:
+    for key in field_keys:
+        for value in research_plan_display_text_values(block, key):
+            if isinstance(value, str) and value.strip():
+                return True
+    return False
+
+
+def research_plan_display_text_values(block: dict[str, Any], key: str) -> list[Any]:
+    values: list[Any] = [block.get(key)]
+    display_field_keys = (key, *_research_plan_display_field_keys(key))
+    for display_key in display_field_keys[1:]:
+        values.append(block.get(display_key))
+    for raw_key, raw_value in block.items():
+        if not isinstance(raw_key, str):
+            continue
+        if raw_key.startswith(f"{key}_") or raw_key.endswith(f"_{key}"):
+            values.append(raw_value)
+    for container_key in (
+        "localizations",
+        "localized",
+        "translations",
+        "translated",
+        "display",
+        "human_display",
+        "ui_display",
+        "localized_display",
+    ):
+        container = block.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for display_key in display_field_keys:
+            values.append(container.get(display_key))
+        for localized in container.values():
+            if not isinstance(localized, dict):
+                continue
+            for display_key in display_field_keys:
+                values.append(localized.get(display_key))
+    return values
+
+
+def _research_plan_display_field_keys(key: str) -> tuple[str, ...]:
+    return (
+        f"display_{key}",
+        f"{key}_display",
+        f"localized_{key}",
+        f"{key}_localized",
+        f"human_{key}",
+        f"{key}_human",
+        f"ui_{key}",
+        f"{key}_ui",
+    )
 
 
 def research_plan_block_has_completion_evidence(block: dict[str, Any]) -> bool:

@@ -28,8 +28,8 @@ from tabular_harness.services.research_plans import (
     latest_research_plan_current_work,
     record_harness_dataset_upload_in_research_plan,
     record_harness_objective_in_research_plan,
-    research_plan_artifact_output_types,
     request_research_plan_human_attention,
+    research_plan_artifact_output_types,
     set_research_plan_current_work,
 )
 
@@ -642,6 +642,132 @@ def test_research_plan_timeline_exposes_contract_validation_issues() -> None:
         assert "done_node_missing_deliverable_contract" in issue_codes
         assert "missing_current_node" in issue_codes
         assert response["blocks"][0]["status"] == "done"
+
+
+def test_research_plan_rejects_erasing_completed_node_display_detail() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_completed_detail_guard", name="Completed Detail Guard")
+        db.add(project)
+        db.commit()
+
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "subtitle": "Summarize row meaning and leakage-sensitive fields.",
+                        "granularity": "chapter",
+                        "status": "done",
+                        "no_output_required": True,
+                        "no_output_required_rationale": "Fixture evidence.",
+                        "completion_evidence": [{"output_type": "none"}],
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Codex completed data understanding.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        try:
+            commit_research_plan_revision(
+                db,
+                project_id=project.id,
+                document={
+                    "schema_version": "research_plan.v2",
+                    "timeline_blocks": [
+                        {
+                            "id": "data_understanding",
+                            "title": "Data understanding",
+                            "granularity": "chapter",
+                            "status": "done",
+                            "no_output_required": True,
+                            "no_output_required_rationale": "Fixture evidence.",
+                            "completion_evidence": [{"output_type": "none"}],
+                        }
+                    ],
+                },
+                author_type="codex",
+                reason="This incorrectly erases completed node display detail.",
+                strict_validation=True,
+            )
+        except ResearchPlanValidationError as exc:
+            detail = getattr(exc, "issues", [])
+        else:
+            detail = []
+
+        issue_codes = {issue["code"] for issue in detail}
+        assert "completed_node_display_text_erased" in issue_codes
+
+
+def test_research_plan_allows_completed_node_display_detail_rewording() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_completed_detail_reword", name="Completed Detail Reword")
+        db.add(project)
+        db.commit()
+
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "subtitle": "Summarize row meaning and leakage-sensitive fields.",
+                        "granularity": "chapter",
+                        "status": "done",
+                        "no_output_required": True,
+                        "no_output_required_rationale": "Fixture evidence.",
+                        "completion_evidence": [{"output_type": "none"}],
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Codex completed data understanding.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "why_it_matters": "Data meaning and leakage-sensitive fields are recorded in the notebook.",
+                        "granularity": "chapter",
+                        "status": "done",
+                        "no_output_required": True,
+                        "no_output_required_rationale": "Fixture evidence.",
+                        "completion_evidence": [{"output_type": "none"}],
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Codex reworded completed node detail without erasing it.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        response = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+        assert response["contract_validation"]["status"] == "ok"
+        assert response["blocks"][0]["subtitle"] == "Data meaning and leakage-sensitive fields are recorded in the notebook."
 
 
 def test_research_plan_timeline_exposes_current_work_and_artifact_links(tmp_path: Path) -> None:
