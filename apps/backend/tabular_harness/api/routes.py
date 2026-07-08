@@ -7469,7 +7469,7 @@ async def proxy_native_marimo_http(
     session = native_marimo_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Native marimo session is not running")
-    if session.to_dict().get("status") != "running":
+    if not session.is_alive():
         raise HTTPException(status_code=503, detail="Native marimo session is not ready")
     target_url = native_marimo_target_url(session, path, request.url.query)
     request_headers = {
@@ -7524,7 +7524,7 @@ async def proxy_native_marimo_http(
 @router.websocket("/api/marimo-sessions/{session_id}/proxy/{path:path}")
 async def proxy_native_marimo_websocket(websocket: WebSocket, session_id: str, path: str = "") -> None:
     session = native_marimo_session(session_id)
-    if session is None or session.to_dict().get("status") != "running":
+    if session is None or not session.is_alive():
         await websocket.close(code=4404)
         return
     await websocket.accept()

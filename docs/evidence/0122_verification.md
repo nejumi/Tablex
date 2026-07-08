@@ -142,10 +142,13 @@ Verification:
 - B: Playwright clicked Leaderboard → Result notebooks → `Model comparison`; the Notebooks focus, marimo panel title, and read order all selected the model-comparison notebook instead of the recommended data-understanding notebook.
   - Evidence: `docs/evidence/playwright/0122_j8_model_comparison_notebook_selected.png`
   - Observation: the browser console still recorded native marimo proxy readiness 503s during iframe startup; that remains J8 lifecycle work, not a notebook routing issue.
+- B: After removing the per-request proxy readiness probe, Playwright repeated the same Leaderboard → `Model comparison` notebook open on Home Credit Test5.
+  - Evidence: `docs/evidence/playwright/0122_j8_model_comparison_proxy_clean.png`
+  - Observation: the page reached the native marimo iframe with 0 console errors; remaining console entries were marimo iframe sandbox/preload warnings, not Tablex 503s.
 
 Known remaining J8 evidence/work:
 
-- Browser-side Playwright/network timing is still required; backend readiness does not explain the reported slow UI by itself.
+- Browser-side timing numbers are still required; current browser proof covers routing and false proxy-503 removal, not full cold/warm latency budgets.
 - Prewarm-on-link-display and iframe unmount avoidance are still pending.
 - Notebook authoring contract checks for top-level full-data loads are still pending.
 

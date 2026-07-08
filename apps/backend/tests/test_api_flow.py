@@ -5720,6 +5720,52 @@ def test_native_marimo_open_returns_session_payload(tmp_path: Path, monkeypatch:
     assert payload["status"] == "running"
 
 
+def test_native_marimo_proxy_forwards_alive_session_without_readiness_probe(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    class FakeNativeMarimoSession:
+        port = 43210
+        base_url = "/api/marimo-sessions/mos_starting/proxy"
+
+        def is_alive(self) -> bool:
+            return True
+
+        def to_dict(self) -> dict[str, Any]:
+            raise AssertionError("proxy should not run a separate readiness probe before forwarding")
+
+    forwarded: list[dict[str, Any]] = []
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def request(self, method: str, target_url: str, **kwargs: Any) -> Any:
+            forwarded.append({"method": method, "target_url": target_url, "kwargs": kwargs})
+            return SimpleNamespace(
+                content=b"console.log('ready');",
+                status_code=200,
+                headers={"content-type": "application/javascript"},
+            )
+
+    monkeypatch.setattr(routes_module, "native_marimo_session", lambda session_id: FakeNativeMarimoSession())
+    monkeypatch.setattr(routes_module.httpx, "AsyncClient", FakeAsyncClient)
+    client = make_client(tmp_path)
+
+    response = client.get("/api/marimo-sessions/mos_starting/proxy/assets/run.js?cache=1")
+
+    assert response.status_code == 200
+    assert response.content == b"console.log('ready');"
+    assert forwarded[0]["method"] == "GET"
+    assert forwarded[0]["target_url"] == "http://127.0.0.1:43210/api/marimo-sessions/mos_starting/proxy/assets/run.js?cache=1"
+
+
 def test_native_marimo_opens_figure_rich_notebook_through_proxy(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
