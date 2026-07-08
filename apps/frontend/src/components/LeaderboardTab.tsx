@@ -472,6 +472,7 @@ export function LeaderboardTab({
   const [predictionUploadedInputs, setPredictionUploadedInputs] = React.useState<Record<string, UploadedPredictionInput>>({});
   const [predictionUploadError, setPredictionUploadError] = React.useState<string | null>(null);
   const [predictionDragKey, setPredictionDragKey] = React.useState<string | null>(null);
+  const prewarmedNotebookArtifactsRef = React.useRef<Set<string>>(new Set());
 
   async function loadPreview(artifactId: string) {
     setPreviewLoadingId(artifactId);
@@ -628,6 +629,31 @@ export function LeaderboardTab({
   const topMetricName = selectedMetric ?? "metric";
   const decisionReady = booleanField(resultReadout?.decision_report.available);
   const resultNotebooks = notebooksForLeaderboardResults(notebookIndex, leaderboard);
+
+  const prewarmNativeMarimoArtifact = React.useCallback((artifactId: string) => {
+    const normalized = artifactId.trim();
+    if (!normalized || prewarmedNotebookArtifactsRef.current.has(normalized)) return;
+    prewarmedNotebookArtifactsRef.current.add(normalized);
+    void api(`/api/analysis-notebooks/${normalized}/marimo-session?wait_ready=false`, { method: "POST" }).catch(() => undefined);
+  }, []);
+
+  React.useEffect(() => {
+    const artifactIds = new Set<string>();
+    for (const notebook of resultNotebooks) {
+      artifactIds.add(notebook.artifact_ids.notebook);
+    }
+    for (const entry of leaderboard.slice(0, 3)) {
+      for (const notebook of notebooksForLeaderboardEntry(notebookIndex, entry)) {
+        artifactIds.add(notebook.artifact_ids.notebook);
+      }
+      for (const notebook of entry.related_notebooks ?? []) {
+        if (notebook.openable) artifactIds.add(notebook.artifact_id);
+      }
+    }
+    for (const artifactId of Array.from(artifactIds).slice(0, 4)) {
+      prewarmNativeMarimoArtifact(artifactId);
+    }
+  }, [leaderboard, notebookIndex, prewarmNativeMarimoArtifact, resultNotebooks]);
 
   async function setLeaderboardMetric(metric: string) {
     await api(`/api/projects/${project.id}/leaderboard/metric`, {

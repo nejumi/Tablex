@@ -9699,7 +9699,7 @@ function NotebooksTab({
     const prewarmed = prewarmedNativeMarimoArtifactsRef.current;
     if (prewarmed.has(artifactId)) return;
     prewarmed.add(artifactId);
-    void api<NativeMarimoSession>(`/api/analysis-notebooks/${artifactId}/marimo-session`, {
+    void api<NativeMarimoSession>(`/api/analysis-notebooks/${artifactId}/marimo-session?wait_ready=false`, {
       method: "POST"
     }).catch(() => undefined);
   }, []);

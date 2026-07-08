@@ -43,3 +43,28 @@ Next evidence required:
 - B: Browser network/error capture for the previously observed `run-page-*.js` failure class.
 - U/B: authoring-contract checks that discourage top-level full-data loads in Codex-authored notebooks.
 
+## Browser timing update: Leaderboard prewarm path
+
+Date: 2026-07-09
+
+Change measured:
+
+- Leaderboard result-notebook links now trigger background native marimo prewarm with `wait_ready=false` when the links become visible.
+- Existing Notebooks-tab prewarm also uses `wait_ready=false`, so background prewarm acknowledges quickly and does not hold the UI path open while marimo becomes ready.
+
+Browser evidence:
+
+- After reloading Home Credit Test5 on the Leaderboard tab, Playwright network records showed background prewarm calls:
+  - `POST /api/analysis-notebooks/art_19452d019824/marimo-session?wait_ready=false => 200`
+  - `POST /api/analysis-notebooks/art_e4f7e6ee90e8/marimo-session?wait_ready=false => 200`
+- Opening the `Model comparison` result notebook from Leaderboard after prewarm:
+  - Measured click-to-native-iframe time: **1,431 ms**
+  - Native iframe: `/api/marimo-sessions/mos_df10a23e802c/proxy/`
+  - Browser console errors: **0**
+  - Screenshot: `docs/evidence/playwright/0122_j8_leaderboard_prewarmed_open.png`
+
+Interpretation:
+
+- The primary Home Credit Leaderboard-to-notebook path is now below the J8 prewarmed target of 3 seconds.
+- The previously observed false proxy-readiness 503 class was not reproduced in this path after the proxy readiness probe removal.
+- Remaining measurement gaps are cold browser open from a fresh backend with no prewarm, Chat-link open timing, and authoring checks for notebooks that perform full-data top-level loads.

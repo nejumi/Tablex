@@ -142,11 +142,13 @@ Known remaining J4 evidence/work:
 
 ## J8 Native marimo Speed
 
-Status: backend profile slice complete.
+Status: Leaderboard prewarm slice complete.
 
 Implemented:
 
 - Added `docs/evidence/0122_marimo_profile.md` with cold/reopen measurements for two registered Home Credit notebooks.
+- Leaderboard result-notebook links now prewarm native marimo sessions when they become visible.
+- Background prewarm calls use `wait_ready=false` so the visible UI path is not held by the marimo readiness wait.
 
 Verification:
 
@@ -159,11 +161,16 @@ Verification:
 - B: After removing the per-request proxy readiness probe, Playwright repeated the same Leaderboard → `Model comparison` notebook open on Home Credit Test5.
   - Evidence: `docs/evidence/playwright/0122_j8_model_comparison_proxy_clean.png`
   - Observation: the page reached the native marimo iframe with 0 console errors; remaining console entries were marimo iframe sandbox/preload warnings, not Tablex 503s.
+- B: Playwright reloaded Home Credit Test5 Leaderboard and observed background prewarm calls for visible result notebooks with `wait_ready=false`, then opened `Model comparison`.
+  - Evidence: `docs/evidence/playwright/0122_j8_leaderboard_prewarmed_open.png`
+  - Timing: click-to-native-iframe was 1,431 ms.
+  - Observation: the path stayed below the 3 second prewarmed target and recorded 0 browser console errors.
 
 Known remaining J8 evidence/work:
 
-- Browser-side timing numbers are still required; current browser proof covers routing and false proxy-503 removal, not full cold/warm latency budgets.
-- Prewarm-on-link-display and iframe unmount avoidance are still pending.
+- Browser-side cold timing from a fresh backend with no prewarm is still pending.
+- Chat-link open timing is still pending.
+- Iframe unmount avoidance is still pending.
 - Notebook authoring contract checks for top-level full-data loads are still pending.
 
 ## J7 Canonical Asset Inventory
