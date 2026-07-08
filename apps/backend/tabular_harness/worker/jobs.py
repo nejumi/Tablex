@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import math
+import re
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -2688,7 +2690,8 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
     if pipeline_artifact.asset_type != "prediction_pipeline":
         raise ValueError("Artifact is not a prediction_pipeline")
 
-    input_path = prediction_input_path_for_job(db, project=project, payload=payload)
+    input_dir = prediction_input_dir_for_job(db, project=project, payload=payload, run_dir=get_settings().data_dir / "_pipeline_runs" / job.id)
+    input_path = None if input_dir is not None else prediction_input_path_for_job(db, project=project, payload=payload)
     history_path = prediction_history_path_for_job(db, project=project, payload=payload)
     run_dir = (get_settings().data_dir / "_pipeline_runs" / job.id).resolve()
     extract_dir = run_dir / "pipeline"
@@ -2714,7 +2717,12 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
         runtime_python = str(ensure_prediction_pipeline_smoke_python(requirements_path))
         runtime_isolated = True
         requirements_hash = prediction_pipeline_requirements_hash(requirements_path)
-    command = [runtime_python, str(predict_path), "--input", str(input_path), "--output", str(output_path)]
+    command = [runtime_python, str(predict_path)]
+    if input_dir is not None:
+        command.extend(["--input-dir", str(input_dir)])
+    elif input_path is not None:
+        command.extend(["--input", str(input_path)])
+    command.extend(["--output", str(output_path)])
     if history_path is not None:
         command.extend(["--history", str(history_path)])
     completed = subprocess.run(
@@ -2745,6 +2753,9 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
             "job_id": job.id,
             "input_dataset_snapshot_id": payload.get("dataset_snapshot_id"),
             "input_artifact_id": payload.get("input_artifact_id"),
+            "input_artifact_ids_by_table": payload.get("input_artifact_ids_by_table")
+            if isinstance(payload.get("input_artifact_ids_by_table"), dict)
+            else None,
             "history_artifact_id": payload.get("history_artifact_id"),
             "primary_path": str(output_path),
             "runtime_isolated": runtime_isolated,
@@ -2766,6 +2777,9 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
             "job_id": job.id,
             "input_dataset_snapshot_id": payload.get("dataset_snapshot_id"),
             "input_artifact_id": payload.get("input_artifact_id"),
+            "input_artifact_ids_by_table": payload.get("input_artifact_ids_by_table")
+            if isinstance(payload.get("input_artifact_ids_by_table"), dict)
+            else None,
             "history_artifact_id": payload.get("history_artifact_id"),
             "primary_path": str(target_dir / "predictions.csv"),
             "runtime_isolated": runtime_isolated,
@@ -2816,11 +2830,45 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
         "pilot_prediction_batch_id": pilot_prediction_batch_id,
         "artifact_id": prediction_artifact.id,
         "artifact_ids": [pipeline_artifact.id, prediction_artifact.id],
-        "row_source": str(input_path),
+        "row_source": str(input_dir or input_path),
         "runtime_isolated": runtime_isolated,
         "python_executable": runtime_python,
         "requirements_hash": requirements_hash,
     }
+
+
+def prediction_input_dir_for_job(db: Session, *, project: Project, payload: dict[str, Any], run_dir: Path) -> Path | None:
+    raw_mapping = payload.get("input_artifact_ids_by_table")
+    if not isinstance(raw_mapping, dict) or not raw_mapping:
+        return None
+    input_dir = (run_dir / "input_dir").resolve()
+    input_dir.mkdir(parents=True, exist_ok=True)
+    manifest: dict[str, Any] = {"schema_version": "prediction_input_dir_manifest.v1", "tables": []}
+    for raw_name, raw_artifact_id in raw_mapping.items():
+        if not isinstance(raw_name, str) or not raw_name.strip() or not isinstance(raw_artifact_id, str) or not raw_artifact_id.strip():
+            continue
+        table_name = re.sub(r"[^A-Za-z0-9._-]+", "_", raw_name).strip("._") or "table"
+        artifact = db.get(Artifact, raw_artifact_id.strip())
+        if artifact is None or artifact.project_id != project.id:
+            raise ValueError(f"Prediction input artifact not found for table {table_name}")
+        source_path = artifact_primary_path(artifact)
+        if not source_path.exists() or not source_path.is_file():
+            raise ValueError(f"Prediction input file not found for table {table_name}")
+        suffix = source_path.suffix.lower() if source_path.suffix.lower() in {".csv", ".parquet"} else ".csv"
+        target_path = input_dir / f"{table_name}{suffix}"
+        shutil.copy2(source_path, target_path)
+        manifest["tables"].append(
+            {
+                "name": table_name,
+                "artifact_id": artifact.id,
+                "filename": target_path.name,
+                "path": str(target_path),
+            }
+        )
+    if not manifest["tables"]:
+        raise ValueError("run_prediction_pipeline input_artifact_ids_by_table did not contain any valid table inputs")
+    (input_dir / "manifest.json").write_text(dumps_json(manifest), encoding="utf-8")
+    return input_dir
 
 
 def prediction_input_path_for_job(db: Session, *, project: Project, payload: dict[str, Any]) -> Path:

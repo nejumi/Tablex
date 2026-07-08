@@ -103,7 +103,7 @@ Known remaining J3 evidence/work:
 
 ## J4 Prediction UX
 
-Status: first UI slice complete.
+Status: upload and multi-table execution slice complete.
 
 Implemented:
 
@@ -112,24 +112,33 @@ Implemented:
 - The first slice lets the user choose an existing `DatasetSnapshot`, queues the existing `run_prediction_pipeline` worker job, runs it, registers the prediction batch artifact, previews it, and offers a predictions download link.
 - Rows without a registered prediction pipeline keep the action disabled.
 - `pipeline_manifest.v1` now accepts normalized `input_contract.required_tables` declarations, and Leaderboard rows expose the pipeline input contract so the prediction drawer can show expected columns and required tables before execution.
+- Added `POST /api/projects/{project_id}/prediction-inputs` for drawer-local CSV/Parquet upload as a `prediction_input` artifact.
+- Prediction input uploads return a fixed-format validation report with observed columns, expected columns, missing columns, unexpected columns, and dtype-check availability.
+- The Leaderboard prediction drawer now supports file chooser/dropzone upload for single-table and per-required-table contracts, shows validation status inline, and only enables prediction when required inputs are present.
+- `run_prediction_pipeline` jobs now accept `input_artifact_ids_by_table` and invoke pipeline `predict.py --input-dir ... --output ...` for multi-table prediction contracts.
 
 Verification:
 
-- U/A: `.venv/bin/pytest apps/backend/tests/test_api_flow.py::test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links apps/backend/tests/test_agent_sessions.py::test_pipeline_manifest_normalizes_required_tables_contract -q`
-  - Result: `2 passed, 1 warning`
+- U/A: `.venv/bin/pytest apps/backend/tests/test_agent_sessions.py::test_prediction_pipeline_worker_runs_predict_and_registers_batch apps/backend/tests/test_agent_sessions.py::test_prediction_pipeline_worker_runs_multitable_input_dir apps/backend/tests/test_agent_sessions.py::test_prediction_pipeline_worker_passes_history_for_time_series_features apps/backend/tests/test_api_flow.py::test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links -q`
+  - Result: `4 passed, 1 warning`
 - U: `npm run build` in `apps/frontend`
+  - Result: passed
+- U: `.venv/bin/python -m py_compile apps/backend/tabular_harness/api/routes.py apps/backend/tabular_harness/worker/jobs.py apps/backend/tests/test_api_flow.py apps/backend/tests/test_agent_sessions.py`
   - Result: passed
 - U: `git diff --check`
   - Result: passed
 - B: Playwright opened Home Credit Test5, clicked the Leaderboard row prediction action, and captured the in-row prediction drawer.
-  - Evidence: `docs/evidence/playwright/0122_j4_prediction_drawer_no_contract.png`
-  - Observation: the drawer opens in the Leaderboard surface and shows the honest "no detailed prediction input contract" state for older registered pipeline artifacts that predate `pipeline_manifest.input_contract`.
+  - Evidence: `docs/evidence/playwright/0122_j4_prediction_drawer_upload_dropzone.png`
+  - Observation: the drawer opens in the Leaderboard surface, shows the expected input columns, and provides an in-place prediction file dropzone without adding a new tab.
+- B: Playwright uploaded a CSV through the drawer file chooser after backend restart picked up the new route.
+  - Evidence: `docs/evidence/playwright/0122_j4_prediction_drawer_uploaded_validation.png`
+  - Observation: the drawer displayed `Input matches required columns` for the uploaded file.
 
 Known remaining J4 evidence/work:
 
-- D&D upload directly inside the prediction drawer and `--input-dir` execution for multi-table prediction are still pending.
-- `pipeline_manifest.v1` `input_contract.required_tables` declaration/display is implemented; `--input-dir` multi-table prediction execution is still pending.
-- Fixed-format validation report for column/dtype mismatch in the drawer is still pending.
+- Live prediction execution from a real external test file through a production-like model pipeline is still pending.
+- Browser evidence currently uses the file chooser path; drag-drop uses the same upload handler but still needs a dedicated browser gesture capture.
+- Parquet column inspection and dtype validation remain `not_available` in the first fixed-format validation report.
 
 ## J8 Native marimo Speed
 

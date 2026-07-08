@@ -4420,6 +4420,41 @@ td {
   gap: 10px;
 }
 
+.prediction-upload-section,
+.prediction-table-inputs {
+  display: grid;
+  gap: 10px;
+}
+
+.prediction-input-dropzone {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--accent));
+  padding: 10px;
+}
+
+.prediction-input-dropzone.dragging {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.prediction-input-dropzone span,
+.prediction-input-validation small {
+  color: var(--muted);
+}
+
+.prediction-input-validation {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .chip-row {
   display: flex;
   flex-wrap: wrap;

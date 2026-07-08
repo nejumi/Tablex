@@ -1,5 +1,5 @@
 import React from "react";
-import { BarChart3, Download, FileText, ListChecks, Loader2, MessageSquare, PieChart, Play, Plus } from "lucide-react";
+import { BarChart3, Download, FileText, ListChecks, Loader2, MessageSquare, PieChart, Play, Plus, Upload } from "lucide-react";
 import type { LocaleMessages } from "../copy";
 import { ArtifactLineagePanel } from "./ArtifactLineagePanel";
 import { RelatedNotebookLinks, notebooksForLeaderboardEntry, notebooksForLeaderboardResults } from "./NotebookLinks";
@@ -24,6 +24,27 @@ import type {
 } from "../types";
 
 const apiBase = import.meta.env.VITE_API_BASE ?? "";
+const SINGLE_PREDICTION_INPUT_KEY = "__single_prediction_input__";
+
+type PredictionInputValidationReport = {
+  status: "passed" | "failed" | string;
+  missing_columns?: string[];
+  unexpected_columns?: string[];
+  observed_columns?: string[];
+};
+
+type PredictionInputUploadResponse = {
+  schema_version: "prediction_input_upload.v1";
+  artifact_id: string;
+  artifact: Artifact;
+  validation_report: PredictionInputValidationReport;
+};
+
+type UploadedPredictionInput = {
+  artifactId: string;
+  filename: string;
+  validationReport: PredictionInputValidationReport;
+};
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, { credentials: "include", ...init });
@@ -82,6 +103,23 @@ function textField(value: unknown): string | null {
 
 function booleanField(value: unknown): boolean {
   return value === true;
+}
+
+function predictionInputIsUsable(input: UploadedPredictionInput | undefined): boolean {
+  return Boolean(input) && input?.validationReport.status !== "failed";
+}
+
+function predictionRunReady(
+  entry: LeaderboardEntry,
+  datasetId: string,
+  uploadedInputs: Record<string, UploadedPredictionInput>
+): boolean {
+  const requiredTables = entry.pipeline_input_contract?.required_tables ?? [];
+  if (requiredTables.length) {
+    return requiredTables.every((table) => table.optional || predictionInputIsUsable(uploadedInputs[table.name]));
+  }
+  if (predictionInputIsUsable(uploadedInputs[SINGLE_PREDICTION_INPUT_KEY])) return true;
+  return Boolean(datasetId);
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | null {
@@ -431,6 +469,9 @@ export function LeaderboardTab({
   const [predictionEntry, setPredictionEntry] = React.useState<LeaderboardEntry | null>(null);
   const [predictionDatasetId, setPredictionDatasetId] = React.useState<string>("");
   const [predictionResultArtifactId, setPredictionResultArtifactId] = React.useState<string | null>(null);
+  const [predictionUploadedInputs, setPredictionUploadedInputs] = React.useState<Record<string, UploadedPredictionInput>>({});
+  const [predictionUploadError, setPredictionUploadError] = React.useState<string | null>(null);
+  const [predictionDragKey, setPredictionDragKey] = React.useState<string | null>(null);
 
   async function loadPreview(artifactId: string) {
     setPreviewLoadingId(artifactId);
@@ -450,12 +491,66 @@ export function LeaderboardTab({
     }
   }, [datasets, predictionDatasetId]);
 
+  async function uploadPredictionInput(entry: LeaderboardEntry, file: File, tableName: string | null) {
+    if (!entry.pipeline_artifact_id) return;
+    const inputKey = tableName ?? SINGLE_PREDICTION_INPUT_KEY;
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("pipeline_artifact_id", entry.pipeline_artifact_id);
+    formData.append("table_name", tableName ?? "prediction_input");
+    formData.append("batch_kind", "external_test");
+    setPredictionUploadError(null);
+    const uploaded = await api<PredictionInputUploadResponse>(`/api/projects/${project.id}/prediction-inputs`, {
+      method: "POST",
+      body: formData
+    });
+    setPredictionUploadedInputs((current) => ({
+      ...current,
+      [inputKey]: {
+        artifactId: uploaded.artifact_id,
+        filename: file.name,
+        validationReport: uploaded.validation_report
+      }
+    }));
+  }
+
+  async function uploadPredictionInputFromFileList(entry: LeaderboardEntry, files: FileList | null, tableName: string | null) {
+    const file = files?.[0];
+    if (!file) return;
+    try {
+      await uploadPredictionInput(entry, file, tableName);
+    } catch (err) {
+      setPredictionUploadError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   async function runPredictionForEntry(entry: LeaderboardEntry) {
-    if (!entry.pipeline_artifact_id || !predictionDatasetId) return;
+    if (!entry.pipeline_artifact_id) return;
+    const requiredTables = entry.pipeline_input_contract?.required_tables ?? [];
+    const payload: Record<string, unknown> = {};
+    if (requiredTables.length) {
+      const tableMapping: Record<string, string> = {};
+      for (const table of requiredTables) {
+        const uploaded = predictionUploadedInputs[table.name];
+        if (uploaded) {
+          tableMapping[table.name] = uploaded.artifactId;
+        } else if (!table.optional) {
+          throw new Error(text.predictionMissingRequiredTable.replace("{table}", table.name));
+        }
+      }
+      if (!Object.keys(tableMapping).length) throw new Error(text.predictionNoUploadedInputs);
+      payload.input_artifact_ids_by_table = tableMapping;
+    } else if (predictionUploadedInputs[SINGLE_PREDICTION_INPUT_KEY]) {
+      payload.input_artifact_id = predictionUploadedInputs[SINGLE_PREDICTION_INPUT_KEY].artifactId;
+    } else if (predictionDatasetId) {
+      payload.dataset_snapshot_id = predictionDatasetId;
+    } else {
+      throw new Error(text.predictionNoUploadedInputs);
+    }
     const job = await api<Job>(`/api/projects/${project.id}/pipelines/${entry.pipeline_artifact_id}/predict`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dataset_snapshot_id: predictionDatasetId })
+      body: JSON.stringify(payload)
     });
     const completed = await runQueuedJobAndWait(job, { label: text.leaderboardActionPredict });
     const artifactId = textField(completed.output.artifact_id) ?? textField(completed.output.prediction_batch_artifact_id);
@@ -540,6 +635,57 @@ export function LeaderboardTab({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ metric })
     });
+  }
+
+  function renderPredictionInputDropzone(entry: LeaderboardEntry, inputKey: string, tableName: string | null, label: string) {
+    const uploaded = predictionUploadedInputs[inputKey];
+    const validation = uploaded?.validationReport;
+    const missing = validation?.missing_columns ?? [];
+    const unexpected = validation?.unexpected_columns ?? [];
+    return (
+      <div
+        className={`prediction-input-dropzone ${predictionDragKey === inputKey ? "dragging" : ""}`}
+        key={inputKey}
+        onDragLeave={() => setPredictionDragKey(null)}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setPredictionDragKey(inputKey);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setPredictionDragKey(null);
+          void runAction(() => uploadPredictionInputFromFileList(entry, event.dataTransfer.files, tableName));
+        }}
+      >
+        <div>
+          <strong>{label}</strong>
+          <span>{text.predictionDropHint}</span>
+        </div>
+        <label className="secondary-button">
+          <Upload size={16} />
+          {text.predictionChooseFile}
+          <input
+            hidden
+            type="file"
+            accept=".csv,.parquet,text/csv,application/vnd.apache.parquet"
+            onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+              void runAction(() => uploadPredictionInputFromFileList(entry, event.target.files, tableName));
+              event.currentTarget.value = "";
+            }}
+          />
+        </label>
+        {uploaded ? (
+          <div className="prediction-input-validation">
+            <span className={validation?.status === "failed" ? "badge warning" : "badge success"}>
+              {validation?.status === "failed" ? text.predictionValidationFailed : text.predictionValidationPassed}
+            </span>
+            <small>{uploaded.filename}</small>
+            {missing.length ? <small>{text.predictionMissingColumns.replace("{columns}", missing.join(", "))}</small> : null}
+            {unexpected.length ? <small>{text.predictionUnexpectedColumns.replace("{columns}", unexpected.join(", "))}</small> : null}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -713,6 +859,8 @@ export function LeaderboardTab({
                     onClick={() => {
                       setPredictionEntry(entry);
                       setPredictionResultArtifactId(null);
+                      setPredictionUploadedInputs({});
+                      setPredictionUploadError(null);
                     }}
                     title={entry.pipeline_artifact_id ? text.leaderboardActionPredict : text.pipelineBundleUnavailable}
                     type="button"
@@ -792,6 +940,29 @@ export function LeaderboardTab({
               ) : (
                 <EmptyInline text={text.predictionNoContract} />
               )}
+              <div className="prediction-upload-section">
+                <strong>{text.predictionUploadTitle}</strong>
+                {predictionEntry.pipeline_input_contract?.required_tables.length ? (
+                  <div className="prediction-table-inputs">
+                    {predictionEntry.pipeline_input_contract.required_tables.map((table) =>
+                      renderPredictionInputDropzone(
+                        predictionEntry,
+                        table.name,
+                        table.name,
+                        `${table.name}${table.optional ? ` · ${text.optional}` : ""}`
+                      )
+                    )}
+                  </div>
+                ) : (
+                  renderPredictionInputDropzone(
+                    predictionEntry,
+                    SINGLE_PREDICTION_INPUT_KEY,
+                    null,
+                    text.predictionSingleInput
+                  )
+                )}
+                {predictionUploadError ? <span className="badge warning">{predictionUploadError}</span> : null}
+              </div>
               {datasets.length ? (
                 <label className="field">
                   <span>{text.predictionInputDataset}</span>
@@ -809,7 +980,7 @@ export function LeaderboardTab({
               <div className="button-row">
                 <button
                   className="primary-button"
-                  disabled={busy || !predictionEntry.pipeline_artifact_id || !predictionDatasetId}
+                  disabled={busy || !predictionEntry.pipeline_artifact_id || !predictionRunReady(predictionEntry, predictionDatasetId, predictionUploadedInputs)}
                   onClick={() => void runAction(() => runPredictionForEntry(predictionEntry))}
                   type="button"
                 >

@@ -8037,9 +8037,14 @@ def run_prediction_pipeline_endpoint(
         raise HTTPException(status_code=400, detail="Artifact is not a prediction pipeline")
     dataset_snapshot_id = payload.get("dataset_snapshot_id")
     input_artifact_id = payload.get("input_artifact_id")
+    input_artifact_ids_by_table = payload.get("input_artifact_ids_by_table")
     history_artifact_id = payload.get("history_artifact_id")
-    if not isinstance(dataset_snapshot_id, str) and not isinstance(input_artifact_id, str):
-        raise HTTPException(status_code=400, detail="dataset_snapshot_id or input_artifact_id is required")
+    if (
+        not isinstance(dataset_snapshot_id, str)
+        and not isinstance(input_artifact_id, str)
+        and not isinstance(input_artifact_ids_by_table, dict)
+    ):
+        raise HTTPException(status_code=400, detail="dataset_snapshot_id, input_artifact_id, or input_artifact_ids_by_table is required")
     job = create_job(
         db,
         job_type="run_prediction_pipeline",
@@ -8048,6 +8053,13 @@ def run_prediction_pipeline_endpoint(
             "pipeline_artifact_id": artifact.id,
             "dataset_snapshot_id": dataset_snapshot_id if isinstance(dataset_snapshot_id, str) else None,
             "input_artifact_id": input_artifact_id if isinstance(input_artifact_id, str) else None,
+            "input_artifact_ids_by_table": {
+                str(key): str(value)
+                for key, value in input_artifact_ids_by_table.items()
+                if isinstance(key, str) and isinstance(value, str) and key.strip() and value.strip()
+            }
+            if isinstance(input_artifact_ids_by_table, dict)
+            else None,
             "history_artifact_id": history_artifact_id if isinstance(history_artifact_id, str) else None,
             "timeout_seconds": payload.get("timeout_seconds") if isinstance(payload.get("timeout_seconds"), int) else 300,
         },
@@ -8059,6 +8071,86 @@ def run_prediction_pipeline_endpoint(
         },
     )
     return job_to_dict(job)
+
+
+@router.post("/api/projects/{project_id}/prediction-inputs")
+def upload_prediction_input(
+    project_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+    file: Annotated[UploadFile, File()],
+    pipeline_artifact_id: Annotated[str | None, Form()] = None,
+    table_name: Annotated[str | None, Form()] = None,
+    batch_kind: Annotated[str | None, Form()] = None,
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".csv", ".parquet"}:
+        raise HTTPException(status_code=400, detail="Only CSV and Parquet prediction inputs are supported")
+    safe_table = sanitize_prediction_input_name(table_name or Path(file.filename or "prediction_input").stem)
+    artifact_name = f"prediction_input_{safe_table}"
+    version = next_artifact_version(db, project.id, "prediction_input", artifact_name)
+    artifact_dir, stored, content_hash = store.store_stream(
+        org_id=project.org_id,
+        project_id=project.id,
+        asset_type="prediction_input",
+        name=artifact_name,
+        version=version,
+        filename=file.filename or f"{safe_table}{suffix}",
+        stream=file.file,
+        metadata={
+            "project_id": project.id,
+            "source_filename": file.filename,
+            "table_name": safe_table,
+            "batch_kind": normalize_prediction_batch_kind(batch_kind),
+        },
+    )
+    validation_report = prediction_input_validation_report(
+        db,
+        project=project,
+        input_path=stored.path,
+        pipeline_artifact_id=pipeline_artifact_id,
+        table_name=safe_table,
+    )
+    artifact = register_artifact(
+        db,
+        project_id=project.id,
+        asset_type="prediction_input",
+        name=artifact_name,
+        uri=str(artifact_dir),
+        content_hash=content_hash,
+        size_bytes=stored.size_bytes,
+        metadata={
+            "project_id": project.id,
+            "primary_path": str(stored.path),
+            "source_filename": file.filename,
+            "table_name": safe_table,
+            "batch_kind": normalize_prediction_batch_kind(batch_kind),
+            "pipeline_artifact_id": pipeline_artifact_id if isinstance(pipeline_artifact_id, str) else None,
+            "validation_report": validation_report,
+        },
+        version=version,
+        org_id=project.org_id,
+    )
+    if isinstance(pipeline_artifact_id, str) and pipeline_artifact_id.strip():
+        pipeline_artifact = db.get(Artifact, pipeline_artifact_id.strip())
+        if pipeline_artifact is not None and pipeline_artifact.project_id == project.id:
+            create_lineage_edge(
+                db,
+                project_id=project.id,
+                from_asset_type="artifact",
+                from_asset_id=artifact.id,
+                to_asset_type="artifact",
+                to_asset_id=pipeline_artifact.id,
+                relation_type="prediction_input_for_pipeline",
+                metadata={"table_name": safe_table, "batch_kind": normalize_prediction_batch_kind(batch_kind)},
+            )
+    return {
+        "schema_version": "prediction_input_upload.v1",
+        "artifact": artifact_to_dict(artifact),
+        "artifact_id": artifact.id,
+        "validation_report": validation_report,
+    }
 
 
 @router.post("/api/projects/{project_id}/pilot-deployments")
@@ -8628,6 +8720,79 @@ def leaderboard_pipeline_input_contract(artifact: Artifact | None) -> dict[str, 
         "required_tables": required_tables,
         "history_requirements": history_requirements if isinstance(history_requirements, dict) else None,
     }
+
+
+def sanitize_prediction_input_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._") or "prediction_input"
+
+
+def normalize_prediction_batch_kind(value: str | None) -> str:
+    kind = (value or "external_test").strip().lower()
+    return kind if kind in {"validation", "external_test", "pilot", "benchmark_submission"} else "external_test"
+
+
+def prediction_input_validation_report(
+    db: Session,
+    *,
+    project: Project,
+    input_path: Path,
+    pipeline_artifact_id: str | None,
+    table_name: str,
+) -> dict[str, Any]:
+    observed_columns = prediction_input_columns(input_path)
+    expected_columns: list[dict[str, Any]] = []
+    pipeline_artifact = (
+        db.get(Artifact, pipeline_artifact_id.strip())
+        if isinstance(pipeline_artifact_id, str) and pipeline_artifact_id.strip()
+        else None
+    )
+    if pipeline_artifact is not None and pipeline_artifact.project_id == project.id and pipeline_artifact.asset_type == "prediction_pipeline":
+        contract = leaderboard_pipeline_input_contract(pipeline_artifact)
+        if isinstance(contract, dict):
+            expected_columns = prediction_expected_columns_for_table(contract, table_name)
+    required_names = [
+        str(column.get("name"))
+        for column in expected_columns
+        if column.get("required", True) is not False and isinstance(column.get("name"), str)
+    ]
+    expected_names = [str(column.get("name")) for column in expected_columns if isinstance(column.get("name"), str)]
+    missing_columns = [name for name in required_names if name not in observed_columns]
+    unexpected_columns = [name for name in observed_columns if expected_names and name not in expected_names]
+    return {
+        "schema_version": "prediction_input_validation_report.v1",
+        "status": "failed" if missing_columns else "passed",
+        "table_name": table_name,
+        "observed_columns": observed_columns,
+        "expected_columns": expected_columns,
+        "missing_columns": missing_columns,
+        "unexpected_columns": unexpected_columns,
+        "dtype_checks": "not_available",
+    }
+
+
+def prediction_expected_columns_for_table(contract: dict[str, Any], table_name: str) -> list[dict[str, Any]]:
+    required_tables = contract.get("required_tables")
+    if isinstance(required_tables, list) and required_tables:
+        for item in required_tables:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("name") or "") == table_name:
+                columns = item.get("columns")
+                return [column for column in columns if isinstance(column, dict)] if isinstance(columns, list) else []
+        return []
+    columns = contract.get("columns")
+    return [column for column in columns if isinstance(column, dict)] if isinstance(columns, list) else []
+
+
+def prediction_input_columns(input_path: Path) -> list[str]:
+    if input_path.suffix.lower() == ".csv":
+        with input_path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.reader(handle)
+            try:
+                return [str(item) for item in next(reader)]
+            except StopIteration:
+                return []
+    return []
 
 
 def pretty_structured_value(value: str) -> str:

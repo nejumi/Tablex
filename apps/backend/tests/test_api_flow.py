@@ -3999,6 +3999,35 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
     predict_job = predict_response.json()
     assert predict_job["job_type"] == "run_prediction_pipeline"
     assert predict_job["status"] == "queued"
+    prediction_upload_response = client.post(
+        f"/api/projects/{project_id}/prediction-inputs",
+        data={"pipeline_artifact_id": pipeline_bundle.id, "table_name": "application", "batch_kind": "external_test"},
+        files={"file": ("application.csv", b"x,row_id\n1,A\n", "text/csv")},
+    )
+    assert prediction_upload_response.status_code == 200, prediction_upload_response.text
+    prediction_upload = prediction_upload_response.json()
+    assert prediction_upload["artifact"]["asset_type"] == "prediction_input"
+    assert prediction_upload["validation_report"]["status"] == "passed"
+    assert prediction_upload["validation_report"]["missing_columns"] == []
+    missing_upload_response = client.post(
+        f"/api/projects/{project_id}/prediction-inputs",
+        data={"pipeline_artifact_id": pipeline_bundle.id, "table_name": "application", "batch_kind": "external_test"},
+        files={"file": ("application_missing.csv", b"row_id\nA\n", "text/csv")},
+    )
+    assert missing_upload_response.status_code == 200, missing_upload_response.text
+    assert missing_upload_response.json()["validation_report"]["status"] == "failed"
+    assert missing_upload_response.json()["validation_report"]["missing_columns"] == ["x"]
+    table_predict_response = client.post(
+        f"/api/projects/{project_id}/pipelines/{pipeline_bundle.id}/predict",
+        json={"input_artifact_ids_by_table": {"application": prediction_upload["artifact_id"]}},
+    )
+    assert table_predict_response.status_code == 200, table_predict_response.text
+    with app.state.session_factory() as db:
+        table_predict_job = db.get(Job, table_predict_response.json()["id"])
+        assert table_predict_job is not None
+        assert loads_json(table_predict_job.input_json, {})["input_artifact_ids_by_table"] == {
+            "application": prediction_upload["artifact_id"]
+        }
     deployment_response = client.post(
         f"/api/projects/{project_id}/pilot-deployments",
         json={"pipeline_artifact_id": pipeline_bundle.id, "experiment_run_id": "run_leaderboard_reconcile"},
