@@ -761,6 +761,17 @@ type RunActionOptions = {
   refreshMode?: "full" | "data-intake" | "none";
 };
 
+type DataUploadDraft = {
+  queuedFiles: File[];
+  primaryFileName: string;
+  uploadProgress: UploadBundleProgress | null;
+  fileColumnHints: Record<string, string[]>;
+  addFiles: (files: FileList | File[]) => void;
+  removeFile: (file: File) => void;
+  setPrimaryFileName: (fileName: string) => void;
+  setUploadProgress: React.Dispatch<React.SetStateAction<UploadBundleProgress | null>>;
+};
+
 async function waitForJobCompletion(jobId: string, options: JobWaitOptions = {}): Promise<Job> {
   const timeoutMs = options.timeoutMs ?? 10 * 60_000;
   const pollMs = options.pollMs ?? 1000;
@@ -2065,6 +2076,77 @@ function DataIntakeStatusCard({
   );
 }
 
+function HomeDataUploadDropzone({
+  draft,
+  text,
+  disabled,
+  onFiles,
+  onOpenDataUpload
+}: {
+  draft: DataUploadDraft;
+  text: LocaleMessages;
+  disabled: boolean;
+  onFiles: (files: FileList | File[]) => void;
+  onOpenDataUpload: () => void;
+}) {
+  const [isDragging, setIsDragging] = React.useState(false);
+  const queuedTableFiles = draft.queuedFiles.filter(isTableUploadFile);
+  const queuedErHintFiles = draft.queuedFiles.filter(isRelationalHintUploadFile);
+  const queuedLabel = draft.queuedFiles.length
+    ? text.homeUploadQueued
+        .replace("{tables}", String(queuedTableFiles.length))
+        .replace("{hints}", String(queuedErHintFiles.length))
+    : text.homeUploadIdle;
+  const active = disabled || draft.uploadProgress?.active === true;
+
+  return (
+    <section className={`home-upload-card ${active ? "active" : ""}`}>
+      <label
+        className={`data-dropzone home-data-dropzone ${isDragging ? "dragging" : ""} ${active ? "disabled" : ""}`}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          if (!active) setIsDragging(true);
+        }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (!active) setIsDragging(true);
+        }}
+        onDragLeave={(event) => {
+          event.preventDefault();
+          setIsDragging(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setIsDragging(false);
+          if (!active) onFiles(event.dataTransfer.files);
+        }}
+      >
+        <input
+          className="data-dropzone-input"
+          type="file"
+          multiple
+          disabled={active}
+          accept=".csv,.parquet,.png,.jpg,.jpeg,.svg,.pdf,.json,image/png,image/jpeg,image/svg+xml,application/pdf,application/json"
+          onChange={(event) => {
+            if (event.target.files && !active) onFiles(event.target.files);
+            event.currentTarget.value = "";
+          }}
+        />
+        <span className="data-dropzone-icon">
+          {active ? <Loader2 className="spin" size={24} /> : <Upload size={26} />}
+        </span>
+        <strong>{active ? text.homeUploadBusy : text.homeUploadTitle}</strong>
+        <p>{text.homeUploadBody}</p>
+        <small>{queuedLabel}</small>
+      </label>
+      <button className="secondary-button" type="button" onClick={onOpenDataUpload}>
+        <Database size={16} />
+        {text.dataIntakeOpenData}
+      </button>
+    </section>
+  );
+}
+
 function ProjectDetail({
   project,
   tab,
@@ -2131,6 +2213,10 @@ function ProjectDetail({
   const seenInterventionKeysRef = React.useRef<Set<string>>(new Set());
   const [pendingAnchor, setPendingAnchor] = React.useState<PendingAnchorNavigation | null>(null);
   const [artifactPreviewRequest, setArtifactPreviewRequest] = React.useState<ArtifactPreviewRequest | null>(null);
+  const [queuedUploadFiles, setQueuedUploadFiles] = React.useState<File[]>([]);
+  const [queuedUploadPrimaryFileName, setQueuedUploadPrimaryFileName] = React.useState("");
+  const [queuedUploadProgress, setQueuedUploadProgress] = React.useState<UploadBundleProgress | null>(null);
+  const [queuedUploadFileColumnHints, setQueuedUploadFileColumnHints] = React.useState<Record<string, string[]>>({});
   const onProjectUpdatedRef = React.useRef(onProjectUpdated);
   React.useEffect(() => {
     onProjectUpdatedRef.current = onProjectUpdated;
@@ -2143,6 +2229,9 @@ function ProjectDetail({
   const hasActiveDataIntakeJob = jobs.some((job) => isDataIntakeJob(job) && !isTerminalJob(job));
   const wasActiveDataIntakeJobRef = React.useRef(false);
   const effectiveProject = overview?.project ?? project;
+  const datasetsRef = React.useRef<DatasetSnapshot[]>([]);
+  const artifactsRef = React.useRef<Artifact[]>([]);
+  const jobsRef = React.useRef<Job[]>([]);
   const tableeMotionState: TableeMotionState = liveAgentOrModelActivity
     ? "working"
     : effectiveProject.current_phase === "AUTONOMOUS_LOOP"
@@ -2174,6 +2263,11 @@ function ProjectDetail({
   React.useEffect(() => {
     setResearchPlanTimeline(null);
   }, [project.id, setResearchPlanTimelineForCurrentLocale]);
+  React.useEffect(() => {
+    datasetsRef.current = datasets;
+    artifactsRef.current = artifacts;
+    jobsRef.current = jobs;
+  }, [datasets, artifacts, jobs]);
   const turnState = agentActivity?.turn_state ?? fallbackTurnState(effectiveProject);
   const focusRecommendation = React.useMemo(
     () => {
@@ -2237,15 +2331,15 @@ function ProjectDetail({
       ] = await Promise.all([
         api<Overview>(`/api/projects/${project.id}/overview`),
         apiOrFallback<ProjectGuidance | null>(`/api/projects/${project.id}/guidance`, null, 3500),
-        apiOrFallback<DatasetSnapshot[]>(`/api/projects/${project.id}/datasets`, [], 5000),
+        apiOrFallback<DatasetSnapshot[]>(`/api/projects/${project.id}/datasets`, datasetsRef.current, 12000),
         apiOrFallback<Question[]>(`/api/projects/${project.id}/questions`, [], 3500),
         apiOrFallback<Assumption[]>(`/api/projects/${project.id}/assumptions`, [], 3500),
         apiOrFallback<AssumptionReviewQueue | null>(`/api/projects/${project.id}/assumptions/review-queue`, null, 3500),
         apiOrFallback<EvaluationCandidate[]>(`/api/projects/${project.id}/evaluation/candidates`, [], 3500),
         apiOrFallback<EvaluationSpec[]>(`/api/projects/${project.id}/evaluation/specs`, [], 3500),
-        apiOrFallback<Artifact[]>(`/api/projects/${project.id}/artifacts?limit=1000`, [], 7000),
+        apiOrFallback<Artifact[]>(`/api/projects/${project.id}/artifacts?limit=1000`, artifactsRef.current, 12000),
         apiOrFallback<BenchmarkDataset[]>(`/api/benchmarks`, [], 3500),
-        apiOrFallback<Job[]>(`/api/projects/${project.id}/jobs`, [], 5000),
+        apiOrFallback<Job[]>(`/api/projects/${project.id}/jobs`, jobsRef.current, 8000),
         apiOrFallback<Run[]>(`/api/projects/${project.id}/runs`, [], 7000),
         apiOrFallback<LeaderboardEntry[]>(`/api/projects/${project.id}/leaderboard`, [], 7000),
         apiOrFallback<PilotDeploymentIndex>(`/api/projects/${project.id}/pilot-deployments`, {
@@ -2472,6 +2566,89 @@ function ProjectDetail({
     }
   }, [jobs, pendingIntervention, userSettings.interventionCountdownSeconds]);
 
+  const addQueuedUploadFiles = React.useCallback(
+    (files: FileList | File[]) => {
+      if (queuedUploadProgress?.active) return;
+      const incoming = Array.from(files);
+      if (!incoming.length) return;
+      const replaceCompletedQueue =
+        queuedUploadProgress !== null && !queuedUploadProgress.active && queuedUploadProgress.overall >= 100;
+      setQueuedUploadProgress(null);
+      if (replaceCompletedQueue) {
+        setQueuedUploadFileColumnHints({});
+      }
+      void readQueuedFileColumnHints(incoming, setQueuedUploadFileColumnHints);
+      setQueuedUploadFiles((current) => {
+        const base = replaceCompletedQueue ? [] : current;
+        const seen = new Set(base.map(uploadFileKey));
+        const next = [...base];
+        for (const item of incoming) {
+          const key = uploadFileKey(item);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          next.push(item);
+        }
+        return next;
+      });
+    },
+    [queuedUploadProgress]
+  );
+
+  const removeQueuedUploadFile = React.useCallback(
+    (fileToRemove: File) => {
+      if (queuedUploadProgress?.active) return;
+      const key = uploadFileKey(fileToRemove);
+      setQueuedUploadProgress(null);
+      setQueuedUploadFileColumnHints((current) => {
+        const next = { ...current };
+        delete next[fileToRemove.name];
+        return next;
+      });
+      setQueuedUploadFiles((current) => current.filter((item) => uploadFileKey(item) !== key));
+    },
+    [queuedUploadProgress?.active]
+  );
+
+  React.useEffect(() => {
+    setQueuedUploadPrimaryFileName((current) => {
+      const tableNames = queuedUploadFiles.filter(isTableUploadFile).map((item) => item.name);
+      if (!tableNames.length) return "";
+      if (current && tableNames.includes(current)) return current;
+      return "";
+    });
+  }, [queuedUploadFiles]);
+
+  React.useEffect(() => {
+    if (queuedUploadProgress?.active !== true) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [queuedUploadProgress?.active]);
+
+  const dataUploadDraft = React.useMemo<DataUploadDraft>(
+    () => ({
+      queuedFiles: queuedUploadFiles,
+      primaryFileName: queuedUploadPrimaryFileName,
+      uploadProgress: queuedUploadProgress,
+      fileColumnHints: queuedUploadFileColumnHints,
+      addFiles: addQueuedUploadFiles,
+      removeFile: removeQueuedUploadFile,
+      setPrimaryFileName: setQueuedUploadPrimaryFileName,
+      setUploadProgress: setQueuedUploadProgress
+    }),
+    [
+      queuedUploadFiles,
+      queuedUploadPrimaryFileName,
+      queuedUploadProgress,
+      queuedUploadFileColumnHints,
+      addQueuedUploadFiles,
+      removeQueuedUploadFile
+    ]
+  );
+
   function navigateToTarget(targetTab: Tab, targetAnchor?: string | null) {
     const normalized = normalizeNavigationTarget(targetTab, targetAnchor);
     if (normalized.targetAnchor) setPendingAnchor({ anchor: normalized.targetAnchor, nonce: Date.now() });
@@ -2497,6 +2674,52 @@ function ProjectDetail({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function uploadDataBundleFromHome(files: FileList | File[]) {
+    const uploadFiles = Array.from(files);
+    if (!uploadFiles.length || queuedUploadProgress?.active) return;
+    addQueuedUploadFiles(uploadFiles);
+    navigateToTarget("Data", "dataset-upload");
+    const unsupportedFiles = uploadFiles.filter((item) => !isTableUploadFile(item) && !isRelationalHintUploadFile(item));
+    if (unsupportedFiles.length) return;
+    const uploadTotalBytes = uploadFiles.reduce((total, item) => total + item.size, 0);
+    setQueuedUploadProgress(buildUploadProgress(uploadFiles, 0, uploadTotalBytes, true, "transferring"));
+    const body = new FormData();
+    uploadFiles.forEach((queuedFile) => body.append("files", queuedFile));
+    body.append("locale", displayLocale);
+    let uploaded = false;
+    await runAction(async () => {
+      const job = await uploadFormData<Job>(
+        `/api/projects/${project.id}/datasets/upload-bundle`,
+        body,
+        (event) => {
+          const requestTotal = event.lengthComputable && event.total > 0 ? event.total : uploadTotalBytes;
+          const estimatedFileBytes =
+            requestTotal > 0 ? Math.min(uploadTotalBytes, (event.loaded / requestTotal) * uploadTotalBytes) : 0;
+          setQueuedUploadProgress(buildUploadProgress(uploadFiles, estimatedFileBytes, uploadTotalBytes, true, "transferring"));
+        },
+        () => {
+          setQueuedUploadProgress(buildUploadProgress(uploadFiles, uploadTotalBytes, uploadTotalBytes, true, "server_processing"));
+        }
+      );
+      uploaded = true;
+      setQueuedUploadProgress(buildUploadProgress(uploadFiles, uploadTotalBytes, uploadTotalBytes, false, "complete"));
+      setAgentChatMessages((current) =>
+        upsertAgentChatMessages(current, [
+          {
+            id: `local-status-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            role: "system",
+            text: text.uploadCompleteChatMessage,
+            createdAt: new Date().toISOString()
+          }
+        ])
+      );
+      return job;
+    }, { refreshMode: "data-intake" });
+    if (!uploaded) {
+      setQueuedUploadProgress((current) => (current ? { ...current, active: false } : current));
     }
   }
 
@@ -2960,11 +3183,13 @@ function ProjectDetail({
           agentSession={agentSession}
           agentTranscriptEvents={agentTranscriptEvents}
           agentRawTranscript={agentRawTranscript}
+          dataUploadDraft={dataUploadDraft}
           onSubmitAgentChat={submitAgentChatWithoutResponse}
           onActionOpen={openAgentChatAction}
           onOpenMemoryItem={openHomeMemoryItem}
           onTabChange={onTabChange}
           onNavigateToTarget={navigateToTarget}
+          onHomeDataUpload={(files) => void uploadDataBundleFromHome(files)}
           onFocusAction={(action) => void runFocusAction(action)}
           onEquipSkill={(asset) => runAction(() => equipLibraryAsset(asset))}
           onCreateSkill={(draft) => runAction(() => createAndEquipSkill(draft))}
@@ -3035,6 +3260,7 @@ function ProjectDetail({
           text={text}
           locale={displayLocale}
           runAction={runAction}
+          uploadDraft={dataUploadDraft}
           onProjectChanged={onProjectChanged}
           onProjectUpdated={onProjectUpdated}
           onObjectiveChanged={refreshResearchPlanTimeline}
@@ -3288,11 +3514,13 @@ function HomeTab({
   agentSession,
   agentTranscriptEvents,
   agentRawTranscript,
+  dataUploadDraft,
   onSubmitAgentChat,
   onActionOpen,
   onOpenMemoryItem,
   onTabChange,
   onNavigateToTarget,
+  onHomeDataUpload,
   onFocusAction,
   onEquipSkill,
   onCreateSkill,
@@ -3328,11 +3556,13 @@ function HomeTab({
   agentSession: AgentSession | null;
   agentTranscriptEvents: AgentTranscriptEvent[];
   agentRawTranscript: AgentRawTranscript | null;
+  dataUploadDraft: DataUploadDraft;
   onSubmitAgentChat: (objective: string) => Promise<void>;
   onActionOpen: (action: AgentChatAction) => void;
   onOpenMemoryItem: (item: HomeMemoryItem) => void;
   onTabChange: (tab: Tab) => void;
   onNavigateToTarget: (tab: Tab, anchor?: string | null) => void;
+  onHomeDataUpload: (files: FileList | File[]) => void;
   onFocusAction: (action: FocusAction | null) => void;
   onEquipSkill: (asset: LibraryAsset) => Promise<void>;
   onCreateSkill: (draft: SkillDraft) => Promise<void>;
@@ -3351,6 +3581,11 @@ function HomeTab({
   const totalArtifactCount = overview?.counts.artifacts ?? artifacts.length;
   const projectStateLoaded = overview !== null;
   const activeDataIntakeJobs = jobs.filter((job) => isDataIntakeJob(job) && !isTerminalJob(job));
+  const showHomeDataUpload =
+    datasetCount === 0 ||
+    activeDataIntakeJobs.length > 0 ||
+    dataUploadDraft.queuedFiles.length > 0 ||
+    dataUploadDraft.uploadProgress !== null;
   const autonomyPoweredOn = project.current_phase === "AUTONOMOUS_LOOP";
   const canStartAutonomy = datasetCount > 0;
   const focusAction = recommendation.primaryAction;
@@ -3470,6 +3705,16 @@ function HomeTab({
           </button>
         </div>
       </section>
+
+      {showHomeDataUpload ? (
+        <HomeDataUploadDropzone
+          draft={dataUploadDraft}
+          text={text}
+          disabled={busy || activeDataIntakeJobs.length > 0}
+          onFiles={onHomeDataUpload}
+          onOpenDataUpload={() => onNavigateToTarget("Data", "dataset-upload")}
+        />
+      ) : null}
 
       {activeDataIntakeJobs.length ? (
         <DataIntakeStatusCard
@@ -4819,6 +5064,7 @@ function DataTab({
   text,
   locale,
   runAction,
+  uploadDraft,
   onProjectChanged,
   onProjectUpdated,
   onObjectiveChanged,
@@ -4835,22 +5081,19 @@ function DataTab({
   text: LocaleMessages;
   locale: string;
   runAction: (action: () => Promise<unknown>, options?: RunActionOptions) => Promise<void>;
+  uploadDraft: DataUploadDraft;
   onProjectChanged: () => Promise<void>;
   onProjectUpdated: (project: Project) => void;
   onObjectiveChanged: () => Promise<void>;
   onOpenNotebookArtifact: (artifactId: string) => void;
   onStatusMessage: (message: string) => void;
 }) {
-  const [queuedFiles, setQueuedFiles] = React.useState<File[]>([]);
-  const [primaryFileName, setPrimaryFileName] = React.useState("");
   const [isDraggingData, setIsDraggingData] = React.useState(false);
-  const [uploadProgress, setUploadProgress] = React.useState<UploadBundleProgress | null>(null);
   const [target, setTarget] = React.useState(project.target_column ?? "");
   const [targetDirty, setTargetDirty] = React.useState(false);
   const [targetSaving, setTargetSaving] = React.useState(false);
   const [targetSavedNotice, setTargetSavedNotice] = React.useState<string | null>(null);
   const [targetSaveError, setTargetSaveError] = React.useState<string | null>(null);
-  const [fileColumnHints, setFileColumnHints] = React.useState<Record<string, string[]>>({});
   const [projectColumnCatalog, setProjectColumnCatalog] = React.useState<ProjectColumnCatalog | null>(null);
   const [erHintFile, setErHintFile] = React.useState<File | null>(null);
   const [erHintNote, setErHintNote] = React.useState("");
@@ -4877,10 +5120,17 @@ function DataTab({
   const [kaggleProbeResults, setKaggleProbeResults] = React.useState<Record<string, Record<string, unknown>>>({});
   const [kaggleInventoryResults, setKaggleInventoryResults] = React.useState<Record<string, Record<string, unknown>>>({});
   const [kaggleDownloadResults, setKaggleDownloadResults] = React.useState<Record<string, Record<string, unknown>>>({});
+  const queuedFiles = uploadDraft.queuedFiles;
+  const selectedPrimaryFileName = uploadDraft.primaryFileName;
+  const uploadProgress = uploadDraft.uploadProgress;
+  const fileColumnHints = uploadDraft.fileColumnHints;
+  const addQueuedUploadFiles = uploadDraft.addFiles;
+  const removeQueuedUploadFile = uploadDraft.removeFile;
+  const setPrimaryFileName = uploadDraft.setPrimaryFileName;
+  const setUploadProgress = uploadDraft.setUploadProgress;
   const queuedTableFiles = queuedFiles.filter(isTableUploadFile);
   const queuedErHintFiles = queuedFiles.filter(isRelationalHintUploadFile);
   const unsupportedQueuedFiles = queuedFiles.filter((item) => !isTableUploadFile(item) && !isRelationalHintUploadFile(item));
-  const selectedPrimaryFileName = primaryFileName;
   const canUploadDataBundle = queuedFiles.length > 0 && unsupportedQueuedFiles.length === 0;
   const uploadProgressByKey = new Map((uploadProgress?.files ?? []).map((item) => [item.key, item]));
   const currentUploadComplete =
@@ -5060,49 +5310,11 @@ function DataTab({
   }, [project.id, datasetCatalogRefreshKey, dataIntakeColumnRefreshKey]);
 
   React.useEffect(() => {
-    setPrimaryFileName((current) => {
-      const tableNames = queuedFiles.filter(isTableUploadFile).map((item) => item.name);
-      if (!tableNames.length) return "";
-      if (current && tableNames.includes(current)) return current;
-      return "";
-    });
-  }, [queuedFiles]);
-
-  React.useEffect(() => {
     setSelectedExistingPrimaryArtifactId((current) => {
       if (current && tableArtifacts.some((artifact) => artifact.id === current)) return current;
       return primaryDataset?.artifact_id ?? "";
     });
   }, [primaryDataset?.artifact_id, tableArtifacts]);
-
-  function addQueuedUploadFiles(files: FileList | File[]) {
-    const incoming = Array.from(files);
-    if (!incoming.length) return;
-    setUploadProgress(null);
-    void readQueuedFileColumnHints(incoming, setFileColumnHints);
-    setQueuedFiles((current) => {
-      const seen = new Set(current.map(uploadFileKey));
-      const next = [...current];
-      for (const item of incoming) {
-        const key = uploadFileKey(item);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        next.push(item);
-      }
-      return next;
-    });
-  }
-
-  function removeQueuedUploadFile(fileToRemove: File) {
-    const key = uploadFileKey(fileToRemove);
-    setUploadProgress(null);
-    setFileColumnHints((current) => {
-      const next = { ...current };
-      delete next[fileToRemove.name];
-      return next;
-    });
-    setQueuedFiles((current) => current.filter((item) => uploadFileKey(item) !== key));
-  }
 
   async function setProjectTarget(nextTarget: string | null) {
     const normalized = nextTarget?.trim() || null;

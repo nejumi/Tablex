@@ -869,6 +869,48 @@ textarea {
   margin-top: 4px;
 }
 
+.home-upload-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.home-upload-card > button {
+  align-self: center;
+  white-space: nowrap;
+}
+
+.home-data-dropzone {
+  min-height: 150px;
+  padding: 18px;
+  align-content: center;
+}
+
+.home-data-dropzone .data-dropzone-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 8px;
+}
+
+.home-data-dropzone strong {
+  font-size: 17px;
+}
+
+.data-dropzone.disabled {
+  cursor: default;
+  opacity: 0.82;
+  transform: none;
+}
+
+.data-dropzone.disabled .data-dropzone-input {
+  cursor: default;
+}
+
 .data-intake-status-rows {
   display: grid;
   gap: 6px;
@@ -7131,6 +7173,7 @@ td {
   .metric-grid.compact,
   .upload-row,
   .data-intake-layout,
+  .home-upload-card,
   .queued-upload-callout,
   .queued-file-overall,
   .queued-file-item,
