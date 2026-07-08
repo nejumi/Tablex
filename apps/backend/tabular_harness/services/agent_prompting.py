@@ -36,6 +36,12 @@ This file is runner-facing protocol, not a user-facing report. Read it together 
 - `task_shape` must be one of: `supervised_regression`, `supervised_classification`, `multilabel`, `multi_target`, `clustering`, `anomaly_detection`, `forecasting`, `distribution_prediction`, `aggregate_prediction`, `inverse_optimization`, `exploratory`, `other`.
 - Use `targets: []` for task shapes without explicit targets. For column targets, use objects such as `{ "table_ref": "<dataset_snapshot_id>", "column": "<column>", "derivation": null }`.
 
+## Evaluation Contract
+- When the metric or validation split should become registered Tablex state, write requests under `.tablex/requests/evaluation/` with `schema_version: "tablex_evaluation_request.v1"`.
+- Supported evaluation operations are `propose_evaluation` and `generate_split`. `propose_evaluation` creates an EvaluationCandidate; `generate_split` queues SplitManifest generation for an approved EvaluationSpec.
+- Accepted `payload.split_policy.kind` values are `random`, `stratified`, `group`, `time`, `fixed_file`, `fold_column`, and `rolling_forward`. Tablex validates fixed ids, enums, and referenced columns; Codex owns the rationale.
+- Do not treat provisional internal-CV runs as final formal comparisons. After an EvaluationSpec and SplitManifest are approved, rerun the relevant candidates under that split before presenting a formal best model.
+
 ## Research Plan
 - Keep a living plan when it helps the user follow the work. Use `outputs/research_plan.json` for draft plan documents and `.tablex/requests/research_plan/` for schema-validated operations.
 - Supported ResearchPlan operations are `commit_revision`, `set_current_work`, `attach_artifact`, and `request_human_attention`; matching acks are written under `.tablex/acks/research_plan/`.

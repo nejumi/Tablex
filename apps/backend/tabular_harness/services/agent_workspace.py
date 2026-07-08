@@ -35,6 +35,11 @@ from tabular_harness.services.agent_requests.data import (
     data_acks_dir,
     data_requests_dir,
 )
+from tabular_harness.services.agent_requests.evaluation import (
+    EVALUATION_REQUEST_SCHEMA_VERSION,
+    evaluation_acks_dir,
+    evaluation_requests_dir,
+)
 from tabular_harness.services.agent_requests.deliverables import (
     DELIVERABLE_REQUEST_SCHEMA_VERSION,
     deliverable_acks_dir,
@@ -136,6 +141,8 @@ def prepare_session_workspace(
     research_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     data_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
     data_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
+    evaluation_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
+    evaluation_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     pipeline_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
     pipeline_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     pilot_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
@@ -765,6 +772,47 @@ def build_session_context(
                             }
                         },
                     },
+                },
+            },
+            "evaluation_tool_requests": {
+                "request_dir": ".tablex/requests/evaluation",
+                "ack_dir": ".tablex/acks/evaluation",
+                "schema_version": EVALUATION_REQUEST_SCHEMA_VERSION,
+                "operations": ["propose_evaluation", "generate_split"],
+                "description": (
+                    "Use this fixed JSON request/ack channel when the metric or validation split should become "
+                    "registered Tablex evaluation state. Codex owns the reasoning and rationale; Tablex validates "
+                    "fixed metric identifiers, dataset ids, split-policy enums, and referenced columns."
+                ),
+                "split_policy_kinds": [
+                    "random",
+                    "stratified",
+                    "group",
+                    "time",
+                    "fixed_file",
+                    "fold_column",
+                    "rolling_forward",
+                ],
+                "example_propose_request": {
+                    "schema_version": EVALUATION_REQUEST_SCHEMA_VERSION,
+                    "request_id": "propose_stratified_auc_001",
+                    "operation": "propose_evaluation",
+                    "payload": {
+                        "objective_metric": {"name": "roc_auc", "direction": "higher_is_better"},
+                        "secondary_metrics": ["pr_auc", "log_loss"],
+                        "split_policy": {
+                            "kind": "stratified",
+                            "params": {"n_folds": 5, "seed": 42, "stratify_column": "TARGET"},
+                        },
+                        "rationale": "Use class-stratified folds because the target is imbalanced.",
+                        "provisional_assumption": "No external holdout has been provided yet.",
+                    },
+                },
+                "example_generate_split_request": {
+                    "schema_version": EVALUATION_REQUEST_SCHEMA_VERSION,
+                    "request_id": "generate_split_for_eval_001",
+                    "operation": "generate_split",
+                    "payload": {"evaluation_spec_id": "eval_approved"},
                 },
             },
             "experiment_result_tool_requests": {

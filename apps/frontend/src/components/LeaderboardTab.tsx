@@ -435,6 +435,8 @@ export function LeaderboardTab({
   }
   const approvedSpecCount = specs.filter((spec) => spec.status === "approved").length;
   const topEntry = leaderboard[0] ?? null;
+  const formalRunCount = leaderboard.filter((entry) => entry.evaluation_grade === "formal").length;
+  const provisionalRunCount = leaderboard.length - formalRunCount;
   const leaderboardStatus = leaderboard.length
     ? approvedSpecCount && splitManifests.length
       ? "comparable"
@@ -535,6 +537,8 @@ export function LeaderboardTab({
               {unavailableCount ? (
                 <span className="badge warning">{text.leaderboardMissingScore.replace("{count}", String(unavailableCount))}</span>
               ) : null}
+              {formalRunCount ? <span className="badge success">{text.leaderboardFormalBadge}</span> : null}
+              {provisionalRunCount ? <span className="badge warning">{text.leaderboardProvisionalBadge}</span> : null}
             </div>
           </div>
           <div className="leaderboard-controls">
@@ -562,7 +566,7 @@ export function LeaderboardTab({
               {text.leaderboardAddMetric}
             </button>
             <div className="leaderboard-best-score">
-              <span>{text.leaderboardBestScore}</span>
+              <span>{topEntry?.evaluation_grade === "formal" ? text.leaderboardBestScore : `${text.leaderboardBestScore} · ${text.leaderboardProvisionalBadge}`}</span>
               <strong>{formatScore(topEntry?.display_metric_value ?? null)}</strong>
               <small>{topEntry ? `${metricLabel(topMetricName)} · ${leaderboardEntryModelLabel(topEntry)}` : metricLabel(topMetricName)}</small>
             </div>
@@ -606,6 +610,9 @@ export function LeaderboardTab({
                   <small>{metricLabel(entry.display_metric_name)}</small>
                 </div>,
                 <div className="cell-stack" key={`${entry.run_id}-eval`}>
+                  <span className={leaderboardEvaluationGradeClass(entry)}>
+                    {leaderboardEvaluationGradeLabel(entry, text)}
+                  </span>
                   <span>{entry.evaluation_spec_id ? text.leaderboardEvaluationReady : text.leaderboardEvaluationMissing}</span>
                   <small>{entry.split_manifest_id ? text.leaderboardValidationReady : text.leaderboardValidationMissing}</small>
                 </div>,
@@ -830,6 +837,14 @@ function leaderboardEntryFeatureSummary(entry: LeaderboardEntry) {
   if (featureSummary) return featureSummary;
   const baseline = formatBaseline(entry.metrics);
   return baseline === "-" ? "" : baseline;
+}
+
+function leaderboardEvaluationGradeClass(entry: LeaderboardEntry) {
+  return entry.evaluation_grade === "formal" ? "badge success" : "badge warning";
+}
+
+function leaderboardEvaluationGradeLabel(entry: LeaderboardEntry, text: LocaleMessages) {
+  return entry.evaluation_grade === "formal" ? text.leaderboardFormalBadge : text.leaderboardProvisionalBadge;
 }
 
 const modelDiagnosticCheckLabels: Record<string, string> = {

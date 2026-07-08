@@ -7740,6 +7740,8 @@ def leaderboard(
             "metrics": metrics,
             "evaluation_spec_id": run.evaluation_spec_id,
             "split_manifest_id": run.split_manifest_id,
+            "evaluation_grade": leaderboard_evaluation_grade(db, run),
+            "evaluation_grade_reason": leaderboard_evaluation_grade_reason(db, run),
             "model_version_id": run.model_version_id,
             "pipeline_artifact_id": (
                 pipeline_artifact.id
@@ -7765,6 +7767,38 @@ def leaderboard(
         for model_id in [leaderboard_model_id(params, metrics)]
         for display_metric_value in [preferred_metric_value(metrics, display_metric)]
     ]
+
+
+def leaderboard_evaluation_grade(db: Session, run: ExperimentRun) -> str:
+    if run.split_manifest_id is None or run.evaluation_spec_id is None:
+        return "provisional"
+    split = db.get(SplitManifest, run.split_manifest_id)
+    if split is None or split.project_id != run.project_id:
+        return "provisional"
+    if split.evaluation_spec_id != run.evaluation_spec_id:
+        return "provisional"
+    spec = db.get(EvaluationSpec, run.evaluation_spec_id)
+    if spec is None or spec.project_id != run.project_id or spec.status != "approved":
+        return "provisional"
+    return "formal"
+
+
+def leaderboard_evaluation_grade_reason(db: Session, run: ExperimentRun) -> str:
+    if run.split_manifest_id is None:
+        return "missing_split_manifest"
+    if run.evaluation_spec_id is None:
+        return "missing_evaluation_spec"
+    split = db.get(SplitManifest, run.split_manifest_id)
+    if split is None or split.project_id != run.project_id:
+        return "split_manifest_not_found"
+    if split.evaluation_spec_id != run.evaluation_spec_id:
+        return "split_manifest_does_not_match_evaluation_spec"
+    spec = db.get(EvaluationSpec, run.evaluation_spec_id)
+    if spec is None or spec.project_id != run.project_id:
+        return "evaluation_spec_not_found"
+    if spec.status != "approved":
+        return "evaluation_spec_not_approved"
+    return "approved_evaluation_spec_and_split_manifest"
 
 
 def leaderboard_model_diagnostics(db: Session, run: ExperimentRun) -> dict[str, Any]:

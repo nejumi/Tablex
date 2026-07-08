@@ -907,6 +907,8 @@ export type Run = {
   dataset_snapshot_id: string | null;
   evaluation_spec_id: string | null;
   split_manifest_id: string | null;
+  evaluation_grade?: "formal" | "provisional";
+  evaluation_grade_reason?: string | null;
   model_version_id: string | null;
   runner_type: string;
   status: string;
@@ -936,6 +938,8 @@ export type LeaderboardEntry = {
   metrics: Record<string, unknown>;
   evaluation_spec_id: string | null;
   split_manifest_id: string | null;
+  evaluation_grade?: "formal" | "provisional";
+  evaluation_grade_reason?: string | null;
   model_version_id: string | null;
   pipeline_artifact_id?: string | null;
   deliverable_expectations?: Array<{

@@ -72,6 +72,16 @@ from tabular_harness.services.agent_requests.data import (
 from tabular_harness.services.agent_requests.data import (
     process_data_tool_requests as process_data_tool_requests_impl,
 )
+from tabular_harness.services.agent_requests.evaluation import (
+    EVALUATION_ACK_SCHEMA_VERSION,
+    EVALUATION_REQUEST_SCHEMA_VERSION,
+    evaluation_acks_dir,
+    evaluation_request_rejection_path,
+    evaluation_requests_dir,
+)
+from tabular_harness.services.agent_requests.evaluation import (
+    process_evaluation_tool_requests as process_evaluation_tool_requests_impl,
+)
 from tabular_harness.services.agent_requests.deliverables import (
     DELIVERABLE_ACK_SCHEMA_VERSION,
     DELIVERABLE_REQUEST_SCHEMA_VERSION,
@@ -1804,6 +1814,24 @@ def process_data_tool_requests(
     )
 
 
+def process_evaluation_tool_requests(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    session: AgentSession,
+    workspace: Path,
+) -> None:
+    process_evaluation_tool_requests_impl(
+        db,
+        store=store,
+        project=project,
+        session=session,
+        workspace=workspace,
+        append_session_event_fn=append_session_event,
+    )
+
+
 
 def process_pipeline_tool_requests(
     db: Session,
@@ -1991,6 +2019,7 @@ def ingest_session_workspace_outputs(
         allow_notebook_auto_registration=allow_notebook_auto_registration,
         project_session_still_registered_fn=project_session_still_registered,
         process_data_tool_requests_fn=process_data_tool_requests,
+        process_evaluation_tool_requests_fn=process_evaluation_tool_requests,
         process_research_plan_tool_requests_fn=process_research_plan_tool_requests,
         process_research_tool_requests_fn=process_research_tool_requests,
         maybe_request_research_plan_contract_revision_fn=maybe_request_research_plan_contract_revision,
