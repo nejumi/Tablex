@@ -28,7 +28,7 @@ Implemented:
 Verification:
 
 - U/A: `.venv/bin/pytest apps/backend/tests/test_agent_evaluation_requests.py apps/backend/tests/test_evaluation_splits.py -q`
-  - Result: `5 passed, 1 warning`
+  - Result: `8 passed, 1 warning`
 - U: `npm run build` in `apps/frontend`
   - Result: passed
 - U: `git diff --check`
@@ -38,7 +38,7 @@ Known remaining J1 evidence/work:
 
 - B: browser evidence for provisional/formal leaderboard labeling is still pending.
 - L: live flow from Chat/Console instruction to proposal, approval, split generation, and formal rerun is still pending.
-- Full directive coverage for `time`, `fold_column`, and `fixed_file` proposal paths still needs targeted tests. The first slice covers candidate creation and generated group split execution.
+- Full directive coverage for `time`, `fold_column`, and `fixed_file` proposal paths now has targeted request-path tests. Generated split execution remains covered for the group split path.
 
 ## J2 Codex Console
 

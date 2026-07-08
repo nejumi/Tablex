@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -39,15 +40,15 @@ def upload_project_dataset(client: TestClient) -> tuple[str, str]:
     assert project_response.status_code == 200
     project_id = project_response.json()["id"]
     csv_bytes = (
-        b"customer_id,created_at,feature,target\n"
-        b"c1,2026-01-01,10,0\n"
-        b"c1,2026-01-02,11,1\n"
-        b"c2,2026-01-03,13,0\n"
-        b"c2,2026-01-04,9,1\n"
-        b"c3,2026-01-05,8,0\n"
-        b"c3,2026-01-06,7,1\n"
-        b"c4,2026-01-07,12,0\n"
-        b"c4,2026-01-08,6,1\n"
+        b"customer_id,created_at,feature,fold,target\n"
+        b"c1,2026-01-01,10,0,0\n"
+        b"c1,2026-01-02,11,1,1\n"
+        b"c2,2026-01-03,13,0,0\n"
+        b"c2,2026-01-04,9,1,1\n"
+        b"c3,2026-01-05,8,0,0\n"
+        b"c3,2026-01-06,7,1,1\n"
+        b"c4,2026-01-07,12,0,0\n"
+        b"c4,2026-01-08,6,1,1\n"
     )
     upload_response = client.post(
         f"/api/projects/{project_id}/datasets/upload",
@@ -132,6 +133,87 @@ def test_agent_evaluation_request_creates_candidate_and_ack(tmp_path: Path) -> N
     assert ack["status"] == "succeeded"
     assert ack["result"]["candidate_id"]
     assert ack["result"]["split_generation_supported"] is True
+
+
+@pytest.mark.parametrize(
+    ("split_kind", "params", "expected_column_attr", "expected_column", "split_generation_supported"),
+    [
+        ("time", {"time_column": "created_at", "test_fraction": 0.25}, "time_column", "created_at", True),
+        ("fold_column", {"fold_column": "fold"}, None, None, False),
+        ("fixed_file", {"validation_file_ref": "validation_holdout.csv"}, None, None, False),
+    ],
+)
+def test_agent_evaluation_request_accepts_non_group_policy_shapes(
+    tmp_path: Path,
+    split_kind: str,
+    params: dict[str, Any],
+    expected_column_attr: str | None,
+    expected_column: str | None,
+    split_generation_supported: bool,
+) -> None:
+    client = make_client(tmp_path)
+    project_id, dataset_id = upload_project_dataset(client)
+    workspace = tmp_path / f"workspace_{split_kind}"
+    request_dir = workspace / ".tablex" / "requests" / "evaluation"
+    request_dir.mkdir(parents=True)
+    request_id = f"propose_{split_kind}"
+    (request_dir / f"{request_id}.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tablex_evaluation_request.v1",
+                "request_id": request_id,
+                "operation": "propose_evaluation",
+                "payload": {
+                    "dataset_snapshot_id": dataset_id,
+                    "objective_metric": {"name": "roc_auc", "direction": "higher_is_better"},
+                    "secondary_metrics": ["log_loss"],
+                    "split_policy": {"kind": split_kind, "params": params},
+                    "rationale": f"Exercise the {split_kind} fixed-format proposal path.",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        session = AgentSession(
+            id=f"ags_eval_{split_kind}",
+            project_id=project_id,
+            goal_text="Evaluate",
+            status="running",
+            workspace_path=str(workspace),
+        )
+        db.add(session)
+        db.flush()
+        process_evaluation_tool_requests(
+            db,
+            store=app.state.artifact_store,
+            project=project,
+            session=session,
+            workspace=workspace,
+        )
+        candidate = db.scalar(
+            select(EvaluationCandidate).where(
+                EvaluationCandidate.project_id == project_id,
+                EvaluationCandidate.scenario_id == f"codex_{request_id}",
+            )
+        )
+        assert candidate is not None
+        assert candidate.primary_metric == "roc_auc"
+        assert candidate.split_type == split_kind
+        if expected_column_attr:
+            assert getattr(candidate, expected_column_attr) == expected_column
+        for key, value in params.items():
+            assert f'"{key}":' in candidate.rationale_md
+            assert str(value) in candidate.rationale_md
+        db.commit()
+    ack = loads_json((workspace / ".tablex" / "acks" / "evaluation" / f"{request_id}.ack.json").read_text(), {})
+    assert ack["schema_version"] == EVALUATION_ACK_SCHEMA_VERSION
+    assert ack["status"] == "succeeded"
+    assert ack["result"]["split_type"] == split_kind
+    assert ack["result"]["split_generation_supported"] is split_generation_supported
 
 
 def test_agent_evaluation_generate_split_request_queues_job(tmp_path: Path) -> None:
