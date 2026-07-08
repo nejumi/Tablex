@@ -121,7 +121,7 @@ Known remaining J4 evidence/work:
 
 - B: browser evidence for the Leaderboard prediction panel is still pending.
 - D&D upload directly inside the prediction drawer and `--input-dir` execution for multi-table prediction are still pending.
-- `pipeline_manifest.v1` `input_contract.required_tables` and `--input-dir` multi-table prediction flow are still pending.
+- `pipeline_manifest.v1` `input_contract.required_tables` declaration/display is implemented; `--input-dir` multi-table prediction execution is still pending.
 - Fixed-format validation report for column/dtype mismatch in the drawer is still pending.
 
 ## J8 Native marimo Speed
