@@ -397,6 +397,9 @@ def python_runtime_context(workspace: Path) -> dict[str, Any]:
         "polars": package_version_or_none("polars"),
         "xgboost": package_version_or_none("xgboost"),
         "lightgbm": package_version_or_none("lightgbm"),
+        "catboost": package_version_or_none("catboost"),
+        "tabpfn": package_version_or_none("tabpfn"),
+        "torch": package_version_or_none("torch"),
     }
     return {
         "tablex_backend": {
@@ -404,6 +407,9 @@ def python_runtime_context(workspace: Path) -> dict[str, Any]:
             "workspace_python": str(workspace_python),
             "workspace_python_exists": workspace_python.exists(),
             "packages": packages,
+            "gpu": {
+                "nvidia_smi_available": shutil.which("nvidia-smi") is not None,
+            },
         },
         "notebook_execution": {
             "marimo_available": packages["marimo"] is not None,

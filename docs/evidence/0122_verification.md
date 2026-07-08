@@ -163,3 +163,48 @@ Known remaining J7 evidence/work:
 - B: browser evidence for finding a data-understanding notebook, final report, and pipeline from Assets search is still pending.
 - Insights/Reports still need to be folded into the same canonical inventory as filter presets.
 - Markdown report preview with inline figure handling needs a targeted verification pass.
+
+## J5 Modeling Strategy As Skill Equipment
+
+Status: first Skill equipment slice complete.
+
+Implemented:
+
+- Added `skills/tablex-modeling-strategy/SKILL.md`.
+- Registered `tablex_modeling_strategy` as a library Skill and equipped it by default for new projects.
+- The Skill covers sanity floors, linear models, tree ensembles, relational aggregation, text/mixed-type models, calibration, ensembling, foundation tabular models, time-aware models, target-free analysis, diagnostics, and prediction pipeline packaging.
+- Added runtime facts for `catboost`, `tabpfn`, `torch`, and `nvidia-smi` availability to `.tablex/context.json`.
+- No new model-selection logic, diversity gate, entity, or request type was added.
+
+Verification:
+
+- U/A: `.venv/bin/pytest apps/backend/tests/test_api_flow.py::test_default_asset_seeding_includes_modeling_and_llm_skills apps/backend/tests/test_agent_sessions.py::test_prepare_session_workspace_exposes_backend_python_runtime apps/backend/tests/test_api_flow.py::test_password_auth_protects_api_and_persists_user_settings -q`
+  - Result: `3 passed, 1 warning`
+- U: `git diff --check`
+  - Result: passed
+
+Known remaining J5 evidence/work:
+
+- Ensemble pipeline registration and prediction E2E proof is still pending.
+- TabPFN or another foundation tabular model live trial remains pending and should happen only after the evaluation contract UX is usable.
+- Leaderboard display of optional `model_family` still needs a focused pass.
+
+## J6 LLM Feature Augmentation Skill
+
+Status: Skill registration slice complete.
+
+Implemented:
+
+- Added `skills/tablex-llm-feature-augmentation/SKILL.md`.
+- Registered `tablex_llm_feature_augmentation` as a library Skill without default project equipment.
+- The Skill covers fit signals, leakage discipline, deterministic `(model, prompt_hash, row_hash, schema_version)` cache patterns, feature design patterns, cost/approval awareness, provenance, and prediction pipeline packaging.
+- No new harness-owned generation workflow, entity, request type, or feature-generation executor was added.
+
+Verification:
+
+- U/A: covered by the default asset seeding test above, which now asserts the Skill is present in the library.
+
+Known remaining J6 evidence/work:
+
+- Live validation on a text-rich dataset is pending.
+- A generated-feature run and reproducible pipeline bundle should be demonstrated after J1-J4 are stable enough for formal comparison and prediction UX.

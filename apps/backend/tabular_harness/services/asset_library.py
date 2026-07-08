@@ -13,6 +13,7 @@ from tabular_harness.services.artifacts import LocalArtifactStore, create_lineag
 
 DEFAULT_PROJECT_SKILL_NAMES = {
     "tablex_grandmaster_eda",
+    "tablex_modeling_strategy",
     "tabular_approach_research",
     "tabular_gradient_boosting_strategy",
     "evaluation_diagnostics_interpreter",
@@ -131,6 +132,83 @@ DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
                 "Justify preprocessing choices from project artifacts, ResearchPlan, and SplitManifest constraints.",
             ],
             "expected_outputs": ["feature_recipe", "metrics", "run_report", "visualization_spec"],
+        },
+    },
+    {
+        "asset_type": "skill",
+        "name": "tablex_modeling_strategy",
+        "description": (
+            "Equips Codex with evaluation-first tabular modeling craft: sanity floors, linear models, tree ensembles, "
+            "calibration, ensembling, foundation tabular models, diagnostics, and prediction pipeline packaging."
+        ),
+        "tags": ["agent", "modeling", "tabular", "ensemble", "diagnostics"],
+        "semantic_tags": [
+            "tabular_modeling",
+            "modeling_strategy",
+            "ensemble",
+            "calibration",
+            "model_diagnostics",
+            "foundation_tabular_model",
+            "prediction_pipeline",
+            "skill",
+        ],
+        "content": {
+            "skill_path": "skills/tablex-modeling-strategy/SKILL.md",
+            "instructions": [
+                "Use this as craft context for choosing and explaining modeling strategies, not as a fixed recipe.",
+                "Compare models only under the same EvaluationSpec and SplitManifest; label provisional results plainly.",
+                "Consider baselines, linear models, tree ensembles, calibration, ensembling, TabPFN/TabICL-style options, and target-free methods when the project evidence supports them.",
+                "Register serious candidates with diagnostics, reports, and reproducible prediction pipelines.",
+            ],
+            "expected_outputs": [
+                "experiment_runs",
+                "model_diagnostics_notebook",
+                "model_report",
+                "prediction_pipeline_bundle",
+            ],
+            "guardrails": [
+                "Do not read secrets or connector credentials.",
+                "Do not use validation/test targets in feature generation or prompts.",
+                "Do not destructively modify EvaluationSpec or SplitManifest.",
+                "Do not force a model-family sequence or harness-side diversity gate.",
+            ],
+        },
+    },
+    {
+        "asset_type": "skill",
+        "name": "tablex_llm_feature_augmentation",
+        "description": (
+            "Guides Codex when it considers LLM-generated row-level or text-normalization features, with leakage "
+            "discipline, deterministic caching, provenance, cost awareness, and pipeline packaging."
+        ),
+        "tags": ["agent", "feature_engineering", "llm", "tabular"],
+        "semantic_tags": [
+            "llm_feature_augmentation",
+            "feature_engineering",
+            "leakage_control",
+            "deterministic_cache",
+            "prediction_pipeline",
+            "skill",
+        ],
+        "content": {
+            "skill_path": "skills/tablex-llm-feature-augmentation/SKILL.md",
+            "instructions": [
+                "Use this only when project evidence suggests LLM-derived features may help and the cost/safety tradeoff is acceptable.",
+                "Never include target values or validation/test labels in generation prompts, examples, cache keys, or summaries.",
+                "Cache generated features deterministically and record prompt/model/cache provenance as artifact metadata.",
+                "Package prompt files and generation code with any prediction pipeline that depends on generated features.",
+            ],
+            "expected_outputs": [
+                "generated_feature_artifact",
+                "feature_generation_report",
+                "experiment_run_comparison",
+                "prediction_pipeline_bundle",
+            ],
+            "guardrails": [
+                "No new harness-owned generation workflow is implied by this Skill.",
+                "External API use must follow existing Tablex network and credential approval policy.",
+                "Generated-feature models remain exploratory unless the prediction pipeline can reproduce the features for new data.",
+            ],
         },
     },
     {

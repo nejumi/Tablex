@@ -423,6 +423,10 @@ def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path
     assert runtime["workspace_python"] == str(workspace / ".tablex" / "bin" / "python")
     assert runtime["workspace_python_exists"] is True
     assert "marimo" in runtime["packages"]
+    assert "tabpfn" in runtime["packages"]
+    assert "catboost" in runtime["packages"]
+    assert "torch" in runtime["packages"]
+    assert "nvidia_smi_available" in runtime["gpu"]
     notebook_contract = context["output_contract"]["notebook_tool_requests"]
     assert notebook_contract["request_dir"] == ".tablex/requests/notebooks"
     assert notebook_contract["ack_dir"] == ".tablex/acks/notebooks"

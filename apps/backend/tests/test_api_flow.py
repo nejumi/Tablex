@@ -1512,6 +1512,27 @@ def test_project_artifacts_include_surface_roles_for_assets_ui(tmp_path: Path) -
     assert "Static HTML notebook snapshots are not Tablex artifacts" in static_download_response.text
 
 
+def test_default_asset_seeding_includes_modeling_and_llm_skills(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    seed_response = client.post("/api/assets/seed-defaults")
+    assert seed_response.status_code == 200
+    assets = seed_response.json()
+    assets_by_name = {item["name"]: item for item in assets}
+    assert "tablex_modeling_strategy" in assets_by_name
+    assert "tablex_llm_feature_augmentation" in assets_by_name
+    assert "ensemble" in assets_by_name["tablex_modeling_strategy"]["semantic_tags"]
+    assert "llm_feature_augmentation" in assets_by_name["tablex_llm_feature_augmentation"]["semantic_tags"]
+
+    modeling_versions_response = client.get(f"/api/assets/{assets_by_name['tablex_modeling_strategy']['id']}/versions")
+    assert modeling_versions_response.status_code == 200
+    assert modeling_versions_response.json()[0]["artifact_id"]
+
+    llm_versions_response = client.get(f"/api/assets/{assets_by_name['tablex_llm_feature_augmentation']['id']}/versions")
+    assert llm_versions_response.status_code == 200
+    assert llm_versions_response.json()[0]["artifact_id"]
+
+
 def test_autonomy_mode_change_is_persisted_in_agent_chat_history(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
@@ -2053,6 +2074,7 @@ def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -
         if reference["asset"] and reference["relation_type"] == "equipped_for_agent_context"
     }
     assert "tablex_grandmaster_eda" in equipped_skill_names
+    assert "tablex_modeling_strategy" in equipped_skill_names
 
     settings_response = client.patch(
         "/api/auth/me/settings",
@@ -9578,6 +9600,8 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     seeded_asset_names = {item["name"] for item in seeded_assets}
     assert {
         "tabular_gradient_boosting_strategy",
+        "tablex_modeling_strategy",
+        "tablex_llm_feature_augmentation",
         "tablex_grandmaster_eda",
         "xgboost_mixed_type_baseline",
         "text_tfidf_train_fold_recipe",
