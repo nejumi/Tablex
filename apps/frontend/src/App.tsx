@@ -9500,6 +9500,7 @@ function NotebooksTab({
   const [nativeMarimoSession, setNativeMarimoSession] = React.useState<NativeMarimoSession | null>(null);
   const [nativeMarimoError, setNativeMarimoError] = React.useState<string | null>(null);
   const [nativeMarimoLoadingId, setNativeMarimoLoadingId] = React.useState<string | null>(null);
+  const [selectedNotebookArtifactId, setSelectedNotebookArtifactId] = React.useState<string | null>(null);
   const [guideDraft, setGuideDraft] = React.useState("");
   const [guideResponse, setGuideResponse] = React.useState<string | null>(null);
   const [guideBusy, setGuideBusy] = React.useState(false);
@@ -9507,8 +9508,15 @@ function NotebooksTab({
   const latestRun = runs[0] ?? null;
   const notebookItems = React.useMemo(() => preferredNotebookItems(notebookIndex), [notebookIndex]);
   const recommendedNotebook = notebookIndex?.recommended_notebook ?? null;
+  const selectedNotebook = React.useMemo(
+    () => selectedNotebookArtifactId ? preferredNotebookForArtifact(notebookIndex, selectedNotebookArtifactId) : null,
+    [notebookIndex, selectedNotebookArtifactId]
+  );
+  const selectedNotebookOverridesStory = Boolean(
+    selectedNotebook && selectedNotebook.notebook_artifact_id !== recommendedNotebook?.notebook_artifact_id
+  );
   const recommendedNotebookHasQualityIssue = isEmptyDiagnosticsNotebook(recommendedNotebook);
-  const reviewNotebook = recommendedNotebook;
+  const reviewNotebook = selectedNotebook ?? recommendedNotebook;
   const notebookFigureCount = React.useMemo(() => notebookItems.reduce((total, item) => total + notebookFigureCountForItem(item), 0), [notebookItems]);
   const executionArtifacts = artifacts.filter(
     (artifact) =>
@@ -9536,6 +9544,7 @@ function NotebooksTab({
   }
 
   const openNativeMarimoArtifact = React.useCallback(async (artifactId: string, options?: { restart?: boolean }) => {
+    setSelectedNotebookArtifactId(artifactId);
     setNativeMarimoLoadingId(artifactId);
     setNativeMarimoError(null);
     setPreview(null);
@@ -9658,19 +9667,20 @@ function NotebooksTab({
     : null;
   const story = analysisStory?.story ?? null;
   const storyNotebook = reviewNotebook;
-  const storyReadOrder = story?.read_order ?? [];
+  const storyReadOrder = selectedNotebookOverridesStory ? [] : story?.read_order ?? [];
   const manifestReadOrder = reviewNotebook?.quality_manifest?.read_order ?? [];
-  const storyCards = story?.visual_story_cards ?? [];
+  const storyCards = selectedNotebookOverridesStory ? [] : story?.visual_story_cards ?? [];
   const manifestFindings = reviewNotebook?.quality_manifest?.key_findings ?? [];
-  const storyCaveats = story?.caveats ?? [];
+  const storyCaveats = selectedNotebookOverridesStory ? [] : story?.caveats ?? [];
   const manifestLimitations = reviewNotebook?.quality_manifest?.limitations ?? [];
+  const storyPrompts = selectedNotebookOverridesStory ? [] : story?.codex_prompts ?? [];
   const storyNotebookNeedsAttention = Boolean(storyNotebook && notebookNeedsAttention(storyNotebook));
   const hasReadableStoryEvidence = Boolean(storyNotebook && !storyNotebookNeedsAttention);
   const notebookFocusHeadline =
-    textField(story?.headline) ??
+    (selectedNotebookOverridesStory ? reviewNotebook?.title : textField(story?.headline)) ??
     (reviewNotebook ? reviewNotebook.title : text.notebookCreateStoryFallbackTitle);
   const notebookFocusReason =
-    textField(story?.why_this_story) ??
+    (selectedNotebookOverridesStory ? reviewNotebook?.recommendation_reason : textField(story?.why_this_story)) ??
     (recommendedNotebookHasQualityIssue
       ? text.notebookModelDiagnosticsEmptyWarning
       : reviewNotebook
@@ -9806,22 +9816,22 @@ function NotebooksTab({
         </div>
       </section>
       <Panel id="analysis-story" title={text.notebookAnalysisStoryTitle} icon={<BarChart3 size={18} />}>
-        {story ? (
+        {story || reviewNotebook ? (
           <div className="analysis-story-surface">
             <section className="analysis-story-hero">
               <div className="analysis-story-copy">
                 <div className="eyebrow">{text.notebookReadThisNow}</div>
-                <h3>{story.headline}</h3>
-                <p>{story.why_this_story || story.deck}</p>
+                <h3>{selectedNotebookOverridesStory ? reviewNotebook?.title : story?.headline ?? reviewNotebook?.title}</h3>
+                <p>{selectedNotebookOverridesStory ? reviewNotebook?.recommendation_reason : story?.why_this_story || story?.deck || reviewNotebook?.recommendation_reason}</p>
                 {recommendedNotebookHasQualityIssue ? (
                   <div className="banner warning compact">
                     {text.notebookModelDiagnosticsEmptyWarning}
                   </div>
                 ) : null}
                 <div className="badge-row">
-                  <span className="badge">{notebookKindLabel(story.source_type, text)}</span>
-                  <span className="badge muted">{story.selected_source.title}</span>
-                  {story.selected_source.status ? (
+                  <span className="badge">{notebookKindLabel(selectedNotebookOverridesStory ? reviewNotebook?.notebook_kind ?? "notebook" : story?.source_type ?? reviewNotebook?.notebook_kind ?? "notebook", text)}</span>
+                  <span className="badge muted">{selectedNotebookOverridesStory ? reviewNotebook?.title : story?.selected_source.title ?? reviewNotebook?.title}</span>
+                  {!selectedNotebookOverridesStory && story?.selected_source.status ? (
                     <span className={decisionReportStatusClass(story.selected_source.status)}>
                       {notebookReadinessText(story.selected_source.status, text)}
                     </span>
@@ -9865,7 +9875,7 @@ function NotebooksTab({
               <div className="analysis-story-preview-head">
                 <div>
                   <div className="eyebrow">{text.notebookNativeMarimoTitle}</div>
-                  <h3>{storyNotebook?.title ?? story.selected_source.title}</h3>
+                  <h3>{storyNotebook?.title ?? story?.selected_source.title ?? text.notebookCreateStoryFallbackTitle}</h3>
                 </div>
                 {storyNotebook ? (
                   <a className="icon-link" href={`${apiBase}/api/artifacts/${storyNotebook.artifact_ids.notebook}/download`} title={text.notebookDownloadCurrentStory}>
@@ -9964,8 +9974,8 @@ function NotebooksTab({
               <section className="analysis-story-section">
                 <div className="mini-card-title">{text.notebookAskCodexNextTitle}</div>
                 <div className="analysis-prompt-list">
-                  {(story.codex_prompts.length
-                    ? story.codex_prompts
+                  {(storyPrompts.length
+                    ? storyPrompts
                     : [
                         text.notebookPromptReadFirst,
                         text.notebookPromptNextAction,

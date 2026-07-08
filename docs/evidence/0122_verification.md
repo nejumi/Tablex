@@ -116,10 +116,12 @@ Verification:
   - Result: passed
 - U: `git diff --check`
   - Result: passed
+- B: Playwright opened Home Credit Test5, clicked the Leaderboard row prediction action, and captured the in-row prediction drawer.
+  - Evidence: `docs/evidence/playwright/0122_j4_prediction_drawer_no_contract.png`
+  - Observation: the drawer opens in the Leaderboard surface and shows the honest "no detailed prediction input contract" state for older registered pipeline artifacts that predate `pipeline_manifest.input_contract`.
 
 Known remaining J4 evidence/work:
 
-- B: browser evidence for the Leaderboard prediction panel is still pending.
 - D&D upload directly inside the prediction drawer and `--input-dir` execution for multi-table prediction are still pending.
 - `pipeline_manifest.v1` `input_contract.required_tables` declaration/display is implemented; `--input-dir` multi-table prediction execution is still pending.
 - Fixed-format validation report for column/dtype mismatch in the drawer is still pending.
@@ -137,6 +139,9 @@ Verification:
 - U/A-style local measurement:
   - `art_19452d019824` cold ready in about 1.9s, warm ready in 15ms after session reuse.
   - `art_e4f7e6ee90e8` cold ready in about 1.9s, warm ready in 12ms after session reuse.
+- B: Playwright clicked Leaderboard → Result notebooks → `Model comparison`; the Notebooks focus, marimo panel title, and read order all selected the model-comparison notebook instead of the recommended data-understanding notebook.
+  - Evidence: `docs/evidence/playwright/0122_j8_model_comparison_notebook_selected.png`
+  - Observation: the browser console still recorded native marimo proxy readiness 503s during iframe startup; that remains J8 lifecycle work, not a notebook routing issue.
 
 Known remaining J8 evidence/work:
 
