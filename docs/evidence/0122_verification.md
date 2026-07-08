@@ -114,3 +114,23 @@ Known remaining J4 evidence/work:
 - D&D upload directly inside the prediction drawer is still pending.
 - `pipeline_manifest.v1` `input_contract.required_tables` and `--input-dir` multi-table prediction flow are still pending.
 - Fixed-format validation report for column/dtype mismatch in the drawer is still pending.
+
+## J8 Native marimo Speed
+
+Status: backend profile slice complete.
+
+Implemented:
+
+- Added `docs/evidence/0122_marimo_profile.md` with cold/reopen measurements for two registered Home Credit notebooks.
+
+Verification:
+
+- U/A-style local measurement:
+  - `art_19452d019824` cold ready in about 1.9s, warm ready in 15ms after session reuse.
+  - `art_e4f7e6ee90e8` cold ready in about 1.9s, warm ready in 12ms after session reuse.
+
+Known remaining J8 evidence/work:
+
+- Browser-side Playwright/network timing is still required; backend readiness does not explain the reported slow UI by itself.
+- Prewarm-on-link-display and iframe unmount avoidance are still pending.
+- Notebook authoring contract checks for top-level full-data loads are still pending.
