@@ -9,7 +9,7 @@ from sqlalchemy import select
 from tabular_harness.core.config import Settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
-from tabular_harness.models.entities import AgentSession, AgentTranscriptEvent, Project
+from tabular_harness.models.entities import AgentSession, AgentTranscriptEvent, Job, Project
 from tabular_harness.services.agent_inbox import list_inbox_entries
 
 
@@ -120,3 +120,57 @@ def test_console_message_does_not_wake_stopped_session(tmp_path: Path) -> None:
         events = list(db.scalars(select(AgentTranscriptEvent).where(AgentTranscriptEvent.session_id == session.id)))
         assert events == []
     assert list_inbox_entries(workspace) == []
+
+
+def test_agent_chat_wakes_completed_main_session_instead_of_composing_locally(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_id = create_project(client)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.autonomy_mode = "full_auto"
+        project.current_phase = "IDLE"
+        session = AgentSession(
+            id="ags_chat_completed",
+            project_id=project_id,
+            session_type="main_autonomous",
+            status="completed",
+            autonomy_mode="full_auto",
+            goal_text="Continue when the user provides input.",
+            workspace_path=str(workspace),
+        )
+        db.add(session)
+        db.commit()
+
+    response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "暫定評価の分割方法を確認して報告してください", "locale": "ja-JP"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["response_composer"]["mode"] == "main_codex_session"
+    assert body["response_composer"]["status"] == "waiting_for_agent"
+    assert body["response_brief"]["delivery"] == "workspace_inbox_and_transcript"
+    with app.state.session_factory() as db:
+        session = db.get(AgentSession, "ags_chat_completed")
+        assert session is not None
+        assert session.status == "between_turns"
+        project = db.get(Project, project_id)
+        assert project is not None
+        assert project.current_phase == "AUTONOMOUS_LOOP"
+        job = db.get(Job, body["job"]["id"])
+        assert job is not None
+        assert job.status == "waiting_for_agent"
+        event = db.scalar(
+            select(AgentTranscriptEvent).where(
+                AgentTranscriptEvent.session_id == session.id,
+                AgentTranscriptEvent.source == "user",
+                AgentTranscriptEvent.event_type == "user_instruction",
+            )
+        )
+        assert event is not None
+    inbox_entries = list_inbox_entries(workspace)
+    assert [entry for entry in inbox_entries if entry.get("kind") == "user_instruction"]

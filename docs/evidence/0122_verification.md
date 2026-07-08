@@ -66,3 +66,25 @@ Known remaining J2 evidence/work:
 
 - B: browser evidence for the Console UI is still pending.
 - U/E2E: fake runner proof that console input appears in the next main-session turn prompt is still pending.
+
+## J3 Chat Handoff
+
+Status: first implementation slice complete.
+
+Implemented:
+
+- Agent Chat now reuses a completed Full Auto main session instead of falling back to the auxiliary response composer when the project remains in full-auto mode.
+- A Chat turn delivered to a completed main session moves that session to `between_turns`, moves the project back to `AUTONOMOUS_LOOP`, writes the user instruction into transcript/inbox, and returns a `waiting_for_agent` main-session wait state.
+
+Verification:
+
+- U/A: `.venv/bin/pytest apps/backend/tests/test_agent_console_message.py -q`
+  - Result: `3 passed, 1 warning`
+- U: `npm run build` in `apps/frontend`
+  - Result: passed
+
+Known remaining J3 evidence/work:
+
+- The response-composer `handoff_to_main_session` schema is still pending for cases where no resumable main session exists.
+- Provenance labels distinguishing saved-state replies from main-session replies are still pending.
+- Full fake-runner and live-project verification for inspection requests is still pending.

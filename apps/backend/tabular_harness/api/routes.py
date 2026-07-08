@@ -4209,8 +4209,18 @@ def create_agent_chat_turn(
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
-    session = active_main_session(db, project_id)
     sidecar_only = is_sidecar_chat_request(payload.message)
+    session = active_main_session(db, project_id)
+    if session is None and not sidecar_only:
+        latest_session = latest_main_session(db, project_id)
+        if latest_session is not None and latest_session.status == "completed" and project.autonomy_mode == "full_auto":
+            latest_session.status = "between_turns"
+            latest_session.pid = None
+            latest_session.ended_at = None
+            latest_session.updated_at = utc_now()
+            project.current_phase = "AUTONOMOUS_LOOP"
+            project.updated_at = utc_now()
+            session = latest_session
     if session is not None and not sidecar_only:
         event = append_session_event(
             db,
