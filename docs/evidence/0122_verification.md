@@ -57,17 +57,19 @@ Implemented:
 
 Verification:
 
-- U/A: `.venv/bin/pytest apps/backend/tests/test_agent_console_message.py -q`
-  - Result: `2 passed, 1 warning`
+- U/A: `.venv/bin/pytest apps/backend/tests/test_agent_console_message.py apps/backend/tests/test_agent_response_composer.py apps/backend/tests/test_agent_sessions.py::test_codex_cli_turn_streaming_uses_workspace_file_transcript apps/backend/tests/test_agent_sessions.py::test_codex_cli_turn_failure_does_not_mark_user_instructions_delivered -q`
+  - Result: `13 passed, 1 warning`
+  - Coverage: Console/Chat HTTP input writes a main-session `user_instruction`; the next turn prompt includes that instruction; the fake Codex runner receives the prompt and only successful turns mark instructions delivered.
 - U: `npm run build` in `apps/frontend`
   - Result: passed
-- U: backend `py_compile` for touched route/schema/inbox files
+- U: `.venv/bin/python -m py_compile apps/backend/tests/test_agent_console_message.py`
   - Result: passed
+- B: Playwright opened Home Credit Test5, switched Agent display mode to Codex Console, and captured the direct-input transcript surface.
+  - Evidence: `docs/evidence/playwright/0122_j2_codex_console_direct_input.png`
 
 Known remaining J2 evidence/work:
 
-- B: browser evidence for the Console UI is still pending.
-- U/E2E: fake runner proof that console input appears in the next main-session turn prompt is still pending.
+- L: live direct Console input into an active Full Auto run is still pending; the browser proof currently shows the paused-state Console and historical transcript.
 
 ## J3 Chat Handoff
 
@@ -84,8 +86,9 @@ Implemented:
 
 Verification:
 
-- U/A: `.venv/bin/pytest apps/backend/tests/test_agent_response_composer.py apps/backend/tests/test_agent_console_message.py -q`
-  - Result: `11 passed, 1 warning`
+- U/A: `.venv/bin/pytest apps/backend/tests/test_agent_console_message.py apps/backend/tests/test_agent_response_composer.py apps/backend/tests/test_agent_sessions.py::test_codex_cli_turn_streaming_uses_workspace_file_transcript apps/backend/tests/test_agent_sessions.py::test_codex_cli_turn_failure_does_not_mark_user_instructions_delivered -q`
+  - Result: `13 passed, 1 warning`
+  - Coverage: Chat in Full Auto routes to the main session instead of local-only composition; completed/missing main sessions are reactivated; delivered user instructions are present in the next main-session prompt and remain pending after failed runner turns.
 - U: `.venv/bin/python -m py_compile apps/backend/tabular_harness/services/agent_response_composer.py apps/backend/tabular_harness/services/agent_chat.py apps/backend/tabular_harness/api/routes.py`
   - Result: passed
 - U/A: `.venv/bin/pytest apps/backend/tests/test_agent_response_composer.py apps/backend/tests/test_agent_console_message.py apps/backend/tests/test_agent_evaluation_requests.py apps/backend/tests/test_evaluation_splits.py apps/backend/tests/test_api_flow.py::test_project_artifacts_include_surface_roles_for_assets_ui apps/backend/tests/test_api_flow.py::test_default_asset_seeding_includes_modeling_and_llm_skills apps/backend/tests/test_api_flow.py::test_password_auth_protects_api_and_persists_user_settings apps/backend/tests/test_agent_sessions.py::test_prepare_session_workspace_exposes_backend_python_runtime -q`
@@ -95,7 +98,7 @@ Verification:
 
 Known remaining J3 evidence/work:
 
-- Full fake-runner and live-project verification for inspection requests is still pending.
+- L: live-project verification for an inspection request that requires reading project files/scripts is still pending.
 - Non-Full-Auto handoff currently returns an honest "start Full Auto" response instead of starting execution.
 
 ## J4 Prediction UX

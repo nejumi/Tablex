@@ -11,6 +11,7 @@ from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
 from tabular_harness.models.entities import AgentSession, AgentTranscriptEvent, Job, Project
 from tabular_harness.services.agent_inbox import list_inbox_entries
+from tabular_harness.services.agent_prompting import build_turn_prompt
 
 
 def make_client(tmp_path: Path) -> TestClient:
@@ -83,6 +84,9 @@ def test_console_message_delivers_to_completed_main_session_and_wakes(tmp_path: 
         payload = loads_json(event.payload_json, {})
         assert payload["channel"] == "console"
         assert payload["delivery"] == "direct_console_to_main_agent_session"
+        prompt = build_turn_prompt(db, project=project, session=session)
+        assert "確認して結果を返してください" in prompt.text
+        assert event.event_index in prompt.delivered_user_event_indexes
     inbox_entries = list_inbox_entries(workspace)
     user_entries = [entry for entry in inbox_entries if entry.get("kind") == "user_instruction"]
     assert user_entries
@@ -172,6 +176,9 @@ def test_agent_chat_wakes_completed_main_session_instead_of_composing_locally(tm
             )
         )
         assert event is not None
+        prompt = build_turn_prompt(db, project=project, session=session)
+        assert "暫定評価の分割方法を確認して報告してください" in prompt.text
+        assert event.event_index in prompt.delivered_user_event_indexes
     inbox_entries = list_inbox_entries(workspace)
     assert [entry for entry in inbox_entries if entry.get("kind") == "user_instruction"]
 
@@ -246,3 +253,6 @@ def test_agent_chat_starts_full_auto_main_session_from_idle_phase(tmp_path: Path
         )
         assert event is not None
         assert loads_json(event.payload_json, {})["delivery"] == "queued_for_main_agent_session"
+        prompt = build_turn_prompt(db, project=project, session=session)
+        assert "暫定評価の分割方法を確認して報告してください" in prompt.text
+        assert event.event_index in prompt.delivered_user_event_indexes
