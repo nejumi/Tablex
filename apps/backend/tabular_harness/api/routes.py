@@ -320,6 +320,9 @@ from tabular_harness.services.portal import (
     running_codex_processes_for_project,
     worker_events_from_job,
 )
+from tabular_harness.services.prediction_input_feedback import (
+    maybe_send_prediction_input_validation_failure_to_codex,
+)
 from tabular_harness.services.project_guidance import (
     build_project_guidance,
 )
@@ -8077,6 +8080,7 @@ def run_prediction_pipeline_endpoint(
 @router.post("/api/projects/{project_id}/prediction-inputs")
 def upload_prediction_input(
     project_id: str,
+    request: Request,
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
     file: Annotated[UploadFile, File()],
@@ -8146,11 +8150,39 @@ def upload_prediction_input(
                 relation_type="prediction_input_for_pipeline",
                 metadata={"table_name": safe_table, "batch_kind": normalize_prediction_batch_kind(batch_kind)},
             )
+    codex_feedback = maybe_send_prediction_input_validation_failure_to_codex(
+        db,
+        project=project,
+        artifact=artifact,
+        pipeline_artifact_id=pipeline_artifact_id,
+        table_name=safe_table,
+        batch_kind=normalize_prediction_batch_kind(batch_kind),
+        validation_report=validation_report,
+    )
+    if codex_feedback.get("delivered") and request.app.state.settings.api_agent_session_supervisor_enabled:
+        session_id = codex_feedback.get("agent_session_id")
+        session = db.get(AgentSession, session_id) if isinstance(session_id, str) else None
+        if (
+            session is not None
+            and project.current_phase == "AUTONOMOUS_LOOP"
+            and session.status in {"starting", "between_turns", "waiting_for_runner"}
+            and not supervisor_slot_active(session.id)
+        ):
+            start_main_agent_session_supervisor_thread(
+                request.app.state.session_factory,
+                store,
+                project_id=project.id,
+                session_id=session.id,
+                supervisor_runner=run_main_agent_session_supervisor,
+                turn_timeout_seconds=request.app.state.settings.agent_idle_timeout_seconds,
+                turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
+            )
     return {
         "schema_version": "prediction_input_upload.v1",
         "artifact": artifact_to_dict(artifact),
         "artifact_id": artifact.id,
         "validation_report": validation_report,
+        "codex_feedback": codex_feedback,
     }
 
 

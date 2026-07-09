@@ -143,6 +143,9 @@ from tabular_harness.services.artifacts import (
 )
 from tabular_harness.services.jobs import create_job
 from tabular_harness.services.model_diagnostics_artifacts import latest_run_artifact
+from tabular_harness.services.prediction_input_feedback import (
+    maybe_send_prediction_input_validation_failure_to_codex,
+)
 from tabular_harness.services.research_plan_timeline import build_research_plan_timeline_response
 from tabular_harness.services.research_plans import (
     ResearchPlanValidationError,
@@ -496,6 +499,81 @@ def test_agent_inbox_entries_are_enveloped_and_processed(tmp_path: Path) -> None
     processed = inbox_processed_path(workspace).read_text(encoding="utf-8")
     assert path.name in processed
     assert "test" in processed
+
+
+def test_prediction_input_validation_failure_writes_codex_observation(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+
+    with sessionmaker(engine)() as db:
+        project = Project(
+            id="p_prediction_input_feedback",
+            name="Prediction input feedback",
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+        )
+        session = AgentSession(
+            id="ags_prediction_input_feedback",
+            project_id=project.id,
+            session_type="main_autonomous",
+            status="running",
+            goal_text="Repair prediction input issues.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.flush()
+        artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="prediction_input",
+            name="bad_prediction_input",
+            filename="application.csv",
+            text="row_id\nA\n",
+            metadata={"project_id": project.id, "table_name": "application"},
+        )
+        artifact_id = artifact.id
+        validation_report = {
+            "schema_version": "prediction_input_validation_report.v1",
+            "status": "failed",
+            "table_name": "application",
+            "observed_columns": ["row_id"],
+            "expected_columns": [{"name": "x", "required": True}],
+            "missing_columns": ["x"],
+            "unexpected_columns": [],
+            "dtype_checks": "not_available",
+        }
+
+        feedback = maybe_send_prediction_input_validation_failure_to_codex(
+            db,
+            project=project,
+            artifact=artifact,
+            pipeline_artifact_id="art_pipeline",
+            table_name="application",
+            batch_kind="external_test",
+            validation_report=validation_report,
+        )
+
+        assert feedback["delivered"] is True
+        event = db.get(AgentTranscriptEvent, feedback["transcript_event_id"])
+        assert event is not None
+        assert event.event_type == "prediction_input_validation_failed"
+        event_payload = loads_json(event.payload_json, {})
+        assert event_payload["validation_report"]["missing_columns"] == ["x"]
+
+    entries = list_inbox_entries(workspace)
+    prediction_feedback = [
+        entry
+        for entry in entries
+        if entry["kind"] == "observation" and entry["type"] == "prediction_input_validation_failed"
+    ]
+    assert len(prediction_feedback) == 1
+    assert prediction_feedback[0]["payload"]["artifact_id"] == artifact_id
+    assert prediction_feedback[0]["payload"]["pipeline_artifact_id"] == "art_pipeline"
+    assert prediction_feedback[0]["payload"]["validation_report"]["missing_columns"] == ["x"]
+    assert "did not match the fixed input contract" in prediction_feedback[0]["content"]
 
 
 def test_research_findings_request_registers_report_evidence_and_plan_link(tmp_path: Path) -> None:
