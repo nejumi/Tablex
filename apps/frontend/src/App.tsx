@@ -11958,6 +11958,8 @@ function AssetsTab({
           ]}
           rows={visibleArtifactRows.slice(0, 160).map((artifact) => {
             const linkedNotebook = preferredNotebookForArtifact(notebookIndex, artifact.id);
+            const directNotebookArtifactId = isNativeNotebookSourceAssetType(artifact.asset_type) ? artifact.id : null;
+            const notebookArtifactId = directNotebookArtifactId ?? linkedNotebook?.artifact_ids.notebook ?? null;
             const planNodeIds = Array.from(assetResearchPlanNodeIds(artifact, researchPlanTimeline));
             return [
               <div className="cell-stack" key={`${artifact.id}-name`}>
@@ -11975,10 +11977,10 @@ function AssetsTab({
               </div>,
               formatBytes(artifact.size_bytes),
               <div className="row-actions" key={artifact.id}>
-                {linkedNotebook ? (
+                {notebookArtifactId ? (
                   <button
                     className="icon-button"
-                    onClick={() => onOpenNotebookArtifact(linkedNotebook.artifact_ids.notebook)}
+                    onClick={() => onOpenNotebookArtifact(notebookArtifactId)}
                     title={text.openNotebookInMarimo}
                   >
                     <BookOpen size={16} />
