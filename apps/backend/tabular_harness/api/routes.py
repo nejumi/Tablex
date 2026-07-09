@@ -58,6 +58,7 @@ from tabular_harness.models.entities import (
     Assumption,
     AssumptionEvidenceLink,
     DatasetSnapshot,
+    DeliverableExpectation,
     EvaluationCandidate,
     EvaluationSpec,
     Evidence,
@@ -10925,6 +10926,7 @@ def delete_project_rows(db: Session, project_id: str) -> None:
     assumption_ids = select(Assumption.id).where(Assumption.project_id == project_id)
     evidence_ids = select(Evidence.id).where(Evidence.project_id == project_id)
     agent_session_ids = select(AgentSession.id).where(AgentSession.project_id == project_id)
+    pilot_deployment_ids = select(PilotDeployment.id).where(PilotDeployment.project_id == project_id)
     asset_version_ids = [
         item
         for item in db.scalars(
@@ -10976,6 +10978,10 @@ def delete_project_rows(db: Session, project_id: str) -> None:
     db.execute(delete(LineageEdge).where(LineageEdge.project_id == project_id))
     db.execute(delete(Idea).where(Idea.project_id == project_id))
     db.execute(delete(ResearchBrief).where(ResearchBrief.project_id == project_id))
+    db.execute(delete(DeliverableExpectation).where(DeliverableExpectation.project_id == project_id))
+    db.execute(delete(PilotPredictionBatch).where(PilotPredictionBatch.deployment_id.in_(pilot_deployment_ids)))
+    db.execute(delete(PilotOutcomeBatch).where(PilotOutcomeBatch.deployment_id.in_(pilot_deployment_ids)))
+    db.execute(delete(PilotDeployment).where(PilotDeployment.project_id == project_id))
     db.execute(delete(ModelVersion).where(ModelVersion.project_id == project_id))
     db.execute(delete(ExperimentRun).where(ExperimentRun.project_id == project_id))
     db.execute(delete(SplitManifest).where(SplitManifest.project_id == project_id))

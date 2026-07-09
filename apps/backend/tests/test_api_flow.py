@@ -43,6 +43,7 @@ from tabular_harness.models.entities import (
     Job,
     LineageEdge,
     ModelVersion,
+    PilotDeployment,
     PilotPredictionBatch,
     PilotOutcomeBatch,
     Project,
@@ -1175,6 +1176,46 @@ def test_delete_project_removes_evaluation_experiment_dependencies(tmp_path: Pat
             payload={"model": "stub"},
             metadata={},
         )
+        pipeline_artifact = store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="prediction_pipeline",
+            name="delete_eval_pipeline",
+            filename="pipeline.json",
+            payload={"pipeline": "stub"},
+            metadata={},
+        )
+        prediction_input_artifact = store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="prediction_input",
+            name="delete_eval_prediction_input",
+            filename="prediction_input.json",
+            payload={"rows": [{"x": 1}]},
+            metadata={},
+        )
+        predictions_artifact = store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="prediction_output",
+            name="delete_eval_prediction_output",
+            filename="predictions.json",
+            payload={"predictions": [0.2]},
+            metadata={},
+        )
+        outcomes_artifact = store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="pilot_outcomes",
+            name="delete_eval_outcomes",
+            filename="outcomes.json",
+            payload={"outcomes": [0]},
+            metadata={},
+        )
         brief_artifact = store_json_artifact(
             db,
             app.state.artifact_store,
@@ -1301,6 +1342,45 @@ def test_delete_project_removes_evaluation_experiment_dependencies(tmp_path: Pat
         db.add(model)
         db.flush()
         run.model_version_id = model.id
+        expectation = DeliverableExpectation(
+            id="de_delete_eval",
+            project_id=project_id,
+            kind="model_diagnostics_notebook",
+            subject_ref=f"experiment_run:{run.id}",
+            status="fulfilled",
+            created_from="delete regression",
+            fulfilled_by_artifact_id=model_artifact.id,
+            fulfilled_at=utc_now(),
+        )
+        deployment = PilotDeployment(
+            id="pd_delete_eval",
+            project_id=project_id,
+            pipeline_artifact_id=pipeline_artifact.id,
+            model_version_id=model.id,
+            experiment_run_id=run.id,
+            status="active",
+        )
+        db.add(expectation)
+        db.add(deployment)
+        db.flush()
+        prediction_batch = PilotPredictionBatch(
+            id="ppb_delete_eval",
+            deployment_id=deployment.id,
+            as_of=utc_now(),
+            input_artifact_id=prediction_input_artifact.id,
+            predictions_artifact_id=predictions_artifact.id,
+            row_count=1,
+        )
+        outcome_batch = PilotOutcomeBatch(
+            id="pob_delete_eval",
+            deployment_id=deployment.id,
+            outcomes_artifact_id=outcomes_artifact.id,
+            join_keys_json='["row_id"]',
+            matched_rows=1,
+        )
+        db.add(prediction_batch)
+        db.add(outcome_batch)
+        db.flush()
         db.add(brief)
         db.flush()
         db.add(idea)
@@ -1311,8 +1391,20 @@ def test_delete_project_removes_evaluation_experiment_dependencies(tmp_path: Pat
 
     with app.state.session_factory() as db:
         assert db.get(Project, project_id) is None
-        for model in (Idea, ResearchBrief, ModelVersion, ExperimentRun, SplitManifest, EvaluationSpec, EvaluationCandidate):
+        for model in (
+            Idea,
+            ResearchBrief,
+            ModelVersion,
+            ExperimentRun,
+            SplitManifest,
+            EvaluationSpec,
+            EvaluationCandidate,
+            DeliverableExpectation,
+            PilotDeployment,
+        ):
             assert not db.scalars(select(model).where(model.project_id == project_id)).all()
+        assert db.get(PilotPredictionBatch, "ppb_delete_eval") is None
+        assert db.get(PilotOutcomeBatch, "pob_delete_eval") is None
 
 
 def test_sqlite_project_delete_indexes_are_created(tmp_path: Path) -> None:
