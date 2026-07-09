@@ -6180,6 +6180,121 @@ def test_pipeline_manifest_normalizes_required_tables_contract() -> None:
     assert tables[1]["optional"] is True
 
 
+def test_pipeline_smoke_uses_required_tables_selftest_input_dir(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "multitable_pipeline"
+    pipeline_dir.mkdir()
+    (pipeline_dir / "predict.py").write_text(
+        "import argparse, csv, json\n"
+        "from pathlib import Path\n"
+        "parser = argparse.ArgumentParser()\n"
+        "parser.add_argument('--input-dir', required=True)\n"
+        "parser.add_argument('--output', required=True)\n"
+        "args = parser.parse_args()\n"
+        "manifest = json.loads((Path(args.input_dir) / 'manifest.json').read_text(encoding='utf-8'))\n"
+        "tables = {item['name']: item for item in manifest['tables']}\n"
+        "application_path = Path(args.input_dir) / tables['application']['filename']\n"
+        "with application_path.open(encoding='utf-8', newline='') as src, open(args.output, 'w', encoding='utf-8', newline='') as dst:\n"
+        "    rows = list(csv.DictReader(src))\n"
+        "    writer = csv.DictWriter(dst, fieldnames=['SK_ID_CURR', 'prediction'])\n"
+        "    writer.writeheader()\n"
+        "    for row in rows:\n"
+        "        writer.writerow({'SK_ID_CURR': row['SK_ID_CURR'], 'prediction': '0.25'})\n",
+        encoding="utf-8",
+    )
+    (pipeline_dir / "requirements.txt").write_text("\n", encoding="utf-8")
+    selftest_dir = pipeline_dir / "selftest" / "input"
+    selftest_dir.mkdir(parents=True)
+    (selftest_dir / "application.csv").write_text("SK_ID_CURR,AMT_CREDIT\n1,100\n2,200\n", encoding="utf-8")
+    (selftest_dir / "bureau.csv").write_text("SK_ID_CURR,DAYS_CREDIT\n1,-10\n2,-20\n", encoding="utf-8")
+    manifest = {
+        "schema_version": "pipeline_manifest.v1",
+        "input_contract": {
+            "inference_format": {"columns": [{"name": "SK_ID_CURR", "dtype": "string"}]},
+            "required_tables": [
+                {
+                    "name": "application",
+                    "role": "primary",
+                    "columns": [
+                        {"name": "SK_ID_CURR", "dtype": "string"},
+                        {"name": "AMT_CREDIT", "dtype": "float"},
+                    ],
+                    "join_keys": ["SK_ID_CURR"],
+                },
+                {
+                    "name": "bureau",
+                    "role": "history",
+                    "columns": [
+                        {"name": "SK_ID_CURR", "dtype": "string"},
+                        {"name": "DAYS_CREDIT", "dtype": "integer"},
+                    ],
+                    "join_keys": ["SK_ID_CURR"],
+                },
+            ],
+        },
+        "output_contract": {
+            "columns": [{"name": "SK_ID_CURR", "dtype": "string"}, {"name": "prediction", "dtype": "float"}],
+            "id_columns": ["SK_ID_CURR"],
+            "prediction_column": "prediction",
+        },
+        "training": {},
+        "expected_metrics": [],
+        "runtime": {"timeout_seconds_predict": 120},
+    }
+    normalized, _warnings = pipeline_requests_module.normalize_pipeline_manifest(manifest)
+
+    result = pipeline_requests_module.smoke_validate_prediction_pipeline(
+        pipeline_dir,
+        workspace=None,
+        manifest=normalized,
+        request_id="multitable_smoke",
+    )
+
+    assert result["status"] == "passed"
+    assert result["input_mode"] == "input_dir"
+    assert result["input_source"] == "selftest/input"
+    assert result["input_rows"] == 2
+    assert result["output_rows"] == 2
+
+
+def test_pipeline_smoke_rejects_required_tables_without_selftest(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "missing_selftest_pipeline"
+    pipeline_dir.mkdir()
+    (pipeline_dir / "predict.py").write_text("print('unused')\n", encoding="utf-8")
+    (pipeline_dir / "requirements.txt").write_text("\n", encoding="utf-8")
+    manifest = {
+        "schema_version": "pipeline_manifest.v1",
+        "input_contract": {
+            "inference_format": {"columns": [{"name": "SK_ID_CURR", "dtype": "string"}]},
+            "required_tables": [
+                {
+                    "name": "application",
+                    "role": "primary",
+                    "columns": [{"name": "SK_ID_CURR", "dtype": "string"}],
+                    "join_keys": ["SK_ID_CURR"],
+                }
+            ],
+        },
+        "output_contract": {"columns": [{"name": "prediction", "dtype": "float"}], "prediction_column": "prediction"},
+        "training": {},
+        "expected_metrics": [],
+        "runtime": {"timeout_seconds_predict": 120},
+    }
+    normalized, _warnings = pipeline_requests_module.normalize_pipeline_manifest(manifest)
+
+    try:
+        pipeline_requests_module.smoke_validate_prediction_pipeline(
+            pipeline_dir,
+            workspace=None,
+            manifest=normalized,
+            request_id="missing_selftest",
+        )
+    except pipeline_requests_module.PipelineToolValidationError as exc:
+        assert "selftest/input" in str(exc)
+        assert exc.issues[0]["pointer"] == "pipeline.selftest.input"
+    else:
+        raise AssertionError("required_tables smoke validation should require selftest/input files")
+
+
 def test_pipeline_request_accepts_top_level_codex_aliases(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
@@ -7077,6 +7192,7 @@ def test_prediction_pipeline_worker_runs_multitable_input_dir(tmp_path: Path) ->
             "application": application_artifact.id,
             "bureau": bureau_artifact.id,
         }
+        assert metadata["batch_kind"] == "external_test"
 
 
 def test_prediction_pipeline_runtime_failure_is_summarized_and_returned_to_codex(tmp_path: Path) -> None:
@@ -7165,9 +7281,9 @@ def test_prediction_pipeline_runtime_failure_is_summarized_and_returned_to_codex
         db.commit()
 
         assert output["job_status"] == "failed"
-        assert "non-numeric columns" in str(output["error_message"])
-        assert "EMERGENCYSTATE_MODE" in str(output["error_message"])
+        assert str(output["error_message"]) == "Prediction pipeline failed while running predict.py (exit code 1)."
         assert "stderr_tail" in output
+        assert "EMERGENCYSTATE_MODE" in str(output["stderr_tail"])
         feedback = output["codex_feedback"]
         assert isinstance(feedback, dict)
         assert feedback["delivered"] is True
@@ -7178,8 +7294,41 @@ def test_prediction_pipeline_runtime_failure_is_summarized_and_returned_to_codex
             )
         )
         assert event is not None
+        payload = loads_json(event.payload_json, {})
+        assert payload["exit_code"] == 1
+        assert "EMERGENCYSTATE_MODE" in payload["stderr_tail"]
         inbox_entries = list_inbox_entries(workspace)
-        assert any(entry.get("type") == "prediction_pipeline_runtime_failed" for entry in inbox_entries)
+        runtime_failure_entries = [entry for entry in inbox_entries if entry.get("type") == "prediction_pipeline_runtime_failed"]
+        assert len(runtime_failure_entries) == 1
+
+        duplicate_job = Job(
+            id="job_predict_failure_duplicate",
+            project_id=project.id,
+            job_type="run_prediction_pipeline",
+            input_json=dumps_json(
+                {
+                    "pipeline_artifact_id": pipeline_artifact.id,
+                    "input_artifact_id": prediction_input.id,
+                }
+            ),
+            status="running",
+        )
+        db.add(duplicate_job)
+        db.commit()
+
+        duplicate_output = run_prediction_pipeline_handler(db, duplicate_job, store)
+        db.commit()
+
+        assert duplicate_output["job_status"] == "failed"
+        duplicate_feedback = duplicate_output["codex_feedback"]
+        assert duplicate_feedback["delivered"] is True
+        assert duplicate_feedback["deduplicated"] is True
+        assert duplicate_feedback["attention_key"] == feedback["attention_key"]
+        duplicate_inbox_entries = list_inbox_entries(workspace)
+        duplicate_runtime_failure_entries = [
+            entry for entry in duplicate_inbox_entries if entry.get("type") == "prediction_pipeline_runtime_failed"
+        ]
+        assert len(duplicate_runtime_failure_entries) == 1
 
 
 def test_prediction_pipeline_worker_passes_history_for_time_series_features(tmp_path: Path) -> None:

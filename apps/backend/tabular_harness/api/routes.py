@@ -7959,6 +7959,8 @@ def leaderboard(
             "model_version_id": run.model_version_id,
             "pipeline_artifact_id": pipeline_artifact.id if pipeline_artifact is not None else None,
             "pipeline_input_contract": leaderboard_pipeline_input_contract(pipeline_artifact),
+            "pipeline_smoke_validation": leaderboard_pipeline_smoke_validation(pipeline_artifact),
+            "pipeline_runtime": leaderboard_pipeline_runtime(db, project_id=project_id, pipeline_artifact=pipeline_artifact),
             "deliverable_expectations": deliverable_expectations_by_run.get(run.id, []),
             "model_diagnostics": leaderboard_model_diagnostics(db, run),
             "related_notebook_artifact_ids": leaderboard_related_notebook_artifact_ids(
@@ -7979,6 +7981,46 @@ def leaderboard(
         for pipeline_artifact in [experiment_run_pipeline_artifact(db, run, params=params)]
         for display_metric_value in [preferred_metric_value(metrics, display_metric)]
     ]
+
+
+def leaderboard_pipeline_runtime(
+    db: Session,
+    *,
+    project_id: str,
+    pipeline_artifact: Artifact | None,
+) -> dict[str, Any] | None:
+    if pipeline_artifact is None:
+        return None
+    jobs = db.scalars(
+        select(Job)
+        .where(Job.project_id == project_id, Job.job_type == "run_prediction_pipeline")
+        .order_by(Job.updated_at.desc(), Job.created_at.desc())
+        .limit(50)
+    ).all()
+    for job in jobs:
+        payload = loads_json(job.input_json, {})
+        if payload.get("pipeline_artifact_id") != pipeline_artifact.id:
+            continue
+        output = loads_json(job.output_json, {})
+        failed = job.status == "failed" or output.get("status") == "failed" or output.get("job_status") == "failed"
+        succeeded = job.status == "succeeded" and not failed
+        feedback = output.get("codex_feedback")
+        return {
+            "last_run_status": "failed" if failed else "succeeded" if succeeded else str(job.status or "unknown"),
+            "last_job_id": job.id,
+            "last_failed_job_id": job.id if failed else None,
+            "last_failure_at": (job.ended_at or job.updated_at).isoformat() if failed and (job.ended_at or job.updated_at) else None,
+            "repair_observation_delivered": bool(isinstance(feedback, dict) and feedback.get("delivered") is True),
+            "superseded_by_artifact_id": None,
+        }
+    return {
+        "last_run_status": "never_run",
+        "last_job_id": None,
+        "last_failed_job_id": None,
+        "last_failure_at": None,
+        "repair_observation_delivered": False,
+        "superseded_by_artifact_id": None,
+    }
 
 
 def leaderboard_evaluation_grade(db: Session, run: ExperimentRun) -> str:
@@ -8139,6 +8181,8 @@ def run_prediction_pipeline_endpoint(
     input_artifact_id = payload.get("input_artifact_id")
     input_artifact_ids_by_table = payload.get("input_artifact_ids_by_table")
     history_artifact_id = payload.get("history_artifact_id")
+    batch_kind = payload.get("batch_kind")
+    deployment_id = payload.get("deployment_id")
     if (
         not isinstance(dataset_snapshot_id, str)
         and not isinstance(input_artifact_id, str)
@@ -8161,6 +8205,8 @@ def run_prediction_pipeline_endpoint(
             if isinstance(input_artifact_ids_by_table, dict)
             else None,
             "history_artifact_id": history_artifact_id if isinstance(history_artifact_id, str) else None,
+            "batch_kind": normalize_prediction_batch_kind(batch_kind if isinstance(batch_kind, str) else None),
+            "deployment_id": deployment_id if isinstance(deployment_id, str) else None,
             "timeout_seconds": payload.get("timeout_seconds") if isinstance(payload.get("timeout_seconds"), int) else 300,
         },
         policy={
@@ -8476,6 +8522,96 @@ def register_pilot_outcomes_endpoint(
             "actual_column": payload.get("actual_column") if isinstance(payload.get("actual_column"), str) else None,
             "observed_at_column": payload.get("observed_at_column")
             if isinstance(payload.get("observed_at_column"), str)
+            else None,
+        },
+        policy={
+            "execution": "queued_worker",
+            "external_network_access": "disabled",
+            "connector_credentials_materialized": False,
+            "secrets_materialized": False,
+        },
+    )
+    return job_to_dict(job)
+
+
+@router.post("/api/pilot-deployments/{deployment_id}/outcomes/upload", response_model=JobRead)
+def upload_pilot_outcomes_endpoint(
+    deployment_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+    file: Annotated[UploadFile, File()],
+    prediction_batch_id: Annotated[str | None, Form()] = None,
+    join_keys: Annotated[str | None, Form()] = None,
+    prediction_column: Annotated[str | None, Form()] = None,
+    actual_column: Annotated[str | None, Form()] = None,
+    observed_at_column: Annotated[str | None, Form()] = None,
+) -> dict[str, Any]:
+    deployment = db.get(PilotDeployment, deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=404, detail="Pilot deployment not found")
+    project = require_project(db, deployment.project_id)
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix != ".csv":
+        raise HTTPException(status_code=400, detail="Pilot outcomes upload currently supports CSV files")
+    artifact_name = sanitize_prediction_input_name(Path(file.filename or "pilot_outcomes").stem or "pilot_outcomes")
+    version = next_artifact_version(db, project.id, "pilot_outcomes", artifact_name)
+    artifact_dir, stored, content_hash = store.store_stream(
+        org_id=project.org_id,
+        project_id=project.id,
+        asset_type="pilot_outcomes",
+        name=artifact_name,
+        version=version,
+        filename=file.filename or "pilot_outcomes.csv",
+        stream=file.file,
+        metadata={
+            "project_id": project.id,
+            "deployment_id": deployment.id,
+            "source_filename": file.filename,
+        },
+    )
+    outcomes_artifact = register_artifact(
+        db,
+        project_id=project.id,
+        asset_type="pilot_outcomes",
+        name=artifact_name,
+        uri=str(artifact_dir),
+        content_hash=content_hash,
+        size_bytes=stored.size_bytes,
+        metadata={
+            "project_id": project.id,
+            "deployment_id": deployment.id,
+            "primary_path": str(stored.path),
+            "source_filename": file.filename,
+        },
+        version=version,
+        org_id=project.org_id,
+    )
+    parsed_join_keys = parse_pilot_join_keys_form(join_keys)
+    outcome_batch = PilotOutcomeBatch(
+        id=new_id("pout"),
+        deployment_id=deployment.id,
+        outcomes_artifact_id=outcomes_artifact.id,
+        join_keys_json=dumps_json(parsed_join_keys),
+    )
+    db.add(outcome_batch)
+    db.flush()
+    job = create_job(
+        db,
+        job_type="score_pilot_outcomes",
+        project_id=project.id,
+        input_payload={
+            "deployment_id": deployment.id,
+            "outcome_batch_id": outcome_batch.id,
+            "prediction_batch_id": prediction_batch_id.strip()
+            if isinstance(prediction_batch_id, str) and prediction_batch_id.strip()
+            else None,
+            "join_keys": parsed_join_keys,
+            "prediction_column": prediction_column.strip()
+            if isinstance(prediction_column, str) and prediction_column.strip()
+            else None,
+            "actual_column": actual_column.strip() if isinstance(actual_column, str) and actual_column.strip() else None,
+            "observed_at_column": observed_at_column.strip()
+            if isinstance(observed_at_column, str) and observed_at_column.strip()
             else None,
         },
         policy={
@@ -8848,6 +8984,9 @@ def leaderboard_pipeline_input_contract(artifact: Artifact | None) -> dict[str, 
                     "role": item.get("role") if isinstance(item.get("role"), str) else None,
                     "columns": table_columns,
                     "join_keys": [str(value) for value in item.get("join_keys") or [] if isinstance(value, str)],
+                    "forbidden_columns": [
+                        str(value) for value in item.get("forbidden_columns") or [] if isinstance(value, str)
+                    ],
                     "as_of_column": item.get("as_of_column") if isinstance(item.get("as_of_column"), str) else None,
                     "history_window": item.get("history_window") if isinstance(item.get("history_window"), str) else None,
                     "optional": item.get("optional") is True,
@@ -8858,6 +8997,24 @@ def leaderboard_pipeline_input_contract(artifact: Artifact | None) -> dict[str, 
         "columns": columns,
         "required_tables": required_tables,
         "history_requirements": history_requirements if isinstance(history_requirements, dict) else None,
+        "forbidden_columns": [str(value) for value in input_contract.get("forbidden_columns") or [] if isinstance(value, str)],
+    }
+
+
+def leaderboard_pipeline_smoke_validation(artifact: Artifact | None) -> dict[str, Any] | None:
+    if artifact is None:
+        return None
+    metadata = loads_json(artifact.metadata_json, {})
+    smoke = metadata.get("smoke_validation")
+    if not isinstance(smoke, dict):
+        return None
+    return {
+        "status": smoke.get("status") if isinstance(smoke.get("status"), str) else None,
+        "input_mode": smoke.get("input_mode") if isinstance(smoke.get("input_mode"), str) else None,
+        "input_source": smoke.get("input_source") if isinstance(smoke.get("input_source"), str) else None,
+        "input_rows": smoke.get("input_rows") if isinstance(smoke.get("input_rows"), int) else None,
+        "output_rows": smoke.get("output_rows") if isinstance(smoke.get("output_rows"), int) else None,
+        "runtime_isolated": smoke.get("runtime_isolated") is True,
     }
 
 
@@ -8870,6 +9027,19 @@ def normalize_prediction_batch_kind(value: str | None) -> str:
     return kind if kind in {"validation", "external_test", "pilot", "benchmark_submission"} else "external_test"
 
 
+def parse_pilot_join_keys_form(value: str | None) -> list[str]:
+    if not isinstance(value, str) or not value.strip():
+        return []
+    text = value.strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, list):
+        return [item.strip() for item in parsed if isinstance(item, str) and item.strip()]
+    return [item.strip() for item in text.split(",") if item.strip()]
+
+
 def prediction_input_validation_report(
     db: Session,
     *,
@@ -8880,6 +9050,7 @@ def prediction_input_validation_report(
 ) -> dict[str, Any]:
     observed_columns = prediction_input_columns(input_path)
     expected_columns: list[dict[str, Any]] = []
+    contract: dict[str, Any] | None = None
     pipeline_artifact = (
         db.get(Artifact, pipeline_artifact_id.strip())
         if isinstance(pipeline_artifact_id, str) and pipeline_artifact_id.strip()
@@ -8897,6 +9068,10 @@ def prediction_input_validation_report(
     expected_names = [str(column.get("name")) for column in expected_columns if isinstance(column.get("name"), str)]
     missing_columns = [name for name in required_names if name not in observed_columns]
     unexpected_columns = [name for name in observed_columns if expected_names and name not in expected_names]
+    forbidden_columns = prediction_forbidden_columns_for_table(contract, table_name) if isinstance(contract, dict) else []
+    forbidden_columns_present = [name for name in forbidden_columns if name in observed_columns]
+    key_columns = prediction_join_keys_for_table(contract, table_name) if isinstance(contract, dict) else []
+    fixed_profile = prediction_input_fixed_profile(input_path, key_columns=key_columns)
     return {
         "schema_version": "prediction_input_validation_report.v1",
         "status": "failed" if missing_columns else "passed",
@@ -8905,7 +9080,11 @@ def prediction_input_validation_report(
         "expected_columns": expected_columns,
         "missing_columns": missing_columns,
         "unexpected_columns": unexpected_columns,
-        "dtype_checks": "not_available",
+        "forbidden_columns": forbidden_columns,
+        "forbidden_columns_present": forbidden_columns_present,
+        "row_count": fixed_profile["row_count"],
+        "key_checks": fixed_profile["key_checks"],
+        "dtype_checks": fixed_profile["dtype_checks"],
     }
 
 
@@ -8921,6 +9100,103 @@ def prediction_expected_columns_for_table(contract: dict[str, Any], table_name: 
         return []
     columns = contract.get("columns")
     return [column for column in columns if isinstance(column, dict)] if isinstance(columns, list) else []
+
+
+def prediction_forbidden_columns_for_table(contract: dict[str, Any], table_name: str) -> list[str]:
+    required_tables = contract.get("required_tables")
+    if isinstance(required_tables, list) and required_tables:
+        for item in required_tables:
+            if isinstance(item, dict) and str(item.get("name") or "") == table_name:
+                return [str(value) for value in item.get("forbidden_columns") or [] if isinstance(value, str)]
+        return []
+    return [str(value) for value in contract.get("forbidden_columns") or [] if isinstance(value, str)]
+
+
+def prediction_join_keys_for_table(contract: dict[str, Any], table_name: str) -> list[str]:
+    required_tables = contract.get("required_tables")
+    if isinstance(required_tables, list):
+        for item in required_tables:
+            if isinstance(item, dict) and str(item.get("name") or "") == table_name:
+                return [str(value) for value in item.get("join_keys") or [] if isinstance(value, str)]
+    return [str(value) for value in contract.get("entity_keys") or [] if isinstance(value, str)]
+
+
+def prediction_input_fixed_profile(input_path: Path, *, key_columns: list[str]) -> dict[str, Any]:
+    if input_path.suffix.lower() != ".csv":
+        return {"row_count": None, "key_checks": [], "dtype_checks": "not_available"}
+    try:
+        with input_path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            columns = list(reader.fieldnames or [])
+            row_count = 0
+            samples: dict[str, set[str]] = {column: set() for column in columns}
+            key_seen: set[tuple[str, ...]] = set()
+            key_null_rows = 0
+            key_duplicate_rows = 0
+            key_complete_rows = 0
+            usable_key_columns = [column for column in key_columns if column in columns]
+            for row in reader:
+                row_count += 1
+                for column in columns:
+                    value = (row.get(column) or "").strip()
+                    if value and len(samples[column]) < 8:
+                        samples[column].add(value)
+                if usable_key_columns:
+                    key = tuple((row.get(column) or "").strip() for column in usable_key_columns)
+                    if any(not item for item in key):
+                        key_null_rows += 1
+                    else:
+                        key_complete_rows += 1
+                        if key in key_seen:
+                            key_duplicate_rows += 1
+                        key_seen.add(key)
+    except OSError:
+        return {"row_count": None, "key_checks": [], "dtype_checks": "not_available"}
+    key_checks = []
+    if usable_key_columns:
+        key_checks.append(
+            {
+                "columns": usable_key_columns,
+                "complete_row_count": key_complete_rows,
+                "null_row_count": key_null_rows,
+                "duplicate_row_count": key_duplicate_rows,
+                "distinct_key_count": len(key_seen),
+            }
+        )
+    return {
+        "row_count": row_count,
+        "key_checks": key_checks,
+        "dtype_checks": [
+            {"name": column, "observed_dtype": prediction_sample_dtype(sorted(samples[column]))}
+            for column in columns
+        ],
+    }
+
+
+def prediction_sample_dtype(values: list[str]) -> str:
+    if not values:
+        return "empty"
+    if all(value.lower() in {"true", "false"} for value in values):
+        return "bool_like"
+    int_count = 0
+    float_count = 0
+    for value in values:
+        try:
+            int(value)
+            int_count += 1
+            continue
+        except ValueError:
+            pass
+        try:
+            float(value)
+            float_count += 1
+        except ValueError:
+            return "string"
+    if int_count == len(values):
+        return "int_like"
+    if int_count + float_count == len(values):
+        return "float_like"
+    return "string"
 
 
 def prediction_input_columns(input_path: Path) -> list[str]:

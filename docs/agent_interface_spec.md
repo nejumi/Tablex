@@ -79,6 +79,17 @@ Skills are equipment for Codex, not fixed recipes. Prior-knowledge research is c
 
 Kaggle, arXiv, web, and domain research should be stored as Evidence/Insight/Report/Skill assets when used. The harness may manage safe download/probe plumbing, but interpretation belongs to Codex.
 
+## Prediction And Operations
+
+Prediction starts from a registered model or pipeline, not from a separate AutoML-style workflow.
+
+- The primary user entrypoint is the relevant Leaderboard/model surface. A user should be able to choose a model, inspect its input contract, run a test prediction, start pilot validation, and download or hand off the pipeline without searching across tabs.
+- A `prediction_pipeline` must be self-contained enough for Tablex to run a fixed smoke test using the same invocation shape as real prediction. If the pipeline declares multiple required tables, the self-test must use an input directory with fixtures for those tables.
+- Prediction inputs are not evaluation datasets by default. They are operational inputs for test prediction, benchmark submission, or pilot validation, and should be recorded with their own batch kind and lineage.
+- Tablex may validate file formats, declared columns, forbidden columns, declared tables, row counts, command exit status, and artifact lineage. It must not infer why a prediction failed from stderr text. Failures should be shown as factual runtime state and returned to the continuing main Codex session for repair.
+- If Full Auto is ON, user-triggered prediction failures, new pilot outcomes, and operational observations should wake the same main session when it is completed or waiting. Power OFF remains authoritative and must not be bypassed.
+- Production serving is not the core Tablex boundary. Tablex may support batch scoring, pilot validation, approved promotion or rollback records, and exportable pipeline bundles, but production handoff should remain explicit and human-approved.
+
 ## Pilot Phase
 
 Pilot Phase is a forward observation loop layered on top of a registered prediction pipeline.

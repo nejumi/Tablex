@@ -30,7 +30,16 @@ type PredictionInputValidationReport = {
   status: "passed" | "failed" | string;
   missing_columns?: string[];
   unexpected_columns?: string[];
+  forbidden_columns_present?: string[];
   observed_columns?: string[];
+  row_count?: number | null;
+  key_checks?: Array<{
+    columns?: string[];
+    complete_row_count?: number | null;
+    null_row_count?: number | null;
+    duplicate_row_count?: number | null;
+    distinct_key_count?: number | null;
+  }>;
 };
 
 type PredictionInputUploadResponse = {
@@ -45,6 +54,8 @@ type UploadedPredictionInput = {
   filename: string;
   validationReport: PredictionInputValidationReport;
 };
+
+type PredictionBatchKind = "external_test" | "pilot" | "benchmark_submission";
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, { credentials: "include", ...init });
@@ -472,6 +483,14 @@ export function LeaderboardTab({
   const [predictionUploadedInputs, setPredictionUploadedInputs] = React.useState<Record<string, UploadedPredictionInput>>({});
   const [predictionUploadError, setPredictionUploadError] = React.useState<string | null>(null);
   const [predictionDragKey, setPredictionDragKey] = React.useState<string | null>(null);
+  const [predictionBatchKind, setPredictionBatchKind] = React.useState<PredictionBatchKind>("external_test");
+  const [pilotOutcomeDeploymentId, setPilotOutcomeDeploymentId] = React.useState<string | null>(null);
+  const [pilotOutcomeUploadError, setPilotOutcomeUploadError] = React.useState<string | null>(null);
+  const [pilotOutcomeJoinKeys, setPilotOutcomeJoinKeys] = React.useState<string>("");
+  const [pilotOutcomeActualColumn, setPilotOutcomeActualColumn] = React.useState<string>("");
+  const [pilotOutcomePredictionColumn, setPilotOutcomePredictionColumn] = React.useState<string>("prediction");
+  const [pilotOutcomeObservedAtColumn, setPilotOutcomeObservedAtColumn] = React.useState<string>("");
+  const [pilotOutcomePredictionBatchId, setPilotOutcomePredictionBatchId] = React.useState<string>("");
   const prewarmedNotebookArtifactsRef = React.useRef<Set<string>>(new Set());
 
   async function loadPreview(artifactId: string) {
@@ -528,7 +547,7 @@ export function LeaderboardTab({
   async function runPredictionForEntry(entry: LeaderboardEntry) {
     if (!entry.pipeline_artifact_id) return;
     const requiredTables = entry.pipeline_input_contract?.required_tables ?? [];
-    const payload: Record<string, unknown> = {};
+    const payload: Record<string, unknown> = { batch_kind: predictionBatchKind };
     if (requiredTables.length) {
       const tableMapping: Record<string, string> = {};
       for (const table of requiredTables) {
@@ -548,6 +567,10 @@ export function LeaderboardTab({
     } else {
       throw new Error(text.predictionNoUploadedInputs);
     }
+    if (predictionBatchKind === "pilot") {
+      const deployment = await ensurePilotDeploymentForPrediction(entry);
+      payload.deployment_id = deployment.id;
+    }
     const job = await api<Job>(`/api/projects/${project.id}/pipelines/${entry.pipeline_artifact_id}/predict`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -557,6 +580,58 @@ export function LeaderboardTab({
     const artifactId = textField(completed.output.artifact_id) ?? textField(completed.output.prediction_batch_artifact_id);
     setPredictionResultArtifactId(artifactId);
     if (artifactId) await loadPreview(artifactId);
+  }
+
+  async function ensurePilotDeploymentForPrediction(entry: LeaderboardEntry): Promise<{ id: string }> {
+    if (!entry.pipeline_artifact_id) throw new Error(text.pipelineBundleUnavailable);
+    const existing = pilotDeployments.find(
+      (deployment) => deployment.pipeline_artifact_id === entry.pipeline_artifact_id && deployment.status === "active"
+    );
+    if (existing) return { id: existing.id };
+    return api<{ id: string }>(`/api/projects/${project.id}/pilot-deployments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pipeline_artifact_id: entry.pipeline_artifact_id,
+        model_version_id: entry.model_version_id,
+        experiment_run_id: entry.run_id,
+        notes: text.pilotAutoCreatedFromPrediction
+      })
+    });
+  }
+
+  function openPilotOutcomeForm(deployment: PilotDeploymentRead) {
+    setPilotOutcomeDeploymentId((current) => (current === deployment.id ? null : deployment.id));
+    setPilotOutcomeUploadError(null);
+    setPilotOutcomeJoinKeys("");
+    setPilotOutcomeActualColumn("");
+    setPilotOutcomePredictionColumn("prediction");
+    setPilotOutcomeObservedAtColumn("");
+    setPilotOutcomePredictionBatchId(deployment.prediction_batches[0]?.id ?? "");
+  }
+
+  async function uploadPilotOutcomes(deployment: PilotDeploymentRead, files: FileList | null) {
+    const file = files?.[0];
+    if (!file) return;
+    if (!pilotOutcomeActualColumn.trim()) {
+      throw new Error(text.pilotOutcomeActualColumn);
+    }
+    const formData = new FormData();
+    formData.append("file", file);
+    if (pilotOutcomePredictionBatchId) formData.append("prediction_batch_id", pilotOutcomePredictionBatchId);
+    if (pilotOutcomeJoinKeys.trim()) formData.append("join_keys", pilotOutcomeJoinKeys);
+    if (pilotOutcomePredictionColumn.trim()) formData.append("prediction_column", pilotOutcomePredictionColumn);
+    formData.append("actual_column", pilotOutcomeActualColumn.trim());
+    if (pilotOutcomeObservedAtColumn.trim()) formData.append("observed_at_column", pilotOutcomeObservedAtColumn.trim());
+    setPilotOutcomeUploadError(null);
+    const job = await api<Job>(`/api/pilot-deployments/${deployment.id}/outcomes/upload`, {
+      method: "POST",
+      body: formData
+    });
+    const completed = await runQueuedJobAndWait(job, { label: text.pilotOutcomeSubmit });
+    const artifactId = textField(completed.output.artifact_id) ?? textField(completed.output.pilot_scoring_report_artifact_id);
+    if (artifactId) await loadPreview(artifactId);
+    setPilotOutcomeDeploymentId(null);
   }
   const approvedSpecCount = specs.filter((spec) => spec.status === "approved").length;
   const topEntry = leaderboard[0] ?? null;
@@ -668,6 +743,8 @@ export function LeaderboardTab({
     const validation = uploaded?.validationReport;
     const missing = validation?.missing_columns ?? [];
     const unexpected = validation?.unexpected_columns ?? [];
+    const forbidden = validation?.forbidden_columns_present ?? [];
+    const firstKeyCheck = validation?.key_checks?.[0] ?? null;
     return (
       <div
         className={`prediction-input-dropzone ${predictionDragKey === inputKey ? "dragging" : ""}`}
@@ -706,8 +783,19 @@ export function LeaderboardTab({
               {validation?.status === "failed" ? text.predictionValidationFailed : text.predictionValidationPassed}
             </span>
             <small>{uploaded.filename}</small>
+            {typeof validation?.row_count === "number" ? (
+              <small>{text.predictionInputRowCount.replace("{count}", String(validation.row_count))}</small>
+            ) : null}
             {missing.length ? <small>{text.predictionMissingColumns.replace("{columns}", missing.join(", "))}</small> : null}
             {unexpected.length ? <small>{text.predictionUnexpectedColumns.replace("{columns}", unexpected.join(", "))}</small> : null}
+            {forbidden.length ? <small>{text.predictionForbiddenColumns.replace("{columns}", forbidden.join(", "))}</small> : null}
+            {firstKeyCheck ? (
+              <small>
+                {text.predictionInputKeyCheck
+                  .replace("{nulls}", String(firstKeyCheck.null_row_count ?? 0))
+                  .replace("{dupes}", String(firstKeyCheck.duplicate_row_count ?? 0))}
+              </small>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -721,6 +809,7 @@ export function LeaderboardTab({
   const showPredictionDatasetSelector = Boolean(
     predictionEntry && !hasRequiredPredictionTables && !hasUsableSinglePredictionUpload
   );
+  const pilotOutcomeTarget = pilotDeployments.find((deployment) => deployment.id === pilotOutcomeDeploymentId) ?? null;
 
   return (
     <div className="stack">
@@ -829,6 +918,9 @@ export function LeaderboardTab({
                 <div className="leaderboard-evidence-badges" key={`${entry.run_id}-evidence`}>
                   <span className={modelDiagnosticsBadgeClass(entry)}>{modelDiagnosticsStatusLabel(entry, text)}</span>
                   <small>{modelDiagnosticsChecksLabel(entry)}</small>
+                  {entry.pipeline_artifact_id ? (
+                    <span className={pipelineRuntimeBadgeClass(entry)}>{pipelineRuntimeStatusLabel(entry, text)}</span>
+                  ) : null}
                   {openDeliverableExpectations(entry).length ? (
                     <span className="badge warning" title={deliverableExpectationsTitle(entry, text)}>
                       {text.deliverableExpectationsOpen.replace(
@@ -896,6 +988,7 @@ export function LeaderboardTab({
                       setPredictionResultArtifactId(null);
                       setPredictionUploadedInputs({});
                       setPredictionUploadError(null);
+                      setPredictionBatchKind("external_test");
                     }}
                     title={entry.pipeline_artifact_id ? text.leaderboardActionPredict : text.pipelineBundleUnavailable}
                     type="button"
@@ -926,6 +1019,32 @@ export function LeaderboardTab({
                 <h3>{leaderboardEntryModelLabel(predictionEntry)}</h3>
                 <p>{text.predictionDrawerBody}</p>
               </div>
+              {predictionEntry.pipeline_runtime?.last_run_status === "failed" ? (
+                <div className="inline-alert warning">
+                  <strong>{text.pipelineRuntimeFailed}</strong>
+                  <span>{text.predictionRuntimeFailedBanner}</span>
+                </div>
+              ) : null}
+              <div className="inline-alert">
+                <strong>{text.predictionRegistrationCheck}</strong>
+                <span>{pipelineSmokeValidationLabel(predictionEntry, text)}</span>
+              </div>
+              <label className="field">
+                <span>{text.predictionBatchKindLabel}</span>
+                <select
+                  value={predictionBatchKind}
+                  onChange={(event) => setPredictionBatchKind(event.target.value as PredictionBatchKind)}
+                >
+                  <option value="external_test">{text.predictionBatchKindTest}</option>
+                  <option value="pilot">{text.predictionBatchKindPilot}</option>
+                  <option value="benchmark_submission">{text.predictionBatchKindBenchmark}</option>
+                </select>
+              </label>
+              {predictionBatchKind === "pilot" ? (
+                <div className="inline-alert">
+                  <span>{text.predictionPilotLocalOnly}</span>
+                </div>
+              ) : null}
               {predictionEntry.pipeline_input_contract ? (
                 <div className="prediction-contract">
                   {predictionEntry.pipeline_input_contract.columns.length ? (
@@ -1068,7 +1187,8 @@ export function LeaderboardTab({
                 text.pilotDeploymentBatches,
                 text.pilotDeploymentScore,
                 text.pilotDeploymentAsOfViolations,
-                text.pilotDeploymentAudit
+                text.pilotDeploymentAudit,
+                text.leaderboardHeaderActions
               ]}
               rows={pilotDeployments.map((deployment) => {
                 const latestReport = deployment.scoring_reports[0] ?? null;
@@ -1117,10 +1237,97 @@ export function LeaderboardTab({
                         {text.openSurface}
                       </button>
                     ) : null}
-                  </div>
+                  </div>,
+                  <button
+                    className="secondary-button compact"
+                    key={`${deployment.id}-outcomes`}
+                    type="button"
+                    onClick={() => openPilotOutcomeForm(deployment)}
+                  >
+                    <Plus size={14} />
+                    {text.pilotAddOutcomes}
+                  </button>
                 ];
               })}
             />
+            <p className="supporting-copy">{text.pilotLocalOnlyNotice}</p>
+            {pilotOutcomeTarget ? (
+              <div className="pilot-outcome-panel">
+                <div>
+                  <div className="eyebrow">{text.pilotAddOutcomes}</div>
+                  <h3>{pilotDeploymentLabel(pilotOutcomeTarget, artifacts, text)}</h3>
+                  <p>{text.pilotOutcomeFileHelp}</p>
+                </div>
+                {pilotOutcomeUploadError ? <div className="inline-alert warning">{pilotOutcomeUploadError}</div> : null}
+                <div className="pilot-outcome-form-grid">
+                  <label className="field">
+                    <span>{text.pilotOutcomePredictionBatch}</span>
+                    <select
+                      value={pilotOutcomePredictionBatchId}
+                      onChange={(event) => setPilotOutcomePredictionBatchId(event.target.value)}
+                    >
+                      <option value="">{text.pilotOutcomeOptional}</option>
+                      {pilotOutcomeTarget.prediction_batches.map((batch) => (
+                        <option key={batch.id} value={batch.id}>
+                          {batch.id} · {formatDate(batch.created_at)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>{text.pilotOutcomeJoinKeys}</span>
+                    <input
+                      value={pilotOutcomeJoinKeys}
+                      onChange={(event) => setPilotOutcomeJoinKeys(event.target.value)}
+                      placeholder="id, entity_id"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>{text.pilotOutcomePredictionColumn}</span>
+                    <input
+                      value={pilotOutcomePredictionColumn}
+                      onChange={(event) => setPilotOutcomePredictionColumn(event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>{text.pilotOutcomeActualColumn}</span>
+                    <input
+                      value={pilotOutcomeActualColumn}
+                      onChange={(event) => setPilotOutcomeActualColumn(event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>{text.pilotOutcomeObservedAtColumn}</span>
+                    <input
+                      value={pilotOutcomeObservedAtColumn}
+                      onChange={(event) => setPilotOutcomeObservedAtColumn(event.target.value)}
+                      placeholder={text.pilotOutcomeOptional}
+                    />
+                  </label>
+                </div>
+                <label className="prediction-input-dropzone">
+                  <span>
+                    <strong>{text.pilotOutcomeFile}</strong>
+                    <small>{text.pilotOutcomeFileHelp}</small>
+                  </span>
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={(event) => {
+                      const files = event.target.files;
+                      void runAction(async () => {
+                        try {
+                          await uploadPilotOutcomes(pilotOutcomeTarget, files);
+                        } catch (err) {
+                          setPilotOutcomeUploadError(err instanceof Error ? err.message : String(err));
+                        }
+                      });
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+            ) : null}
           </div>
         ) : (
           <EmptyInline text={text.pilotDeploymentsEmpty} />
@@ -1231,6 +1438,36 @@ function modelDiagnosticsStatusLabel(entry: LeaderboardEntry, text: LocaleMessag
   if (status === "partial") return text.modelDiagnosticsPartial;
   if (status === "registered") return text.modelDiagnosticsRegistered;
   return text.modelDiagnosticsMissing;
+}
+
+function pipelineRuntimeBadgeClass(entry: LeaderboardEntry) {
+  const status = entry.pipeline_runtime?.last_run_status;
+  if (status === "succeeded") return "badge success";
+  if (status === "failed") return "badge warning";
+  return "badge muted";
+}
+
+function pipelineRuntimeStatusLabel(entry: LeaderboardEntry, text: LocaleMessages) {
+  const status = entry.pipeline_runtime?.last_run_status;
+  if (status === "succeeded") return text.pipelineRuntimeReady;
+  if (status === "failed") {
+    return entry.pipeline_runtime?.repair_observation_delivered
+      ? `${text.pipelineRuntimeFailed} · ${text.pipelineRuntimeRepairSent}`
+      : text.pipelineRuntimeFailed;
+  }
+  return text.pipelineRuntimeNeverRun;
+}
+
+function pipelineSmokeValidationLabel(entry: LeaderboardEntry, text: LocaleMessages) {
+  const smoke = entry.pipeline_smoke_validation;
+  if (!smoke?.status) return text.predictionRegistrationCheckMissing;
+  const source = smoke.input_source || smoke.input_mode || smoke.status;
+  if (typeof smoke.input_rows === "number") {
+    return text.predictionRegistrationCheckRows
+      .replace("{source}", source)
+      .replace("{rows}", String(smoke.input_rows));
+  }
+  return source;
 }
 
 function modelDiagnosticsChecksLabel(entry: LeaderboardEntry) {

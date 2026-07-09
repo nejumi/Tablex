@@ -19,6 +19,9 @@ from tabular_harness.models.entities import (
     Insight,
     Job,
     ModelVersion,
+    PilotDeployment,
+    PilotOutcomeBatch,
+    PilotPredictionBatch,
     Project,
     Question,
     Report,
@@ -880,6 +883,8 @@ def _state_summary(db: Session, project: Project, counts: dict[str, int]) -> dic
         project.id,
         Job.status.in_(["failed", "timed_out"]),
     )
+    prediction_runtime = _prediction_runtime_state(db, project.id)
+    pilot_state = _pilot_state(db, project.id)
     return {
         "project_phase": project.current_phase,
         "target_column": project.target_column,
@@ -896,12 +901,84 @@ def _state_summary(db: Session, project: Project, counts: dict[str, int]) -> dic
         "split_manifest_count": counts["split_manifests"],
         "successful_run_count": successful_run_count,
         "failed_recent_job_count": failed_recent_job_count,
+        "prediction_pipeline_count": prediction_runtime["prediction_pipeline_count"],
+        "prediction_pipeline_failed_count": prediction_runtime["failed_count"],
+        "prediction_pipeline_succeeded_count": prediction_runtime["succeeded_count"],
+        "prediction_pipeline_never_run_count": prediction_runtime["never_run_count"],
+        "active_pilot_deployment_count": pilot_state["active_deployment_count"],
+        "pilot_prediction_batch_count": pilot_state["prediction_batch_count"],
+        "pilot_outcome_batch_count": pilot_state["outcome_batch_count"],
         "report_count": counts["reports"],
         "analysis_notebook_count": counts["analysis_notebooks"],
         "notebook_execution_plan_count": counts["notebook_execution_plans"],
         "candidate_count": counts["evaluation_candidates"],
         "idea_count": counts["ideas"],
         "visualization_count": counts["visualizations"],
+    }
+
+
+def _prediction_runtime_state(db: Session, project_id: str) -> dict[str, int]:
+    pipeline_artifact_ids = [
+        artifact_id
+        for (artifact_id,) in db.execute(
+            select(Artifact.id).where(Artifact.project_id == project_id, Artifact.asset_type == "prediction_pipeline")
+        ).all()
+    ]
+    latest_status_by_pipeline: dict[str, str] = {}
+    jobs = db.scalars(
+        select(Job)
+        .where(Job.project_id == project_id, Job.job_type == "run_prediction_pipeline")
+        .order_by(Job.updated_at.asc(), Job.created_at.asc())
+    ).all()
+    for job in jobs:
+        payload = loads_json(job.input_json, {})
+        pipeline_artifact_id = payload.get("pipeline_artifact_id")
+        if not isinstance(pipeline_artifact_id, str) or pipeline_artifact_id not in pipeline_artifact_ids:
+            continue
+        output = loads_json(job.output_json, {})
+        failed = job.status == "failed" or output.get("status") == "failed" or output.get("job_status") == "failed"
+        succeeded = job.status == "succeeded" and not failed
+        latest_status_by_pipeline[pipeline_artifact_id] = "failed" if failed else "succeeded" if succeeded else str(job.status)
+    failed_count = sum(1 for status in latest_status_by_pipeline.values() if status == "failed")
+    succeeded_count = sum(1 for status in latest_status_by_pipeline.values() if status == "succeeded")
+    return {
+        "prediction_pipeline_count": len(pipeline_artifact_ids),
+        "failed_count": failed_count,
+        "succeeded_count": succeeded_count,
+        "never_run_count": max(0, len(pipeline_artifact_ids) - len(latest_status_by_pipeline)),
+    }
+
+
+def _pilot_state(db: Session, project_id: str) -> dict[str, int]:
+    deployments = db.scalars(select(PilotDeployment).where(PilotDeployment.project_id == project_id)).all()
+    deployment_ids = [deployment.id for deployment in deployments]
+    active_deployment_count = sum(1 for deployment in deployments if deployment.status == "active")
+    if not deployment_ids:
+        return {
+            "active_deployment_count": active_deployment_count,
+            "prediction_batch_count": 0,
+            "outcome_batch_count": 0,
+        }
+    prediction_batch_count = int(
+        db.scalar(
+            select(func.count())
+            .select_from(PilotPredictionBatch)
+            .where(PilotPredictionBatch.deployment_id.in_(deployment_ids))
+        )
+        or 0
+    )
+    outcome_batch_count = int(
+        db.scalar(
+            select(func.count())
+            .select_from(PilotOutcomeBatch)
+            .where(PilotOutcomeBatch.deployment_id.in_(deployment_ids))
+        )
+        or 0
+    )
+    return {
+        "active_deployment_count": active_deployment_count,
+        "prediction_batch_count": prediction_batch_count,
+        "outcome_batch_count": outcome_batch_count,
     }
 
 
@@ -1287,6 +1364,61 @@ def _recommended_focus(project: Project, counts: dict[str, int], state: dict[str
             ],
         )
 
+    if int(state["prediction_pipeline_failed_count"]) > 0:
+        return _focus(
+            focus_key="prediction_repair",
+            target_tab="Leaderboard",
+            title="Repair the prediction pipeline before more prediction batches",
+            reason="At least one registered prediction pipeline failed on its latest prediction run. The failure details are recorded for Codex repair.",
+            risk_level="high",
+            confidence=0.86,
+            evidence=[
+                f"{state['prediction_pipeline_failed_count']} failed latest pipeline run(s)",
+                f"{state['prediction_pipeline_count']} registered prediction pipelines",
+            ],
+            primary_action=_navigate_action("open_leaderboard_prediction_repair", "Open Leaderboard", "Leaderboard"),
+            secondary_actions=[
+                _navigate_action("inspect_assets_prediction_failures", "Inspect Assets", "Assets"),
+                _agent_prompt_action(project.id, "ask_prediction_repair_status", _prediction_repair_prompt(project)),
+            ],
+            suggested_agent_prompt=_prediction_repair_prompt(project),
+        )
+
+    if int(state["pilot_prediction_batch_count"]) > int(state["pilot_outcome_batch_count"]):
+        return _focus(
+            focus_key="pilot_outcomes",
+            target_tab="Leaderboard",
+            title="Add outcomes for pilot validation",
+            reason="Pilot prediction batches exist, but fewer outcome batches are registered. The next operational evidence comes from joining predictions to actual outcomes.",
+            risk_level="medium",
+            confidence=0.83,
+            evidence=[
+                f"{state['pilot_prediction_batch_count']} pilot prediction batches",
+                f"{state['pilot_outcome_batch_count']} pilot outcome batches",
+            ],
+            primary_action=_navigate_action("open_pilot_outcomes", "Open pilot validation", "Leaderboard"),
+            secondary_actions=[_navigate_action("inspect_prediction_batches", "Inspect Assets", "Assets")],
+        )
+
+    if int(state["prediction_pipeline_count"]) > 0:
+        return _focus(
+            focus_key="prediction_operations",
+            target_tab="Leaderboard",
+            title="Run a test prediction or start pilot validation",
+            reason="The project has reproducible prediction pipeline artifacts. The next evidence comes from running them on target-free prediction inputs or pilot batches.",
+            risk_level="medium",
+            confidence=0.8,
+            evidence=[
+                f"{state['prediction_pipeline_count']} registered prediction pipelines",
+                f"{state['active_pilot_deployment_count']} active pilot validations",
+            ],
+            primary_action=_navigate_action("open_prediction_drawer", "Open Leaderboard", "Leaderboard"),
+            secondary_actions=[
+                _navigate_action("inspect_assets_prediction_inputs", "Inspect Assets", "Assets"),
+                _agent_prompt_action(project.id, "ask_next_prediction_iteration", _next_iteration_prompt(project)),
+            ],
+        )
+
     return _focus(
         focus_key="reports",
         target_tab="Insight",
@@ -1317,6 +1449,7 @@ def _journey_stages(
     has_successful_run = int(state["successful_run_count"]) > 0
     has_notebook_source = int(state["analysis_notebook_count"]) > 0
     has_report = int(state["report_count"]) > 0
+    has_prediction_pipeline = int(state["prediction_pipeline_count"]) > 0
 
     data_status = "done" if state["has_dataset"] else "current"
     if state["has_understanding_report"]:
@@ -1383,6 +1516,13 @@ def _journey_stages(
     else:
         reports_status = "waiting"
 
+    if focus_key in {"prediction_repair", "pilot_outcomes", "prediction_operations"}:
+        operations_status = "current"
+    elif has_prediction_pipeline:
+        operations_status = "next" if has_report else "waiting"
+    else:
+        operations_status = "waiting"
+
     focus_action_by_stage = {
         "data_intake": "upload_data",
         "understanding": "understand_data",
@@ -1392,6 +1532,7 @@ def _journey_stages(
         "experiments": "experiments",
         "notebooks": "notebooks",
         "reports": "reports",
+        "operations": focus_key if focus_key in {"prediction_repair", "pilot_outcomes", "prediction_operations"} else "prediction_operations",
     }
 
     def stage_action(stage_id: str) -> dict[str, Any] | None:
@@ -1484,6 +1625,19 @@ def _journey_stages(
             "Turn evidence, risks, diagnostics, and next actions into in-product reports.",
             [f"{state['report_count']} reports", f"{state['visualization_count']} visualizations"],
             stage_action("reports"),
+        ),
+        _journey_stage(
+            "operations",
+            "Prediction and pilot",
+            "Leaderboard",
+            operations_status,
+            "Run target-free predictions, collect pilot outcomes, and feed operational observations back to Codex.",
+            [
+                f"{state['prediction_pipeline_count']} prediction pipelines",
+                f"{state['pilot_prediction_batch_count']} pilot prediction batches",
+                f"{state['pilot_outcome_batch_count']} pilot outcome batches",
+            ],
+            stage_action("operations"),
         ),
     ]
 
@@ -1632,6 +1786,14 @@ def _next_iteration_prompt(project: Project) -> str:
     return (
         f"Review the current reports and experiment evidence for project '{project.name}', then propose the next "
         "controlled agent task with expected artifacts, evaluation constraints, diagnostics, and review criteria."
+    )
+
+
+def _prediction_repair_prompt(project: Project) -> str:
+    return (
+        f"Review the latest prediction pipeline runtime failure observations for project '{project.name}'. "
+        "Explain the repair status in human-facing language, inspect the pipeline source and stderr evidence, "
+        "and register a new prediction_pipeline version if a source repair is needed."
     )
 
 

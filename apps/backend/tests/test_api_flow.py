@@ -44,9 +44,11 @@ from tabular_harness.models.entities import (
     LineageEdge,
     ModelVersion,
     PilotPredictionBatch,
+    PilotOutcomeBatch,
     Project,
     Question,
     ResearchBrief,
+    Report,
     SplitManifest,
     User,
     utc_now,
@@ -3939,6 +3941,7 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
                         "role": "primary",
                         "columns": [{"name": "x", "dtype": "float", "required": True}],
                         "join_keys": ["row_id"],
+                        "forbidden_columns": ["TARGET"],
                         "as_of_column": None,
                         "history_window": None,
                         "optional": False,
@@ -3966,7 +3969,18 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
             name="hierarchical_median_pipeline",
             filename="pipeline_bundle.zip",
             text="zip placeholder",
-            metadata={"experiment_run_ids": ["run_leaderboard_reconcile"], "pipeline_manifest": pipeline_manifest},
+            metadata={
+                "experiment_run_ids": ["run_leaderboard_reconcile"],
+                "pipeline_manifest": pipeline_manifest,
+                "smoke_validation": {
+                    "status": "passed",
+                    "input_mode": "input_dir",
+                    "input_source": "selftest/input",
+                    "input_rows": 2,
+                    "output_rows": 2,
+                    "runtime_isolated": True,
+                },
+            },
         )
         prediction_input_artifact = store_text_artifact(
             db,
@@ -4049,6 +4063,9 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
     ]
     assert leaderboard_row["pipeline_input_contract"]["required_tables"][0]["name"] == "application"
     assert leaderboard_row["pipeline_input_contract"]["required_tables"][1]["as_of_column"] == "event_time"
+    assert leaderboard_row["pipeline_smoke_validation"]["status"] == "passed"
+    assert leaderboard_row["pipeline_smoke_validation"]["input_source"] == "selftest/input"
+    assert leaderboard_row["pipeline_smoke_validation"]["input_rows"] == 2
     assert leaderboard_row["related_notebook_artifact_ids"] == [notebook.id]
     assert len(leaderboard_row["related_notebooks"]) == 1
     related_notebook = leaderboard_row["related_notebooks"][0]
@@ -4077,13 +4094,18 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
     prediction_upload_response = client.post(
         f"/api/projects/{project_id}/prediction-inputs",
         data={"pipeline_artifact_id": pipeline_bundle.id, "table_name": "application", "batch_kind": "external_test"},
-        files={"file": ("application.csv", b"x,row_id\n1,A\n", "text/csv")},
+        files={"file": ("application.csv", b"x,row_id,TARGET\n1,A,0\n", "text/csv")},
     )
     assert prediction_upload_response.status_code == 200, prediction_upload_response.text
     prediction_upload = prediction_upload_response.json()
     assert prediction_upload["artifact"]["asset_type"] == "prediction_input"
     assert prediction_upload["validation_report"]["status"] == "passed"
     assert prediction_upload["validation_report"]["missing_columns"] == []
+    assert prediction_upload["validation_report"]["forbidden_columns_present"] == ["TARGET"]
+    assert prediction_upload["validation_report"]["row_count"] == 1
+    assert prediction_upload["validation_report"]["key_checks"][0]["columns"] == ["row_id"]
+    assert prediction_upload["validation_report"]["key_checks"][0]["null_row_count"] == 0
+    assert prediction_upload["validation_report"]["key_checks"][0]["duplicate_row_count"] == 0
     missing_upload_response = client.post(
         f"/api/projects/{project_id}/prediction-inputs",
         data={"pipeline_artifact_id": pipeline_bundle.id, "table_name": "application", "batch_kind": "external_test"},
@@ -4160,13 +4182,39 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
     pilot_outcomes_job = pilot_outcomes_response.json()
     assert pilot_outcomes_job["job_type"] == "score_pilot_outcomes"
     assert pilot_outcomes_job["status"] == "queued"
+    uploaded_outcomes_response = client.post(
+        f"/api/pilot-deployments/{deployment['id']}/outcomes/upload",
+        data={
+            "join_keys": '["id"]',
+            "actual_column": "actual",
+            "prediction_column": "prediction",
+        },
+        files={"file": ("pilot_outcomes_uploaded.csv", b"id,actual\n1,2\n", "text/csv")},
+    )
+    assert uploaded_outcomes_response.status_code == 200, uploaded_outcomes_response.text
+    uploaded_outcomes_job = uploaded_outcomes_response.json()
+    assert uploaded_outcomes_job["job_type"] == "score_pilot_outcomes"
+    with app.state.session_factory() as db:
+        queued_job = db.get(Job, uploaded_outcomes_job["id"])
+        assert queued_job is not None
+        queued_payload = loads_json(queued_job.input_json, {})
+        assert queued_payload["join_keys"] == ["id"]
+        assert queued_payload["actual_column"] == "actual"
+        uploaded_outcome_batch_id = queued_payload["outcome_batch_id"]
+        uploaded_outcome_batch = db.get(PilotOutcomeBatch, uploaded_outcome_batch_id)
+        assert uploaded_outcome_batch is not None
+        uploaded_artifact = db.get(Artifact, uploaded_outcome_batch.outcomes_artifact_id)
+        assert uploaded_artifact is not None
+        assert uploaded_artifact.asset_type == "pilot_outcomes"
     pilot_index_response = client.get(f"/api/projects/{project_id}/pilot-deployments")
     assert pilot_index_response.status_code == 200, pilot_index_response.text
     pilot_index = pilot_index_response.json()
     assert pilot_index["schema_version"] == "pilot_deployment_index.v1"
     assert len(pilot_index["deployments"]) == 1
     assert pilot_index["deployments"][0]["id"] == deployment["id"]
-    assert pilot_index["deployments"][0]["outcome_batches"][0]["outcomes_artifact_id"] == outcome_artifact.id
+    outcome_artifact_ids = {batch["outcomes_artifact_id"] for batch in pilot_index["deployments"][0]["outcome_batches"]}
+    assert outcome_artifact.id in outcome_artifact_ids
+    assert uploaded_artifact.id in outcome_artifact_ids
     assert pilot_index["deployments"][0]["scoring_reports"][0]["artifact"]["id"] == scoring_artifact.id
     assert pilot_index["deployments"][0]["scoring_reports"][0]["metrics"]["mae"] == 0.5
 
@@ -7509,6 +7557,158 @@ def test_project_guidance_surfaces_unlocked_evaluation_when_runs_exist(tmp_path:
     assert focus["primary_action"]["label"] != "Compare evaluation scenarios"
 
 
+def test_project_guidance_continues_to_prediction_operations_after_reports(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    app = cast(Any, client.app)
+    project_id = "p_guidance_operations"
+    with app.state.session_factory() as db:
+        project = Project(id=project_id, name="Guidance operations", target_column="target")
+        db.add(project)
+        db.flush()
+        dataset_artifact = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="uploaded_dataset",
+            name="train",
+            filename="train.csv",
+            text="feature,target\n1,0\n2,1\n",
+            metadata={"project_id": project_id},
+        )
+        dataset = DatasetSnapshot(
+            id="ds_guidance_operations",
+            project_id=project_id,
+            artifact_id=dataset_artifact.id,
+            source_type="upload",
+            source_ref="train.csv",
+            row_count=2,
+            column_count=2,
+            schema_hash="schema",
+            data_hash="data",
+        )
+        understanding = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="understanding_report",
+            name="understanding",
+            filename="understanding.md",
+            text="# Understanding\n",
+            metadata={"project_id": project_id},
+        )
+        spec = EvaluationSpec(
+            id="eval_guidance_operations",
+            project_id=project_id,
+            dataset_snapshot_id=dataset.id,
+            name="ROC AUC",
+            split_type="stratified_kfold",
+            primary_metric="roc_auc",
+            rationale_md="Use a fixed classification metric.",
+            risk_level="medium",
+            status="approved",
+        )
+        split_artifact = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="split_manifest",
+            name="split",
+            filename="split.json",
+            text="{}",
+            metadata={"project_id": project_id},
+        )
+        split = SplitManifest(
+            id="split_guidance_operations",
+            project_id=project_id,
+            evaluation_spec_id=spec.id,
+            artifact_id=split_artifact.id,
+            train_count=1,
+            valid_count=1,
+        )
+        db.add_all([dataset, spec, split])
+        db.flush()
+        pipeline = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="prediction_pipeline",
+            name="operations_pipeline",
+            filename="operations_pipeline.zip",
+            text="zip placeholder",
+            metadata={"project_id": project_id},
+        )
+        run = ExperimentRun(
+            id="run_guidance_operations",
+            project_id=project_id,
+            dataset_snapshot_id=dataset.id,
+            evaluation_spec_id=spec.id,
+            split_manifest_id=split.id,
+            runner_type="codex_main_session",
+            status="succeeded",
+            params_json=json.dumps({"model_id": "operations_model", "pipeline_artifact_id": pipeline.id}),
+            metrics_json=json.dumps({"primary_metric_name": "roc_auc", "primary_metric_value": 0.75, "roc_auc": 0.75}),
+            summary_md="Model with pipeline.",
+        )
+        notebook = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="model_notebook",
+            filename="model_notebook.py",
+            text="import marimo\n",
+            metadata={"project_id": project_id, "run_id": run.id},
+        )
+        report_artifact = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="decision_report",
+            name="decision_report",
+            filename="decision_report.md",
+            text="# Decision report\n",
+            metadata={"project_id": project_id},
+        )
+        report = Report(
+            id="rpt_guidance_operations",
+            project_id=project_id,
+            report_type="decision_report",
+            title="Decision report",
+            summary="Decision report.",
+            artifact_id=report_artifact.id,
+        )
+        db.add_all([run, report])
+        db.commit()
+        assert understanding.id
+        assert notebook.id
+
+    guidance_response = client.get(f"/api/projects/{project_id}/guidance")
+    assert guidance_response.status_code == 200, guidance_response.text
+    guidance = guidance_response.json()
+    assert guidance["recommended_focus"]["focus_key"] == "prediction_operations"
+    assert guidance["current_stage_id"] == "operations"
+    operations_stage = {stage["id"]: stage for stage in guidance["journey_stages"]}["operations"]
+    assert operations_stage["status"] == "current"
+
+    with app.state.session_factory() as db:
+        failed_job = Job(
+            id="job_guidance_prediction_failed",
+            project_id=project_id,
+            job_type="run_prediction_pipeline",
+            status="failed",
+            input_json=json.dumps({"pipeline_artifact_id": pipeline.id}),
+            output_json=json.dumps({"status": "failed", "job_status": "failed"}),
+        )
+        db.add(failed_job)
+        db.commit()
+
+    repair_guidance_response = client.get(f"/api/projects/{project_id}/guidance")
+    assert repair_guidance_response.status_code == 200, repair_guidance_response.text
+    repair_focus = repair_guidance_response.json()["recommended_focus"]
+    assert repair_focus["focus_key"] == "prediction_repair"
+    assert repair_focus["target_tab"] == "Leaderboard"
+
+
 def test_guidance_and_result_helpers_count_marimo_notebook_as_native_notebook(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
@@ -7551,6 +7751,114 @@ def test_guidance_and_result_helpers_count_marimo_notebook_as_native_notebook(tm
     assert guidance["supporting_counts"]["analysis_notebooks"] == 1
     assert guidance["state_summary"]["analysis_notebook_count"] == 1
     assert guidance["state_summary"]["latest_analysis_notebook_artifact_id"] == notebook.id
+
+
+def test_leaderboard_reports_prediction_pipeline_runtime_failure_state(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = Project(id="p_pipeline_runtime_state", name="Pipeline runtime state")
+        db.add(project)
+        db.flush()
+        pipeline = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project.id,
+            asset_type="prediction_pipeline",
+            name="runtime_state_pipeline",
+            filename="runtime_state_pipeline.zip",
+            text="zip placeholder",
+            metadata={
+                "project_id": project.id,
+                "pipeline_manifest": {
+                    "schema_version": "pipeline_manifest.v1",
+                    "input_contract": {
+                        "inference_format": {
+                            "columns": [{"name": "SK_ID_CURR", "dtype": "string", "required": True}]
+                        }
+                    },
+                    "output_contract": {
+                        "columns": [{"name": "prediction", "dtype": "float", "required": True}],
+                        "prediction_column": "prediction",
+                    },
+                    "training": {},
+                    "runtime": {},
+                },
+            },
+        )
+        prediction_input = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project.id,
+            asset_type="prediction_input",
+            name="runtime_state_prediction_input",
+            filename="runtime_state_prediction_input.csv",
+            text="SK_ID_CURR\n1\n",
+            metadata={"project_id": project.id, "table_name": "prediction_input"},
+        )
+        run = ExperimentRun(
+            id="run_pipeline_runtime_state",
+            project_id=project.id,
+            runner_type="codex_main_session",
+            status="succeeded",
+            params_json=json.dumps(
+                {
+                    "model_id": "runtime_state_model",
+                    "model_description": "Model with a prediction pipeline.",
+                    "features_used": ["SK_ID_CURR"],
+                    "pipeline_artifact_id": pipeline.id,
+                }
+            ),
+            metrics_json=json.dumps({"primary_metric_name": "roc_auc", "primary_metric_value": 0.7, "roc_auc": 0.7}),
+            summary_md="Model with a prediction pipeline.",
+        )
+        failed_job = Job(
+            id="job_pipeline_runtime_failed",
+            project_id=project.id,
+            job_type="run_prediction_pipeline",
+            status="failed",
+            input_json=json.dumps({"pipeline_artifact_id": pipeline.id, "input_artifact_id": "art_prediction_input"}),
+            output_json=json.dumps(
+                {
+                    "status": "failed",
+                    "job_status": "failed",
+                    "error_message": "Prediction pipeline failed while running predict.py (exit code 1).",
+                    "codex_feedback": {"delivered": True, "attention_key": "prediction_pipeline_runtime_failed:test"},
+                }
+            ),
+        )
+        db.add_all([run, failed_job])
+        db.commit()
+
+    leaderboard_response = client.get("/api/projects/p_pipeline_runtime_state/leaderboard")
+    assert leaderboard_response.status_code == 200, leaderboard_response.text
+    row = leaderboard_response.json()[0]
+    runtime = row["pipeline_runtime"]
+    assert runtime["last_run_status"] == "failed"
+    assert runtime["last_failed_job_id"] == "job_pipeline_runtime_failed"
+    assert runtime["repair_observation_delivered"] is True
+
+    deployment_response = client.post(
+        "/api/projects/p_pipeline_runtime_state/pilot-deployments",
+        json={"pipeline_artifact_id": pipeline.id, "experiment_run_id": "run_pipeline_runtime_state"},
+    )
+    assert deployment_response.status_code == 200, deployment_response.text
+    deployment_id = deployment_response.json()["id"]
+    predict_response = client.post(
+        f"/api/projects/p_pipeline_runtime_state/pipelines/{pipeline.id}/predict",
+        json={
+            "input_artifact_id": prediction_input.id,
+            "batch_kind": "pilot",
+            "deployment_id": deployment_id,
+        },
+    )
+    assert predict_response.status_code == 200, predict_response.text
+    with app.state.session_factory() as db:
+        job = db.get(Job, predict_response.json()["id"])
+        assert job is not None
+        payload = loads_json(job.input_json, {})
+        assert payload["batch_kind"] == "pilot"
+        assert payload["deployment_id"] == deployment_id
 
 
 def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path: Path, monkeypatch: Any) -> None:

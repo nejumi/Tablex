@@ -82,7 +82,7 @@ from tabular_harness.services.benchmark_collection import create_benchmark_colle
 from tabular_harness.services.benchmark_evidence import create_benchmark_evidence_pack
 from tabular_harness.services.prediction_input_feedback import (
     maybe_send_prediction_pipeline_runtime_failure_to_codex,
-    summarize_prediction_pipeline_runtime_failure,
+    prediction_pipeline_runtime_failure_message,
 )
 from tabular_harness.services.benchmarks import (
     benchmark_import_readiness,
@@ -2685,6 +2685,7 @@ def workspace_relative_path_for_job(workspace: Path, value: Any, job_type: str, 
 def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
     payload = loads_json(job.input_json, {})
     project = project_for_job(db, job, "run_prediction_pipeline")
+    batch_kind = prediction_batch_kind_from_payload(payload)
     pipeline_artifact_id = payload.get("pipeline_artifact_id")
     if not isinstance(pipeline_artifact_id, str) or not pipeline_artifact_id.strip():
         raise ValueError("run_prediction_pipeline requires pipeline_artifact_id")
@@ -2739,7 +2740,7 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
     )
     if completed.returncode != 0:
         stderr_tail = (completed.stderr or completed.stdout or "")[-4000:]
-        error_summary = summarize_prediction_pipeline_runtime_failure(stderr_tail)
+        error_summary = prediction_pipeline_runtime_failure_message(exit_code=completed.returncode)
         codex_feedback = maybe_send_prediction_pipeline_runtime_failure_to_codex(
             db,
             project=project,
@@ -2747,6 +2748,7 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
             job_id=job.id,
             error_message=stderr_tail,
             error_summary=error_summary,
+            exit_code=completed.returncode,
             input_artifact_id=payload.get("input_artifact_id") if isinstance(payload.get("input_artifact_id"), str) else None,
             dataset_snapshot_id=payload.get("dataset_snapshot_id") if isinstance(payload.get("dataset_snapshot_id"), str) else None,
             input_artifact_ids_by_table=payload.get("input_artifact_ids_by_table")
@@ -2764,6 +2766,7 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
             "input_artifact_ids_by_table": payload.get("input_artifact_ids_by_table")
             if isinstance(payload.get("input_artifact_ids_by_table"), dict)
             else None,
+            "batch_kind": batch_kind,
             "stderr_tail": stderr_tail,
             "exit_code": completed.returncode,
             "codex_feedback": codex_feedback,
@@ -2791,6 +2794,7 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
             "input_artifact_ids_by_table": payload.get("input_artifact_ids_by_table")
             if isinstance(payload.get("input_artifact_ids_by_table"), dict)
             else None,
+            "batch_kind": batch_kind,
             "history_artifact_id": payload.get("history_artifact_id"),
             "primary_path": str(output_path),
             "runtime_isolated": runtime_isolated,
@@ -2815,6 +2819,7 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
             "input_artifact_ids_by_table": payload.get("input_artifact_ids_by_table")
             if isinstance(payload.get("input_artifact_ids_by_table"), dict)
             else None,
+            "batch_kind": batch_kind,
             "history_artifact_id": payload.get("history_artifact_id"),
             "primary_path": str(target_dir / "predictions.csv"),
             "runtime_isolated": runtime_isolated,
@@ -2845,6 +2850,15 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
             dataset_snapshot_id = payload.get("dataset_snapshot_id")
             dataset = db.get(DatasetSnapshot, dataset_snapshot_id) if isinstance(dataset_snapshot_id, str) else None
             input_artifact_id = dataset.artifact_id if dataset is not None else None
+        if not isinstance(input_artifact_id, str) or not input_artifact_id.strip():
+            mapping = payload.get("input_artifact_ids_by_table")
+            if isinstance(mapping, dict):
+                table_artifact_ids = [
+                    str(value).strip()
+                    for key, value in sorted(mapping.items())
+                    if isinstance(key, str) and isinstance(value, str) and value.strip()
+                ]
+                input_artifact_id = table_artifact_ids[0] if table_artifact_ids else None
         if not isinstance(input_artifact_id, str) or not input_artifact_id.strip():
             raise ValueError("Pilot prediction batch requires an input artifact")
         as_of = parse_iso_datetime(payload.get("as_of")) or utc_now()
@@ -2904,6 +2918,12 @@ def prediction_input_dir_for_job(db: Session, *, project: Project, payload: dict
         raise ValueError("run_prediction_pipeline input_artifact_ids_by_table did not contain any valid table inputs")
     (input_dir / "manifest.json").write_text(dumps_json(manifest), encoding="utf-8")
     return input_dir
+
+
+def prediction_batch_kind_from_payload(payload: dict[str, Any]) -> str:
+    raw = payload.get("batch_kind")
+    value = raw.strip().lower() if isinstance(raw, str) else "external_test"
+    return value if value in {"validation", "external_test", "pilot", "benchmark_submission"} else "external_test"
 
 
 def prediction_input_path_for_job(db: Session, *, project: Project, payload: dict[str, Any]) -> Path:

@@ -4415,6 +4415,31 @@ td {
   max-width: 560px;
 }
 
+.inline-alert {
+  display: grid;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, var(--accent));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface));
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.inline-alert strong {
+  color: var(--text-strong);
+}
+
+.inline-alert.warning {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--border));
+  background: color-mix(in srgb, var(--warning-bg) 42%, var(--surface));
+}
+
+.inline-alert.warning strong {
+  color: var(--warning);
+}
+
 .prediction-contract {
   display: grid;
   gap: 10px;
@@ -4469,6 +4494,27 @@ td {
 .prediction-active-input small,
 .prediction-input-note {
   color: var(--muted);
+}
+
+.pilot-outcome-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-muted) 62%, var(--surface));
+  padding: 14px;
+}
+
+.pilot-outcome-panel h3,
+.pilot-outcome-panel p {
+  margin: 0;
+}
+
+.pilot-outcome-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
 }
 
 .chip-row {

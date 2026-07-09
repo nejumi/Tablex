@@ -1011,7 +1011,9 @@ def build_session_context(
                 "description": (
                     "Use this fixed JSON request/ack channel when a leaderboard run has a reproducible prediction pipeline. "
                     "Tablex validates required files and manifest shape, zips the pipeline directory as a prediction_pipeline artifact, "
-                    "and links it to the declared ExperimentRun ids."
+                    "and links it to the declared ExperimentRun ids. predict.py must accept --input <file> for single-table inputs, "
+                    "or --input-dir <directory> when input_contract.required_tables is declared. The --input-dir directory contains "
+                    "a manifest.json and one file per table."
                 ),
                 "required_pipeline_files": [
                     "pipeline_manifest.json",
@@ -1020,6 +1022,16 @@ def build_session_context(
                     "requirements.txt",
                     "README.md",
                 ],
+                "selftest_contract": {
+                    "single_table": (
+                        "Strongly recommended: include selftest/input.csv with target-free rows representative of prediction input. "
+                        "If absent, Tablex smoke validation falls back to synthetic manifest values and marks the guarantee weaker."
+                    ),
+                    "multi_table": (
+                        "Required when input_contract.required_tables is present: include selftest/input/<table>.csv for each "
+                        "non-optional table. Tablex smoke validation runs predict.py with --input-dir using these files."
+                    ),
+                },
                 "example_request": {
                     "schema_version": PIPELINE_REQUEST_SCHEMA_VERSION,
                     "request_id": "register_prediction_pipeline_001",
@@ -1031,8 +1043,38 @@ def build_session_context(
                         "research_plan_node_id": "modeling",
                         "manifest": {
                             "schema_version": "pipeline_manifest.v1",
-                            "input_contract": {"inference_format": {"columns": []}, "history_requirements": {"required": False}},
-                            "output_contract": {"columns": [], "id_columns": [], "prediction_column": "prediction"},
+                            "input_contract": {
+                                "inference_format": {"columns": [{"name": "row_id", "dtype": "string", "required": True}]},
+                                "required_tables": [
+                                    {
+                                        "name": "application",
+                                        "role": "primary",
+                                        "columns": [{"name": "row_id", "dtype": "string", "required": True}],
+                                        "join_keys": ["row_id"],
+                                        "entity_keys": ["row_id"],
+                                        "forbidden_columns": ["TARGET"],
+                                        "optional": False,
+                                    },
+                                    {
+                                        "name": "history",
+                                        "role": "history",
+                                        "columns": [{"name": "row_id", "dtype": "string", "required": True}],
+                                        "join_keys": ["row_id"],
+                                        "as_of_column": None,
+                                        "history_window": None,
+                                        "optional": True,
+                                    },
+                                ],
+                                "history_requirements": {"required": False},
+                            },
+                            "output_contract": {
+                                "columns": [
+                                    {"name": "row_id", "dtype": "string", "required": True},
+                                    {"name": "prediction", "dtype": "float", "required": True},
+                                ],
+                                "id_columns": ["row_id"],
+                                "prediction_column": "prediction",
+                            },
                             "training": {"dataset_snapshot_id": "ds_current", "split_manifest_id": None, "evaluation_spec_id": None, "seed": 0, "deterministic": True},
                             "expected_metrics": [],
                             "runtime": {"python": ">=3.11", "timeout_seconds_predict": 120},

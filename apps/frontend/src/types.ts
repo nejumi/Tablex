@@ -969,6 +969,22 @@ export type LeaderboardEntry = {
     }>;
     history_requirements?: Record<string, unknown> | null;
   } | null;
+  pipeline_smoke_validation?: {
+    status?: string | null;
+    input_mode?: string | null;
+    input_source?: string | null;
+    input_rows?: number | null;
+    output_rows?: number | null;
+    runtime_isolated?: boolean;
+  } | null;
+  pipeline_runtime?: {
+    last_run_status: "never_run" | "succeeded" | "failed" | string;
+    last_job_id?: string | null;
+    last_failed_job_id?: string | null;
+    last_failure_at?: string | null;
+    repair_observation_delivered?: boolean;
+    superseded_by_artifact_id?: string | null;
+  } | null;
   deliverable_expectations?: Array<{
     id: string;
     kind: string;

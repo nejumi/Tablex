@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -536,6 +537,8 @@ def normalize_pipeline_input_contract(
         normalized_tables, table_issues = normalize_pipeline_required_tables(required_tables)
         input_contract["required_tables"] = normalized_tables
         issues.extend(table_issues)
+    if "forbidden_columns" in input_contract:
+        input_contract["forbidden_columns"] = string_items(input_contract.get("forbidden_columns"))
     return warnings, issues
 
 
@@ -544,7 +547,7 @@ def normalize_pipeline_required_tables(value: Any) -> tuple[list[dict[str, Any]]
         return [], [{"pointer": "pipeline_manifest.input_contract.required_tables", "message": "must be an array when provided"}]
     normalized: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
-    valid_roles = {"primary", "supporting", "history"}
+    valid_roles = {"primary", "supporting", "history", "future"}
     for index, item in enumerate(value):
         pointer = f"pipeline_manifest.input_contract.required_tables/{index}"
         if not isinstance(item, dict):
@@ -573,7 +576,9 @@ def normalize_pipeline_required_tables(value: Any) -> tuple[list[dict[str, Any]]
             table["columns"] = normalized_columns
             issues.extend(column_issues)
         table["join_keys"] = string_items(table.get("join_keys"))
-        for optional_key in ("as_of_column", "history_window"):
+        table["entity_keys"] = string_items(table.get("entity_keys"))
+        table["forbidden_columns"] = string_items(table.get("forbidden_columns"))
+        for optional_key in ("as_of_column", "history_window", "prediction_horizon"):
             optional_value = table.get(optional_key)
             table[optional_key] = optional_value.strip() if isinstance(optional_value, str) and optional_value.strip() else None
         table["optional"] = bool(table.get("optional"))
@@ -798,18 +803,27 @@ def smoke_validate_prediction_pipeline(
     required_output_columns = sorted(set([prediction_column, *output_column_names]))
     smoke_dir = workspace_dir / ".tablex_smoke" / request_id
     smoke_dir.mkdir(parents=True, exist_ok=True)
-    input_path = smoke_dir / "input.csv"
     output_path = smoke_dir / "predictions.csv"
-    input_row, input_source = smoke_input_row_for_pipeline(
-        workspace,
-        manifest=manifest,
-        input_column_names=input_column_names,
-        column_specs=column_specs,
-    )
-    with input_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=input_column_names)
-        writer.writeheader()
-        writer.writerow(input_row)
+    required_tables = pipeline_required_tables(input_contract)
+    if required_tables:
+        input_mode = "input_dir"
+        input_arg_name = "--input-dir"
+        input_arg_path, input_source, input_rows = smoke_input_dir_for_pipeline(
+            workspace_dir,
+            smoke_dir=smoke_dir,
+            required_tables=required_tables,
+        )
+    else:
+        input_mode = "input_file"
+        input_arg_name = "--input"
+        input_arg_path, input_source, input_rows = smoke_input_file_for_pipeline(
+            workspace_dir,
+            smoke_dir=smoke_dir,
+            workspace=workspace,
+            manifest=manifest,
+            input_column_names=input_column_names,
+            column_specs=column_specs,
+        )
     timeout_seconds = runtime.get("timeout_seconds_predict")
     if not isinstance(timeout_seconds, int) or timeout_seconds <= 0:
         timeout_seconds = 300
@@ -820,8 +834,8 @@ def smoke_validate_prediction_pipeline(
             [
                 str(smoke_python),
                 str(workspace_dir / "predict.py"),
-                "--input",
-                str(input_path),
+                input_arg_name,
+                str(input_arg_path),
                 "--output",
                 str(output_path),
             ],
@@ -877,14 +891,14 @@ def smoke_validate_prediction_pipeline(
         reader = csv.DictReader(handle)
         rows = list(reader)
         output_columns = list(reader.fieldnames or [])
-    if len(rows) != 1:
+    if len(rows) != input_rows:
         raise PipelineToolValidationError(
-            f"Prediction pipeline smoke output must contain 1 row; got {len(rows)}",
+            f"Prediction pipeline smoke output must contain {input_rows} row(s); got {len(rows)}",
             issues=[
                 pipeline_tool_issue(
                     "pipeline.output.rows",
                     "prediction output row count must match the smoke input row count",
-                    expected_rows=1,
+                    expected_rows=input_rows,
                     actual_rows=len(rows),
                 )
             ],
@@ -908,12 +922,172 @@ def smoke_validate_prediction_pipeline(
         "runtime_isolated": True,
         "python_executable": str(smoke_python),
         "requirements_hash": prediction_pipeline_requirements_hash(requirements_path),
+        "input_mode": input_mode,
         "input_source": input_source,
-        "input_rows": 1,
+        "input_rows": input_rows,
         "output_rows": len(rows),
         "prediction_column": prediction_column,
         "validated_output_columns": required_output_columns,
     }
+
+
+def pipeline_required_tables(input_contract: dict[str, Any]) -> list[dict[str, Any]]:
+    tables = input_contract.get("required_tables")
+    return [item for item in tables if isinstance(item, dict)] if isinstance(tables, list) else []
+
+
+def smoke_input_file_for_pipeline(
+    workspace_dir: Path,
+    *,
+    smoke_dir: Path,
+    workspace: Path | None,
+    manifest: dict[str, Any],
+    input_column_names: list[str],
+    column_specs: list[dict[str, Any]],
+) -> tuple[Path, str, int]:
+    input_path = smoke_dir / "input.csv"
+    selftest_path = workspace_dir / "selftest" / "input.csv"
+    if selftest_path.is_file():
+        row_count = validate_csv_selftest_file(
+            selftest_path,
+            required_columns=input_column_names,
+            pointer="pipeline.selftest.input.csv",
+        )
+        shutil.copy2(selftest_path, input_path)
+        return input_path, "selftest/input.csv", row_count
+    input_row, input_source = smoke_input_row_for_pipeline(
+        workspace,
+        manifest=manifest,
+        input_column_names=input_column_names,
+        column_specs=column_specs,
+    )
+    with input_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=input_column_names)
+        writer.writeheader()
+        writer.writerow(input_row)
+    return input_path, input_source, 1
+
+
+def smoke_input_dir_for_pipeline(
+    workspace_dir: Path,
+    *,
+    smoke_dir: Path,
+    required_tables: list[dict[str, Any]],
+) -> tuple[Path, str, int]:
+    selftest_dir = workspace_dir / "selftest" / "input"
+    if not selftest_dir.is_dir():
+        raise PipelineToolValidationError(
+            "Prediction pipeline with required_tables must include selftest/input table files",
+            issues=[
+                pipeline_tool_issue(
+                    "pipeline.selftest.input",
+                    "required_tables pipelines must include selftest/input/<table>.csv files so Tablex can smoke-test predict.py with --input-dir",
+                    repair="Create selftest/input with one CSV per non-optional required table, using the same table names declared in input_contract.required_tables.",
+                )
+            ],
+        )
+    input_dir = smoke_dir / "input_dir"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    input_manifest: dict[str, Any] = {"schema_version": "prediction_input_dir_manifest.v1", "tables": []}
+    row_counts: dict[str, int] = {}
+    issues: list[dict[str, Any]] = []
+    included_table_names: set[str] = set()
+    for index, table in enumerate(required_tables):
+        table_name = str(table.get("name") or "").strip()
+        if not table_name:
+            continue
+        source_path = selftest_dir / pipeline_table_input_filename(table_name)
+        columns = [item for item in table.get("columns") or [] if isinstance(item, dict)]
+        required_columns = [
+            str(column.get("name"))
+            for column in columns
+            if isinstance(column.get("name"), str) and column.get("required", True) is not False
+        ]
+        if not source_path.is_file():
+            if bool(table.get("optional")):
+                continue
+            issues.append(
+                pipeline_tool_issue(
+                    f"pipeline.selftest.input.{index}",
+                    f"Missing selftest CSV for required table {table_name}",
+                    expected_path=str(source_path.relative_to(workspace_dir)),
+                    repair=f"Add {source_path.relative_to(workspace_dir)} with the declared columns for {table_name}.",
+                )
+            )
+            continue
+        row_count = validate_csv_selftest_file(
+            source_path,
+            required_columns=required_columns,
+            pointer=f"pipeline.selftest.input.{table_name}",
+        )
+        target_path = input_dir / source_path.name
+        shutil.copy2(source_path, target_path)
+        row_counts[table_name] = row_count
+        included_table_names.add(table_name)
+        input_manifest["tables"].append(
+            {
+                "name": table_name,
+                "filename": target_path.name,
+                "path": str(target_path),
+            }
+        )
+    if issues:
+        raise PipelineToolValidationError("Prediction pipeline selftest input is incomplete", issues=issues)
+    if not input_manifest["tables"]:
+        raise PipelineToolValidationError(
+            "Prediction pipeline selftest input did not include any table files",
+            issues=[
+                pipeline_tool_issue(
+                    "pipeline.selftest.input",
+                    "selftest/input must contain at least one CSV file for the declared required_tables",
+                    repair="Add target-free CSV fixtures under selftest/input before registering the pipeline.",
+                )
+            ],
+        )
+    (input_dir / "manifest.json").write_text(dumps_json(input_manifest), encoding="utf-8")
+    primary_tables = [table for table in required_tables if table.get("role") == "primary" and str(table.get("name") or "") in included_table_names]
+    if primary_tables:
+        expected_rows = row_counts[str(primary_tables[0].get("name"))]
+    else:
+        expected_rows = max(row_counts.values())
+    return input_dir, "selftest/input", expected_rows
+
+
+def pipeline_table_input_filename(table_name: str) -> str:
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", table_name).strip("._") or "table"
+    return f"{safe_name}.csv"
+
+
+def validate_csv_selftest_file(path: Path, *, required_columns: list[str], pointer: str) -> int:
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            observed_columns = list(reader.fieldnames or [])
+            missing_columns = [column for column in required_columns if column not in observed_columns]
+            rows = list(reader)
+    except OSError as exc:
+        raise PipelineToolValidationError(
+            f"Prediction pipeline selftest file could not be read: {path}",
+            issues=[pipeline_tool_issue(pointer, "selftest CSV could not be read", path=str(path))],
+        ) from exc
+    if missing_columns:
+        raise PipelineToolValidationError(
+            f"Prediction pipeline selftest file is missing column(s): {', '.join(missing_columns)}",
+            issues=[
+                pipeline_tool_issue(
+                    pointer,
+                    "selftest CSV is missing columns declared required by the pipeline manifest",
+                    missing_columns=missing_columns,
+                    observed_columns=observed_columns,
+                )
+            ],
+        )
+    if not rows:
+        raise PipelineToolValidationError(
+            "Prediction pipeline selftest file must contain at least one data row",
+            issues=[pipeline_tool_issue(pointer, "selftest CSV must contain at least one data row")],
+        )
+    return len(rows)
 
 
 def smoke_input_row_for_pipeline(

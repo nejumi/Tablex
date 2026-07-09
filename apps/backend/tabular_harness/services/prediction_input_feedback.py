@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tabular_harness.models.entities import Artifact, Project
+from tabular_harness.core.json import loads_json
+from tabular_harness.models.entities import AgentTranscriptEvent, Artifact, Project
 from tabular_harness.services.agent_inbox import write_inbox_entry
 from tabular_harness.services.agent_supervisor import active_main_session, latest_main_session
 from tabular_harness.services.agent_transcript import append_session_event
@@ -93,19 +96,10 @@ def maybe_send_prediction_input_validation_failure_to_codex(
     }
 
 
-def summarize_prediction_pipeline_runtime_failure(error_message: str) -> str:
-    stripped = " ".join(error_message.strip().split())
-    if "pandas dtypes must be int, float or bool" in error_message and "Fields with bad pandas dtypes:" in error_message:
-        fields = error_message.rsplit("Fields with bad pandas dtypes:", 1)[1].strip().splitlines()[0].strip()
-        return (
-            "Prediction pipeline failed because predict.py passed non-numeric columns to the model. "
-            f"Columns needing pipeline-side preprocessing: {fields}"
-        )
-    if "No such file or directory" in error_message:
-        return "Prediction pipeline failed because predict.py could not find a required bundled file or input path."
-    if stripped:
-        return f"Prediction pipeline failed during predict.py execution: {stripped[:700]}"
-    return "Prediction pipeline failed during predict.py execution."
+def prediction_pipeline_runtime_failure_message(*, exit_code: int | None) -> str:
+    if isinstance(exit_code, int):
+        return f"Prediction pipeline failed while running predict.py (exit code {exit_code})."
+    return "Prediction pipeline failed while running predict.py."
 
 
 def maybe_send_prediction_pipeline_runtime_failure_to_codex(
@@ -116,6 +110,7 @@ def maybe_send_prediction_pipeline_runtime_failure_to_codex(
     job_id: str,
     error_message: str,
     error_summary: str,
+    exit_code: int | None = None,
     input_artifact_id: str | None = None,
     dataset_snapshot_id: str | None = None,
     input_artifact_ids_by_table: dict[str, Any] | None = None,
@@ -123,16 +118,38 @@ def maybe_send_prediction_pipeline_runtime_failure_to_codex(
     session = active_main_session(db, project.id) or latest_main_session(db, project.id)
     if session is None or not session.workspace_path:
         return {"delivered": False, "reason": "no_main_session"}
+    attention_key = prediction_pipeline_runtime_failure_attention_key(
+        pipeline_artifact_id=pipeline_artifact.id,
+        exit_code=exit_code,
+        stderr_tail=error_message[-4000:],
+    )
+    existing_event = prediction_pipeline_runtime_failure_event_for_attention_key(
+        db,
+        project_id=project.id,
+        attention_key=attention_key,
+    )
+    if existing_event is not None:
+        return {
+            "delivered": True,
+            "deduplicated": True,
+            "reason": "duplicate_runtime_failure_observation",
+            "agent_session_id": existing_event.session_id,
+            "transcript_event_id": existing_event.id,
+            "transcript_event_index": existing_event.event_index,
+            "attention_key": attention_key,
+        }
     payload = {
         "schema_version": "prediction_pipeline_runtime_failure.v1",
         "project_id": project.id,
         "agent_session_id": session.id,
         "job_id": job_id,
+        "attention_key": attention_key,
         "pipeline_artifact_id": pipeline_artifact.id,
         "pipeline_name": pipeline_artifact.name,
         "input_artifact_id": input_artifact_id if isinstance(input_artifact_id, str) else None,
         "dataset_snapshot_id": dataset_snapshot_id if isinstance(dataset_snapshot_id, str) else None,
         "input_artifact_ids_by_table": input_artifact_ids_by_table if isinstance(input_artifact_ids_by_table, dict) else None,
+        "exit_code": exit_code if isinstance(exit_code, int) else None,
         "error_summary": error_summary,
         "stderr_tail": error_message[-4000:],
     }
@@ -153,14 +170,17 @@ def maybe_send_prediction_pipeline_runtime_failure_to_codex(
         "schema_version: prediction_pipeline_runtime_failure.v1",
         f"project_id: {project.id}",
         f"job_id: {job_id}",
+        f"attention_key: {attention_key}",
         f"pipeline_artifact_id: {pipeline_artifact.id}",
         f"pipeline_name: {pipeline_artifact.name}",
+        f"exit_code: {exit_code if isinstance(exit_code, int) else '<unknown>'}",
         f"input_artifact_id: {input_artifact_id or '<none>'}",
         f"dataset_snapshot_id: {dataset_snapshot_id or '<none>'}",
         "",
         "A user ran a registered prediction pipeline, but predict.py failed on the prediction input.",
         "Repair the Codex-authored pipeline source and register a new prediction_pipeline artifact version. Do not mutate the existing artifact.",
         "The repaired predict.py must apply the same preprocessing used at training time and must accept target-free prediction input.",
+        "Use the stderr tail below as factual evidence; Tablex has not inferred the root cause.",
         "",
         "Error summary:",
         error_summary,
@@ -185,4 +205,37 @@ def maybe_send_prediction_pipeline_runtime_failure_to_codex(
         "transcript_event_id": event.id,
         "transcript_event_index": event.event_index,
         "inbox_path": str(inbox_path),
+        "attention_key": attention_key,
     }
+
+
+def prediction_pipeline_runtime_failure_attention_key(
+    *,
+    pipeline_artifact_id: str,
+    exit_code: int | None,
+    stderr_tail: str,
+) -> str:
+    digest = hashlib.sha256(stderr_tail.encode("utf-8", errors="replace")).hexdigest()[:16]
+    return f"prediction_pipeline_runtime_failed:{pipeline_artifact_id}:{exit_code if isinstance(exit_code, int) else 'unknown'}:{digest}"
+
+
+def prediction_pipeline_runtime_failure_event_for_attention_key(
+    db: Session,
+    *,
+    project_id: str,
+    attention_key: str,
+) -> AgentTranscriptEvent | None:
+    events = db.scalars(
+        select(AgentTranscriptEvent)
+        .where(
+            AgentTranscriptEvent.project_id == project_id,
+            AgentTranscriptEvent.event_type == "prediction_pipeline_runtime_failed",
+        )
+        .order_by(AgentTranscriptEvent.created_at.desc())
+        .limit(100)
+    ).all()
+    for event in events:
+        payload = loads_json(event.payload_json, {})
+        if payload.get("attention_key") == attention_key:
+            return event
+    return None
