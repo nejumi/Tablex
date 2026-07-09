@@ -4455,6 +4455,22 @@ td {
   align-items: center;
 }
 
+.prediction-active-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--success) 28%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--success) 9%, var(--surface));
+  padding: 10px;
+}
+
+.prediction-active-input small,
+.prediction-input-note {
+  color: var(--muted);
+}
+
 .chip-row {
   display: flex;
   flex-wrap: wrap;

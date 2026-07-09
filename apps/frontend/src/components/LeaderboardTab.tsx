@@ -533,7 +533,7 @@ export function LeaderboardTab({
       const tableMapping: Record<string, string> = {};
       for (const table of requiredTables) {
         const uploaded = predictionUploadedInputs[table.name];
-        if (uploaded) {
+        if (predictionInputIsUsable(uploaded)) {
           tableMapping[table.name] = uploaded.artifactId;
         } else if (!table.optional) {
           throw new Error(text.predictionMissingRequiredTable.replace("{table}", table.name));
@@ -541,7 +541,7 @@ export function LeaderboardTab({
       }
       if (!Object.keys(tableMapping).length) throw new Error(text.predictionNoUploadedInputs);
       payload.input_artifact_ids_by_table = tableMapping;
-    } else if (predictionUploadedInputs[SINGLE_PREDICTION_INPUT_KEY]) {
+    } else if (predictionInputIsUsable(predictionUploadedInputs[SINGLE_PREDICTION_INPUT_KEY])) {
       payload.input_artifact_id = predictionUploadedInputs[SINGLE_PREDICTION_INPUT_KEY].artifactId;
     } else if (predictionDatasetId) {
       payload.dataset_snapshot_id = predictionDatasetId;
@@ -713,6 +713,14 @@ export function LeaderboardTab({
       </div>
     );
   }
+
+  const predictionRequiredTables = predictionEntry?.pipeline_input_contract?.required_tables ?? [];
+  const hasRequiredPredictionTables = predictionRequiredTables.length > 0;
+  const singlePredictionUpload = predictionUploadedInputs[SINGLE_PREDICTION_INPUT_KEY];
+  const hasUsableSinglePredictionUpload = predictionInputIsUsable(singlePredictionUpload);
+  const showPredictionDatasetSelector = Boolean(
+    predictionEntry && !hasRequiredPredictionTables && !hasUsableSinglePredictionUpload
+  );
 
   return (
     <div className="stack">
@@ -969,9 +977,9 @@ export function LeaderboardTab({
               )}
               <div className="prediction-upload-section">
                 <strong>{text.predictionUploadTitle}</strong>
-                {predictionEntry.pipeline_input_contract?.required_tables.length ? (
+                {hasRequiredPredictionTables ? (
                   <div className="prediction-table-inputs">
-                    {predictionEntry.pipeline_input_contract.required_tables.map((table) =>
+                    {predictionRequiredTables.map((table) =>
                       renderPredictionInputDropzone(
                         predictionEntry,
                         table.name,
@@ -990,7 +998,17 @@ export function LeaderboardTab({
                 )}
                 {predictionUploadError ? <span className="badge warning">{predictionUploadError}</span> : null}
               </div>
-              {datasets.length ? (
+              {hasUsableSinglePredictionUpload && singlePredictionUpload ? (
+                <div className="prediction-active-input">
+                  <span className="badge success">{text.predictionUploadedFileActive}</span>
+                  <strong>{singlePredictionUpload.filename}</strong>
+                  <small>{text.predictionUploadedFileActiveBody}</small>
+                </div>
+              ) : null}
+              {hasRequiredPredictionTables ? (
+                <small className="prediction-input-note">{text.predictionRequiredTablesUseUploads}</small>
+              ) : null}
+              {showPredictionDatasetSelector && datasets.length ? (
                 <label className="field">
                   <span>{text.predictionInputDataset}</span>
                   <select value={predictionDatasetId} onChange={(event) => setPredictionDatasetId(event.target.value)}>
@@ -1001,9 +1019,10 @@ export function LeaderboardTab({
                     ))}
                   </select>
                 </label>
-              ) : (
+              ) : null}
+              {showPredictionDatasetSelector && !datasets.length ? (
                 <EmptyInline text={text.predictionNoDatasets} />
-              )}
+              ) : null}
               <div className="button-row">
                 <button
                   className="primary-button"
