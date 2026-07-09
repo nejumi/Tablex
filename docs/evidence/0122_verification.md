@@ -117,6 +117,7 @@ Implemented:
 - The Leaderboard prediction drawer now supports file chooser/dropzone upload for single-table and per-required-table contracts, shows validation status inline, and only enables prediction when required inputs are present.
 - `run_prediction_pipeline` jobs now accept `input_artifact_ids_by_table` and invoke pipeline `predict.py --input-dir ... --output ...` for multi-table prediction contracts.
 - Failed prediction input validation now writes the same fixed-format validation report to the active main session as a `prediction_input_validation_failed` inbox observation, so Codex can repair the pipeline/input explanation without harness-side interpretation.
+- Parquet prediction inputs now use DuckDB metadata reads to populate observed columns without adding a new Python dependency.
 
 Verification:
 
@@ -130,6 +131,8 @@ Verification:
   - Result: passed
 - U/A: `.venv/bin/pytest apps/backend/tests/test_agent_sessions.py::test_prediction_input_validation_failure_writes_codex_observation apps/backend/tests/test_agent_sessions.py::test_prediction_pipeline_worker_runs_predict_and_registers_batch apps/backend/tests/test_agent_sessions.py::test_prediction_pipeline_worker_runs_multitable_input_dir apps/backend/tests/test_agent_sessions.py::test_prediction_pipeline_worker_passes_history_for_time_series_features -q`
   - Result: `4 passed`
+- U/A: `.venv/bin/pytest apps/backend/tests/test_api_flow.py::test_prediction_input_columns_reads_csv_and_parquet_headers -q`
+  - Result: `1 passed, 1 warning`
 - B: Playwright opened Home Credit Test5, clicked the Leaderboard row prediction action, and captured the in-row prediction drawer.
   - Evidence: `docs/evidence/playwright/0122_j4_prediction_drawer_upload_dropzone.png`
   - Observation: the drawer opens in the Leaderboard surface, shows the expected input columns, and provides an in-place prediction file dropzone without adding a new tab.
@@ -141,7 +144,7 @@ Known remaining J4 evidence/work:
 
 - Live prediction execution from a real external test file through a production-like model pipeline is still pending.
 - Browser evidence currently uses the file chooser path; drag-drop uses the same upload handler but still needs a dedicated browser gesture capture.
-- Parquet column inspection and dtype validation remain `not_available` in the first fixed-format validation report.
+- Dtype validation remains `not_available` in the first fixed-format validation report.
 
 ## J8 Native marimo Speed
 

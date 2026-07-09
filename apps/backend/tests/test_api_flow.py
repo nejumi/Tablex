@@ -3795,6 +3795,19 @@ def test_leaderboard_metric_direction_handles_derived_loss_names() -> None:
     assert metric_lower_is_better("roc_auc") is False
 
 
+def test_prediction_input_columns_reads_csv_and_parquet_headers(tmp_path: Path) -> None:
+    csv_path = tmp_path / "prediction_input.csv"
+    csv_path.write_text("x,row_id\n1,A\n", encoding="utf-8")
+    assert routes_module.prediction_input_columns(csv_path) == ["x", "row_id"]
+
+    import duckdb
+
+    parquet_path = tmp_path / "prediction_input.parquet"
+    with duckdb.connect(database=":memory:") as connection:
+        connection.execute("COPY (SELECT 1::INT AS x, 'A' AS row_id) TO ? (FORMAT PARQUET)", [str(parquet_path)])
+    assert routes_module.prediction_input_columns(parquet_path) == ["x", "row_id"]
+
+
 def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
     tmp_path: Path,
     monkeypatch: Any,

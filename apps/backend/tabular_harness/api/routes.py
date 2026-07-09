@@ -8835,6 +8835,15 @@ def prediction_input_columns(input_path: Path) -> list[str]:
                 return [str(item) for item in next(reader)]
             except StopIteration:
                 return []
+    if input_path.suffix.lower() == ".parquet":
+        try:
+            import duckdb
+
+            with duckdb.connect(database=":memory:") as connection:
+                cursor = connection.execute("SELECT * FROM read_parquet(?) LIMIT 0", [str(input_path)])
+                return [str(item[0]) for item in cursor.description or []]
+        except Exception:
+            return []
     return []
 
 
