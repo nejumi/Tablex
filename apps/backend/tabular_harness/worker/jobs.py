@@ -80,6 +80,10 @@ from tabular_harness.services.baseline import (
 )
 from tabular_harness.services.benchmark_collection import create_benchmark_collection_plan
 from tabular_harness.services.benchmark_evidence import create_benchmark_evidence_pack
+from tabular_harness.services.prediction_input_feedback import (
+    maybe_send_prediction_pipeline_runtime_failure_to_codex,
+    summarize_prediction_pipeline_runtime_failure,
+)
 from tabular_harness.services.benchmarks import (
     benchmark_import_readiness,
     benchmark_to_dict,
@@ -2735,7 +2739,38 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
     )
     if completed.returncode != 0:
         stderr_tail = (completed.stderr or completed.stdout or "")[-4000:]
-        raise RuntimeError(f"Prediction pipeline failed with exit code {completed.returncode}: {stderr_tail}")
+        error_summary = summarize_prediction_pipeline_runtime_failure(stderr_tail)
+        codex_feedback = maybe_send_prediction_pipeline_runtime_failure_to_codex(
+            db,
+            project=project,
+            pipeline_artifact=pipeline_artifact,
+            job_id=job.id,
+            error_message=stderr_tail,
+            error_summary=error_summary,
+            input_artifact_id=payload.get("input_artifact_id") if isinstance(payload.get("input_artifact_id"), str) else None,
+            dataset_snapshot_id=payload.get("dataset_snapshot_id") if isinstance(payload.get("dataset_snapshot_id"), str) else None,
+            input_artifact_ids_by_table=payload.get("input_artifact_ids_by_table")
+            if isinstance(payload.get("input_artifact_ids_by_table"), dict)
+            else None,
+        )
+        return {
+            "schema_version": "prediction_pipeline_job.v1",
+            "job_status": "failed",
+            "status": "failed",
+            "error_message": error_summary,
+            "pipeline_artifact_id": pipeline_artifact.id,
+            "input_dataset_snapshot_id": payload.get("dataset_snapshot_id"),
+            "input_artifact_id": payload.get("input_artifact_id"),
+            "input_artifact_ids_by_table": payload.get("input_artifact_ids_by_table")
+            if isinstance(payload.get("input_artifact_ids_by_table"), dict)
+            else None,
+            "stderr_tail": stderr_tail,
+            "exit_code": completed.returncode,
+            "codex_feedback": codex_feedback,
+            "runtime_isolated": runtime_isolated,
+            "python_executable": runtime_python,
+            "requirements_hash": requirements_hash,
+        }
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise ValueError("Prediction pipeline did not create a non-empty predictions.csv")
     version = next_artifact_version(db, project.id, "prediction_batch", f"prediction_batch_{job.id}")

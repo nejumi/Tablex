@@ -7079,6 +7079,109 @@ def test_prediction_pipeline_worker_runs_multitable_input_dir(tmp_path: Path) ->
         }
 
 
+def test_prediction_pipeline_runtime_failure_is_summarized_and_returned_to_codex(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    pipeline_dir = tmp_path / "failing_pipeline_src"
+    pipeline_dir.mkdir()
+    (pipeline_dir / "predict.py").write_text(
+        "import argparse, sys\n"
+        "parser = argparse.ArgumentParser()\n"
+        "parser.add_argument('--input', required=True)\n"
+        "parser.add_argument('--output', required=True)\n"
+        "parser.parse_args()\n"
+        "sys.stderr.write('ValueError: pandas dtypes must be int, float or bool.\\n')\n"
+        "sys.stderr.write('Fields with bad pandas dtypes: EMERGENCYSTATE_MODE: str\\n')\n"
+        "raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    bundle_path = tmp_path / "failing_pipeline.zip"
+    with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(pipeline_dir / "predict.py", "predict.py")
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_predict_failure", name="Prediction Failure")
+        session = AgentSession(
+            id="ags_predict_failure",
+            project_id=project.id,
+            status="completed",
+            goal_text="Repair failed prediction pipelines.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.flush()
+        version = next_artifact_version(db, project.id, "prediction_pipeline", "failing_pipeline")
+        target_dir, stored, content_hash = store.store_existing_file(
+            org_id=project.org_id,
+            project_id=project.id,
+            asset_type="prediction_pipeline",
+            name="failing_pipeline",
+            version=version,
+            source_path=bundle_path,
+            filename="failing_pipeline.zip",
+            metadata={"project_id": project.id, "primary_path": str(bundle_path)},
+        )
+        pipeline_artifact = register_artifact(
+            db,
+            project_id=project.id,
+            asset_type="prediction_pipeline",
+            name="failing_pipeline",
+            uri=str(target_dir),
+            content_hash=content_hash,
+            size_bytes=stored.size_bytes,
+            metadata={"project_id": project.id, "primary_path": str(target_dir / "failing_pipeline.zip")},
+            version=version,
+            org_id=project.org_id,
+        )
+        prediction_input = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="prediction_input",
+            name="application_test",
+            filename="application_test.csv",
+            text="SK_ID_CURR,EMERGENCYSTATE_MODE\n1,No\n",
+            metadata={"project_id": project.id, "table_name": "prediction_input"},
+        )
+        job = Job(
+            id="job_predict_failure",
+            project_id=project.id,
+            job_type="run_prediction_pipeline",
+            input_json=dumps_json(
+                {
+                    "pipeline_artifact_id": pipeline_artifact.id,
+                    "input_artifact_id": prediction_input.id,
+                }
+            ),
+            status="running",
+        )
+        db.add(job)
+        db.commit()
+
+        output = run_prediction_pipeline_handler(db, job, store)
+        db.commit()
+
+        assert output["job_status"] == "failed"
+        assert "non-numeric columns" in str(output["error_message"])
+        assert "EMERGENCYSTATE_MODE" in str(output["error_message"])
+        assert "stderr_tail" in output
+        feedback = output["codex_feedback"]
+        assert isinstance(feedback, dict)
+        assert feedback["delivered"] is True
+        event = db.scalar(
+            select(AgentTranscriptEvent).where(
+                AgentTranscriptEvent.session_id == session.id,
+                AgentTranscriptEvent.event_type == "prediction_pipeline_runtime_failed",
+            )
+        )
+        assert event is not None
+        inbox_entries = list_inbox_entries(workspace)
+        assert any(entry.get("type") == "prediction_pipeline_runtime_failed" for entry in inbox_entries)
+
+
 def test_prediction_pipeline_worker_passes_history_for_time_series_features(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
