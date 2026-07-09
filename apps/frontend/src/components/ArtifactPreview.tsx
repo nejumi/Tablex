@@ -506,8 +506,8 @@ export function NativeMarimoFrame({
         }
       }
     }
-    const initialTimer = window.setTimeout(refreshSessionStatus, 600);
-    const interval = window.setInterval(refreshSessionStatus, sessionStatus.status === "starting" ? 1200 : 5000);
+    const initialTimer = window.setTimeout(refreshSessionStatus, sessionStatus.status === "starting" ? 250 : 600);
+    const interval = window.setInterval(refreshSessionStatus, sessionStatus.status === "starting" ? 600 : 5000);
     return () => {
       stopped = true;
       window.clearTimeout(initialTimer);
