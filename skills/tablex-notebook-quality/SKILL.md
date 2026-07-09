@@ -18,6 +18,7 @@ Write for a human analyst first, while preserving harness-owned evaluation bound
 - Keep EvaluationSpec and SplitManifest visible before discussing model lift.
 - Use clear section flow: executive read, EDA quality rubric, data shape, target/profile, feature landscape, evaluation guardrails, model diagnostics, failure analysis, next actions.
 - Prefer a few high-signal plots with interpretation over many disconnected charts.
+- For human-facing Japanese labels in matplotlib or seaborn charts, import `japanize_matplotlib` in the notebook setup before drawing figures. Tablex exposes its runtime availability in `python_runtimes.tablex_backend.packages.japanize_matplotlib`; do not ship garbled labels when native Japanese text is required.
 - Every important claim should be backed by an artifact, metric, table, plot, or explicit assumption.
 - Include a next-analysis queue for Codex or a human: permutation importance, native feature importance for tree-based models, partial dependence for the most important features, SHAP inspection when the runtime/model supports it, calibration, threshold analysis, slice metrics, residual/error review, and prediction examples when relevant.
 

@@ -113,6 +113,7 @@ This file is runner-facing protocol, not a user-facing report. Read it together 
 - Include `research_plan_node_id` when the notebook belongs to a visible plan node, and include dataset/run/model links when applicable so Data, Leaderboard, Assets, Chat, and ResearchPlan can open the same native notebook.
 - Human-facing data-understanding and model-diagnostics notebooks must contain meaningful visual diagnostics, not only markdown and tables. Use `dataset_access.datasets[*].fast_paths` cached profile/sample files for the first visible render, and read full `.tablex/data` tables only when a full scan is deliberate.
 - Marimo public variables must be unique across the notebook. Use underscore-prefixed temporaries such as `_mo`, `_fig`, `_ax`, `_table`, and `_data` for repeated scratch values.
+- When using matplotlib or seaborn for Japanese labels, import `japanize_matplotlib` in the notebook setup before drawing figures. Check `python_runtimes.tablex_backend.packages.japanize_matplotlib` in the session context if you need to confirm availability.
 - Register model diagnostics artifacts through `.tablex/requests/model_diagnostics/` before marking model diagnostics complete. Standard checks are permutation importance, native/tree feature importance when applicable, partial dependence for important features, and SHAP when supported; otherwise declare the fixed not-applicable or unavailable status with a reason.
 
 ## Experiments, Leaderboard, And Pipelines

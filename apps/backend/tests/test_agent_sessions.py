@@ -426,6 +426,7 @@ def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path
     assert runtime["workspace_python"] == str(workspace / ".tablex" / "bin" / "python")
     assert runtime["workspace_python_exists"] is True
     assert "marimo" in runtime["packages"]
+    assert runtime["packages"]["japanize_matplotlib"]
     assert "tabpfn" in runtime["packages"]
     assert "catboost" in runtime["packages"]
     assert "torch" in runtime["packages"]
@@ -450,6 +451,7 @@ def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path
     authoring_constraints = notebook_contract["register_notebook_contract"]["marimo_authoring_constraints"]
     assert any("unique across the notebook" in item for item in authoring_constraints)
     assert any("`.tablex/data`" in item for item in authoring_constraints)
+    assert any("japanize_matplotlib" in item for item in authoring_constraints)
     research_contract = context["output_contract"]["research_tool_requests"]
     assert research_contract["schema_version"] == "tablex_research_request.v1"
     assert "source-backed findings" in research_contract["completion_contract"]

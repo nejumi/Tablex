@@ -392,6 +392,7 @@ def python_runtime_context(workspace: Path) -> dict[str, Any]:
         "numpy": package_version_or_none("numpy"),
         "scikit_learn": package_version_or_none("scikit-learn"),
         "matplotlib": package_version_or_none("matplotlib"),
+        "japanize_matplotlib": package_version_or_none("japanize-matplotlib"),
         "plotly": package_version_or_none("plotly"),
         "duckdb": package_version_or_none("duckdb"),
         "polars": package_version_or_none("polars"),
@@ -1173,6 +1174,11 @@ def build_session_context(
                             "For the first visible render, prefer dataset_access.datasets[*].fast_paths profile/sample "
                             "files over full table reads. Read full data from `.tablex/data` only for deliberate scans "
                             "or modeling steps, and cache summaries for repeated native marimo rendering."
+                        ),
+                        (
+                            "When using matplotlib or seaborn for human-facing Japanese labels, import "
+                            "`japanize_matplotlib` in the notebook setup before drawing figures. The Tablex runtime "
+                            "exposes its availability in python_runtimes.tablex_backend.packages."
                         ),
                     ],
                     "example_request": {
