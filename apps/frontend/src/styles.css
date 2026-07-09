@@ -5440,6 +5440,14 @@ td {
   color-scheme: light;
 }
 
+.native-marimo-frame.loading {
+  height: 1px;
+  min-height: 1px;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .native-marimo-loading-panel {
   position: relative;
   display: grid;
@@ -5588,6 +5596,12 @@ td {
   border: 0;
   background: #fff;
   color-scheme: light;
+}
+
+.native-marimo-expanded-frame.loading {
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .native-marimo-runtime-error {

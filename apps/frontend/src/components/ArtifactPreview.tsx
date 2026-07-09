@@ -184,6 +184,35 @@ function evidenceMetricCardClass(tone: EvidenceReaderMetric["tone"] = "muted") {
   return `evidence-reader-metric ${tone}`;
 }
 
+export function NativeMarimoLoadingPanel({
+  recovering = false,
+  expanded = false
+}: {
+  recovering?: boolean;
+  expanded?: boolean;
+}) {
+  const { text } = React.useContext(LocaleContext);
+  return (
+    <div
+      className={`native-marimo-loading-panel${expanded ? " expanded" : ""}`}
+      role="status"
+      aria-live="polite"
+      aria-label={text.notebookNativeMarimoLoading}
+    >
+      <div className="native-marimo-loading-mark" aria-hidden="true">
+        <span />
+      </div>
+      <div className="native-marimo-loading-copy">
+        <strong>{recovering ? text.notebookNativeMarimoRecovering : text.notebookNativeMarimoLoading}</strong>
+        <p>{text.notebookNativeMarimoLoadingDetail}</p>
+      </div>
+      <div className="native-marimo-loading-progress" aria-label={text.notebookNativeMarimoLoadingProgress}>
+        <span />
+      </div>
+    </div>
+  );
+}
+
 async function waitForJobTranslation(jobId: string): Promise<Job> {
   return waitForJobCompletion(jobId, { timeoutMs: 60_000, label: "Translation job" });
 }
@@ -463,6 +492,8 @@ export function NativeMarimoFrame({
   const [recovering, setRecovering] = React.useState(false);
   const [recoverAttempt, setRecoverAttempt] = React.useState(0);
   const [expanded, setExpanded] = React.useState(false);
+  const [frameLoaded, setFrameLoaded] = React.useState(false);
+  const [expandedFrameLoaded, setExpandedFrameLoaded] = React.useState(false);
   const url = sessionStatus.proxy_url.startsWith("/api/") ? `${apiBase}${sessionStatus.proxy_url}` : sessionStatus.proxy_url;
   const runtimeError = sessionStatus.runtime?.has_error ? sessionStatus.runtime.error_excerpt : null;
   const nativeStatus = sessionStatus.status;
@@ -484,7 +515,13 @@ export function NativeMarimoFrame({
     setSessionUnavailable(false);
     setRecovering(false);
     setRecoverAttempt(0);
+    setFrameLoaded(false);
+    setExpandedFrameLoaded(false);
   }, [session]);
+  React.useEffect(() => {
+    setFrameLoaded(false);
+    setExpandedFrameLoaded(false);
+  }, [url]);
   React.useEffect(() => {
     let stopped = false;
     async function refreshSessionStatus() {
@@ -523,28 +560,6 @@ export function NativeMarimoFrame({
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [expanded]);
 
-  function renderLoadingPanel(isExpanded = false) {
-    return (
-      <div
-        className={`native-marimo-loading-panel${isExpanded ? " expanded" : ""}`}
-        role="status"
-        aria-live="polite"
-        aria-label={text.notebookNativeMarimoLoading}
-      >
-        <div className="native-marimo-loading-mark" aria-hidden="true">
-          <span />
-        </div>
-        <div className="native-marimo-loading-copy">
-          <strong>{recovering ? text.notebookNativeMarimoRecovering : text.notebookNativeMarimoLoading}</strong>
-          <p>{text.notebookNativeMarimoLoadingDetail}</p>
-        </div>
-        <div className="native-marimo-loading-progress" aria-label={text.notebookNativeMarimoLoadingProgress}>
-          <span />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="native-marimo-viewer">
       <div className="native-marimo-toolbar">
@@ -577,21 +592,23 @@ export function NativeMarimoFrame({
           </details>
         </div>
       ) : null}
-      {recovering ? renderLoadingPanel() : null}
+      {recovering ? <NativeMarimoLoadingPanel recovering /> : null}
       {sessionUnavailable && !recovering ? (
         <div className="banner danger native-marimo-runtime-error">
           <strong>{text.notebookNativeMarimoError}</strong>
           <span>{text.notebookNativeMarimoUnavailable}</span>
         </div>
       ) : null}
-      {sessionStarting && !runtimeError && !recovering ? renderLoadingPanel() : null}
+      {sessionStarting && !runtimeError && !recovering ? <NativeMarimoLoadingPanel /> : null}
+      {!expanded && showFrame && !frameLoaded ? <NativeMarimoLoadingPanel /> : null}
       {!expanded && showFrame ? (
         <iframe
           key={url}
-          className="native-marimo-frame"
+          className={`native-marimo-frame${frameLoaded ? "" : " loading"}`}
           src={url}
           title={text.notebookNativeMarimoTitle}
           sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-modals"
+          onLoad={() => setFrameLoaded(true)}
         />
       ) : null}
       {expanded ? (
@@ -626,22 +643,26 @@ export function NativeMarimoFrame({
             </div>
           ) : null}
           {recovering ? (
-            renderLoadingPanel(true)
+            <NativeMarimoLoadingPanel recovering expanded />
           ) : sessionUnavailable ? (
             <div className="banner danger native-marimo-runtime-error expanded">
               <strong>{text.notebookNativeMarimoError}</strong>
               <span>{text.notebookNativeMarimoUnavailable}</span>
             </div>
           ) : sessionStarting && !runtimeError ? (
-            renderLoadingPanel(true)
+            <NativeMarimoLoadingPanel expanded />
           ) : showFrame ? (
-            <iframe
-              key={url}
-              className="native-marimo-expanded-frame"
-              src={url}
-              title={text.notebookNativeMarimoTitle}
-              sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-modals"
-            />
+            <>
+              {!expandedFrameLoaded ? <NativeMarimoLoadingPanel expanded /> : null}
+              <iframe
+                key={url}
+                className={`native-marimo-expanded-frame${expandedFrameLoaded ? "" : " loading"}`}
+                src={url}
+                title={text.notebookNativeMarimoTitle}
+                sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-modals"
+                onLoad={() => setExpandedFrameLoaded(true)}
+              />
+            </>
           ) : null}
         </div>
       ) : null}

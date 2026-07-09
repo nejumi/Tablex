@@ -3,7 +3,7 @@ import { englishMessages, japaneseMessages, type LocaleMessages } from "./copy";
 import { LocaleContext, useLocale } from "./locale";
 import { ResearchPlanTimeline, primaryResearchPlanFocusBlock, researchPlanBlockRuntimeAwareStatusLabel, researchPlanStatusLabel } from "./components/ResearchPlanTimeline";
 import { AgentChatDock, TurnStateBar, UserAvatar, agentInputFormClassName, turnStateLabel } from "./components/AgentChatDock";
-import { FocusedEvidenceReader, HtmlArtifactPreview, NativeMarimoFrame, TranslatablePreview, VisualArtifactPreview, isHtmlArtifactPreview, isVisualArtifactPreview } from "./components/ArtifactPreview";
+import { FocusedEvidenceReader, HtmlArtifactPreview, NativeMarimoFrame, NativeMarimoLoadingPanel, TranslatablePreview, VisualArtifactPreview, isHtmlArtifactPreview, isVisualArtifactPreview } from "./components/ArtifactPreview";
 import { ArtifactLineagePanel } from "./components/ArtifactLineagePanel";
 import { AgentActivityRail, hasLiveAgentOrModelActivity, humanizeLabel, jobActiveForActivity, optimisticWorkerEvent, workerEventsFromJob, workerStatusLabel } from "./components/AgentActivityRail";
 import { LeaderboardTab, metricLabel } from "./components/LeaderboardTab";
@@ -9551,10 +9551,12 @@ function NotebooksTab({
     setNativeMarimoError(null);
     setPreview(null);
     setPreviewError(null);
-    const restartSuffix = options?.restart ? "?restart=true" : "";
+    focusNavigationAnchor("notebook-native-marimo-top", 0);
+    const params = new URLSearchParams({ wait_ready: "false" });
+    if (options?.restart) params.set("restart", "true");
     try {
       setNativeMarimoSession(
-        await api<NativeMarimoSession>(`/api/analysis-notebooks/${artifactId}/marimo-session${restartSuffix}`, {
+        await api<NativeMarimoSession>(`/api/analysis-notebooks/${artifactId}/marimo-session?${params.toString()}`, {
           method: "POST"
         })
       );
@@ -9846,10 +9848,7 @@ function NotebooksTab({
           </div>
         ) : null}
         {nativeMarimoLoadingId ? (
-          <div className="banner muted">
-            <Loader2 className="spin" size={16} />
-            {text.notebookNativeMarimoLoading}
-          </div>
+          <NativeMarimoLoadingPanel />
         ) : nativeMarimoSession ? (
           <NativeMarimoFrame session={nativeMarimoSession} onRestart={restartNativeMarimoArtifact} />
         ) : (
