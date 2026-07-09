@@ -491,7 +491,7 @@ import type {
   Tab
 } from "./types";
 const apiBase = import.meta.env.VITE_API_BASE ?? "";
-const topLevelTabIds = new Set<Tab>(["Home", "Data", "Insight", "Leaderboard", "Assets"]);
+const topLevelTabIds = new Set<Tab>(["Home", "Data", "Insight", "Evaluation", "Leaderboard", "Assets"]);
 const hiddenLegacyTabIds = new Set<Tab>(["Overview", "Approach", "Raw"]);
 const primaryTabItems = tabItems.filter((item) => topLevelTabIds.has(item.id));
 const supportingTabItems = tabItems.filter((item) => !topLevelTabIds.has(item.id) && !hiddenLegacyTabIds.has(item.id));
@@ -7492,6 +7492,7 @@ function EvaluationTab({
   busy: boolean;
   runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
+  const { text } = useLocale();
   const latestQualityGate = artifacts.find((artifact) => artifact.asset_type === "data_quality_gate") ?? null;
   const scenarioComparisonArtifacts = artifacts.filter((artifact) => artifact.asset_type === "evaluation_scenario_comparison");
   const approvalReviewArtifacts = artifacts.filter((artifact) => artifact.asset_type === "evaluation_approval_review");
@@ -7536,40 +7537,39 @@ function EvaluationTab({
     candidates[0] ??
     null;
   const evaluationStatus = latestApprovedSpec
-    ? "approved spec"
+    ? text.evaluationStatusApproved
     : latestScenarioComparison
-      ? "comparison ready"
+      ? text.evaluationStatusComparisonReady
       : candidates.length
-        ? "candidates drafted"
-        : "needs design";
+        ? text.evaluationStatusCandidatesDrafted
+        : text.evaluationStatusNeedsDesign;
   const evaluationStatusTone: EvidenceReaderMetric["tone"] = latestApprovedSpec ? "ready" : candidates.length ? "warning" : "risk";
   const evaluationReaderTitle = latestApprovedSpec
-    ? "Evaluation is approved; keep every run behind this contract"
+    ? text.evaluationReaderApprovedTitle
     : latestScenarioComparison
-      ? "Read the scenario comparison before promoting a primary spec"
+      ? text.evaluationReaderComparisonTitle
       : candidates.length
-        ? "Compare evaluation scenarios before adopting a split"
-        : "Draft evaluation candidates before modeling claims";
-  const evaluationReaderBody =
-    "Tablex should keep metrics, split logic, leakage exclusions, and adoption risk visible before any leaderboard or runner result is trusted. Codex can propose approaches, but the harness owns EvaluationSpec and SplitManifest.";
+        ? text.evaluationReaderCandidatesTitle
+        : text.evaluationReaderNeedsDesignTitle;
+  const evaluationReaderBody = text.evaluationReaderBody;
   const evaluationNextLabel = !candidates.length
-    ? "Design candidates"
+    ? text.evaluationNextDesignCandidates
     : !latestScenarioComparison
-      ? "Compare scenarios"
+      ? text.evaluationNextCompareScenarios
       : !latestSpec
-        ? "Promote primary candidate"
+        ? text.evaluationNextPromoteCandidate
         : latestSpec.status !== "approved"
-          ? "Approve EvaluationSpec"
-          : "Generate SplitManifest";
+          ? text.evaluationNextApproveSpec
+          : text.evaluationNextGenerateSplit;
   const evaluationNextDetail = !candidates.length
-    ? "Create primary, alternative, and reference candidates so the tradeoff is explicit."
+    ? text.evaluationNextDesignCandidatesDetail
     : !latestScenarioComparison
-      ? "Compare random/stratified/time/group feasibility against assumptions and quality risk."
+      ? text.evaluationNextCompareScenariosDetail
       : !latestSpec
-        ? "Promote only after reading the comparison; promotion is explicit and recorded."
+        ? text.evaluationNextPromoteCandidateDetail
         : latestSpec.status !== "approved"
-          ? "Approval should remain a deliberate harness action, not an implicit chat side effect."
-          : "Split generation is the handoff contract for downstream experiments and Codex runner work.";
+          ? text.evaluationNextApproveSpecDetail
+          : text.evaluationNextGenerateSplitDetail;
   const evaluationButtonDisabled =
     busy ||
     (!candidates.length
@@ -7605,17 +7605,18 @@ function EvaluationTab({
     <div className="stack">
       <FocusedEvidenceReader
         id="evaluation-design"
-        eyebrow="Evaluation Evidence Reader"
+        eyebrow={text.evaluationReaderEyebrow}
         title={evaluationReaderTitle}
         body={evaluationReaderBody}
         status={evaluationStatus}
         statusTone={evaluationStatusTone}
         metrics={[
-          { label: "Candidates", value: candidates.length, tone: candidates.length ? "ready" : "risk" },
-          { label: "Specs", value: specs.length, tone: specs.length ? "ready" : "muted" },
-          { label: "Comparison", value: latestScenarioComparison ? "ready" : "missing", tone: latestScenarioComparison ? "ready" : "warning" },
-          { label: "Quality", value: latestQualityGate ? "ready" : "missing", tone: latestQualityGate ? "ready" : "warning" }
+          { label: text.evaluationMetricCandidates, value: candidates.length, tone: candidates.length ? "ready" : "risk" },
+          { label: text.evaluationMetricSpecs, value: specs.length, tone: specs.length ? "ready" : "muted" },
+          { label: text.evaluationMetricComparison, value: latestScenarioComparison ? text.evaluationMetricReady : text.evaluationMetricMissing, tone: latestScenarioComparison ? "ready" : "warning" },
+          { label: text.evaluationMetricQuality, value: latestQualityGate ? text.evaluationMetricReady : text.evaluationMetricMissing, tone: latestQualityGate ? "ready" : "warning" }
         ]}
+        nextEyebrow={text.notebookMetricNext}
         nextLabel={evaluationNextLabel}
         nextDetail={evaluationNextDetail}
         nextButtonLabel={evaluationNextLabel}
@@ -7649,12 +7650,13 @@ function EvaluationTab({
             void runAction(() => api(`/api/evaluation-specs/${latestSpec.id}/generate-split`, { method: "POST" }));
           }
         }}
-        previewTitle={latestScenarioComparison ? "Latest scenario comparison" : "Evaluation decision evidence"}
+        previewEyebrow={text.notebookReadThisNow}
+        previewTitle={latestScenarioComparison ? text.evaluationPreviewLatestScenario : text.evaluationPreviewDecisionEvidence}
         preview={scenarioPreview}
         previewError={scenarioPreviewError}
         previewLoading={Boolean(scenarioPreviewLoadingId)}
-        previewEmpty="Design and compare evaluation candidates to get a readable scenario comparison here."
-        boundary="Approval and SplitManifest stay explicit"
+        previewEmpty={text.evaluationPreviewEmpty}
+        boundary={text.evaluationBoundaryExplicit}
       />
       <div className="toolbar">
         <button
@@ -7663,7 +7665,7 @@ function EvaluationTab({
           onClick={() => void runAction(() => api(`/api/projects/${project.id}/evaluation/design`, { method: "POST" }))}
         >
           {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-          Design Candidates
+          {text.evaluationActionDesignCandidates}
         </button>
         <button
           className="secondary-button"
@@ -7681,10 +7683,10 @@ function EvaluationTab({
           }
         >
           {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
-          Compare Scenarios
+          {text.evaluationActionCompareScenarios}
         </button>
       </div>
-      <Panel id="evaluation-candidates" title="Evaluation Candidates" icon={<BarChart3 size={18} />}>
+      <Panel id="evaluation-candidates" title={text.evaluationCandidatesTitle} icon={<BarChart3 size={18} />}>
         {candidates.length ? (
           <div className="card-grid">
             {candidates.map((candidate) => (
@@ -7698,23 +7700,23 @@ function EvaluationTab({
                 <p>{candidate.rationale_md}</p>
                 <dl className="facts">
                   <div>
-                    <dt>Metric</dt>
+                    <dt>{text.evaluationCandidateMetric}</dt>
                     <dd>{candidate.primary_metric}</dd>
                   </div>
                   <div>
-                    <dt>Stratify</dt>
+                    <dt>{text.evaluationCandidateStratify}</dt>
                     <dd>{candidate.stratify_column || "-"}</dd>
                   </div>
                   <div>
-                    <dt>Time</dt>
+                    <dt>{text.evaluationCandidateTime}</dt>
                     <dd>{candidate.time_column || "-"}</dd>
                   </div>
                   <div>
-                    <dt>Group</dt>
+                    <dt>{text.evaluationCandidateGroup}</dt>
                     <dd>{candidate.group_column || "-"}</dd>
                   </div>
                   <div>
-                    <dt>Excluded</dt>
+                    <dt>{text.evaluationCandidateExcluded}</dt>
                     <dd>{candidate.excluded_columns.length || "-"}</dd>
                   </div>
                 </dl>
@@ -7728,19 +7730,19 @@ function EvaluationTab({
                   }
                 >
                   <Check size={16} />
-                  Promote
+                  {text.evaluationCandidatePromote}
                 </button>
               </div>
             ))}
           </div>
         ) : (
-          <EmptyInline text="Primary, alternative, reference random, time-aware, and group-aware evaluation candidates will appear here before any EvaluationSpec is adopted." />
+          <EmptyInline text={text.evaluationCandidatesEmpty} />
         )}
       </Panel>
-      <Panel title="Scenario Comparisons" icon={<ListChecks size={18} />}>
+      <Panel title={text.evaluationScenarioComparisonsTitle} icon={<ListChecks size={18} />}>
         {scenarioComparisonArtifacts.length ? (
           <Table
-            headers={["Comparison", "Recommended", "Candidates", "Created", "Actions"]}
+            headers={text.evaluationScenarioComparisonHeaders}
             rows={scenarioComparisonArtifacts.map((artifact) => [
               `${artifact.name} v${artifact.version}`,
               String(artifact.metadata.recommended_candidate_id ?? "-"),
@@ -7751,49 +7753,49 @@ function EvaluationTab({
                   className="icon-button"
                   disabled={scenarioPreviewLoadingId === artifact.id}
                   onClick={() => void loadScenarioPreview(artifact.id)}
-                  title="Preview scenario comparison"
+                  title={text.evaluationScenarioComparisonPreviewTitle}
                 >
                   {scenarioPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
                 </button>
-                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download scenario comparison">
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title={text.evaluationScenarioComparisonDownloadTitle}>
                   <Download size={16} />
                 </a>
               </div>
             ])}
           />
         ) : (
-          <EmptyInline text="Scenario comparisons will summarize split feasibility, target distribution sanity, temporal/group leakage concerns, open questions, assumptions, and adoption risks before an EvaluationSpec is promoted." />
+          <EmptyInline text={text.evaluationScenarioComparisonEmpty} />
         )}
         {scenarioPreviewError ? <div className="banner danger">{scenarioPreviewError}</div> : null}
         {scenarioPreview?.preview_available ? (
           <TranslatablePreview preview={scenarioPreview} />
         ) : (
-          <EmptyInline text={scenarioPreview?.reason ?? "Generate or select a comparison artifact to inspect decision support before adopting the primary EvaluationSpec."} />
+          <EmptyInline text={scenarioPreview?.reason ?? text.evaluationScenarioComparisonSelectEmpty} />
         )}
       </Panel>
-      <Panel title="Quality Gate Context" icon={<AlertTriangle size={18} />}>
+      <Panel title={text.evaluationQualityGateTitle} icon={<AlertTriangle size={18} />}>
         {latestQualityGate ? (
           <Table
-            headers={["Gate", "Severity", "Dataset", "Preview"]}
+            headers={text.evaluationQualityGateHeaders}
             rows={[
               [
                 latestQualityGate.name,
                 String(latestQualityGate.metadata.severity ?? "-"),
                 String(latestQualityGate.metadata.dataset_snapshot_id ?? "-"),
-                <a className="icon-link" key={latestQualityGate.id} href={`${apiBase}/api/artifacts/${latestQualityGate.id}/download`} title="Download quality gate">
+                <a className="icon-link" key={latestQualityGate.id} href={`${apiBase}/api/artifacts/${latestQualityGate.id}/download`} title={text.evaluationQualityGateDownloadTitle}>
                   <Download size={16} />
                 </a>
               ]
             ]}
           />
         ) : (
-          <EmptyInline text="Run data quality analysis from the Data tab to expose leakage, availability, missingness, identity, time/group, duplicate, and evaluation readiness findings before adopting an EvaluationSpec." />
+          <EmptyInline text={text.evaluationQualityGateEmpty} />
         )}
       </Panel>
-      <Panel title="Evaluation Specs" icon={<Check size={18} />}>
+      <Panel title={text.evaluationSpecsTitle} icon={<Check size={18} />}>
         {specs.length ? (
           <Table
-            headers={["Spec", "Split", "Metric", "Status", "Actions"]}
+            headers={text.evaluationSpecsHeaders}
             rows={specs.map((spec) => [
               spec.id,
               spec.split_type,
@@ -7814,7 +7816,7 @@ function EvaluationTab({
                       return completedJob;
                     })
                   }
-                  title="Create approval review"
+                  title={text.evaluationCreateApprovalReviewTitle}
                 >
                   <ListChecks size={16} />
                 </button>
@@ -7822,7 +7824,7 @@ function EvaluationTab({
                   className="icon-button"
                   disabled={busy || spec.status === "approved"}
                   onClick={() => void runAction(() => api(`/api/evaluation-specs/${spec.id}/approve`, { method: "POST" }))}
-                  title="Approve EvaluationSpec"
+                  title={text.evaluationApproveSpecTitle}
                 >
                   <Check size={16} />
                 </button>
@@ -7832,7 +7834,7 @@ function EvaluationTab({
                   onClick={() =>
                     void runAction(() => api(`/api/evaluation-specs/${spec.id}/generate-split`, { method: "POST" }))
                   }
-                  title="Generate SplitManifest"
+                  title={text.evaluationGenerateSplitTitle}
                 >
                   <GitBranch size={16} />
                 </button>
@@ -7840,13 +7842,13 @@ function EvaluationTab({
             ])}
           />
         ) : (
-          <EmptyInline text="Adopted primary EvaluationSpecs will appear here. Baselines should use an approved spec and generated SplitManifest." />
+          <EmptyInline text={text.evaluationSpecsEmpty} />
         )}
       </Panel>
-      <Panel title="Approval Reviews" icon={<FileText size={18} />}>
+      <Panel title={text.evaluationApprovalReviewsTitle} icon={<FileText size={18} />}>
         {approvalReviewArtifacts.length ? (
           <Table
-            headers={["Spec", "Status", "Blockers", "Warnings", "Created", "Actions"]}
+            headers={text.evaluationApprovalReviewsHeaders}
             rows={approvalReviewArtifacts.map((artifact) => [
               String(artifact.metadata.evaluation_spec_id ?? artifact.name),
               String(artifact.metadata.review_status ?? "-"),
@@ -7858,24 +7860,24 @@ function EvaluationTab({
                   className="icon-button"
                   disabled={approvalPreviewLoadingId === artifact.id}
                   onClick={() => void loadApprovalPreview(artifact.id)}
-                  title="Preview approval review"
+                  title={text.evaluationApprovalReviewPreviewTitle}
                 >
                   {approvalPreviewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
                 </button>
-                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title="Download approval review">
+                <a className="icon-link" href={`${apiBase}/api/artifacts/${artifact.id}/download`} title={text.evaluationApprovalReviewDownloadTitle}>
                   <Download size={16} />
                 </a>
               </div>
             ])}
           />
         ) : (
-          <EmptyInline text="Approval reviews will capture blockers, assumption-backed proceed decisions, quality context, scenario comparison context, and lineage before EvaluationSpec approval." />
+          <EmptyInline text={text.evaluationApprovalReviewsEmpty} />
         )}
         {approvalPreviewError ? <div className="banner danger">{approvalPreviewError}</div> : null}
         {approvalPreview?.preview_available ? (
           <TranslatablePreview preview={approvalPreview} />
         ) : (
-          <EmptyInline text={approvalPreview?.reason ?? "Create or select an approval review to inspect blockers and assumption-backed proceed notes."} />
+          <EmptyInline text={approvalPreview?.reason ?? text.evaluationApprovalReviewSelectEmpty} />
         )}
       </Panel>
     </div>

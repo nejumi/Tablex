@@ -522,6 +522,29 @@ export function NativeMarimoFrame({
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [expanded]);
+
+  function renderLoadingPanel(isExpanded = false) {
+    return (
+      <div
+        className={`native-marimo-loading-panel${isExpanded ? " expanded" : ""}`}
+        role="status"
+        aria-live="polite"
+        aria-label={text.notebookNativeMarimoLoading}
+      >
+        <div className="native-marimo-loading-mark" aria-hidden="true">
+          <span />
+        </div>
+        <div className="native-marimo-loading-copy">
+          <strong>{recovering ? text.notebookNativeMarimoRecovering : text.notebookNativeMarimoLoading}</strong>
+          <p>{text.notebookNativeMarimoLoadingDetail}</p>
+        </div>
+        <div className="native-marimo-loading-progress" aria-label={text.notebookNativeMarimoLoadingProgress}>
+          <span />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="native-marimo-viewer">
       <div className="native-marimo-toolbar">
@@ -554,23 +577,14 @@ export function NativeMarimoFrame({
           </details>
         </div>
       ) : null}
-      {recovering ? (
-        <div className="banner subtle native-marimo-runtime-error">
-          <Loader2 className="spin" size={16} />
-          <strong>{text.notebookNativeMarimoRecovering}</strong>
-        </div>
-      ) : null}
+      {recovering ? renderLoadingPanel() : null}
       {sessionUnavailable && !recovering ? (
         <div className="banner danger native-marimo-runtime-error">
           <strong>{text.notebookNativeMarimoError}</strong>
           <span>{text.notebookNativeMarimoUnavailable}</span>
         </div>
       ) : null}
-      {sessionStarting && !runtimeError ? (
-        <div className="banner subtle native-marimo-runtime-error">
-          <strong>{text.notebookNativeMarimoLoading}</strong>
-        </div>
-      ) : null}
+      {sessionStarting && !runtimeError && !recovering ? renderLoadingPanel() : null}
       {!expanded && showFrame ? (
         <iframe
           key={url}
@@ -612,19 +626,14 @@ export function NativeMarimoFrame({
             </div>
           ) : null}
           {recovering ? (
-            <div className="banner subtle native-marimo-runtime-error expanded">
-              <Loader2 className="spin" size={16} />
-              <strong>{text.notebookNativeMarimoRecovering}</strong>
-            </div>
+            renderLoadingPanel(true)
           ) : sessionUnavailable ? (
             <div className="banner danger native-marimo-runtime-error expanded">
               <strong>{text.notebookNativeMarimoError}</strong>
               <span>{text.notebookNativeMarimoUnavailable}</span>
             </div>
           ) : sessionStarting && !runtimeError ? (
-            <div className="banner subtle native-marimo-runtime-error expanded">
-              <strong>{text.notebookNativeMarimoLoading}</strong>
-            </div>
+            renderLoadingPanel(true)
           ) : showFrame ? (
             <iframe
               key={url}
