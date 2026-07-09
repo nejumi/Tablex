@@ -8041,6 +8041,32 @@ def test_leaderboard_reports_prediction_pipeline_runtime_failure_state(tmp_path:
                 },
             },
         )
+        repaired_pipeline = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project.id,
+            asset_type="prediction_pipeline",
+            name="runtime_state_pipeline",
+            filename="runtime_state_pipeline_v2.zip",
+            text="zip replacement",
+            metadata={
+                "project_id": project.id,
+                "pipeline_manifest": {
+                    "schema_version": "pipeline_manifest.v1",
+                    "input_contract": {
+                        "inference_format": {
+                            "columns": [{"name": "SK_ID_CURR", "dtype": "string", "required": True}]
+                        }
+                    },
+                    "output_contract": {
+                        "columns": [{"name": "prediction", "dtype": "float", "required": True}],
+                        "prediction_column": "prediction",
+                    },
+                    "training": {},
+                    "runtime": {},
+                },
+            },
+        )
         prediction_input = store_text_artifact(
             db,
             app.state.artifact_store,
@@ -8092,6 +8118,7 @@ def test_leaderboard_reports_prediction_pipeline_runtime_failure_state(tmp_path:
     assert runtime["last_run_status"] == "failed"
     assert runtime["last_failed_job_id"] == "job_pipeline_runtime_failed"
     assert runtime["repair_observation_delivered"] is True
+    assert runtime["superseded_by_artifact_id"] == repaired_pipeline.id
 
     deployment_response = client.post(
         "/api/projects/p_pipeline_runtime_state/pilot-deployments",

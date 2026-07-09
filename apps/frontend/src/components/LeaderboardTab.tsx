@@ -32,6 +32,7 @@ type PredictionInputValidationReport = {
   unexpected_columns?: string[];
   forbidden_columns_present?: string[];
   observed_columns?: string[];
+  dtype_checks?: Array<{ name?: string; observed_dtype?: string | null }>;
   row_count?: number | null;
   key_checks?: Array<{
     columns?: string[];
@@ -525,7 +526,7 @@ export function LeaderboardTab({
     formData.append("file", file);
     formData.append("pipeline_artifact_id", entry.pipeline_artifact_id);
     formData.append("table_name", tableName ?? "prediction_input");
-    formData.append("batch_kind", "external_test");
+    formData.append("batch_kind", predictionBatchKind);
     setPredictionUploadError(null);
     const uploaded = await api<PredictionInputUploadResponse>(`/api/projects/${project.id}/prediction-inputs`, {
       method: "POST",
@@ -776,6 +777,7 @@ export function LeaderboardTab({
     const unexpected = validation?.unexpected_columns ?? [];
     const forbidden = validation?.forbidden_columns_present ?? [];
     const firstKeyCheck = validation?.key_checks?.[0] ?? null;
+    const dtypeSummaryText = predictionInputDtypeSummary(validation?.dtype_checks ?? []);
     const reusableInputs = reusablePredictionInputArtifacts(artifacts, tableName);
     return (
       <div
@@ -846,6 +848,11 @@ export function LeaderboardTab({
                 {text.predictionInputKeyCheck
                   .replace("{nulls}", String(firstKeyCheck.null_row_count ?? 0))
                   .replace("{dupes}", String(firstKeyCheck.duplicate_row_count ?? 0))}
+              </small>
+            ) : null}
+            {dtypeSummaryText ? (
+              <small title={dtypeSummaryText}>
+                {text.predictionInputDtypeCheck.replace("{columns}", truncateLabel(dtypeSummaryText, 96))}
               </small>
             ) : null}
           </div>
@@ -1500,6 +1507,7 @@ function pipelineRuntimeBadgeClass(entry: LeaderboardEntry) {
 }
 
 function pipelineRuntimeStatusLabel(entry: LeaderboardEntry, text: LocaleMessages) {
+  if (entry.pipeline_runtime?.superseded_by_artifact_id) return text.pipelineRuntimeSuperseded;
   const status = entry.pipeline_runtime?.last_run_status;
   if (status === "succeeded") return text.pipelineRuntimeReady;
   if (status === "failed") {
@@ -1533,6 +1541,14 @@ function reusablePredictionInputArtifacts(artifacts: Artifact[], tableName: stri
     })
     .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
     .slice(0, 8);
+}
+
+function predictionInputDtypeSummary(dtypeChecks: Array<{ name?: string; observed_dtype?: string | null }>) {
+  const items = dtypeChecks
+    .filter((item) => typeof item.name === "string" && item.name.trim())
+    .slice(0, 8)
+    .map((item) => `${item.name}: ${item.observed_dtype || "unknown"}`);
+  return items.join(", ");
 }
 
 function predictionInputArtifactLabel(artifact: Artifact) {

@@ -8012,7 +8012,11 @@ def leaderboard_pipeline_runtime(
             "last_failed_job_id": job.id if failed else None,
             "last_failure_at": (job.ended_at or job.updated_at).isoformat() if failed and (job.ended_at or job.updated_at) else None,
             "repair_observation_delivered": bool(isinstance(feedback, dict) and feedback.get("delivered") is True),
-            "superseded_by_artifact_id": None,
+            "superseded_by_artifact_id": superseding_prediction_pipeline_artifact_id(
+                db,
+                project_id=project_id,
+                pipeline_artifact=pipeline_artifact,
+            ),
         }
     return {
         "last_run_status": "never_run",
@@ -8020,8 +8024,32 @@ def leaderboard_pipeline_runtime(
         "last_failed_job_id": None,
         "last_failure_at": None,
         "repair_observation_delivered": False,
-        "superseded_by_artifact_id": None,
+        "superseded_by_artifact_id": superseding_prediction_pipeline_artifact_id(
+            db,
+            project_id=project_id,
+            pipeline_artifact=pipeline_artifact,
+        ),
     }
+
+
+def superseding_prediction_pipeline_artifact_id(
+    db: Session,
+    *,
+    project_id: str,
+    pipeline_artifact: Artifact,
+) -> str | None:
+    replacement = db.scalar(
+        select(Artifact)
+        .where(
+            Artifact.project_id == project_id,
+            Artifact.asset_type == "prediction_pipeline",
+            Artifact.name == pipeline_artifact.name,
+            Artifact.version > pipeline_artifact.version,
+        )
+        .order_by(Artifact.version.desc(), Artifact.created_at.desc())
+        .limit(1)
+    )
+    return replacement.id if replacement is not None else None
 
 
 def leaderboard_evaluation_grade(db: Session, run: ExperimentRun) -> str:

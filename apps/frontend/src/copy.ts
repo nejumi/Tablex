@@ -228,6 +228,7 @@ export const englishMessages = {
   pipelineRuntimeReady: "Last prediction succeeded",
   pipelineRuntimeFailed: "Last prediction failed",
   pipelineRuntimeRepairSent: "repair requested",
+  pipelineRuntimeSuperseded: "New pipeline version available",
   predictionRuntimeFailedBanner:
     "This pipeline failed during the last prediction run. The uploaded file may not be the cause. Tablex saved the failure details and sent them to Codex for repair.",
   leaderboardActionPredict: "Predict with this model",
@@ -261,6 +262,7 @@ export const englishMessages = {
   predictionForbiddenColumns: "Contract warning: {columns}",
   predictionInputRowCount: "{count} rows",
   predictionInputKeyCheck: "key null {nulls} / duplicate {dupes}",
+  predictionInputDtypeCheck: "Types: {columns}",
   predictionMissingRequiredTable: "Upload the required prediction table: {table}",
   predictionNoUploadedInputs: "Upload prediction files or choose a dataset snapshot first.",
   optional: "optional",
@@ -1237,6 +1239,7 @@ export const japaneseMessages: LocaleMessages = {
   pipelineRuntimeReady: "直近の予測は成功",
   pipelineRuntimeFailed: "直近の予測が失敗",
   pipelineRuntimeRepairSent: "修復依頼済み",
+  pipelineRuntimeSuperseded: "新しいpipeline版あり",
   predictionRuntimeFailedBanner:
     "このpipelineは直近の予測実行で失敗しました。アップロードしたファイルが原因とは限りません。Tablexは失敗詳細を保存し、Codexに修復を依頼済みです。",
   leaderboardActionPredict: "このモデルで予測",
@@ -1270,6 +1273,7 @@ export const japaneseMessages: LocaleMessages = {
   predictionForbiddenColumns: "契約上の警告: {columns}",
   predictionInputRowCount: "{count}行",
   predictionInputKeyCheck: "key欠損 {nulls} / 重複 {dupes}",
+  predictionInputDtypeCheck: "型: {columns}",
   predictionMissingRequiredTable: "必要な予測テーブルをアップロードしてください: {table}",
   predictionNoUploadedInputs: "予測ファイルをアップロードするか、DatasetSnapshotを選択してください。",
   optional: "任意",
