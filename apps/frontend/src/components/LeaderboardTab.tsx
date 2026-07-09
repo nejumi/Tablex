@@ -513,12 +513,6 @@ export function LeaderboardTab({
     }
   }
 
-  React.useEffect(() => {
-    if (!predictionDatasetId && datasets.length) {
-      setPredictionDatasetId(datasets[0].id);
-    }
-  }, [datasets, predictionDatasetId]);
-
   async function uploadPredictionInput(entry: LeaderboardEntry, file: File, tableName: string | null) {
     if (!entry.pipeline_artifact_id) return;
     const inputKey = tableName ?? SINGLE_PREDICTION_INPUT_KEY;
@@ -1046,6 +1040,7 @@ export function LeaderboardTab({
                       setPredictionEntry(entry);
                       setPredictionResultArtifactId(null);
                       setPredictionUploadedInputs({});
+                      setPredictionDatasetId("");
                       setPredictionUploadError(null);
                       setPredictionBatchKind("external_test");
                     }}
@@ -1190,6 +1185,7 @@ export function LeaderboardTab({
                 <label className="field">
                   <span>{text.predictionInputDataset}</span>
                   <select value={predictionDatasetId} onChange={(event) => setPredictionDatasetId(event.target.value)}>
+                    <option value="">{text.predictionDatasetPlaceholder}</option>
                     {datasets.map((dataset) => (
                       <option key={dataset.id} value={dataset.id}>
                         {dataset.source_ref ?? dataset.id} · {dataset.row_count ?? "-"} rows

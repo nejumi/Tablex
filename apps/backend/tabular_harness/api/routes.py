@@ -173,6 +173,7 @@ from tabular_harness.services.agent_requests.data import (
 from tabular_harness.services.agent_session_results import (
     experiment_model_id_from_params,
     experiment_result_signature,
+    experiment_signature_context_from_params,
 )
 from tabular_harness.services.agent_sessions import (
     active_main_session,
@@ -7898,17 +7899,8 @@ def leaderboard(
     runs = db.scalars(
         select(ExperimentRun).where(ExperimentRun.project_id == project_id, ExperimentRun.status == "succeeded")
     ).all()
-    unique_runs: list[ExperimentRun] = []
-    seen_result_signatures: set[str] = set()
-    for run in runs:
-        metrics = loads_json(run.metrics_json, {})
-        params = loads_json(run.params_json, {})
-        signature = experiment_result_signature(metrics, model_id=experiment_model_id_from_params(params))
-        if signature in seen_result_signatures:
-            continue
-        seen_result_signatures.add(signature)
-        unique_runs.append(run)
-    runs = unique_runs
+    notebook_index = build_project_notebook_index(db, project)
+    runs = unique_leaderboard_runs(db, runs, notebook_index=notebook_index)
     metric_preference = latest_metric_preference(db, project_id)
     display_metric = metric_preference
     if display_metric is None:
@@ -7927,7 +7919,6 @@ def leaderboard(
     if display_metric is None:
         display_metric = str(BUILTIN_METRIC_OPTIONS[0]["name"])
     sorted_runs = sorted(runs, key=lambda run: leaderboard_sort_key_for_metric(run, display_metric))
-    notebook_index = build_project_notebook_index(db, project)
     deliverable_expectations_by_run = deliverable_expectations_for_run_ids(
         db,
         project_id=project_id,
@@ -7982,6 +7973,67 @@ def leaderboard(
         for pipeline_artifact in [experiment_run_pipeline_artifact(db, run, params=params)]
         for display_metric_value in [preferred_metric_value(metrics, display_metric)]
     ]
+
+
+def unique_leaderboard_runs(
+    db: Session,
+    runs: list[ExperimentRun],
+    *,
+    notebook_index: dict[str, Any],
+) -> list[ExperimentRun]:
+    selected_by_signature: dict[str, ExperimentRun] = {}
+    scores_by_signature: dict[str, tuple[int, float]] = {}
+    for run in runs:
+        metrics = loads_json(run.metrics_json, {})
+        params = loads_json(run.params_json, {})
+        signature = experiment_result_signature(
+            metrics,
+            model_id=experiment_model_id_from_params(params),
+            **experiment_signature_context_from_params(params),
+        )
+        score = leaderboard_run_evidence_score(db, run, params=params, notebook_index=notebook_index)
+        if signature not in selected_by_signature or score > scores_by_signature[signature]:
+            selected_by_signature[signature] = run
+            scores_by_signature[signature] = score
+    return list(selected_by_signature.values())
+
+
+def leaderboard_run_evidence_score(
+    db: Session,
+    run: ExperimentRun,
+    *,
+    params: dict[str, Any],
+    notebook_index: dict[str, Any],
+) -> tuple[int, float]:
+    score = 0
+    if experiment_run_pipeline_artifact(db, run, params=params) is not None:
+        score += 20
+    diagnostics = leaderboard_model_diagnostics(db, run)
+    diagnostics_status = diagnostics.get("status") if isinstance(diagnostics, dict) else None
+    if diagnostics_status == "ready":
+        score += 12
+    elif diagnostics_status == "registered":
+        score += 8
+    elif diagnostics_status == "partial":
+        score += 4
+    if run.evaluation_spec_id:
+        score += 3
+    if run.split_manifest_id:
+        score += 3
+    if run.model_version_id:
+        score += 2
+    if run.summary_md:
+        score += 1
+    score += 5 * len(
+        leaderboard_related_notebooks(
+            notebook_index,
+            run_id=run.id,
+            model_version_id=run.model_version_id,
+        )
+    )
+    started_at = run.started_at or run.ended_at
+    timestamp = started_at.timestamp() if started_at is not None else 0.0
+    return (score, -timestamp)
 
 
 def leaderboard_pipeline_runtime(

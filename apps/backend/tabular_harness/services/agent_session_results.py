@@ -1252,7 +1252,13 @@ def register_experiment_run_specs(
         )
         if experiment_run_exists(db, project_id=project.id, source_key=spec.source_key):
             continue
-        result_signature = experiment_result_signature(spec.metrics, model_id=spec.model_id)
+        result_signature = experiment_result_signature(
+            spec.metrics,
+            model_id=spec.model_id,
+            model_description=spec.summary,
+            features_used=spec.params.get("features_used"),
+            feature_summary=spec.params.get("feature_summary"),
+        )
         if experiment_run_with_signature_exists(db, project_id=project.id, result_signature=result_signature):
             continue
         declared_research_plan_node_id = spec.research_plan_node_id
@@ -1617,29 +1623,65 @@ def experiment_run_with_signature_exists(db: Session, *, project_id: str, result
         params = loads_json(run.params_json, {})
         if params.get("result_signature") == result_signature:
             return True
+        metrics = loads_json(run.metrics_json, {})
+        if (
+            experiment_result_signature(
+                metrics,
+                model_id=experiment_model_id_from_params(params),
+                **experiment_signature_context_from_params(params),
+            )
+            == result_signature
+        ):
+            return True
     return False
 
 
-def experiment_result_signature(metrics: dict[str, Any], *, model_id: str | None = None) -> str:
-    cleaned_model_id = model_id.strip().casefold() if isinstance(model_id, str) and model_id.strip() else ""
-    if cleaned_model_id:
-        primary_metric_name = str(metrics.get("primary_metric_name") or "").strip().casefold()
-        primary_metric_value = metrics.get("primary_metric_value")
-        if not isinstance(primary_metric_value, int | float) or isinstance(primary_metric_value, bool):
-            primary_metric_value = metrics.get(primary_metric_name)
-        if isinstance(primary_metric_value, int | float) and not isinstance(primary_metric_value, bool):
-            payload = {
-                "model_id": cleaned_model_id,
-                "primary_metric_name": primary_metric_name,
-                "primary_metric_value": round(float(primary_metric_value), 8),
-            }
-            return "candidate:" + hashlib.sha256(dumps_json(payload).encode("utf-8")).hexdigest()
+def experiment_result_signature(
+    metrics: dict[str, Any],
+    *,
+    model_id: str | None = None,
+    model_description: Any = None,
+    features_used: Any = None,
+    feature_summary: Any = None,
+) -> str:
+    del model_id
+    primary_metric_name = str(metrics.get("primary_metric_name") or "").strip().casefold()
     numeric_metrics = {
         key: round(float(value), 12)
         for key, value in metrics.items()
         if isinstance(value, int | float) and not isinstance(value, bool)
     }
-    return "metrics:" + hashlib.sha256(dumps_json(numeric_metrics).encode("utf-8")).hexdigest()
+    normalized_features = (
+        sorted(str(feature).strip().casefold() for feature in features_used if isinstance(feature, str) and feature.strip())
+        if isinstance(features_used, list)
+        else []
+    )
+    payload = {
+        "primary_metric_name": primary_metric_name,
+        "numeric_metrics": numeric_metrics,
+        "model_description": str(model_description or "").strip().casefold(),
+        "features_used": normalized_features,
+        "feature_summary": str(feature_summary or "").strip().casefold(),
+    }
+    return "metrics:" + hashlib.sha256(dumps_json(payload).encode("utf-8")).hexdigest()
+
+
+def experiment_signature_context_from_params(params: dict[str, Any]) -> dict[str, Any]:
+    raw = params.get("raw") if isinstance(params.get("raw"), dict) else {}
+    features_used = params.get("features_used")
+    if not isinstance(features_used, list):
+        features_used = raw.get("features_used") if isinstance(raw.get("features_used"), list) else []
+    model_description = params.get("model_description")
+    if not isinstance(model_description, str):
+        model_description = raw.get("model_description") if isinstance(raw.get("model_description"), str) else ""
+    feature_summary = params.get("feature_summary")
+    if not isinstance(feature_summary, str):
+        feature_summary = raw.get("feature_summary") if isinstance(raw.get("feature_summary"), str) else ""
+    return {
+        "model_description": model_description,
+        "features_used": features_used,
+        "feature_summary": feature_summary,
+    }
 
 
 def experiment_model_id_from_params(params: dict[str, Any]) -> str:
@@ -2156,6 +2198,7 @@ def experiment_registration_notification_fingerprint(
             result_signature = experiment_result_signature(
                 metrics,
                 model_id=experiment_model_id_from_params(params),
+                **experiment_signature_context_from_params(params),
             )
         run_keys.append(result_signature or run.id)
     payload = {
@@ -2182,6 +2225,7 @@ def experiment_registration_result_set_fingerprint(runs: list[ExperimentRun]) ->
             result_signature = experiment_result_signature(
                 metrics,
                 model_id=experiment_model_id_from_params(params),
+                **experiment_signature_context_from_params(params),
             )
         run_keys.append(result_signature or run.id)
     payload = {

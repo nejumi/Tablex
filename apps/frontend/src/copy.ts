@@ -236,6 +236,7 @@ export const englishMessages = {
   predictionDrawerBody:
     "Upload prediction files or choose an existing DatasetSnapshot for this model pipeline. The prediction input should not include target values used for training or validation.",
   predictionInputDataset: "Existing DatasetSnapshot",
+  predictionDatasetPlaceholder: "Select only if this snapshot is a prediction input",
   predictionExpectedColumns: "Expected columns",
   predictionRequiredTables: "Required tables",
   predictionNoContract: "This pipeline has not declared a detailed prediction input contract.",
@@ -1247,6 +1248,7 @@ export const japaneseMessages: LocaleMessages = {
   predictionDrawerBody:
     "このモデルのpipelineで使う予測ファイルをアップロードするか、既存のDatasetSnapshotを選びます。予測入力には、学習や検証に使ったtarget値を含めないでください。",
   predictionInputDataset: "既存のDatasetSnapshot",
+  predictionDatasetPlaceholder: "予測入力として使う場合だけ選択",
   predictionExpectedColumns: "期待カラム",
   predictionRequiredTables: "必要テーブル",
   predictionNoContract: "このpipelineには詳細な予測入力契約がまだ登録されていません。",

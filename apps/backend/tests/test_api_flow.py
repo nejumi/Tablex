@@ -3967,6 +3967,56 @@ def test_leaderboard_metric_direction_handles_derived_loss_names() -> None:
     assert metric_lower_is_better("roc_auc") is False
 
 
+def test_leaderboard_collapses_duplicate_metric_results_and_keeps_richer_row(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Duplicate Leaderboard"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    metrics = {"primary_metric_name": "roc_auc", "primary_metric_value": 0.7844664737034611, "roc_auc": 0.7844664737034611}
+
+    with app.state.session_factory() as db:
+        rich_run = ExperimentRun(
+            id="run_rich_duplicate",
+            project_id=project_id,
+            runner_type="codex_main_session",
+            status="succeeded",
+            started_at=datetime(2026, 7, 9, 16, 14, tzinfo=timezone.utc),
+            params_json=json.dumps(
+                {
+                    "model_id": "lgbm_relational_aggregates_v1",
+                    "model_description": "LightGBM using application features plus target-free relational aggregates",
+                }
+            ),
+            metrics_json=json.dumps(metrics),
+            summary_md="Registered with related evidence.",
+        )
+        thin_run = ExperimentRun(
+            id="run_thin_duplicate",
+            project_id=project_id,
+            runner_type="codex_main_session",
+            status="succeeded",
+            started_at=datetime(2026, 7, 9, 16, 15, tzinfo=timezone.utc),
+            params_json=json.dumps(
+                {
+                    "model_id": "hc_lgbm_relational_aggregates_internal_cv_v1",
+                    "model_description": "LightGBM using application features plus target-free relational aggregates",
+                }
+            ),
+            metrics_json=json.dumps(metrics),
+            summary_md=None,
+        )
+        db.add_all([rich_run, thin_run])
+        db.commit()
+
+    leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
+    assert leaderboard_response.status_code == 200, leaderboard_response.text
+    leaderboard = leaderboard_response.json()
+    assert len(leaderboard) == 1
+    assert leaderboard[0]["run_id"] == "run_rich_duplicate"
+    assert leaderboard[0]["model_id"] == "lgbm_relational_aggregates_v1"
+
+
 def test_prediction_input_columns_reads_csv_and_parquet_headers(tmp_path: Path) -> None:
     csv_path = tmp_path / "prediction_input.csv"
     csv_path.write_text("x,row_id\n1,A\n", encoding="utf-8")
