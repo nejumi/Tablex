@@ -26,9 +26,13 @@ def maybe_send_prediction_input_validation_failure_to_codex(
 ) -> dict[str, Any]:
     if validation_report.get("status") != "failed":
         return {"delivered": False, "reason": "validation_passed"}
-    session = active_main_session(db, project.id)
+    session = active_main_session(db, project.id) or latest_main_session(db, project.id)
     if session is None or not session.workspace_path:
-        return {"delivered": False, "reason": "no_active_main_session"}
+        return {"delivered": False, "reason": "no_main_session"}
+    if session.status == "stopped":
+        return {"delivered": False, "reason": "agent_power_off", "agent_session_id": session.id}
+    if session.status not in {"starting", "running", "between_turns", "waiting_for_runner", "completed"}:
+        return {"delivered": False, "reason": f"main_session_{session.status}", "agent_session_id": session.id}
     event = append_session_event(
         db,
         session,

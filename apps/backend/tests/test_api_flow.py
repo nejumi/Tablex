@@ -3870,6 +3870,132 @@ def test_prediction_input_columns_reads_csv_and_parquet_headers(tmp_path: Path) 
     assert routes_module.prediction_input_columns(parquet_path) == ["x", "row_id"]
 
 
+def test_prediction_input_failure_wakes_completed_session_but_not_stopped(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    supervisor_starts: list[dict[str, str]] = []
+
+    def fake_start_supervisor(*args: Any, **kwargs: Any) -> None:
+        supervisor_starts.append({"project_id": str(kwargs["project_id"]), "session_id": str(kwargs["session_id"])})
+
+    monkeypatch.setattr(routes_module, "start_main_agent_session_supervisor_thread", fake_start_supervisor)
+    client = make_client(tmp_path)
+    app = cast(Any, client.app)
+
+    project_response = client.post("/api/projects", json={"name": "Prediction wake"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    workspace = app.state.artifact_store.root / "agent_sessions" / project_id / "ags_prediction_wake"
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "IDLE"
+        project.autonomy_mode = "full_auto"
+        db.add(
+            AgentSession(
+                id="ags_prediction_wake",
+                project_id=project_id,
+                org_id=project.org_id,
+                session_type="main_autonomous",
+                status="completed",
+                autonomy_mode="full_auto",
+                runner_kind="codex_cli",
+                goal_text="Wake when prediction input needs repair.",
+                workspace_path=str(workspace),
+                created_by="test",
+            )
+        )
+        pipeline = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="prediction_pipeline",
+            name="prediction_wake_pipeline",
+            filename="pipeline.zip",
+            text="zip placeholder",
+            metadata={
+                "pipeline_manifest": {
+                    "schema_version": "pipeline_manifest.v1",
+                    "input_contract": {
+                        "inference_format": {
+                            "columns": [{"name": "x", "dtype": "float", "required": True}]
+                        }
+                    },
+                }
+            },
+        )
+        db.commit()
+
+    failed_upload = client.post(
+        f"/api/projects/{project_id}/prediction-inputs",
+        data={"pipeline_artifact_id": pipeline.id, "table_name": "prediction_input", "batch_kind": "external_test"},
+        files={"file": ("missing_x.csv", b"row_id\nA\n", "text/csv")},
+    )
+    assert failed_upload.status_code == 200, failed_upload.text
+    assert failed_upload.json()["codex_feedback"]["delivered"] is True
+    assert supervisor_starts == [{"project_id": project_id, "session_id": "ags_prediction_wake"}]
+    with app.state.session_factory() as db:
+        session = db.get(AgentSession, "ags_prediction_wake")
+        project = db.get(Project, project_id)
+        assert session is not None
+        assert project is not None
+        assert session.status == "between_turns"
+        assert project.current_phase == "AUTONOMOUS_LOOP"
+
+    stopped_response = client.post("/api/projects", json={"name": "Prediction stopped"})
+    assert stopped_response.status_code == 200
+    stopped_project_id = stopped_response.json()["id"]
+    stopped_workspace = app.state.artifact_store.root / "agent_sessions" / stopped_project_id / "ags_prediction_stopped"
+    with app.state.session_factory() as db:
+        project = db.get(Project, stopped_project_id)
+        assert project is not None
+        project.current_phase = "IDLE"
+        project.autonomy_mode = "full_auto"
+        db.add(
+            AgentSession(
+                id="ags_prediction_stopped",
+                project_id=stopped_project_id,
+                org_id=project.org_id,
+                session_type="main_autonomous",
+                status="stopped",
+                autonomy_mode="full_auto",
+                runner_kind="codex_cli",
+                goal_text="Do not wake when power is off.",
+                workspace_path=str(stopped_workspace),
+                created_by="test",
+            )
+        )
+        stopped_pipeline = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=stopped_project_id,
+            asset_type="prediction_pipeline",
+            name="prediction_stopped_pipeline",
+            filename="pipeline.zip",
+            text="zip placeholder",
+            metadata={
+                "pipeline_manifest": {
+                    "schema_version": "pipeline_manifest.v1",
+                    "input_contract": {
+                        "inference_format": {
+                            "columns": [{"name": "x", "dtype": "float", "required": True}]
+                        }
+                    },
+                }
+            },
+        )
+        db.commit()
+    stopped_upload = client.post(
+        f"/api/projects/{stopped_project_id}/prediction-inputs",
+        data={"pipeline_artifact_id": stopped_pipeline.id, "table_name": "prediction_input", "batch_kind": "external_test"},
+        files={"file": ("missing_x.csv", b"row_id\nA\n", "text/csv")},
+    )
+    assert stopped_upload.status_code == 200, stopped_upload.text
+    assert stopped_upload.json()["codex_feedback"]["reason"] == "agent_power_off"
+    assert supervisor_starts == [{"project_id": project_id, "session_id": "ags_prediction_wake"}]
+
+
 def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
     tmp_path: Path,
     monkeypatch: Any,

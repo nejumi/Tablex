@@ -8304,6 +8304,13 @@ def upload_prediction_input(
     if codex_feedback.get("delivered") and request.app.state.settings.api_agent_session_supervisor_enabled:
         session_id = codex_feedback.get("agent_session_id")
         session = db.get(AgentSession, session_id) if isinstance(session_id, str) else None
+        if session is not None and session.status == "completed" and project.autonomy_mode == "full_auto":
+            session.status = "between_turns"
+            session.pid = None
+            session.ended_at = None
+            session.updated_at = utc_now()
+            project.current_phase = "AUTONOMOUS_LOOP"
+            project.updated_at = utc_now()
         if (
             session is not None
             and project.current_phase == "AUTONOMOUS_LOOP"
