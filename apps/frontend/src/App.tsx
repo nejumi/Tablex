@@ -9669,6 +9669,16 @@ function NotebooksTab({
     : null;
   const story = analysisStory?.story ?? null;
   const storyNotebook = reviewNotebook;
+  const selectedNotebookArtifact = selectedNotebookArtifactId
+    ? artifacts.find((artifact) => artifact.id === selectedNotebookArtifactId) ?? null
+    : null;
+  const nativeViewerArtifactId = selectedNotebookArtifactId ?? storyNotebook?.artifact_ids.notebook ?? null;
+  const nativeViewerTitle =
+    selectedNotebook?.title ??
+    (selectedNotebookArtifact ? artifactDisplayTitle(selectedNotebookArtifact) : null) ??
+    storyNotebook?.title ??
+    story?.selected_source.title ??
+    text.notebookNativeMarimoTitle;
   const storyReadOrder = selectedNotebookOverridesStory ? [] : story?.read_order ?? [];
   const manifestReadOrder = reviewNotebook?.quality_manifest?.read_order ?? [];
   const storyCards = selectedNotebookOverridesStory ? [] : story?.visual_story_cards ?? [];
@@ -9817,6 +9827,35 @@ function NotebooksTab({
           </div>
         </div>
       </section>
+      <section id="notebook-native-marimo-top" className="analysis-story-preview">
+        <div className="analysis-story-preview-head">
+          <div>
+            <div className="eyebrow">{text.notebookNativeMarimoTitle}</div>
+            <h3>{nativeViewerTitle}</h3>
+          </div>
+          {nativeViewerArtifactId ? (
+            <a className="icon-link" href={`${apiBase}/api/artifacts/${nativeViewerArtifactId}/download`} title={text.notebookDownloadCurrentStory}>
+              <Download size={16} />
+            </a>
+          ) : null}
+        </div>
+        {nativeMarimoError ? (
+          <div className="banner danger">
+            <strong>{text.notebookNativeMarimoError}</strong>
+            <span>{nativeMarimoError}</span>
+          </div>
+        ) : null}
+        {nativeMarimoLoadingId ? (
+          <div className="banner muted">
+            <Loader2 className="spin" size={16} />
+            {text.notebookNativeMarimoLoading}
+          </div>
+        ) : nativeMarimoSession ? (
+          <NativeMarimoFrame session={nativeMarimoSession} onRestart={restartNativeMarimoArtifact} />
+        ) : (
+          <EmptyInline text={text.notebookNativeMarimoEmpty} />
+        )}
+      </section>
       <Panel id="analysis-story" title={text.notebookAnalysisStoryTitle} icon={<BarChart3 size={18} />}>
         {story || reviewNotebook ? (
           <div className="analysis-story-surface">
@@ -9872,37 +9911,6 @@ function NotebooksTab({
                 </button>
               </div>
             </section>
-
-            <section id="notebook-native-marimo-top" className="analysis-story-preview">
-              <div className="analysis-story-preview-head">
-                <div>
-                  <div className="eyebrow">{text.notebookNativeMarimoTitle}</div>
-                  <h3>{storyNotebook?.title ?? story?.selected_source.title ?? text.notebookCreateStoryFallbackTitle}</h3>
-                </div>
-                {storyNotebook ? (
-                  <a className="icon-link" href={`${apiBase}/api/artifacts/${storyNotebook.artifact_ids.notebook}/download`} title={text.notebookDownloadCurrentStory}>
-                    <Download size={16} />
-                  </a>
-                ) : null}
-              </div>
-              {nativeMarimoError ? (
-                <div className="banner danger">
-                  <strong>{text.notebookNativeMarimoError}</strong>
-                  <span>{nativeMarimoError}</span>
-                </div>
-              ) : null}
-              {nativeMarimoLoadingId ? (
-                <div className="banner muted">
-                  <Loader2 className="spin" size={16} />
-                  {text.notebookNativeMarimoLoading}
-                </div>
-              ) : nativeMarimoSession ? (
-                <NativeMarimoFrame session={nativeMarimoSession} onRestart={restartNativeMarimoArtifact} />
-              ) : (
-                <EmptyInline text={text.notebookNativeMarimoEmpty} />
-              )}
-            </section>
-
             <div className="analysis-story-grid">
               <section className="analysis-story-section">
                 <div className="mini-card-title">{text.notebookReadOrderTitle}</div>
