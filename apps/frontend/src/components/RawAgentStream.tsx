@@ -187,7 +187,7 @@ export function RawAgentStream({
         {rawLines.length ? (
           <>
             {rawLines.map((line) => (
-              <RawTranscriptLineCard
+              <RawTranscriptConsoleLine
                 active={rawTurnIsActive && `${line.stream}-${line.line_number}` === activeRawLineKey}
                 key={`${line.stream}-${line.line_number}`}
                 line={line}
@@ -199,14 +199,22 @@ export function RawAgentStream({
                 <summary>
                   {text.rawAgentIndexedEvents} ({events.length})
                 </summary>
-                <div className="raw-agent-index-list">{events.map((event) => renderRawAgentEvent(event))}</div>
+                <div className="raw-agent-index-list">
+                  {events.map((event) => (
+                    <RawEventConsoleLine event={event} key={event.id} />
+                  ))}
+                </div>
               </details>
             ) : null}
           </>
         ) : events.length ? (
-          events.map((event, index) =>
-            renderRawAgentEvent(event, { active: rawTurnIsActive && index === events.length - 1 })
-          )
+          events.map((event, index) => (
+            <RawEventConsoleLine
+              active={rawTurnIsActive && index === events.length - 1}
+              event={event}
+              key={event.id}
+            />
+          ))
         ) : (
           <EmptyInline text={text.rawAgentEmpty} />
         )}
@@ -274,7 +282,7 @@ function rawTranscriptLineRange(lines: AgentRawTranscriptLine[]): string {
   return first === last ? ` #${first}` : ` #${first}-#${last}`;
 }
 
-function RawTranscriptLineCard({
+function RawTranscriptConsoleLine({
   line,
   active,
   text
@@ -297,16 +305,19 @@ function RawTranscriptLineCard({
           <span>{view.level}</span>
         </div>
         {view.body ? <pre className="raw-cli-body">{view.body}</pre> : null}
-        <details className="raw-agent-detail">
-          <summary>{event ? text.rawAgentRawJsonl : text.rawAgentRawLine}</summary>
-          <pre>{line.text}</pre>
-        </details>
-        {event ? (
+        <div className="raw-cli-meta">
+          <span>{line.stream}</span>
           <details className="raw-agent-detail compact">
-            <summary>{text.rawAgentParsedEvent}</summary>
-            <pre>{rawDetailText(event)}</pre>
+            <summary>{event ? text.rawAgentRawJsonl : text.rawAgentRawLine}</summary>
+            <pre>{line.text}</pre>
           </details>
-        ) : null}
+          {event ? (
+            <details className="raw-agent-detail compact">
+              <summary>{text.rawAgentParsedEvent}</summary>
+              <pre>{rawDetailText(event)}</pre>
+            </details>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -323,12 +334,18 @@ type RawCodexLineView = {
 function rawCodexLineView(line: AgentRawTranscriptViewLine): RawCodexLineView {
   const event = line.parsed;
   if (!event) {
+    const originalLength = typeof line.original_length === "number" ? line.original_length : null;
     return {
       kind: line.stream === "stderr" ? "stderr" : "event",
       prompt: line.stream === "stderr" ? "err" : "raw",
-      title: line.stream === "stderr" ? "Codex stderr" : "Raw JSONL line",
+      title: line.stream === "stderr" ? "Codex stderr" : line.truncated ? "Raw JSONL line truncated" : "Raw JSONL line",
       level: line.stream,
-      body: line.text
+      body:
+        line.truncated === true
+          ? `line ${line.line_number} is too large to display inline${
+              originalLength !== null ? ` (${originalLength.toLocaleString()} chars)` : ""
+            }. Open Raw line for the exact transcript record.`
+          : line.text
     };
   }
   const eventType = textField(event.type) ?? "jsonl";
@@ -383,23 +400,31 @@ function rawCodexLineView(line: AgentRawTranscriptViewLine): RawCodexLineView {
   };
 }
 
-function renderRawAgentEvent(event: RawAgentEvent, options: { active?: boolean } = {}) {
-  const active = options.active === true && isActiveRawEvent(event);
+function RawEventConsoleLine({ event, active }: { event: RawAgentEvent; active?: boolean }) {
+  const isActive = active === true && isActiveRawEvent(event);
   return (
-    <div className={`raw-agent-event ${active ? "is-active" : ""}`} key={event.id}>
-      <div className="raw-agent-line">
+    <div className={`raw-agent-event raw-cli-line event ${isActive ? "is-active" : ""}`}>
+      <div className="raw-cli-gutter" aria-hidden="true">
         <span>{formatDate(event.timestamp)}</span>
-        <b>{event.source}</b>
-        <em>{event.level}</em>
-        <strong>{event.title}</strong>
+        <b>{event.source.toLowerCase()}</b>
       </div>
-      {event.body ? <div className="raw-agent-body">{event.body}</div> : null}
-      {event.details?.map((detail) => (
-        <details className="raw-agent-detail" key={detail.label}>
-          <summary>{detail.label}</summary>
-          <pre>{rawDetailText(detail.value)}</pre>
-        </details>
-      ))}
+      <div className="raw-cli-content">
+        <div className="raw-cli-head">
+          <strong>{event.title}</strong>
+          <span>{event.level}</span>
+        </div>
+        {event.body ? <pre className="raw-cli-body">{event.body}</pre> : null}
+        {event.details?.length ? (
+          <div className="raw-cli-meta">
+            {event.details.map((detail) => (
+              <details className="raw-agent-detail compact" key={detail.label}>
+                <summary>{detail.label}</summary>
+                <pre>{rawDetailText(detail.value)}</pre>
+              </details>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

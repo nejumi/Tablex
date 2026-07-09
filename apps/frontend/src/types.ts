@@ -673,6 +673,8 @@ export type AgentRawTranscriptLine = {
   line_number: number;
   text: string;
   parsed: Record<string, unknown> | null;
+  truncated?: boolean;
+  original_length?: number | null;
 };
 
 export type AgentRawTranscriptViewLine = AgentRawTranscriptLine & {

@@ -1757,7 +1757,7 @@ textarea {
 
 .raw-agent-log {
   display: grid;
-  gap: 8px;
+  gap: 0;
   align-content: start;
   min-height: min(58vh, 560px);
   max-height: min(62vh, 760px);
@@ -1765,21 +1765,24 @@ textarea {
   overscroll-behavior-x: contain;
   overscroll-behavior-y: auto;
   scrollbar-gutter: stable;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(15, 23, 42, 0.92);
   border-radius: 8px;
-  background: #08111f;
-  padding: 10px;
+  background:
+    linear-gradient(180deg, rgba(2, 6, 23, 0.98), rgba(8, 13, 25, 0.98));
+  color: #dbeafe;
+  font-family: var(--mono);
+  padding: 0;
 }
 
 .raw-agent-event {
   position: relative;
   display: grid;
-  gap: 6px;
+  gap: 0;
   overflow: visible;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
-  padding: 9px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .raw-agent-event > * {
@@ -1838,10 +1841,10 @@ textarea {
 }
 
 .raw-cli-line {
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: 82px minmax(0, 1fr);
   gap: 10px;
-  border-color: rgba(148, 163, 184, 0.14);
-  background: linear-gradient(90deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.74));
+  border-bottom: 1px solid rgba(148, 163, 184, 0.09);
+  background: transparent;
   padding: 0;
 }
 
@@ -1849,57 +1852,59 @@ textarea {
   display: grid;
   align-content: start;
   justify-items: end;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
   border-right: 1px solid rgba(148, 163, 184, 0.18);
   color: #64748b;
   font-family: var(--mono);
-  font-size: 11px;
-  padding: 10px 0 10px 10px;
+  font-size: 10px;
+  padding: 9px 0 9px 10px;
 }
 
 .raw-cli-gutter b {
-  max-width: 58px;
+  max-width: 68px;
   overflow: hidden;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.12);
+  border-radius: 0;
+  background: transparent;
   color: #cbd5e1;
   font-size: 10px;
   font-weight: 820;
   line-height: 1.2;
-  padding: 3px 6px;
+  padding: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .raw-cli-content {
   display: grid;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
-  padding: 10px 10px 10px 0;
+  padding: 8px 12px 8px 0;
 }
 
 .raw-cli-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
+  color: #94a3b8;
 }
 
 .raw-cli-head strong {
   color: #f8fafc;
-  font-size: 13px;
+  font-family: var(--mono);
+  font-size: 12px;
 }
 
 .raw-cli-head span {
   overflow: hidden;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 999px;
+  border: 0;
+  border-radius: 0;
   color: #94a3b8;
   font-family: var(--mono);
   font-size: 10px;
-  padding: 2px 6px;
+  padding: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1911,18 +1916,16 @@ textarea {
   color: #e2e8f0;
   font-family: var(--mono);
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.48;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .raw-cli-line.message {
-  border-color: rgba(96, 165, 250, 0.2);
-  background: linear-gradient(90deg, rgba(15, 23, 42, 0.92), rgba(30, 58, 138, 0.24));
+  background: rgba(30, 58, 138, 0.1);
 }
 
 .raw-cli-line.message .raw-cli-gutter b {
-  background: rgba(96, 165, 250, 0.18);
   color: #bfdbfe;
 }
 
@@ -1933,23 +1936,19 @@ textarea {
 }
 
 .raw-cli-line.command .raw-cli-gutter b {
-  background: rgba(52, 211, 153, 0.15);
   color: #bbf7d0;
 }
 
 .raw-cli-line.tool .raw-cli-gutter b,
 .raw-cli-line.edit .raw-cli-gutter b {
-  background: rgba(167, 139, 250, 0.16);
   color: #ddd6fe;
 }
 
 .raw-cli-line.stderr {
-  border-color: rgba(251, 191, 36, 0.28);
-  background: linear-gradient(90deg, rgba(69, 26, 3, 0.48), rgba(120, 53, 15, 0.22));
+  background: rgba(120, 53, 15, 0.18);
 }
 
 .raw-cli-line.stderr .raw-cli-gutter b {
-  background: rgba(251, 191, 36, 0.18);
   color: #fde68a;
 }
 
@@ -1958,22 +1957,31 @@ textarea {
 }
 
 .raw-cli-line.lifecycle {
-  border-color: rgba(148, 163, 184, 0.1);
   background: rgba(15, 23, 42, 0.46);
 }
 
+.raw-cli-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #64748b;
+  font-size: 10px;
+}
+
 .raw-agent-detail {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 7px;
-  background: rgba(0, 0, 0, 0.16);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .raw-agent-detail summary {
   cursor: pointer;
   color: #93c5fd;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 820;
-  padding: 7px 8px;
+  padding: 0;
 }
 
 .raw-agent-detail.compact summary {
@@ -1984,8 +1992,8 @@ textarea {
   margin: 0;
   max-height: 360px;
   overflow: auto;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.28);
   color: #dbeafe;
   font-size: 11px;
   line-height: 1.45;
@@ -1995,16 +2003,16 @@ textarea {
 }
 
 .raw-agent-index {
-  margin-top: 4px;
+  margin: 8px;
 }
 
 .raw-agent-index-list {
   display: grid;
-  gap: 8px;
+  gap: 0;
   max-height: 360px;
   overflow: auto;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 8px;
+  padding: 0;
 }
 
 .agent-chat-message.live-codex {

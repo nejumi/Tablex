@@ -10057,7 +10057,6 @@ def latest_agent_session_activity_focus(
     accepted_chat_sources = {
         "main_codex_session_chat_update",
         "main_agent_session_attention",
-        "main_agent_session_experiment_registration",
         "main_agent_session_notebook_update",
         "main_agent_session_research_registration",
         "native_marimo_open_failure",
@@ -10112,6 +10111,26 @@ def latest_agent_session_activity_focus(
                     {"summary": compact_activity_summary(normalized_message, limit=limit), **target},
                 )
             )
+
+    session = db.get(AgentSession, session_id)
+    latest_codex_message = latest_codex_message_observation_for_session(db, session=session, limit=limit) if session else None
+    if latest_codex_message is not None:
+        created_at = datetime_from_iso_or_none(latest_codex_message.get("created_at"))
+        candidates.append(
+            (
+                created_at or utc_datetime_or_none(getattr(session, "updated_at", None)) or utc_now(),
+                {
+                    "summary": compact_activity_summary(str(latest_codex_message.get("content") or ""), limit=limit),
+                    "target_tab": "Home",
+                    "target_anchor": "agent-workspace",
+                    "artifact_id": None,
+                    "artifact_ids": [],
+                    "source": latest_codex_message.get("source"),
+                    "event_index": latest_codex_message.get("event_index"),
+                    "line_number": latest_codex_message.get("line_number"),
+                },
+            )
+        )
 
     current_work = latest_research_plan_current_work(db, project_id=project_id) if include_current_work else None
     current_work_payload = research_plan_current_work_payload(current_work)
@@ -10212,29 +10231,7 @@ def latest_agent_session_activity_focus(
         ).all()
     )
     for event in experiment_result_events:
-        payload = loads_json(event.payload_json, {})
-        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
-        registered_run_ids = [
-            item for item in result.get("registered_run_ids", []) if isinstance(item, str) and item.strip()
-        ] if isinstance(result.get("registered_run_ids"), list) else []
         if event.event_type == "experiment_result_request_succeeded":
-            if japanese:
-                summary = f"モデル評価結果をLeaderboardに登録しました。{len(registered_run_ids)}件のrunを比較できます。"
-            else:
-                summary = f"Experiment results were registered on the Leaderboard. {len(registered_run_ids)} run(s) are comparable."
-            candidates.append(
-                (
-                    utc_datetime_or_none(event.created_at) or event.created_at,
-                    {
-                        "summary": compact_activity_summary(summary, limit=limit),
-                        "target_tab": "Leaderboard",
-                        "target_anchor": "result-readout",
-                        "artifact_id": None,
-                        "artifact_ids": [],
-                        "run_ids": registered_run_ids,
-                    },
-                )
-            )
             continue
         if japanese:
             summary = "モデル評価結果はまだLeaderboardに反映していません。表示中の順位表はそのまま保持し、分析は続いています。"

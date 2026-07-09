@@ -419,15 +419,18 @@ def request_context_for_auto_registered_notebooks(
         except OSError:
             pass
         return 0
-    write_notebook_context_request_to_workspace_inbox(workspace, notebook_artifacts=pending)
     digest_source = "|".join(sorted(artifact.id for artifact in pending))
     digest = hashlib.sha1(digest_source.encode("utf-8")).hexdigest()[:12]
+    attention_key = f"notebook_context_registration_needed:{session.id}:{digest}"
+    if agent_session_attention_chat_turn_exists(db, project=project, session=session, attention_key=attention_key):
+        return len(pending)
+    write_notebook_context_request_to_workspace_inbox(workspace, notebook_artifacts=pending)
     register_agent_session_attention_chat_turn(
         db,
         store=store,
         project=project,
         session=session,
-        attention_key=f"notebook_context_registration_needed:{session.id}:{digest}",
+        attention_key=attention_key,
         status="needs_attention",
         message_kind="notebook_context_registration_needed",
         details={
@@ -478,17 +481,20 @@ def request_quality_repair_for_session_notebooks(
         except OSError:
             pass
         return 0
-    write_notebook_quality_repair_to_workspace_inbox(workspace, notebook_artifacts=pending)
     digest_source = "|".join(
         f"{artifact.id}:{notebook_quality_feedback_from_metadata(artifact).get('status')}" for artifact in pending
     )
     digest = hashlib.sha1(digest_source.encode("utf-8")).hexdigest()[:12]
+    attention_key = f"notebook_quality_repair_needed:{session.id}:{digest}"
+    if agent_session_attention_chat_turn_exists(db, project=project, session=session, attention_key=attention_key):
+        return len(pending)
+    write_notebook_quality_repair_to_workspace_inbox(workspace, notebook_artifacts=pending)
     register_agent_session_attention_chat_turn(
         db,
         store=store,
         project=project,
         session=session,
-        attention_key=f"notebook_quality_repair_needed:{session.id}:{digest}",
+        attention_key=attention_key,
         status="needs_attention",
         message_kind="notebook_quality_repair_needed",
         details={
@@ -958,11 +964,6 @@ def register_agent_session_notebook_chat_turn(
         next_focus_label = "ノートブック" if japanese else "Notebook"
     context_links = notebook_artifact_context_links_from_metadata(db, project=project, notebook_artifact=notebook_artifact)
     notebook_quality = notebook_quality_feedback_from_metadata(notebook_artifact)
-    if status == "quality_needs_attention" and session.workspace_path:
-        write_notebook_quality_repair_to_workspace_inbox(
-            Path(session.workspace_path),
-            notebook_artifacts=[notebook_artifact],
-        )
     linked_plan_node_id = linked_plan_node_id or notebook_artifact_research_plan_node_id(db, notebook_artifact=notebook_artifact)
     visible_surfaces = notebook_registration_visible_surfaces(
         notebook_artifact=notebook_artifact,

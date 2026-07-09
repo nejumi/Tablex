@@ -3503,7 +3503,7 @@ def test_agent_activity_uses_research_plan_current_work_ack_node_id(
     assert worker["target_anchor"] == "research-plan"
 
 
-def test_agent_activity_surfaces_experiment_result_success_event(
+def test_agent_activity_does_not_repromote_experiment_result_success_event(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -3552,14 +3552,32 @@ def test_agent_activity_surfaces_experiment_result_success_event(
             },
             update_heartbeat=False,
         )
+        append_session_event(
+            db,
+            session,
+            source="codex_cli",
+            event_type="item.completed",
+            role="assistant",
+            title="Codex message",
+            content="I am now checking the repaired prediction pipeline fixtures.",
+            payload={
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": "I am now checking the repaired prediction pipeline fixtures.",
+                },
+            },
+            update_heartbeat=False,
+        )
         db.commit()
 
     activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
     assert activity_response.status_code == 200
     worker = activity_response.json()["workers"][0]
-    assert "Experiment results were registered on the Leaderboard. 2 run(s) are comparable." in worker["detail"]
-    assert worker["target_tab"] == "Leaderboard"
-    assert worker["target_anchor"] == "result-readout"
+    assert "checking the repaired prediction pipeline fixtures" in worker["detail"]
+    assert "Experiment results were registered" not in worker["detail"]
+    assert worker["target_tab"] == "Home"
+    assert worker["target_anchor"] == "agent-workspace"
 
 
 def test_agent_activity_surfaces_experiment_result_failure_event(
@@ -7074,8 +7092,8 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
     assert activity["turn_state"]["raw_transcript"]["stderr_line_count"] == 0
     assert activity["turn_state"]["raw_transcript"]["updated_at"]
     assert main_worker["raw_transcript"]["stdout_line_count"] == activity["turn_state"]["raw_transcript"]["stdout_line_count"]
-    assert "データ理解の根拠" in main_worker["detail"]
-    assert "データ理解の根拠" in main_worker["human_description"]["summary"]
+    assert "I am continuing the main autonomous session." in main_worker["detail"]
+    assert "I am continuing the main autonomous session." in main_worker["human_description"]["summary"]
 
 
 def test_agent_chat_appends_user_instruction_to_active_main_session(

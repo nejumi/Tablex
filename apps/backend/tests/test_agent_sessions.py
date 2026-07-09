@@ -62,6 +62,10 @@ from tabular_harness.services.agent_session_results import (
     register_experiment_result_failure_chat_turn,
     restore_registered_session_experiment_visibility,
 )
+from tabular_harness.services.agent_session_chat import (
+    request_context_for_auto_registered_notebooks,
+    request_quality_repair_for_session_notebooks,
+)
 from tabular_harness.services.agent_sessions import (
     CODEX_RAW_TRANSCRIPT_FILENAME,
     CODEX_STDERR_LOG_FILENAME,
@@ -11331,6 +11335,59 @@ def test_auto_registered_notebook_without_request_asks_codex_for_context_registr
         assert attention_payload["actions"][0]["target_tab"] == "Notebooks"
         assert attention_payload["actions"][0]["target_anchor"] == "notebook-native-marimo-top"
         assert notebook_artifact.id in attention_payload["response_brief"]["details"]["notebook_artifact_ids"]
+
+        initial_inbox_entries = list_inbox_entries(workspace)
+        assert len([entry for entry in initial_inbox_entries if entry["type"] == "notebook_context_request"]) == 1
+        assert len([entry for entry in initial_inbox_entries if entry["type"] == "notebook_quality_repair"]) == 1
+
+        request_context_for_auto_registered_notebooks(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            workspace=workspace,
+        )
+        request_quality_repair_for_session_notebooks(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            workspace=workspace,
+        )
+        db.commit()
+
+        repeated_inbox_entries = list_inbox_entries(workspace)
+        assert len([entry for entry in repeated_inbox_entries if entry["type"] == "notebook_context_request"]) == 1
+        assert len([entry for entry in repeated_inbox_entries if entry["type"] == "notebook_quality_repair"]) == 1
+
+        repeated_attention_payloads = [
+            loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
+            for artifact in db.scalars(
+                select(Artifact)
+                .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+                .order_by(Artifact.created_at.desc())
+            ).all()
+        ]
+        assert (
+            len(
+                [
+                    payload
+                    for payload in repeated_attention_payloads
+                    if payload.get("intent", {}).get("message_kind") == "notebook_context_registration_needed"
+                ]
+            )
+            == 1
+        )
+        assert (
+            len(
+                [
+                    payload
+                    for payload in repeated_attention_payloads
+                    if payload.get("intent", {}).get("message_kind") == "notebook_quality_repair_needed"
+                ]
+            )
+            == 1
+        )
 
 
 def test_notebook_request_context_registration_does_not_emit_missing_context_attention(tmp_path: Path) -> None:

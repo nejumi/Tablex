@@ -2479,7 +2479,7 @@ function ProjectDetail({
       const [data, sessionData, rawTranscriptData, researchPlanTimelineData, projectData] = await Promise.all([
         apiOrFallback<AgentActivityResponse | null>(`/api/projects/${project.id}/agent-activity`, null, 7000),
         apiOrFallback<AgentSession | null>(`/api/projects/${project.id}/agent-session/current`, null, 3000),
-        apiOrFallback<AgentRawTranscript | null>(`/api/projects/${project.id}/agent-session/raw-transcript?limit=8`, null, 3000),
+        apiOrFallback<AgentRawTranscript | null>(`/api/projects/${project.id}/agent-session/raw-transcript?limit=120`, null, 3000),
         apiOrFallback<ResearchPlanTimelineResponse | null>(
           `/api/projects/${project.id}/research-plan/timeline?locale=${encodeURIComponent(displayLocale)}`,
           null,
