@@ -2714,6 +2714,7 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
     if requirements_path.exists():
         from tabular_harness.services.agent_requests.pipelines import (
             ensure_prediction_pipeline_smoke_python,
+            prediction_pipeline_predict_command,
             prediction_pipeline_requirements_hash,
             validate_pipeline_requirements_file,
         )
@@ -2722,14 +2723,17 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
         runtime_python = str(ensure_prediction_pipeline_smoke_python(requirements_path))
         runtime_isolated = True
         requirements_hash = prediction_pipeline_requirements_hash(requirements_path)
-    command = [runtime_python, str(predict_path)]
-    if input_dir is not None:
-        command.extend(["--input-dir", str(input_dir)])
-    elif input_path is not None:
-        command.extend(["--input", str(input_path)])
-    command.extend(["--output", str(output_path)])
-    if history_path is not None:
-        command.extend(["--history", str(history_path)])
+    else:
+        from tabular_harness.services.agent_requests.pipelines import prediction_pipeline_predict_command
+
+    command = prediction_pipeline_predict_command(
+        python_executable=runtime_python,
+        predict_path=predict_path,
+        input_dir=input_dir,
+        input_path=input_path,
+        output_path=output_path,
+        history_path=history_path,
+    )
     completed = subprocess.run(
         command,
         cwd=str(extract_dir),

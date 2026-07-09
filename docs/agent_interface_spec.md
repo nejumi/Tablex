@@ -88,6 +88,8 @@ Prediction starts from a registered model or pipeline, not from a separate AutoM
 - Prediction inputs are not evaluation datasets by default. They are operational inputs for test prediction, benchmark submission, or pilot validation, and should be recorded with their own batch kind and lineage.
 - Tablex may validate file formats, declared columns, forbidden columns, declared tables, row counts, command exit status, and artifact lineage. It must not infer why a prediction failed from stderr text. Failures should be shown as factual runtime state and returned to the continuing main Codex session for repair.
 - If Full Auto is ON, user-triggered prediction failures, new pilot outcomes, and operational observations should wake the same main session when it is completed or waiting. Power OFF remains authoritative and must not be bypassed.
+- The durable operational context is the pipeline version lineage, evaluation contract reference, input contract, prediction/outcome batch ledger, and Codex-authored decision record. A leaderboard run alone is not enough to describe operations.
+- Version changes, repair versions, challenger runs, promotion, rollback, and production handoff should be recorded as lineage and human-approved state transitions. Tablex should not silently replace a user's operational model.
 - Production serving is not the core Tablex boundary. Tablex may support batch scoring, pilot validation, approved promotion or rollback records, and exportable pipeline bundles, but production handoff should remain explicit and human-approved.
 
 ## Pilot Phase

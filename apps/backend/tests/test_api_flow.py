@@ -3962,6 +3962,34 @@ def test_prediction_input_columns_reads_csv_and_parquet_headers(tmp_path: Path) 
     assert routes_module.prediction_input_columns(parquet_path) == ["x", "row_id"]
 
 
+def test_prediction_input_parquet_fixed_profile_reports_rows_dtypes_and_key_checks(tmp_path: Path) -> None:
+    import duckdb
+
+    parquet_path = tmp_path / "prediction_input.parquet"
+    with duckdb.connect(database=":memory:") as connection:
+        connection.execute(
+            """
+            COPY (
+                SELECT 1::INT AS x, 'A' AS row_id
+                UNION ALL SELECT 2::INT AS x, 'A' AS row_id
+                UNION ALL SELECT 3::INT AS x, NULL AS row_id
+            ) TO ? (FORMAT PARQUET)
+            """,
+            [str(parquet_path)],
+        )
+
+    profile = routes_module.prediction_input_fixed_profile(parquet_path, key_columns=["row_id"])
+
+    assert profile["row_count"] == 3
+    assert {item["name"] for item in profile["dtype_checks"]} == {"x", "row_id"}
+    key_check = profile["key_checks"][0]
+    assert key_check["columns"] == ["row_id"]
+    assert key_check["complete_row_count"] == 2
+    assert key_check["null_row_count"] == 1
+    assert key_check["duplicate_row_count"] == 1
+    assert key_check["distinct_key_count"] == 1
+
+
 def test_prediction_input_failure_wakes_completed_session_but_not_stopped(
     tmp_path: Path,
     monkeypatch: Any,

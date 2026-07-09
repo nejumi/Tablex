@@ -9164,8 +9164,10 @@ def prediction_join_keys_for_table(contract: dict[str, Any], table_name: str) ->
 
 
 def prediction_input_fixed_profile(input_path: Path, *, key_columns: list[str]) -> dict[str, Any]:
+    if input_path.suffix.lower() == ".parquet":
+        return prediction_input_parquet_fixed_profile(input_path, key_columns=key_columns)
     if input_path.suffix.lower() != ".csv":
-        return {"row_count": None, "key_checks": [], "dtype_checks": "not_available"}
+        return {"row_count": None, "key_checks": [], "dtype_checks": []}
     try:
         with input_path.open("r", encoding="utf-8-sig", newline="") as handle:
             reader = csv.DictReader(handle)
@@ -9213,6 +9215,79 @@ def prediction_input_fixed_profile(input_path: Path, *, key_columns: list[str]) 
             for column in columns
         ],
     }
+
+
+def prediction_input_parquet_fixed_profile(input_path: Path, *, key_columns: list[str]) -> dict[str, Any]:
+    try:
+        import duckdb
+
+        with duckdb.connect(database=":memory:") as connection:
+            cursor = connection.execute("SELECT * FROM read_parquet(?) LIMIT 0", [str(input_path)])
+            columns = [str(item[0]) for item in cursor.description or []]
+            dtype_checks = [
+                {"name": str(item[0]), "observed_dtype": str(item[1])}
+                for item in cursor.description or []
+            ]
+            row_count = int(
+                connection.execute("SELECT COUNT(*) FROM read_parquet(?)", [str(input_path)]).fetchone()[0]
+            )
+            usable_key_columns = [column for column in key_columns if column in columns]
+            key_checks = []
+            if usable_key_columns:
+                null_condition = " OR ".join(
+                    f"{duckdb_quote_identifier(column)} IS NULL" for column in usable_key_columns
+                )
+                key_select = ", ".join(duckdb_quote_identifier(column) for column in usable_key_columns)
+                null_rows = int(
+                    connection.execute(
+                        f"SELECT COUNT(*) FROM read_parquet(?) WHERE {null_condition}",
+                        [str(input_path)],
+                    ).fetchone()[0]
+                )
+                complete_rows = row_count - null_rows
+                duplicate_rows = int(
+                    connection.execute(
+                        f"""
+                        WITH grouped AS (
+                            SELECT {key_select}, COUNT(*) AS row_count
+                            FROM read_parquet(?)
+                            WHERE NOT ({null_condition})
+                            GROUP BY {key_select}
+                        )
+                        SELECT COALESCE(SUM(row_count - 1), 0) FROM grouped WHERE row_count > 1
+                        """,
+                        [str(input_path)],
+                    ).fetchone()[0]
+                )
+                distinct_keys = int(
+                    connection.execute(
+                        f"""
+                        SELECT COUNT(*) FROM (
+                            SELECT {key_select}
+                            FROM read_parquet(?)
+                            WHERE NOT ({null_condition})
+                            GROUP BY {key_select}
+                        )
+                        """,
+                        [str(input_path)],
+                    ).fetchone()[0]
+                )
+                key_checks.append(
+                    {
+                        "columns": usable_key_columns,
+                        "complete_row_count": complete_rows,
+                        "null_row_count": null_rows,
+                        "duplicate_row_count": duplicate_rows,
+                        "distinct_key_count": distinct_keys,
+                    }
+                )
+            return {"row_count": row_count, "key_checks": key_checks, "dtype_checks": dtype_checks}
+    except Exception:
+        return {"row_count": None, "key_checks": [], "dtype_checks": []}
+
+
+def duckdb_quote_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
 
 
 def prediction_sample_dtype(values: list[str]) -> str:

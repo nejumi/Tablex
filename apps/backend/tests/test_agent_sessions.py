@@ -6295,6 +6295,55 @@ def test_pipeline_smoke_rejects_required_tables_without_selftest(tmp_path: Path)
         raise AssertionError("required_tables smoke validation should require selftest/input files")
 
 
+def test_pipeline_smoke_fails_when_predict_requires_columns_missing_from_manifest_selftest(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "underdeclared_pipeline"
+    pipeline_dir.mkdir()
+    (pipeline_dir / "predict.py").write_text(
+        "import argparse, csv\n"
+        "parser = argparse.ArgumentParser()\n"
+        "parser.add_argument('--input', required=True)\n"
+        "parser.add_argument('--output', required=True)\n"
+        "args = parser.parse_args()\n"
+        "with open(args.input, encoding='utf-8', newline='') as src:\n"
+        "    row = next(csv.DictReader(src))\n"
+        "    _ = row['EMERGENCYSTATE_MODE']\n"
+        "with open(args.output, 'w', encoding='utf-8', newline='') as dst:\n"
+        "    dst.write('prediction\\n0.5\\n')\n",
+        encoding="utf-8",
+    )
+    (pipeline_dir / "requirements.txt").write_text("\n", encoding="utf-8")
+    selftest_dir = pipeline_dir / "selftest"
+    selftest_dir.mkdir()
+    (selftest_dir / "input.csv").write_text("SK_ID_CURR\n1\n", encoding="utf-8")
+    manifest = {
+        "schema_version": "pipeline_manifest.v1",
+        "input_contract": {
+            "inference_format": {"columns": [{"name": "SK_ID_CURR", "dtype": "string"}]},
+        },
+        "output_contract": {
+            "columns": [{"name": "prediction", "dtype": "float"}],
+            "prediction_column": "prediction",
+        },
+        "training": {},
+        "expected_metrics": [],
+        "runtime": {"timeout_seconds_predict": 120},
+    }
+    normalized, _warnings = pipeline_requests_module.normalize_pipeline_manifest(manifest)
+
+    try:
+        pipeline_requests_module.smoke_validate_prediction_pipeline(
+            pipeline_dir,
+            workspace=None,
+            manifest=normalized,
+            request_id="underdeclared",
+        )
+    except pipeline_requests_module.PipelineToolValidationError as exc:
+        assert exc.issues[0]["pointer"] == "pipeline.predict"
+        assert "EMERGENCYSTATE_MODE" in exc.issues[0]["stderr_tail"]
+    else:
+        raise AssertionError("smoke validation should execute predict.py and catch undeclared required columns")
+
+
 def test_pipeline_request_accepts_top_level_codex_aliases(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
@@ -7282,6 +7331,8 @@ def test_prediction_pipeline_runtime_failure_is_summarized_and_returned_to_codex
 
         assert output["job_status"] == "failed"
         assert str(output["error_message"]) == "Prediction pipeline failed while running predict.py (exit code 1)."
+        assert "EMERGENCYSTATE_MODE" not in str(output["error_message"])
+        assert "前処理" not in str(output["error_message"])
         assert "stderr_tail" in output
         assert "EMERGENCYSTATE_MODE" in str(output["stderr_tail"])
         feedback = output["codex_feedback"]
@@ -7296,10 +7347,13 @@ def test_prediction_pipeline_runtime_failure_is_summarized_and_returned_to_codex
         assert event is not None
         payload = loads_json(event.payload_json, {})
         assert payload["exit_code"] == 1
+        assert payload["error_summary"] == "Prediction pipeline failed while running predict.py (exit code 1)."
+        assert "EMERGENCYSTATE_MODE" not in payload["error_summary"]
         assert "EMERGENCYSTATE_MODE" in payload["stderr_tail"]
         inbox_entries = list_inbox_entries(workspace)
         runtime_failure_entries = [entry for entry in inbox_entries if entry.get("type") == "prediction_pipeline_runtime_failed"]
         assert len(runtime_failure_entries) == 1
+        assert "Tablex has not inferred the root cause" in runtime_failure_entries[0]["content"]
 
         duplicate_job = Job(
             id="job_predict_failure_duplicate",

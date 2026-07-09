@@ -43,6 +43,30 @@ class PipelineToolValidationError(ValueError):
         self.issues = issues
 
 
+def prediction_pipeline_predict_command(
+    *,
+    python_executable: str,
+    predict_path: Path,
+    output_path: Path,
+    input_path: Path | None = None,
+    input_dir: Path | None = None,
+    history_path: Path | None = None,
+) -> list[str]:
+    if input_dir is not None and input_path is not None:
+        raise ValueError("prediction pipeline command accepts either input_path or input_dir, not both")
+    if input_dir is None and input_path is None:
+        raise ValueError("prediction pipeline command requires input_path or input_dir")
+    command = [python_executable, str(predict_path)]
+    if input_dir is not None:
+        command.extend(["--input-dir", str(input_dir)])
+    else:
+        command.extend(["--input", str(input_path)])
+    command.extend(["--output", str(output_path)])
+    if history_path is not None:
+        command.extend(["--history", str(history_path)])
+    return command
+
+
 def pipeline_tool_issue(pointer: str, message: str, **extra: Any) -> dict[str, Any]:
     issue = {"pointer": pointer, "message": message}
     issue.update({key: value for key, value in extra.items() if value is not None})
@@ -831,14 +855,13 @@ def smoke_validate_prediction_pipeline(
     smoke_python = ensure_prediction_pipeline_smoke_python(requirements_path)
     try:
         completed = subprocess.run(
-            [
-                str(smoke_python),
-                str(workspace_dir / "predict.py"),
-                input_arg_name,
-                str(input_arg_path),
-                "--output",
-                str(output_path),
-            ],
+            prediction_pipeline_predict_command(
+                python_executable=str(smoke_python),
+                predict_path=workspace_dir / "predict.py",
+                input_dir=input_arg_path if input_arg_name == "--input-dir" else None,
+                input_path=input_arg_path if input_arg_name == "--input" else None,
+                output_path=output_path,
+            ),
             cwd=str(workspace_dir),
             capture_output=True,
             text=True,
