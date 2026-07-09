@@ -2290,7 +2290,9 @@ def update_experiment_registration_chat_payload(
             path.write_bytes(encoded)
             chat_artifact.content_hash = hashlib.sha256(encoded).hexdigest()
             chat_artifact.size_bytes = len(encoded)
-            chat_artifact.created_at = utc_now()
+            # Keep the original chat chronology stable. Rescans may enrich links
+            # on the existing notice, but they must not make an old leaderboard
+            # result appear as a fresh chat message.
             metadata = loads_json(chat_artifact.metadata_json, {})
             metadata["agent_session_id"] = session.id
             metadata["visible_state_fingerprint"] = visible_state_fingerprint

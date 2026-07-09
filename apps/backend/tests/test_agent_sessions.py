@@ -4598,6 +4598,7 @@ def test_experiment_registration_chat_dedupes_when_visible_links_change(tmp_path
             source_request_id="register_runs_first",
         )
         assert first_notice is not None
+        first_notice_created_at = first_notice.created_at
 
         source_artifact = store_text_artifact(
             db,
@@ -4625,6 +4626,7 @@ def test_experiment_registration_chat_dedupes_when_visible_links_change(tmp_path
         db.commit()
 
         assert second_notice is None
+        assert first_notice.created_at.replace(tzinfo=None) == first_notice_created_at.replace(tzinfo=None)
         experiment_chat_count = db.scalar(
             select(func.count())
             .select_from(Artifact)
@@ -4652,6 +4654,7 @@ def test_experiment_registration_chat_dedupes_when_visible_links_change(tmp_path
         db.commit()
 
         assert third_notice is None
+        assert first_notice.created_at.replace(tzinfo=None) == first_notice_created_at.replace(tzinfo=None)
         experiment_chat_count_after_resume = db.scalar(
             select(func.count())
             .select_from(Artifact)

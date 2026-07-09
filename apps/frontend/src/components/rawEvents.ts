@@ -30,7 +30,7 @@ export function buildRawAgentEvents(
 ): RawAgentEvent[] {
   const sessionEvents = buildRawSessionEvents(transcriptEvents, agentSession);
   if (sessionEvents.length) {
-    return dedupeRawAgentEvents([...sessionEvents, ...buildRawJobHarnessEvents(jobs)])
+    return dedupeRawAgentEvents(sessionEvents)
       .sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime())
       .slice(-500);
   }
@@ -113,7 +113,8 @@ export function buildRawAgentEvents(
 }
 
 function buildRawSessionEvents(events: AgentTranscriptEvent[], agentSession: AgentSession | null): RawAgentEvent[] {
-  return events.map((event) => {
+  const mainEvents = events.filter(isMainSessionTranscriptEvent);
+  return mainEvents.map((event) => {
     const payload = event.payload ?? {};
     const active = agentSessionHasObservedCodexProcess(agentSession);
     const isCodex = event.source === "codex_cli" || event.source === "codex_cli_stderr";
@@ -123,12 +124,12 @@ function buildRawSessionEvents(events: AgentTranscriptEvent[], agentSession: Age
       source: isCodex ? "Codex" : event.source === "user" ? "User" : "Tablex",
       level: event.event_type,
       title: event.title ?? humanizeLabel(event.event_type),
-      active: active && isCodex && event.event_index === events[events.length - 1]?.event_index,
+      active: active && isCodex && event.event_index === mainEvents[mainEvents.length - 1]?.event_index,
       body: event.content,
       details: [
         ...(event.source === "codex_cli" ? [{ label: "Raw Codex JSONL event", value: payload }] : []),
         ...(event.source === "codex_cli_stderr" ? [{ label: "Codex stderr line", value: payload }] : []),
-        ...(!isCodex ? [{ label: "Tablex event detail", value: payload }] : []),
+        ...(event.source === "user" ? [{ label: "User instruction", value: payload }] : []),
         ...(agentSession && event.event_index === 0 ? [{ label: "Session detail", value: agentSession }] : [])
       ],
       payload: {
@@ -141,8 +142,8 @@ function buildRawSessionEvents(events: AgentTranscriptEvent[], agentSession: Age
   });
 }
 
-function buildRawJobHarnessEvents(jobs: Job[]): RawAgentEvent[] {
-  return buildRawJobEvents(jobs).filter((event) => event.source !== "Codex" && event.source !== "Codex runner");
+function isMainSessionTranscriptEvent(event: AgentTranscriptEvent): boolean {
+  return event.source === "codex_cli" || event.source === "codex_cli_stderr" || event.source === "user";
 }
 
 function buildRawJobEvents(jobs: Job[]): RawAgentEvent[] {
