@@ -1554,11 +1554,13 @@ def attention_chat_message(message_kind: str, *, details: dict[str, Any], japane
         if japanese:
             return (
                 "現在のデータで進められる分析、評価、モデリング、診断は完了しました。"
-                "次に進むには、テストデータ、運用サンプル、または追加の目的指定が必要です。"
+                "次に進むには、人間の追加指示または追加データが必要です。"
+                "例: テストデータで推論する、評価分割や指標を見直す、アンサンブルや高度な特徴量エンジニアリングを追加する、運用サンプルや実測値で仮運用評価を始める。"
             )
         return (
             "The available analysis, evaluation, modeling, and diagnostics are complete for the current data. "
-            "To continue, add test data, an operational scoring sample, or new objective guidance."
+            "To continue, provide a new instruction or additional data. Examples: run prediction on test data, "
+            "revise the evaluation split or metric, add ensembles or deeper feature engineering, or start pilot validation with operational samples and outcomes."
         )
     if message_kind == "runner_unavailable":
         if japanese:
