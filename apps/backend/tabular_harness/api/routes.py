@@ -8328,6 +8328,40 @@ def upload_prediction_input(
     }
 
 
+@router.post("/api/projects/{project_id}/prediction-inputs/{artifact_id}/validate")
+def validate_prediction_input_artifact(
+    project_id: str,
+    artifact_id: str,
+    payload: dict[str, Any],
+    db: Annotated[Session, Depends(get_session)],
+) -> dict[str, Any]:
+    project = require_project(db, project_id)
+    artifact = db.get(Artifact, artifact_id)
+    if artifact is None or artifact.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Prediction input artifact not found")
+    if artifact.asset_type != "prediction_input":
+        raise HTTPException(status_code=400, detail="Artifact is not a prediction input")
+    try:
+        input_path = artifact_primary_path(artifact)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    pipeline_artifact_id = payload.get("pipeline_artifact_id")
+    table_name = payload.get("table_name")
+    validation_report = prediction_input_validation_report(
+        db,
+        project=project,
+        input_path=input_path,
+        pipeline_artifact_id=pipeline_artifact_id if isinstance(pipeline_artifact_id, str) else None,
+        table_name=table_name if isinstance(table_name, str) and table_name.strip() else "prediction_input",
+    )
+    return {
+        "schema_version": "prediction_input_validation.v1",
+        "artifact": artifact_to_dict(artifact),
+        "artifact_id": artifact.id,
+        "validation_report": validation_report,
+    }
+
+
 @router.post("/api/projects/{project_id}/pilot-deployments")
 def create_pilot_deployment_endpoint(
     project_id: str,

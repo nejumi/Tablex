@@ -49,6 +49,13 @@ type PredictionInputUploadResponse = {
   validation_report: PredictionInputValidationReport;
 };
 
+type PredictionInputValidationResponse = {
+  schema_version: "prediction_input_validation.v1";
+  artifact_id: string;
+  artifact: Artifact;
+  validation_report: PredictionInputValidationReport;
+};
+
 type UploadedPredictionInput = {
   artifactId: string;
   filename: string;
@@ -534,6 +541,30 @@ export function LeaderboardTab({
     }));
   }
 
+  async function reusePredictionInput(entry: LeaderboardEntry, artifact: Artifact, tableName: string | null) {
+    if (!entry.pipeline_artifact_id) return;
+    const inputKey = tableName ?? SINGLE_PREDICTION_INPUT_KEY;
+    const validation = await api<PredictionInputValidationResponse>(
+      `/api/projects/${project.id}/prediction-inputs/${artifact.id}/validate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pipeline_artifact_id: entry.pipeline_artifact_id,
+          table_name: tableName ?? "prediction_input"
+        })
+      }
+    );
+    setPredictionUploadedInputs((current) => ({
+      ...current,
+      [inputKey]: {
+        artifactId: artifact.id,
+        filename: predictionInputArtifactLabel(artifact),
+        validationReport: validation.validation_report
+      }
+    }));
+  }
+
   async function uploadPredictionInputFromFileList(entry: LeaderboardEntry, files: FileList | null, tableName: string | null) {
     const file = files?.[0];
     if (!file) return;
@@ -745,6 +776,7 @@ export function LeaderboardTab({
     const unexpected = validation?.unexpected_columns ?? [];
     const forbidden = validation?.forbidden_columns_present ?? [];
     const firstKeyCheck = validation?.key_checks?.[0] ?? null;
+    const reusableInputs = reusablePredictionInputArtifacts(artifacts, tableName);
     return (
       <div
         className={`prediction-input-dropzone ${predictionDragKey === inputKey ? "dragging" : ""}`}
@@ -777,6 +809,26 @@ export function LeaderboardTab({
             }}
           />
         </label>
+        {reusableInputs.length ? (
+          <label className="prediction-reuse-select">
+            <span>{text.predictionRecentInputs}</span>
+            <select
+              defaultValue=""
+              onChange={(event) => {
+                const selected = reusableInputs.find((item) => item.id === event.target.value);
+                if (selected) void runAction(() => reusePredictionInput(entry, selected, tableName));
+                event.currentTarget.value = "";
+              }}
+            >
+              <option value="">{text.predictionReuseInput}</option>
+              {reusableInputs.map((artifact) => (
+                <option key={artifact.id} value={artifact.id}>
+                  {predictionInputArtifactLabel(artifact)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         {uploaded ? (
           <div className="prediction-input-validation">
             <span className={validation?.status === "failed" ? "badge warning" : "badge success"}>
@@ -1468,6 +1520,24 @@ function pipelineSmokeValidationLabel(entry: LeaderboardEntry, text: LocaleMessa
       .replace("{rows}", String(smoke.input_rows));
   }
   return source;
+}
+
+function reusablePredictionInputArtifacts(artifacts: Artifact[], tableName: string | null) {
+  const normalizedTable = tableName?.trim() || null;
+  return artifacts
+    .filter((artifact) => {
+      if (artifact.asset_type !== "prediction_input") return false;
+      if (!normalizedTable) return true;
+      const artifactTableName = typeof artifact.metadata.table_name === "string" ? artifact.metadata.table_name : "";
+      return artifactTableName === normalizedTable;
+    })
+    .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+    .slice(0, 8);
+}
+
+function predictionInputArtifactLabel(artifact: Artifact) {
+  const sourceFilename = typeof artifact.metadata.source_filename === "string" ? artifact.metadata.source_filename : "";
+  return sourceFilename || artifact.name || artifact.id;
 }
 
 function modelDiagnosticsChecksLabel(entry: LeaderboardEntry) {

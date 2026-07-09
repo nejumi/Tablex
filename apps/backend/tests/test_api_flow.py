@@ -4106,6 +4106,15 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
     assert prediction_upload["validation_report"]["key_checks"][0]["columns"] == ["row_id"]
     assert prediction_upload["validation_report"]["key_checks"][0]["null_row_count"] == 0
     assert prediction_upload["validation_report"]["key_checks"][0]["duplicate_row_count"] == 0
+    reuse_validation_response = client.post(
+        f"/api/projects/{project_id}/prediction-inputs/{prediction_upload['artifact_id']}/validate",
+        json={"pipeline_artifact_id": pipeline_bundle.id, "table_name": "application"},
+    )
+    assert reuse_validation_response.status_code == 200, reuse_validation_response.text
+    reuse_validation = reuse_validation_response.json()
+    assert reuse_validation["artifact_id"] == prediction_upload["artifact_id"]
+    assert reuse_validation["validation_report"]["status"] == "passed"
+    assert reuse_validation["validation_report"]["forbidden_columns_present"] == ["TARGET"]
     missing_upload_response = client.post(
         f"/api/projects/{project_id}/prediction-inputs",
         data={"pipeline_artifact_id": pipeline_bundle.id, "table_name": "application", "batch_kind": "external_test"},
