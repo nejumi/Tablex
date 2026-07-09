@@ -4064,6 +4064,57 @@ def run_planned_agent_task_codex_handler(db: Session, job: Job, store: LocalArti
     return output
 
 
+def start_autonomous_loop_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    payload = loads_json(job.input_json, {})
+    project_id = job.project_id
+    if project_id is None:
+        raise ValueError("start_autonomous_loop requires a project_id")
+    project = db.get(Project, project_id)
+    if project is None:
+        raise ValueError("Project not found")
+    locale = payload.get("locale") if isinstance(payload.get("locale"), str) else None
+    if project.current_phase != "AUTONOMOUS_LOOP" or project.autonomy_mode != "full_auto":
+        return {
+            "schema_version": "autonomous_loop_start.v1",
+            "status": "stopped",
+            "reason": "Full Auto is no longer active for this project.",
+            "worker_events": [
+                autonomous_session_worker_event(
+                    job,
+                    project,
+                    status="succeeded",
+                    headline="Autonomous session is off",
+                )
+            ],
+        }
+    runner_mode = str(payload.get("runner_mode") or RUNNER_MODE_CODEX_IF_AVAILABLE)
+    output = run_autonomous_loop_tick(
+        db,
+        store=store,
+        project=project,
+        job=job,
+        runner_mode=runner_mode,
+        autonomy_mode="full_auto",
+        locale=locale,
+        agent_model=payload.get("agent_model") if isinstance(payload.get("agent_model"), str) else None,
+        utility_model=payload.get("utility_model") if isinstance(payload.get("utility_model"), str) else None,
+    )
+    next_job = queue_autonomous_session_continuation(
+        db,
+        project=project,
+        reason="start_after_data_intake_completed",
+        parent_job_id=job.id,
+        exclude_job_id=job.id,
+        runner_mode=runner_mode,
+        locale=locale,
+        run_after_seconds=15,
+    )
+    if next_job is not None:
+        output["session_continuation_job_id"] = next_job.id
+    output["schema_version"] = "autonomous_loop_start.v1"
+    return output
+
+
 def continue_autonomous_session_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
     payload = loads_json(job.input_json, {})
     project_id = job.project_id
@@ -4265,6 +4316,7 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["review_agent_task_readiness"] = review_agent_task_readiness_handler
     handlers["run_planned_agent_task_stub"] = run_planned_agent_task_stub_handler
     handlers["run_planned_agent_task_codex"] = run_planned_agent_task_codex_handler
+    handlers["start_autonomous_loop"] = start_autonomous_loop_handler
     handlers["continue_autonomous_session"] = continue_autonomous_session_handler
     handlers["agent_chat_turn"] = agent_chat_turn_handler
     return handlers

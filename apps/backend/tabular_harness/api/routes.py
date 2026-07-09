@@ -355,6 +355,7 @@ LEGACY_NOTEBOOK_ANCHORS = {"notebook-preview-top"}
 NOTEBOOK_NAVIGATION_ANCHORS = {*LEGACY_NOTEBOOK_ANCHORS, NOTEBOOK_NATIVE_MARIMO_ANCHOR}
 STATIC_NOTEBOOK_HTML_ASSET_TYPES = {"notebook_html", "notebook_execution_html", "notebook_evidence_html"}
 MAIN_SESSION_CHAT_WAITING_STATUS = "waiting_for_agent"
+DATA_INTAKE_JOB_TYPES = {"upload_data_bundle", "select_primary_table", "import_benchmark_dataset"}
 POWER_STOP_PRESERVED_JOB_TYPES = {"upload_data_bundle", "select_primary_table"}
 AUTONOMY_STOP_PROCESS_TERM_GRACE_SECONDS = 2.0
 
@@ -453,6 +454,20 @@ def raise_metadata_db_busy(exc: OperationalError) -> None:
             ),
         ) from exc
     raise exc
+
+
+def active_data_intake_job_ids(db: Session, project_id: str) -> list[str]:
+    return list(
+        db.scalars(
+            select(Job.id)
+            .where(
+                Job.project_id == project_id,
+                Job.job_type.in_(DATA_INTAKE_JOB_TYPES),
+                ~Job.status.in_(TERMINAL_STATUSES),
+            )
+            .order_by(Job.created_at)
+        ).all()
+    )
 
 
 def auth_status_payload(request: Request, db: Session, user: User | None) -> dict[str, Any]:
@@ -953,71 +968,75 @@ def update_project(
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
-    data = payload.model_dump(exclude_unset=True)
-    previous_autonomy_mode = project.autonomy_mode
-    previous_phase = project.current_phase
-    locale = data.pop("locale", None)
-    for key, value in data.items():
-        if key == "autonomy_mode" and value is None:
-            continue
-        setattr(project, key, value)
-    if "target_column" in data:
-        record_user_confirmed_task_spec_for_project_edit(
-            db,
-            store=store,
-            project=project,
-            target_column=project.target_column,
-            table_ref=project.primary_dataset_snapshot_id,
-        )
-        record_harness_objective_in_research_plan(
-            db,
-            project_id=project.id,
-            objective_label=project.target_column,
-        )
-    stopped_session = None
-    if (
-        previous_autonomy_mode == "full_auto"
-        and project.autonomy_mode == "approval_based"
-        and previous_phase == "AUTONOMOUS_LOOP"
-    ):
-        stopped_session = stop_main_session(db, project)
-    project.updated_at = utc_now()
-    session = None
-    should_touch_main_agent_session = project.current_phase == "AUTONOMOUS_LOOP" or previous_phase == "AUTONOMOUS_LOOP"
-    if should_touch_main_agent_session:
-        session = ensure_project_full_auto_agent_session(
-            db,
-            store=store,
-            project=project,
-            created_by=request_actor_id(request),
-        )
-        if session is not None and request.app.state.settings.api_agent_session_supervisor_enabled:
-            start_main_agent_session_supervisor_thread(
-                request.app.state.session_factory,
-                store,
-                project_id=project_id,
-                session_id=session.id,
-                supervisor_runner=run_main_agent_session_supervisor,
-                turn_timeout_seconds=request.app.state.settings.agent_idle_timeout_seconds,
-                turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
+    try:
+        project = require_project(db, project_id)
+        data = payload.model_dump(exclude_unset=True)
+        previous_autonomy_mode = project.autonomy_mode
+        previous_phase = project.current_phase
+        locale = data.pop("locale", None)
+        for key, value in data.items():
+            if key == "autonomy_mode" and value is None:
+                continue
+            setattr(project, key, value)
+        if "target_column" in data:
+            record_user_confirmed_task_spec_for_project_edit(
+                db,
+                store=store,
+                project=project,
+                target_column=project.target_column,
+                table_ref=project.primary_dataset_snapshot_id,
             )
-    if (
-        "autonomy_mode" in data
-        and project.autonomy_mode in {"approval_based", "full_auto"}
-        and project.autonomy_mode != previous_autonomy_mode
-    ):
-        record_autonomy_mode_change_chat_turn(
-            db,
-            store,
-            project=project,
-            previous_mode=previous_autonomy_mode,
-            next_mode=project.autonomy_mode,
-            locale=locale if isinstance(locale, str) else None,
-            stopped_session_id=stopped_session.id if stopped_session is not None else None,
-        )
-    db.flush()
-    return project_to_dict(project)
+            record_harness_objective_in_research_plan(
+                db,
+                project_id=project.id,
+                objective_label=project.target_column,
+            )
+        stopped_session = None
+        if (
+            previous_autonomy_mode == "full_auto"
+            and project.autonomy_mode == "approval_based"
+            and previous_phase == "AUTONOMOUS_LOOP"
+        ):
+            stopped_session = stop_main_session(db, project)
+        project.updated_at = utc_now()
+        session = None
+        should_touch_main_agent_session = project.current_phase == "AUTONOMOUS_LOOP" or previous_phase == "AUTONOMOUS_LOOP"
+        if should_touch_main_agent_session:
+            session = ensure_project_full_auto_agent_session(
+                db,
+                store=store,
+                project=project,
+                created_by=request_actor_id(request),
+            )
+            if session is not None and request.app.state.settings.api_agent_session_supervisor_enabled:
+                start_main_agent_session_supervisor_thread(
+                    request.app.state.session_factory,
+                    store,
+                    project_id=project_id,
+                    session_id=session.id,
+                    supervisor_runner=run_main_agent_session_supervisor,
+                    turn_timeout_seconds=request.app.state.settings.agent_idle_timeout_seconds,
+                    turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
+                )
+        if (
+            "autonomy_mode" in data
+            and project.autonomy_mode in {"approval_based", "full_auto"}
+            and project.autonomy_mode != previous_autonomy_mode
+        ):
+            record_autonomy_mode_change_chat_turn(
+                db,
+                store,
+                project=project,
+                previous_mode=previous_autonomy_mode,
+                next_mode=project.autonomy_mode,
+                locale=locale if isinstance(locale, str) else None,
+                stopped_session_id=stopped_session.id if stopped_session is not None else None,
+            )
+        db.flush()
+        return project_to_dict(project)
+    except OperationalError as exc:
+        db.rollback()
+        raise_metadata_db_busy(exc)
 
 
 @router.delete("/api/projects/{project_id}")
@@ -1186,31 +1205,61 @@ def record_autonomy_mode_change_chat_turn(
     )
 
 
-def queued_autonomy_start_output(project: Project, job: Job, *, locale: str | None) -> dict[str, Any]:
+def queued_autonomy_start_output(
+    project: Project,
+    job: Job,
+    *,
+    locale: str | None,
+    waiting_for_job_ids: list[str] | None = None,
+) -> dict[str, Any]:
     japanese = locale_is_japanese(locale)
-    assistant_message = (
-        "Full Autoを起動しました。データ理解、評価設計、実験準備をバックグラウンドで進めます。"
-        "進行はAgent ActivityとこのWorkspaceに表示します。"
-        if japanese
-        else "Full Auto is starting. Data understanding, evaluation design, and experiment preparation will continue in the background. Progress will appear in Agent Activity and this workspace."
-    )
+    waiting_for_job_ids = waiting_for_job_ids or []
+    if waiting_for_job_ids:
+        assistant_message = (
+            "Full Autoを受け付けました。データ取り込みが完了したら、自動でデータ理解から開始します。"
+            if japanese
+            else "Full Auto was accepted. It will start from data understanding after data intake finishes."
+        )
+        status = "waiting_for_data_intake"
+        headline = "データ取り込み後にFull Autoを開始" if japanese else "Full Auto will start after data intake"
+        detail = (
+            "データ取り込みの完了を待っています。完了後に自動で開始します。"
+            if japanese
+            else "Waiting for data intake to finish, then Full Auto will start automatically."
+        )
+    else:
+        assistant_message = (
+            "Full Autoを起動しました。データ理解、評価設計、実験準備をバックグラウンドで進めます。"
+            "進行はAgent ActivityとこのWorkspaceに表示します。"
+            if japanese
+            else "Full Auto is starting. Data understanding, evaluation design, and experiment preparation will continue in the background. Progress will appear in Agent Activity and this workspace."
+        )
+        status = "queued"
+        headline = "Full Autoを開始中" if japanese else "Full Auto is starting"
+        detail = (
+            "開始要求を受け付けました。進行はこのWorkspaceに表示します。"
+            if japanese
+            else "Start request accepted. Progress will appear in this workspace."
+        )
     return {
         "schema_version": "autonomous_loop_start_queued.v1",
         "project_id": project.id,
-        "status": "queued",
+        "status": status,
         "assistant_message": assistant_message,
         "created_job_ids": [job.id],
+        "waiting_for_job_ids": waiting_for_job_ids,
         "worker_events": [
             {
                 "worker_id": "full-auto-loop",
                 "display_name": "Full Auto Agent",
-                "status": "queued",
-                "headline": "Full Auto is starting",
-                "detail": "The local backend accepted the Agent loop and will run it outside the Start request.",
+                "status": "waiting" if waiting_for_job_ids else "queued",
+                "headline": headline,
+                "detail": detail,
                 "job_id": job.id,
                 "project_id": project.id,
                 "target_tab": "Home",
                 "target_anchor": "agent-workspace",
+                "dependency_job_ids": waiting_for_job_ids,
                 "created_at": job.created_at.isoformat(),
                 "updated_at": utc_now().isoformat(),
                 "active": True,
@@ -1581,9 +1630,60 @@ def start_project_autonomy(
     try:
         project = require_project(db, project_id)
         if payload.autonomy_mode == "full_auto":
+            runner_mode = "codex_cli_if_available" if payload.runner_mode == "harness_only" else payload.runner_mode
             project.autonomy_mode = "full_auto"
             project.current_phase = "AUTONOMOUS_LOOP"
             project.updated_at = utc_now()
+            waiting_for_job_ids = active_data_intake_job_ids(db, project_id)
+            if waiting_for_job_ids:
+                job = create_job(
+                    db,
+                    job_type="start_autonomous_loop",
+                    project_id=project_id,
+                    input_payload={
+                        "runner_mode": runner_mode,
+                        "requested_runner_mode": payload.runner_mode,
+                        "autonomy_mode": payload.autonomy_mode,
+                        "locale": payload.locale,
+                        "agent_model": payload.agent_model,
+                        "utility_model": payload.utility_model,
+                        "waiting_for_job_ids": waiting_for_job_ids,
+                    },
+                    policy={
+                        "secret_access": "forbidden",
+                        "connector_credentials": "not_materialized",
+                        "production_write": "forbidden",
+                        "runner_mode": runner_mode,
+                        "requested_runner_mode": payload.runner_mode,
+                        "autonomy_mode": payload.autonomy_mode,
+                        "deferred_until_data_intake_complete": True,
+                    },
+                    dependency_job_ids=waiting_for_job_ids,
+                    priority=80,
+                    created_by=request_actor_id(request),
+                )
+                output = queued_autonomy_start_output(
+                    project,
+                    job,
+                    locale=payload.locale,
+                    waiting_for_job_ids=waiting_for_job_ids,
+                )
+                assistant_message = str(output["assistant_message"])
+                job.output_json = dumps_json(output)
+                artifact = record_autonomy_control_chat_turn(
+                    db,
+                    store,
+                    project=project,
+                    job=job,
+                    user_message="Agent loopを開始" if locale_is_japanese(payload.locale) else "Start agent loop",
+                    assistant_message=assistant_message,
+                    output=output,
+                    locale=payload.locale,
+                )
+                output["agent_chat_turn_artifact_id"] = artifact.id
+                job.output_json = dumps_json(output)
+                db.commit()
+                return job_to_dict(job)
             session = start_or_resume_main_session(
                 db,
                 store=store,
@@ -1598,9 +1698,7 @@ def start_project_autonomy(
                 job_type="start_autonomous_loop",
                 project_id=project_id,
                 input_payload={
-                    "runner_mode": "codex_cli_if_available"
-                    if payload.runner_mode == "harness_only"
-                    else payload.runner_mode,
+                    "runner_mode": runner_mode,
                     "requested_runner_mode": payload.runner_mode,
                     "autonomy_mode": payload.autonomy_mode,
                     "locale": payload.locale,
@@ -1612,9 +1710,7 @@ def start_project_autonomy(
                     "secret_access": "forbidden",
                     "connector_credentials": "not_materialized",
                     "production_write": "forbidden",
-                    "runner_mode": "codex_cli_if_available"
-                    if payload.runner_mode == "harness_only"
-                    else payload.runner_mode,
+                    "runner_mode": runner_mode,
                     "requested_runner_mode": payload.runner_mode,
                     "autonomy_mode": payload.autonomy_mode,
                     "control_record_only": True,

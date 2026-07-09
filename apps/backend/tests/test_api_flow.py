@@ -2189,6 +2189,66 @@ def test_full_auto_start_creates_main_agent_session_without_dataset_even_with_le
     assert "session_resumed_after_power_on" in transcript_event_types
 
 
+def test_full_auto_start_during_data_upload_is_preserved_until_intake_finishes(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Autonomous upload race"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    upload_response = client.post(
+        f"/api/projects/{project_id}/datasets/upload-bundle",
+        files=[("files", ("train.csv", b"id,target\n1,0\n2,1\n", "text/csv"))],
+        data={"primary_filename": "train.csv", "target_column": "target", "locale": "ja-JP"},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+    upload_job = upload_response.json()
+    assert upload_job["status"] == "queued"
+
+    start_response = client.post(
+        f"/api/projects/{project_id}/autonomy/start",
+        json={"runner_mode": "harness_only", "locale": "ja-JP"},
+    )
+    assert start_response.status_code == 200, start_response.text
+    start_job = start_response.json()
+    assert start_job["job_type"] == "start_autonomous_loop"
+    assert start_job["status"] == "queued"
+    assert start_job["dependency_job_ids"] == [upload_job["id"]]
+    assert start_job["output"]["status"] == "waiting_for_data_intake"
+    assert "データ取り込みが完了したら" in start_job["output"]["assistant_message"]
+
+    project_after_start = client.get(f"/api/projects/{project_id}").json()
+    assert project_after_start["autonomy_mode"] == "full_auto"
+    assert project_after_start["current_phase"] == "AUTONOMOUS_LOOP"
+
+    def fake_autonomous_tick(db: Any, **kwargs: Any) -> dict[str, Any]:
+        del db
+        project = kwargs["project"]
+        project.autonomy_mode = "full_auto"
+        project.current_phase = "AUTONOMOUS_LOOP"
+        return {
+            "schema_version": "fake_autonomous_tick.v1",
+            "assistant_message": "Full Auto started after upload.",
+            "worker_events": [],
+        }
+
+    monkeypatch.setattr("tabular_harness.worker.jobs.run_autonomous_loop_tick", fake_autonomous_tick)
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        worker = create_default_worker(store=app.state.artifact_store)
+        completed_upload = worker.run_next_job(db, project_id=project_id)
+        assert completed_upload is not None
+        assert completed_upload.id == upload_job["id"]
+        assert completed_upload.status == "succeeded", completed_upload.error_message
+        completed_start = worker.run_next_job(db, project_id=project_id)
+        assert completed_start is not None
+        assert completed_start.id == start_job["id"]
+        assert completed_start.status == "succeeded", completed_start.error_message
+        assert loads_json(completed_start.output_json, {})["schema_version"] == "autonomous_loop_start.v1"
+
+
 def test_autonomy_stop_cancels_project_work_without_old_job_type_allowlist(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 

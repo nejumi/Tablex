@@ -744,6 +744,28 @@ function apiErrorMessage(body: string, fallback: string): string {
   return body;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isMetadataBusyError(err: unknown): boolean {
+  return err instanceof Error && err.message.toLowerCase().includes("metadata database is busy");
+}
+
+async function apiWithMetadataBusyRetry<T>(path: string, init?: RequestInit): Promise<T> {
+  let latestError: unknown = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      return await api<T>(path, init);
+    } catch (err) {
+      latestError = err;
+      if (!isMetadataBusyError(err) || attempt === 3) break;
+      await sleep(250 * (attempt + 1));
+    }
+  }
+  throw latestError instanceof Error ? latestError : new Error(String(latestError));
+}
+
 function avatarGenerationProgress(elapsedSeconds: number, text: LocaleMessages) {
   const percent = Math.min(92, 12 + Math.floor(elapsedSeconds * 0.7));
   let label = text.userAvatarProgressPreparing;
@@ -2920,7 +2942,7 @@ function ProjectDetail({
       }
     ]);
     try {
-      await api<Project>(`/api/projects/${project.id}`, {
+      await apiWithMetadataBusyRetry<Project>(`/api/projects/${project.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ autonomy_mode: nextMode, locale: displayLocale })
@@ -2956,7 +2978,7 @@ function ProjectDetail({
       }
     ]);
     try {
-      const job = await api<Job>(`/api/projects/${project.id}/autonomy/${poweredOn ? "stop" : "start"}`, {
+      const job = await apiWithMetadataBusyRetry<Job>(`/api/projects/${project.id}/autonomy/${poweredOn ? "stop" : "start"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: poweredOn
