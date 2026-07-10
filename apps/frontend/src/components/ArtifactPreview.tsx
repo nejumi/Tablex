@@ -493,13 +493,37 @@ export function NativeMarimoFrame({
   const [recoverAttempt, setRecoverAttempt] = React.useState(0);
   const [expanded, setExpanded] = React.useState(false);
   const [frameLoaded, setFrameLoaded] = React.useState(false);
+  const [frameSettled, setFrameSettled] = React.useState(false);
   const [expandedFrameLoaded, setExpandedFrameLoaded] = React.useState(false);
+  const [expandedFrameSettled, setExpandedFrameSettled] = React.useState(false);
+  const settleTimersRef = React.useRef<number[]>([]);
   const url = sessionStatus.proxy_url.startsWith("/api/") ? `${apiBase}${sessionStatus.proxy_url}` : sessionStatus.proxy_url;
   const runtimeError = sessionStatus.runtime?.has_error ? sessionStatus.runtime.error_excerpt : null;
   const nativeStatus = sessionStatus.status;
   const sessionStarting = nativeStatus === "starting";
   const sessionFailed = nativeStatus === "failed";
   const showFrame = nativeStatus === "running" && !sessionUnavailable && !sessionFailed && !recovering;
+  const frameReady = frameLoaded && frameSettled;
+  const expandedFrameReady = expandedFrameLoaded && expandedFrameSettled;
+  const clearSettleTimers = React.useCallback(() => {
+    settleTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    settleTimersRef.current = [];
+  }, []);
+  const markFrameLoaded = React.useCallback((expandedFrame = false) => {
+    if (expandedFrame) {
+      setExpandedFrameLoaded(true);
+    } else {
+      setFrameLoaded(true);
+    }
+    const timer = window.setTimeout(() => {
+      if (expandedFrame) {
+        setExpandedFrameSettled(true);
+      } else {
+        setFrameSettled(true);
+      }
+    }, 700);
+    settleTimersRef.current.push(timer);
+  }, []);
   const restartSession = React.useCallback(async () => {
     if (!onRestart) return;
     setRecovering(true);
@@ -511,17 +535,28 @@ export function NativeMarimoFrame({
     }
   }, [onRestart, session.artifact_id]);
   React.useEffect(() => {
+    clearSettleTimers();
     setSessionStatus(session);
     setSessionUnavailable(false);
     setRecovering(false);
     setRecoverAttempt(0);
     setFrameLoaded(false);
+    setFrameSettled(false);
     setExpandedFrameLoaded(false);
-  }, [session]);
+    setExpandedFrameSettled(false);
+  }, [clearSettleTimers, session]);
   React.useEffect(() => {
+    clearSettleTimers();
     setFrameLoaded(false);
+    setFrameSettled(false);
     setExpandedFrameLoaded(false);
-  }, [url]);
+    setExpandedFrameSettled(false);
+  }, [clearSettleTimers, url]);
+  React.useEffect(() => {
+    return () => {
+      clearSettleTimers();
+    };
+  }, [clearSettleTimers]);
   React.useEffect(() => {
     let stopped = false;
     async function refreshSessionStatus() {
@@ -599,17 +634,20 @@ export function NativeMarimoFrame({
           <span>{text.notebookNativeMarimoUnavailable}</span>
         </div>
       ) : null}
-      {sessionStarting && !runtimeError && !recovering ? <NativeMarimoLoadingPanel /> : null}
-      {!expanded && showFrame && !frameLoaded ? <NativeMarimoLoadingPanel /> : null}
       {!expanded && showFrame ? (
-        <iframe
-          key={url}
-          className={`native-marimo-frame${frameLoaded ? "" : " loading"}`}
-          src={url}
-          title={text.notebookNativeMarimoTitle}
-          sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-modals"
-          onLoad={() => setFrameLoaded(true)}
-        />
+        <div className="native-marimo-frame-shell">
+          {!frameReady && !runtimeError ? <NativeMarimoLoadingPanel /> : null}
+          <iframe
+            key={url}
+            className={`native-marimo-frame${frameReady ? "" : " loading"}`}
+            src={url}
+            title={text.notebookNativeMarimoTitle}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-modals"
+            onLoad={() => markFrameLoaded(false)}
+          />
+        </div>
+      ) : sessionStarting && !runtimeError && !recovering ? (
+        <NativeMarimoLoadingPanel />
       ) : null}
       {expanded ? (
         <div className="native-marimo-expanded" role="dialog" aria-modal="true" aria-label={text.notebookNativeMarimoTitle}>
@@ -649,20 +687,20 @@ export function NativeMarimoFrame({
               <strong>{text.notebookNativeMarimoError}</strong>
               <span>{text.notebookNativeMarimoUnavailable}</span>
             </div>
-          ) : sessionStarting && !runtimeError ? (
-            <NativeMarimoLoadingPanel expanded />
           ) : showFrame ? (
-            <>
-              {!expandedFrameLoaded ? <NativeMarimoLoadingPanel expanded /> : null}
+            <div className="native-marimo-expanded-frame-shell">
+              {!expandedFrameReady && !runtimeError ? <NativeMarimoLoadingPanel expanded /> : null}
               <iframe
                 key={url}
-                className={`native-marimo-expanded-frame${expandedFrameLoaded ? "" : " loading"}`}
+                className={`native-marimo-expanded-frame${expandedFrameReady ? "" : " loading"}`}
                 src={url}
                 title={text.notebookNativeMarimoTitle}
                 sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-modals"
-                onLoad={() => setExpandedFrameLoaded(true)}
+                onLoad={() => markFrameLoaded(true)}
               />
-            </>
+            </div>
+          ) : sessionStarting && !runtimeError ? (
+            <NativeMarimoLoadingPanel expanded />
           ) : null}
         </div>
       ) : null}

@@ -5513,22 +5513,31 @@ td {
   align-items: center;
 }
 
-.native-marimo-frame {
-  display: block;
+.native-marimo-frame-shell {
+  position: relative;
   width: 100%;
   height: max(780px, calc(100vh - 150px));
   min-height: 780px;
+  overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
   border-radius: 8px;
   background: #fff;
+}
+
+.native-marimo-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  border: 0;
+  background: #fff;
   color-scheme: light;
+  opacity: 1;
+  transition: opacity 180ms ease;
 }
 
 .native-marimo-frame.loading {
-  height: 1px;
-  min-height: 1px;
-  border: 0;
-  opacity: 0;
+  opacity: 0.01;
   pointer-events: none;
 }
 
@@ -5547,6 +5556,17 @@ td {
     var(--surface);
   padding: 22px;
   color: var(--text);
+}
+
+.native-marimo-frame-shell > .native-marimo-loading-panel,
+.native-marimo-expanded-frame-shell > .native-marimo-loading-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 .native-marimo-loading-panel.expanded {
@@ -5673,6 +5693,13 @@ td {
   padding: 10px 12px;
 }
 
+.native-marimo-expanded-frame-shell {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
 .native-marimo-expanded-frame {
   display: block;
   width: 100%;
@@ -5680,11 +5707,12 @@ td {
   border: 0;
   background: #fff;
   color-scheme: light;
+  opacity: 1;
+  transition: opacity 180ms ease;
 }
 
 .native-marimo-expanded-frame.loading {
-  height: 1px;
-  opacity: 0;
+  opacity: 0.01;
   pointer-events: none;
 }
 
