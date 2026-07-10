@@ -1142,6 +1142,10 @@ export function App() {
   const hydratedUserIdRef = React.useRef<string | null>(null);
   const moreTabsRef = React.useRef<HTMLDivElement | null>(null);
   const deletedProjectIdsRef = React.useRef<Set<string>>(new Set());
+  const authRefreshPromiseRef = React.useRef<Promise<void> | null>(null);
+  const projectRefreshPromiseRef = React.useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const projectRefreshSeqRef = React.useRef(0);
+  const visibleProjectRefreshSeqRef = React.useRef(0);
   const localePacks = React.useMemo(() => mergeLocalePacks(dynamicLocalePacks), [dynamicLocalePacks]);
   const activeLocale = resolveLocalePack(userSettings.locale, localePacks);
   const text = copyForLocale(activeLocale.locale, localePacks);
@@ -1191,55 +1195,81 @@ export function App() {
   }, []);
 
   const refreshAuth = React.useCallback(async () => {
-    setAuthLoading(true);
-    setAuthError(null);
-    try {
-      const status = await api<AuthStatus>("/api/auth/status");
-      setAuthStatus(status);
-      if (status.user?.id && hydratedUserIdRef.current !== status.user.id) {
-        hydratedUserIdRef.current = status.user.id;
-        setUserSettings((current) => mergeServerUserSettings(current, status.user?.settings ?? {}));
-      }
-      if (!status.authenticated) {
-        hydratedUserIdRef.current = null;
-      }
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setAuthLoading(false);
+    if (authRefreshPromiseRef.current) {
+      return authRefreshPromiseRef.current;
     }
+    const promise = (async () => {
+      setAuthLoading(true);
+      setAuthError(null);
+      try {
+        const status = await api<AuthStatus>("/api/auth/status");
+        setAuthStatus(status);
+        if (status.user?.id && hydratedUserIdRef.current !== status.user.id) {
+          hydratedUserIdRef.current = status.user.id;
+          setUserSettings((current) => mergeServerUserSettings(current, status.user?.settings ?? {}));
+        }
+        if (!status.authenticated) {
+          hydratedUserIdRef.current = null;
+        }
+      } catch (err) {
+        setAuthError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setAuthLoading(false);
+        authRefreshPromiseRef.current = null;
+      }
+    })();
+    authRefreshPromiseRef.current = promise;
+    return promise;
   }, []);
 
   const refreshProjects = React.useCallback(async (preferredProjectId?: string | null, options?: { silent?: boolean }) => {
-    if (!options?.silent) {
-      setLoading(true);
+    const refreshKey = `${preferredProjectId === undefined ? "__current__" : preferredProjectId ?? "__none__"}:${options?.silent ? "silent" : "visible"}`;
+    if (projectRefreshPromiseRef.current?.key === refreshKey) {
+      return projectRefreshPromiseRef.current.promise;
     }
-    setError(null);
-    try {
-      const [data, portalData] = await Promise.all([
-        api<Project[]>("/api/projects"),
-        api<PortalOverview>("/api/portal/overview").catch(() => null)
-      ]);
-      const visibleProjects = filterDeletedProjects(data, deletedProjectIdsRef.current);
-      const visiblePortalData = filterDeletedProjectsFromPortalOverview(portalData, deletedProjectIdsRef.current);
-      setProjects(visibleProjects);
-      setPortalOverview(visiblePortalData);
-      setPortalIdeas(visiblePortalData?.ideas ?? []);
-      if (preferredProjectId) {
-        setSelectedProjectId(preferredProjectId);
-      } else if (preferredProjectId === null) {
-        setSelectedProjectId(null);
-      } else if (!selectedProjectId && visibleProjects[0]) {
-        setSelectedProjectId(visibleProjects[0].id);
+    const refreshSeq = ++projectRefreshSeqRef.current;
+    const showLoading = !options?.silent;
+    const visibleRefreshSeq = showLoading ? ++visibleProjectRefreshSeqRef.current : null;
+    const promise = (async () => {
+      if (showLoading) {
+        setLoading(true);
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (!options?.silent) {
-        setLoading(false);
+      setError(null);
+      try {
+        const [data, portalData] = await Promise.all([
+          api<Project[]>("/api/projects"),
+          api<PortalOverview>("/api/portal/overview").catch(() => null)
+        ]);
+        if (projectRefreshSeqRef.current !== refreshSeq) return;
+        const visibleProjects = filterDeletedProjects(data, deletedProjectIdsRef.current);
+        const visiblePortalData = filterDeletedProjectsFromPortalOverview(portalData, deletedProjectIdsRef.current);
+        setProjects(visibleProjects);
+        setPortalOverview(visiblePortalData);
+        setPortalIdeas(visiblePortalData?.ideas ?? []);
+        setSelectedProjectId((currentProjectId) => {
+          if (preferredProjectId !== undefined) return preferredProjectId;
+          if (!currentProjectId && visibleProjects[0]) return visibleProjects[0].id;
+          if (currentProjectId && !visibleProjects.some((project) => project.id === currentProjectId)) {
+            return visibleProjects[0]?.id ?? null;
+          }
+          return currentProjectId;
+        });
+      } catch (err) {
+        if (projectRefreshSeqRef.current === refreshSeq) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (showLoading && visibleProjectRefreshSeqRef.current === visibleRefreshSeq) {
+          setLoading(false);
+        }
+        if (projectRefreshPromiseRef.current?.key === refreshKey) {
+          projectRefreshPromiseRef.current = null;
+        }
       }
-    }
-  }, [selectedProjectId]);
+    })();
+    projectRefreshPromiseRef.current = { key: refreshKey, promise };
+    return promise;
+  }, []);
 
   React.useEffect(() => {
     void refreshAuth();
