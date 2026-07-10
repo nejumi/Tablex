@@ -5782,6 +5782,29 @@ td {
   min-width: 0;
 }
 
+.native-marimo-stage {
+  position: relative;
+  min-width: 0;
+}
+
+.native-marimo-stage-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  overflow: hidden;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.native-marimo-stage-overlay > .native-marimo-loading-panel {
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 8px;
+}
+
 .native-marimo-toolbar {
   display: flex;
   justify-content: space-between;
@@ -5798,6 +5821,10 @@ td {
   border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
   border-radius: 8px;
   background: #fff;
+}
+
+.native-marimo-placeholder-shell {
+  display: grid;
 }
 
 .native-marimo-frame {

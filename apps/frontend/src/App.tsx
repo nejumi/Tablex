@@ -9840,13 +9840,22 @@ function NotebooksTab({
             <span>{nativeMarimoError}</span>
           </div>
         ) : null}
-        {nativeMarimoLoadingId ? (
-          <NativeMarimoLoadingPanel />
-        ) : nativeMarimoSession ? (
-          <NativeMarimoFrame session={nativeMarimoSession} onRestart={restartNativeMarimoArtifact} />
-        ) : (
-          <EmptyInline text={text.notebookNativeMarimoEmpty} />
-        )}
+        <div className={`native-marimo-stage${nativeMarimoLoadingId ? " loading" : ""}`}>
+          {nativeMarimoSession ? (
+            <NativeMarimoFrame session={nativeMarimoSession} onRestart={restartNativeMarimoArtifact} />
+          ) : nativeMarimoLoadingId ? (
+            <div className="native-marimo-frame-shell native-marimo-placeholder-shell">
+              <NativeMarimoLoadingPanel />
+            </div>
+          ) : (
+            <EmptyInline text={text.notebookNativeMarimoEmpty} />
+          )}
+          {nativeMarimoSession && nativeMarimoLoadingId ? (
+            <div className="native-marimo-stage-overlay">
+              <NativeMarimoLoadingPanel />
+            </div>
+          ) : null}
+        </div>
       </section>
       <Panel id="analysis-story" title={text.notebookAnalysisStoryTitle} icon={<BarChart3 size={18} />}>
         {story || reviewNotebook ? (
