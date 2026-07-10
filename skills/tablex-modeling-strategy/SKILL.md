@@ -12,6 +12,7 @@ Use this skill when a Tablex project moves from data understanding into evaluati
 Codex chooses the modeling path from project evidence. This skill provides craft knowledge and tradeoffs; it must not be treated as a checklist, model-family gate, or fixed execution order.
 
 - Start from the task, row/entity/time semantics, EvaluationSpec, SplitManifest, leakage review, and prediction-time availability.
+- When repeated entity or entity-item histories exist, read `skills/tablex-onodera-deep-dive/SKILL.md` before finalizing feature families.
 - Keep simple sanity floors visible. Do not mistake a sanity floor for the final modeling strategy when the evidence supports richer features.
 - Compare models only under the same evaluation contract. If the evaluation contract is missing or provisional, make that explicit before optimizing.
 - Register important runs, diagnostics, notebooks, reports, and prediction pipelines as artifacts. Do not leave modeling results only in terminal output.

@@ -19,11 +19,12 @@ Treat Codex as the analyst. Treat Tablex as the harness that provides context, r
 
 1. Read `AGENTS.md`, `.harness/task_contract.json` if present, and the relevant Tablex context artifacts: DatasetSnapshot, profile, SemanticCatalog, RelationalCatalog, Assumptions, Questions, EvaluationSpec, SplitManifest, prior reports, prior notebooks, and current Ideas/Findings.
 2. Read `skills/tablex-notebook-quality/SKILL.md` when authoring or revising a notebook.
-3. Read `references/grandmaster_eda_patterns.md` when planning exploration depth, multi-table analysis, leakage/drift checks, entity trajectory review, or hypothesis extraction.
-4. Read `references/tablex_marimo_outputs.md` before writing marimo notebooks or notebook-adjacent JSON artifacts.
-5. Execute exploratory analysis in the controlled workspace. Prefer DuckDB, Polars, pandas, Plotly, matplotlib, scikit-learn, and project-approved libraries already available in the environment.
-6. Turn discoveries into Tablex assets: findings, ideas, assumptions, questions, evidence, native marimo notebook source, figure manifest, and next-analysis queue.
-7. Register every important output through the AgentResult contract. Do not leave insight only in terminal logs.
+3. Read `skills/tablex-onodera-deep-dive/SKILL.md` when entity IDs, item IDs, repeated histories, sessions, orders, or other trajectories are present and micro case studies could reveal feature hypotheses.
+4. Read `references/grandmaster_eda_patterns.md` when planning exploration depth, multi-table analysis, leakage/drift checks, entity trajectory review, or hypothesis extraction.
+5. Read `references/tablex_marimo_outputs.md` before writing marimo notebooks or notebook-adjacent JSON artifacts.
+6. Execute exploratory analysis in the controlled workspace. Prefer DuckDB, Polars, pandas, Plotly, matplotlib, scikit-learn, and project-approved libraries already available in the environment.
+7. Turn discoveries into Tablex assets: findings, ideas, assumptions, questions, evidence, native marimo notebook source, figure manifest, and next-analysis queue.
+8. Register every important output through the AgentResult contract. Do not leave insight only in terminal logs.
 
 ## Analysis Standard
 
@@ -70,3 +71,4 @@ If an artifact cannot be produced, say exactly what is missing and preserve usef
 
 - `references/grandmaster_eda_patterns.md`: distilled EDA moves and source-inspired principles.
 - `references/tablex_marimo_outputs.md`: expected marimo notebook structure, UI cards, and artifact schemas.
+- `../tablex-onodera-deep-dive/SKILL.md`: micro trajectory inspection for entity/user/item histories and feature hypotheses.

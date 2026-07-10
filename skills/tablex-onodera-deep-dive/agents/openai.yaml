@@ -1,0 +1,4 @@
+interface:
+  display_name: "ONODERA Deep Dive"
+  short_description: "Inspect raw trajectories and turn micro insights into features."
+  default_prompt: "Use $tablex-onodera-deep-dive to inspect representative entity trajectories, derive feature hypotheses, and validate them with macro evidence."
