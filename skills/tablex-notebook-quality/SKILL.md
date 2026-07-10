@@ -12,7 +12,7 @@ Use this skill when a Tablex task asks for a notebook, data understanding report
 Write for a human analyst first, while preserving harness-owned evaluation boundaries.
 
 - Do not treat Tablex notebook generation as a fixed template. Use the current `notebook_authoring_brief`, Data Review evidence, project artifacts, and cited public notebook-craft inspirations to decide the narrative on the fly.
-- Use public Kaggle Grandmaster-style work as craft inspiration: detailed EDA before modeling, question-driven flow, high-signal visuals, clear storytelling, strong structure, original insight, and transparent next actions. Do not copy public notebook text, code, or section order verbatim.
+- Use public Kaggle Grandmaster-style work and winner solution write-ups as craft inspiration: detailed EDA before modeling, question-driven flow, high-signal visuals, clear storytelling, strong structure, original insight, ablations, model intent, feature rationale, and transparent next actions. Do not copy public notebook text, code, or section order verbatim.
 - Start with a reader brief: what question the notebook answers and what the user should inspect first.
 - Tell a data story: row meaning, target meaning, leakage risk, time/group structure, missingness, and prediction-time availability.
 - Keep EvaluationSpec and SplitManifest visible before discussing model lift.
@@ -21,6 +21,22 @@ Write for a human analyst first, while preserving harness-owned evaluation bound
 - For human-facing Japanese labels in matplotlib or seaborn charts, import `japanize_matplotlib` in the notebook setup before drawing figures. Tablex exposes its runtime availability in `python_runtimes.tablex_backend.packages.japanize_matplotlib`; do not ship garbled labels when native Japanese text is required.
 - Every important claim should be backed by an artifact, metric, table, plot, or explicit assumption.
 - Include a next-analysis queue for Codex or a human: permutation importance, native feature importance for tree-based models, partial dependence for the most important features, SHAP inspection when the runtime/model supports it, calibration, threshold analysis, slice metrics, residual/error review, and prediction examples when relevant.
+
+## Model Notebook Standard
+
+A model notebook must stand alone. A reader should not need to inspect prior chat, raw logs, or previous notebook versions to understand what the model is.
+
+For each important model or model family, explain:
+
+- Objective and evaluation boundary: target definition, row/entity grain, metric, split, provisional/formal status, and leakage assumptions.
+- Domain hypothesis: what real-world mechanism the model is trying to capture, and which tables or fields represent that mechanism.
+- Feature design: feature families, aggregation windows, categorical/text handling, missingness handling, interaction ideas, prediction-time availability, and why each family was chosen.
+- Model design: model family, preprocessing, hyperparameters or tuning policy, seed/ensemble policy, calibration or threshold policy, and why this model is appropriate for the feature landscape.
+- Results: headline metric, fold variability, baseline deltas, ablation deltas, slice behavior, calibration/threshold evidence when relevant, and comparison against earlier candidates.
+- Interpretation: top features, permutation/native importance, PDP/ALE/SHAP when supported, representative successes/failures, suspicious signals, and whether the evidence matches the original hypothesis.
+- Operational readiness: prediction pipeline status, required input tables, forbidden target columns, expected failure modes, and next data needed for test/pilot/production evaluation.
+
+Avoid notebooks that only say "this version improved over the previous one." Version deltas are useful, but the notebook must also explain the current model from first principles.
 
 ## Quality Rubric
 

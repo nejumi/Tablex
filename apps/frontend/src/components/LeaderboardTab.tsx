@@ -1,5 +1,5 @@
 import React from "react";
-import { BarChart3, Download, FileText, ListChecks, Loader2, MessageSquare, PieChart, Play, Plus, Upload } from "lucide-react";
+import { BookOpen, Download, FileText, ListChecks, Loader2, MessageSquare, MoreHorizontal, PieChart, Play, Plus, Upload } from "lucide-react";
 import type { LocaleMessages } from "../copy";
 import { ArtifactLineagePanel } from "./ArtifactLineagePanel";
 import { RelatedNotebookLinks, notebooksForLeaderboardEntry, notebooksForLeaderboardResults } from "./NotebookLinks";
@@ -949,121 +949,139 @@ export function LeaderboardTab({
                 text.leaderboardHeaderEvidence,
                 text.leaderboardHeaderActions
               ]}
-              rows={leaderboard.map((entry) => [
-                <strong className="leaderboard-rank" key={`${entry.run_id}-rank`}>#{entry.rank}</strong>,
-                <div className="leaderboard-model-cell" key={`${entry.run_id}-model`}>
-                  <strong>{leaderboardEntryModelLabel(entry)}</strong>
-                  {entry.model_family ? <span className="badge muted">{entry.model_family.replace(/_/g, " ")}</span> : null}
-                  {leaderboardEntryDescription(entry) ? <p>{leaderboardEntryDescription(entry)}</p> : null}
-                  {leaderboardEntryFeatureSummary(entry) ? <small>{leaderboardEntryFeatureSummary(entry)}</small> : null}
-                </div>,
-                <div className="leaderboard-score-cell" key={`${entry.run_id}-score`}>
-                  <strong>{formatScore(entry.display_metric_value)}</strong>
-                  <small>{metricLabel(entry.display_metric_name)}</small>
-                </div>,
-                <div className="cell-stack" key={`${entry.run_id}-eval`}>
-                  <span className={leaderboardEvaluationGradeClass(entry)}>
-                    {leaderboardEvaluationGradeLabel(entry, text)}
-                  </span>
-                  <span>{entry.evaluation_spec_id ? text.leaderboardEvaluationReady : text.leaderboardEvaluationMissing}</span>
-                  <small>{entry.split_manifest_id ? text.leaderboardValidationReady : text.leaderboardValidationMissing}</small>
-                </div>,
-                <div className="leaderboard-evidence-badges" key={`${entry.run_id}-evidence`}>
-                  <span className={modelDiagnosticsBadgeClass(entry)}>{modelDiagnosticsStatusLabel(entry, text)}</span>
-                  <small>{modelDiagnosticsChecksLabel(entry)}</small>
-                  {entry.pipeline_artifact_id ? (
-                    <span className={pipelineRuntimeBadgeClass(entry)}>{pipelineRuntimeStatusLabel(entry, text)}</span>
-                  ) : null}
-                  {openDeliverableExpectations(entry).length ? (
-                    <span className="badge warning" title={deliverableExpectationsTitle(entry, text)}>
-                      {text.deliverableExpectationsOpen.replace(
-                        "{count}",
-                        String(openDeliverableExpectations(entry).length)
-                      )}
+              rows={leaderboard.map((entry) => {
+                const existingNotebook = notebooksForLeaderboardEntry(notebookIndex, entry)[0] ?? resultNotebooks[0] ?? null;
+                return [
+                  <strong className="leaderboard-rank" key={`${entry.run_id}-rank`}>#{entry.rank}</strong>,
+                  <div className="leaderboard-model-cell" key={`${entry.run_id}-model`}>
+                    <strong>{leaderboardEntryModelLabel(entry)}</strong>
+                    {entry.model_family ? <span className="badge muted">{entry.model_family.replace(/_/g, " ")}</span> : null}
+                    {leaderboardEntryDescription(entry) ? <p>{leaderboardEntryDescription(entry)}</p> : null}
+                    {leaderboardEntryFeatureSummary(entry) ? <small>{leaderboardEntryFeatureSummary(entry)}</small> : null}
+                  </div>,
+                  <div className="leaderboard-score-cell" key={`${entry.run_id}-score`}>
+                    <strong>{formatScore(entry.display_metric_value)}</strong>
+                    <small>{metricLabel(entry.display_metric_name)}</small>
+                  </div>,
+                  <div className="cell-stack" key={`${entry.run_id}-eval`}>
+                    <span className={leaderboardEvaluationGradeClass(entry)}>
+                      {leaderboardEvaluationGradeLabel(entry, text)}
                     </span>
-                  ) : null}
-                  <span className={decisionReady ? "badge success" : "badge warning"}>
-                    {decisionReady ? text.leaderboardEvidenceReportReady : text.leaderboardEvidenceReportMissing}
-                  </span>
-                  <RelatedOutputsDrawer
-                    compact
-                    downloadLabel={text.downloadArtifact}
-                    emptyText={text.relatedOutputsEmpty}
-                    items={relatedOutputItemsForLeaderboardEntry(entry, notebookIndex, text, onOpenNotebookArtifact, loadPreview)}
-                    title={text.relatedOutputs}
-                  />
-                </div>,
-                <div className="row-actions" key={`${entry.run_id}-actions`}>
-                  <button
-                    className="icon-button"
-                    disabled={busy}
-                    onClick={() => void runAction(() => analyzeTopRun(entry))}
-                    title={text.leaderboardActionAnalyzeDiagnostics}
-                  >
-                    {busy ? <Loader2 className="spin" size={16} /> : <ListChecks size={16} />}
-                  </button>
-                  <button
-                    className="icon-button"
-                    disabled={busy}
-                    onClick={() => void runAction(() => materializeTopRunModelEvidence(entry))}
-                    title={text.leaderboardActionMaterializeEvidence}
-                  >
-                    {busy ? <Loader2 className="spin" size={16} /> : <PieChart size={16} />}
-                  </button>
-                  <button
-                    className="icon-button"
-                    disabled={busy}
-                    onClick={() => {
-                      const existingNotebook = notebooksForLeaderboardEntry(notebookIndex, entry)[0] ?? resultNotebooks[0] ?? null;
-                      if (existingNotebook) {
-                        onOpenNotebookArtifact(existingNotebook.artifact_ids.notebook);
-                        return;
-                      }
-                      void runAction(prepareResultNotebookEvidence);
-                    }}
-                    title={text.leaderboardActionOpenNotebook}
-                  >
-                    {busy ? <Loader2 className="spin" size={16} /> : <BarChart3 size={16} />}
-                  </button>
-                  <button
-                    className="icon-button"
-                    disabled={busy}
-                    onClick={() => void runAction(() => draftTopRunReport(entry))}
-                    title={text.leaderboardActionDraftReport}
-                  >
-                    {busy ? <Loader2 className="spin" size={16} /> : <FileText size={16} />}
-                  </button>
-                  <button
-                    className="icon-button"
-                    disabled={busy || !entry.pipeline_artifact_id}
-                    onClick={() => {
-                      setPredictionEntry(entry);
-                      setPredictionResultArtifactId(null);
-                      setPredictionUploadedInputs({});
-                      setPredictionDatasetId("");
-                      setPredictionUploadError(null);
-                      setPredictionBatchKind("external_test");
-                    }}
-                    title={entry.pipeline_artifact_id ? text.leaderboardActionPredict : text.pipelineBundleUnavailable}
-                    type="button"
-                  >
-                    {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                  </button>
-                  {entry.pipeline_artifact_id ? (
-                    <a
-                      className="icon-link"
-                      href={`${apiBase}/api/experiment-runs/${entry.run_id}/pipeline-bundle`}
-                      title={text.downloadPipelineBundle}
+                    <span>{entry.evaluation_spec_id ? text.leaderboardEvaluationReady : text.leaderboardEvaluationMissing}</span>
+                    <small>{entry.split_manifest_id ? text.leaderboardValidationReady : text.leaderboardValidationMissing}</small>
+                  </div>,
+                  <div className="leaderboard-evidence-badges" key={`${entry.run_id}-evidence`}>
+                    <span className={modelDiagnosticsBadgeClass(entry)}>{modelDiagnosticsStatusLabel(entry, text)}</span>
+                    <small>{modelDiagnosticsChecksLabel(entry)}</small>
+                    {entry.pipeline_artifact_id ? (
+                      <span className={pipelineRuntimeBadgeClass(entry)}>{pipelineRuntimeStatusLabel(entry, text)}</span>
+                    ) : null}
+                    {openDeliverableExpectations(entry).length ? (
+                      <span className="badge warning" title={deliverableExpectationsTitle(entry, text)}>
+                        {text.deliverableExpectationsOpen.replace(
+                          "{count}",
+                          String(openDeliverableExpectations(entry).length)
+                        )}
+                      </span>
+                    ) : null}
+                    <span className={decisionReady ? "badge success" : "badge warning"}>
+                      {decisionReady ? text.leaderboardEvidenceReportReady : text.leaderboardEvidenceReportMissing}
+                    </span>
+                    <RelatedOutputsDrawer
+                      compact
+                      downloadLabel={text.downloadArtifact}
+                      emptyText={text.relatedOutputsEmpty}
+                      items={relatedOutputItemsForLeaderboardEntry(entry, notebookIndex, text, onOpenNotebookArtifact, loadPreview)}
+                      title={text.relatedOutputs}
+                    />
+                  </div>,
+                  <div className="leaderboard-row-actions" key={`${entry.run_id}-actions`}>
+                    <button
+                      className="leaderboard-row-primary"
+                      disabled={busy}
+                      onClick={() => {
+                        if (existingNotebook) {
+                          onOpenNotebookArtifact(existingNotebook.artifact_ids.notebook);
+                          return;
+                        }
+                        void runAction(prepareResultNotebookEvidence);
+                      }}
+                      title={text.leaderboardActionOpenNotebook}
+                      type="button"
                     >
-                      <Download size={16} />
-                    </a>
-                  ) : (
-                    <button className="icon-button" disabled title={text.pipelineBundleUnavailable} type="button">
-                      <Download size={16} />
+                      {busy ? <Loader2 className="spin" size={16} /> : <BookOpen size={16} />}
+                      <span>{text.leaderboardActionOpenNotebookShort}</span>
                     </button>
-                  )}
-                </div>
-              ])}
+                    <button
+                      className="leaderboard-row-primary"
+                      disabled={busy || !entry.pipeline_artifact_id}
+                      onClick={() => {
+                        setPredictionEntry(entry);
+                        setPredictionResultArtifactId(null);
+                        setPredictionUploadedInputs({});
+                        setPredictionDatasetId("");
+                        setPredictionUploadError(null);
+                        setPredictionBatchKind("external_test");
+                      }}
+                      title={entry.pipeline_artifact_id ? text.leaderboardActionPredict : text.pipelineBundleUnavailable}
+                      type="button"
+                    >
+                      {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                      <span>{text.leaderboardActionPredictShort}</span>
+                    </button>
+                    <details className="leaderboard-row-more">
+                      <summary>
+                        <MoreHorizontal size={16} />
+                        <span>{text.leaderboardMoreActions}</span>
+                      </summary>
+                      <div className="leaderboard-row-more-menu">
+                        <button
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() => void runAction(() => analyzeTopRun(entry))}
+                          type="button"
+                        >
+                          <ListChecks size={15} />
+                          {text.leaderboardActionAnalyzeDiagnostics}
+                        </button>
+                        <button
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() => void runAction(() => materializeTopRunModelEvidence(entry))}
+                          type="button"
+                        >
+                          <PieChart size={15} />
+                          {text.leaderboardActionMaterializeEvidence}
+                        </button>
+                        <button
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() => void runAction(() => draftTopRunReport(entry))}
+                          type="button"
+                        >
+                          <FileText size={15} />
+                          {text.leaderboardActionDraftReport}
+                        </button>
+                        {entry.pipeline_artifact_id ? (
+                          <a
+                            className="text-button"
+                            href={`${apiBase}/api/experiment-runs/${entry.run_id}/pipeline-bundle`}
+                            title={text.downloadPipelineBundle}
+                          >
+                            <Download size={15} />
+                            {text.leaderboardActionDownloadPipelineShort}
+                          </a>
+                        ) : (
+                          <button className="text-button" disabled title={text.pipelineBundleUnavailable} type="button">
+                            <Download size={15} />
+                            {text.leaderboardActionDownloadPipelineShort}
+                          </button>
+                        )}
+                      </div>
+                    </details>
+                  </div>
+                ];
+              })}
             />
           </div>
           {predictionEntry ? (

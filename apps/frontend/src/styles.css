@@ -4667,7 +4667,7 @@ td {
 
 .leaderboard-table-wrap th:nth-child(6),
 .leaderboard-table-wrap td:nth-child(6) {
-  width: 190px;
+  width: 220px;
 }
 
 .leaderboard-rank {
@@ -4722,8 +4722,85 @@ td {
   gap: 6px;
 }
 
-.leaderboard-table-wrap .row-actions {
-  flex-wrap: nowrap;
+.leaderboard-row-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.leaderboard-row-primary {
+  display: inline-flex;
+  justify-content: center;
+  gap: 6px;
+  align-items: center;
+  min-height: 34px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: color-mix(in srgb, var(--accent) 86%, var(--text-strong));
+  padding: 7px 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.15;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.leaderboard-row-primary:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+}
+
+.leaderboard-row-primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.leaderboard-row-more {
+  grid-column: 1 / -1;
+  position: relative;
+}
+
+.leaderboard-row-more summary {
+  display: inline-flex;
+  justify-content: center;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--muted-strong);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+}
+
+.leaderboard-row-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.leaderboard-row-more-menu {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 8px;
+  box-shadow: var(--shadow-sm);
+}
+
+.leaderboard-row-more-menu .text-button {
+  justify-content: flex-start;
+  min-height: 30px;
+  text-align: left;
 }
 
 .result-readout-grid {
