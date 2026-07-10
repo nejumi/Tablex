@@ -264,6 +264,12 @@ def process_experiment_result_requests(
                     source_request_id=request_id,
                     diagnostics_status=model_diagnostics_notebook,
                 )
+            skipped_duplicates = skipped_duplicate_run_specs_for_ack(
+                db,
+                project_id=project.id,
+                specs=specs,
+                created_runs=runs,
+            )
             ack = {
                 "schema_version": EXPERIMENT_ACK_SCHEMA_VERSION,
                 "request_id": request_id,
@@ -275,7 +281,8 @@ def process_experiment_result_requests(
                     "registered_run_ids": [run.id for run in runs],
                     "registered_runs": [experiment_run_ack_item(run) for run in runs],
                     "registered_count": len(runs),
-                    "duplicate_count": max(0, len(specs) - len(runs)),
+                    "duplicate_count": len(skipped_duplicates),
+                    "skipped_duplicates": skipped_duplicates,
                     "plan_link_warnings": experiment_plan_link_warnings(runs),
                     "context_warnings": experiment_context_warnings(runs),
                     "pipeline_registration": pipeline_registration,
@@ -1609,20 +1616,28 @@ def validate_run_spec_plan_node_refs(db: Session, *, project: Project, specs: li
 
 
 def experiment_run_exists(db: Session, *, project_id: str, source_key: str) -> bool:
+    return experiment_run_for_source_key(db, project_id=project_id, source_key=source_key) is not None
+
+
+def experiment_run_for_source_key(db: Session, *, project_id: str, source_key: str) -> ExperimentRun | None:
     runs = db.scalars(select(ExperimentRun).where(ExperimentRun.project_id == project_id)).all()
     for run in runs:
         params = loads_json(run.params_json, {})
         if params.get("source_key") == source_key:
-            return True
-    return False
+            return run
+    return None
 
 
 def experiment_run_with_signature_exists(db: Session, *, project_id: str, result_signature: str) -> bool:
+    return experiment_run_for_signature(db, project_id=project_id, result_signature=result_signature) is not None
+
+
+def experiment_run_for_signature(db: Session, *, project_id: str, result_signature: str) -> ExperimentRun | None:
     runs = db.scalars(select(ExperimentRun).where(ExperimentRun.project_id == project_id)).all()
     for run in runs:
         params = loads_json(run.params_json, {})
         if params.get("result_signature") == result_signature:
-            return True
+            return run
         metrics = loads_json(run.metrics_json, {})
         if (
             experiment_result_signature(
@@ -1632,8 +1647,49 @@ def experiment_run_with_signature_exists(db: Session, *, project_id: str, result
             )
             == result_signature
         ):
-            return True
-    return False
+            return run
+    return None
+
+
+def skipped_duplicate_run_specs_for_ack(
+    db: Session,
+    *,
+    project_id: str,
+    specs: list[RunSpec],
+    created_runs: list[ExperimentRun],
+) -> list[dict[str, Any]]:
+    created_source_keys = {
+        str(loads_json(run.params_json, {}).get("source_key") or "")
+        for run in created_runs
+        if str(loads_json(run.params_json, {}).get("source_key") or "").strip()
+    }
+    skipped: list[dict[str, Any]] = []
+    for spec in specs:
+        if spec.source_key in created_source_keys:
+            continue
+        result_signature = experiment_result_signature(
+            spec.metrics,
+            model_id=spec.model_id,
+            model_description=spec.summary,
+            features_used=spec.params.get("features_used"),
+            feature_summary=spec.params.get("feature_summary"),
+        )
+        source_key_run = experiment_run_for_source_key(db, project_id=project_id, source_key=spec.source_key)
+        signature_run = experiment_run_for_signature(db, project_id=project_id, result_signature=result_signature)
+        existing_run = source_key_run or signature_run
+        if existing_run is None:
+            continue
+        reason = "source_key_already_registered" if source_key_run is not None else "result_signature_already_registered"
+        skipped.append(
+            {
+                "model_id": spec.model_id,
+                "source_key": spec.source_key,
+                "result_signature": result_signature,
+                "existing_run_id": existing_run.id,
+                "reason": reason,
+            }
+        )
+    return skipped
 
 
 def experiment_result_signature(

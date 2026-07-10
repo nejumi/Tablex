@@ -5639,6 +5639,86 @@ def test_experiment_result_file_request_registers_leaderboard_run_with_ack(tmp_p
         assert "model-diagnostics notebooks" in chat_payload["assistant_message"]
 
 
+def test_experiment_result_request_skips_duplicate_result_signature_with_ack(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    request_dir = experiment_requests_dir(workspace)
+    request_dir.mkdir(parents=True)
+    first_payload = {
+        "schema_version": "tablex_experiment_result_request.v1",
+        "request_id": "exp_req_first",
+        "operation": "register_runs",
+        "payload": {
+            "runs": [
+                {
+                    "model_id": "lgbm_relational_aggregates",
+                    "model_description": "LightGBM using application features plus target-free relational aggregates.",
+                    "features_used": ["application_train_raw", "bureau_aggregates"],
+                    "feature_summary": "application raw fields plus bureau aggregates",
+                    "primary_metric_name": "roc_auc",
+                    "metrics": {"roc_auc": 0.7894239655657451},
+                }
+            ]
+        },
+    }
+    second_payload = {
+        **first_payload,
+        "request_id": "exp_req_duplicate",
+        "payload": {
+            "runs": [
+                {
+                    "model_id": "lgbm_relational_aggregates",
+                    "model_description": "LightGBM using application features plus target-free relational aggregates.",
+                    "features_used": ["application_train_raw", "bureau_aggregates"],
+                    "feature_summary": "application fields plus relational SK_ID_CURR aggregates",
+                    "primary_metric_name": "roc_auc",
+                    "metrics": {"roc_auc": 0.7894239655657451},
+                }
+            ]
+        },
+    }
+    (request_dir / "first.json").write_text(dumps_json(first_payload), encoding="utf-8")
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_exp_duplicate_ack", name="Experiment Duplicate ACK")
+        session = AgentSession(
+            id="as_exp_duplicate_ack",
+            project_id=project.id,
+            goal_text="Register requested runs.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+        first_ack = loads_json((experiment_acks_dir(workspace) / "first.ack.json").read_text(encoding="utf-8"), {})
+        assert first_ack["status"] == "succeeded"
+        assert first_ack["result"]["registered_count"] == 1
+        first_run_id = first_ack["result"]["registered_run_ids"][0]
+
+        (request_dir / "duplicate.json").write_text(dumps_json(second_payload), encoding="utf-8")
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        second_ack = loads_json(
+            (experiment_acks_dir(workspace) / "duplicate.ack.json").read_text(encoding="utf-8"),
+            {},
+        )
+        assert second_ack["status"] == "succeeded"
+        assert second_ack["result"]["registered_count"] == 0
+        assert second_ack["result"]["duplicate_count"] == 1
+        assert second_ack["result"]["registered_run_ids"] == []
+        duplicate = second_ack["result"]["skipped_duplicates"][0]
+        assert duplicate["model_id"] == "lgbm_relational_aggregates"
+        assert duplicate["existing_run_id"] == first_run_id
+        assert duplicate["reason"] == "result_signature_already_registered"
+        runs = list(db.scalars(select(ExperimentRun).where(ExperimentRun.project_id == project.id)).all())
+        assert len(runs) == 1
+
+
 def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
