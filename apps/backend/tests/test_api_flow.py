@@ -1615,8 +1615,10 @@ def test_default_asset_seeding_includes_modeling_and_llm_skills(tmp_path: Path) 
     assets_by_name = {item["name"]: item for item in assets}
     assert "tablex_modeling_strategy" in assets_by_name
     assert "tablex_llm_feature_augmentation" in assets_by_name
+    assert "tablex_onodera_deep_dive" in assets_by_name
     assert "ensemble" in assets_by_name["tablex_modeling_strategy"]["semantic_tags"]
     assert "llm_feature_augmentation" in assets_by_name["tablex_llm_feature_augmentation"]["semantic_tags"]
+    assert "entity_trajectory" in assets_by_name["tablex_onodera_deep_dive"]["semantic_tags"]
 
     modeling_versions_response = client.get(f"/api/assets/{assets_by_name['tablex_modeling_strategy']['id']}/versions")
     assert modeling_versions_response.status_code == 200
@@ -10450,6 +10452,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
         "tabular_gradient_boosting_strategy",
         "tablex_modeling_strategy",
         "tablex_llm_feature_augmentation",
+        "tablex_onodera_deep_dive",
         "tablex_grandmaster_eda",
         "xgboost_mixed_type_baseline",
         "text_tfidf_train_fold_recipe",

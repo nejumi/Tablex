@@ -212,6 +212,45 @@ DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
         },
     },
     {
+        "asset_type": "skill",
+        "name": "tablex_onodera_deep_dive",
+        "description": (
+            "Equips Codex to inspect representative raw entity trajectories, derive behavioral feature hypotheses, "
+            "and validate micro observations with macro evidence."
+        ),
+        "tags": ["agent", "eda", "feature_engineering", "kaggle", "trajectory"],
+        "semantic_tags": [
+            "data_understanding",
+            "feature_engineering",
+            "entity_trajectory",
+            "micro_case_study",
+            "hypothesis_extraction",
+            "model_diagnostics",
+            "skill",
+        ],
+        "content": {
+            "skill_path": "skills/tablex-onodera-deep-dive/SKILL.md",
+            "instructions": [
+                "Use this as craft context when repeated entity, item, session, order, account, or event histories are available.",
+                "Inspect raw micro trajectories across target classes, target bins, important categories, edge cases, and model errors.",
+                "Turn observed mechanisms into feature families, then validate them with fold-safe macro evidence and ablations.",
+                "Tie notebook/report narrative back to raw trajectory observations, feature intent, validation evidence, and model effect.",
+            ],
+            "expected_outputs": [
+                "micro_casebook_notebook_section",
+                "feature_hypothesis_records",
+                "macro_validation_plots",
+                "model_effect_ablation_notes",
+            ],
+            "guardrails": [
+                "Do not inspect validation or test labels to invent features.",
+                "Do not overfit memorable anecdotes; micro cases generate hypotheses and macro validation decides.",
+                "Do not copy external solution text, code, figures, or section order.",
+                "Respect EvaluationSpec, SplitManifest, and prediction-time availability.",
+            ],
+        },
+    },
+    {
         "asset_type": "feature_recipe",
         "name": "xgboost_mixed_type_baseline",
         "description": "Feature recipe outline for numeric imputation, ordinal categoricals, optional TF-IDF text blocks, datetime parts, and XGBoost.",

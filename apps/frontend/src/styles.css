@@ -58,28 +58,28 @@
 }
 
 :root[data-theme="matrix"] {
-  --bg: #020805;
-  --surface: #07150d;
-  --surface-subtle: #0b1d12;
-  --surface-muted: #051009;
-  --surface-hover: #0d2b18;
-  --text: #d7ffe6;
-  --text-strong: #f0fff5;
-  --muted: #82b995;
-  --muted-strong: #abe9bd;
-  --border: #173923;
-  --border-strong: #2d6c43;
-  --accent: #37ff7a;
-  --accent-2: #00d8a0;
-  --accent-strong: #20bf55;
-  --focus: #145b2c;
-  --success: #62ff9b;
-  --success-bg: #062014;
-  --warning: #d9ff73;
-  --warning-bg: #20250b;
-  --danger: #ff8f8f;
-  --danger-bg: #2a0d0d;
-  --shadow: rgba(0, 30, 8, 0.78);
+  --bg: #000000;
+  --surface: #000904;
+  --surface-subtle: #001307;
+  --surface-muted: #000502;
+  --surface-hover: #00230b;
+  --text: #b9ffc8;
+  --text-strong: #f2fff4;
+  --muted: #4f9d62;
+  --muted-strong: #83ff9f;
+  --border: #0b3515;
+  --border-strong: #00a32c;
+  --accent: #00ff41;
+  --accent-2: #39ff14;
+  --accent-strong: #00ff41;
+  --focus: #073c13;
+  --success: #00ff41;
+  --success-bg: #001b08;
+  --warning: #d6ff57;
+  --warning-bg: #182000;
+  --danger: #ff6f6f;
+  --danger-bg: #210000;
+  --shadow: rgba(0, 0, 0, 0.88);
   color-scheme: dark;
   color: var(--text);
   background: var(--bg);
@@ -99,9 +99,12 @@ body {
 }
 
 :root[data-theme="matrix"] body {
+  font-family:
+    "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", "Noto Sans JP", ui-monospace, monospace;
   background:
-    radial-gradient(circle at 18% 8%, rgba(55, 255, 122, 0.11), transparent 28%),
-    linear-gradient(180deg, #020805 0%, #03150a 48%, #020805 100%);
+    radial-gradient(circle at 14% 6%, rgba(0, 255, 65, 0.13), transparent 24%),
+    radial-gradient(circle at 86% 8%, rgba(57, 255, 20, 0.08), transparent 22%),
+    linear-gradient(180deg, #000000 0%, #001006 48%, #000000 100%);
 }
 
 :root[data-theme="matrix"] body::before {
@@ -111,43 +114,50 @@ body {
   z-index: 0;
   pointer-events: none;
   background:
-    linear-gradient(180deg, rgba(55, 255, 122, 0.08), transparent 22%, rgba(55, 255, 122, 0.04) 44%, transparent 70%),
-    repeating-linear-gradient(90deg, rgba(55, 255, 122, 0.05) 0 1px, transparent 1px 34px),
-    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 4px);
+    radial-gradient(circle at 50% -20%, rgba(0, 255, 65, 0.14), transparent 34%),
+    linear-gradient(180deg, rgba(0, 255, 65, 0.09), transparent 22%, rgba(0, 255, 65, 0.05) 44%, transparent 70%),
+    repeating-linear-gradient(90deg, rgba(0, 255, 65, 0.07) 0 1px, transparent 1px 28px),
+    repeating-linear-gradient(180deg, rgba(185, 255, 200, 0.05) 0 1px, transparent 1px 4px);
   mix-blend-mode: screen;
-  opacity: 0.55;
+  opacity: 0.82;
 }
 
 :root[data-theme="matrix"] body::after {
-  content: "010010110101001001101001011101000100110101100001011101000111001001101001011110000101101001001101010000010101000";
+  content: "010010110101001001101001011101000100110101100001011101000111001001101001011110000101101001001101010000010101000001101001011011100111000001110101011101000010111001100011011011110110010001100101";
   position: fixed;
-  top: -24vh;
-  left: 2vw;
+  top: -42vh;
+  left: 1.5vw;
   z-index: 0;
   width: 1ch;
-  height: 160vh;
+  height: 210vh;
   pointer-events: none;
-  color: rgba(80, 255, 132, 0.22);
+  color: rgba(0, 255, 65, 0.42);
   font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
-  line-height: 1.05;
+  line-height: 1;
   text-orientation: upright;
   text-shadow:
-    7vw -18vh 0 rgba(55, 255, 122, 0.13),
-    14vw 10vh 0 rgba(0, 216, 160, 0.17),
-    22vw -6vh 0 rgba(55, 255, 122, 0.12),
-    31vw 16vh 0 rgba(165, 255, 190, 0.11),
-    42vw -22vh 0 rgba(55, 255, 122, 0.16),
-    53vw 8vh 0 rgba(0, 216, 160, 0.12),
-    65vw -12vh 0 rgba(55, 255, 122, 0.18),
-    76vw 20vh 0 rgba(165, 255, 190, 0.10),
-    88vw -4vh 0 rgba(55, 255, 122, 0.14),
-    96vw 14vh 0 rgba(0, 216, 160, 0.13);
+    0 0 8px rgba(0, 255, 65, 0.62),
+    5vw 30vh 0 rgba(0, 255, 65, 0.34),
+    9vw -8vh 0 rgba(185, 255, 200, 0.30),
+    14vw 18vh 0 rgba(0, 255, 65, 0.36),
+    19vw -24vh 0 rgba(57, 255, 20, 0.30),
+    25vw 7vh 0 rgba(0, 255, 65, 0.38),
+    31vw 33vh 0 rgba(185, 255, 200, 0.26),
+    37vw -15vh 0 rgba(0, 255, 65, 0.32),
+    43vw 23vh 0 rgba(57, 255, 20, 0.28),
+    50vw -5vh 0 rgba(0, 255, 65, 0.42),
+    57vw 29vh 0 rgba(185, 255, 200, 0.25),
+    64vw -18vh 0 rgba(0, 255, 65, 0.34),
+    71vw 12vh 0 rgba(57, 255, 20, 0.30),
+    78vw 35vh 0 rgba(0, 255, 65, 0.36),
+    86vw -10vh 0 rgba(185, 255, 200, 0.26),
+    94vw 19vh 0 rgba(0, 255, 65, 0.34);
   white-space: nowrap;
   writing-mode: vertical-rl;
-  opacity: 0.82;
-  animation: matrix-rain 22s linear infinite;
+  opacity: 0.95;
+  animation: matrix-rain 12s linear infinite;
 }
 
 :root[data-theme="matrix"] .app-shell,
@@ -158,11 +168,11 @@ body {
 
 @keyframes matrix-rain {
   from {
-    transform: translateY(-12vh);
+    transform: translateY(-18vh);
   }
 
   to {
-    transform: translateY(28vh);
+    transform: translateY(48vh);
   }
 }
 
@@ -7360,29 +7370,223 @@ td {
   }
 }
 
-:root[data-theme="matrix"] .progress-track {
-  border: 1px solid rgba(55, 255, 122, 0.18);
+:root[data-theme="matrix"] .sidebar,
+:root[data-theme="matrix"] .auth-card,
+:root[data-theme="matrix"] .auth-user-chip,
+:root[data-theme="matrix"] .tabs,
+:root[data-theme="matrix"] .tab-menu,
+:root[data-theme="matrix"] .mission-plan-panel,
+:root[data-theme="matrix"] .mission-agent-primary,
+:root[data-theme="matrix"] .mission-memory-panel,
+:root[data-theme="matrix"] .mission-evidence-stack,
+:root[data-theme="matrix"] .mission-skills-panel,
+:root[data-theme="matrix"] .autonomous-navigator,
+:root[data-theme="matrix"] .panel,
+:root[data-theme="matrix"] .data-focus-panel,
+:root[data-theme="matrix"] .leaderboard-surface,
+:root[data-theme="matrix"] .leaderboard-head,
+:root[data-theme="matrix"] .leaderboard-result-notebooks,
+:root[data-theme="matrix"] .leaderboard-prediction-panel,
+:root[data-theme="matrix"] .pilot-outcome-panel,
+:root[data-theme="matrix"] .related-outputs-drawer,
+:root[data-theme="matrix"] .artifact-lineage-panel,
+:root[data-theme="matrix"] .agent-chat-history,
+:root[data-theme="matrix"] .agent-chat-wait-latest,
+:root[data-theme="matrix"] .agent-activity-rail,
+:root[data-theme="matrix"] .agent-worker-card,
+:root[data-theme="matrix"] .chat-bubble.assistant,
+:root[data-theme="matrix"] .native-marimo-loading-panel,
+:root[data-theme="matrix"] .portal-project-card,
+:root[data-theme="matrix"] .home-upload-card,
+:root[data-theme="matrix"] .data-intake-status-card,
+:root[data-theme="matrix"] .question-card,
+:root[data-theme="matrix"] .review-card,
+:root[data-theme="matrix"] .benchmark-card,
+:root[data-theme="matrix"] .mini-card,
+:root[data-theme="matrix"] .insight-card,
+:root[data-theme="matrix"] .focus-card,
+:root[data-theme="matrix"] .notebook-start-card,
+:root[data-theme="matrix"] .notebook-guide-card,
+:root[data-theme="matrix"] .analysis-story-card,
+:root[data-theme="matrix"] .db-connector-card {
+  border-color: rgba(0, 255, 65, 0.24);
   background:
-    repeating-linear-gradient(90deg, rgba(55, 255, 122, 0.10) 0 1px, transparent 1px 14px),
+    repeating-linear-gradient(180deg, rgba(0, 255, 65, 0.035) 0 1px, transparent 1px 6px),
+    linear-gradient(135deg, rgba(0, 255, 65, 0.075), rgba(0, 0, 0, 0.72) 46%),
+    rgba(0, 9, 4, 0.92);
+  box-shadow:
+    0 0 0 1px rgba(0, 255, 65, 0.06),
+    0 18px 52px rgba(0, 0, 0, 0.72),
+    inset 0 0 26px rgba(0, 255, 65, 0.045);
+}
+
+:root[data-theme="matrix"] .topbar h1,
+:root[data-theme="matrix"] .brand-name,
+:root[data-theme="matrix"] .panel-title h2,
+:root[data-theme="matrix"] .mission-panel-head strong,
+:root[data-theme="matrix"] .mission-panel-title strong,
+:root[data-theme="matrix"] .leaderboard-head h2,
+:root[data-theme="matrix"] .leaderboard-best-score strong,
+:root[data-theme="matrix"] .leaderboard-score-cell strong,
+:root[data-theme="matrix"] .leaderboard-model-cell strong,
+:root[data-theme="matrix"] .research-plan-block strong,
+:root[data-theme="matrix"] .agent-worker-topline strong,
+:root[data-theme="matrix"] .turn-state-main strong {
+  color: #f2fff4;
+  text-shadow:
+    0 0 8px rgba(0, 255, 65, 0.42),
+    0 0 22px rgba(0, 255, 65, 0.18);
+}
+
+:root[data-theme="matrix"] .nav-label,
+:root[data-theme="matrix"] .topbar-kicker,
+:root[data-theme="matrix"] .mission-panel-head > div:first-child > span,
+:root[data-theme="matrix"] .mission-panel-title span,
+:root[data-theme="matrix"] .leaderboard-controls label > span,
+:root[data-theme="matrix"] .turn-state-main span {
+  color: rgba(0, 255, 65, 0.82);
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.34);
+}
+
+:root[data-theme="matrix"] .brand-mark {
+  border: 1px solid rgba(0, 255, 65, 0.32);
+  background:
+    radial-gradient(circle, rgba(0, 255, 65, 0.16), rgba(0, 0, 0, 0.86) 58%);
+  box-shadow:
+    0 0 18px rgba(0, 255, 65, 0.16),
+    inset 0 0 18px rgba(0, 255, 65, 0.10);
+}
+
+:root[data-theme="matrix"] .project-item:hover,
+:root[data-theme="matrix"] .project-item.active,
+:root[data-theme="matrix"] .tab.active,
+:root[data-theme="matrix"] .tab-menu-item:hover,
+:root[data-theme="matrix"] .tab-menu-item.active,
+:root[data-theme="matrix"] .queued-table-chip.active {
+  border-color: rgba(0, 255, 65, 0.50);
+  background:
+    linear-gradient(90deg, rgba(0, 255, 65, 0.16), rgba(0, 0, 0, 0.18)),
+    rgba(0, 18, 7, 0.92);
+  color: #f2fff4;
+  box-shadow:
+    0 0 0 1px rgba(0, 255, 65, 0.10),
+    0 0 18px rgba(0, 255, 65, 0.12);
+}
+
+:root[data-theme="matrix"] input,
+:root[data-theme="matrix"] select,
+:root[data-theme="matrix"] textarea {
+  border-color: rgba(0, 255, 65, 0.34);
+  background:
+    repeating-linear-gradient(180deg, rgba(0, 255, 65, 0.025) 0 1px, transparent 1px 5px),
+    #000602;
+  color: #b9ffc8;
+  caret-color: #00ff41;
+  box-shadow: inset 0 0 16px rgba(0, 255, 65, 0.055);
+}
+
+:root[data-theme="matrix"] input:focus,
+:root[data-theme="matrix"] select:focus,
+:root[data-theme="matrix"] textarea:focus {
+  border-color: #00ff41;
+  outline-color: rgba(0, 255, 65, 0.24);
+  box-shadow:
+    0 0 0 1px rgba(0, 255, 65, 0.24),
+    0 0 20px rgba(0, 255, 65, 0.18),
+    inset 0 0 16px rgba(0, 255, 65, 0.08);
+}
+
+:root[data-theme="matrix"] .primary-button,
+:root[data-theme="matrix"] .secondary-button,
+:root[data-theme="matrix"] .icon-button,
+:root[data-theme="matrix"] .icon-link,
+:root[data-theme="matrix"] .leaderboard-row-primary,
+:root[data-theme="matrix"] .leaderboard-row-more summary,
+:root[data-theme="matrix"] .asset-primary-action {
+  border-color: rgba(0, 255, 65, 0.52);
+  background:
+    linear-gradient(180deg, rgba(0, 255, 65, 0.12), rgba(0, 0, 0, 0.78)),
+    #000904;
+  color: #b9ffc8;
+  box-shadow:
+    0 0 0 1px rgba(0, 255, 65, 0.08),
+    inset 0 0 16px rgba(0, 255, 65, 0.06);
+  text-shadow: 0 0 9px rgba(0, 255, 65, 0.35);
+}
+
+:root[data-theme="matrix"] .primary-button:hover:not(:disabled),
+:root[data-theme="matrix"] .secondary-button:hover:not(:disabled),
+:root[data-theme="matrix"] .icon-button:hover:not(:disabled),
+:root[data-theme="matrix"] .leaderboard-row-primary:hover:not(:disabled),
+:root[data-theme="matrix"] .leaderboard-row-more summary:hover,
+:root[data-theme="matrix"] .asset-primary-action:hover:not(:disabled) {
+  border-color: #00ff41;
+  background:
+    linear-gradient(180deg, rgba(0, 255, 65, 0.24), rgba(0, 17, 6, 0.84)),
+    #000904;
+  color: #f2fff4;
+  box-shadow:
+    0 0 0 1px rgba(0, 255, 65, 0.18),
+    0 0 24px rgba(0, 255, 65, 0.22),
+    inset 0 0 18px rgba(0, 255, 65, 0.10);
+}
+
+:root[data-theme="matrix"] table,
+:root[data-theme="matrix"] .markdown-table {
+  background: #000602;
+  color: #b9ffc8;
+}
+
+:root[data-theme="matrix"] th,
+:root[data-theme="matrix"] td,
+:root[data-theme="matrix"] .markdown-table th,
+:root[data-theme="matrix"] .markdown-table td {
+  border-color: rgba(0, 255, 65, 0.20);
+}
+
+:root[data-theme="matrix"] th,
+:root[data-theme="matrix"] .markdown-table th {
+  background:
+    linear-gradient(180deg, rgba(0, 255, 65, 0.16), rgba(0, 0, 0, 0.82));
+  color: #f2fff4;
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.30);
+}
+
+:root[data-theme="matrix"] .badge,
+:root[data-theme="matrix"] .agent-scope-pill,
+:root[data-theme="matrix"] .project-item-main small,
+:root[data-theme="matrix"] .agent-worker-topline span,
+:root[data-theme="matrix"] .leaderboard-evidence-badges span,
+:root[data-theme="matrix"] .agent-chat-wait-meta span {
+  border: 1px solid rgba(0, 255, 65, 0.25);
+  background: rgba(0, 18, 7, 0.86);
+  color: #83ff9f;
+  text-shadow: 0 0 7px rgba(0, 255, 65, 0.22);
+}
+
+:root[data-theme="matrix"] .progress-track {
+  border: 1px solid rgba(0, 255, 65, 0.18);
+  background:
+    repeating-linear-gradient(90deg, rgba(0, 255, 65, 0.10) 0 1px, transparent 1px 14px),
     rgba(2, 16, 8, 0.94);
   box-shadow:
-    inset 0 0 14px rgba(55, 255, 122, 0.10),
-    0 0 18px rgba(55, 255, 122, 0.08);
+    inset 0 0 14px rgba(0, 255, 65, 0.10),
+    0 0 18px rgba(0, 255, 65, 0.08);
 }
 
 :root[data-theme="matrix"] .progress-track > div,
 :root[data-theme="matrix"] .progress-track > span,
 :root[data-theme="matrix"] .native-marimo-loading-progress span {
   background:
-    linear-gradient(90deg, transparent 0%, rgba(55, 255, 122, 0.44) 18%, #9dffb7 48%, #00d8a0 72%, transparent 100%);
+    linear-gradient(90deg, transparent 0%, rgba(0, 255, 65, 0.44) 18%, #9dffb7 48%, #00ff41 72%, transparent 100%);
   box-shadow:
-    0 0 16px rgba(55, 255, 122, 0.50),
+    0 0 16px rgba(0, 255, 65, 0.50),
     0 0 34px rgba(0, 216, 160, 0.28);
 }
 
 :root[data-theme="matrix"] .spin {
   filter:
-    drop-shadow(0 0 5px rgba(55, 255, 122, 0.80))
+    drop-shadow(0 0 5px rgba(0, 255, 65, 0.80))
     drop-shadow(0 0 13px rgba(0, 216, 160, 0.38));
 }
 
@@ -7397,16 +7601,16 @@ td {
 :root[data-theme="matrix"] .agent-turn-card.is-active,
 :root[data-theme="matrix"] .raw-agent-event.is-active,
 :root[data-theme="matrix"] .native-marimo-loading-panel {
-  border-color: rgba(55, 255, 122, 0.56);
+  border-color: rgba(0, 255, 65, 0.56);
   background-image:
-    linear-gradient(90deg, rgba(55, 255, 122, 0.08) 0 1px, transparent 1px 16px),
-    linear-gradient(180deg, rgba(55, 255, 122, 0.08), transparent 45%),
+    linear-gradient(90deg, rgba(0, 255, 65, 0.08) 0 1px, transparent 1px 16px),
+    linear-gradient(180deg, rgba(0, 255, 65, 0.08), transparent 45%),
     radial-gradient(circle at 84% 14%, rgba(157, 255, 183, 0.14), transparent 22%);
   box-shadow:
-    0 0 0 1px rgba(55, 255, 122, 0.20),
-    0 0 24px rgba(55, 255, 122, 0.18),
-    inset 0 0 28px rgba(55, 255, 122, 0.06);
-  text-shadow: 0 0 10px rgba(55, 255, 122, 0.24);
+    0 0 0 1px rgba(0, 255, 65, 0.20),
+    0 0 24px rgba(0, 255, 65, 0.18),
+    inset 0 0 28px rgba(0, 255, 65, 0.06);
+  text-shadow: 0 0 10px rgba(0, 255, 65, 0.24);
 }
 
 :root[data-theme="matrix"] .agent-worker-card.active,
@@ -7437,7 +7641,7 @@ td {
   letter-spacing: 0;
   line-height: 1;
   pointer-events: none;
-  text-shadow: 0 0 9px rgba(55, 255, 122, 0.42);
+  text-shadow: 0 0 9px rgba(0, 255, 65, 0.42);
   white-space: nowrap;
   animation: matrix-active-code-scan 2.8s linear infinite;
 }
@@ -7453,8 +7657,8 @@ td {
 :root[data-theme="matrix"] .raw-agent-event.is-active::before {
   background: #9dffb7;
   box-shadow:
-    0 0 0 4px rgba(55, 255, 122, 0.16),
-    0 0 15px rgba(55, 255, 122, 0.82),
+    0 0 0 4px rgba(0, 255, 65, 0.16),
+    0 0 15px rgba(0, 255, 65, 0.82),
     0 0 31px rgba(0, 216, 160, 0.50);
 }
 
@@ -7473,20 +7677,20 @@ td {
 
 :root[data-theme="matrix"] .agent-turn-card.is-active::after {
   background:
-    repeating-linear-gradient(180deg, rgba(55, 255, 122, 0.05) 0 1px, transparent 1px 5px),
-    linear-gradient(135deg, rgba(55, 255, 122, 0.10), rgba(2, 18, 8, 0.86) 54%),
+    repeating-linear-gradient(180deg, rgba(0, 255, 65, 0.05) 0 1px, transparent 1px 5px),
+    linear-gradient(135deg, rgba(0, 255, 65, 0.10), rgba(2, 18, 8, 0.86) 54%),
     var(--surface);
 }
 
 :root[data-theme="matrix"] .raw-agent-event.is-active {
   border-radius: 8px;
   background:
-    repeating-linear-gradient(180deg, rgba(55, 255, 122, 0.06) 0 1px, transparent 1px 5px),
-    linear-gradient(90deg, rgba(55, 255, 122, 0.12), transparent 38%);
+    repeating-linear-gradient(180deg, rgba(0, 255, 65, 0.06) 0 1px, transparent 1px 5px),
+    linear-gradient(90deg, rgba(0, 255, 65, 0.12), transparent 38%);
   box-shadow:
     inset 3px 0 0 #9dffb7,
-    0 0 0 1px rgba(55, 255, 122, 0.16),
-    0 0 18px rgba(55, 255, 122, 0.14);
+    0 0 0 1px rgba(0, 255, 65, 0.16),
+    0 0 18px rgba(0, 255, 65, 0.14);
 }
 
 :root[data-theme="matrix"] .native-marimo-loading-panel::before {
@@ -7502,32 +7706,32 @@ td {
   font-weight: 800;
   letter-spacing: 0;
   pointer-events: none;
-  text-shadow: 0 0 12px rgba(55, 255, 122, 0.46);
+  text-shadow: 0 0 12px rgba(0, 255, 65, 0.46);
   white-space: nowrap;
 }
 
 :root[data-theme="matrix"] .native-marimo-loading-mark {
   border-color: rgba(157, 255, 183, 0.62);
   background:
-    radial-gradient(circle, rgba(55, 255, 122, 0.18), rgba(2, 16, 8, 0.96) 62%),
+    radial-gradient(circle, rgba(0, 255, 65, 0.18), rgba(2, 16, 8, 0.96) 62%),
     var(--surface-muted);
   box-shadow:
-    0 0 0 1px rgba(55, 255, 122, 0.16),
-    0 0 30px rgba(55, 255, 122, 0.22),
-    inset 0 0 22px rgba(55, 255, 122, 0.12);
+    0 0 0 1px rgba(0, 255, 65, 0.16),
+    0 0 30px rgba(0, 255, 65, 0.22),
+    inset 0 0 22px rgba(0, 255, 65, 0.12);
 }
 
 :root[data-theme="matrix"] .native-marimo-loading-mark::before {
   background: #9dffb7;
   box-shadow:
-    0 0 16px rgba(55, 255, 122, 0.90),
+    0 0 16px rgba(0, 255, 65, 0.90),
     0 0 40px rgba(0, 216, 160, 0.42);
 }
 
 :root[data-theme="matrix"] .native-marimo-loading-mark span {
   border-top-color: #9dffb7;
-  border-bottom-color: rgba(55, 255, 122, 0.18);
-  filter: drop-shadow(0 0 8px rgba(55, 255, 122, 0.75));
+  border-bottom-color: rgba(0, 255, 65, 0.18);
+  filter: drop-shadow(0 0 8px rgba(0, 255, 65, 0.75));
 }
 
 :root[data-theme="matrix"] .agent-chat-form.is-user-turn::before {
@@ -7536,16 +7740,16 @@ td {
     transparent 0deg,
     transparent 30deg,
     #9dffb7 64deg,
-    #37ff7a 96deg,
+    #00ff41 96deg,
     transparent 138deg,
     transparent 360deg
   );
-  filter: drop-shadow(0 0 12px rgba(55, 255, 122, 0.52));
+  filter: drop-shadow(0 0 12px rgba(0, 255, 65, 0.52));
 }
 
 :root[data-theme="matrix"] .token-sparkline.live span {
-  background: linear-gradient(180deg, #9dffb7, #37ff7a 42%, #00d8a0);
-  box-shadow: 0 0 12px rgba(55, 255, 122, 0.42);
+  background: linear-gradient(180deg, #9dffb7, #00ff41 42%, #00ff41);
+  box-shadow: 0 0 12px rgba(0, 255, 65, 0.42);
 }
 
 @keyframes matrix-active-code-scan {

@@ -14,6 +14,7 @@ from tabular_harness.api.routes import router
 from tabular_harness.core.config import Settings, get_settings
 from tabular_harness.db.session import create_engine_for_settings, create_session_factory, init_db
 from tabular_harness.services.agent_sessions import start_active_main_session_supervisors
+from tabular_harness.services.asset_library import seed_default_assets
 from tabular_harness.services.artifacts import LocalArtifactStore
 from tabular_harness.services.auth import ensure_bootstrap_user, user_for_session_token
 from tabular_harness.services.jobs import reap_stale_running_jobs
@@ -65,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             email=app_settings.bootstrap_user_email,
             password=app_settings.bootstrap_user_password,
         )
+        seed_default_assets(session, app.state.artifact_store)
         reap_stale_running_jobs(session)
         session.commit()
 
