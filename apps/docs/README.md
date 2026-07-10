@@ -24,3 +24,5 @@ Production URL after GitHub Pages is enabled:
 ```text
 https://nejumi.github.io/Tablex/
 ```
+
+First-time GitHub setup: open the repository settings and set **Settings → Pages → Build and deployment → Source** to **GitHub Actions**. If the workflow fails at `actions/configure-pages` with `Get Pages site failed`, Pages has not been enabled for this repository yet.

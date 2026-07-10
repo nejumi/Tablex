@@ -208,7 +208,7 @@ npm --prefix apps/docs run start
 npm --prefix apps/docs run build
 ```
 
-The GitHub Pages workflow publishes the site to `https://nejumi.github.io/Tablex/` when Pages is configured to use GitHub Actions.
+The GitHub Pages workflow publishes the site to `https://nejumi.github.io/Tablex/` when Pages is configured to use GitHub Actions. On first setup, open GitHub repository settings and set **Settings → Pages → Build and deployment → Source** to **GitHub Actions**. If the workflow fails at `actions/configure-pages` with `Get Pages site failed`, this repository setting is the missing step.
 
 ## Development Notes
 
