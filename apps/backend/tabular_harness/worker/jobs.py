@@ -2099,7 +2099,10 @@ def prepare_data_understanding_notebook_authoring_handler(
         store=store,
         project=project,
         objective=(
-            "Author the project data-understanding marimo notebook from current artifacts and equipped Skills. "
+            "Author a deep, visual, Kaggle Grandmaster-caliber project data-understanding marimo notebook "
+            "from current artifacts and equipped Skills. Include rich EDA, micro-to-macro row/entity deep dives, "
+            "relationship and leakage inspection, visual hypotheses, and concrete implications for feature "
+            "engineering and evaluation. "
             "Do not use harness-authored notebook prose."
         ),
         response_locale=response_locale,
