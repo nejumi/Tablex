@@ -5270,7 +5270,11 @@ def list_agent_chat_history(
     turns.extend(
         turn for turn in main_session_update_turns if isinstance(turn.get("artifact_id"), str) and turn["artifact_id"] not in paired_update_ids
     )
-    return compact_agent_chat_history_turns(turns, locale=response_locale, db=db, project_id=project_id)
+    return prioritize_completed_waiting_for_input_turn(
+        compact_agent_chat_history_turns(turns, locale=response_locale, db=db, project_id=project_id),
+        db=db,
+        project_id=project_id,
+    )
 
 
 def normalize_agent_chat_history_payload(artifact: Artifact, payload: Any, *, japanese: bool) -> dict[str, Any] | None:
@@ -5674,6 +5678,47 @@ def agent_attention_event_is_resolved(db: Session, *, project_id: str, payload: 
         if not notebook_artifact_has_declared_context(db, artifact=artifact, include_sibling_versions=True):
             return False
     return True
+
+
+def prioritize_completed_waiting_for_input_turn(
+    turns: list[dict[str, Any]],
+    *,
+    db: Session,
+    project_id: str,
+) -> list[dict[str, Any]]:
+    session = latest_main_session(db, project_id)
+    if session is None or session.status != "completed":
+        return turns
+    completed_indexes = [
+        index
+        for index, turn in enumerate(turns)
+        if agent_chat_turn_is_completed_waiting_for_input(turn, session_id=session.id)
+    ]
+    if not completed_indexes:
+        return turns
+    completed_index = completed_indexes[-1]
+    completed_turn = turns[completed_index]
+    completed_at = parse_api_datetime(completed_turn.get("created_at"))
+    if completed_at is not None:
+        for turn in turns[completed_index + 1 :]:
+            user_message = str(turn.get("user_message") or "").strip()
+            turn_created_at = parse_api_datetime(turn.get("created_at"))
+            if user_message and (turn_created_at is None or turn_created_at >= completed_at):
+                return turns
+    remaining = [
+        turn
+        for index, turn in enumerate(turns)
+        if index not in completed_indexes
+    ]
+    return [*remaining, completed_turn]
+
+
+def agent_chat_turn_is_completed_waiting_for_input(turn: dict[str, Any], *, session_id: str) -> bool:
+    intent = turn.get("intent") if isinstance(turn.get("intent"), dict) else {}
+    if intent.get("type") != "agent_attention_event" or intent.get("message_kind") != "completed_waiting_for_input":
+        return False
+    brief = turn.get("response_brief") if isinstance(turn.get("response_brief"), dict) else {}
+    return brief.get("agent_session_id") == session_id
 
 
 def coalesce_adjacent_notebook_update_turns(

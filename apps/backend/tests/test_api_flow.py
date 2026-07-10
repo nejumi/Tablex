@@ -4777,6 +4777,98 @@ def test_agent_chat_history_surfaces_legacy_experiment_registration_payload(tmp_
     assert turn["response_brief"]["run_ids"] == ["run_legacy"]
 
 
+def test_agent_chat_history_keeps_completed_waiting_notice_after_late_result_notice(tmp_path: Path) -> None:
+    client = make_client(tmp_path, api_agent_session_supervisor_enabled=False)
+
+    project_response = client.post("/api/projects", json={"name": "Completed notice ordering"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "IDLE"
+        project.autonomy_mode = "full_auto"
+        session = AgentSession(
+            id="ags_completed_notice_ordering",
+            project_id=project_id,
+            session_type="main_autonomous",
+            status="completed",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Completed available work.",
+            created_at=utc_now() - timedelta(minutes=20),
+            started_at=utc_now() - timedelta(minutes=20),
+            ended_at=utc_now() - timedelta(minutes=5),
+        )
+        db.add(session)
+        db.flush()
+        register_agent_session_attention_chat_turn(
+            db,
+            store=app.state.artifact_store,
+            project=project,
+            session=session,
+            attention_key="completed_waiting_for_input:test_ordering",
+            status="ready",
+            message_kind="completed_waiting_for_input",
+            details={},
+        )
+        late_result = store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="agent_chat_turn",
+            name="late_experiment_registration_notice",
+            filename="agent_chat_turn.json",
+            payload={
+                "schema_version": "agent_chat_turn.v1",
+                "project_id": project_id,
+                "user_message": "",
+                "assistant_message": "Registered 3 model evaluation(s) on the leaderboard.",
+                "intent": {
+                    "type": "experiment_results_registered",
+                    "source": "main_agent_session_workspace",
+                    "status": "ready",
+                },
+                "actions": [],
+                "action_summary": {},
+                "response_brief": {
+                    "schema_version": "experiment_results_registered.v1",
+                    "agent_session_id": session.id,
+                    "run_ids": ["run_late_1", "run_late_2", "run_late_3"],
+                },
+                "response_composer": {
+                    "schema_version": "agent_response_composer.v1",
+                    "mode": "main_agent_session",
+                    "status": "harness_fact",
+                },
+                "worker_events": [],
+                "token_usage": {"source": "not_applicable", "is_estimate": False, "series": []},
+                "next_focus": {"target_tab": "Leaderboard", "target_anchor": "result-readout", "label": "Leaderboard"},
+            },
+            metadata={
+                "project_id": project_id,
+                "agent_session_id": session.id,
+                "source": "main_agent_session_experiment_registration",
+                "source_key": "late_result_notice",
+            },
+        )
+        late_result.created_at = utc_now() + timedelta(seconds=1)
+        db.commit()
+
+    history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
+    assert history_response.status_code == 200, history_response.text
+    turns = history_response.json()
+    assert [turn["intent"].get("type") for turn in turns[-2:]] == [
+        "experiment_results_registered",
+        "agent_attention_event",
+    ]
+    assert turns[-1]["intent"]["message_kind"] == "completed_waiting_for_input"
+    assert "test data" in turns[-1]["assistant_message"]
+    assert "outcomes" in turns[-1]["assistant_message"]
+
+
 def test_pilot_phase_vertical_loop_registers_pipeline_predicts_scores_and_notifies_session(
     tmp_path: Path,
     monkeypatch: Any,

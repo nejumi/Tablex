@@ -341,7 +341,9 @@ function turnStateRawObservationText(turnState: TurnState, text: LocaleMessages)
 }
 
 function turnStateDisplayDetail(turnState: TurnState, text: LocaleMessages, locale: string): string {
-  if (turnState.state === "waiting_for_user") return text.turnStateUserTurnHint;
+  if (turnState.state === "waiting_for_user") {
+    return displayTextOrFallback(turnState.detail, locale, text.turnStateUserTurnHint);
+  }
   if (turnState.state === "worker_pending") {
     return displayTextOrFallback(turnState.detail, locale, text.turnStateWorkerPendingHint);
   }
