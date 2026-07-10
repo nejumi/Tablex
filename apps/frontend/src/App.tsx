@@ -3310,6 +3310,7 @@ function ProjectDetail({
           runAction={runAction}
           onAskAgent={submitAgentChat}
           onOpenNotebookArtifact={openNotebookArtifact}
+          previewRequest={artifactPreviewRequest}
         />
       )}
       {tab === "Data" && (
@@ -3460,6 +3461,7 @@ function ProjectDetail({
           runAction={runAction}
           onAskAgent={submitAgentChat}
           onOpenNotebookArtifact={openNotebookArtifact}
+          previewRequest={artifactPreviewRequest}
         />
       )}
       {tab === "Assets" && (
@@ -3617,7 +3619,7 @@ function HomeTab({
   const canStartAutonomy = datasetCount > 0;
   const focusAction = recommendation.primaryAction;
   const [agentViewMode, setAgentViewMode] = React.useState<"chat" | "raw">("chat");
-  const ideaFindingItems = buildIdeaFindingItems(ideas, insights, artifacts, text, locale);
+  const ideaFindingItems = buildIdeaFindingItems(ideas, insights, reports, notebookIndex, artifacts, text, locale);
   const equippedSkills = equippedSkillItems(projectAssetReferences, libraryAssets);
   const rawAgentEvents = buildRawAgentEvents(messages, jobs, agentTranscriptEvents, agentSession);
   const agentWorkspaceScrollResetKey = `${project.id}:${agentSession?.id ?? "no-agent-session"}`;
@@ -4588,12 +4590,47 @@ function insightDeepDiveAnchor(insight: Insight) {
   return memoryAnchor("finding", insight.id);
 }
 
-function buildIdeaFindingItems(ideas: Idea[], insights: Insight[], artifacts: Artifact[], text: LocaleMessages, locale: string): HomeMemoryItem[] {
+function buildIdeaFindingItems(
+  ideas: Idea[],
+  insights: Insight[],
+  reports: Report[],
+  notebookIndex: NotebookIndex | null,
+  artifacts: Artifact[],
+  text: LocaleMessages,
+  locale: string
+): HomeMemoryItem[] {
   const researchArtifacts = artifacts
     .filter((artifact) => artifact.asset_type === "research_findings_report")
     .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
     .slice(0, 8);
+  const notebookItems = preferredNotebookItems(notebookIndex).slice(0, 6);
   const items: HomeMemoryItem[] = [
+    ...reports.slice(0, 8).map((report) => ({
+      id: report.id,
+      kind: "finding" as const,
+      title: memoryDisplayText(report.title, locale, text.memoryUntitledSignalTitle, 90),
+      summary: memoryDisplayText(report.summary || report.report_type, locale, text.memoryNoSummary),
+      meta: text.memoryKindReport,
+      cta: text.memoryOpenReport,
+      target_tab: "Insight",
+      target_anchor: "decision-report-preview",
+      artifact_id: report.artifact_id,
+      created_at: report.created_at,
+      signal_priority: report.report_type.includes("decision") ? 94 : 86
+    })),
+    ...notebookItems.map((item) => ({
+      id: item.notebook_artifact_id,
+      kind: "finding" as const,
+      title: memoryDisplayText(item.title, locale, text.memoryUntitledSignalTitle, 90),
+      summary: memoryDisplayText(item.recommendation_reason || notebookCoverageLabel(item), locale, text.memoryNoSummary),
+      meta: text.memoryKindNotebook,
+      cta: text.memoryOpenNotebook,
+      target_tab: "Notebooks",
+      target_anchor: NOTEBOOK_NATIVE_MARIMO_ANCHOR,
+      artifact_id: item.artifact_ids.notebook,
+      created_at: item.created_at,
+      signal_priority: item === notebookIndex?.recommended_notebook ? 90 : 80
+    })),
     ...ideas.map((idea) => ({
       id: idea.id,
       kind: "idea" as const,
@@ -10250,7 +10287,8 @@ function ReportsTab({
   text,
   runAction,
   onAskAgent,
-  onOpenNotebookArtifact
+  onOpenNotebookArtifact,
+  previewRequest
 }: {
   project: Project;
   reports: Report[];
@@ -10266,6 +10304,7 @@ function ReportsTab({
   runAction: (action: () => Promise<unknown>) => Promise<void>;
   onAskAgent: (message: string) => Promise<AgentChatResponse | void>;
   onOpenNotebookArtifact: (artifactId: string) => void;
+  previewRequest: ArtifactPreviewRequest | null;
 }) {
   const [reportPreview, setReportPreview] = React.useState<ArtifactPreview | null>(null);
   const [reportPreviewSource, setReportPreviewSource] = React.useState<{ type: "report" | "artifact"; id: string } | null>(null);
@@ -10324,6 +10363,7 @@ function ReportsTab({
     ? text.decisionReportNextOpenDetail
     : text.decisionReportNextGenerateDetail;
   const autoPreviewedReportRef = React.useRef<string | null>(null);
+  const handledPreviewRequestRef = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     if (currentDecisionReportId && autoPreviewedReportRef.current !== currentDecisionReportId) {
@@ -10359,6 +10399,13 @@ function ReportsTab({
       setPreviewLoadingId(null);
     }
   }
+
+  React.useEffect(() => {
+    if (!previewRequest || previewRequest.targetTab !== "Insight") return;
+    if (handledPreviewRequestRef.current === previewRequest.nonce) return;
+    handledPreviewRequestRef.current = previewRequest.nonce;
+    void loadArtifactPreview(previewRequest.artifactId);
+  }, [previewRequest]);
 
   async function planNotebookExecution(item: NotebookIndexItem) {
     const job = await api<Job>(`/api/analysis-notebooks/${item.artifact_ids.notebook}/execution-plan`, {
