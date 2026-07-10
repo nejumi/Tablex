@@ -105,6 +105,8 @@ from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.dataset_profile import profile_dataset_artifact
 from tabular_harness.services.decision_reporting import create_decision_report_v1
 from tabular_harness.services.deliverable_expectations import (
+    create_project_data_understanding_notebook_expectation,
+    create_run_model_diagnostics_notebook_expectations,
     fulfill_run_pipeline_bundle_expectations,
 )
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
@@ -2102,6 +2104,12 @@ def prepare_data_understanding_notebook_authoring_handler(
         ),
         response_locale=response_locale,
     )
+    create_project_data_understanding_notebook_expectation(
+        db,
+        project=project,
+        created_from="prepare_data_understanding_notebook_authoring",
+        authoring_brief_artifact_id=result.brief_artifact.id,
+    )
     return {
         "schema_version": "notebook_authoring_preparation.v1",
         "notebook_kind": "data_understanding",
@@ -2426,6 +2434,12 @@ def prepare_model_diagnostics_notebook_authoring_handler(
         store=store,
         project=project,
         objective=f"Author the model-diagnostics marimo notebook for ExperimentRun {run.id}.",
+    )
+    create_run_model_diagnostics_notebook_expectations(
+        db,
+        project=project,
+        runs=[run],
+        created_from="prepare_model_diagnostics_notebook_authoring",
     )
     return {
         "schema_version": "notebook_authoring_preparation.v1",

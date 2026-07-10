@@ -297,6 +297,7 @@ from tabular_harness.services.artifacts import (
 )
 from tabular_harness.services.dataset_profile import profile_dataset_artifact
 from tabular_harness.services.deliverable_expectations import (
+    fulfill_project_data_understanding_notebook_expectations,
     fulfill_run_model_diagnostics_notebook_expectations,
     maybe_write_open_deliverable_expectation_observation,
 )
@@ -1950,6 +1951,14 @@ def execute_notebook_registration_request(
         notebook_artifact=notebook_artifact,
         payload=payload,
     )
+    if context_links.get("notebook_kind") == "data_understanding":
+        dataset_snapshot_id = context_links.get("dataset_snapshot_id")
+        fulfill_project_data_understanding_notebook_expectations(
+            db,
+            project=project,
+            notebook_artifact_id=notebook_artifact.id,
+            dataset_snapshot_id=dataset_snapshot_id if isinstance(dataset_snapshot_id, str) else None,
+        )
     if context_links.get("notebook_kind") == "model_diagnostics":
         run_ids = []
         run_id = context_links.get("run_id")

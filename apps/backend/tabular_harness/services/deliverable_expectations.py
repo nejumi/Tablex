@@ -19,14 +19,20 @@ from tabular_harness.models.entities import (
 from tabular_harness.services.agent_inbox import write_inbox_entry
 
 DELIVERABLE_EXPECTATION_KINDS = {
+    "data_understanding_notebook",
     "model_diagnostics_notebook",
     "pipeline_bundle",
     "validation_audit",
     "research_findings",
 }
 DELIVERABLE_EXPECTATION_STATUSES = {"open", "fulfilled", "waived"}
+PROJECT_SUBJECT_PREFIX = "project:"
 RUN_SUBJECT_PREFIX = "experiment_run:"
 OPEN_EXPECTATION_NOTIFICATION_AFTER = timedelta(minutes=30)
+
+
+def project_subject_ref(project_id: str) -> str:
+    return f"{PROJECT_SUBJECT_PREFIX}{project_id}"
 
 
 def run_subject_ref(run_id: str) -> str:
@@ -139,6 +145,29 @@ def create_run_model_diagnostics_notebook_expectations(
     return expectations
 
 
+def create_project_data_understanding_notebook_expectation(
+    db: Session,
+    *,
+    project: Project,
+    created_from: str,
+    dataset_snapshot_id: str | None = None,
+    authoring_brief_artifact_id: str | None = None,
+) -> DeliverableExpectation:
+    metadata: dict[str, Any] = {}
+    if dataset_snapshot_id:
+        metadata["dataset_snapshot_id"] = dataset_snapshot_id
+    if authoring_brief_artifact_id:
+        metadata["notebook_authoring_brief_artifact_id"] = authoring_brief_artifact_id
+    return upsert_deliverable_expectation(
+        db,
+        project_id=project.id,
+        kind="data_understanding_notebook",
+        subject_ref=project_subject_ref(project.id),
+        created_from=created_from,
+        metadata=metadata,
+    )
+
+
 def fulfill_run_model_diagnostics_notebook_expectations(
     db: Session,
     *,
@@ -159,6 +188,28 @@ def fulfill_run_model_diagnostics_notebook_expectations(
         )
         for run_id in unique_strings(run_ids)
     ]
+
+
+def fulfill_project_data_understanding_notebook_expectations(
+    db: Session,
+    *,
+    project: Project,
+    notebook_artifact_id: str,
+    dataset_snapshot_id: str | None = None,
+) -> DeliverableExpectation:
+    metadata: dict[str, Any] = {"notebook_artifact_id": notebook_artifact_id}
+    if dataset_snapshot_id:
+        metadata["dataset_snapshot_id"] = dataset_snapshot_id
+    return upsert_deliverable_expectation(
+        db,
+        project_id=project.id,
+        kind="data_understanding_notebook",
+        subject_ref=project_subject_ref(project.id),
+        created_from="register_notebook",
+        metadata=metadata,
+        status="fulfilled",
+        fulfilled_by_artifact_id=notebook_artifact_id,
+    )
 
 
 def fulfill_run_pipeline_bundle_expectations(

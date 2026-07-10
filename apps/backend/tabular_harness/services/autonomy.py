@@ -52,6 +52,7 @@ from tabular_harness.services.baseline import (
 )
 from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
+from tabular_harness.services.deliverable_expectations import create_project_data_understanding_notebook_expectation
 from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
     approve_spec,
@@ -477,12 +478,12 @@ def run_data_understanding_stack(
         except ValueError as exc:
             state.warn(f"EDA review skipped: {exc}")
 
-    existing_notebook = latest_native_notebook_artifact(db, project.id)
+    existing_notebook = latest_data_understanding_notebook_artifact(db, project.id)
     if existing_notebook is not None:
         state.record(
             "data_understanding_notebook",
             "reused",
-            "Reused the latest analysis notebook artifact instead of regenerating it during Agent loop start.",
+            "Reused the latest Data Understanding notebook artifact instead of regenerating it during Agent loop start.",
             artifact_ids=[existing_notebook.id],
         )
         return
@@ -503,6 +504,13 @@ def run_data_understanding_stack(
             "prepared",
             "Prepared the context needed for an agent-authored Data Understanding notebook.",
             artifact_ids=brief.artifact_ids,
+        )
+        create_project_data_understanding_notebook_expectation(
+            db,
+            project=project,
+            created_from="autonomous_data_understanding",
+            dataset_snapshot_id=dataset.id,
+            authoring_brief_artifact_id=brief.brief_artifact.id,
         )
     except ValueError as exc:
         state.warn(f"Data Understanding notebook authoring context skipped: {exc}")
@@ -626,12 +634,20 @@ def latest_project_artifact(db: Session, project_id: str, asset_type: str) -> Ar
     )
 
 
-def latest_native_notebook_artifact(db: Session, project_id: str) -> Artifact | None:
-    return db.scalar(
-        select(Artifact)
-        .where(Artifact.project_id == project_id, Artifact.asset_type.in_(("analysis_notebook", "marimo_notebook")))
-        .order_by(Artifact.created_at.desc())
+def latest_data_understanding_notebook_artifact(db: Session, project_id: str) -> Artifact | None:
+    artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project_id, Artifact.asset_type.in_(("analysis_notebook", "marimo_notebook")))
+            .order_by(Artifact.created_at.desc())
+            .limit(200)
+        ).all()
     )
+    for artifact in artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("notebook_kind") == "data_understanding":
+            return artifact
+    return None
 
 
 def run_evaluation_stack(

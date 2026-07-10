@@ -25,6 +25,7 @@ from tabular_harness.models.entities import (
     Artifact,
     Base,
     DatasetSnapshot,
+    DeliverableExpectation,
     EvaluationSpec,
     Evidence,
     ExperimentRun,
@@ -9778,7 +9779,15 @@ def test_notebook_file_request_registers_source_ack_chat_and_plan_link(tmp_path:
             goal_text="Write and register a data understanding notebook.",
             workspace_path=str(workspace),
         )
-        db.add_all([project, session])
+        expectation = DeliverableExpectation(
+            id="deliv_data_notebook",
+            project_id=project.id,
+            kind="data_understanding_notebook",
+            subject_ref=f"project:{project.id}",
+            status="open",
+            created_from="test",
+        )
+        db.add_all([project, session, expectation])
         db.commit()
         commit_research_plan_revision(
             db,
@@ -9833,6 +9842,9 @@ def test_notebook_file_request_registers_source_ack_chat_and_plan_link(tmp_path:
         assert ack["result"]["visible_surfaces"]["chat"]["artifact_id"] == ack["result"]["chat_artifact_id"]
         assert ack["result"]["notebook_quality"]["status"] == "manifest_provided"
         assert ack["result"]["notebook_quality"]["schema_version"] == "tablex_notebook_quality_manifest.v1"
+        db.refresh(expectation)
+        assert expectation.status == "fulfilled"
+        assert expectation.fulfilled_by_artifact_id == notebook_artifact.id
         chat_artifact = db.scalar(
             select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
         )

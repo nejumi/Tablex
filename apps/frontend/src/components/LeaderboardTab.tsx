@@ -722,6 +722,23 @@ export function LeaderboardTab({
     return completedJob;
   }
 
+  async function prepareRunNotebookEvidence(entry: LeaderboardEntry) {
+    const job = await api<Job>(`/api/runs/${entry.run_id}/analysis-notebook`, { method: "POST" });
+    const completedJob = await runQueuedJobAndWait(job, {
+      timeoutMs: 10 * 60_000,
+      label: "Model diagnostics notebook job"
+    });
+    await openNotebookOrAskAgentToAuthor({
+      completedJob,
+      locale,
+      projectName: project.name,
+      notebookKind: "model diagnostics",
+      onOpenNotebookArtifact,
+      onAskAgent
+    });
+    return completedJob;
+  }
+
   const readoutStatus = resultReadout?.status ?? leaderboardStatus;
   const readoutTone = resultReadoutStatusTone(readoutStatus, leaderboardTone);
   const metricOptions = leaderboardMetricOptions(leaderboard);
@@ -950,7 +967,7 @@ export function LeaderboardTab({
                 text.leaderboardHeaderActions
               ]}
               rows={leaderboard.map((entry) => {
-                const existingNotebook = notebooksForLeaderboardEntry(notebookIndex, entry)[0] ?? resultNotebooks[0] ?? null;
+                const existingNotebook = notebooksForLeaderboardEntry(notebookIndex, entry)[0] ?? null;
                 return [
                   <strong className="leaderboard-rank" key={`${entry.run_id}-rank`}>#{entry.rank}</strong>,
                   <div className="leaderboard-model-cell" key={`${entry.run_id}-model`}>
@@ -1004,7 +1021,7 @@ export function LeaderboardTab({
                           onOpenNotebookArtifact(existingNotebook.artifact_ids.notebook);
                           return;
                         }
-                        void runAction(prepareResultNotebookEvidence);
+                        void runAction(() => prepareRunNotebookEvidence(entry));
                       }}
                       title={text.leaderboardActionOpenNotebook}
                       type="button"

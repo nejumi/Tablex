@@ -2261,6 +2261,7 @@ function ProjectDetail({
   const seenInterventionKeysRef = React.useRef<Set<string>>(new Set());
   const [pendingAnchor, setPendingAnchor] = React.useState<PendingAnchorNavigation | null>(null);
   const [artifactPreviewRequest, setArtifactPreviewRequest] = React.useState<ArtifactPreviewRequest | null>(null);
+  const artifactPreviewNonceRef = React.useRef(0);
   const [queuedUploadFiles, setQueuedUploadFiles] = React.useState<File[]>([]);
   const [queuedUploadPrimaryFileName, setQueuedUploadPrimaryFileName] = React.useState("");
   const [queuedUploadProgress, setQueuedUploadProgress] = React.useState<UploadBundleProgress | null>(null);
@@ -2703,6 +2704,21 @@ function ProjectDetail({
     onTabChange(normalized.targetTab);
   }
 
+  function requestArtifactPreview(artifactId: string, targetTab: Tab, anchor?: string | null) {
+    artifactPreviewNonceRef.current += 1;
+    setArtifactPreviewRequest({
+      artifactId,
+      targetTab,
+      anchor: anchor ?? null,
+      nonce: artifactPreviewNonceRef.current
+    });
+  }
+
+  function openNotebookArtifact(artifactId: string) {
+    requestArtifactPreview(artifactId, "Notebooks", NOTEBOOK_NATIVE_MARIMO_ANCHOR);
+    navigateToTarget("Notebooks", NOTEBOOK_NATIVE_MARIMO_ANCHOR);
+  }
+
   async function runAction(action: () => Promise<unknown>, options: RunActionOptions = {}) {
     setBusy(true);
     setError(null);
@@ -3078,12 +3094,7 @@ function ProjectDetail({
       return;
     }
     if (artifactId) {
-      setArtifactPreviewRequest({
-        artifactId,
-        targetTab: normalized.targetTab,
-        anchor: normalized.targetAnchor ?? null,
-        nonce: Date.now()
-      });
+      requestArtifactPreview(artifactId, normalized.targetTab, normalized.targetAnchor ?? null);
     }
     navigateToTarget(normalized.targetTab, normalized.targetAnchor ?? null);
   }
@@ -3091,12 +3102,7 @@ function ProjectDetail({
   function openHomeMemoryItem(item: HomeMemoryItem) {
     const targetTab = tabFromString(item.target_tab, "Insight");
     if (item.artifact_id) {
-      setArtifactPreviewRequest({
-        artifactId: item.artifact_id,
-        targetTab,
-        anchor: item.target_anchor,
-        nonce: Date.now()
-      });
+      requestArtifactPreview(item.artifact_id, targetTab, item.target_anchor);
     }
     navigateToTarget(targetTab, item.target_anchor);
   }
@@ -3212,12 +3218,7 @@ function ProjectDetail({
           onCancelWorker={cancelWorkerJob}
           onNavigateToTarget={navigateToTarget}
           onOpenArtifact={(artifactId, targetTab, anchor) => {
-            setArtifactPreviewRequest({
-              artifactId,
-              targetTab,
-              anchor: anchor ?? null,
-              nonce: Date.now()
-            });
+            requestArtifactPreview(artifactId, targetTab, anchor ?? null);
             navigateToTarget(targetTab, anchor ?? null);
           }}
         />
@@ -3308,15 +3309,7 @@ function ProjectDetail({
           text={text}
           runAction={runAction}
           onAskAgent={submitAgentChat}
-          onOpenNotebookArtifact={(artifactId) => {
-            setArtifactPreviewRequest({
-              artifactId,
-              targetTab: "Notebooks",
-              anchor: "notebook-native-marimo-top",
-              nonce: Date.now()
-            });
-            navigateToTarget("Notebooks", "notebook-native-marimo-top");
-          }}
+          onOpenNotebookArtifact={openNotebookArtifact}
         />
       )}
       {tab === "Data" && (
@@ -3335,15 +3328,7 @@ function ProjectDetail({
           onProjectChanged={onProjectChanged}
           onProjectUpdated={onProjectUpdated}
           onObjectiveChanged={refreshResearchPlanTimeline}
-          onOpenNotebookArtifact={(artifactId) => {
-            setArtifactPreviewRequest({
-              artifactId,
-              targetTab: "Notebooks",
-              anchor: "notebook-native-marimo-top",
-              nonce: Date.now()
-            });
-            navigateToTarget("Notebooks", "notebook-native-marimo-top");
-          }}
+          onOpenNotebookArtifact={openNotebookArtifact}
           onStatusMessage={(message) =>
             setAgentChatMessages((current) =>
               upsertAgentChatMessages(current, [
@@ -3423,15 +3408,7 @@ function ProjectDetail({
           text={text}
           runAction={runAction}
           onAskAgent={submitAgentChat}
-          onOpenNotebookArtifact={(artifactId) => {
-            setArtifactPreviewRequest({
-              artifactId,
-              targetTab: "Notebooks",
-              anchor: "notebook-native-marimo-top",
-              nonce: Date.now()
-            });
-            navigateToTarget("Notebooks", "notebook-native-marimo-top");
-          }}
+          onOpenNotebookArtifact={openNotebookArtifact}
         />
       )}
       {tab === "Notebooks" && (
@@ -3464,15 +3441,7 @@ function ProjectDetail({
           text={text}
           runAction={runAction}
           onAskAgent={submitAgentChat}
-          onOpenNotebookArtifact={(artifactId) => {
-            setArtifactPreviewRequest({
-              artifactId,
-              targetTab: "Notebooks",
-              anchor: "notebook-native-marimo-top",
-              nonce: Date.now()
-            });
-            navigateToTarget("Notebooks", "notebook-native-marimo-top");
-          }}
+          onOpenNotebookArtifact={openNotebookArtifact}
         />
       )}
       {tab === "Reports" && (
@@ -3490,15 +3459,7 @@ function ProjectDetail({
           text={text}
           runAction={runAction}
           onAskAgent={submitAgentChat}
-          onOpenNotebookArtifact={(artifactId) => {
-            setArtifactPreviewRequest({
-              artifactId,
-              targetTab: "Notebooks",
-              anchor: "notebook-native-marimo-top",
-              nonce: Date.now()
-            });
-            navigateToTarget("Notebooks", "notebook-native-marimo-top");
-          }}
+          onOpenNotebookArtifact={openNotebookArtifact}
         />
       )}
       {tab === "Assets" && (
@@ -3517,15 +3478,7 @@ function ProjectDetail({
           runAction={runAction}
           onEquipSkill={(asset) => runAction(() => equipLibraryAsset(asset))}
           onCreateSkill={(draft) => runAction(() => createAndEquipSkill(draft))}
-          onOpenNotebookArtifact={(artifactId) => {
-            setArtifactPreviewRequest({
-              artifactId,
-              targetTab: "Notebooks",
-              anchor: "notebook-native-marimo-top",
-              nonce: Date.now()
-            });
-            navigateToTarget("Notebooks", "notebook-native-marimo-top");
-          }}
+          onOpenNotebookArtifact={openNotebookArtifact}
         />
       )}
       {tab === "Library" && (

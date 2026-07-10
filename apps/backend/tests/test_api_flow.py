@@ -80,6 +80,7 @@ from tabular_harness.services.artifacts import (
     next_artifact_version,
     register_artifact,
 )
+from tabular_harness.services.autonomy import latest_data_understanding_notebook_artifact
 from tabular_harness.services.deliverable_expectations import (
     fulfill_run_pipeline_bundle_expectations,
     maybe_write_open_deliverable_expectation_observation,
@@ -1679,6 +1680,41 @@ def test_health_aliases_are_public_when_auth_is_enabled(tmp_path: Path) -> None:
     assert client.get("/healthz").json() == {"status": "ok"}
     assert client.get("/api/health").json() == {"status": "ok"}
     assert client.get("/api/projects").status_code == 401
+
+
+def test_data_understanding_notebook_reuse_ignores_model_notebooks(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Notebook Reuse Guard"})
+    assert project_response.status_code == 200, project_response.text
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        model_notebook = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="model_diagnostics",
+            filename="model_diagnostics.py",
+            text="import marimo\n",
+            metadata={"notebook_kind": "model_diagnostics"},
+        )
+        db.commit()
+        assert model_notebook.id
+        assert latest_data_understanding_notebook_artifact(db, project_id) is None
+
+        data_notebook = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="data_understanding",
+            filename="data_understanding.py",
+            text="import marimo\n",
+            metadata={"notebook_kind": "data_understanding"},
+        )
+        db.commit()
+        assert latest_data_understanding_notebook_artifact(db, project_id).id == data_notebook.id
 
 
 def test_admin_storage_usage_api_returns_categories(tmp_path: Path) -> None:
@@ -9902,6 +9938,20 @@ def test_portal_overview_ideas_and_agent_activity(tmp_path: Path, monkeypatch: A
     notebook_output = run_queued_job(client, notebook_job["id"])
     assert notebook_output["analysis_notebook_artifact_id"] is None
     assert notebook_output["notebook_authoring_brief_artifact_id"]
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        data_notebook_expectation = db.scalar(
+            select(DeliverableExpectation).where(
+                DeliverableExpectation.project_id == project_id,
+                DeliverableExpectation.kind == "data_understanding_notebook",
+                DeliverableExpectation.subject_ref == f"project:{project_id}",
+            )
+        )
+        assert data_notebook_expectation is not None
+        assert data_notebook_expectation.status == "open"
+        assert loads_json(data_notebook_expectation.metadata_json, {})[
+            "notebook_authoring_brief_artifact_id"
+        ] == notebook_output["notebook_authoring_brief_artifact_id"]
 
     eda_response = client.post(f"/api/datasets/{dataset_id}/eda-review")
     assert eda_response.status_code == 200, eda_response.text
@@ -10125,6 +10175,17 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert notebook_output["notebook_run_manifest_artifact_id"] is None
     assert notebook_output["notebook_report_id"] is None
     assert notebook_output["notebook_authoring_brief_artifact_id"]
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        data_notebook_expectation = db.scalar(
+            select(DeliverableExpectation).where(
+                DeliverableExpectation.project_id == project_id,
+                DeliverableExpectation.kind == "data_understanding_notebook",
+                DeliverableExpectation.subject_ref == f"project:{project_id}",
+            )
+        )
+        assert data_notebook_expectation is not None
+        assert data_notebook_expectation.status == "open"
 
     authoring_preview_response = client.get(
         f"/api/artifacts/{notebook_output['notebook_authoring_brief_artifact_id']}/preview"
@@ -11291,6 +11352,17 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert model_notebook_output["visualization_artifact_id"] is None
     assert model_notebook_output["execution_status"] == "awaiting_agent_authored_notebook"
     assert model_notebook_output["notebook_authoring_brief_artifact_id"]
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        model_notebook_expectation = db.scalar(
+            select(DeliverableExpectation).where(
+                DeliverableExpectation.project_id == project_id,
+                DeliverableExpectation.kind == "model_diagnostics_notebook",
+                DeliverableExpectation.subject_ref == f"experiment_run:{baseline_run['id']}",
+            )
+        )
+        assert model_notebook_expectation is not None
+        assert model_notebook_expectation.status == "open"
 
     notebook_index_response = client.get(f"/api/projects/{project_id}/analysis-notebooks")
     assert notebook_index_response.status_code == 200, notebook_index_response.text
