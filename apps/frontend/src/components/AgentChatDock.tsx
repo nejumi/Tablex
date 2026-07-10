@@ -163,7 +163,8 @@ function surfaceLabel(anchor: string, text: LocaleMessages) {
     reports: "Reports",
     "evaluation-design": "Evaluation Design",
     "approach-handoff": "Runner Handoff",
-    "assumption-review": "Review Queue"
+    "assumption-review": "Review Queue",
+    "asset-library": "Skill Library"
   };
   return labels[anchor] ?? anchor.replace(/-/g, " ");
 }

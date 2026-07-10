@@ -3193,6 +3193,9 @@ function ProjectDetail({
         relation_type: asset.asset_type === "skill" ? "equipped_for_agent_context" : "uses"
       })
     });
+    if (asset.asset_type === "skill") {
+      addMatrixSkillEquippedMessage(asset);
+    }
   }
 
   async function createAndEquipSkill(draft: SkillDraft) {
@@ -3222,6 +3225,38 @@ function ProjectDetail({
     });
     await equipLibraryAsset(asset);
     return asset;
+  }
+
+  function addMatrixSkillEquippedMessage(asset: LibraryAsset) {
+    if (userSettings.displayTheme !== "matrix") return;
+    const createdAt = new Date().toISOString();
+    setAgentChatMessages((current) =>
+      upsertAgentChatMessages(current, [
+        {
+          id: `matrix-skill-equipped:${asset.id}:${createdAt}`,
+          role: "system",
+          text: `I know ${asset.name}.`,
+          actions: [
+            {
+              type: "matrix_skill_reveal",
+              status: "ready",
+              label: "Show me.",
+              target_tab: "Assets",
+              target_anchor: "asset-library",
+              detail: `Open the Skill library context for ${asset.name}.`,
+              entity_ids: [asset.id]
+            }
+          ],
+          responseComposer: {
+            schema_version: "agent_response_composer.v1",
+            mode: "matrix_theme_ui_event",
+            status: "succeeded"
+          },
+          createdAt,
+          transient: true
+        }
+      ])
+    );
   }
 
   async function catchPendingIntervention() {
@@ -5024,7 +5059,8 @@ function surfaceLabel(anchor: string) {
     reports: "Reports",
     "evaluation-design": "Evaluation Design",
     "approach-handoff": "Runner Handoff",
-    "assumption-review": "Review Queue"
+    "assumption-review": "Review Queue",
+    "asset-library": "Skill Library"
   };
   return labels[anchor] ?? anchor.replace(/-/g, " ");
 }
@@ -12682,7 +12718,7 @@ function LibraryTab({
         onCreateSkill={onCreateSkill}
         onEquipSkill={onEquipSkill}
       />
-      <Panel title="Cross-project Asset Library" icon={<Library size={18} />}>
+      <Panel id="asset-library" title="Cross-project Asset Library" icon={<Library size={18} />}>
         {assets.length ? (
           <Table
             headers={["Type", "Name", "Tags", "Semantic", "Latest Version", "Status", "Actions"]}
