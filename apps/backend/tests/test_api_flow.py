@@ -2175,7 +2175,7 @@ def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -
         json={
             "settings": {
                 "locale": "ja-JP",
-                "displayTheme": "dark",
+                "displayTheme": "matrix",
                 "userAvatarDataUrl": "data:image/svg+xml;base64,PHN2Zy8+",
                 "agentModel": "gpt-5.5-xhigh",
                 "utilityModel": "gpt-5-mini",
@@ -2185,7 +2185,7 @@ def test_password_auth_protects_api_and_persists_user_settings(tmp_path: Path) -
     assert settings_response.status_code == 200, settings_response.text
     saved_settings = settings_response.json()["settings"]
     assert saved_settings["locale"] == "ja-JP"
-    assert saved_settings["displayTheme"] == "dark"
+    assert saved_settings["displayTheme"] == "matrix"
     assert saved_settings["userAvatarDataUrl"].startswith("data:image/")
 
     logout_response = client.post("/api/auth/logout")

@@ -60,7 +60,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-type DisplayTheme = "light" | "dark";
+type DisplayTheme = "light" | "dark" | "matrix";
 type LocaleDirection = "ltr" | "rtl";
 type LocaleSource = "built_in" | "dynamic";
 type ChatSubmitShortcutSetting = "locale_default" | "enter" | "shift_enter";
@@ -189,7 +189,7 @@ function loadUserSettings(): UserSettings {
             : "",
       dynamicLanguageRequest:
         typeof parsed.dynamicLanguageRequest === "string" ? parsed.dynamicLanguageRequest : "",
-      displayTheme: parsed.displayTheme === "dark" ? "dark" : "light",
+      displayTheme: isDisplayTheme(parsed.displayTheme) ? parsed.displayTheme : "light",
       showDetailedTabs: parsed.showDetailedTabs === true,
       interventionCountdownSeconds:
         typeof parsed.interventionCountdownSeconds === "number" && Number.isFinite(parsed.interventionCountdownSeconds)
@@ -223,7 +223,7 @@ function mergeServerUserSettings(current: UserSettings, serverSettings: Partial<
       typeof serverSettings.dynamicLanguageRequest === "string"
         ? serverSettings.dynamicLanguageRequest
         : current.dynamicLanguageRequest,
-    displayTheme: serverSettings.displayTheme === "dark" || serverSettings.displayTheme === "light" ? serverSettings.displayTheme : current.displayTheme,
+    displayTheme: isDisplayTheme(serverSettings.displayTheme) ? serverSettings.displayTheme : current.displayTheme,
     showDetailedTabs:
       typeof serverSettings.showDetailedTabs === "boolean" ? serverSettings.showDetailedTabs : current.showDetailedTabs,
     interventionCountdownSeconds:
@@ -253,6 +253,16 @@ function mergeServerUserSettings(current: UserSettings, serverSettings: Partial<
 
 function isChatSubmitShortcutSetting(value: unknown): value is ChatSubmitShortcutSetting {
   return value === "locale_default" || value === "enter" || value === "shift_enter";
+}
+
+function isDisplayTheme(value: unknown): value is DisplayTheme {
+  return value === "light" || value === "dark" || value === "matrix";
+}
+
+function displayThemeLabel(theme: DisplayTheme, text: LocaleMessages): string {
+  if (theme === "dark") return text.darkTheme;
+  if (theme === "matrix") return text.matrixTheme;
+  return text.lightTheme;
 }
 
 function normalizeLocale(value: string) {
@@ -1789,7 +1799,7 @@ function UserSettingsPanel({
       <div className="settings-section">
         <div className="settings-label-row">
           <span>{text.appearance}</span>
-          <strong>{settings.displayTheme === "dark" ? text.darkTheme : text.lightTheme}</strong>
+          <strong>{displayThemeLabel(settings.displayTheme, text)}</strong>
         </div>
         <div className="segmented-control" role="group" aria-label={text.appearance}>
           <button
@@ -1807,6 +1817,14 @@ function UserSettingsPanel({
           >
             <Moon size={15} />
             {text.darkTheme}
+          </button>
+          <button
+            className={settings.displayTheme === "matrix" ? "active" : ""}
+            onClick={() => update({ displayTheme: "matrix" })}
+            type="button"
+          >
+            <Sparkles size={15} />
+            {text.matrixTheme}
           </button>
         </div>
         <label className="checkbox-row">

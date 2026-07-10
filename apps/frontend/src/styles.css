@@ -57,6 +57,34 @@
   background: var(--bg);
 }
 
+:root[data-theme="matrix"] {
+  --bg: #020805;
+  --surface: #07150d;
+  --surface-subtle: #0b1d12;
+  --surface-muted: #051009;
+  --surface-hover: #0d2b18;
+  --text: #d7ffe6;
+  --text-strong: #f0fff5;
+  --muted: #82b995;
+  --muted-strong: #abe9bd;
+  --border: #173923;
+  --border-strong: #2d6c43;
+  --accent: #37ff7a;
+  --accent-2: #00d8a0;
+  --accent-strong: #20bf55;
+  --focus: #145b2c;
+  --success: #62ff9b;
+  --success-bg: #062014;
+  --warning: #d9ff73;
+  --warning-bg: #20250b;
+  --danger: #ff8f8f;
+  --danger-bg: #2a0d0d;
+  --shadow: rgba(0, 30, 8, 0.78);
+  color-scheme: dark;
+  color: var(--text);
+  background: var(--bg);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -65,8 +93,35 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  position: relative;
   background: var(--bg);
   color: var(--text);
+}
+
+:root[data-theme="matrix"] body {
+  background:
+    radial-gradient(circle at 18% 8%, rgba(55, 255, 122, 0.11), transparent 28%),
+    linear-gradient(180deg, #020805 0%, #03150a 48%, #020805 100%);
+}
+
+:root[data-theme="matrix"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(55, 255, 122, 0.08), transparent 22%, rgba(55, 255, 122, 0.04) 44%, transparent 70%),
+    repeating-linear-gradient(90deg, rgba(55, 255, 122, 0.05) 0 1px, transparent 1px 34px),
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 4px);
+  mix-blend-mode: screen;
+  opacity: 0.55;
+}
+
+:root[data-theme="matrix"] .app-shell,
+:root[data-theme="matrix"] .auth-shell {
+  position: relative;
+  z-index: 1;
 }
 
 button,

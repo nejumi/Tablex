@@ -136,7 +136,7 @@ def update_user_settings(user: User, settings: dict[str, Any]) -> User:
         user.requested_locale = clean_short_string(settings["requestedLocale"], fallback="", max_length=64)
     if isinstance(settings.get("dynamicLanguageRequest"), str):
         user.dynamic_language_request = str(settings["dynamicLanguageRequest"])[:4000]
-    if settings.get("displayTheme") in {"light", "dark"}:
+    if settings.get("displayTheme") in {"light", "dark", "matrix"}:
         user.display_theme = str(settings["displayTheme"])
     countdown = settings.get("interventionCountdownSeconds")
     if isinstance(countdown, int | float):
