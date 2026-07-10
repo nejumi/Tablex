@@ -14,6 +14,7 @@ from tabular_harness.models.entities import (
     Project,
     ResearchPlanCurrentWork,
     ResearchPlanRevision,
+    User,
     utc_now,
 )
 from tabular_harness.services.research_plan_timeline import (
@@ -465,6 +466,98 @@ def test_research_plan_timeline_accepts_human_locale_alias_keys() -> None:
     assert blocks[0]["subtitle"] == "モデリング前にデータの物語を見つけます。"
     assert blocks[0]["subtasks"][0]["title"] == "裾の見立て"
     assert blocks[0]["subtasks"][0]["detail"] == "高salaryセグメントを確認します。"
+
+
+def test_research_plan_commit_rejects_missing_japanese_display_locale_for_japanese_project() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        user = User(id="u_plan_locale_contract", email="plan-locale-contract@example.com", locale="ja-JP")
+        project = Project(
+            id="p_plan_locale_contract",
+            name="Plan Locale Contract",
+            created_by=user.id,
+        )
+        db.add_all([user, project])
+        db.commit()
+
+        try:
+            commit_research_plan_revision(
+                db,
+                project_id=project.id,
+                document={
+                    "schema_version": "research_plan.v2",
+                    "timeline_blocks": [
+                        {
+                            "id": "data_upload",
+                            "title": "Data upload",
+                            "subtitle": "Uploaded data is available.",
+                            "granularity": "chapter",
+                            "status": "active",
+                        }
+                    ],
+                },
+                author_type="codex",
+                reason="Codex submitted an English-only plan for a Japanese project.",
+                strict_validation=True,
+            )
+        except ResearchPlanValidationError as exc:
+            issues = exc.issues
+        else:
+            issues = []
+
+        assert {issue["code"] for issue in issues} == {"localized_display_missing"}
+        assert {issue["path"] for issue in issues} == {
+            "/timeline_blocks/0/title",
+            "/timeline_blocks/0/subtitle",
+        }
+
+
+def test_research_plan_commit_accepts_explicit_japanese_display_locale_for_japanese_project() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        user = User(id="u_plan_locale_ok", email="plan-locale-ok@example.com", locale="ja-JP")
+        project = Project(
+            id="p_plan_locale_ok",
+            name="Plan Locale OK",
+            created_by=user.id,
+        )
+        db.add_all([user, project])
+        db.commit()
+
+        result = commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_upload",
+                        "title": "Data upload",
+                        "subtitle": "Uploaded data is available.",
+                        "granularity": "chapter",
+                        "status": "active",
+                        "localizations": {
+                            "ja-JP": {
+                                "title": "データアップロード",
+                                "subtitle": "アップロード済みデータを利用できます。",
+                            }
+                        },
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Codex submitted localized display values for a Japanese project.",
+            strict_validation=True,
+        )
+
+        timeline = build_research_plan_timeline_response(db, project_id=project.id, locale="ja-JP")
+        assert result.created is True
+        assert timeline["blocks"][0]["title"] == "データアップロード"
+        assert timeline["blocks"][0]["subtitle"] == "アップロード済みデータを利用できます。"
 
 
 def test_research_plan_timeline_keeps_mixed_language_blocks_visible() -> None:

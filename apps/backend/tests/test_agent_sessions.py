@@ -11560,6 +11560,12 @@ def test_research_plan_ingest_commits_contract_valid_workspace_plan(tmp_path: Pa
                         "granularity": "chapter",
                         "why_it_matters": "Compare candidate models after EDA.",
                         "status": "active",
+                        "localizations": {
+                            "ja-JP": {
+                                "title": "モデリングレビュー",
+                                "why_it_matters": "EDA後に候補モデルを比較します。",
+                            }
+                        },
                     }
                 ],
             }

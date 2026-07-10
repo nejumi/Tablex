@@ -3576,7 +3576,9 @@ def test_agent_activity_does_not_repromote_experiment_result_success_event(
     activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
     assert activity_response.status_code == 200
     worker = activity_response.json()["workers"][0]
-    assert "checking the repaired prediction pipeline fixtures" in worker["detail"]
+    assert "Registered 2 leaderboard run(s)" not in worker["detail"]
+    assert "checking the repaired prediction pipeline fixtures" not in worker["detail"]
+    assert worker["job_type"] == "agent_session"
     assert "Experiment results were registered" not in worker["detail"]
     assert worker["target_tab"] == "Home"
     assert worker["target_anchor"] == "agent-workspace"
@@ -7144,8 +7146,10 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
     assert activity["turn_state"]["raw_transcript"]["stderr_line_count"] == 0
     assert activity["turn_state"]["raw_transcript"]["updated_at"]
     assert main_worker["raw_transcript"]["stdout_line_count"] == activity["turn_state"]["raw_transcript"]["stdout_line_count"]
-    assert "I am continuing the main autonomous session." in main_worker["detail"]
-    assert "I am continuing the main autonomous session." in main_worker["human_description"]["summary"]
+    assert "I am continuing the main autonomous session." not in main_worker["detail"]
+    assert main_worker["detail"] == "データ理解の根拠を確認し、次に評価設計へ進む準備をしています。"
+    assert "I am continuing the main autonomous session." not in main_worker["human_description"]["summary"]
+    assert main_worker["human_description"]["summary"] == "データ理解の根拠を確認し、次に評価設計へ進む準備をしています。"
 
 
 def test_agent_chat_appends_user_instruction_to_active_main_session(

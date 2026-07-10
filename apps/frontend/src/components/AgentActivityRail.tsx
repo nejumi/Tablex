@@ -24,14 +24,14 @@ function tabLabel(tab: Tab, text: LocaleMessages) {
   return item ? text[item.labelKey] : tab;
 }
 
-function surfaceLabel(anchor: string) {
+function surfaceLabel(anchor: string, text: LocaleMessages) {
   const labels: Record<string, string> = {
-    "dataset-upload": "Dataset Upload",
+    "dataset-upload": text.planBlockDataUpload,
     "data-focus": "Data Evidence",
     "relational-map": "Relational Map",
-    "research-plan": "Research Plan",
-    "agent-workspace": "Agent Workspace",
-    "agent-activity": "Agent Activity",
+    "research-plan": text.researchPlanTitle,
+    "agent-workspace": text.agentWorkspaceTitle,
+    "agent-activity": text.agentActivityTitle,
     "notebook-native-marimo-top": "Notebook",
     "result-readout": "Result Readout"
   };
@@ -274,7 +274,7 @@ function AgentWorkerCard({
   const explicitNotebookViewer = artifactId && event.target_tab === "Notebooks";
   const targetTab = explicitNotebookViewer ? "Notebooks" : event.target_tab ? tabFromString(event.target_tab, "Home") : null;
   const targetLabel = targetTab
-    ? `${text.openSurface} ${tabLabel(targetTab, text)}${event.target_anchor ? ` · ${surfaceLabel(event.target_anchor)}` : ""}`
+    ? `${text.openSurface} ${tabLabel(targetTab, text)}${event.target_anchor ? ` · ${surfaceLabel(event.target_anchor, text)}` : ""}`
     : text.openSurface;
   function openTarget() {
     if (!targetTab) return;

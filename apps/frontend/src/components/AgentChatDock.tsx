@@ -149,12 +149,12 @@ function tabLabel(tab: Tab, text: LocaleMessages) {
   return item ? text[item.labelKey] : tab;
 }
 
-function surfaceLabel(anchor: string) {
+function surfaceLabel(anchor: string, text: LocaleMessages) {
   const labels: Record<string, string> = {
     "dataset-upload": "Dataset Upload",
     "data-focus": "Data Evidence",
     "relational-map": "Relational Map",
-    "research-plan": "Research Plan",
+    "research-plan": text.researchPlanTitle,
     "notebook-focus": "Notebook Focus",
     "notebook-center": "Notebook Center",
     "analysis-story": "Analysis Story",
@@ -173,7 +173,7 @@ function agentChatActionLabel(action: AgentChatAction, text: LocaleMessages) {
   const verb = ["needs_review", "created", "recorded", "explained"].includes(action.status)
     ? text.chatActionReview
     : text.chatActionOpen;
-  const anchorLabel = action.target_anchor ? ` · ${surfaceLabel(action.target_anchor)}` : "";
+  const anchorLabel = action.target_anchor ? ` · ${surfaceLabel(action.target_anchor, text)}` : "";
   return `${verb} ${tabLabel(targetTab, text)}${anchorLabel}`;
 }
 
@@ -290,7 +290,7 @@ function AgentChatSummaryCard({
           <strong>{nextLabel}</strong>
           <small>
             {targetLabel}
-            {nextAnchor ? ` · ${surfaceLabel(nextAnchor)}` : ""}
+            {nextAnchor ? ` · ${surfaceLabel(nextAnchor, text)}` : ""}
           </small>
         </button>
       ) : null}

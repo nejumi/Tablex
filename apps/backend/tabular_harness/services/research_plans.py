@@ -22,9 +22,11 @@ from tabular_harness.models.entities import (
     ResearchPlan,
     ResearchPlanCurrentWork,
     ResearchPlanRevision,
+    User,
     utc_now,
 )
 from tabular_harness.services.artifacts import artifact_primary_path, create_lineage_edge
+from tabular_harness.services.locales import locale_is_japanese
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,7 @@ PLAN_NOTEBOOK_ASSET_TYPES = {
 }
 PLAN_DISPLAY_TITLE_FIELDS = ("title",)
 PLAN_DISPLAY_DETAIL_FIELDS = (
+    "detail",
     "subtitle",
     "summary",
     "description",
@@ -87,6 +90,7 @@ HARNESS_RESEARCH_PLAN_BOOTSTRAP_SOURCES = {
     "harness_dataset_upload",
     "harness_objective_framing",
 }
+_MISSING = object()
 
 
 def latest_research_plan_revision(db: Session, *, project_id: str) -> ResearchPlanRevision | None:
@@ -839,6 +843,11 @@ def validate_research_plan_document(
         return issues
 
     blocks = [block for block in raw_blocks if isinstance(block, dict)]
+    required_display_locale = research_plan_required_explicit_display_locale(
+        db,
+        project_id=project_id,
+        document=document,
+    ) if strict else None
     if strict and len(blocks) > PLAN_MAX_TOP_LEVEL_BLOCKS:
         issues.append(
             research_plan_issue(
@@ -857,6 +866,29 @@ def validate_research_plan_document(
         block_id = research_plan_block_id(block, index)
         status = research_plan_block_status(block)
         granularity = research_plan_block_granularity(block)
+        if required_display_locale:
+            issues.extend(
+                research_plan_locale_display_issues(
+                    block,
+                    locale=required_display_locale,
+                    path=path,
+                    node_id=block_id,
+                )
+            )
+            subtasks = block.get("subtasks")
+            if isinstance(subtasks, list):
+                for subtask_index, subtask in enumerate(subtasks):
+                    if not isinstance(subtask, dict):
+                        continue
+                    subtask_id = str(subtask.get("id") or f"subtask_{subtask_index + 1}")
+                    issues.extend(
+                        research_plan_locale_display_issues(
+                            subtask,
+                            locale=required_display_locale,
+                            path=f"{path}/subtasks/{subtask_index}",
+                            node_id=f"{block_id}/{subtask_id}",
+                        )
+                    )
         if strict and granularity:
             if granularity in PLAN_TOO_FINE_GRANULARITIES:
                 issues.append(
@@ -1121,6 +1153,129 @@ def validate_research_plan_document(
                     )
                 )
     return issues
+
+
+def research_plan_required_explicit_display_locale(
+    db: Session,
+    *,
+    project_id: str,
+    document: dict[str, Any],
+) -> str | None:
+    locale = research_plan_document_locale(document)
+    if not locale:
+        project = db.get(Project, project_id)
+        if project is not None and project.created_by:
+            user = db.get(User, project.created_by)
+            if user is not None and user.locale and user.locale.strip():
+                locale = user.locale.strip()
+    if locale_is_japanese(locale):
+        return "ja-JP"
+    return None
+
+
+def research_plan_document_locale(document: dict[str, Any]) -> str | None:
+    for key in ("response_locale", "locale", "language"):
+        value = document.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for container_key in ("project", "human_interface", "ui", "display"):
+        container = document.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for key in ("response_locale", "locale", "language", "notebook_language"):
+            value = container.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def research_plan_locale_display_issues(
+    block: dict[str, Any],
+    *,
+    locale: str,
+    path: str,
+    node_id: str,
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    for key in PLAN_DISPLAY_TITLE_FIELDS:
+        if not research_plan_has_explicit_locale_display_text(block, key, locale):
+            issues.append(
+                research_plan_issue(
+                    "localized_display_missing",
+                    f"{path}/{key}",
+                    f"ResearchPlan node `{node_id}` is being submitted for locale `{locale}`, but `{key}` has no explicit localized display value.",
+                    f"Add localizations.{locale}.{key} (or an equivalent locale-keyed display field). Do not rely on raw English fields for this locale.",
+                )
+            )
+    for key in PLAN_DISPLAY_DETAIL_FIELDS:
+        if not research_plan_has_display_text(block, (key,)):
+            continue
+        if research_plan_has_explicit_locale_display_text(block, key, locale):
+            continue
+        issues.append(
+            research_plan_issue(
+                "localized_display_missing",
+                f"{path}/{key}",
+                f"ResearchPlan node `{node_id}` includes `{key}` display text, but no explicit `{locale}` localized value for that field.",
+                f"Add localizations.{locale}.{key} (or an equivalent locale-keyed display field), or remove that display field if it should not be shown.",
+            )
+        )
+    return issues
+
+
+def research_plan_has_explicit_locale_display_text(block: dict[str, Any], key: str, locale: str | None) -> bool:
+    value = research_plan_explicit_locale_display_value(block, key, locale=locale)
+    return isinstance(value, str) and value.strip() != ""
+
+
+def research_plan_explicit_locale_display_value(block: dict[str, Any], key: str, *, locale: str | None) -> Any:
+    locale_keys = research_plan_locale_keys(locale)
+    if not locale_keys:
+        return _MISSING
+    display_field_keys = (key, *_research_plan_display_field_keys(key))
+    for container_key in ("localizations", "localized", "translations", "translated"):
+        container = block.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for locale_key in locale_keys:
+            localized = container.get(locale_key)
+            if not isinstance(localized, dict):
+                continue
+            for display_key in display_field_keys:
+                if display_key in localized:
+                    return localized[display_key]
+    for container_key in ("display", "human_display", "ui_display", "localized_display"):
+        container = block.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for locale_key in locale_keys:
+            localized = container.get(locale_key)
+            if not isinstance(localized, dict):
+                continue
+            for display_key in display_field_keys:
+                if display_key in localized:
+                    return localized[display_key]
+    for locale_key in locale_keys:
+        suffix = locale_key.replace("-", "_")
+        for display_key in display_field_keys:
+            for field_key in (f"{display_key}_{suffix}", f"{suffix}_{display_key}"):
+                if field_key in block:
+                    return block[field_key]
+    return _MISSING
+
+
+def research_plan_locale_keys(locale: str | None) -> list[str]:
+    if not isinstance(locale, str) or not locale.strip():
+        return []
+    normalized = locale.strip().replace("_", "-")
+    lower = normalized.lower()
+    language = lower.split("-", 1)[0]
+    keys = [normalized, lower, language]
+    if locale_is_japanese(locale):
+        keys.extend(["ja-JP", "ja-jp", "ja", "Japanese", "japanese", "日本語", "Japanese / 日本語"])
+    elif language == "en":
+        keys.extend(["en-US", "en-us", "en", "English", "english"])
+    return list(dict.fromkeys(keys))
 
 
 def validate_research_plan_current_work_target(

@@ -99,6 +99,7 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
                     project_id=project_id,
                     revision=revision,
                     raw_blocks=raw_blocks,
+                    locale=response_locale,
                 ),
             ),
             "artifact_links": all_links,
@@ -164,6 +165,7 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
                 project_id=project_id,
                 revision=None,
                 raw_blocks=raw_blocks,
+                locale=response_locale,
             ),
         ),
         "artifact_links": [],
@@ -287,6 +289,7 @@ def research_plan_effective_current_work_payload(
     project_id: str,
     revision: Any | None,
     raw_blocks: Any,
+    locale: str | None = None,
 ) -> dict[str, Any] | None:
     stored = latest_research_plan_current_work(db, project_id=project_id)
     blocks = [block for block in raw_blocks if isinstance(block, dict)] if isinstance(raw_blocks, list) else []
@@ -316,7 +319,11 @@ def research_plan_effective_current_work_payload(
     expected_outputs: list[str] = []
     if isinstance(deliverable_contract, dict) and isinstance(deliverable_contract.get("expected_outputs"), list):
         expected_outputs = [str(item) for item in deliverable_contract["expected_outputs"] if str(item).strip()]
-    summary = block.get("subtitle") or block.get("title") or ""
+    summary = (
+        _research_plan_block_subtitle(block, locale=locale)
+        or _research_plan_display_string(block, "title", locale=locale)
+        or ""
+    )
     revision_id = getattr(revision, "id", None)
     research_plan_id = getattr(revision, "research_plan_id", None)
     updated_at = getattr(revision, "created_at", None)
@@ -629,6 +636,8 @@ def _research_plan_localized_value(
     explicit_value = _research_plan_explicit_localized_value(raw_block, key, locale=locale)
     if explicit_value is not _MISSING:
         return explicit_value
+    if not allow_unlocalized_fallback:
+        return _MISSING
     value = raw_block.get(key)
     return value
 

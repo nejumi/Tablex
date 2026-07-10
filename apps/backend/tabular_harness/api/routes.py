@@ -10109,6 +10109,7 @@ def latest_agent_session_activity_focus(
     accepted_chat_sources = {
         "main_codex_session_chat_update",
         "main_agent_session_attention",
+        "main_agent_session_experiment_registration",
         "main_agent_session_notebook_update",
         "main_agent_session_research_registration",
         "native_marimo_open_failure",
@@ -10163,26 +10164,6 @@ def latest_agent_session_activity_focus(
                     {"summary": compact_activity_summary(normalized_message, limit=limit), **target},
                 )
             )
-
-    session = db.get(AgentSession, session_id)
-    latest_codex_message = latest_codex_message_observation_for_session(db, session=session, limit=limit) if session else None
-    if latest_codex_message is not None:
-        created_at = datetime_from_iso_or_none(latest_codex_message.get("created_at"))
-        candidates.append(
-            (
-                created_at or utc_datetime_or_none(getattr(session, "updated_at", None)) or utc_now(),
-                {
-                    "summary": compact_activity_summary(str(latest_codex_message.get("content") or ""), limit=limit),
-                    "target_tab": "Home",
-                    "target_anchor": "agent-workspace",
-                    "artifact_id": None,
-                    "artifact_ids": [],
-                    "source": latest_codex_message.get("source"),
-                    "event_index": latest_codex_message.get("event_index"),
-                    "line_number": latest_codex_message.get("line_number"),
-                },
-            )
-        )
 
     current_work = latest_research_plan_current_work(db, project_id=project_id) if include_current_work else None
     current_work_payload = research_plan_current_work_payload(current_work)
@@ -10247,7 +10228,7 @@ def latest_agent_session_activity_focus(
             )
             continue
         if japanese:
-            summary = "Research Planを更新しました。"
+            summary = "リサーチプランを更新しました。"
             if node_id:
                 summary += f" 現在地: {node_id}"
         else:
@@ -10323,7 +10304,7 @@ def latest_agent_session_activity_focus(
             if japanese:
                 summary = "marimo notebookを登録しました。Tablex内のnative marimo viewerで開けます。"
                 if plan_node_id:
-                    summary += f" ResearchPlan: {plan_node_id}"
+                    summary += f" リサーチプラン: {plan_node_id}"
             else:
                 summary = "A marimo notebook was registered and can be opened in the native Tablex viewer."
                 if plan_node_id:
