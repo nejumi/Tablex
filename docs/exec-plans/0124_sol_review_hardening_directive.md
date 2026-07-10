@@ -112,13 +112,16 @@ Current state: Home, Leaderboard/model drawers, Notebooks, and Assets have becom
 Implementation direction:
 
 - Audit whether Insights still has a unique user task.
-- If it does not, fold it into Assets as a saved filter or Home signal instead of maintaining another top-level destination.
+- Preserve a deliberate insight-delivery path even if the old Insights tab taxonomy is retired. The problem is not only tab redundancy; human-readable reports, findings, and notebooks are often saved as artifacts without being actively delivered to the user.
+- Make the surface answer "what should I read now?" before showing shelves or inventories.
+- If the old Insights tab does not have a unique task after this, fold it into Assets as a saved filter or Home signal instead of maintaining another top-level destination.
 - Do not add another top-level tab to compensate.
 
 Acceptance:
 
 - A first-time user can explain why each top-level tab exists.
 - Notebook/report/research discovery has one canonical inventory plus context-specific drawers, not several competing places.
+- Newly registered readable outputs are visible through a reading queue or equivalent delivery path rather than only through artifact inventory.
 
 ## Initial Execution Order
 

@@ -10383,8 +10383,118 @@ function ReportsTab({
     return completedJob;
   }
 
+  const readingQueueItems = React.useMemo(() => {
+    const items: Array<{
+      id: string;
+      kind: string;
+      title: string;
+      detail: string;
+      createdAt: string;
+      actionLabel: string;
+      icon: React.ReactNode;
+      open: () => void;
+    }> = [];
+    if (currentDecisionReportId) {
+      items.push({
+        id: `decision:${currentDecisionReportId}`,
+        kind: text.insightDeliveryDecision,
+        title: textField(decisionReport?.report?.title) ?? text.decisionReportCurrentText,
+        detail: textField(decisionReport?.report?.summary) ?? text.decisionReportNextOpenDetail,
+        createdAt: textField(decisionReport?.report?.created_at) ?? "",
+        actionLabel: text.insightDeliveryOpenReport,
+        icon: <FileText size={18} />,
+        open: () => void loadReportPreview(currentDecisionReportId)
+      });
+    }
+    for (const report of reports.slice(0, 8)) {
+      if (report.id === currentDecisionReportId) continue;
+      items.push({
+        id: `report:${report.id}`,
+        kind: text.insightDeliveryReport,
+        title: report.title,
+        detail: report.summary || report.report_type,
+        createdAt: report.created_at,
+        actionLabel: text.insightDeliveryOpenReport,
+        icon: <FileText size={18} />,
+        open: () => void loadReportPreview(report.id)
+      });
+    }
+    for (const artifact of researchFindingArtifacts.slice(0, 6)) {
+      items.push({
+        id: `research:${artifact.id}`,
+        kind: text.insightDeliveryResearch,
+        title: textField(artifact.metadata.topic) ?? artifactDisplayTitle(artifact),
+        detail: [
+          artifact.metadata.source_count != null ? `${String(artifact.metadata.source_count)} source` : null,
+          artifact.metadata.finding_count != null ? `${String(artifact.metadata.finding_count)} finding` : null
+        ]
+          .filter(Boolean)
+          .join(" / "),
+        createdAt: artifact.created_at,
+        actionLabel: text.insightDeliveryOpenArtifact,
+        icon: <Search size={18} />,
+        open: () => void loadArtifactPreview(artifact.id)
+      });
+    }
+    for (const item of notebookItems.slice(0, 6)) {
+      items.push({
+        id: `notebook:${item.notebook_artifact_id}`,
+        kind: text.insightDeliveryNotebook,
+        title: item.title,
+        detail: item.recommendation_reason || notebookCoverageLabel(item),
+        createdAt: item.created_at,
+        actionLabel: text.insightDeliveryOpenNotebook,
+        icon: <BookOpen size={18} />,
+        open: () => onOpenNotebookArtifact(item.artifact_ids.notebook)
+      });
+    }
+    const seen = new Set<string>();
+    return items
+      .filter((item) => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      })
+      .sort((left, right) => {
+        const leftTime = Date.parse(left.createdAt || "");
+        const rightTime = Date.parse(right.createdAt || "");
+        return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+      })
+      .slice(0, 8);
+  }, [
+    currentDecisionReportId,
+    decisionReport,
+    reports,
+    researchFindingArtifacts,
+    notebookItems,
+    text,
+    onOpenNotebookArtifact
+  ]);
+
   return (
     <div className="stack">
+      <Panel title={text.insightDeliveryTitle} icon={<Lightbulb size={18} />}>
+        <div className="insight-delivery-head">
+          <p>{text.insightDeliveryBody}</p>
+        </div>
+        {readingQueueItems.length ? (
+          <div className="insight-delivery-grid">
+            {readingQueueItems.map((item) => (
+              <button className="insight-delivery-card" key={item.id} onClick={item.open} type="button">
+                <span className="insight-delivery-icon">{item.icon}</span>
+                <span className="insight-delivery-copy">
+                  <span className="badge muted">{item.kind}</span>
+                  <strong>{item.title}</strong>
+                  <small>{item.detail || text.insightNoSummary}</small>
+                </span>
+                <span className="secondary-button">{item.actionLabel}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <EmptyInline text={text.insightDeliveryEmpty} />
+        )}
+      </Panel>
       <FocusedEvidenceReader
         id="decision-report"
         eyebrow={text.decisionReportReader}
@@ -10422,46 +10532,46 @@ function ReportsTab({
         boundary={text.decisionReportBoundary}
       />
       {currentDecisionBundle ? (
-        <Panel title="Read This First" icon={<FileText size={18} />}>
+        <Panel title={text.insightReadThisFirstTitle} icon={<FileText size={18} />}>
           <div className="decision-read-grid">
             <div className="decision-read-column">
-              <h3>What is proven</h3>
+              <h3>{text.insightProvenTitle}</h3>
               {provenEvidence.length ? (
                 provenEvidence.map((row) => (
                   <div className="decision-read-item" key={`proven-${textField(row.area) ?? JSON.stringify(row)}`}>
                     <strong>{textField(row.area) ?? "Evidence"}</strong>
-                    <p>{textField(row.summary) ?? "No summary recorded."}</p>
+                    <p>{textField(row.summary) ?? text.insightNoSummary}</p>
                   </div>
                 ))
               ) : (
-                <EmptyInline text="No evidence area is ready yet." />
+                <EmptyInline text={text.insightNoProven} />
               )}
             </div>
             <div className="decision-read-column">
-              <h3>What needs attention</h3>
+              <h3>{text.insightAttentionTitle}</h3>
               {attentionEvidence.length ? (
                 attentionEvidence.map((row) => (
                   <div className="decision-read-item" key={`attention-${textField(row.area) ?? JSON.stringify(row)}`}>
                     <strong>{textField(row.area) ?? "Evidence"}</strong>
-                    <p>{textField(row.summary) ?? "No summary recorded."}</p>
+                    <p>{textField(row.summary) ?? text.insightNoSummary}</p>
                   </div>
                 ))
               ) : (
-                <EmptyInline text="No attention item was generated." />
+                <EmptyInline text={text.insightNoAttention} />
               )}
             </div>
           </div>
         </Panel>
       ) : null}
       {nextActions.length ? (
-        <Panel title="Next Actions" icon={<ListChecks size={18} />}>
+        <Panel title={text.insightNextActionsTitle} icon={<ListChecks size={18} />}>
           <div className="decision-next-list">
             {nextActions.slice(0, 5).map((item, index) => (
               <div className="decision-next-item" key={`${textField(item.title) ?? "action"}-${index}`}>
                 <span>{String(item.priority ?? index + 1)}</span>
                 <div>
-                  <strong>{textField(item.title) ?? "Review next action"}</strong>
-                  <p>{textField(item.reason) ?? "No reason was recorded."}</p>
+                  <strong>{textField(item.title) ?? text.insightReviewNextAction}</strong>
+                  <p>{textField(item.reason) ?? text.insightNoSummary}</p>
                   <small>{textField(item.target_tab) ?? "Reports"}</small>
                 </div>
               </div>
@@ -10476,7 +10586,7 @@ function ReportsTab({
               <div className="decision-evidence-row" key={textField(row.area) ?? JSON.stringify(row)}>
                 <div>
                   <strong>{textField(row.area) ?? "Evidence"}</strong>
-                  <p>{textField(row.summary) ?? "No summary recorded."}</p>
+                  <p>{textField(row.summary) ?? text.insightNoSummary}</p>
                 </div>
                 <span className={decisionReportStatusClass(textField(row.status) ?? "missing")}>
                   {(textField(row.status) ?? "missing").replace(/_/g, " ")}
