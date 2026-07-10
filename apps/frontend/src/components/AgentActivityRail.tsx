@@ -38,6 +38,10 @@ function surfaceLabel(anchor: string, text: LocaleMessages) {
   return labels[anchor] ?? anchor.replace(/[_-]+/g, " ");
 }
 
+function isAgentWorkspaceNoOpTarget(targetTab: Tab | null, targetAnchor: string | null | undefined, artifactId: string | null) {
+  return targetTab === "Home" && !artifactId && (!targetAnchor || targetAnchor === "agent-workspace");
+}
+
 export function AgentActivityRail({
   text,
   projectName,
@@ -273,6 +277,7 @@ function AgentWorkerCard({
   const artifactId = event.artifact_id ?? event.artifact_ids?.[0] ?? null;
   const explicitNotebookViewer = artifactId && event.target_tab === "Notebooks";
   const targetTab = explicitNotebookViewer ? "Notebooks" : event.target_tab ? tabFromString(event.target_tab, "Home") : null;
+  const targetIsNoOp = isAgentWorkspaceNoOpTarget(targetTab, event.target_anchor, artifactId);
   const targetLabel = targetTab
     ? `${text.openSurface} ${tabLabel(targetTab, text)}${event.target_anchor ? ` · ${surfaceLabel(event.target_anchor, text)}` : ""}`
     : text.openSurface;
@@ -309,7 +314,7 @@ function AgentWorkerCard({
         <strong>{event.display_name}</strong>
         <div className="agent-worker-actions">
           <span className={isLive ? "live" : isWaiting ? "waiting" : ""}>{workerStatusLabel(event.status, text)}</span>
-          {targetTab ? (
+          {targetTab && !targetIsNoOp ? (
             <button
               className="icon-button agent-worker-open"
               onClick={openTarget}

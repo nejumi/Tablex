@@ -196,7 +196,16 @@ function agentChatActionArtifactId(action: AgentChatAction): string | null {
   return [action.artifact_id, ...(action.artifact_ids ?? [])].filter((value): value is string => Boolean(value))[0] ?? null;
 }
 
+function isAgentWorkspaceNoOpAction(action: Pick<AgentChatAction, "target_tab" | "target_anchor" | "artifact_id" | "artifact_ids" | "entity_ids">) {
+  const targetTab = tabFromString(action.target_tab, "Home");
+  const targetAnchor = action.target_anchor ?? null;
+  const hasArtifact = Boolean(action.artifact_id || action.artifact_ids?.length);
+  const hasEntity = Boolean(action.entity_ids?.length);
+  return targetTab === "Home" && targetAnchor === "agent-workspace" && !hasArtifact && !hasEntity;
+}
+
 function agentChatActionIsPrimaryLink(action: AgentChatAction) {
+  if (isAgentWorkspaceNoOpAction(action)) return false;
   const targetTab = tabFromString(action.target_tab, "Home");
   if (["Notebooks", "Leaderboard", "Assets", "Data"].includes(targetTab)) return true;
   if (agentChatActionArtifactId(action)) return true;
@@ -205,7 +214,7 @@ function agentChatActionIsPrimaryLink(action: AgentChatAction) {
 }
 
 function visibleAgentChatActions(assistant: AgentChatMessage | undefined): AgentChatAction[] {
-  const actions = assistant?.actions ?? [];
+  const actions = (assistant?.actions ?? []).filter((action) => !isAgentWorkspaceNoOpAction(action));
   if (!actions.length) return [];
   if (actions.every((action) => action.target_tab === "Notebooks" && agentChatActionArtifactId(action))) {
     return actions.slice(0, 12);
@@ -281,11 +290,12 @@ function AgentChatSummaryCard({
         detail: "Open the surface Tablex selected for this response."
       }
     : null;
+  const visibleSummaryAction = summaryAction && !isAgentWorkspaceNoOpAction(summaryAction) ? summaryAction : null;
   const needsReview = Array.isArray(summary.what_needs_review) ? summary.what_needs_review.slice(0, 3) : [];
   return (
     <div className="agent-chat-summary">
-      {summaryAction ? (
-        <button className="agent-chat-next-button" type="button" onClick={() => onActionOpen(summaryAction)}>
+      {visibleSummaryAction ? (
+        <button className="agent-chat-next-button" type="button" onClick={() => onActionOpen(visibleSummaryAction)}>
           <span>{text.nextActionLabel}</span>
           <strong>{nextLabel}</strong>
           <small>
