@@ -11706,6 +11706,17 @@ function artifactDetailLine(artifact: Artifact): string {
   return `${artifact.asset_type} · v${artifact.version}`;
 }
 
+function assetCategoryIconForArtifact(artifact: Artifact): React.ReactNode {
+  const category = assetCategoryForArtifact(artifact);
+  if (category === "notebooks") return <BookOpen size={18} />;
+  if (category === "reports") return <FileText size={18} />;
+  if (category === "model_prediction") return <BarChart3 size={18} />;
+  if (category === "research") return <Search size={18} />;
+  if (category === "data") return <Database size={18} />;
+  if (category === "plans_records") return <ListChecks size={18} />;
+  return <Library size={18} />;
+}
+
 function artifactOriginLabel(
   artifact: Artifact,
   timeline: ResearchPlanTimelineResponse | null,
@@ -11922,10 +11933,13 @@ function AssetsTab({
   async function loadPreview(artifactId: string) {
     setPreviewLoadingId(artifactId);
     setPreviewError(null);
+    focusNavigationAnchor("assets-artifact-preview", 0);
     try {
       setPreview(await api<ArtifactPreview>(`/api/artifacts/${artifactId}/preview`));
+      focusNavigationAnchor("assets-artifact-preview", 0);
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : String(err));
+      focusNavigationAnchor("assets-artifact-preview", 0);
     } finally {
       setPreviewLoadingId(null);
     }
@@ -11991,10 +12005,21 @@ function AssetsTab({
             const notebookArtifactId = directNotebookArtifactId ?? linkedNotebook?.artifact_ids.notebook ?? null;
             const planNodeIds = Array.from(assetResearchPlanNodeIds(artifact, researchPlanTimeline));
             return [
-              <div className="cell-stack" key={`${artifact.id}-name`}>
-                <span>{artifactDisplayTitle(artifact)}</span>
-                <small>{artifactDetailLine(artifact)}</small>
-                {linkedNotebook ? <small>{text.relatedNotebooks}: {conciseNotebookTitle(linkedNotebook.title)}</small> : null}
+              <div className={`asset-output-cell${notebookArtifactId ? " notebook-openable" : ""}`} key={`${artifact.id}-name`}>
+                <span className="asset-output-icon" aria-hidden="true">
+                  {assetCategoryIconForArtifact(artifact)}
+                </span>
+                <div className="cell-stack">
+                  <span>{artifactDisplayTitle(artifact)}</span>
+                  <small>{artifactDetailLine(artifact)}</small>
+                  {notebookArtifactId ? (
+                    <small className="asset-notebook-affordance">
+                      <BookOpen size={13} />
+                      {text.notebookOpenMarimo}
+                    </small>
+                  ) : null}
+                  {linkedNotebook ? <small>{text.relatedNotebooks}: {conciseNotebookTitle(linkedNotebook.title)}</small> : null}
+                </div>
               </div>,
               <span className="badge" key={`${artifact.id}-category`}>
                 {assetCategoryLabel(assetCategoryForArtifact(artifact), text)}
@@ -12005,31 +12030,51 @@ function AssetsTab({
                 {planNodeIds.length ? <small>{planNodeIds.slice(0, 2).join(", ")}</small> : null}
               </div>,
               formatBytes(artifact.size_bytes),
-              <div className="row-actions" key={artifact.id}>
+              <div className="asset-actions" key={artifact.id}>
                 {notebookArtifactId ? (
                   <button
-                    className="icon-button"
+                    className="asset-primary-action"
                     onClick={() => onOpenNotebookArtifact(notebookArtifactId)}
+                    type="button"
                     title={text.openNotebookInMarimo}
                   >
-                    <BookOpen size={16} />
+                    <BookOpen size={18} />
+                    <span>{text.notebookOpenMarimo}</span>
                   </button>
-                ) : null}
-                <button
-                  className="icon-button"
-                  disabled={previewLoadingId === artifact.id}
-                  onClick={() => void loadPreview(artifact.id)}
-                  title={text.previewArtifact}
-                >
-                  {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
-                </button>
-                <a
-                  className="icon-link"
-                  href={`${apiBase}/api/artifacts/${artifact.id}/download`}
-                  title={text.downloadArtifact}
-                >
-                  <Download size={16} />
-                </a>
+                ) : (
+                  <button
+                    className="asset-primary-action muted"
+                    disabled={previewLoadingId === artifact.id}
+                    onClick={() => void loadPreview(artifact.id)}
+                    type="button"
+                    title={text.previewArtifact}
+                  >
+                    {previewLoadingId === artifact.id ? <Loader2 className="spin" size={18} /> : <Eye size={18} />}
+                    <span>{text.assetPreviewAction}</span>
+                  </button>
+                )}
+                <div className="asset-secondary-actions">
+                  {notebookArtifactId ? (
+                    <button
+                      aria-label={text.previewArtifact}
+                      className="icon-button"
+                      disabled={previewLoadingId === artifact.id}
+                      onClick={() => void loadPreview(artifact.id)}
+                      type="button"
+                      title={text.previewArtifact}
+                    >
+                      {previewLoadingId === artifact.id ? <Loader2 className="spin" size={16} /> : <Eye size={16} />}
+                    </button>
+                  ) : null}
+                  <a
+                    aria-label={text.downloadArtifact}
+                    className="icon-link"
+                    href={`${apiBase}/api/artifacts/${artifact.id}/download`}
+                    title={text.downloadArtifact}
+                  >
+                    <Download size={16} />
+                  </a>
+                </div>
               </div>
             ];
           })}

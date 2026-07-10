@@ -1462,6 +1462,91 @@ textarea {
   font-weight: 800;
 }
 
+.asset-output-cell {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+}
+
+.asset-output-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--muted-strong);
+}
+
+.asset-output-cell.notebook-openable .asset-output-icon {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+}
+
+.asset-notebook-affordance {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  width: fit-content;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-muted));
+  padding: 3px 8px;
+  color: color-mix(in srgb, var(--accent) 84%, var(--text-strong));
+  font-weight: 800;
+}
+
+.asset-actions {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 230px;
+}
+
+.asset-primary-action {
+  display: inline-flex;
+  justify-content: center;
+  gap: 7px;
+  align-items: center;
+  min-height: 36px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  padding: 7px 10px;
+  color: color-mix(in srgb, var(--accent) 86%, var(--text-strong));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.asset-primary-action:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+}
+
+.asset-primary-action.muted {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.asset-primary-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.asset-secondary-actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
 .research-plan-subtask {
   width: 100%;
   border: 1px solid var(--border);
