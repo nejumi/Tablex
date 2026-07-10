@@ -118,10 +118,59 @@ body {
   opacity: 0.55;
 }
 
+:root[data-theme="matrix"] body::after {
+  content: "010010110101001001101001011101000100110101100001011101000111001001101001011110000101101001001101010000010101000";
+  position: fixed;
+  top: -24vh;
+  left: 2vw;
+  z-index: 0;
+  width: 1ch;
+  height: 160vh;
+  pointer-events: none;
+  color: rgba(80, 255, 132, 0.22);
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.05;
+  text-orientation: upright;
+  text-shadow:
+    7vw -18vh 0 rgba(55, 255, 122, 0.13),
+    14vw 10vh 0 rgba(0, 216, 160, 0.17),
+    22vw -6vh 0 rgba(55, 255, 122, 0.12),
+    31vw 16vh 0 rgba(165, 255, 190, 0.11),
+    42vw -22vh 0 rgba(55, 255, 122, 0.16),
+    53vw 8vh 0 rgba(0, 216, 160, 0.12),
+    65vw -12vh 0 rgba(55, 255, 122, 0.18),
+    76vw 20vh 0 rgba(165, 255, 190, 0.10),
+    88vw -4vh 0 rgba(55, 255, 122, 0.14),
+    96vw 14vh 0 rgba(0, 216, 160, 0.13);
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+  opacity: 0.82;
+  animation: matrix-rain 22s linear infinite;
+}
+
 :root[data-theme="matrix"] .app-shell,
 :root[data-theme="matrix"] .auth-shell {
   position: relative;
   z-index: 1;
+}
+
+@keyframes matrix-rain {
+  from {
+    transform: translateY(-12vh);
+  }
+
+  to {
+    transform: translateY(28vh);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="matrix"] body::after {
+    animation: none;
+    transform: translateY(4vh);
+  }
 }
 
 button,
