@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.json import loads_json
-from tabular_harness.models.entities import AgentSession, Artifact, ExperimentRun, Project
+from tabular_harness.models.entities import AgentSession, Artifact, ExperimentRun, Project, utc_now
 from tabular_harness.services.artifacts import artifact_primary_path
 from tabular_harness.services.portal import running_codex_processes_for_project
 from tabular_harness.services.research_plans import (
@@ -14,7 +14,7 @@ from tabular_harness.services.research_plans import (
     PLAN_MAX_TOP_LEVEL_BLOCKS,
     ResearchPlanValidationError,
     commit_research_plan_artifact_revision,
-    ensure_harness_initial_research_plan_revision,
+    harness_initial_research_plan_document,
     latest_research_plan_current_work,
     latest_research_plan_revision,
     research_plan_artifact_links,
@@ -109,8 +109,7 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
             response["ignored_source_artifact"] = ignored_source_artifact
         return response
     if artifact is None:
-        ensure_harness_initial_research_plan_revision(db, project_id=project_id)
-        return build_research_plan_timeline_response(db, project_id=project_id, locale=locale)
+        return transient_harness_initial_research_plan_timeline_response(db, project_id=project_id, locale=locale)
     try:
         payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
     except OSError:
@@ -138,8 +137,7 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
         if result is not None:
             return build_research_plan_timeline_response(db, project_id=project_id, locale=locale)
     if not research_plan_payload_is_displayable_legacy(payload, locale=locale):
-        ensure_harness_initial_research_plan_revision(db, project_id=project_id)
-        response = build_research_plan_timeline_response(db, project_id=project_id, locale=locale)
+        response = transient_harness_initial_research_plan_timeline_response(db, project_id=project_id, locale=locale)
         response["ignored_source_artifact"] = ignored_research_plan_source_payload(artifact, validation=validation)
         return response
     raw_blocks = payload.get("timeline_blocks") if isinstance(payload, dict) else None
@@ -156,6 +154,48 @@ def build_research_plan_timeline_response(db: Session, *, project_id: str, local
             db,
             project_id=project_id,
             payload=payload if isinstance(payload, dict) else {},
+        ),
+        "current_work": annotate_research_plan_current_work_activity(
+            db,
+            project_id=project_id,
+            payload=research_plan_effective_current_work_payload(
+                db,
+                project_id=project_id,
+                revision=None,
+                raw_blocks=raw_blocks,
+                locale=response_locale,
+            ),
+        ),
+        "artifact_links": [],
+        "blocks": clean_research_plan_timeline_blocks(raw_blocks, locale=response_locale),
+    }
+
+
+def transient_harness_initial_research_plan_timeline_response(
+    db: Session,
+    *,
+    project_id: str,
+    locale: str | None = None,
+) -> dict[str, Any]:
+    payload = harness_initial_research_plan_document(project_id=project_id)
+    raw_blocks = payload.get("timeline_blocks")
+    response_locale = _research_plan_effective_locale(locale, payload)
+    return {
+        "schema_version": "research_plan_timeline.v1",
+        "project_id": project_id,
+        "source_artifact_id": None,
+        "source_revision_id": None,
+        "research_plan_id": None,
+        "revision_index": 0,
+        "revision_author_type": "harness",
+        "response_locale": response_locale,
+        "requested_locale": locale,
+        "authored_locale": _research_plan_payload_locale(payload),
+        "generated_at": utc_now().isoformat(),
+        "contract_validation": research_plan_contract_validation_summary(
+            db,
+            project_id=project_id,
+            payload=payload,
         ),
         "current_work": annotate_research_plan_current_work_activity(
             db,

@@ -493,6 +493,27 @@ def require_auth_user(request: Request, db: Session) -> User:
     return user
 
 
+def require_admin_user(request: Request, db: Session) -> User | None:
+    settings = request.app.state.settings
+    if not settings.auth_enabled:
+        return None
+    user = require_auth_user(request, db)
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin privileges are required.")
+    return user
+
+
+def require_visible_project(request: Request, db: Session, project_id: str) -> Project:
+    project = require_project(db, project_id)
+    settings = request.app.state.settings
+    if not settings.auth_enabled:
+        return project
+    user = require_auth_user(request, db)
+    if user.is_admin or project.created_by == user.id:
+        return project
+    raise HTTPException(status_code=404, detail="Project not found")
+
+
 def request_actor_id(request: Request) -> str:
     user_id = getattr(request.state, "user_id", None)
     return str(user_id) if user_id else "local-user"
@@ -525,6 +546,8 @@ def app_config(request: Request) -> dict[str, Any]:
         "app_display_name": str(settings.app_display_name),
         "architecture_name": "Tabular-first Prediction Meta-Harness",
         "auth_enabled": bool(settings.auth_enabled),
+        "authorization_model": "owner_admin_scoped" if settings.auth_enabled else "local_single_user",
+        "multi_user_security": "partial_project_scope" if settings.auth_enabled else "not_claimed_local_mode",
         "password_auth_enabled": True,
         "google_auth_enabled": bool(settings.google_auth_enabled),
         "api_agent_session_supervisor_enabled": bool(settings.api_agent_session_supervisor_enabled),
@@ -537,6 +560,7 @@ def admin_storage_usage(
     request: Request,
     db: Annotated[Session, Depends(get_session)],
 ) -> dict[str, Any]:
+    require_admin_user(request, db)
     return storage_usage_report(request.app.state.settings, db)
 
 
@@ -548,6 +572,7 @@ def admin_storage_gc(
     dry_run: bool = Query(default=True),
     retention: int | None = Query(default=None, ge=1, le=100),
 ) -> dict[str, Any]:
+    require_admin_user(request, db)
     plan = artifact_gc_plan(db, settings=request.app.state.settings, dry_run=dry_run, retention=retention)
     report_artifact = store_json_artifact(
         db,
@@ -928,8 +953,14 @@ def create_portal_idea_endpoint(
 
 
 @router.get("/api/projects", response_model=list[ProjectRead])
-def list_projects(db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
-    projects = db.scalars(select(Project).order_by(Project.created_at.desc())).all()
+def list_projects(request: Request, db: Annotated[Session, Depends(get_session)]) -> list[dict[str, Any]]:
+    stmt = select(Project).order_by(Project.created_at.desc())
+    settings = request.app.state.settings
+    if settings.auth_enabled:
+        user = require_auth_user(request, db)
+        if not user.is_admin:
+            stmt = stmt.where(Project.created_by == user.id)
+    projects = db.scalars(stmt).all()
     return [project_to_dict(project) for project in projects]
 
 
@@ -957,8 +988,8 @@ def create_project(
 
 
 @router.get("/api/projects/{project_id}", response_model=ProjectRead)
-def get_project(project_id: str, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
-    project = require_project(db, project_id)
+def get_project(project_id: str, request: Request, db: Annotated[Session, Depends(get_session)]) -> dict[str, Any]:
+    project = require_visible_project(request, db, project_id)
     return project_to_dict(project)
 
 
@@ -971,7 +1002,7 @@ def update_project(
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     try:
-        project = require_project(db, project_id)
+        project = require_visible_project(request, db, project_id)
         data = payload.model_dump(exclude_unset=True)
         previous_autonomy_mode = project.autonomy_mode
         previous_phase = project.current_phase
@@ -1047,7 +1078,7 @@ def delete_project(
     request: Request,
     db: Annotated[Session, Depends(get_session)],
 ) -> dict[str, Any]:
-    project = require_project(db, project_id)
+    project = require_visible_project(request, db, project_id)
     org_id = project.org_id
     stop_main_session(db, project, record_event=False)
     stopped_marimo_sessions = stop_native_marimo_sessions_for_project(project_id)
@@ -6176,12 +6207,6 @@ def get_research_plan_timeline(
     locale: str | None = None,
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
-    record_harness_objective_in_research_plan(
-        db,
-        project_id=project.id,
-        objective_label=project.target_column,
-    )
-    db.flush()
     response_locale = (
         locale.strip()
         if isinstance(locale, str) and locale.strip()

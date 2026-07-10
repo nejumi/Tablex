@@ -79,6 +79,8 @@ Skills are equipment for Codex, not fixed recipes. Prior-knowledge research is c
 
 Kaggle, arXiv, web, and domain research should be stored as Evidence/Insight/Report/Skill assets when used. The harness may manage safe download/probe plumbing, but interpretation belongs to Codex.
 
+Research must preserve its provenance boundary. When the runner has internet access or registered local source packs, Codex should return source-backed findings with citations or artifact-backed source references. When the runner has no internet access and no registered sources for the topic, Codex may still use its internal prior knowledge to propose hypotheses, known patterns, or search directions, but those outputs must be labeled as non-source-backed prior knowledge rather than Evidence. Offline prior knowledge can guide analysis and Skill selection; it does not by itself complete a source-backed research plan block unless Codex explicitly records that no source-backed research is needed for the current project.
+
 ## Prediction And Operations
 
 Prediction starts from a registered model or pipeline, not from a separate AutoML-style workflow.

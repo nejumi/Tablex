@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.ids import new_id
@@ -241,11 +241,22 @@ def acquire_next_job(
             continue
         if not dependencies_satisfied(db, job):
             continue
-        job.locked_by = worker_id
-        job.locked_at = now
-        job.updated_at = now
+        stale_cutoff = now - timedelta(seconds=JOB_LOCK_EXPIRY_SECONDS)
+        claim = db.execute(
+            update(Job)
+            .where(
+                Job.id == job.id,
+                Job.status.in_(RUNNABLE_STATUSES),
+                or_(Job.locked_by.is_(None), Job.locked_at.is_(None), Job.locked_at <= stale_cutoff),
+            )
+            .values(locked_by=worker_id, locked_at=now, updated_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        if claim.rowcount != 1:
+            continue
         db.flush()
-        return job
+        db.expire_all()
+        return db.get(Job, job.id)
     return None
 
 

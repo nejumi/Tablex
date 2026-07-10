@@ -49,6 +49,7 @@ from tabular_harness.models.entities import (
     Project,
     Question,
     ResearchBrief,
+    ResearchPlan,
     Report,
     SplitManifest,
     User,
@@ -81,6 +82,7 @@ from tabular_harness.services.artifacts import (
     register_artifact,
 )
 from tabular_harness.services.autonomy import latest_data_understanding_notebook_artifact
+from tabular_harness.services.auth import create_auth_session, create_user
 from tabular_harness.services.deliverable_expectations import (
     fulfill_run_pipeline_bundle_expectations,
     maybe_write_open_deliverable_expectation_observation,
@@ -114,7 +116,12 @@ from tabular_harness.worker.jobs import (
 from tabular_harness.worker.runner import SyncWorker
 
 
-def make_client(tmp_path: Path, *, api_agent_session_supervisor_enabled: bool = True) -> TestClient:
+def make_client(
+    tmp_path: Path,
+    *,
+    api_agent_session_supervisor_enabled: bool = True,
+    auth_enabled: bool = False,
+) -> TestClient:
     settings = Settings(
         app_display_name="Tablex",
         data_dir=tmp_path / "data",
@@ -124,6 +131,7 @@ def make_client(tmp_path: Path, *, api_agent_session_supervisor_enabled: bool = 
         cors_origins=("http://localhost:5173",),
         api_agent_session_supervisor_enabled=api_agent_session_supervisor_enabled,
         local_worker_enabled=False,
+        auth_enabled=auth_enabled,
     )
     return TestClient(create_app(settings))
 
@@ -1738,6 +1746,86 @@ def test_admin_storage_gc_api_registers_dry_run_report(tmp_path: Path) -> None:
     assert payload["schema_version"] == "artifact_gc_plan.v1"
     assert payload["dry_run"] is True
     assert isinstance(payload["report_artifact_id"], str)
+
+
+def test_admin_storage_requires_admin_when_auth_is_enabled(tmp_path: Path) -> None:
+    client = make_client(tmp_path, auth_enabled=True)
+
+    bootstrap_response = client.post(
+        "/api/auth/bootstrap",
+        json={"email": "admin@example.com", "password": "CorrectHorse1!", "display_name": "Admin"},
+    )
+    assert bootstrap_response.status_code == 200, bootstrap_response.text
+    assert client.get("/api/admin/storage/usage").status_code == 200
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        user = create_user(
+            db,
+            email="member@example.com",
+            password="CorrectHorse2!",
+            display_name="Member",
+            is_admin=False,
+        )
+        token = create_auth_session(
+            db,
+            user=user,
+            session_days=1,
+            user_agent="pytest",
+            ip_address="127.0.0.1",
+        )
+        db.commit()
+        member_token = token.token
+
+    client.cookies.set(app.state.settings.auth_cookie_name, member_token)
+    response = client.get("/api/admin/storage/usage")
+
+    assert response.status_code == 403
+
+
+def test_project_list_scopes_non_admin_when_auth_is_enabled(tmp_path: Path) -> None:
+    client = make_client(tmp_path, auth_enabled=True)
+
+    admin_response = client.post(
+        "/api/auth/bootstrap",
+        json={"email": "admin@example.com", "password": "CorrectHorse1!", "display_name": "Admin"},
+    )
+    assert admin_response.status_code == 200, admin_response.text
+    admin_project_response = client.post("/api/projects", json={"name": "Admin project"})
+    assert admin_project_response.status_code == 200, admin_project_response.text
+    admin_project_id = admin_project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        user = create_user(
+            db,
+            email="member@example.com",
+            password="CorrectHorse2!",
+            display_name="Member",
+            is_admin=False,
+        )
+        token = create_auth_session(
+            db,
+            user=user,
+            session_days=1,
+            user_agent="pytest",
+            ip_address="127.0.0.1",
+        )
+        db.commit()
+        member_token = token.token
+
+    client.cookies.set(app.state.settings.auth_cookie_name, member_token)
+    member_project_response = client.post("/api/projects", json={"name": "Member project"})
+    assert member_project_response.status_code == 200, member_project_response.text
+    member_project_id = member_project_response.json()["id"]
+
+    scoped_response = client.get("/api/projects")
+    assert scoped_response.status_code == 200
+    scoped_ids = {project["id"] for project in scoped_response.json()}
+
+    assert member_project_id in scoped_ids
+    assert admin_project_id not in scoped_ids
+    assert client.get(f"/api/projects/{admin_project_id}").status_code == 404
 
 
 def test_artifact_preview_includes_one_hop_lineage(tmp_path: Path) -> None:
@@ -9180,11 +9268,14 @@ def test_research_plan_timeline_reads_artifact_authored_blocks(tmp_path: Path) -
     assert japanese_alias["blocks"][1]["subtitle"] == "Prepare the data owner reply shape."
 
 
-def test_research_plan_timeline_initializes_harness_anchors_when_empty(tmp_path: Path) -> None:
+def test_research_plan_timeline_shows_harness_anchors_without_persisting_on_get(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_response = client.post("/api/projects", json={"name": "Initial plan anchors"})
     assert project_response.status_code == 200
     project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        before_count = len(db.scalars(select(ResearchPlan).where(ResearchPlan.project_id == project_id)).all())
 
     response = client.get(f"/api/projects/{project_id}/research-plan/timeline?locale=ja-JP")
     assert response.status_code == 200
@@ -9200,6 +9291,9 @@ def test_research_plan_timeline_initializes_harness_anchors_when_empty(tmp_path:
     assert payload["blocks"][0]["status"] == "active"
     assert payload["blocks"][0]["title"] == "データアップロード"
     assert payload["blocks"][1]["status"] == "pending"
+    with app.state.session_factory() as db:
+        after_count = len(db.scalars(select(ResearchPlan).where(ResearchPlan.project_id == project_id)).all())
+    assert after_count == before_count
 
 
 def test_research_plan_tool_substrate_endpoints_expose_codex_owned_progress(tmp_path: Path) -> None:
