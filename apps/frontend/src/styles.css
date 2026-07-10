@@ -7360,6 +7360,218 @@ td {
   }
 }
 
+:root[data-theme="matrix"] .progress-track {
+  border: 1px solid rgba(55, 255, 122, 0.18);
+  background:
+    repeating-linear-gradient(90deg, rgba(55, 255, 122, 0.10) 0 1px, transparent 1px 14px),
+    rgba(2, 16, 8, 0.94);
+  box-shadow:
+    inset 0 0 14px rgba(55, 255, 122, 0.10),
+    0 0 18px rgba(55, 255, 122, 0.08);
+}
+
+:root[data-theme="matrix"] .progress-track > div,
+:root[data-theme="matrix"] .progress-track > span,
+:root[data-theme="matrix"] .native-marimo-loading-progress span {
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(55, 255, 122, 0.44) 18%, #9dffb7 48%, #00d8a0 72%, transparent 100%);
+  box-shadow:
+    0 0 16px rgba(55, 255, 122, 0.50),
+    0 0 34px rgba(0, 216, 160, 0.28);
+}
+
+:root[data-theme="matrix"] .spin {
+  filter:
+    drop-shadow(0 0 5px rgba(55, 255, 122, 0.80))
+    drop-shadow(0 0 13px rgba(0, 216, 160, 0.38));
+}
+
+:root[data-theme="matrix"] .research-plan-block.active,
+:root[data-theme="matrix"] .research-plan-block.current-work,
+:root[data-theme="matrix"] .turn-state-bar.is-agent-running,
+:root[data-theme="matrix"] .turn-state-bar.is-agent-scheduled,
+:root[data-theme="matrix"] .agent-worker-card.active,
+:root[data-theme="matrix"] .agent-worker-card.running,
+:root[data-theme="matrix"] .agent-worker-card.approval_required,
+:root[data-theme="matrix"] .agent-chat-form.is-user-turn,
+:root[data-theme="matrix"] .agent-turn-card.is-active,
+:root[data-theme="matrix"] .raw-agent-event.is-active,
+:root[data-theme="matrix"] .native-marimo-loading-panel {
+  border-color: rgba(55, 255, 122, 0.56);
+  background-image:
+    linear-gradient(90deg, rgba(55, 255, 122, 0.08) 0 1px, transparent 1px 16px),
+    linear-gradient(180deg, rgba(55, 255, 122, 0.08), transparent 45%),
+    radial-gradient(circle at 84% 14%, rgba(157, 255, 183, 0.14), transparent 22%);
+  box-shadow:
+    0 0 0 1px rgba(55, 255, 122, 0.20),
+    0 0 24px rgba(55, 255, 122, 0.18),
+    inset 0 0 28px rgba(55, 255, 122, 0.06);
+  text-shadow: 0 0 10px rgba(55, 255, 122, 0.24);
+}
+
+:root[data-theme="matrix"] .agent-worker-card.active,
+:root[data-theme="matrix"] .agent-worker-card.running,
+:root[data-theme="matrix"] .agent-worker-card.approval_required {
+  position: relative;
+  overflow: hidden;
+  border-left-color: #9dffb7;
+}
+
+:root[data-theme="matrix"] .agent-worker-card.active::before,
+:root[data-theme="matrix"] .agent-worker-card.running::before,
+:root[data-theme="matrix"] .agent-worker-card.approval_required::before,
+:root[data-theme="matrix"] .turn-state-bar.is-agent-running::before,
+:root[data-theme="matrix"] .turn-state-bar.is-agent-scheduled::before {
+  content: "010101001101001011010010";
+  position: absolute;
+  top: -8px;
+  right: 8px;
+  bottom: auto;
+  left: auto;
+  max-width: 54%;
+  overflow: hidden;
+  color: rgba(157, 255, 183, 0.26);
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  pointer-events: none;
+  text-shadow: 0 0 9px rgba(55, 255, 122, 0.42);
+  white-space: nowrap;
+  animation: matrix-active-code-scan 2.8s linear infinite;
+}
+
+:root[data-theme="matrix"] .turn-state-bar.is-agent-running,
+:root[data-theme="matrix"] .turn-state-bar.is-agent-scheduled {
+  position: relative;
+  overflow: hidden;
+}
+
+:root[data-theme="matrix"] .turn-state-bar.is-agent-running .turn-state-dot,
+:root[data-theme="matrix"] .turn-state-bar.is-agent-scheduled .turn-state-dot,
+:root[data-theme="matrix"] .raw-agent-event.is-active::before {
+  background: #9dffb7;
+  box-shadow:
+    0 0 0 4px rgba(55, 255, 122, 0.16),
+    0 0 15px rgba(55, 255, 122, 0.82),
+    0 0 31px rgba(0, 216, 160, 0.50);
+}
+
+:root[data-theme="matrix"] .agent-turn-card.is-active::before {
+  background: conic-gradient(
+    from 0turn,
+    transparent 0turn,
+    transparent 0.18turn,
+    rgba(157, 255, 183, 0.92) 0.24turn,
+    rgba(0, 216, 160, 0.52) 0.28turn,
+    transparent 0.34turn,
+    transparent 1turn
+  );
+  opacity: 0.36;
+}
+
+:root[data-theme="matrix"] .agent-turn-card.is-active::after {
+  background:
+    repeating-linear-gradient(180deg, rgba(55, 255, 122, 0.05) 0 1px, transparent 1px 5px),
+    linear-gradient(135deg, rgba(55, 255, 122, 0.10), rgba(2, 18, 8, 0.86) 54%),
+    var(--surface);
+}
+
+:root[data-theme="matrix"] .raw-agent-event.is-active {
+  border-radius: 8px;
+  background:
+    repeating-linear-gradient(180deg, rgba(55, 255, 122, 0.06) 0 1px, transparent 1px 5px),
+    linear-gradient(90deg, rgba(55, 255, 122, 0.12), transparent 38%);
+  box-shadow:
+    inset 3px 0 0 #9dffb7,
+    0 0 0 1px rgba(55, 255, 122, 0.16),
+    0 0 18px rgba(55, 255, 122, 0.14);
+}
+
+:root[data-theme="matrix"] .native-marimo-loading-panel::before {
+  content: "01101101 01100001 01110010 01101001 01101101 01101111";
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  max-width: min(520px, 68%);
+  overflow: hidden;
+  color: rgba(157, 255, 183, 0.24);
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  pointer-events: none;
+  text-shadow: 0 0 12px rgba(55, 255, 122, 0.46);
+  white-space: nowrap;
+}
+
+:root[data-theme="matrix"] .native-marimo-loading-mark {
+  border-color: rgba(157, 255, 183, 0.62);
+  background:
+    radial-gradient(circle, rgba(55, 255, 122, 0.18), rgba(2, 16, 8, 0.96) 62%),
+    var(--surface-muted);
+  box-shadow:
+    0 0 0 1px rgba(55, 255, 122, 0.16),
+    0 0 30px rgba(55, 255, 122, 0.22),
+    inset 0 0 22px rgba(55, 255, 122, 0.12);
+}
+
+:root[data-theme="matrix"] .native-marimo-loading-mark::before {
+  background: #9dffb7;
+  box-shadow:
+    0 0 16px rgba(55, 255, 122, 0.90),
+    0 0 40px rgba(0, 216, 160, 0.42);
+}
+
+:root[data-theme="matrix"] .native-marimo-loading-mark span {
+  border-top-color: #9dffb7;
+  border-bottom-color: rgba(55, 255, 122, 0.18);
+  filter: drop-shadow(0 0 8px rgba(55, 255, 122, 0.75));
+}
+
+:root[data-theme="matrix"] .agent-chat-form.is-user-turn::before {
+  background: conic-gradient(
+    from var(--turn-orbit-angle),
+    transparent 0deg,
+    transparent 30deg,
+    #9dffb7 64deg,
+    #37ff7a 96deg,
+    transparent 138deg,
+    transparent 360deg
+  );
+  filter: drop-shadow(0 0 12px rgba(55, 255, 122, 0.52));
+}
+
+:root[data-theme="matrix"] .token-sparkline.live span {
+  background: linear-gradient(180deg, #9dffb7, #37ff7a 42%, #00d8a0);
+  box-shadow: 0 0 12px rgba(55, 255, 122, 0.42);
+}
+
+@keyframes matrix-active-code-scan {
+  from {
+    transform: translateX(16%);
+    opacity: 0.12;
+  }
+  45% {
+    opacity: 0.38;
+  }
+  to {
+    transform: translateX(-18%);
+    opacity: 0.18;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="matrix"] .agent-worker-card.active::before,
+  :root[data-theme="matrix"] .agent-worker-card.running::before,
+  :root[data-theme="matrix"] .agent-worker-card.approval_required::before,
+  :root[data-theme="matrix"] .turn-state-bar.is-agent-running::before,
+  :root[data-theme="matrix"] .turn-state-bar.is-agent-scheduled::before {
+    animation: none;
+  }
+}
+
 .agent-worker-meta {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
