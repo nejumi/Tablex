@@ -12,6 +12,9 @@ apps/frontend/dist/
 apps/frontend/*.tsbuildinfo
 apps/frontend/vite.config.js
 apps/frontend/vite.config.d.ts
+apps/docs/node_modules/
+apps/docs/build/
+apps/docs/.docusaurus/
 .DS_Store
 .env
 .tablex-backend.log

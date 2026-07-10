@@ -1,0 +1,49 @@
+:root {
+  --ifm-color-primary: #1d6f9f;
+  --ifm-color-primary-dark: #185f88;
+  --ifm-color-primary-darker: #15567c;
+  --ifm-color-primary-darkest: #104562;
+  --ifm-color-primary-light: #2685bc;
+  --ifm-color-primary-lighter: #2e92c9;
+  --ifm-color-primary-lightest: #55acd5;
+  --ifm-font-family-base: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ifm-code-font-size: 93%;
+}
+
+[data-theme="dark"] {
+  --ifm-color-primary: #55b7e4;
+}
+
+.hero--primary {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(34, 183, 166, 0.28), transparent 28%),
+    linear-gradient(135deg, #163a53 0%, #1d6f9f 52%, #22b7a6 100%);
+}
+
+.tablex-shot {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+  box-shadow: 0 14px 36px rgba(22, 58, 83, 0.16);
+  margin: 1rem 0 1.5rem;
+}
+
+.tablex-callout {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-left: 4px solid var(--ifm-color-primary);
+  border-radius: 8px;
+  padding: 1rem;
+  background: var(--ifm-background-surface-color);
+}
+
+.tablex-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.tablex-card {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+  padding: 1rem;
+  background: var(--ifm-background-surface-color);
+}

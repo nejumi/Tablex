@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-label="Leaderboard screenshot placeholder">
+  <rect width="1200" height="760" fill="#eef4f8"/>
+  <rect x="64" y="64" width="1072" height="632" rx="24" fill="#ffffff"/>
+  <text x="112" y="136" font-family="Inter, Arial, sans-serif" font-size="38" font-weight="800" fill="#163a53">Leaderboard</text>
+  <rect x="112" y="188" width="976" height="80" rx="14" fill="#e8f5fb"/>
+  <rect x="112" y="292" width="976" height="80" rx="14" fill="#f8fbfd"/>
+  <rect x="112" y="396" width="976" height="80" rx="14" fill="#f8fbfd"/>
+  <rect x="112" y="500" width="976" height="116" rx="14" fill="#f8fbfd"/>
+  <text x="142" y="238" font-family="Inter, Arial, sans-serif" font-size="24" fill="#1d6f9f">Model, score, evaluation grade, evidence, prediction actions</text>
+  <text x="142" y="572" font-family="Inter, Arial, sans-serif" font-size="20" fill="#667085">Replace this placeholder with a captured product screenshot.</text>
+</svg>

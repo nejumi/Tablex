@@ -191,11 +191,24 @@ git diff --check README.md
 
 ## Documentation
 
+- [Public documentation site source](apps/docs/)
 - [Development guide](docs/dev.md)
 - [Agent interface spec](docs/agent_interface_spec.md)
 - [Benchmark catalog and workflows](docs/benchmarks.md)
 - [Execution plans](docs/exec-plans/)
 - [E2E and audit evidence](docs/evidence/)
+
+The public user documentation is a Docusaurus site under `apps/docs/`. English is the canonical source; Japanese, Simplified Chinese, and Korean pages live under matching `i18n/` paths.
+
+Local docs development:
+
+```bash
+npm --prefix apps/docs install
+npm --prefix apps/docs run start
+npm --prefix apps/docs run build
+```
+
+The GitHub Pages workflow publishes the site to `https://nejumi.github.io/Tablex/` when Pages is configured to use GitHub Actions.
 
 ## Development Notes
 

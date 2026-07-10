@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-label="Prediction drawer screenshot placeholder">
+  <rect width="1200" height="760" fill="#eef4f8"/>
+  <rect x="78" y="78" width="1044" height="604" rx="26" fill="#ffffff"/>
+  <text x="132" y="150" font-family="Inter, Arial, sans-serif" font-size="38" font-weight="800" fill="#163a53">Prediction drawer</text>
+  <rect x="132" y="204" width="452" height="112" rx="16" fill="#e8f5fb"/>
+  <rect x="616" y="204" width="452" height="112" rx="16" fill="#f1fbf7"/>
+  <rect x="132" y="350" width="936" height="166" rx="16" fill="#f8fbfd" stroke="#dfe4ea"/>
+  <rect x="132" y="552" width="260" height="54" rx="12" fill="#1d6f9f"/>
+  <text x="162" y="582" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700" fill="#ffffff">Run prediction</text>
+  <text x="132" y="650" font-family="Inter, Arial, sans-serif" font-size="20" fill="#667085">Replace this placeholder with a captured product screenshot.</text>
+</svg>

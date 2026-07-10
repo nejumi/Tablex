@@ -571,6 +571,11 @@ textarea {
   align-items: center;
 }
 
+.topbar-docs-link {
+  text-decoration: none;
+  white-space: nowrap;
+}
+
 .auth-user-chip {
   display: inline-flex;
   gap: 8px;

@@ -501,6 +501,7 @@ import type {
   Tab
 } from "./types";
 const apiBase = import.meta.env.VITE_API_BASE ?? "";
+const docsBaseUrl = normalizeDocsBaseUrl(import.meta.env.VITE_DOCS_BASE_URL ?? "https://nejumi.github.io/Tablex/");
 const topLevelTabIds = new Set<Tab>(["Home", "Data", "Insight", "Evaluation", "Leaderboard", "Assets"]);
 const hiddenLegacyTabIds = new Set<Tab>(["Overview", "Approach", "Raw"]);
 const primaryTabItems = tabItems.filter((item) => topLevelTabIds.has(item.id));
@@ -508,6 +509,23 @@ const supportingTabItems = tabItems.filter((item) => !topLevelTabIds.has(item.id
 const supportingTabIdSet = new Set<Tab>(supportingTabItems.map((item) => item.id));
 const NOTEBOOK_NATIVE_MARIMO_ANCHOR = "notebook-native-marimo-top";
 const notebookNavigationAnchors = new Set(["notebook-preview-top", NOTEBOOK_NATIVE_MARIMO_ANCHOR]);
+
+function normalizeDocsBaseUrl(value: string): string {
+  const trimmed = value.trim() || "https://nejumi.github.io/Tablex/";
+  return trimmed.endsWith("/") ? trimmed : `${trimmed}/`;
+}
+
+function docsLocaleSegment(locale: string): string {
+  const normalized = locale.toLowerCase();
+  if (normalized.startsWith("ja")) return "ja/";
+  if (normalized.startsWith("zh")) return "zh-Hans/";
+  if (normalized.startsWith("ko")) return "ko/";
+  return "";
+}
+
+function docsHomeUrl(locale: string): string {
+  return `${docsBaseUrl}${docsLocaleSegment(locale)}`;
+}
 
 function tabFromString(value: string | null | undefined, fallback: Tab): Tab {
   if (value === "Overview" || value === "Approach") return "Home";
@@ -1482,6 +1500,16 @@ export function App() {
                 </span>
               </div>
             ) : null}
+            <a
+              className="secondary-button topbar-docs-link"
+              href={docsHomeUrl(activeLocale.locale)}
+              target="_blank"
+              rel="noreferrer"
+              title={text.docsLink}
+            >
+              <BookOpen size={16} />
+              {text.docsLink}
+            </a>
             <button className="icon-button" onClick={() => void refreshProjects()} title={text.refreshProjects}>
               <RefreshCw size={18} />
             </button>

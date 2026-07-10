@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-label="Home workspace screenshot placeholder">
+  <rect width="1200" height="760" fill="#eef4f8"/>
+  <rect x="48" y="48" width="220" height="664" rx="18" fill="#163a53"/>
+  <rect x="300" y="48" width="852" height="112" rx="18" fill="#ffffff"/>
+  <rect x="300" y="190" width="420" height="220" rx="18" fill="#ffffff"/>
+  <rect x="742" y="190" width="410" height="220" rx="18" fill="#ffffff"/>
+  <rect x="300" y="440" width="852" height="272" rx="18" fill="#ffffff"/>
+  <text x="92" y="108" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="700" fill="#ffffff">Tablex</text>
+  <text x="340" y="116" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="700" fill="#163a53">Home / Agent workspace</text>
+  <text x="340" y="300" font-family="Inter, Arial, sans-serif" font-size="28" fill="#1d6f9f">Mission control</text>
+  <text x="782" y="300" font-family="Inter, Arial, sans-serif" font-size="28" fill="#1d6f9f">Research plan</text>
+  <text x="340" y="572" font-family="Inter, Arial, sans-serif" font-size="28" fill="#1d6f9f">Agent Chat and evidence links</text>
+  <text x="340" y="650" font-family="Inter, Arial, sans-serif" font-size="20" fill="#667085">Replace this placeholder with a captured product screenshot.</text>
+</svg>
