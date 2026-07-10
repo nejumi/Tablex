@@ -4026,6 +4026,7 @@ def test_leaderboard_collapses_duplicate_metric_results_and_keeps_richer_row(tmp
                 {
                     "model_id": "lgbm_relational_aggregates_v1",
                     "model_description": "LightGBM using application features plus target-free relational aggregates",
+                    "features_used": ["application", "bureau_aggregates"],
                 }
             ),
             metrics_json=json.dumps(metrics),
@@ -4041,6 +4042,8 @@ def test_leaderboard_collapses_duplicate_metric_results_and_keeps_richer_row(tmp
                 {
                     "model_id": "hc_lgbm_relational_aggregates_internal_cv_v1",
                     "model_description": "LightGBM using application features plus target-free relational aggregates",
+                    "features_used": ["application", "bureau_aggregates"],
+                    "feature_summary": "application fields plus bureau aggregates",
                 }
             ),
             metrics_json=json.dumps(metrics),

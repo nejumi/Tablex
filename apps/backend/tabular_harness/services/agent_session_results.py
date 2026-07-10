@@ -1644,7 +1644,7 @@ def experiment_result_signature(
     features_used: Any = None,
     feature_summary: Any = None,
 ) -> str:
-    del model_id
+    del model_id, feature_summary
     primary_metric_name = str(metrics.get("primary_metric_name") or "").strip().casefold()
     numeric_metrics = {
         key: round(float(value), 12)
@@ -1661,7 +1661,6 @@ def experiment_result_signature(
         "numeric_metrics": numeric_metrics,
         "model_description": str(model_description or "").strip().casefold(),
         "features_used": normalized_features,
-        "feature_summary": str(feature_summary or "").strip().casefold(),
     }
     return "metrics:" + hashlib.sha256(dumps_json(payload).encode("utf-8")).hexdigest()
 
