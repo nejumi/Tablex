@@ -20,6 +20,8 @@ Full Auto is a continuing agent session. It should feel like one data scientist 
 
 Agent Chat is for human-facing progress and decisions. It should tell you what changed, what is uncertain, what needs attention, and where to look next.
 
+![Agent workspace with persistent chat, observed state, contextual actions, and equipped Skills](/img/screenshots/agent-chat-workspace.png)
+
 ## Codex Console
 
 Codex Console is the raw execution view. Use it when you need to inspect what the runner actually did. It is not the normal reading surface for project conclusions.

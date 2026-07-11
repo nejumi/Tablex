@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy import create_engine, select
@@ -7,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
     AgentSession,
+    AgentSupervisorLease,
     Artifact,
     Base,
     ExperimentRun,
@@ -289,6 +291,24 @@ def test_research_plan_current_work_live_state_uses_observed_codex_process(monke
         assert scheduled_current_work["is_live"] is False
         assert scheduled_current_work["observed_codex_process_count"] == 0
 
+        now = utc_now()
+        db.add(
+            AgentSupervisorLease(
+                session_id=session.id,
+                owner_id="host-agent-supervisor",
+                acquired_at=now,
+                heartbeat_at=now,
+                expires_at=now + timedelta(seconds=45),
+            )
+        )
+        db.commit()
+        lease_response = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+        lease_current_work = lease_response["current_work"]
+        assert lease_current_work["activity_state"] == "active"
+        assert lease_current_work["is_live"] is True
+        assert lease_current_work["observed_codex_process_count"] == 0
+        assert lease_current_work["supervisor_lease_active"] is True
+
         monkeypatch.setattr(
             "tabular_harness.services.research_plan_timeline.running_codex_processes_for_project",
             lambda project_id: [{"pid": 12345, "command": f"codex exec /tmp/{project_id}/task"}],
@@ -300,7 +320,7 @@ def test_research_plan_current_work_live_state_uses_observed_codex_process(monke
         assert active_current_work["observed_codex_process_count"] == 1
 
 
-def test_derived_current_work_is_not_marked_live_from_process_presence(monkeypatch) -> None:
+def test_derived_current_work_keeps_revision_source_and_reflects_runner_presence(monkeypatch) -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
 
@@ -349,8 +369,8 @@ def test_derived_current_work_is_not_marked_live_from_process_presence(monkeypat
         response = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
         current_work = response["current_work"]
         assert current_work["source"] == "research_plan_revision_status"
-        assert current_work["activity_state"] == "declared_only"
-        assert current_work["is_live"] is False
+        assert current_work["activity_state"] == "active"
+        assert current_work["is_live"] is True
         assert current_work["observed_codex_process_count"] == 1
 
 
@@ -690,8 +710,7 @@ def test_research_plan_timeline_does_not_promote_invalid_legacy_artifact(tmp_pat
         assert ignored["contract_validation"]["status"] == "needs_revision"
         assert ignored["contract_validation"]["error_count"] > 0
         revisions = list(db.scalars(select(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project.id)))
-        assert len(revisions) == 1
-        assert revisions[0].source_artifact_id is None
+        assert revisions == []
 
 
 def test_research_plan_timeline_exposes_contract_validation_issues() -> None:
@@ -1346,6 +1365,75 @@ def test_research_plan_accepts_marimo_notebook_asset_type_as_native_notebook(tmp
             and link["target_anchor"] == "notebook-native-marimo-top"
             for link in links
         )
+
+
+def test_research_plan_accepts_notebook_registered_by_host_worker_from_container(
+    tmp_path: Path, monkeypatch
+) -> None:
+    container_data = tmp_path / "container-data"
+    relative_primary_path = Path("artifacts/local-org/project/analysis_notebook/notebook/v1/notebook.py")
+    notebook_path = container_data / relative_primary_path
+    notebook_path.parent.mkdir(parents=True)
+    notebook_path.write_text("import marimo\n\napp = marimo.App()\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "tabular_harness.core.config.get_settings",
+        lambda: type("RuntimeSettings", (), {"data_dir": container_data})(),
+    )
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_plan_host_worker_notebook", name="Plan Host Worker Notebook")
+        artifact = Artifact(
+            id="art_host_worker_notebook",
+            project_id=project.id,
+            asset_type="analysis_notebook",
+            name="host_worker_notebook",
+            version=1,
+            uri=f"/home/tablex/project/data/{relative_primary_path.parent}",
+            content_hash="hash",
+            size_bytes=notebook_path.stat().st_size,
+            metadata_json=dumps_json(
+                {
+                    "workspace_relative_path": "notebooks/host_worker_notebook.py",
+                    "primary_path": f"/home/tablex/project/data/{relative_primary_path}",
+                }
+            ),
+        )
+        db.add_all([project, artifact])
+        db.commit()
+
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "data_understanding",
+                        "title": "Data understanding",
+                        "granularity": "chapter",
+                        "status": "done",
+                        "deliverable_contract": {"expected_outputs": ["notebook"]},
+                        "completion_evidence": [
+                            {
+                                "output_type": "notebook",
+                                "workspace_path": "notebooks/host_worker_notebook.py",
+                            }
+                        ],
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Accept the host worker notebook through the shared data volume.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        response = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
+
+        assert response["contract_validation"]["status"] == "ok"
+        assert response["contract_validation"]["issues"] == []
 
 
 def test_research_plan_timeline_rewrites_static_notebook_html_links_to_native_source(tmp_path: Path) -> None:

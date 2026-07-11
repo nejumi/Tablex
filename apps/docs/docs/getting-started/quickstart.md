@@ -8,6 +8,17 @@ description: Start a Tablex project, upload data, run Full Auto, and review the 
 
 This guide walks through the first successful Tablex project. The goal is not to force a modeling workflow too early; it is to get data, objective, evaluation, and human-readable outputs into one project.
 
+## 0. Start the complete runtime
+
+Install and authenticate the latest Codex CLI on the host, then use the Tablex launcher:
+
+```bash
+codex login --device-auth  # only when needed
+scripts/tablex up
+```
+
+The launcher reuses host Codex authentication, creates its managed companion runtime on first use, and checks authentication plus local sandbox support before Docker starts. Host `pip` and `python3-venv` are not required; the launcher bootstraps the companion runtime from a digest-pinned official uv image. Open `http://localhost:8080`. Later starts use the same `scripts/tablex up`; stop with `scripts/tablex down`.
+
 ## 1. Create a project
 
 Open Tablex and create a project from the portal. Use a short name that describes the dataset or business question.

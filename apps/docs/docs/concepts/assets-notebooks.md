@@ -22,8 +22,10 @@ Reports should be human-readable. They are best for decisions, summaries, source
 
 Notebook source is the artifact of record. Tablex opens native marimo notebooks in-product so the analysis remains executable and reusable by both humans and agents.
 
+![A native marimo report running inside the Tablex notebook workspace](/img/screenshots/native-marimo-report.png)
+
 If a notebook fails, Tablex should show the failure and let the agent repair the source. A static HTML fallback should not hide notebook errors.
 
 ## Screenshots and figures
 
-Figures inside notebooks help human readers understand distributions, errors, feature behavior, and model diagnostics. Screenshots in this documentation explain the product UI. Replace placeholder screenshots as the UI stabilizes.
+Figures inside notebooks help human readers understand distributions, errors, feature behavior, and model diagnostics. Screenshots in this documentation use the public Home Credit demo so the product workflow can be shown without exposing private project data.

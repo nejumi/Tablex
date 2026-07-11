@@ -8,7 +8,7 @@ description: Tablex가 model runs, diagnostics, notebooks, deeper feature engine
 
 Leaderboard는 model candidates가 비교 가능한 형태가 되는 곳입니다. 좋은 row는 score뿐 아니라 model이 무엇을 사용했는지, 왜 시도했는지, 어떤 evidence가 뒷받침하는지, 무엇이 아직 없는지 설명해야 합니다.
 
-![Leaderboard placeholder](/img/screenshots/leaderboard-placeholder.svg)
+![Model score, evaluation quality, diagnostics, prediction readiness를 비교하는 Leaderboard](/img/screenshots/leaderboard-model-evidence.png)
 
 ## Baselines first
 

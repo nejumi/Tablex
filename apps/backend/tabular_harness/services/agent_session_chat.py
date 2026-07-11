@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.json import dumps_json, loads_json
+from tabular_harness.core.runtime_paths import resolve_runtime_data_path
 from tabular_harness.models.entities import (
     AgentSession,
     AgentTranscriptEvent,
@@ -555,7 +556,7 @@ def reconcile_project_notebook_context_requests(
             store=store,
             project=project,
             session=session,
-            workspace=Path(session.workspace_path),
+            workspace=resolve_runtime_data_path(session.workspace_path),
             limit=limit,
         )
     return reconciled
@@ -596,7 +597,7 @@ def reconcile_project_notebook_quality_requests(
             store=store,
             project=project,
             session=session,
-            workspace=Path(session.workspace_path),
+            workspace=resolve_runtime_data_path(session.workspace_path),
             limit=limit,
         )
     return reconciled
@@ -2141,7 +2142,9 @@ def maybe_register_chat_update_from_workspace_output(
             "schema_version": "agent_progress_report_brief.v1",
             "agent_session_id": session.id,
             "source_artifact_id": artifact.id,
-            "workspace_relative_path": str(path.relative_to(Path(session.workspace_path or path.parent))),
+            "workspace_relative_path": str(
+                path.relative_to(resolve_runtime_data_path(session.workspace_path or path.parent))
+            ),
             "linked_action_count": len(actions),
             "visible_state_fingerprint": visible_state_fingerprint,
         },

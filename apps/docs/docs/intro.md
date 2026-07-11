@@ -9,7 +9,7 @@ description: Learn the Tablex workflow for agentic tabular prediction, evaluatio
 
 Tablex is an agentic workbench for tabular prediction projects. It helps a data science agent work with your data while the product keeps the project state understandable: data, objectives, evaluation contracts, notebooks, model results, prediction pipelines, assets, and operational feedback all stay linked.
 
-![Tablex Home workspace](/img/screenshots/home-workspace-placeholder.svg)
+![Tablex Home workspace showing Full Auto activity, Research Plan, and linked evidence](/img/screenshots/home-workspace.png)
 
 ## What Tablex is for
 
@@ -34,6 +34,10 @@ Tablex has a few primary surfaces:
 - Evaluation: candidate metrics and split designs.
 - Leaderboard: model runs, evidence, diagnostics, prediction, and pilot actions.
 - Assets: the canonical inventory of files, notebooks, reports, pipelines, and evidence.
+
+The agent workspace keeps readable progress and contextual actions together, while the Codex Console remains available for inspecting the underlying execution record.
+
+![Agent Chat with observed state, contextual actions, and equipped Skills](/img/screenshots/agent-chat-workspace.png)
 
 ## English is the canonical documentation
 

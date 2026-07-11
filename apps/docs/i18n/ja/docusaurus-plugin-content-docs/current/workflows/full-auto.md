@@ -8,6 +8,8 @@ description: Full Autoの動き、停止条件、指示方法。
 
 Full Autoは、現在のProject状態からAgentが継続して作業するためのモードです。データ理解、評価、モデリング、Notebook、レポートまでを細かく指示せず進めたい時に使います。
 
+![Live Activity、Research Plan、登録済みEvidenceを表示するFull Auto Mission Control](/img/screenshots/home-workspace.png)
+
 ## 開始時に起きること
 
 AgentはProject context、data manifest、装備中Skill、artifact参照、評価状態、安全境界を受け取ります。ファイル確認、Notebookやレポートの作成、構造化requestの提出、検証エラーへの対応ができます。

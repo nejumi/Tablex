@@ -8,7 +8,7 @@ description: モデルrun、診断、Notebook、特徴量深掘りの読み方�
 
 Leaderboardはモデル候補を比較する場所です。良い行はスコアだけでなく、何を使い、なぜ試し、どの根拠があり、何が不足しているかを説明します。
 
-![Leaderboard placeholder](/img/screenshots/leaderboard-placeholder.svg)
+![モデルスコア、評価品質、診断、予測準備状況を比較するLeaderboard](/img/screenshots/leaderboard-model-evidence.png)
 
 ## Baselineから始める
 

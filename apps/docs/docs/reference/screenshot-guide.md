@@ -6,7 +6,7 @@ description: How screenshots are used in the Tablex documentation and which capt
 
 # Screenshot guide
 
-The docs currently include placeholder illustrations. Replace them with product screenshots as the UI stabilizes.
+The docs use screenshots from public or synthetic demo projects. Refresh them as the UI changes materially, while keeping stable filenames so links remain valid.
 
 ## Useful screenshots to capture
 

@@ -22,8 +22,10 @@ Assetsは全成果物の正典リストです。アップロードデータ、pr
 
 Notebook sourceが記録の正本です。Tablexはnative marimoを製品内で開き、分析を人間にもAgentにも再利用可能な資産として残します。
 
+![Tablex内で実行中のnative marimoレポート](/img/screenshots/native-marimo-report.png)
+
 Notebookが失敗した場合は失敗を表示し、Agentにsourceを修復させます。静的HTMLで失敗を隠すべきではありません。
 
 ## スクリーンショットと図
 
-Notebook内の図は分布、誤差、特徴量、診断を理解する助けになります。このドキュメントのスクリーンショットはUI説明用です。UIが固まったらplaceholderを差し替えてください。
+Notebook内の図は分布、誤差、特徴量、診断を理解する助けになります。このドキュメントでは、非公開データを露出せず製品workflowを示せるよう、公開デモのスクリーンショットを使用します。

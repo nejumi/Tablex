@@ -9,7 +9,7 @@ description: agentic tabular prediction, evaluation, notebooks, assets, pilot va
 
 Tablex는 표 형식 예측 프로젝트를 위한 agentic 워크벤치입니다. 데이터 과학 에이전트가 데이터를 다루는 동안, 제품은 프로젝트 상태를 이해하기 쉽게 유지합니다. 데이터, 목표, 평가 계약, Notebook, 모델 결과, 예측 파이프라인, 자산, 운영 피드백이 모두 연결됩니다.
 
-![Tablex Home workspace](/img/screenshots/home-workspace-placeholder.svg)
+![Full Auto, Research Plan, evidence를 보여주는 Tablex Home](/img/screenshots/home-workspace.png)
 
 ## Tablex가 필요한 경우
 
@@ -34,6 +34,10 @@ Tablex의 주요 화면은 다음과 같습니다.
 - Evaluation: 후보 metric과 split design.
 - Leaderboard: model runs, evidence, diagnostics, prediction, pilot actions.
 - Assets: 파일, Notebook, 보고서, pipeline, evidence의 정본 인벤토리.
+
+Agent workspace는 사람이 읽는 진행 상황과 contextual action을 함께 보여주며, Codex Console에서는 underlying execution record를 확인할 수 있습니다.
+
+![Observed state, contextual actions, equipped Skills를 보여주는 Agent Chat](/img/screenshots/agent-chat-workspace.png)
 
 ## 영어 문서가 정본입니다
 

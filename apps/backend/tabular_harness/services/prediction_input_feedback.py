@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.json import loads_json
+from tabular_harness.core.runtime_paths import resolve_runtime_data_path
 from tabular_harness.models.entities import AgentTranscriptEvent, Artifact, Project
 from tabular_harness.services.agent_inbox import write_inbox_entry
 from tabular_harness.services.agent_supervisor import active_main_session, latest_main_session
@@ -82,7 +82,7 @@ def maybe_send_prediction_input_validation_failure_to_codex(
     ]
     try:
         inbox_path = write_inbox_entry(
-            Path(session.workspace_path),
+            resolve_runtime_data_path(session.workspace_path),
             kind="observation",
             entry_type="prediction_input_validation_failed",
             payload=payload,
@@ -194,7 +194,7 @@ def maybe_send_prediction_pipeline_runtime_failure_to_codex(
     ]
     try:
         inbox_path = write_inbox_entry(
-            Path(session.workspace_path),
+            resolve_runtime_data_path(session.workspace_path),
             kind="observation",
             entry_type="prediction_pipeline_runtime_failed",
             payload=payload,

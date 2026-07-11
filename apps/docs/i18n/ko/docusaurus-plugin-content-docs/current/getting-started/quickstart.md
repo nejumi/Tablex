@@ -8,6 +8,17 @@ description: Tablex 프로젝트를 만들고, 데이터를 업로드하고, Ful
 
 이 가이드는 첫 번째 Tablex 프로젝트를 성공적으로 통과하는 흐름을 설명합니다. 목표는 모델링 워크플로를 너무 일찍 강제하는 것이 아니라, 데이터, objective, evaluation, 사람이 읽을 수 있는 output을 하나의 프로젝트에 모으는 것입니다.
 
+## 0. 전체 런타임 시작
+
+호스트에 최신 Codex CLI를 설치하고 인증한 뒤 Tablex launcher를 실행합니다.
+
+```bash
+codex login --device-auth  # 인증되지 않은 경우에만
+scripts/tablex up
+```
+
+Launcher는 호스트 Codex 인증을 재사용하고 첫 실행에 companion runtime을 만듭니다. 호스트 `pip`와 `python3-venv`는 필요하지 않으며, digest로 고정된 공식 uv image에서 runtime을 준비합니다. Docker 시작 전에 인증과 local sandbox를 검사하며 실패하면 시작하지 않습니다. `http://localhost:8080`을 여세요. 이후에도 `scripts/tablex up`, 종료는 `scripts/tablex down`을 사용합니다.
+
 ## 1. 프로젝트 만들기
 
 Tablex를 열고 포털에서 프로젝트를 만듭니다. 데이터셋이나 비즈니스 질문을 설명하는 짧은 이름을 사용하세요.

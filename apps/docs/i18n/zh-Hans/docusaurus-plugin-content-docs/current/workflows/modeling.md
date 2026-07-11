@@ -8,7 +8,7 @@ description: Tablex 如何呈现模型运行、诊断、Notebook 和更深入的
 
 Leaderboard 是模型候选变得可比较的地方。好的行不仅应解释分数，还应说明模型使用了什么、为什么尝试它、有哪些证据支持，以及还缺什么。
 
-![Leaderboard placeholder](/img/screenshots/leaderboard-placeholder.svg)
+![比较模型分数、评估质量、诊断和预测就绪状态的 Leaderboard](/img/screenshots/leaderboard-model-evidence.png)
 
 ## 先看基线
 

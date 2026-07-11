@@ -8,6 +8,8 @@ description: Full Auto 如何运行、何时停止，以及如何给出指令。
 
 Full Auto 让智能体从当前项目状态继续推进。当你希望 Tablex 从数据理解推进到评估、建模、Notebook 和报告，而不是每个小步骤都询问时，它很有用。
 
+![显示实时活动、Research Plan 和已注册证据的 Full Auto mission control](/img/screenshots/home-workspace.png)
+
 ## Full Auto 启动后会发生什么
 
 智能体会收到项目上下文、数据 manifest、已装备的 Skills、资产引用、评估状态和安全边界。它可以检查文件、撰写 Notebook 和报告、提交结构化请求，并对校验错误作出反应。

@@ -9,7 +9,7 @@ description: Tablexのデータ、評価、Notebook、アセット、予測、�
 
 Tablexは、表データ予測プロジェクトのためのagentic workbenchです。データサイエンスAgentが分析やモデリングを進める一方で、Tablexはデータ、目的、評価契約、Notebook、モデル結果、予測パイプライン、アセット、運用フィードバックを結び付けて見える状態に保ちます。
 
-![Tablex Home workspace](/img/screenshots/home-workspace-placeholder.svg)
+![Full Auto、Research Plan、Evidenceを表示するTablex Home](/img/screenshots/home-workspace.png)
 
 ## Tablexが向いている場面
 
@@ -32,6 +32,10 @@ Tablexは「CSVを1つアップロードしてモデルを作る」だけでは�
 - Evaluation: 指標と分割の候補。
 - Leaderboard: モデル比較、診断、予測、仮運用。
 - Assets: ファイル、Notebook、レポート、パイプライン、根拠の全在庫。
+
+Agent workspaceでは、人間向けの進捗説明と関連アクションを同じ場所で確認できます。実行記録を詳しく調べる場合はCodex Consoleを利用できます。
+
+![Observed state、関連アクション、装備中Skillを表示するAgent Chat](/img/screenshots/agent-chat-workspace.png)
 
 ## 英語が正本です
 

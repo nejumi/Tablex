@@ -1,4 +1,6 @@
 .venv/
+.tablex-runtime/
+/build/
 data/
 __pycache__/
 *.py[cod]

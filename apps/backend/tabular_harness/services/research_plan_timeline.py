@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from tabular_harness.core.json import loads_json
 from tabular_harness.models.entities import AgentSession, Artifact, ExperimentRun, Project, utc_now
+from tabular_harness.services.agent_presence import supervisor_lease_active
 from tabular_harness.services.artifacts import artifact_primary_path
 from tabular_harness.services.portal import running_codex_processes_for_project
 from tabular_harness.services.research_plans import (
@@ -300,15 +301,10 @@ def annotate_research_plan_current_work_activity(
         annotated["activity_state"] = "inactive"
         annotated["is_live"] = False
         return annotated
-    if annotated.get("source") == "research_plan_revision_status":
-        annotated["activity_state"] = "declared_only"
-        annotated["is_live"] = False
-        annotated["agent_session_id"] = session.id
-        annotated["agent_session_status"] = session.status
-        annotated["observed_codex_process_count"] = len(running_codex_processes_for_project(project_id))
-        return annotated
     observed_processes = running_codex_processes_for_project(project_id)
-    if session.status == "running" and observed_processes:
+    lease_active = supervisor_lease_active(db, session.id)
+    runner_live = session.status == "running" and (bool(observed_processes) or lease_active)
+    if runner_live:
         annotated["activity_state"] = "active"
         annotated["is_live"] = True
     elif session.status in {"starting", "running", "between_turns", "waiting_for_runner"}:
@@ -320,6 +316,7 @@ def annotate_research_plan_current_work_activity(
     annotated["agent_session_id"] = session.id
     annotated["agent_session_status"] = session.status
     annotated["observed_codex_process_count"] = len(observed_processes)
+    annotated["supervisor_lease_active"] = lease_active
     return annotated
 
 

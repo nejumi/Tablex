@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tabular_harness.agent.runners import CODEX_HARNESS_CONFIG_ARGS
+from tabular_harness.agent.runners import CODEX_HARNESS_CONFIG_ARGS, safe_env
 
 
 class AvatarGenerationError(RuntimeError):
@@ -46,30 +46,10 @@ def generate_user_avatar_candidates(
             status_code=500,
         )
 
-    errors: list[str] = []
     if provider in {"auto", "codex"}:
-        try:
-            return generate_with_codex_cli(prompt=normalized_prompt, count=count)
-        except AvatarGenerationError as exc:
-            if provider == "codex":
-                raise
-            errors.append(str(exc))
+        return generate_with_codex_cli(prompt=normalized_prompt, count=count)
 
-    if provider in {"auto", "openai"}:
-        try:
-            return generate_with_openai_api(prompt=normalized_prompt, count=count, user=user)
-        except AvatarGenerationError as exc:
-            if provider == "openai":
-                raise
-            errors.append(str(exc))
-
-    suffix = f" Details: {'; '.join(errors)}" if errors else ""
-    raise AvatarGenerationError(
-        "No avatar image generation backend is available. Codex CLI image generation is preferred; "
-        "OPENAI_API_KEY is only needed when TABLEX_AVATAR_PROVIDER=openai or Codex CLI is unavailable."
-        + suffix,
-        status_code=503,
-    )
+    return generate_with_openai_api(prompt=normalized_prompt, count=count, user=user)
 
 
 def generate_with_openai_api(
@@ -139,23 +119,27 @@ def generate_with_openai_api(
 
 
 def generate_with_codex_cli(*, prompt: str, count: int) -> list[AvatarCandidate]:
-    codex = shutil.which("codex")
+    codex = shutil.which(os.getenv("TABLEX_AVATAR_CODEX_BINARY", "codex"))
     if not codex:
         raise AvatarGenerationError("Codex CLI is not available on PATH for avatar generation.", status_code=503)
 
+    ensure_codex_cli_authenticated(codex)
     timeout = codex_avatar_timeout()
     with tempfile.TemporaryDirectory(prefix="tablex_avatar_") as tmp:
         workdir = Path(tmp)
+        runner_env = safe_env(workdir, network_enabled=True)
+        runtime_codex = Path(runner_env["CODEX_HOME"]) / "bin" / "codex"
+        execution_codex = str(runtime_codex) if runtime_codex.is_file() else codex
+        generated_root = Path(runner_env["CODEX_HOME"]) / "generated_images"
+        generated_before = generated_image_inventory(generated_root)
         result_path = workdir / "result.json"
         command = [
-            codex,
+            execution_codex,
             "exec",
             *CODEX_HARNESS_CONFIG_ARGS,
             "--cd",
             str(workdir),
             "--skip-git-repo-check",
-            "--sandbox",
-            "workspace-write",
             "--output-last-message",
             str(result_path),
         ]
@@ -173,6 +157,7 @@ def generate_with_codex_cli(*, prompt: str, count: int) -> list[AvatarCandidate]
                 stdin=subprocess.DEVNULL,
                 text=True,
                 timeout=timeout,
+                env=runner_env,
             )
         except subprocess.TimeoutExpired as exc:
             raise AvatarGenerationError(
@@ -190,45 +175,109 @@ def generate_with_codex_cli(*, prompt: str, count: int) -> list[AvatarCandidate]
             )
 
         files, revised_prompt = codex_avatar_result_files(result_path)
-        if not files:
-            files = [path.name for path in sorted(workdir.glob("candidate_*.png"))]
+        candidate_paths: list[Path] = []
+        for filename in files:
+            path = safe_child_file(workdir, filename)
+            if path is not None and path.is_file():
+                candidate_paths.append(path)
+                continue
+            generated_path = safe_generated_image_file(generated_root, filename)
+            if generated_path is not None and generated_path.is_file():
+                candidate_paths.append(generated_path)
+        candidate_paths.extend(sorted(workdir.glob("candidate_*.png")))
+        candidate_paths.extend(new_generated_image_files(generated_root, generated_before))
 
         candidates: list[AvatarCandidate] = []
-        for index, filename in enumerate(files[:count], start=1):
-            path = safe_child_file(workdir, filename)
-            if path is None or not path.is_file():
+        seen_paths: set[Path] = set()
+        for path in candidate_paths:
+            resolved = path.resolve()
+            if resolved in seen_paths:
                 continue
-            data_url = image_file_to_data_url(path)
+            seen_paths.add(resolved)
+            data_url = image_file_to_data_url(resolved)
             if data_url is None:
                 continue
             candidates.append(
                 AvatarCandidate(
-                    id=f"avatar_candidate_{index}",
+                    id=f"avatar_candidate_{len(candidates) + 1}",
                     data_url=data_url,
                     model="codex-cli:gpt-image-2",
                     revised_prompt=revised_prompt,
                 )
             )
+            if len(candidates) >= count:
+                break
 
         if not candidates:
-            raise AvatarGenerationError("Codex avatar generation returned no usable image files.", status_code=502)
+            raise AvatarGenerationError(
+                "Codex completed without a new readable image in its generated-images directory.",
+                status_code=502,
+            )
         return candidates
 
 
+def ensure_codex_cli_authenticated(codex: str) -> None:
+    try:
+        completed = subprocess.run(
+            [codex, "login", "status"],
+            capture_output=True,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise AvatarGenerationError(
+            "Tablex could not verify Codex authentication. Authenticate the Codex CLI used by Tablex and try again.",
+            status_code=503,
+        ) from exc
+    if completed.returncode != 0:
+        raise AvatarGenerationError(
+            "Codex CLI is installed but not authenticated for Tablex. Complete Codex device authentication for this Tablex runtime, then try again.",
+            status_code=503,
+        )
+
+
+def codex_generated_images_root() -> Path:
+    codex_home = Path(os.getenv("CODEX_HOME", str(Path.home() / ".codex"))).expanduser()
+    return (codex_home / "generated_images").resolve()
+
+
+def generated_image_inventory(root: Path) -> set[Path]:
+    if not root.is_dir():
+        return set()
+    return {path.resolve() for path in root.rglob("*") if path.is_file()}
+
+
+def new_generated_image_files(root: Path, before: set[Path]) -> list[Path]:
+    created = generated_image_inventory(root) - before
+    return sorted(created, key=lambda path: path.stat().st_mtime_ns)
+
+
+
+def safe_generated_image_file(root: Path, filename: str) -> Path | None:
+    raw = Path(filename)
+    candidate = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError:
+        return None
+    return candidate
+
+
 def codex_avatar_task_prompt(*, prompt: str, count: int) -> str:
-    file_list = [f"candidate_{index}.png" for index in range(1, count + 1)]
     return "\n".join(
         [
             "Use the built-in $imagegen capability to generate user avatar candidates for Tablex.",
             "This is a constrained asset-generation task. Work only in the current temporary directory.",
             "Do not read secrets, connector credentials, .env files, project data, or unrelated repository files.",
-            f"Generate exactly {count} square PNG image file(s): {', '.join(file_list)}.",
+            f"Generate exactly {count} distinct square PNG candidate(s), using one built-in image-generation call per candidate.",
             "Each candidate should work as a small chat/profile avatar: centered subject, friendly, polished, no logo, no watermark, no UI screenshot.",
             "Avoid text, letters, numbers, spreadsheet cell labels, and brand marks unless the user explicitly asked for them.",
             "If a transparent background is practical, use the built-in image generation path and local chroma-key cleanup; otherwise use a clean simple background.",
-            "Keep only the requested candidate PNG files in the current directory.",
-            "Final response must be only valid JSON with this shape:",
-            json.dumps({"files": file_list, "revised_prompt": "short prompt summary"}, ensure_ascii=True),
+            "The built-in image tool saves under CODEX_HOME/generated_images; do not copy generated files into the temporary work directory.",
+            "Final response must be only valid JSON. Report the generated file paths emitted by the image tool when available:",
+            json.dumps({"files": ["generated image path"], "revised_prompt": "short prompt summary"}, ensure_ascii=True),
             "User avatar direction:",
             prompt,
         ]
@@ -293,7 +342,7 @@ def image_file_to_data_url(path: Path) -> str | None:
 
 def compact_process_output(value: str, *, limit: int = 600) -> str:
     text = " ".join(value.split())
-    return text[:limit]
+    return text if len(text) <= limit else f"...{text[-limit:]}"
 
 
 def avatar_prompt(user_prompt: str) -> str:

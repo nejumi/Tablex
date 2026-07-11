@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
+from tabular_harness.core.runtime_paths import resolve_runtime_data_path
 from tabular_harness.models.entities import (
     AgentSession,
     Artifact,
@@ -464,7 +465,7 @@ def ingest_registered_session_experiment_artifacts(
         if runs:
             created_runs.extend(runs)
             created_by_artifact[artifact.id] = runs
-            workspace = Path(session.workspace_path) if session.workspace_path else None
+            workspace = resolve_runtime_data_path(session.workspace_path) if session.workspace_path else None
             pipeline_registration = experiment_pipeline_registration_status(runs)
             if workspace is not None and pipeline_registration["status"] != "ready":
                 write_pipeline_registration_request_to_workspace_inbox(
@@ -560,7 +561,7 @@ def restore_registered_session_experiment_visibility(
             source_artifact=source_artifact,
             source_request_id=source_request_id,
         )
-        workspace = Path(session.workspace_path) if session.workspace_path else None
+        workspace = resolve_runtime_data_path(session.workspace_path) if session.workspace_path else None
         if workspace is not None:
             pipeline_registration = experiment_pipeline_registration_status(group_runs)
             if pipeline_registration["status"] != "ready":
@@ -1700,7 +1701,10 @@ def experiment_result_signature(
     features_used: Any = None,
     feature_summary: Any = None,
 ) -> str:
-    del model_id, feature_summary
+    # Labels and prose can differ between the structured workspace result and a
+    # later explicit registration request. They describe a result; they do not
+    # make an otherwise identical result a new leaderboard experiment.
+    del model_id, model_description, feature_summary
     primary_metric_name = str(metrics.get("primary_metric_name") or "").strip().casefold()
     numeric_metrics = {
         key: round(float(value), 12)
@@ -1715,7 +1719,6 @@ def experiment_result_signature(
     payload = {
         "primary_metric_name": primary_metric_name,
         "numeric_metrics": numeric_metrics,
-        "model_description": str(model_description or "").strip().casefold(),
         "features_used": normalized_features,
     }
     return "metrics:" + hashlib.sha256(dumps_json(payload).encode("utf-8")).hexdigest()
@@ -1969,7 +1972,7 @@ def register_structured_experiment_result_failure(
 ) -> None:
     metadata = loads_json(artifact.metadata_json, {})
     workspace_relative_path = str(metadata.get("workspace_relative_path") or "").strip()
-    workspace = Path(session.workspace_path) if session.workspace_path else None
+    workspace = resolve_runtime_data_path(session.workspace_path) if session.workspace_path else None
     if workspace is not None:
         write_experiment_result_artifact_rejection_to_workspace_inbox(
             workspace,

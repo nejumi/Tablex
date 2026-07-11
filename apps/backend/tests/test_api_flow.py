@@ -31,6 +31,7 @@ from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
 from tabular_harness.models.entities import (
     AgentSession,
+    AgentSupervisorLease,
     AgentTranscriptEvent,
     Artifact,
     AssetReference,
@@ -44,13 +45,13 @@ from tabular_harness.models.entities import (
     LineageEdge,
     ModelVersion,
     PilotDeployment,
-    PilotPredictionBatch,
     PilotOutcomeBatch,
+    PilotPredictionBatch,
     Project,
     Question,
+    Report,
     ResearchBrief,
     ResearchPlan,
-    Report,
     SplitManifest,
     User,
     utc_now,
@@ -81,8 +82,8 @@ from tabular_harness.services.artifacts import (
     next_artifact_version,
     register_artifact,
 )
-from tabular_harness.services.autonomy import latest_data_understanding_notebook_artifact
 from tabular_harness.services.auth import create_auth_session, create_user
+from tabular_harness.services.autonomy import latest_data_understanding_notebook_artifact
 from tabular_harness.services.deliverable_expectations import (
     fulfill_run_pipeline_bundle_expectations,
     maybe_write_open_deliverable_expectation_observation,
@@ -2765,6 +2766,66 @@ def test_agent_activity_treats_stale_running_session_as_off_when_project_idle(
     assert all(worker.get("agent_session_id") != "ags_idle_stale_running" for worker in activity["workers"])
 
 
+def test_agent_activity_uses_supervisor_lease_for_host_runner_presence(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.running_codex_processes_for_project",
+        lambda project_id: [],
+    )
+    monkeypatch.setattr(
+        "tabular_harness.services.portal.running_codex_processes_for_project",
+        lambda project_id: [],
+    )
+    client = make_client(tmp_path, api_agent_session_supervisor_enabled=False)
+
+    app = cast(Any, client.app)
+    project_id = "p_host_runner_activity"
+    now = utc_now()
+    with app.state.session_factory() as db:
+        project = Project(
+            id=project_id,
+            name="Host runner activity",
+            autonomy_mode="full_auto",
+            current_phase="AUTONOMOUS_LOOP",
+        )
+        db.add(project)
+        db.flush()
+        session = AgentSession(
+            id="ags_host_runner_activity",
+            project_id=project_id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Continue on the host runner.",
+            pid=4242,
+            started_at=now,
+            last_heartbeat_at=now,
+        )
+        db.add(session)
+        db.flush()
+        db.add(
+            AgentSupervisorLease(
+                session_id=session.id,
+                owner_id="host-agent-supervisor",
+                acquired_at=now,
+                heartbeat_at=now,
+                expires_at=now + timedelta(seconds=45),
+            )
+        )
+        db.commit()
+        activity = routes_module.get_project_agent_activity(project_id, db)
+
+    assert activity["active_count"] == 1
+    assert activity["turn_state"]["state"] == "agent_running"
+    assert activity["turn_state"]["label"] == "Codex is working"
+    assert "metadata_db.agent_supervisor_leases" in activity["turn_state"]["sources"]
+    assert activity["workers"][0]["status"] == "running"
+    assert activity["workers"][0]["active"] is True
+
+
 def test_agent_activity_hides_queued_autonomous_worker_when_project_idle(
     tmp_path: Path,
     monkeypatch: Any,
@@ -2807,7 +2868,7 @@ def test_agent_activity_hides_queued_autonomous_worker_when_project_idle(
     assert all(worker.get("job_id") != queued_job_id for worker in activity["workers"])
 
 
-def test_agent_activity_watchdog_starts_main_session_when_full_auto_has_no_session(
+def test_agent_activity_read_does_not_start_main_session_when_full_auto_has_no_session(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -2831,13 +2892,8 @@ def test_agent_activity_watchdog_starts_main_session_when_full_auto_has_no_sessi
 
     activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
     assert activity_response.status_code == 200
-    activity = activity_response.json()
-    assert activity["turn_state"]["state"] in {"agent_running", "agent_scheduled"}
-    session_id = activity["turn_state"]["agent_session_id"]
-
-    session = client.get(f"/api/projects/{project_id}/agent-session/current").json()
-    assert session["id"] == session_id
-    assert session["session_type"] == "main_autonomous"
+    with app.state.session_factory() as db:
+        assert list(db.scalars(select(AgentSession.id).where(AgentSession.project_id == project_id))) == []
 
 
 def test_agent_activity_last_output_uses_codex_transcript_not_sidecar_heartbeat(

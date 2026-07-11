@@ -23,6 +23,7 @@ from tabular_harness.agent.runners import codex_harness_config_args, safe_env
 from tabular_harness.core.config import get_settings
 from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
+from tabular_harness.core.runtime_paths import resolve_runtime_data_path
 from tabular_harness.models.entities import (
     AgentSession,
     AgentTranscriptEvent,
@@ -653,7 +654,7 @@ COMPLETED_PLAN_NON_ACTIONABLE_INBOX_TYPES = {
 def processed_workspace_inbox_filenames(session: AgentSession) -> set[str]:
     if not session.workspace_path:
         return set()
-    processed_path = inbox_processed_path(Path(session.workspace_path))
+    processed_path = inbox_processed_path(resolve_runtime_data_path(session.workspace_path))
     if not processed_path.exists():
         return set()
     processed: set[str] = set()
@@ -680,7 +681,7 @@ def processed_workspace_inbox_filenames(session: AgentSession) -> set[str]:
 def unprocessed_actionable_workspace_inbox_exists(session: AgentSession) -> bool:
     if not session.workspace_path:
         return False
-    workspace = Path(session.workspace_path)
+    workspace = resolve_runtime_data_path(session.workspace_path)
     processed = processed_workspace_inbox_filenames(session)
     for entry in list_inbox_entries(workspace):
         filename = str(entry.get("_filename") or "")
@@ -1209,7 +1210,13 @@ def run_main_agent_session_supervisor(
                 session = db.get(AgentSession, session_id)
                 if project is None or session is None:
                     return
-                ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=Path(session.workspace_path or workspace))
+                ingest_session_workspace_outputs(
+                    db,
+                    store=store,
+                    project=project,
+                    session=session,
+                    workspace=resolve_runtime_data_path(session.workspace_path or workspace),
+                )
                 if main_session_should_pause_after_completed_plan(db, project=project, session=session):
                     pause_main_session_after_completed_plan(db, store=store, project=project, session=session)
                     db.commit()
@@ -1337,13 +1344,59 @@ def run_codex_cli_turn_streaming(
                 db.commit()
         return None
 
+    settings = get_settings()
+    runner_env = safe_env(
+        workspace,
+        network_enabled=settings.agent_session_network_enabled,
+    )
+    preflight = subprocess.run(
+        [
+            "codex",
+            "sandbox",
+            "-P",
+            "workspace",
+            "-C",
+            str(workspace),
+            "--",
+            "sh",
+            "-c",
+            "touch .harness/.codex-sandbox-probe && rm -f .harness/.codex-sandbox-probe",
+        ],
+        cwd=str(workspace),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=runner_env,
+        check=False,
+    )
+    if preflight.returncode != 0:
+        error = (preflight.stderr or preflight.stdout or "Codex sandbox preflight failed.").strip()
+        with session_factory() as db:
+            session = db.get(AgentSession, session_id)
+            if session is not None:
+                session.status = "failed"
+                session.pid = None
+                session.last_error = error
+                session.ended_at = utc_now()
+                append_session_event(
+                    db,
+                    session,
+                    source="tablex_sidecar",
+                    event_type="runner_sandbox_unavailable",
+                    role="harness",
+                    title="Codex sandbox is unavailable",
+                    content="Tablex stopped before starting a Codex turn because the local command sandbox is unavailable.",
+                    payload={"exit_code": preflight.returncode, "error": error},
+                )
+                db.commit()
+        return 78
+
     with session_factory() as db:
         session = db.get(AgentSession, session_id)
         if session is None:
             return 1
         turn_index = session.turn_index
         last_message_path = workspace / ".tablex" / f"codex_last_message_turn_{turn_index}.md"
-        settings = get_settings()
         config_args = codex_harness_config_args(
             network_enabled=settings.agent_session_network_enabled,
             web_search_enabled=settings.agent_session_web_search_enabled,
@@ -1355,8 +1408,6 @@ def run_codex_cli_turn_streaming(
                 *config_args,
                 "--cd",
                 str(workspace),
-                "--sandbox",
-                "workspace-write",
                 "resume",
                 session.codex_thread_id,
                 "--json",
@@ -1372,8 +1423,6 @@ def run_codex_cli_turn_streaming(
                 *config_args,
                 "--cd",
                 str(workspace),
-                "--sandbox",
-                "workspace-write",
                 "--json",
                 "--output-last-message",
                 str(last_message_path),
@@ -1412,7 +1461,7 @@ def run_codex_cli_turn_streaming(
             stderr=stderr_writer,
             text=True,
             bufsize=1,
-            env=safe_env(workspace),
+            env=runner_env,
             start_new_session=True,
         )
         with session_factory() as db:

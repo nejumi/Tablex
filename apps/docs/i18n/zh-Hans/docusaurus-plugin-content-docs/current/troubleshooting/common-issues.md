@@ -6,6 +6,10 @@ description: 处理 Tablex 中与上传、Full Auto、Notebook、预测和文档
 
 # 常见问题
 
+## Tablex 可以打开，但 Codex 功能不可用
+
+仅能打开网页并不代表 Full Auto 已准备好。请运行 `scripts/tablex setup` 检查 host companion 和 Codex runtime。认证失败时运行 `codex login --device-auth`。如果 Linux sandbox 检查失败，请安装 Codex 官方 bubblewrap/AppArmor 前置条件，不要全局关闭主机安全限制。然后运行 `scripts/tablex up`。使用 `scripts/tablex status` 查看状态，使用 `scripts/tablex logs` 查看日志。默认 Codex 路径不需要 `OPENAI_API_KEY`。
+
 ## 数据上传看起来卡住了
 
 大型关系数据集可能需要较长时间创建 profile。请在 Home 和 Data 查看导入进度。如果下游输出已经存在但活动仍长时间停留，请刷新项目并检查 Jobs。

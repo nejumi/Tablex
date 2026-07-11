@@ -9,7 +9,7 @@ description: 了解 Tablex 在智能体式表格预测、评估、Notebook、资
 
 Tablex 是面向表格预测项目的智能体式工作台。它让数据科学智能体处理数据，同时由产品侧保持项目状态清晰：数据、目标、评估契约、Notebook、模型结果、预测流水线、资产和运营反馈都会相互链接。
 
-![Tablex Home workspace](/img/screenshots/home-workspace-placeholder.svg)
+![显示 Full Auto、Research Plan 和证据的 Tablex Home](/img/screenshots/home-workspace.png)
 
 ## Tablex 适合什么场景
 
@@ -34,6 +34,10 @@ Tablex 有几个主要界面：
 - Evaluation：候选指标和数据切分设计。
 - Leaderboard：模型运行、证据、诊断、预测和试运行操作。
 - Assets：文件、Notebook、报告、流水线和证据的统一资产清单。
+
+Agent workspace 将面向人的进展和上下文操作放在一起，同时保留 Codex Console 以便检查底层执行记录。
+
+![显示观察状态、上下文操作和已装备 Skills 的 Agent Chat](/img/screenshots/agent-chat-workspace.png)
 
 ## 英文是正本文档
 

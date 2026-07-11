@@ -8,6 +8,17 @@ description: 创建 Tablex 项目、上传数据、运行 Full Auto，并查看�
 
 本指南带你完成第一个可用的 Tablex 项目。目标不是过早强迫建模流程，而是把数据、目标、评估和人类可读输出放进同一个项目。
 
+## 0. 启动完整运行环境
+
+请在主机安装并认证最新 Codex CLI，然后运行 Tablex launcher。
+
+```bash
+codex login --device-auth  # 仅在尚未认证时
+scripts/tablex up
+```
+
+Launcher 会复用主机 Codex 认证，并在首次运行时创建 companion runtime。无需主机安装 `pip` 或 `python3-venv`；launcher 会从 digest 固定的官方 uv image 准备 runtime。它会在 Docker 启动前检查认证和 local sandbox，失败时停止启动。打开 `http://localhost:8080`。以后仍使用 `scripts/tablex up`，停止使用 `scripts/tablex down`。
+
 ## 1. 创建项目
 
 打开 Tablex，在门户中创建项目。项目名建议简短，并能说明数据集或业务问题。

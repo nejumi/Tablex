@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from tabular_harness.core.config import get_settings
 from tabular_harness.core.json import loads_json
+from tabular_harness.core.runtime_paths import resolve_runtime_data_path
 from tabular_harness.models.entities import (
     AgentSession,
     Artifact,
@@ -35,15 +36,15 @@ from tabular_harness.services.agent_requests.data import (
     data_acks_dir,
     data_requests_dir,
 )
-from tabular_harness.services.agent_requests.evaluation import (
-    EVALUATION_REQUEST_SCHEMA_VERSION,
-    evaluation_acks_dir,
-    evaluation_requests_dir,
-)
 from tabular_harness.services.agent_requests.deliverables import (
     DELIVERABLE_REQUEST_SCHEMA_VERSION,
     deliverable_acks_dir,
     deliverable_requests_dir,
+)
+from tabular_harness.services.agent_requests.evaluation import (
+    EVALUATION_REQUEST_SCHEMA_VERSION,
+    evaluation_acks_dir,
+    evaluation_requests_dir,
 )
 from tabular_harness.services.agent_requests.model_diagnostics import (
     MODEL_DIAGNOSTIC_CHECK_NAMES,
@@ -126,8 +127,10 @@ def prepare_session_workspace(
     project: Project,
     session: AgentSession,
 ) -> Path:
-    workspace = Path(session.workspace_path or session_workspace_path(store, project.id, session.id))
-    session.workspace_path = str(workspace)
+    stored_workspace = Path(session.workspace_path or session_workspace_path(store, project.id, session.id))
+    workspace = resolve_runtime_data_path(stored_workspace)
+    if not session.workspace_path:
+        session.workspace_path = str(stored_workspace)
     (workspace / ".tablex").mkdir(parents=True, exist_ok=True)
     (workspace / "outputs").mkdir(parents=True, exist_ok=True)
     (workspace / "reports").mkdir(parents=True, exist_ok=True)
@@ -435,16 +438,19 @@ def write_session_context_file(
     response_locale: str | None = None,
 ) -> None:
     if not session.workspace_path:
-        return
-    workspace = Path(session.workspace_path)
+        raise RuntimeError("AgentSession workspace path is not configured")
+    workspace = resolve_runtime_data_path(session.workspace_path)
     path = workspace / ".tablex" / "context.json"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         ensure_session_dataset_links(db, workspace=workspace, project_id=project.id)
+        manifest_path = workspace / SESSION_INTERNAL_DIR / SESSION_DATA_MANIFEST_FILENAME
+        if not manifest_path.is_file():
+            raise RuntimeError(f"AgentSession data manifest was not created: {manifest_path}")
         context = build_session_context(db, project=project, session=session, response_locale=response_locale)
         path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
-    except OSError:
-        return
+    except OSError as exc:
+        raise RuntimeError(f"AgentSession context could not be written: {path}") from exc
 
 
 def session_data_manifest(workspace: Path) -> dict[str, Any]:
@@ -533,6 +539,7 @@ def build_session_context(
     session: AgentSession,
     response_locale: str | None = None,
 ) -> dict[str, Any]:
+    workspace = resolve_runtime_data_path(session.workspace_path or "")
     datasets = list(
         db.scalars(
             select(DatasetSnapshot).where(DatasetSnapshot.project_id == project.id).order_by(DatasetSnapshot.created_at.desc()).limit(12)
@@ -554,7 +561,7 @@ def build_session_context(
     response_locale = response_locale.strip() if isinstance(response_locale, str) and response_locale.strip() else latest_project_response_locale(db, project)
     equipped_skills = equipped_skill_context(db, skill_references)
     latest_research_plan_artifact = next((item for item in artifacts if item.asset_type == "research_plan"), None)
-    data_manifest = session_data_manifest(Path(session.workspace_path or ""))
+    data_manifest = session_data_manifest(workspace)
     data_links_by_dataset_id = {
         str(item.get("dataset_snapshot_id")): item
         for item in data_manifest.get("datasets", [])
@@ -609,9 +616,9 @@ def build_session_context(
         "dataset_access": {
             "root": f"{SESSION_INTERNAL_DIR}/{SESSION_DATA_DIR}",
             "cache_root": f"{SESSION_INTERNAL_DIR}/{SESSION_CACHE_DIR}",
-            "manifest_path": str(Path(session.workspace_path or "") / SESSION_INTERNAL_DIR / SESSION_DATA_MANIFEST_FILENAME),
+            "manifest_path": str(workspace / SESSION_INTERNAL_DIR / SESSION_DATA_MANIFEST_FILENAME),
             "manifest_relative_path": f"{SESSION_INTERNAL_DIR}/{SESSION_DATA_MANIFEST_FILENAME}",
-            "data_dir": str(Path(session.workspace_path or "") / SESSION_INTERNAL_DIR / SESSION_DATA_DIR),
+            "data_dir": str(workspace / SESSION_INTERNAL_DIR / SESSION_DATA_DIR),
             "data_dir_relative_path": f"{SESSION_INTERNAL_DIR}/{SESSION_DATA_DIR}",
             "files": data_manifest.get("datasets", []),
             "datasets": data_manifest.get("datasets", []),
@@ -645,7 +652,7 @@ def build_session_context(
             project_id=project.id,
             response_locale=response_locale,
         ),
-        "python_runtimes": python_runtime_context(Path(session.workspace_path or "")),
+        "python_runtimes": python_runtime_context(workspace),
         "output_contract": {
             "registerable_dirs": ["outputs", "reports", "notebooks", "artifacts"],
             "marimo_notebooks": "Place .py marimo notebooks under notebooks/ or outputs/notebooks/.",

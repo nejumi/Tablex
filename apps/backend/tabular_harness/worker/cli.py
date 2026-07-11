@@ -21,6 +21,18 @@ def main() -> None:
         action="store_true",
         help="Disable worker-side recovery for active Full Auto Codex sessions.",
     )
+    parser.add_argument(
+        "--job-type",
+        action="append",
+        default=[],
+        help="Only acquire this job type. Repeat to allow multiple types.",
+    )
+    parser.add_argument(
+        "--exclude-job-type",
+        action="append",
+        default=[],
+        help="Do not acquire this job type. Repeat to exclude multiple types.",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -28,6 +40,8 @@ def main() -> None:
     init_db(engine)
     session_factory = create_session_factory(engine)
     worker = create_default_worker(worker_id=args.worker_id, include_stub_handlers=False)
+    selected_job_types = set(args.job_type) if args.job_type else set(worker.handlers)
+    selected_job_types.difference_update(args.exclude_job_type)
     artifact_store = LocalArtifactStore(settings.artifact_root)
     supervisor_recovery_interval_seconds = 15.0
     next_supervisor_recovery_at = 0.0
@@ -56,7 +70,7 @@ def main() -> None:
             )
             next_supervisor_recovery_at = time.monotonic() + supervisor_recovery_interval_seconds
         with session_factory() as session:
-            job = worker.run_next_job(session)
+            job = worker.run_next_job(session, job_types=selected_job_types)
             session.commit()
             if args.once:
                 return

@@ -4,6 +4,31 @@ Tablex is the current working name for a tabular-first agentic data science work
 
 The product name may still change. Keep code, package names, API paths, and database tables neutral where practical.
 
+## Product Tour
+
+<table>
+  <tr>
+    <td width="50%">
+      <a href="apps/docs/static/img/screenshots/home-workspace.png"><img src="apps/docs/static/img/screenshots/home-workspace.png" alt="Tablex Home workspace with Full Auto activity and Research Plan" /></a>
+      <br /><strong>Mission control</strong><br />Follow Full Auto, the live Research Plan, evidence, and the next decision from one workspace.
+    </td>
+    <td width="50%">
+      <a href="apps/docs/static/img/screenshots/agent-chat-workspace.png"><img src="apps/docs/static/img/screenshots/agent-chat-workspace.png" alt="Tablex Agent Chat with contextual actions and equipped Skills" /></a>
+      <br /><strong>Agent workspace</strong><br />Read human-facing progress, inspect live state, and move directly to the relevant data, asset, or notebook.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <a href="apps/docs/static/img/screenshots/leaderboard-model-evidence.png"><img src="apps/docs/static/img/screenshots/leaderboard-model-evidence.png" alt="Tablex Leaderboard with evaluation and model evidence" /></a>
+      <br /><strong>Evidence-aware leaderboard</strong><br />Compare scores together with evaluation quality, diagnostics, reproducibility, notebooks, and prediction readiness.
+    </td>
+    <td width="50%">
+      <a href="apps/docs/static/img/screenshots/native-marimo-report.png"><img src="apps/docs/static/img/screenshots/native-marimo-report.png" alt="Native marimo analysis notebook running inside Tablex" /></a>
+      <br /><strong>Executable analysis</strong><br />Open agent-authored native marimo notebooks in place, with readable narrative, tables, and visual diagnostics.
+    </td>
+  </tr>
+</table>
+
 ## Product Contract
 
 Read [docs/agent_interface_spec.md](docs/agent_interface_spec.md) before changing Full Auto, Raw, Chat, Research Plan, or notebook behavior.
@@ -122,19 +147,48 @@ tablex-worker --once
 tablex-worker --interval 2 --worker-id local-worker
 ```
 
-Run a dedicated Full Auto supervisor:
+For manual host-side debugging, run a dedicated Full Auto supervisor from the
+managed runtime created by `scripts/tablex setup`:
 
 ```bash
-tablex-agent-supervisor --interval 15 --owner-id local-agent-supervisor
+.tablex-runtime/venv/bin/tablex-agent-supervisor --interval 15 --owner-id local-agent-supervisor
 ```
 
 If the supervisor is split out, start the API with `TABLEX_API_AGENT_SESSION_SUPERVISOR_ENABLED=false` and run worker processes with `--no-agent-session-supervisor` where appropriate.
 
-Docker Compose starts API, worker, and agent supervisor from the same image:
+`scripts/tablex` is the supported complete local launcher. It keeps the API, UI, and non-Codex jobs in ordinary Docker containers, while the Full Auto supervisor and Codex-required jobs run as host companions using the user's installed and authenticated latest Codex CLI. This avoids privileged containers and nested-sandbox failures. Project data is shared through the ignored `data/` directory; credentials are never copied into project data or runner workspaces.
+
+### First start
+
+From the repository root:
 
 ```bash
-docker compose up --build
+codex login --device-auth  # only when Codex is not already authenticated
+scripts/tablex up
 ```
+
+The device-auth command prints a URL and one-time code. `scripts/tablex up` reuses that host authentication, creates its managed Python runtime on first use, checks Codex authentication and local sandboxing without a model call, then starts Tablex. If the runtime check fails, Tablex stops before starting a misleading UI-only deployment. On Linux, install the official Codex bubblewrap/AppArmor prerequisites; do not disable the host security restriction globally.
+
+Tablex does not pin Full Auto to an older fallback model. The agent model remains the authenticated Codex default unless the user explicitly selects another model.
+
+The launcher requires Docker and the Codex CLI, but its runtime bootstrap does not require host `pip`, `python3-venv`, or sudo. It bootstraps a pinned, official uv binary from its digest-locked container image and creates the companion runtime under `.tablex-runtime/`. Ubuntu may require a one-time administrator installation of its distribution-provided bubblewrap AppArmor profile; use the exact commands in the [troubleshooting guide](apps/docs/docs/troubleshooting/common-issues.md).
+
+Open `http://localhost:8080` and verify the API:
+
+```bash
+curl http://localhost:8080/health
+scripts/tablex status
+```
+
+### Later starts
+
+Authentication survives normal restarts:
+
+```bash
+scripts/tablex up
+```
+
+Use `scripts/tablex down` to stop Tablex. `scripts/tablex status` shows Docker and companion state, and `scripts/tablex logs` follows the companion log. Project data remains under `data/`; host Codex authentication remains in the user's normal `CODEX_HOME`. Never put Codex tokens, API keys, or authentication contents in Compose environment variables, images, logs, or repository files.
 
 ## Auth And Settings
 

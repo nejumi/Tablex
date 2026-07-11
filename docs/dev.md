@@ -184,21 +184,33 @@ tablex-worker --interval 2 --worker-id local-worker
 
 In continuous mode, `tablex-worker` also starts recovery for active Full Auto Codex sessions. Backend and worker processes coordinate through a database-backed supervisor lease, so only one process should own a given main session at a time. Use `--no-agent-session-supervisor` only when another process is intentionally responsible for Full Auto session recovery. `--once` remains a single queued-job runner and does not start a long-running session supervisor.
 
-For a dedicated Full Auto supervisor process, run:
+For manual debugging, create/check the supported host runtime and then run a
+dedicated Full Auto supervisor process:
 
 ```bash
-tablex-agent-supervisor --interval 15 --owner-id local-agent-supervisor
+scripts/tablex setup
+.tablex-runtime/venv/bin/tablex-agent-supervisor --interval 15 --owner-id local-agent-supervisor
 ```
 
 This process only recovers and drives active main `AgentSession` records; it does not process ordinary queued jobs. If this process should be the only supervisor owner, start the API with `TABLEX_API_AGENT_SESSION_SUPERVISOR_ENABLED=false` and run `tablex-worker --no-agent-session-supervisor` for sidecar jobs. Database supervisor leases still prevent duplicate ownership if more than one process is present.
 
-The optional Compose stack uses that split by default:
+The supported complete local launcher uses that split by default:
 
 ```bash
-docker compose up --build
+scripts/tablex up
 ```
 
-It starts three processes from the same local image: `tablex-api` for the product UI/API, `tablex-worker` for concrete sidecar jobs, and `tablex-agent-supervisor` for the continuing Full Auto main `AgentSession`. They share the `tablex-data` volume for SQLite metadata and local artifacts. Use the plain `docker run`/Dockerfile path when you want the simplest single-process container; use Compose when you want supervisor behavior isolated from API reloads or worker restarts.
+It starts `tablex-api` and the non-Codex worker as ordinary containers. The
+Codex-required worker and `tablex-agent-supervisor` run as unprivileged host
+companions using the user's installed, authenticated Codex CLI. They share the ignored host `data/`
+directory for SQLite metadata and local artifacts. This avoids granting a
+container broad host capabilities merely to support Codex's nested sandbox.
+Direct `docker compose up` is an infrastructure/debugging path and does not
+start the required host companion.
+
+The agent model remains the authenticated Codex default unless the user
+explicitly selects a model. Do not pin an older model to work around runtime or
+sandbox compatibility; those failures must be fixed in the execution layer.
 
 The local worker daemon, `/api/worker/run-once`, `/api/jobs/{job_id}/run`, and the manual `tablex-worker` entrypoint all use concrete handlers only: `agent_chat_turn`, `build_split_manifest`, `run_baseline`, `train_model_candidates`, `run_planned_agent_task_codex`, and `continue_autonomous_session`. Generic MVP stub handlers are not used by product worker paths; a queued job without a concrete handler stays queued instead of receiving fake success. When split/model/Codex child workers finish, they schedule the autonomous-session heartbeat so Full Auto can resume from current state instead of stopping after one turn. Agent Activity should show Training Worker, Codex Runner, and Autonomous Session cards with project names, human descriptions, and estimated telemetry. Queued child jobs are waiting, not live; stale queued jobs should fall out of the right-edge activity overlay while remaining visible in Jobs/history.
 
@@ -590,19 +602,38 @@ Use `HARNESS_DATABASE_URL` to point Alembic at a non-default SQLite database.
 
 ## Docker
 
-Build:
+`scripts/tablex` is the supported complete local launcher. The API and non-Codex worker run in ordinary Docker containers; the Codex-required worker and Full Auto supervisor run as host companions with the user's installed latest Codex CLI. The split avoids privileged containers and nested Docker bubblewrap failures. SQLite and artifacts are shared through the ignored `data/` directory.
+
+The host companion is a local deployment of the existing `AgentRunner` boundary, not a permanent host-only architecture. A hosted Tablex can replace it with leased, short-lived remote runners backed by object artifact storage and a queue while preserving AgentSession, transcript, artifact, and lineage contracts. Keep runner authentication and execution credentials outside project workspaces in both modes.
+
+### First start
+
+From the repository root:
 
 ```bash
-docker build -t tablex:dev .
+codex login --device-auth  # only when needed
+scripts/tablex up
 ```
 
-Run:
+The launcher reuses host Codex authentication, builds a managed Python companion runtime on first use, and runs a model-free auth/sandbox check before starting Docker. A failed check aborts startup. Linux users should install the official Codex bubblewrap and AppArmor prerequisites rather than disabling AppArmor globally.
+
+Verify the complete runtime:
 
 ```bash
-docker run --rm -p 8080:8080 -v "$PWD/data:/data" tablex:dev
+curl http://localhost:8080/health
+scripts/tablex status
 ```
 
-Open `http://localhost:8080`.
+### Later starts and shutdown
+
+```bash
+scripts/tablex up
+scripts/tablex down
+```
+
+Project data is stored under the ignored `data/` directory and is not removed by `scripts/tablex down`. Host Codex credentials stay in the user's normal `CODEX_HOME` and are never copied into project data or workspaces.
+
+For an image-only build check, run `docker build -t tablex:dev .` and `docker run --rm tablex:dev codex --version`. This verifies the bundled CLI used by container-only helpers, not the host companion runtime.
 
 ## API Smoke Flow
 

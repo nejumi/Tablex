@@ -3,12 +3,66 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from tabular_harness.models.entities import Base
 from tabular_harness.services.artifacts import LocalArtifactStore
-from tabular_harness.worker.agent_supervisor_cli import run_agent_session_supervisor_loop
+from tabular_harness.worker.agent_supervisor_cli import (
+    check_codex_runtime,
+    run_agent_session_supervisor_loop,
+)
+
+
+def test_codex_runtime_check_probes_auth_and_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        "tabular_harness.worker.agent_supervisor_cli.shutil.which",
+        lambda name, path=None: "/usr/bin/codex",
+    )
+    monkeypatch.setattr(
+        "tabular_harness.worker.agent_supervisor_cli.safe_env",
+        lambda workspace: {"CODEX_HOME": str(tmp_path / "codex-home")},
+    )
+
+    def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("tabular_harness.worker.agent_supervisor_cli.subprocess.run", fake_run)
+
+    check_codex_runtime()
+
+    assert commands[0] == ["/usr/bin/codex", "login", "status"]
+    assert commands[1][0:4] == ["/usr/bin/codex", "sandbox", "-P", "workspace"]
+
+
+def test_codex_runtime_check_rejects_unavailable_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.worker.agent_supervisor_cli.shutil.which",
+        lambda name, path=None: "/usr/bin/codex",
+    )
+    monkeypatch.setattr(
+        "tabular_harness.worker.agent_supervisor_cli.safe_env",
+        lambda workspace: {"CODEX_HOME": str(tmp_path / "codex-home")},
+    )
+    results = iter(
+        [
+            SimpleNamespace(returncode=0, stdout="", stderr=""),
+            SimpleNamespace(returncode=1, stdout="", stderr="sandbox unavailable"),
+        ]
+    )
+    monkeypatch.setattr(
+        "tabular_harness.worker.agent_supervisor_cli.subprocess.run",
+        lambda *args, **kwargs: next(results),
+    )
+
+    with pytest.raises(RuntimeError, match="sandbox unavailable"):
+        check_codex_runtime()
 
 
 def test_agent_supervisor_loop_once_runs_recovery_with_stable_owner(tmp_path: Path) -> None:
