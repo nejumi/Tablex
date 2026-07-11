@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from tabular_harness.core.ids import new_id
@@ -64,16 +64,25 @@ def append_session_event(
 def reserve_transcript_event_indexes(db: Session, *, session_id: str, count: int) -> int:
     if count <= 0:
         raise ValueError("count must be positive")
-    cached_next = _TRANSCRIPT_EVENT_NEXT_INDEX.get(session_id)
-    if cached_next is None:
-        current_max = db.scalar(
-            select(func.max(AgentTranscriptEvent.event_index)).where(AgentTranscriptEvent.session_id == session_id)
-        )
-        next_index = int(current_max if current_max is not None else -1) + 1
-    else:
-        next_index = int(cached_next)
-    _TRANSCRIPT_EVENT_NEXT_INDEX[session_id] = next_index + count
-    return next_index
+    next_index = int(
+        db.execute(
+            text(
+                """
+                INSERT INTO agent_transcript_sequences (session_id, next_index)
+                SELECT :session_id, COALESCE(MAX(event_index), -1) + 1 + :count
+                FROM agent_transcript_events
+                WHERE session_id = :session_id
+                ON CONFLICT(session_id) DO UPDATE
+                SET next_index = agent_transcript_sequences.next_index + :count
+                RETURNING next_index
+                """
+            ),
+            {"session_id": session_id, "count": count},
+        ).scalar_one()
+    )
+    start_index = next_index - count
+    _TRANSCRIPT_EVENT_NEXT_INDEX[session_id] = next_index
+    return start_index
 
 
 def session_to_dict(session: AgentSession) -> dict[str, Any]:
@@ -309,4 +318,3 @@ def codex_event_content(event: dict[str, Any]) -> str | None:
             f"reasoning={usage.get('reasoning_output_tokens', '-')}"
         )
     return None
-

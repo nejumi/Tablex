@@ -6,6 +6,22 @@ description: upload, Full Auto, notebooks, prediction, documentation과 관련�
 
 # 흔한 문제
 
+## Tablex는 열리지만 Codex 기능이 작동하지 않음
+
+웹 화면만 열리는 것은 Full Auto 준비 완료를 의미하지 않습니다. `scripts/tablex setup`으로 host companion과 Codex runtime을 확인하세요. 인증에 실패하면 `codex login --device-auth`를 실행합니다. Linux sandbox 검사에 실패하면 공식 Codex bubblewrap/AppArmor prerequisites를 설치하고 호스트 보안 제한을 전역으로 끄지 마세요. 이후 `scripts/tablex up`을 실행합니다. 상태는 `scripts/tablex status`, 로그는 `scripts/tablex logs`로 확인합니다. 기본 Codex 경로에는 `OPENAI_API_KEY`가 필요하지 않습니다.
+
+Ubuntu 24.04에서는 배포판이 제공하는 bubblewrap profile을 설치하고 로드한 뒤 모델 호출 없는 검사를 다시 실행합니다.
+
+```bash
+sudo apt-get update
+sudo apt-get install -y apparmor-profiles apparmor-utils bubblewrap
+sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
+sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+scripts/tablex setup
+```
+
+다른 Linux 배포판은 [Codex 공식 sandbox prerequisites](https://learn.chatgpt.com/docs/sandboxing)를 따르세요.
+
 ## Data upload가 멈춘 것처럼 보임
 
 큰 relational dataset은 profile에 시간이 걸릴 수 있습니다. Home과 Data에서 import progress를 확인하세요. downstream outputs가 이미 있는데 activity가 오래 남아 있다면 project를 refresh하고 Jobs를 확인하세요.

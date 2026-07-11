@@ -7040,6 +7040,11 @@ td {
   animation: turn-dot-live 1.2s ease-in-out infinite;
 }
 
+.turn-state-bar.is-agent-scheduled .turn-state-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .turn-state-bar.is-waiting-for-user {
   border-color: color-mix(in srgb, var(--accent-2) 52%, var(--border));
   background: color-mix(in srgb, var(--success-bg) 58%, var(--surface));

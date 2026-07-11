@@ -22,8 +22,10 @@ Reports는 사람이 읽을 수 있어야 합니다. decisions, summaries, sourc
 
 Notebook source가 artifact of record입니다. Tablex는 product 안에서 native marimo notebooks를 열어 분석을 사람과 에이전트 모두가 실행하고 재사용할 수 있게 합니다.
 
+![Tablex notebook workspace에서 실행 중인 native marimo report](/img/screenshots/native-marimo-report.png)
+
 Notebook이 실패하면 Tablex는 실패를 보여주고 에이전트가 source를 고치게 해야 합니다. static HTML fallback으로 notebook error를 숨겨서는 안 됩니다.
 
 ## Screenshots and figures
 
-Notebook 안의 figure는 사람이 distributions, errors, feature behavior, model diagnostics를 이해하는 데 도움이 됩니다. 이 문서의 screenshot은 product UI를 설명합니다. UI가 안정되면 placeholder screenshot을 교체하세요.
+Notebook 안의 figure는 사람이 distributions, errors, feature behavior, model diagnostics를 이해하는 데 도움이 됩니다. 이 문서는 private project data를 노출하지 않고 product workflow를 보여주기 위해 public demo screenshot을 사용합니다.

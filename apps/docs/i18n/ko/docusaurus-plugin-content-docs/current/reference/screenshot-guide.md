@@ -6,7 +6,7 @@ description: Tablex 문서에서 screenshot을 사용하는 방식과 가장 유
 
 # Screenshot guide
 
-현재 문서에는 placeholder illustration이 포함되어 있습니다. UI가 안정되면 product screenshot으로 교체하세요.
+문서는 public 또는 synthetic demo project의 screenshot을 사용합니다. UI가 크게 바뀌면 link가 유지되도록 안정된 filename으로 이미지를 갱신하세요.
 
 ## 캡처하면 좋은 screenshot
 

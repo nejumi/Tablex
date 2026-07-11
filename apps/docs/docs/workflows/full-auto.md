@@ -8,6 +8,8 @@ description: How Full Auto runs, when it stops, and how to give instructions.
 
 Full Auto lets the agent continue a project from the current state. It is useful when you want Tablex to move from data understanding through evaluation, modeling, notebooks, and reports without prompting for every small step.
 
+![Full Auto mission control with live activity, Research Plan, and registered evidence](/img/screenshots/home-workspace.png)
+
 ## What happens when Full Auto starts
 
 The agent receives the project context, data manifest, equipped Skills, artifact references, evaluation state, and safety boundaries. It can inspect files, write notebooks and reports, submit structured requests, and react to validation errors.

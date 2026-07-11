@@ -46,10 +46,12 @@ from tabular_harness.api.deps import get_artifact_store, get_session
 from tabular_harness.core.config import get_settings
 from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
+from tabular_harness.core.runtime_paths import resolve_runtime_data_path
 from tabular_harness.models.entities import (
     AgentSession,
     AgentSupervisorLease,
     AgentTranscriptEvent,
+    AgentTranscriptSequence,
     Answer,
     Artifact,
     Asset,
@@ -195,6 +197,7 @@ from tabular_harness.services.agent_sessions import (
     start_main_agent_session_supervisor_thread,
     start_or_resume_main_session,
     stop_main_session,
+    supervisor_lease_active,
     supervisor_slot_active,
     transcript_event_to_dict,
     write_notebook_runtime_failure_to_workspace_inbox,
@@ -4778,7 +4781,7 @@ def latest_codex_message_observation_from_raw_transcript(
 ) -> dict[str, Any] | None:
     if not session.workspace_path:
         return None
-    stdout_path = raw_codex_transcript_path(Path(session.workspace_path))
+    stdout_path = raw_codex_transcript_path(resolve_runtime_data_path(session.workspace_path))
     _line_count, _tail, tail_lines, updated_at = tail_text_file(stdout_path, limit=80)
     for line in reversed(tail_lines):
         parsed = line.get("parsed")
@@ -6529,7 +6532,7 @@ def raw_transcript_observation_for_session(session: AgentSession | None) -> dict
             "stderr_line_count": 0,
             "updated_at": None,
         }
-    workspace = Path(session.workspace_path)
+    workspace = resolve_runtime_data_path(session.workspace_path)
     stdout_count, _stdout_tail, _stdout_tail_lines, stdout_updated_at = tail_text_file(
         raw_codex_transcript_path(workspace), limit=1
     )
@@ -6568,7 +6571,7 @@ def get_agent_session_raw_transcript(
             "updated_at": None,
         }
     bounded_limit = max(1, min(limit, 500))
-    workspace = Path(session.workspace_path)
+    workspace = resolve_runtime_data_path(session.workspace_path)
     stdout_path = raw_codex_transcript_path(workspace)
     stderr_path = raw_codex_stderr_path(workspace)
     stdout_count, stdout_tail, stdout_tail_lines, stdout_updated_at = tail_text_file(stdout_path, limit=bounded_limit)
@@ -6599,7 +6602,7 @@ def download_agent_session_raw_transcript(
     session = active_main_session(db, project_id) or latest_main_session(db, project_id)
     if session is None or not session.workspace_path:
         raise HTTPException(status_code=404, detail="AgentSession raw transcript is not available.")
-    workspace = Path(session.workspace_path)
+    workspace = resolve_runtime_data_path(session.workspace_path)
     if stream_name == "stdout":
         path = raw_codex_transcript_path(workspace)
         filename = "codex_raw_transcript.jsonl"
@@ -7331,7 +7334,7 @@ def record_native_marimo_runtime_failure_chat_turn(
     session = active_main_session(db, project.id) or latest_main_session(db, project.id)
     if session is not None and session.workspace_path:
         write_notebook_runtime_failure_to_workspace_inbox(
-            Path(session.workspace_path),
+            resolve_runtime_data_path(session.workspace_path),
             notebook_artifact=notebook_artifact,
             error_message=f"RuntimeError: {error_message}",
         )
@@ -7486,7 +7489,7 @@ def record_native_marimo_open_failure_chat_turn(
     session = active_main_session(db, project.id) or latest_main_session(db, project.id)
     if session is not None and session.workspace_path:
         write_notebook_runtime_failure_to_workspace_inbox(
-            Path(session.workspace_path),
+            resolve_runtime_data_path(session.workspace_path),
             notebook_artifact=notebook_artifact,
             error_message=f"{error_type}: {error_message}",
         )
@@ -9726,35 +9729,11 @@ def list_project_jobs(project_id: str, db: Annotated[Session, Depends(get_sessio
 @router.get("/api/projects/{project_id}/agent-activity", response_model=AgentActivityRead)
 def get_project_agent_activity(
     project_id: str,
-    request: Request,
     db: Annotated[Session, Depends(get_session)],
-    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
     if reap_stale_running_jobs(db):
         db.commit()
-    recovered_session = ensure_project_full_auto_agent_session(
-        db,
-        store=store,
-        project=project,
-        created_by=request_actor_id(request),
-    )
-    if recovered_session is not None:
-        db.flush()
-        db.commit()
-        if (
-            request.app.state.settings.api_agent_session_supervisor_enabled
-            and not supervisor_slot_active(recovered_session.id)
-        ):
-            start_main_agent_session_supervisor_thread(
-                request.app.state.session_factory,
-                store,
-                project_id=project_id,
-                session_id=recovered_session.id,
-                supervisor_runner=run_main_agent_session_supervisor,
-                turn_timeout_seconds=request.app.state.settings.agent_idle_timeout_seconds,
-                turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
-            )
     jobs = list(
         db.scalars(
             select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc()).limit(30)
@@ -9796,7 +9775,9 @@ def get_project_agent_activity(
     session_has_process = False
     if session is not None:
         session_processes = running_codex_processes_for_project(project_id)
-        session_has_process = bool(session_processes)
+        session_has_process = bool(session_processes) or (
+            session.status == "running" and supervisor_lease_active(db, session.id)
+        )
         last_codex_output_at = latest_codex_transcript_output_at(db, session_id=session.id)
         heartbeat_age_seconds = seconds_since_timestamp(last_codex_output_at, now=utc_now())
         response_locale = latest_project_response_locale(db, project)
@@ -9979,7 +9960,9 @@ def get_project_agent_activity(
         and session.status in {"starting", "running", "between_turns", "waiting_for_runner"}
     ):
         observed_processes = list(turn_state.get("codex_processes") or [])
-        session_has_process = bool(observed_processes)
+        session_has_process = bool(observed_processes) or (
+            session.status == "running" and supervisor_lease_active(db, session.id)
+        )
         last_codex_output_at = latest_codex_transcript_output_at(db, session_id=session.id)
         heartbeat_age_seconds = seconds_since_timestamp(last_codex_output_at, now=utc_now())
         heartbeat_phrase = heartbeat_phrase_for_locale(heartbeat_age_seconds, locale=response_locale)
@@ -9998,6 +9981,11 @@ def get_project_agent_activity(
             )
         turn_state = {
             **turn_state,
+            "sources": list(
+                dict.fromkeys(
+                    [*list(turn_state.get("sources") or []), "metadata_db.agent_supervisor_leases"]
+                )
+            ),
             "state": "agent_running" if session_has_process else "agent_scheduled",
             "owner": "agent",
             "label": headline,
@@ -11167,6 +11155,7 @@ def delete_project_rows(db: Session, project_id: str) -> None:
             if latest_version is None:
                 asset.status = "deleted"
     db.execute(delete(AgentSupervisorLease).where(AgentSupervisorLease.session_id.in_(agent_session_ids)))
+    db.execute(delete(AgentTranscriptSequence).where(AgentTranscriptSequence.session_id.in_(agent_session_ids)))
     db.execute(delete(AgentTranscriptEvent).where(AgentTranscriptEvent.project_id == project_id))
     db.execute(delete(AgentSession).where(AgentSession.project_id == project_id))
     db.execute(delete(Job).where(Job.project_id == project_id))

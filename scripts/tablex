@@ -1,0 +1,169 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+RUNTIME_DIR="$ROOT/.tablex-runtime"
+VENV_DIR="$RUNTIME_DIR/venv"
+UV_BIN="$RUNTIME_DIR/uv"
+UV_IMAGE="ghcr.io/astral-sh/uv@sha256:0f36cb9361a3346885ca3677e3767016687b5a170c1a6b88465ec14aefec90aa"
+PID_FILE="$RUNTIME_DIR/agent-supervisor.pid"
+LOG_FILE="$RUNTIME_DIR/agent-supervisor.log"
+WORKER_PID_FILE="$RUNTIME_DIR/codex-worker.pid"
+WORKER_LOG_FILE="$RUNTIME_DIR/codex-worker.log"
+DATA_DIR=${TABLEX_DATA_DIR:-"$ROOT/data"}
+CODEX_AUTH_DIR=${CODEX_HOME:-"$HOME/.codex"}
+HOST_UID=${TABLEX_UID:-$(id -u)}
+HOST_GID=${TABLEX_GID:-$(id -g)}
+
+die() {
+  printf '%s\n' "Tablex: $*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "$1 is required."
+}
+
+run_detached() {
+  trap '' HUP
+  if command -v setsid >/dev/null 2>&1; then
+    exec setsid "$@"
+  fi
+  exec "$@"
+}
+
+install_uv() {
+  [ -x "$UV_BIN" ] && return
+  cid=$(docker create "$UV_IMAGE") || die "Unable to create the pinned uv bootstrap container."
+  if ! docker cp "$cid:/uv" "$UV_BIN.tmp"; then
+    docker rm "$cid" >/dev/null 2>&1 || true
+    rm -f "$UV_BIN.tmp"
+    die "Unable to extract uv from its official bootstrap image."
+  fi
+  docker rm "$cid" >/dev/null
+  mv "$UV_BIN.tmp" "$UV_BIN"
+  chmod 0755 "$UV_BIN"
+}
+
+setup_runtime() {
+  require_command docker
+  mkdir -p "$RUNTIME_DIR" "$DATA_DIR"
+  install_uv
+  if [ ! -x "$VENV_DIR/bin/tablex-agent-supervisor" ]; then
+    "$UV_BIN" venv --clear --python 3.12 "$VENV_DIR"
+  fi
+  "$UV_BIN" pip install --python "$VENV_DIR/bin/python" --editable "$ROOT"
+}
+
+supervisor_running() {
+  [ -f "$PID_FILE" ] || return 1
+  pid=$(cat "$PID_FILE")
+  kill -0 "$pid" 2>/dev/null
+}
+
+worker_running() {
+  [ -f "$WORKER_PID_FILE" ] || return 1
+  worker_pid=$(cat "$WORKER_PID_FILE")
+  kill -0 "$worker_pid" 2>/dev/null
+}
+
+check_runtime() {
+  if ! TABLEX_CODEX_HOME="$RUNTIME_DIR/codex-home" \
+    "$VENV_DIR/bin/tablex-agent-supervisor" --check-runtime; then
+    die "Codex runtime check failed. On Linux, install the official bubblewrap/AppArmor prerequisites before starting Tablex."
+  fi
+}
+
+start_supervisor() {
+  if supervisor_running; then
+    return
+  fi
+  HARNESS_DATA_DIR="$DATA_DIR" \
+    TABLEX_CODEX_HOME="$RUNTIME_DIR/codex-home" \
+    run_detached "$VENV_DIR/bin/tablex-agent-supervisor" \
+      --interval 15 \
+      --owner-id host-agent-supervisor \
+      </dev/null >>"$LOG_FILE" 2>&1 &
+  printf '%s\n' "$!" >"$PID_FILE"
+}
+
+start_codex_worker() {
+  if worker_running; then
+    return
+  fi
+  HARNESS_DATA_DIR="$DATA_DIR" \
+    TABLEX_CODEX_HOME="$RUNTIME_DIR/codex-home" \
+    run_detached "$VENV_DIR/bin/tablex-worker" \
+      --interval 2 \
+      --worker-id host-codex-worker \
+      --no-agent-session-supervisor \
+      --job-type generate_user_avatar_candidates \
+      --job-type agent_chat_turn \
+      --job-type run_planned_agent_task_codex \
+      --job-type continue_autonomous_session \
+      </dev/null >>"$WORKER_LOG_FILE" 2>&1 &
+  printf "%s\n" "$!" >"$WORKER_PID_FILE"
+}
+
+stop_supervisor() {
+  if supervisor_running; then
+    pid=$(cat "$PID_FILE")
+    kill "$pid"
+    wait "$pid" 2>/dev/null || true
+  fi
+  rm -f "$PID_FILE"
+}
+
+stop_codex_worker() {
+  if worker_running; then
+    worker_pid=$(cat "$WORKER_PID_FILE")
+    kill "$worker_pid"
+    wait "$worker_pid" 2>/dev/null || true
+  fi
+  rm -f "$WORKER_PID_FILE"
+}
+
+case ${1:-up} in
+  setup)
+    setup_runtime
+    require_command codex
+    codex login status
+    check_runtime
+    ;;
+  up)
+    require_command docker
+    setup_runtime
+    require_command codex
+    codex login status >/dev/null 2>&1 || die "Codex is not authenticated. Run: codex login --device-auth"
+    check_runtime
+    TABLEX_DATA_DIR="$DATA_DIR" TABLEX_CODEX_AUTH_DIR="$CODEX_AUTH_DIR" TABLEX_UID="$HOST_UID" TABLEX_GID="$HOST_GID" docker compose -f "$ROOT/docker-compose.yml" up --build -d --remove-orphans tablex-api tablex-worker
+    start_codex_worker
+    start_supervisor
+    printf '%s\n' "Tablex: http://localhost:8080"
+    ;;
+  down)
+    stop_codex_worker
+    stop_supervisor
+    TABLEX_DATA_DIR="$DATA_DIR" TABLEX_CODEX_AUTH_DIR="$CODEX_AUTH_DIR" TABLEX_UID="$HOST_UID" TABLEX_GID="$HOST_GID" docker compose -f "$ROOT/docker-compose.yml" down
+    ;;
+  status)
+    TABLEX_DATA_DIR="$DATA_DIR" TABLEX_CODEX_AUTH_DIR="$CODEX_AUTH_DIR" TABLEX_UID="$HOST_UID" TABLEX_GID="$HOST_GID" docker compose -f "$ROOT/docker-compose.yml" ps
+    if supervisor_running; then
+      printf 'host agent supervisor: running (pid %s)\n' "$(cat "$PID_FILE")"
+    else
+      printf '%s\n' "host agent supervisor: stopped"
+    fi
+    if worker_running; then
+      printf 'host Codex worker: running (pid %s)\n' "$(cat "$WORKER_PID_FILE")"
+    else
+      printf '%s\n' "host Codex worker: stopped"
+    fi
+    ;;
+  logs)
+    touch "$LOG_FILE" "$WORKER_LOG_FILE"
+    tail -f "$LOG_FILE" "$WORKER_LOG_FILE"
+    ;;
+  *)
+    die "usage: scripts/tablex [setup|up|down|status|logs]"
+    ;;
+esac

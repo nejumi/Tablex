@@ -16,6 +16,7 @@ import tabular_harness.services.agent_requests.research_plan as research_plan_re
 import tabular_harness.services.agent_sessions as agent_sessions_module
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
+from tabular_harness.core.config import get_settings
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.db.session import ensure_sqlite_mvp_columns
 from tabular_harness.models.entities import (
@@ -49,6 +50,10 @@ from tabular_harness.services.agent_inbox import (
     mark_inbox_entry_processed,
     write_inbox_entry,
 )
+from tabular_harness.services.agent_session_chat import (
+    request_context_for_auto_registered_notebooks,
+    request_quality_repair_for_session_notebooks,
+)
 from tabular_harness.services.agent_session_results import (
     experiment_acks_dir,
     experiment_artifact_rejection_path,
@@ -62,10 +67,6 @@ from tabular_harness.services.agent_session_results import (
     register_experiment_registration_chat_turn,
     register_experiment_result_failure_chat_turn,
     restore_registered_session_experiment_visibility,
-)
-from tabular_harness.services.agent_session_chat import (
-    request_context_for_auto_registered_notebooks,
-    request_quality_repair_for_session_notebooks,
 )
 from tabular_harness.services.agent_sessions import (
     CODEX_RAW_TRANSCRIPT_FILENAME,
@@ -481,6 +482,135 @@ def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path
     assert context["dataset_access"]["datasets"][0]["workspace_relative_path"] == ".tablex/data/ds_runtime__train.csv"
     assert context["dataset_access"]["datasets"][0]["fast_paths"]["sample_rows_csv"] == ".tablex/cache/dataset_samples/ds_runtime__sample_rows.csv"
     assert context["dataset_access"]["files"][0]["workspace_relative_path"] == ".tablex/data/ds_runtime__train.csv"
+
+
+def test_prepare_session_workspace_maps_container_data_path_on_host(tmp_path: Path, monkeypatch: Any) -> None:
+    data_dir = tmp_path / "runtime-data"
+    monkeypatch.setenv("HARNESS_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("HARNESS_ARTIFACT_ROOT", str(data_dir / "artifacts"))
+    get_settings.cache_clear()
+    try:
+        engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+        Base.metadata.create_all(engine)
+        store = LocalArtifactStore(data_dir / "artifacts")
+        logical_workspace = Path("/data/artifacts/agent_sessions/p_logical/as_logical")
+        physical_workspace = data_dir / "artifacts/agent_sessions/p_logical/as_logical"
+        with sessionmaker(engine)() as db:
+            project = Project(id="p_logical", name="Logical Path Project")
+            session = AgentSession(
+                id="as_logical",
+                project_id=project.id,
+                goal_text="Use the host runtime path.",
+                workspace_path=str(logical_workspace),
+            )
+            db.add_all([project, session])
+            db.commit()
+
+            prepared_workspace = prepare_session_workspace(db, store=store, project=project, session=session)
+
+        assert prepared_workspace == physical_workspace
+        assert session.workspace_path == str(logical_workspace)
+        assert (physical_workspace / ".tablex/context.json").is_file()
+        assert (physical_workspace / ".tablex/data_manifest.json").is_file()
+        context = loads_json((physical_workspace / ".tablex/context.json").read_text(encoding="utf-8"), {})
+        assert context["dataset_access"]["manifest_path"] == str(
+            physical_workspace / ".tablex/data_manifest.json"
+        )
+        assert context["python_runtimes"]["tablex_backend"]["workspace_python"] == str(
+            physical_workspace / ".tablex/bin/python"
+        )
+    finally:
+        get_settings.cache_clear()
+
+
+def test_workspace_ingest_maps_container_path_and_processes_plan_request(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    data_dir = tmp_path / "runtime-data"
+    monkeypatch.setenv("HARNESS_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("HARNESS_ARTIFACT_ROOT", str(data_dir / "artifacts"))
+    get_settings.cache_clear()
+    try:
+        engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+        Base.metadata.create_all(engine)
+        store = LocalArtifactStore(data_dir / "artifacts")
+        logical_workspace = Path("/data/artifacts/agent_sessions/p_ingest/as_ingest")
+        physical_workspace = data_dir / "artifacts/agent_sessions/p_ingest/as_ingest"
+        with sessionmaker(engine)() as db:
+            project = Project(id="p_ingest", name="Mapped Ingest")
+            session = AgentSession(
+                id="as_ingest",
+                project_id=project.id,
+                goal_text="Keep the visible plan synchronized.",
+                workspace_path=str(logical_workspace),
+            )
+            db.add_all([project, session])
+            db.commit()
+            prepare_session_workspace(db, store=store, project=project, session=session)
+            initial_revision = db.scalar(
+                select(ResearchPlanRevision)
+                .where(ResearchPlanRevision.project_id == project.id)
+                .order_by(ResearchPlanRevision.revision_index.desc())
+            )
+            assert initial_revision is not None
+            next_document = loads_json(initial_revision.document_json, {})
+            next_document["timeline_blocks"][0].update(
+                {
+                    "status": "done",
+                    "no_output_required": True,
+                    "no_output_required_rationale": "The empty test workspace needs no upload artifact.",
+                }
+            )
+            next_document["timeline_blocks"][1]["status"] = "active"
+            (physical_workspace / "reports/chat_update.md").write_text(
+                "Objective framing is active.",
+                encoding="utf-8",
+            )
+            request_dir = research_plan_requests_dir(physical_workspace)
+            (request_dir / "advance_to_modeling.json").write_text(
+                dumps_json(
+                    {
+                        "schema_version": "tablex_research_plan_request.v1",
+                        "request_id": "advance_to_modeling",
+                        "operation": "commit_revision",
+                        "payload": {
+                            "reason": "Advance the visible plan after workspace preparation.",
+                            "document": next_document,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            ingest_session_workspace_outputs(
+                db,
+                store=store,
+                project=project,
+                session=session,
+                workspace=physical_workspace,
+            )
+            db.commit()
+
+            ack = loads_json(
+                (research_plan_acks_dir(physical_workspace) / "advance_to_modeling.ack.json").read_text(
+                    encoding="utf-8"
+                ),
+                {},
+            )
+            revision = db.scalar(
+                select(ResearchPlanRevision)
+                .where(ResearchPlanRevision.project_id == project.id)
+                .order_by(ResearchPlanRevision.revision_index.desc())
+            )
+
+        assert ack["status"] == "succeeded", ack
+        assert revision is not None
+        document = loads_json(revision.document_json, {})
+        active_nodes = [node["id"] for node in document["timeline_blocks"] if node["status"] == "active"]
+        assert active_nodes == ["objective_framing"]
+    finally:
+        get_settings.cache_clear()
 
 
 def test_agent_inbox_entries_are_enveloped_and_processed(tmp_path: Path) -> None:
@@ -1032,6 +1162,9 @@ def test_codex_cli_turn_streaming_uses_workspace_file_transcript(
     fake_codex = bin_dir / "codex"
     fake_codex.write_text(
         """#!/bin/sh
+if [ "$1" = "sandbox" ]; then
+  exit 0
+fi
 while IFS= read -r _line; do
   :
 done
@@ -1142,6 +1275,9 @@ def test_codex_cli_turn_failure_does_not_mark_user_instructions_delivered(
     fake_codex = bin_dir / "codex"
     fake_codex.write_text(
         """#!/bin/sh
+if [ "$1" = "sandbox" ]; then
+  exit 0
+fi
 while IFS= read -r _line; do
   :
 done
@@ -1233,6 +1369,9 @@ def test_codex_cli_turn_start_silence_recovers_with_chat_and_activity(
     fake_codex = bin_dir / "codex"
     fake_codex.write_text(
         """#!/bin/sh
+if [ "$1" = "sandbox" ]; then
+  exit 0
+fi
 while IFS= read -r _line; do
   :
 done
@@ -1367,6 +1506,9 @@ def test_codex_cli_turn_streaming_cancels_when_supervisor_lease_is_lost(
     fake_codex = bin_dir / "codex"
     fake_codex.write_text(
         """#!/bin/sh
+if [ "$1" = "sandbox" ]; then
+  exit 0
+fi
 while IFS= read -r _line; do
   :
 done
@@ -1882,7 +2024,7 @@ def test_main_supervisor_stops_before_runner_when_lease_is_lost(
         assert db.get(AgentSupervisorLease, "as_lease_lost_supervisor") is None
 
 
-def test_transcript_index_reservation_survives_uncommitted_sidecar_event(tmp_path: Path) -> None:
+def test_transcript_index_reservation_continues_after_sidecar_event(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(engine)
@@ -1906,17 +2048,17 @@ def test_transcript_index_reservation_survives_uncommitted_sidecar_event(tmp_pat
             content="Progress update requested.",
             payload={},
         )
-
-        append_codex_stream_lines(
-            session_factory,
-            project_id="p_index_reservation",
-            session_id="as_index_reservation",
-            lines=[
-                ("stdout", '{"type":"thread.started","thread_id":"thread_2"}\n'),
-                ("stdout", '{"type":"turn.started"}\n'),
-            ],
-        )
         db.commit()
+
+    append_codex_stream_lines(
+        session_factory,
+        project_id="p_index_reservation",
+        session_id="as_index_reservation",
+        lines=[
+            ("stdout", '{"type":"thread.started","thread_id":"thread_2"}\n'),
+            ("stdout", '{"type":"turn.started"}\n'),
+        ],
+    )
 
     with session_factory() as db:
         events = list(
@@ -1935,32 +2077,74 @@ def test_transcript_index_reservation_survives_uncommitted_sidecar_event(tmp_pat
     ]
 
 
-def test_transcript_index_reservation_uses_cached_next_index_without_db_max_query() -> None:
-    session_id = "as_cached_index"
-    agent_sessions_module._TRANSCRIPT_EVENT_NEXT_INDEX.pop(session_id, None)
+def test_transcript_index_reservation_is_shared_across_database_sessions(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_id = "as_database_index"
 
-    class CountingDB:
-        calls = 0
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_database_index", name="Database Index")
+        session = AgentSession(id=session_id, project_id=project.id, goal_text="Continue.")
+        db.add_all([project, session])
+        db.flush()
+        db.add(
+            AgentTranscriptEvent(
+                id="agte_existing_index",
+                project_id=project.id,
+                session_id=session.id,
+                event_index=41,
+                source="tablex_sidecar",
+                event_type="existing",
+            )
+        )
+        db.commit()
 
-        def scalar(self, statement: Any) -> int:
-            del statement
-            self.calls += 1
-            return 41
+    with sessionmaker(engine)() as first_db:
+        assert reserve_transcript_event_indexes(first_db, session_id=session_id, count=2) == 42
+        first_db.commit()
 
-    first_db = CountingDB()
-    assert reserve_transcript_event_indexes(first_db, session_id=session_id, count=2) == 42
-    assert first_db.calls == 1
+    with sessionmaker(engine)() as second_db:
+        assert reserve_transcript_event_indexes(second_db, session_id=session_id, count=3) == 44
+        second_db.commit()
 
-    class RaisingDB:
-        def scalar(self, statement: Any) -> int:
-            del statement
-            raise AssertionError("cached transcript index reservation should not query DB max")
+    assert agent_sessions_module._TRANSCRIPT_EVENT_NEXT_INDEX[session_id] == 47
 
-    try:
-        assert reserve_transcript_event_indexes(RaisingDB(), session_id=session_id, count=3) == 44
-        assert agent_sessions_module._TRANSCRIPT_EVENT_NEXT_INDEX[session_id] == 47
-    finally:
-        agent_sessions_module._TRANSCRIPT_EVENT_NEXT_INDEX.pop(session_id, None)
+
+def test_transcript_index_reservation_serializes_concurrent_database_writers(tmp_path: Path) -> None:
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'test.db'}",
+        connect_args={"timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    session_id = "as_concurrent_database_index"
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_concurrent_database_index", name="Concurrent Database Index")
+        session = AgentSession(id=session_id, project_id=project.id, goal_text="Continue.")
+        db.add_all([project, session])
+        db.commit()
+
+    barrier = threading.Barrier(2)
+    reservations: list[int] = []
+    errors: list[Exception] = []
+
+    def reserve() -> None:
+        try:
+            with sessionmaker(engine)() as db:
+                barrier.wait(timeout=5)
+                reservations.append(reserve_transcript_event_indexes(db, session_id=session_id, count=1))
+                time.sleep(0.05)
+                db.commit()
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=reserve), threading.Thread(target=reserve)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert sorted(reservations) == [0, 1]
 
 
 def test_sqlite_schema_sync_repairs_duplicate_transcript_indexes(tmp_path: Path) -> None:
@@ -5670,7 +5854,7 @@ def test_experiment_result_request_skips_duplicate_result_signature_with_ack(tmp
             "runs": [
                 {
                     "model_id": "lgbm_relational_aggregates",
-                    "model_description": "LightGBM using application features plus target-free relational aggregates.",
+                    "model_description": "The same fitted LightGBM, now described with fold-safe relational features.",
                     "features_used": ["application_train_raw", "bureau_aggregates"],
                     "feature_summary": "application fields plus relational SK_ID_CURR aggregates",
                     "primary_metric_name": "roc_auc",

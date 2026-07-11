@@ -8,6 +8,8 @@ description: Full Auto가 어떻게 실행되고 언제 멈추며 어떻게 지�
 
 Full Auto는 에이전트가 현재 프로젝트 상태에서 계속 작업하게 합니다. 매 작은 단계마다 묻지 않고 데이터 이해에서 evaluation, modeling, notebooks, reports까지 진행하고 싶을 때 유용합니다.
 
+![Live activity, Research Plan, registered evidence를 보여주는 Full Auto mission control](/img/screenshots/home-workspace.png)
+
 ## Full Auto가 시작되면
 
 에이전트는 project context, data manifest, equipped Skills, artifact references, evaluation state, safety boundaries를 받습니다. 파일을 검사하고, Notebook과 report를 쓰고, structured request를 제출하고, validation error에 반응할 수 있습니다.

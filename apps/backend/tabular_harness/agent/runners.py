@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -15,7 +16,7 @@ from pydantic import BaseModel
 from tabular_harness.schemas import AgentResult, AgentTaskContract
 from tabular_harness.services.codex_transcript import build_codex_cli_transcript
 
-CODEX_HARNESS_CONFIG_ARGS = ("--ignore-user-config", "--ignore-rules", "-c", "mcp_servers={}")
+CODEX_HARNESS_CONFIG_ARGS = ("-c", "mcp_servers={}")
 
 
 def codex_harness_config_args(
@@ -24,14 +25,12 @@ def codex_harness_config_args(
     web_search_enabled: bool = False,
 ) -> tuple[str, ...]:
     args = list(CODEX_HARNESS_CONFIG_ARGS)
-    if network_enabled:
-        args.extend(["-c", "sandbox_workspace_write.network_access=true"])
     if web_search_enabled:
         args.extend(["-c", 'web_search="live"'])
     return tuple(args)
 
 
-def codex_harness_config_args_for_policy(execution_policy: "ExecutionPolicy") -> tuple[str, ...]:
+def codex_harness_config_args_for_policy(execution_policy: ExecutionPolicy) -> tuple[str, ...]:
     network_enabled = execution_policy.network in {"restricted", "full"}
     web_search_enabled = execution_policy.network == "full"
     return codex_harness_config_args(
@@ -308,8 +307,6 @@ class CodexCliRunner(AgentRunner):
                 *config_args,
                 "--cd",
                 str(workspace),
-                "--sandbox",
-                codex_sandbox(execution_policy.sandbox),
                 "--json",
             ]
             if include_output_schema:
@@ -334,7 +331,11 @@ class CodexCliRunner(AgentRunner):
                 text=True,
                 capture_output=True,
                 timeout=execution_policy.timeout_seconds,
-                env=safe_env(workspace),
+                env=safe_env(
+                    workspace,
+                    sandbox=execution_policy.sandbox,
+                    network_enabled=execution_policy.network in {"restricted", "full"},
+                ),
                 check=False,
             )
         except FileNotFoundError:
@@ -403,7 +404,11 @@ class CodexCliRunner(AgentRunner):
                     text=True,
                     capture_output=True,
                     timeout=execution_policy.timeout_seconds,
-                    env=safe_env(workspace),
+                    env=safe_env(
+                    workspace,
+                    sandbox=execution_policy.sandbox,
+                    network_enabled=execution_policy.network in {"restricted", "full"},
+                ),
                     check=False,
                 )
             except subprocess.TimeoutExpired as exc:
@@ -1240,7 +1245,12 @@ def render_stub_report(
     return "\n".join(lines).strip() + "\n"
 
 
-def safe_env(workspace: Path) -> dict[str, str]:
+def safe_env(
+    workspace: Path,
+    *,
+    sandbox: str = "workspace_write",
+    network_enabled: bool = False,
+) -> dict[str, str]:
     allowed = {
         "PATH",
         "LANG",
@@ -1251,14 +1261,34 @@ def safe_env(workspace: Path) -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if key in allowed}
     workspace_bin = workspace / ".tablex" / "bin"
     existing_path = env.get("PATH") or os.defpath
-    env["PATH"] = f"{workspace_bin}{os.pathsep}{existing_path}"
     isolated_home = workspace / ".harness" / "home"
     isolated_home.mkdir(parents=True, exist_ok=True)
     env["HOME"] = str(isolated_home)
-    codex_home = tablex_codex_home()
-    prepare_tablex_codex_home(codex_home)
+    codex_home = tablex_codex_home_for_workspace(workspace)
+    try:
+        prepare_tablex_codex_home(
+            codex_home,
+            workspace=workspace,
+            sandbox=sandbox,
+            network_enabled=network_enabled,
+        )
+    except OSError:
+        codex_home = (workspace / ".tablex" / "codex_home").resolve()
+        prepare_tablex_codex_home(
+            codex_home,
+            workspace=workspace,
+            sandbox=sandbox,
+            network_enabled=network_enabled,
+        )
+    runtime_codex_bin = codex_home / "bin"
+    env["PATH"] = os.pathsep.join((str(workspace_bin), str(runtime_codex_bin), existing_path))
     env["CODEX_HOME"] = str(codex_home)
     return env
+
+
+def tablex_codex_home_for_workspace(workspace: Path) -> Path:
+    digest = hashlib.sha256(str(workspace.resolve()).encode("utf-8")).hexdigest()[:16]
+    return tablex_codex_home() / digest
 
 
 def tablex_codex_home() -> Path:
@@ -1274,7 +1304,13 @@ def tablex_codex_home() -> Path:
     return (base / "tablex" / "codex_home").resolve()
 
 
-def prepare_tablex_codex_home(codex_home: Path) -> None:
+def prepare_tablex_codex_home(
+    codex_home: Path,
+    *,
+    workspace: Path,
+    sandbox: str,
+    network_enabled: bool,
+) -> None:
     codex_home.mkdir(parents=True, exist_ok=True)
     try:
         codex_home.chmod(0o700)
@@ -1282,6 +1318,14 @@ def prepare_tablex_codex_home(codex_home: Path) -> None:
         pass
     remove_tablex_codex_runtime_state(codex_home)
     host_codex_home = host_codex_home_for_auth()
+    prepare_codex_runtime_binary(codex_home, host_codex_home=host_codex_home)
+    write_tablex_codex_config(
+        codex_home,
+        workspace=workspace,
+        sandbox=sandbox,
+        network_enabled=network_enabled,
+        host_codex_home=host_codex_home,
+    )
     if host_codex_home is None:
         return
     for filename in ("auth.json", "installation_id"):
@@ -1299,6 +1343,46 @@ def prepare_tablex_codex_home(codex_home: Path) -> None:
             # Keep the runtime isolated even if the platform disallows symlinks.
             # API-key auth can still work through OPENAI_API_KEY.
             pass
+
+
+def write_tablex_codex_config(
+    codex_home: Path,
+    *,
+    workspace: Path,
+    sandbox: str,
+    network_enabled: bool,
+    host_codex_home: Path | None,
+) -> None:
+    root_permission = "write" if sandbox == "full_access" else "read"
+    workspace_permission = "read" if sandbox == "read_only" else "write"
+    filesystem_permissions: list[tuple[Path | str, str]] = [
+        (":root", root_permission),
+        (":tmpdir", "write"),
+        (workspace.resolve(), workspace_permission),
+    ]
+    if host_codex_home is not None:
+        filesystem_permissions.append((host_codex_home.resolve(), "none"))
+    lines = [
+        "default_permissions = \"workspace\"",
+        "approval_policy = \"never\"",
+        "",
+        "[permissions.workspace.filesystem]",
+    ]
+    lines.extend(
+        f"{json.dumps(str(path))} = {json.dumps(permission)}"
+        for path, permission in filesystem_permissions
+    )
+    if network_enabled:
+        lines.extend(
+            [
+                "",
+                "[permissions.workspace.network]",
+                "enabled = true",
+                "mode = \"full\"",
+                "allow_local_binding = false",
+            ]
+        )
+    (codex_home / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def remove_tablex_codex_runtime_state(codex_home: Path) -> None:
@@ -1352,3 +1436,37 @@ def host_codex_home_for_auth() -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def prepare_codex_runtime_binary(codex_home: Path, *, host_codex_home: Path | None) -> None:
+    if host_codex_home is None:
+        return
+    for command in ("codex", "rg"):
+        prepare_codex_runtime_tool(codex_home, host_codex_home=host_codex_home, command=command)
+
+
+def prepare_codex_runtime_tool(codex_home: Path, *, host_codex_home: Path, command: str) -> None:
+    tool_binary = shutil.which(command)
+    if tool_binary is None:
+        return
+    try:
+        resolved_binary = Path(tool_binary).resolve(strict=True)
+        resolved_binary.relative_to(host_codex_home.resolve())
+    except (OSError, ValueError):
+        return
+    try:
+        with resolved_binary.open("rb") as source:
+            if source.read(4) != b"\x7fELF":
+                return
+        runtime_bin = codex_home / "bin"
+        runtime_bin.mkdir(parents=True, exist_ok=True)
+        target = runtime_bin / command
+        source_stat = resolved_binary.stat()
+        if target.exists():
+            target_stat = target.stat()
+            if target_stat.st_size == source_stat.st_size and target_stat.st_mtime_ns == source_stat.st_mtime_ns:
+                return
+        shutil.copy2(resolved_binary, target)
+        target.chmod(0o755)
+    except OSError:
+        return

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
+from tabular_harness.core.runtime_paths import resolve_runtime_data_path
 from tabular_harness.models.entities import Artifact, LineageEdge, Project
 
 
@@ -258,11 +259,12 @@ def artifact_primary_path(artifact: Artifact) -> Path:
     metadata = loads_json(artifact.metadata_json, {})
     primary_path = metadata.get("primary_path")
     if primary_path:
-        return Path(primary_path)
-    manifest_path = Path(artifact.uri) / "artifact_manifest.json"
+        return resolve_runtime_data_path(primary_path)
+    artifact_dir = resolve_runtime_data_path(artifact.uri)
+    manifest_path = artifact_dir / "artifact_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     first_file = cast(str, manifest["files"][0]["path"])
-    return Path(artifact.uri) / first_file
+    return artifact_dir / first_file
 
 
 def artifact_to_dict(artifact: Artifact) -> dict[str, Any]:

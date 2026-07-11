@@ -8,6 +8,17 @@ description: Project作成、データアップロード、Full Auto、最初の
 
 このページでは、Tablexで最初のProjectを成功させる流れを説明します。目的は早すぎるモデリングではなく、データ、目的、評価、人間が読める成果物を1つのProjectに集めることです。
 
+## 0. 完全なランタイムを起動する
+
+ホストに最新のCodex CLIをインストールして認証し、Tablex launcherを実行します。
+
+```bash
+codex login --device-auth  # 未認証の場合のみ
+scripts/tablex up
+```
+
+launcherはホストのCodex認証を再利用し、初回にcompanion runtimeを作成します。ホストの`pip`と`python3-venv`は不要で、digest固定した公式uv imageからruntimeを準備します。Docker起動前に認証とlocal sandboxを検査し、失敗時は起動を中止します。`http://localhost:8080`を開きます。2回目以降も`scripts/tablex up`、停止は`scripts/tablex down`です。
+
 ## 1. Projectを作る
 
 PortalからProjectを作成します。データセットやビジネス課題が分かる短い名前を付けます。

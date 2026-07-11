@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -220,6 +221,7 @@ def test_codex_cli_runner_retries_without_cli_schema_when_codex_rejects_schema(
         return SimpleNamespace(returncode=0, stdout='{"msg":{"type":"done"}}\n', stderr="")
 
     monkeypatch.setattr("tabular_harness.agent.runners.subprocess.run", fake_run)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
 
     result = CodexCliRunner(codex_binary="codex").run_task(
         WorkspaceRef(project_id="p_001", path=str(tmp_path)),
@@ -235,8 +237,8 @@ def test_codex_cli_runner_retries_without_cli_schema_when_codex_rejects_schema(
     for command in commands:
         expected_config_args = list(codex_harness_config_args(network_enabled=False, web_search_enabled=False))
         assert expected_config_args == command[2 : 2 + len(expected_config_args)]
-        assert "--ignore-user-config" in command
-        assert "--ignore-rules" in command
+        assert "--ignore-user-config" not in command
+        assert "--ignore-rules" not in command
         assert "mcp_servers={}" in command
     last_message_index = commands[1].index("--output-last-message") + 1
     assert commands[1][last_message_index].endswith(".harness/codex_last_message.md")
@@ -294,6 +296,7 @@ def test_codex_cli_runner_honors_full_network_execution_policy(
         return SimpleNamespace(returncode=0, stdout='{"msg":{"type":"done"}}\n', stderr="")
 
     monkeypatch.setattr("tabular_harness.agent.runners.subprocess.run", fake_run)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
 
     result = CodexCliRunner(codex_binary="codex").run_task(
         WorkspaceRef(project_id="p_001", path=str(tmp_path)),
@@ -304,7 +307,12 @@ def test_codex_cli_runner_honors_full_network_execution_policy(
 
     assert result.status == "succeeded"
     command = commands[0]
-    assert "sandbox_workspace_write.network_access=true" in command
+    assert "sandbox_workspace_write.network_access=true" not in command
+    runtime_config = Path(os.environ.get("TABLEX_CODEX_HOME", str(tmp_path / "cache" / "tablex" / "codex_home")))
+    runtime_config = runtime_config / hashlib.sha256(str(tmp_path.resolve()).encode("utf-8")).hexdigest()[:16] / "config.toml"
+    config_text = runtime_config.read_text(encoding="utf-8")
+    assert "[permissions.workspace.network]" in config_text
+    assert "mode = \"full\"" in config_text
     assert "--enable" not in command
     assert 'web_search="live"' in command
 
@@ -322,15 +330,22 @@ def test_codex_safe_env_does_not_pass_connector_credentials(tmp_path: Path, monk
     monkeypatch.setenv("CODEX_HOME", str(host_codex_home))
     monkeypatch.setenv("HOME", str(host_home))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.delenv("TABLEX_CODEX_HOME", raising=False)
 
     env = safe_env(tmp_path / "workspace")
 
-    runtime_codex_home = tmp_path / "cache" / "tablex" / "codex_home"
+    runtime_codex_home = (
+        tmp_path / "cache" / "tablex" / "codex_home"
+        / hashlib.sha256(str((tmp_path / "workspace").resolve()).encode("utf-8")).hexdigest()[:16]
+    )
     assert env["CODEX_HOME"] == str(runtime_codex_home.resolve())
     assert Path(env["CODEX_HOME"]) != host_codex_home
     assert (runtime_codex_home / "auth.json").is_symlink()
     assert (runtime_codex_home / "auth.json").resolve() == (host_codex_home / "auth.json").resolve()
-    assert not (runtime_codex_home / "config.toml").exists()
+    config_text = (runtime_codex_home / "config.toml").read_text(encoding="utf-8")
+    assert json.dumps(str(host_codex_home.resolve())) + " = \"none\"" in config_text
+    assert json.dumps(str((tmp_path / "workspace").resolve())) + " = \"write\"" in config_text
+    assert "mcp_servers.bad" not in config_text
     assert "KAGGLE_USERNAME" not in env
     assert "KAGGLE_API_TOKEN" not in env
     assert "WANDB_API_KEY" not in env
@@ -346,7 +361,54 @@ def test_codex_safe_env_prefers_workspace_python_shims(tmp_path: Path, monkeypat
 
     path_parts = env["PATH"].split(os.pathsep)
     assert path_parts[0] == str(workspace / ".tablex" / "bin")
-    assert path_parts[1:] == ["/usr/local/bin", "/usr/bin"]
+    assert path_parts[1] == str(Path(env["CODEX_HOME"]) / "bin")
+    assert path_parts[2:] == ["/usr/local/bin", "/usr/bin"]
+
+
+def test_codex_safe_env_falls_back_when_user_cache_is_read_only(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("HOME", "/proc/tablex-read-only-home")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("TABLEX_CODEX_HOME", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    workspace = tmp_path / "workspace"
+
+    env = safe_env(workspace)
+
+    assert Path(env["CODEX_HOME"]) == (workspace / ".tablex/codex_home").resolve()
+    assert Path(env["CODEX_HOME"]).is_dir()
+
+
+def test_codex_safe_env_allows_only_resolved_codex_binary_dir_inside_auth_home(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    host_home = tmp_path / "home"
+    host_codex_home = host_home / ".codex"
+    codex_bin_dir = host_codex_home / "packages" / "standalone" / "releases" / "test" / "bin"
+    codex_bin_dir.mkdir(parents=True)
+    codex_binary = codex_bin_dir / "codex"
+    codex_binary.write_bytes(b"\x7fELFtest-only")
+    codex_binary.chmod(0o755)
+    rg_binary = codex_bin_dir / "rg"
+    rg_binary.write_bytes(b"\x7fELFrg-test-only")
+    rg_binary.chmod(0o755)
+    (host_codex_home / "auth.json").write_text('{"token":"test-only"}', encoding="utf-8")
+    monkeypatch.setenv("HOME", str(host_home))
+    monkeypatch.setenv("CODEX_HOME", str(host_codex_home))
+    monkeypatch.setenv("PATH", str(codex_bin_dir))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.delenv("TABLEX_CODEX_HOME", raising=False)
+
+    env = safe_env(tmp_path / "workspace")
+
+    config_text = (Path(env["CODEX_HOME"]) / "config.toml").read_text(encoding="utf-8")
+    assert json.dumps(str(host_codex_home.resolve())) + ' = "none"' in config_text
+    runtime_binary = Path(env["CODEX_HOME"]) / "bin" / "codex"
+    assert runtime_binary.read_bytes() == b"\x7fELFtest-only"
+    runtime_rg = Path(env["CODEX_HOME"]) / "bin" / "rg"
+    assert runtime_rg.read_bytes() == b"\x7fELFrg-test-only"
+    assert Path(env["PATH"].split(os.pathsep)[1]) == runtime_binary.parent
+    assert json.dumps(str((host_codex_home / "auth.json").resolve())) + ' = "read"' not in config_text
 
 
 def test_codex_safe_env_removes_stale_runtime_config_and_plugins(tmp_path: Path, monkeypatch: Any) -> None:
@@ -354,7 +416,10 @@ def test_codex_safe_env_removes_stale_runtime_config_and_plugins(tmp_path: Path,
     host_codex_home = host_home / ".codex"
     host_codex_home.mkdir(parents=True)
     (host_codex_home / "auth.json").write_text('{"token":"test-only"}', encoding="utf-8")
-    runtime_codex_home = tmp_path / "cache" / "tablex" / "codex_home"
+    runtime_codex_home = (
+        tmp_path / "cache" / "tablex" / "codex_home"
+        / hashlib.sha256(str((tmp_path / "workspace").resolve()).encode("utf-8")).hexdigest()[:16]
+    )
     (runtime_codex_home / "plugins" / "bad").mkdir(parents=True)
     (runtime_codex_home / "plugins" / "bad" / "plugin.json").write_text("{}", encoding="utf-8")
     (runtime_codex_home / "skills" / "bad").mkdir(parents=True)
@@ -370,12 +435,17 @@ def test_codex_safe_env_removes_stale_runtime_config_and_plugins(tmp_path: Path,
     (runtime_codex_home / "logs_2.sqlite").write_text("keep", encoding="utf-8")
     monkeypatch.setenv("HOME", str(host_home))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.delenv("TABLEX_CODEX_HOME", raising=False)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
 
     env = safe_env(tmp_path / "workspace")
 
     assert env["CODEX_HOME"] == str(runtime_codex_home.resolve())
     assert (runtime_codex_home / "auth.json").is_symlink()
-    assert not (runtime_codex_home / "config.toml").exists()
+    config_text = (runtime_codex_home / "config.toml").read_text(encoding="utf-8")
+    assert json.dumps(str(host_codex_home.resolve())) + " = \"none\"" in config_text
+    assert json.dumps(str((tmp_path / "workspace").resolve())) + " = \"write\"" in config_text
+    assert "mcp_servers.bad" not in config_text
     assert not (runtime_codex_home / "config.json").exists()
     assert not (runtime_codex_home / "plugins").exists()
     assert not (runtime_codex_home / "skills").exists()
@@ -397,6 +467,9 @@ def test_codex_safe_env_uses_explicit_tablex_codex_home(tmp_path: Path, monkeypa
 
     env = safe_env(tmp_path / "workspace")
 
-    assert env["CODEX_HOME"] == str(tablex_codex_home.resolve())
-    assert (tablex_codex_home / "auth.json").is_symlink()
-    assert (tablex_codex_home / "auth.json").resolve() == (host_codex_home / "auth.json").resolve()
+    runtime_codex_home = tablex_codex_home / hashlib.sha256(
+        str((tmp_path / "workspace").resolve()).encode("utf-8")
+    ).hexdigest()[:16]
+    assert env["CODEX_HOME"] == str(runtime_codex_home.resolve())
+    assert (runtime_codex_home / "auth.json").is_symlink()
+    assert (runtime_codex_home / "auth.json").resolve() == (host_codex_home / "auth.json").resolve()

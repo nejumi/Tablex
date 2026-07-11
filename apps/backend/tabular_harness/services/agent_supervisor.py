@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from tabular_harness.core.json import loads_json
+from tabular_harness.core.runtime_paths import resolve_runtime_data_path
 from tabular_harness.models.entities import (
     AgentSession,
     AgentSupervisorLease,
@@ -19,6 +20,7 @@ from tabular_harness.models.entities import (
     Project,
     utc_now,
 )
+from tabular_harness.services.agent_presence import supervisor_lease_active
 from tabular_harness.services.agent_transcript import append_session_event
 
 MAIN_AUTONOMOUS_SESSION_TYPE = "main_autonomous"
@@ -91,11 +93,6 @@ def _lease_expired(expires_at: datetime, now: datetime) -> bool:
     if comparable.tzinfo is None:
         comparable = comparable.replace(tzinfo=timezone.utc)
     return comparable <= now
-
-
-def supervisor_lease_active(db: Session, session_id: str, *, now: datetime | None = None) -> bool:
-    lease = db.get(AgentSupervisorLease, session_id)
-    return bool(lease is not None and not _lease_expired(lease.expires_at, now or utc_now()))
 
 
 def acquire_supervisor_lease(
@@ -305,7 +302,7 @@ def clear_stale_stored_runner_pid(db: Session, *, session: AgentSession) -> bool
         return False
     previous_pid = session.pid
     process_alive = pid_is_alive(previous_pid)
-    workspace_hint = Path(session.workspace_path) if session.workspace_path else None
+    workspace_hint = resolve_runtime_data_path(session.workspace_path) if session.workspace_path else None
     matched_codex_process = process_alive and pid_matches_agent_codex_process(previous_pid, workspace_hint, session.id)
     terminated = False
     if matched_codex_process:

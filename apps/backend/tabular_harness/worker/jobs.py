@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from tabular_harness.core.config import Settings, get_settings
 from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
+from tabular_harness.core.runtime_paths import resolve_runtime_data_path
 from tabular_harness.models.entities import (
     AgentSession,
     Artifact,
@@ -2565,7 +2566,7 @@ def register_prediction_pipeline_handler(db: Session, job: Job, store: LocalArti
     session = db.get(AgentSession, session_id.strip())
     if session is None or session.project_id != project.id:
         raise ValueError("AgentSession for prediction pipeline registration not found")
-    workspace = Path(session.workspace_path).resolve()
+    workspace = resolve_runtime_data_path(session.workspace_path).resolve()
     if not workspace.exists() or not workspace.is_dir():
         raise ValueError("AgentSession workspace for prediction pipeline registration not found")
     ack_path = workspace_relative_path_for_job(
@@ -3328,7 +3329,7 @@ def notify_main_agent_session_of_pilot_report(
     )
     if session is None or not session.workspace_path:
         return None
-    session_workspace = Path(session.workspace_path)
+    session_workspace = resolve_runtime_data_path(session.workspace_path)
     observation_dir = session_workspace / ".tablex" / "pilot_observations"
     observation_dir.mkdir(parents=True, exist_ok=True)
     report_workspace_path = observation_dir / f"{report_artifact.id}.json"

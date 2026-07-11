@@ -8,7 +8,7 @@ description: How Tablex presents model runs, diagnostics, notebooks, and deeper 
 
 The Leaderboard is where model candidates become comparable. A good row should explain not only the score, but also what the model used, why it was tried, what evidence supports it, and what remains missing.
 
-![Leaderboard placeholder](/img/screenshots/leaderboard-placeholder.svg)
+![Leaderboard comparing model scores, evaluation quality, diagnostics, and prediction readiness](/img/screenshots/leaderboard-model-evidence.png)
 
 ## Baselines first
 

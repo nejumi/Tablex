@@ -20,6 +20,8 @@ Full Auto 是持续的智能体会话。它应该像一位数据科学家持续�
 
 Agent Chat 用于面向人的进展和决策。它应该告诉你发生了什么变化、哪些事情仍不确定、哪里需要注意，以及下一步应该看哪里。
 
+![包含持续聊天、观察状态、上下文操作和已装备 Skills 的 Agent workspace](/img/screenshots/agent-chat-workspace.png)
+
 ## Codex Console
 
 Codex Console 是原始执行视图。当你需要检查 runner 实际做了什么时使用它。它不是阅读项目结论的普通界面。

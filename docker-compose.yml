@@ -1,38 +1,48 @@
 services:
+  tablex-codex-ready:
+    build: .
+    image: tablex:local
+    user: "${TABLEX_UID:-1000}:${TABLEX_GID:-1000}"
+    command: ["codex", "login", "status"]
+    environment:
+      CODEX_HOME: /codex-auth
+      HOME: /tmp/tablex-home
+    volumes:
+      - ${TABLEX_CODEX_AUTH_DIR:-./.tablex-codex-auth}:/codex-auth
+
   tablex-api:
     build: .
     image: tablex:local
+    user: "${TABLEX_UID:-1000}:${TABLEX_GID:-1000}"
     environment:
       HARNESS_DATA_DIR: /data
+      HOME: /tmp/tablex-home
+      CODEX_HOME: /codex-auth
+      TABLEX_CODEX_HOME: /tmp/tablex-codex-home
       FRONTEND_DIST_DIR: /app/frontend_dist
       TABLEX_API_AGENT_SESSION_SUPERVISOR_ENABLED: "false"
       TABLEX_LOCAL_WORKER_ENABLED: "false"
     ports:
       - "8080:8080"
     volumes:
-      - tablex-data:/data
+      - ${TABLEX_DATA_DIR:-./data}:/data
+      - ${TABLEX_CODEX_AUTH_DIR:-./.tablex-codex-auth}:/codex-auth
+    depends_on:
+      tablex-codex-ready:
+        condition: service_completed_successfully
 
   tablex-worker:
     image: tablex:local
+    user: "${TABLEX_UID:-1000}:${TABLEX_GID:-1000}"
     build: .
-    command: ["tablex-worker", "--interval", "2", "--worker-id", "compose-worker", "--no-agent-session-supervisor"]
+    command: ["tablex-worker", "--interval", "2", "--worker-id", "compose-worker", "--no-agent-session-supervisor", "--exclude-job-type", "generate_user_avatar_candidates", "--exclude-job-type", "agent_chat_turn", "--exclude-job-type", "run_planned_agent_task_codex", "--exclude-job-type", "continue_autonomous_session"]
     environment:
       HARNESS_DATA_DIR: /data
+      HOME: /tmp/tablex-home
+      CODEX_HOME: /codex-auth
+      TABLEX_CODEX_HOME: /tmp/tablex-codex-home
     volumes:
-      - tablex-data:/data
+      - ${TABLEX_DATA_DIR:-./data}:/data
+      - ${TABLEX_CODEX_AUTH_DIR:-./.tablex-codex-auth}:/codex-auth
     depends_on:
       - tablex-api
-
-  tablex-agent-supervisor:
-    image: tablex:local
-    build: .
-    command: ["tablex-agent-supervisor", "--interval", "15", "--owner-id", "compose-agent-supervisor"]
-    environment:
-      HARNESS_DATA_DIR: /data
-    volumes:
-      - tablex-data:/data
-    depends_on:
-      - tablex-api
-
-volumes:
-  tablex-data:

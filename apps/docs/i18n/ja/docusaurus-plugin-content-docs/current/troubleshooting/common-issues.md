@@ -6,6 +6,28 @@ description: アップロード、Full Auto、Notebook、予測、ドキュメ�
 
 # よくある問題
 
+## Tablexは開くがCodex機能が動かない
+
+Web画面が開くだけではFull Autoの準備完了ではありません。host companionとCodex runtimeを確認します。
+
+```bash
+scripts/tablex setup
+```
+
+認証に失敗する場合は`codex login --device-auth`を実行します。Linuxでsandbox検査に失敗する場合は、公式のCodex bubblewrap/AppArmor前提を導入し、ホスト全体の制限を無効化しないでください。その後`scripts/tablex up`を実行します。状態は`scripts/tablex status`、ログは`scripts/tablex logs`で確認できます。既定のCodex経路に`OPENAI_API_KEY`は不要です。
+
+Ubuntu 24.04では、ディストリビューション提供のbubblewrap profileを導入・ロードしてから、モデルを呼ばない検査を再実行します。
+
+```bash
+sudo apt-get update
+sudo apt-get install -y apparmor-profiles apparmor-utils bubblewrap
+sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
+sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+scripts/tablex setup
+```
+
+その他のLinuxでは[Codex公式sandbox前提](https://learn.chatgpt.com/docs/sandboxing)に従ってください。
+
 ## データアップロードが止まって見える
 
 大きな関係データではprofileに時間がかかります。HomeとDataで進行状況を確認します。下流成果物ができているのにactivityが残る場合は、Projectを更新してJobsを確認します。

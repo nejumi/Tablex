@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from tabular_harness.main import create_app
 from tabular_harness.services.avatar_generation import (
     AvatarCandidate,
     AvatarGenerationError,
+    ensure_codex_cli_authenticated,
     generate_user_avatar_candidates,
 )
 
@@ -140,6 +142,10 @@ def test_avatar_generation_uses_codex_cli_without_openai_api_key(monkeypatch: py
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("TABLEX_AVATAR_PROVIDER", raising=False)
     monkeypatch.setattr("tabular_harness.services.avatar_generation.shutil.which", lambda name: "/usr/bin/codex")
+    monkeypatch.setattr(
+        "tabular_harness.services.avatar_generation.ensure_codex_cli_authenticated",
+        lambda codex: None,
+    )
 
     def fake_run(
         command: list[str],
@@ -150,10 +156,14 @@ def test_avatar_generation_uses_codex_cli_without_openai_api_key(monkeypatch: py
         stdin: int,
         text: bool,
         timeout: int,
+        env: dict[str, str],
     ) -> subprocess.CompletedProcess[str]:
         assert command[:2] == ["/usr/bin/codex", "exec"]
         assert "--skip-git-repo-check" in command
-        assert "--sandbox" in command
+        assert "--sandbox" not in command
+        assert Path(env["CODEX_HOME"]) != Path(os.environ.get("CODEX_HOME", ""))
+        config_text = (Path(env["CODEX_HOME"]) / "config.toml").read_text(encoding="utf-8")
+        assert "default_permissions = \"workspace\"" in config_text
         assert capture_output is True
         assert check is False
         assert text is True
@@ -178,6 +188,58 @@ def test_avatar_generation_uses_codex_cli_without_openai_api_key(monkeypatch: py
     assert candidates[0].revised_prompt == "friendly avatar"
 
 
+def test_avatar_generation_collects_builtin_generated_images(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("TABLEX_AVATAR_PROVIDER", raising=False)
+    monkeypatch.setattr("tabular_harness.services.avatar_generation.shutil.which", lambda name: "/usr/bin/codex")
+    monkeypatch.setattr(
+        "tabular_harness.services.avatar_generation.ensure_codex_cli_authenticated",
+        lambda codex: None,
+    )
+
+    def fake_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        generated = Path(str(env["CODEX_HOME"])) / "generated_images" / "session-1" / "generated.png"
+        generated.parent.mkdir(parents=True)
+        generated.write_bytes(b"\x89PNG\r\n\x1a\navatar")
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        result_path.write_text(
+            json.dumps({"files": [str(generated)], "revised_prompt": "built-in avatar"}),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("tabular_harness.services.avatar_generation.subprocess.run", fake_run)
+
+    candidates = generate_user_avatar_candidates(prompt="friendly analyst avatar", count=1)
+
+    assert len(candidates) == 1
+    assert candidates[0].data_url.startswith("data:image/png;base64,")
+    assert candidates[0].revised_prompt == "built-in avatar"
+
+
+
+def test_avatar_generation_requires_codex_authentication(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.services.avatar_generation.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, stdout="Not logged in", stderr=""),
+    )
+
+    with pytest.raises(AvatarGenerationError) as exc_info:
+        ensure_codex_cli_authenticated("/usr/bin/codex")
+
+    assert exc_info.value.status_code == 503
+    assert "not authenticated for Tablex" in str(exc_info.value)
+
+
 def test_avatar_generation_reports_no_backend_when_codex_and_openai_are_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -189,5 +251,4 @@ def test_avatar_generation_reports_no_backend_when_codex_and_openai_are_unavaila
         generate_user_avatar_candidates(prompt="friendly analyst avatar", count=1)
 
     assert exc_info.value.status_code == 503
-    assert "Codex CLI image generation is preferred" in str(exc_info.value)
-    assert "OPENAI_API_KEY is only needed" in str(exc_info.value)
+    assert "Codex CLI is not available" in str(exc_info.value)

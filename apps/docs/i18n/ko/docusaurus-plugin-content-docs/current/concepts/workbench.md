@@ -20,6 +20,8 @@ Full Auto는 지속되는 에이전트 세션입니다. 서로 관련 없는 job
 
 Agent Chat은 사람을 위한 progress와 decision의 공간입니다. 무엇이 바뀌었는지, 무엇이 불확실한지, 무엇이 주의가 필요한지, 다음에 어디를 봐야 하는지 알려줘야 합니다.
 
+![Persistent chat, observed state, contextual actions, equipped Skills가 있는 Agent workspace](/img/screenshots/agent-chat-workspace.png)
+
 ## Codex Console
 
 Codex Console은 raw execution view입니다. runner가 실제로 무엇을 했는지 확인해야 할 때 사용합니다. 프로젝트 결론을 읽는 기본 화면은 아닙니다.

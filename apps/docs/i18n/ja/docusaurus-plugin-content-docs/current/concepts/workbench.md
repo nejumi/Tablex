@@ -20,6 +20,8 @@ Full Autoは継続するAgentセッションです。小さなチケットの連
 
 Agent Chatは人間向けの説明面です。何が変わったか、何が不確かか、何に注意すべきか、次にどこを見るべきかを表示します。
 
+![Persistent Chat、Observed state、関連アクション、装備中Skillを表示するAgent workspace](/img/screenshots/agent-chat-workspace.png)
+
 ## Codex Console
 
 Codex Consoleは実行記録を見る面です。通常の結論を読む場所ではなく、Runnerが実際に何をしたかを確認したい時に使います。

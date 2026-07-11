@@ -675,6 +675,13 @@ class AgentSupervisorLease(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class AgentTranscriptSequence(Base):
+    __tablename__ = "agent_transcript_sequences"
+
+    session_id: Mapped[str] = mapped_column(String, ForeignKey("agent_sessions.id"), primary_key=True)
+    next_index: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class AgentTranscriptEvent(Base):
     __tablename__ = "agent_transcript_events"
     __table_args__ = (
