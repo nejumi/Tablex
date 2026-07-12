@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 
 from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
-from tabular_harness.models.entities import Asset, AssetReference, AssetVersion
+from tabular_harness.models.entities import Artifact, Asset, AssetReference, AssetVersion
 from tabular_harness.services.approach import store_json_artifact
-from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
+from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path, create_lineage_edge
 
 DEFAULT_PROJECT_SKILL_NAMES = {
     "tablex_grandmaster_eda",
@@ -447,6 +447,7 @@ def seed_default_assets(db: Session, store: LocalArtifactStore) -> list[Asset]:
             select(Asset).where(Asset.asset_type == definition["asset_type"], Asset.name == definition["name"])
         )
         if existing is not None:
+            refresh_default_asset_version(db, store=store, asset=existing, definition=definition)
             created_or_existing.append(existing)
             continue
         created_or_existing.append(create_library_asset(db, store=store, payload=definition))
@@ -467,14 +468,18 @@ def equip_default_project_skills(db: Session, store: LocalArtifactStore, *, proj
                 AssetReference.relation_type == "equipped_for_agent_context",
             )
         )
-        reference = create_asset_reference(
-            db,
-            source_type="project",
-            source_id=project_id,
-            target_asset_id=asset.id,
-            target_asset_version_id=asset.latest_version_id,
-            relation_type="equipped_for_agent_context",
-        )
+        if existed is not None:
+            existed.target_asset_version_id = asset.latest_version_id
+            reference = existed
+        else:
+            reference = create_asset_reference(
+                db,
+                source_type="project",
+                source_id=project_id,
+                target_asset_id=asset.id,
+                target_asset_version_id=asset.latest_version_id,
+                relation_type="equipped_for_agent_context",
+            )
         references.append(reference)
         if existed is None:
             create_lineage_edge(
@@ -499,15 +504,7 @@ def create_library_asset(db: Session, *, store: LocalArtifactStore, payload: dic
         asset_type=f"library_{payload['asset_type']}",
         name=str(payload["name"]),
         filename="asset_version.json",
-        payload={
-            "schema_version": "asset_version.v1",
-            "asset_type": payload["asset_type"],
-            "name": payload["name"],
-            "description": payload.get("description"),
-            "content": payload.get("content") or {},
-            "tags": payload.get("tags") or [],
-            "semantic_tags": payload.get("semantic_tags") or [],
-        },
+        payload=library_asset_version_payload(payload),
         metadata={"asset_id": asset_id, "scope": "organization"},
         created_by=str(owner_user_id) if owner_user_id else "local-user",
     )
@@ -543,6 +540,69 @@ def create_library_asset(db: Session, *, store: LocalArtifactStore, payload: dic
     db.flush()
     asset.latest_version_id = version.id
     return asset
+
+
+def library_asset_version_payload(definition: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": "asset_version.v1",
+        "asset_type": definition["asset_type"],
+        "name": definition["name"],
+        "description": definition.get("description"),
+        "content": definition.get("content") or {},
+        "tags": definition.get("tags") or [],
+        "semantic_tags": definition.get("semantic_tags") or [],
+    }
+
+
+def refresh_default_asset_version(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    asset: Asset,
+    definition: dict[str, Any],
+) -> None:
+    desired_payload = library_asset_version_payload(definition)
+    latest_version = db.get(AssetVersion, asset.latest_version_id or "")
+    latest_artifact = db.get(Artifact, latest_version.artifact_id) if latest_version is not None else None
+    current_payload: dict[str, Any] = {}
+    if latest_artifact is not None:
+        try:
+            current_payload = loads_json(artifact_primary_path(latest_artifact).read_text(encoding="utf-8"), {})
+        except OSError:
+            current_payload = {}
+    if current_payload == desired_payload:
+        return
+
+    artifact = store_json_artifact(
+        db,
+        store,
+        project_id=None,
+        asset_type=f"library_{definition['asset_type']}",
+        name=str(definition["name"]),
+        filename="asset_version.json",
+        payload=desired_payload,
+        metadata={"asset_id": asset.id, "scope": "organization", "source": "tablex_builtin_refresh"},
+        created_by="tablex-builtin",
+    )
+    version_count = len(db.scalars(select(AssetVersion).where(AssetVersion.asset_id == asset.id)).all())
+    version = AssetVersion(
+        id=new_id("av"),
+        asset_id=asset.id,
+        version=f"1.0.{version_count}",
+        artifact_id=artifact.id,
+        digest=artifact.content_hash,
+        inputs_schema_json=dumps_json(definition.get("inputs_schema") or {}),
+        outputs_schema_json=dumps_json(definition.get("outputs_schema") or {}),
+        runtime_requirements_json=dumps_json(definition.get("runtime_requirements") or {}),
+        status="active",
+        created_by="tablex-builtin",
+    )
+    db.add(version)
+    db.flush()
+    asset.description = definition.get("description")
+    asset.tags_json = dumps_json(definition.get("tags") or [])
+    asset.semantic_tags_json = dumps_json(definition.get("semantic_tags") or [])
+    asset.latest_version_id = version.id
 
 
 def create_asset_reference(

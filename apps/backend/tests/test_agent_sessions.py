@@ -2797,6 +2797,45 @@ def test_default_project_skills_include_domain_deep_dive() -> None:
     assert "tablex_onodera_deep_dive" in DEFAULT_PROJECT_SKILL_NAMES
 
 
+def test_default_skill_refresh_updates_existing_project_reference(tmp_path: Path) -> None:
+    from copy import deepcopy
+
+    from tabular_harness.models.entities import Asset
+    from tabular_harness.services.asset_library import (
+        DEFAULT_LIBRARY_ASSETS,
+        create_library_asset,
+        equip_default_project_skills,
+    )
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    current_definition = next(item for item in DEFAULT_LIBRARY_ASSETS if item["name"] == "tablex_grandmaster_eda")
+    old_definition = deepcopy(current_definition)
+    old_definition["content"]["instructions"] = ["Old built-in guidance."]
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_refresh_skill", name="Refresh Skill")
+        db.add(project)
+        old_asset = create_library_asset(db, store=store, payload=old_definition)
+        old_version_id = old_asset.latest_version_id
+        db.commit()
+
+        first_refs = equip_default_project_skills(db, store, project_id=project.id)
+        refreshed_asset = db.get(Asset, old_asset.id)
+        assert refreshed_asset is not None
+        assert refreshed_asset.latest_version_id != old_version_id
+        matching_refs = [item for item in first_refs if item.target_asset_id == old_asset.id]
+        assert len(matching_refs) == 1
+        assert matching_refs[0].target_asset_version_id == refreshed_asset.latest_version_id
+        db.commit()
+
+        latest_version_id = refreshed_asset.latest_version_id
+        second_refs = equip_default_project_skills(db, store, project_id=project.id)
+        assert refreshed_asset.latest_version_id == latest_version_id
+        assert len([item for item in second_refs if item.target_asset_id == old_asset.id]) == 1
+
+
 def test_runner_failure_backoff_counts_attempts_not_sidecar_events(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
