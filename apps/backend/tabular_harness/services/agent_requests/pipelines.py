@@ -320,8 +320,10 @@ def execute_pipeline_registration_request(
     manifest, manifest_warnings = normalize_pipeline_manifest(submitted_manifest)
     compatibility_warnings.extend(manifest_warnings)
     run_ids = require_string_list(payload.get("experiment_run_ids", []), "payload.experiment_run_ids")
-    if not run_ids:
-        raise ValueError("payload.experiment_run_ids must contain at least one run id")
+    if len(run_ids) != 1:
+        raise ValueError(
+            "payload.experiment_run_ids must contain exactly one run id so every Leaderboard model has its own complete pipeline bundle"
+        )
     runs = []
     for run_id in run_ids:
         run = db.get(ExperimentRun, run_id)

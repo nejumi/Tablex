@@ -6,7 +6,7 @@ description: How Tablex presents model runs, diagnostics, notebooks, and deeper 
 
 # Modeling and diagnostics
 
-The Leaderboard is the promotion surface for prediction-ready model candidates. A row appears only after its downloadable pipeline passes an isolated prediction smoke test, starts its training entrypoint in the same isolated dependency environment, matches the run's primary metric at numerical precision, and includes the manifest, training and prediction entrypoints, dependencies, and local usage instructions. Score-only runs remain in experiment history until that contract is complete.
+The Leaderboard is the promotion surface for prediction-ready model candidates. Every registered candidate must be completed with its own downloadable pipeline; Tablex does not treat dropping an incomplete candidate as completion. Full Auto continues until every bundle passes an isolated prediction smoke test, starts its training entrypoint in the same isolated dependency environment, matches the run's primary metric at numerical precision, and includes that model's complete feature construction, fitted estimator, manifest, training and prediction entrypoints, dependencies, and local usage instructions. Score-only runs remain in experiment history only while this required work is in progress.
 
 Every Leaderboard row can be used for prediction from the UI and downloaded as a self-contained local pipeline bundle. The displayed score, model implementation, and exported bundle therefore stay one versioned deliverable rather than three unrelated claims.
 

@@ -6,7 +6,7 @@ description: Tablex가 model runs, diagnostics, notebooks, deeper feature engine
 
 # Modeling and diagnostics
 
-Leaderboard는 예측 준비가 끝난 model candidate를 승격하는 화면입니다. 다운로드 가능한 pipeline이 격리된 prediction smoke test를 통과하고 같은 dependency environment에서 training entrypoint를 시작할 수 있으며 run의 primary metric과 수치 정밀도로 일치하고 manifest, training/prediction entrypoint, dependencies, local usage instructions를 포함할 때만 row가 표시됩니다. Score만 있는 run은 이 contract를 충족할 때까지 experiment history에 남습니다.
+Leaderboard는 예측 준비가 끝난 model candidate를 승격하는 화면입니다. 등록된 모든 candidate는 각각 고유한 downloadable pipeline으로 완성해야 하며, 불완전한 candidate를 제거해서 완료로 처리하지 않습니다. 모든 bundle이 isolated prediction smoke test를 통과하고 같은 dependency environment에서 training entrypoint를 시작하며 run의 primary metric과 수치 정밀도로 일치하고 해당 model의 전체 feature construction, fitted estimator, manifest, training/prediction entrypoint, dependencies, local usage instructions를 포함할 때까지 Full Auto가 계속됩니다. Score만 있는 run은 이 필수 작업이 진행되는 동안에만 experiment history에 남습니다.
 
 모든 Leaderboard row는 UI에서 prediction에 사용할 수 있고 self-contained local pipeline bundle로 다운로드할 수 있습니다. 표시 score, model implementation, exported bundle은 하나의 versioned deliverable로 관리됩니다.
 
