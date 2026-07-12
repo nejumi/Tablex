@@ -12,6 +12,7 @@ import { RawTab } from "./components/RawTab";
 import { buildRawAgentEvents, maxTranscriptEventIndex, mergeTranscriptEvents } from "./components/rawEvents";
 import { AuthGate } from "./components/AuthGate";
 import { ProjectDeleteDialog } from "./components/ProjectDeleteDialog";
+import { ProjectCloneDialog, type ProjectCloneMode } from "./components/ProjectCloneDialog";
 import { PortalView } from "./components/PortalView";
 import { EmptyInline, EmptyState, LoadingBlock, Metric, Panel, Table } from "./components/Primitives";
 import {
@@ -29,6 +30,7 @@ import {
   BarChart3,
   BookOpen,
   Check,
+  Copy,
   Database,
   Download,
   Eye,
@@ -1136,7 +1138,9 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [moreTabsOpen, setMoreTabsOpen] = React.useState(false);
   const [projectPendingDeletion, setProjectPendingDeletion] = React.useState<Project | null>(null);
+  const [projectPendingClone, setProjectPendingClone] = React.useState<Project | null>(null);
   const [deletingProjectId, setDeletingProjectId] = React.useState<string | null>(null);
+  const [cloningProjectId, setCloningProjectId] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const hydratedUserIdRef = React.useRef<string | null>(null);
@@ -1443,6 +1447,33 @@ export function App() {
     }
   }
 
+  async function cloneProject(project: Project, name: string, mode: ProjectCloneMode) {
+    setCloningProjectId(project.id);
+    setError(null);
+    try {
+      const result = await api<{
+        schema_version: "project_clone.v1";
+        mode: ProjectCloneMode;
+        source_project_id: string;
+        project: Project;
+        copied_counts: Record<string, number>;
+      }>(`/api/projects/${project.id}/clone`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, mode })
+      });
+      setProjectPendingClone(null);
+      deletedProjectIdsRef.current.delete(result.project.id);
+      setProjects((current) => [result.project, ...current.filter((item) => item.id !== result.project.id)]);
+      await refreshProjects(result.project.id, { silent: true });
+      openProject(result.project.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCloningProjectId(null);
+    }
+  }
+
   return (
     <LocaleContext.Provider value={{ text, locale: activeLocale.locale }}>
       <div className="app-shell">
@@ -1480,18 +1511,32 @@ export function App() {
                 <span>{project.name}</span>
                 <small>{formatWorkflowState(project.current_phase, text)}</small>
               </button>
-              <button
-                className="project-delete-button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setProjectPendingDeletion(project);
-                }}
-                disabled={deletingProjectId === project.id}
-                title={text.deleteProject}
-                type="button"
-              >
-                {deletingProjectId === project.id ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
-              </button>
+              <span className="project-item-actions">
+                <button
+                  className="project-action-button project-clone-button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setProjectPendingClone(project);
+                  }}
+                  disabled={cloningProjectId === project.id || deletingProjectId === project.id}
+                  title={text.cloneProject}
+                  type="button"
+                >
+                  {cloningProjectId === project.id ? <Loader2 className="spin" size={14} /> : <Copy size={14} />}
+                </button>
+                <button
+                  className="project-action-button project-delete-button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setProjectPendingDeletion(project);
+                  }}
+                  disabled={deletingProjectId === project.id || cloningProjectId === project.id}
+                  title={text.deleteProject}
+                  type="button"
+                >
+                  {deletingProjectId === project.id ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
+                </button>
+              </span>
             </div>
           ))}
         </div>
@@ -1575,6 +1620,17 @@ export function App() {
               if (!deletingProjectId) setProjectPendingDeletion(null);
             }}
             onConfirm={() => void deleteProject(projectPendingDeletion)}
+          />
+        ) : null}
+        {projectPendingClone ? (
+          <ProjectCloneDialog
+            project={projectPendingClone}
+            text={text}
+            busy={cloningProjectId === projectPendingClone.id}
+            onCancel={() => {
+              if (!cloningProjectId) setProjectPendingClone(null);
+            }}
+            onConfirm={(name, mode) => void cloneProject(projectPendingClone, name, mode)}
           />
         ) : null}
         {error ? <div className="banner danger">{error}</div> : null}
@@ -12668,6 +12724,7 @@ function formatWorkflowState(value: string | null, text?: LocaleMessages) {
   if (text) {
     if (normalized === "idle") return text.workflowIdle;
     if (normalized === "draft") return text.workflowDraft;
+    if (normalized === "data_ready") return text.workflowDataReady;
     if (normalized === "understanding_review") return text.workflowUnderstandingReview;
     if (normalized === "autonomous_loop") return text.workflowAutonomousLoop;
   }

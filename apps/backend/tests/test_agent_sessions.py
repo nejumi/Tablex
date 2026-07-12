@@ -2788,6 +2788,7 @@ def test_turn_prompt_includes_living_research_plan_contract(tmp_path: Path) -> N
         assert "Run the hypothesis loop autonomously" in protocol
         assert "structured experiment ledger" in protocol
         assert "remaining high-value opportunities" in protocol
+        assert "while your own report, notebook, experiment ledger" in protocol
         assert "Continue the evidence loop beyond a generic merge-and-boost baseline" in prompt.text
 
 

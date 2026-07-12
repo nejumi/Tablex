@@ -22,6 +22,19 @@ class ProjectUpdate(BaseModel):
     locale: str | None = None
 
 
+class ProjectCloneCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    mode: Literal["data_only", "full"]
+
+
+class ProjectCloneRead(BaseModel):
+    schema_version: Literal["project_clone.v1"]
+    mode: Literal["data_only", "full"]
+    source_project_id: str
+    project: ProjectRead
+    copied_counts: dict[str, int]
+
+
 class AutonomyStartCreate(BaseModel):
     runner_mode: Literal["harness_only", "codex_cli", "codex_cli_if_available"] = "codex_cli_if_available"
     autonomy_mode: Literal["approval_based", "full_auto"] = "full_auto"

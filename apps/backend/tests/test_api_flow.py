@@ -28,7 +28,7 @@ from tabular_harness.api.routes import (
     visible_activity_workers,
 )
 from tabular_harness.core.config import Settings
-from tabular_harness.core.json import loads_json
+from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.main import create_app
 from tabular_harness.models.entities import (
     AgentSession,
@@ -1169,6 +1169,171 @@ def test_project_autonomy_mode_persists(tmp_path: Path) -> None:
     read_response = client.get(f"/api/projects/{project['id']}")
     assert read_response.status_code == 200
     assert read_response.json()["autonomy_mode"] == "full_auto"
+
+
+def test_clone_project_data_only_reuses_uploaded_data_without_progress(tmp_path: Path) -> None:
+    client = make_client(tmp_path, api_agent_session_supervisor_enabled=False)
+    source = client.post("/api/projects", json={"name": "Source data"}).json()
+    app = cast(Any, client.app)
+
+    with app.state.session_factory() as db:
+        dataset_artifact = store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=source["id"],
+            asset_type="uploaded_table",
+            name="orders",
+            filename="orders.json",
+            payload=[{"order_id": 1, "value": 4.0}],
+            metadata={"source": "upload"},
+        )
+        report_artifact = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=source["id"],
+            asset_type="report",
+            name="progress_report",
+            filename="report.md",
+            text="# Existing progress",
+            metadata={"source": "analysis"},
+        )
+        dataset = DatasetSnapshot(
+            id="ds_clone_data_source",
+            project_id=source["id"],
+            artifact_id=dataset_artifact.id,
+            source_type="upload",
+            source_ref="orders.json",
+            row_count=1,
+            column_count=2,
+            schema_hash="schema-orders",
+            data_hash="data-orders",
+        )
+        project = db.get(Project, source["id"])
+        assert project is not None
+        db.add(dataset)
+        db.flush()
+        project.primary_dataset_snapshot_id = dataset.id
+        db.commit()
+        source_dataset_path = artifact_primary_path(dataset_artifact)
+        source_report_id = report_artifact.id
+
+    response = client.post(
+        f"/api/projects/{source['id']}/clone",
+        json={"name": "Source data - data copy", "mode": "data_only"},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    clone = payload["project"]
+    assert payload["mode"] == "data_only"
+    assert clone["current_phase"] == "DATA_READY"
+    assert clone["autonomy_mode"] == "approval_based"
+    assert clone["task_type"] is None
+    assert clone["target_column"] is None
+    assert payload["copied_counts"]["datasets"] == 1
+
+    with app.state.session_factory() as db:
+        cloned_datasets = list(db.scalars(select(DatasetSnapshot).where(DatasetSnapshot.project_id == clone["id"])).all())
+        cloned_artifacts = list(db.scalars(select(Artifact).where(Artifact.project_id == clone["id"])).all())
+        assert len(cloned_datasets) == 1
+        assert cloned_datasets[0].id != dataset.id
+        assert clone["primary_dataset_snapshot_id"] == cloned_datasets[0].id
+        assert source_report_id not in {artifact.id for artifact in cloned_artifacts}
+        assert {artifact.asset_type for artifact in cloned_artifacts} == {"uploaded_table"}
+        cloned_path = artifact_primary_path(cloned_artifacts[0])
+        assert cloned_path != source_dataset_path
+        assert cloned_path.read_text(encoding="utf-8") == source_dataset_path.read_text(encoding="utf-8")
+
+
+def test_clone_project_full_remaps_progress_and_leaves_agent_power_off(tmp_path: Path) -> None:
+    client = make_client(tmp_path, api_agent_session_supervisor_enabled=False)
+    source = client.post("/api/projects", json={"name": "Source progress"}).json()
+    app = cast(Any, client.app)
+
+    with app.state.session_factory() as db:
+        artifact = store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=source["id"],
+            asset_type="uploaded_table",
+            name="training",
+            filename="training.json",
+            payload=[{"id": 1, "target": 0}],
+            metadata={"source_project_id": source["id"]},
+        )
+        dataset = DatasetSnapshot(
+            id="ds_clone_full_source",
+            project_id=source["id"],
+            artifact_id=artifact.id,
+            source_type="upload",
+            source_ref="training.json",
+            row_count=1,
+            column_count=2,
+            schema_hash="schema-full",
+            data_hash="data-full",
+        )
+        candidate = EvaluationCandidate(
+            id="evc_clone_full_source",
+            project_id=source["id"],
+            dataset_snapshot_id=dataset.id,
+            name="Stratified folds",
+            split_type="stratified",
+            primary_metric="roc_auc",
+            rationale_md="Comparable folds.",
+            confidence=0.8,
+            risk_level="medium",
+            status="proposed",
+        )
+        run = ExperimentRun(
+            id="run_clone_full_source",
+            project_id=source["id"],
+            dataset_snapshot_id=dataset.id,
+            evaluation_candidate_id=candidate.id,
+            runner_type="codex_main_session",
+            status="succeeded",
+            params_json=dumps_json({"dataset_snapshot_id": dataset.id, "source_project_id": source["id"]}),
+            metrics_json=dumps_json({"roc_auc": 0.78}),
+        )
+        session = AgentSession(
+            id="ags_clone_full_source",
+            project_id=source["id"],
+            goal_text="Do not clone runtime state.",
+            status="running",
+            pid=987654,
+        )
+        project = db.get(Project, source["id"])
+        assert project is not None
+        db.add_all([dataset, candidate, run, session])
+        db.flush()
+        project.primary_dataset_snapshot_id = dataset.id
+        project.task_type = "classification"
+        project.target_column = "target"
+        project.current_phase = "AUTONOMOUS_LOOP"
+        project.autonomy_mode = "full_auto"
+        db.commit()
+
+    response = client.post(
+        f"/api/projects/{source['id']}/clone",
+        json={"name": "Source progress - full copy", "mode": "full"},
+    )
+    assert response.status_code == 200, response.text
+    clone = response.json()["project"]
+    assert clone["current_phase"] == "IDLE"
+    assert clone["autonomy_mode"] == "approval_based"
+    assert clone["task_type"] == "classification"
+    assert clone["target_column"] == "target"
+
+    with app.state.session_factory() as db:
+        cloned_dataset = db.scalar(select(DatasetSnapshot).where(DatasetSnapshot.project_id == clone["id"]))
+        cloned_candidate = db.scalar(select(EvaluationCandidate).where(EvaluationCandidate.project_id == clone["id"]))
+        cloned_run = db.scalar(select(ExperimentRun).where(ExperimentRun.project_id == clone["id"]))
+        assert cloned_dataset is not None and cloned_dataset.id != dataset.id
+        assert cloned_candidate is not None and cloned_candidate.dataset_snapshot_id == cloned_dataset.id
+        assert cloned_run is not None
+        assert cloned_run.dataset_snapshot_id == cloned_dataset.id
+        assert cloned_run.evaluation_candidate_id == cloned_candidate.id
+        assert loads_json(cloned_run.params_json, {})["dataset_snapshot_id"] == cloned_dataset.id
+        assert loads_json(cloned_run.params_json, {})["source_project_id"] == clone["id"]
+        assert not db.scalars(select(AgentSession).where(AgentSession.project_id == clone["id"])).all()
 
 
 def test_delete_project_removes_project_scoped_records(tmp_path: Path, monkeypatch: Any) -> None:

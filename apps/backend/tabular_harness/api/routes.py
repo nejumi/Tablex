@@ -141,6 +141,8 @@ from tabular_harness.schemas import (
     PortalIdeaCreate,
     PortalIdeaRead,
     PortalOverviewRead,
+    ProjectCloneCreate,
+    ProjectCloneRead,
     ProjectCreate,
     ProjectGuidanceRead,
     ProjectOverview,
@@ -332,6 +334,7 @@ from tabular_harness.services.prediction_pipeline_contract import (
     leaderboard_ready_pipeline_artifact,
     prediction_pipeline_artifact_for_run,
 )
+from tabular_harness.services.project_cloning import clone_project
 from tabular_harness.services.project_guidance import (
     build_project_guidance,
 )
@@ -992,6 +995,32 @@ def create_project(
     db.flush()
     equip_default_project_skills(db, store, project_id=project.id)
     return project_to_dict(project)
+
+
+@router.post("/api/projects/{project_id}/clone", response_model=ProjectCloneRead)
+def clone_project_endpoint(
+    project_id: str,
+    payload: ProjectCloneCreate,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    source = require_visible_project(request, db, project_id)
+    target, copied_counts = clone_project(
+        db,
+        store=store,
+        source=source,
+        name=payload.name,
+        mode=payload.mode,
+        created_by=request_actor_id(request),
+    )
+    return {
+        "schema_version": "project_clone.v1",
+        "mode": payload.mode,
+        "source_project_id": source.id,
+        "project": project_to_dict(target),
+        "copied_counts": copied_counts,
+    }
 
 
 @router.get("/api/projects/{project_id}", response_model=ProjectRead)

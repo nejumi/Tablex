@@ -393,7 +393,13 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
-.project-delete-button {
+.project-item-actions {
+  align-self: start;
+  display: grid;
+  gap: 2px;
+}
+
+.project-action-button {
   align-self: start;
   display: inline-grid;
   place-items: center;
@@ -411,7 +417,13 @@ button:disabled {
   color: var(--danger);
 }
 
-.project-delete-button:disabled {
+.project-clone-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-strong);
+}
+
+.project-action-button:disabled {
   cursor: progress;
   color: var(--muted);
   opacity: 0.75;
@@ -480,6 +492,86 @@ button:disabled {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.project-clone-dialog {
+  width: min(560px, calc(100vw - 32px));
+  border-color: var(--border-strong);
+}
+
+.clone-project-icon {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent-strong);
+}
+
+.project-clone-name {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-clone-name input {
+  width: 100%;
+}
+
+.project-clone-modes {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.project-clone-modes legend {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-clone-mode {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-muted);
+  cursor: pointer;
+}
+
+.project-clone-mode.selected {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.project-clone-mode input {
+  margin: 3px 0 0;
+}
+
+.project-clone-mode > svg {
+  margin-top: 1px;
+  color: var(--accent-strong);
+}
+
+.project-clone-mode span {
+  display: grid;
+  gap: 4px;
+}
+
+.project-clone-mode strong {
+  color: var(--text);
+}
+
+.project-clone-mode small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
 }
 
 .project-item:hover,
