@@ -2787,6 +2787,9 @@ def test_turn_prompt_includes_living_research_plan_contract(tmp_path: Path) -> N
         assert "global group-by count/mean/min/max and a flat merge as a lossy relational baseline" in protocol
         assert "Run the hypothesis loop autonomously" in protocol
         assert "structured experiment ledger" in protocol
+        assert "Build and surface the foundation incrementally" in protocol
+        assert "leave the Leaderboard empty" in protocol
+        assert "vertically complete before moving far ahead" in protocol
         assert "remaining high-value opportunities" in protocol
         assert "while your own report, notebook, experiment ledger" in protocol
         assert "Continue the evidence loop beyond a generic merge-and-boost baseline" in prompt.text
