@@ -13,6 +13,7 @@ services:
   tablex-api:
     build: .
     image: tablex:local
+    restart: unless-stopped
     user: "${TABLEX_UID:-1000}:${TABLEX_GID:-1000}"
     environment:
       HARNESS_DATA_DIR: /data
@@ -35,6 +36,7 @@ services:
     image: tablex:local
     user: "${TABLEX_UID:-1000}:${TABLEX_GID:-1000}"
     build: .
+    restart: unless-stopped
     command: ["tablex-worker", "--interval", "2", "--worker-id", "compose-worker", "--no-agent-session-supervisor", "--exclude-job-type", "generate_user_avatar_candidates", "--exclude-job-type", "agent_chat_turn", "--exclude-job-type", "run_planned_agent_task_codex", "--exclude-job-type", "continue_autonomous_session"]
     environment:
       HARNESS_DATA_DIR: /data
