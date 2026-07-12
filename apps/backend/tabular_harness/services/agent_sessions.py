@@ -64,6 +64,7 @@ from tabular_harness.services.agent_outputs import (
     should_skip_session_output,
 )
 from tabular_harness.services.agent_prompting import build_turn_prompt, session_protocol_text
+from tabular_harness.services.prediction_pipeline_contract import leaderboard_ready_pipeline_artifact
 from tabular_harness.services.agent_requests.data import (
     DATA_REQUEST_SCHEMA_VERSION,
     TASK_SPEC_SCHEMA_VERSION,
@@ -704,6 +705,8 @@ def main_session_should_pause_after_completed_plan(db: Session, *, project: Proj
         return False
     if pending_main_session_user_instruction_exists(db, session=session):
         return False
+    if project_has_incomplete_prediction_runs(db, project=project):
+        return False
     if unprocessed_actionable_workspace_inbox_exists(session):
         return False
     latest_state_change = latest_request_or_rejection_artifact_at(db, project_id=project.id)
@@ -714,6 +717,19 @@ def main_session_should_pause_after_completed_plan(db: Session, *, project: Proj
         if state_change_at > chat_at:
             return False
     return True
+
+
+def project_has_incomplete_prediction_runs(db: Session, *, project: Project) -> bool:
+    runs = db.scalars(
+        select(ExperimentRun).where(
+            ExperimentRun.project_id == project.id,
+            ExperimentRun.status == "succeeded",
+        )
+    ).all()
+    return any(
+        leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {})) is None
+        for run in runs
+    )
 
 
 def pause_main_session_after_completed_plan(

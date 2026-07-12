@@ -841,7 +841,8 @@ def build_session_context(
                     "ExperimentRuns appear in the Leaderboard only after a linked reproducible pipeline passes isolated "
                     "prediction smoke validation, reproduces the registered metrics, and remains downloadable for local use. "
                     "After registering runs, inspect result.pipeline_registration in the ack; if it is missing or partial, "
-                    "continue with register_prediction_pipeline requests for those run ids before marking modeling/reporting complete."
+                    "create one complete model-specific bundle and one register_prediction_pipeline request per run. Do not remove "
+                    "or merge away a run to clear the missing count. Modeling/reporting is incomplete until every run is prediction-ready."
                 ),
                 "register_runs_contract": {
                     "research_plan_link": (
@@ -1026,6 +1027,7 @@ def build_session_context(
                     "or --input-dir <directory> when input_contract.required_tables is declared. The --input-dir directory contains "
                     "a manifest.json and one file per table."
                 ),
+                "cardinality": "Submit exactly one experiment_run_id per request and preserve that run's complete model-specific inference path.",
                 "required_pipeline_files": [
                     "pipeline_manifest.json",
                     "train.py",

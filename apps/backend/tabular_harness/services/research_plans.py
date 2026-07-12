@@ -1002,6 +1002,20 @@ def validate_research_plan_document(
                         )
                     )
                 if strict:
+                    incomplete_pipeline_run_ids = research_plan_incomplete_pipeline_run_ids(
+                        db,
+                        project_id=project_id,
+                        block=block,
+                    )
+                    if incomplete_pipeline_run_ids:
+                        issues.append(
+                            research_plan_issue(
+                                "done_node_incomplete_prediction_pipelines",
+                                f"{path}/completion_evidence",
+                                f"Node `{block_id}` references model run(s) without complete prediction pipelines: {', '.join(incomplete_pipeline_run_ids[:6])}.",
+                                "Create and register one validated model-specific prediction pipeline bundle per run before marking the node done. Do not remove model evidence to bypass this requirement.",
+                            )
+                        )
                     missing_registered_deliverables = missing_registered_research_plan_deliverables(
                         db,
                         project_id=project_id,
@@ -1469,6 +1483,30 @@ def missing_registered_research_plan_deliverables(
     return [output_type for output_type in expected if output_type not in verified_types]
 
 
+def research_plan_incomplete_pipeline_run_ids(
+    db: Session,
+    *,
+    project_id: str,
+    block: dict[str, Any],
+) -> list[str]:
+    incomplete: list[str] = []
+    for item in research_plan_evidence_items(block):
+        for run_id in research_plan_evidence_run_ids(item):
+            run = research_plan_experiment_run(db, project_id=project_id, run_id=run_id)
+            if run is None or run.status != "succeeded":
+                continue
+            if (
+                leaderboard_ready_pipeline_artifact(
+                    db,
+                    run,
+                    params=loads_json(run.params_json, {}),
+                )
+                is None
+            ):
+                incomplete.append(run.id)
+    return list(dict.fromkeys(incomplete))
+
+
 def research_plan_expected_output_types(block: dict[str, Any]) -> set[str]:
     contract = block.get("deliverable_contract")
     if not isinstance(contract, dict):
@@ -1532,7 +1570,15 @@ def research_plan_verified_output_types_for_evidence_item(
         run = research_plan_experiment_run(db, project_id=project_id, run_id=run_id)
         if run is not None:
             verified_types.add("experiment_run")
-            if run.status == "succeeded":
+            if (
+                run.status == "succeeded"
+                and leaderboard_ready_pipeline_artifact(
+                    db,
+                    run,
+                    params=loads_json(run.params_json, {}),
+                )
+                is not None
+            ):
                 verified_types.add("leaderboard_entry")
     artifact = research_plan_evidence_artifact(db, project_id=project_id, item=item)
     if artifact is not None:

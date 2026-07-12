@@ -29,6 +29,7 @@ from tabular_harness.models.entities import (
     utc_now,
 )
 from tabular_harness.services.agent_inbox import (
+    inbox_processed_path,
     latest_inbox_entry_path,
     list_inbox_entries,
     write_inbox_entry,
@@ -114,13 +115,49 @@ def workspace_inbox_has_payload(
     entry_type: str,
     payload: dict[str, Any],
 ) -> bool:
+    processed_filenames: set[str] = set()
+    processed_path = inbox_processed_path(workspace)
+    if processed_path.is_file():
+        try:
+            for line in processed_path.read_text(encoding="utf-8").splitlines():
+                text = line.strip()
+                if text.endswith(".json") and " " not in text and "{" not in text:
+                    processed_filenames.add(text)
+                    continue
+                record = loads_json(line, {})
+                if isinstance(record, dict) and isinstance(record.get("entry"), str):
+                    processed_filenames.add(record["entry"])
+        except OSError:
+            pass
     for entry in list_inbox_entries(workspace):
+        if entry.get("_filename") in processed_filenames:
+            continue
         if entry.get("kind") != kind or entry.get("type") != entry_type:
             continue
         existing_payload = entry.get("payload")
         if isinstance(existing_payload, dict) and existing_payload == payload:
             return True
+        if (
+            entry_type == "pipeline_registration_request"
+            and isinstance(existing_payload, dict)
+            and pipeline_request_missing_run_ids(payload)
+            and pipeline_request_missing_run_ids(existing_payload) == pipeline_request_missing_run_ids(payload)
+        ):
+            return True
     return False
+
+
+def pipeline_request_missing_run_ids(payload: dict[str, Any]) -> set[str]:
+    registration = payload.get("pipeline_registration")
+    missing_runs = registration.get("missing_runs") if isinstance(registration, dict) else None
+    if isinstance(missing_runs, list):
+        return {
+            str(item.get("run_id"))
+            for item in missing_runs
+            if isinstance(item, dict) and isinstance(item.get("run_id"), str)
+        }
+    run_ids = payload.get("run_ids")
+    return {item for item in run_ids if isinstance(item, str)} if isinstance(run_ids, list) else set()
 
 
 @dataclass(frozen=True)
@@ -566,14 +603,6 @@ def restore_registered_session_experiment_visibility(
         )
         workspace = resolve_runtime_data_path(session.workspace_path) if session.workspace_path else None
         if workspace is not None:
-            pipeline_registration = experiment_pipeline_registration_status(db, group_runs)
-            if pipeline_registration["status"] != "ready":
-                write_pipeline_registration_request_to_workspace_inbox(
-                    workspace,
-                    runs=group_runs,
-                    source_request_id=source_reference,
-                    pipeline_registration=pipeline_registration,
-                )
             diagnostics_artifact_status = experiment_model_diagnostics_artifact_status(
                 db,
                 project=project,
@@ -598,6 +627,23 @@ def restore_registered_session_experiment_visibility(
                     source_request_id=source_reference,
                     diagnostics_status=diagnostics_notebook_status,
                 )
+    workspace = resolve_runtime_data_path(session.workspace_path) if session.workspace_path else None
+    if workspace is not None:
+        project_runs = list(
+            db.scalars(
+                select(ExperimentRun)
+                .where(ExperimentRun.project_id == project.id, ExperimentRun.status == "succeeded")
+                .order_by(ExperimentRun.started_at.asc(), ExperimentRun.id.asc())
+            ).all()
+        )
+        pipeline_registration = experiment_pipeline_registration_status(db, project_runs)
+        if pipeline_registration["status"] != "ready":
+            write_pipeline_registration_request_to_workspace_inbox(
+                workspace,
+                runs=project_runs,
+                source_request_id="project_prediction_pipeline_completion",
+                pipeline_registration=pipeline_registration,
+            )
     db.flush()
     return runs
 
@@ -2758,11 +2804,18 @@ def write_pipeline_registration_request_to_workspace_inbox(
 ) -> None:
     if not runs or pipeline_registration.get("status") == "ready":
         return
+    missing_runs = pipeline_registration.get("missing_runs") if isinstance(pipeline_registration, dict) else []
+    missing_items = missing_runs if isinstance(missing_runs, list) else []
+    missing_run_ids = [
+        str(item["run_id"])
+        for item in missing_items
+        if isinstance(item, dict) and isinstance(item.get("run_id"), str)
+    ]
     payload = {
         "schema_version": "tablex_pipeline_registration_request.v1",
         "source_request_id": source_request_id,
         "pipeline_registration": pipeline_registration,
-        "run_ids": [run.id for run in runs],
+        "run_ids": missing_run_ids,
     }
     if workspace_inbox_has_payload(
         workspace,
@@ -2771,16 +2824,15 @@ def write_pipeline_registration_request_to_workspace_inbox(
         payload=payload,
     ):
         return
-    missing_runs = pipeline_registration.get("missing_runs") if isinstance(pipeline_registration, dict) else []
-    missing_items = missing_runs if isinstance(missing_runs, list) else []
     lines = [
         "schema_version: tablex_pipeline_registration_request.v1",
         f"created_at: {utc_now().isoformat()}",
         f"source_request_id: {source_request_id or '<unknown>'}",
         f"missing_count: {pipeline_registration.get('missing_count', len(missing_items))}",
         "",
-        "Leaderboard rows were registered, but one or more runs do not yet have reproducible prediction pipeline bundles.",
-        "Continue the work and create pipeline directories under `pipelines/<name>/` for the missing runs, then submit fixed JSON requests under `.tablex/requests/pipelines/` with `schema_version: \"tablex_pipeline_request.v1\"` and operation `register_prediction_pipeline`.",
+        "One or more registered model runs are incomplete because they do not yet have validated prediction pipeline bundles.",
+        "Continue the work and create one model-specific pipeline directory under `pipelines/<name>/` for every missing run, then submit one fixed JSON request per run under `.tablex/requests/pipelines/` with `schema_version: \"tablex_pipeline_request.v1\"` and operation `register_prediction_pipeline`.",
+        "Do not remove, hide, merge away, or downgrade missing model runs. Preserve each model's fitted estimator, feature construction, preprocessing, and raw-input inference behavior in its own downloadable bundle.",
         "",
         "Required pipeline files:",
         "- pipeline_manifest.json",

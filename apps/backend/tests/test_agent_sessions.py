@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import io
 import subprocess
 import sys
 import threading
@@ -261,6 +262,83 @@ def run_queued_pipeline_registration_worker(db, store: LocalArtifactStore, proje
     refreshed = db.get(Job, job.id)
     assert refreshed is not None
     return refreshed
+
+
+def store_ready_pipeline_for_run(
+    db: Any,
+    store: LocalArtifactStore,
+    *,
+    project_id: str,
+    run: ExperimentRun,
+) -> Artifact:
+    metrics = loads_json(run.metrics_json, {})
+    metric_name = str(metrics["primary_metric_name"])
+    metric_value = float(metrics["primary_metric_value"])
+    manifest = {
+        "schema_version": "pipeline_manifest.v1",
+        "input_contract": {
+            "inference_format": {"columns": [{"name": "x", "dtype": "float", "required": True}]}
+        },
+        "output_contract": {
+            "columns": [{"name": "prediction", "dtype": "float", "required": True}],
+            "prediction_column": "prediction",
+        },
+        "training": {"deterministic": True, "seed": 7},
+        "runtime": {"python": ">=3.11"},
+        "expected_metrics": [{"name": metric_name, "value": metric_value}],
+    }
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("pipeline_manifest.json", dumps_json(manifest))
+        archive.writestr("train.py", "print('train')\n")
+        archive.writestr("predict.py", "print('predict')\n")
+        archive.writestr("requirements.txt", "")
+        archive.writestr("README.md", "# Ready pipeline\n")
+    bundle.seek(0)
+    name = f"ready_pipeline_{run.id}"
+    metadata = {
+        "experiment_run_ids": [run.id],
+        "pipeline_manifest": manifest,
+        "smoke_validation": {"status": "passed", "runtime_isolated": True},
+        "metric_reproduction": {
+            "metric_reproduced": True,
+            "comparisons": [
+                {
+                    "run_id": run.id,
+                    "metric": metric_name,
+                    "expected": metric_value,
+                    "observed": metric_value,
+                    "matched": True,
+                }
+            ],
+        },
+    }
+    version = next_artifact_version(db, project_id, "prediction_pipeline", name)
+    artifact_dir, stored, content_hash = store.store_stream(
+        org_id="local-org",
+        project_id=project_id,
+        asset_type="prediction_pipeline",
+        name=name,
+        version=version,
+        filename=f"{name}.zip",
+        stream=bundle,
+        metadata=metadata,
+    )
+    artifact = register_artifact(
+        db,
+        project_id=project_id,
+        asset_type="prediction_pipeline",
+        name=name,
+        uri=str(artifact_dir),
+        content_hash=content_hash,
+        size_bytes=stored.size_bytes,
+        metadata={**metadata, "primary_path": str(stored.path)},
+        version=version,
+    )
+    params = loads_json(run.params_json, {})
+    params["pipeline_artifact_id"] = artifact.id
+    run.params_json = dumps_json(params)
+    return artifact
 
 
 def test_agent_session_marimo_notebook_outputs_are_analysis_notebooks() -> None:
@@ -3644,6 +3722,70 @@ def test_completed_plan_pauses_main_session_until_new_input(tmp_path: Path) -> N
         assert "test data" in payload["assistant_message"]
 
 
+def test_completed_plan_does_not_pause_while_any_model_pipeline_is_incomplete(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    workspace = tmp_path / "workspace"
+
+    with sessionmaker(engine)() as db:
+        project = Project(
+            id="p_incomplete_pipeline",
+            name="Incomplete Pipeline",
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+        )
+        session = AgentSession(
+            id="as_incomplete_pipeline",
+            project_id=project.id,
+            goal_text="Complete every model pipeline.",
+            status="running",
+            workspace_path=str(workspace),
+        )
+        run = ExperimentRun(
+            id="run_incomplete_pipeline",
+            project_id=project.id,
+            runner_type="codex_main_session",
+            status="succeeded",
+            params_json=dumps_json({"agent_session_id": session.id, "model_id": "candidate"}),
+            metrics_json=dumps_json(
+                {"mae": 1.0, "primary_metric_name": "mae", "primary_metric_value": 1.0}
+            ),
+        )
+        db.add_all([project, session, run])
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "modeling",
+                        "title": "Modeling",
+                        "granularity": "chapter",
+                        "status": "done",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="The plan claims completion before the model bundle exists.",
+        )
+        request = write_inbox_entry(
+            workspace,
+            kind="request",
+            entry_type="pipeline_registration_request",
+            payload={"run_ids": [run.id]},
+        )
+        mark_inbox_entry_processed(workspace, request, processed_by="codex")
+        db.commit()
+
+        assert main_session_should_pause_after_completed_plan(db, project=project, session=session) is False
+
+        store = LocalArtifactStore(tmp_path / "artifacts")
+        store_ready_pipeline_for_run(db, store, project_id=project.id, run=run)
+        db.commit()
+        assert main_session_should_pause_after_completed_plan(db, project=project, session=session) is True
+
+
 def test_waiting_plan_pauses_main_session_for_external_input(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
@@ -5717,6 +5859,20 @@ def test_existing_experiment_run_restores_chat_and_research_plan_link(tmp_path: 
             if entry.get("type") == "pipeline_registration_request"
         ]
         assert len(pipeline_requests_after_restore) == 1
+
+        mark_inbox_entry_processed(
+            workspace,
+            Path(str(pipeline_requests_after_restore[0]["_path"])),
+            processed_by="codex",
+        )
+        restore_registered_session_experiment_visibility(db, store=store, project=project, session=session)
+        db.commit()
+        pipeline_requests_after_processed_restore = [
+            entry
+            for entry in list_inbox_entries(workspace)
+            if entry.get("type") == "pipeline_registration_request"
+        ]
+        assert len(pipeline_requests_after_processed_restore) == 2
 
 
 def test_experiment_result_file_request_registers_leaderboard_run_with_ack(tmp_path: Path) -> None:
@@ -9348,6 +9504,7 @@ def test_strict_research_plan_rejects_leaderboard_when_only_experiment_run_is_de
         except ResearchPlanValidationError as exc:
             issue_codes = {issue["code"] for issue in exc.issues}
             assert "done_node_missing_contract_deliverables" in issue_codes
+            assert "done_node_incomplete_prediction_pipelines" in issue_codes
         else:
             raise AssertionError("Expected ResearchPlanValidationError")
 
@@ -9403,6 +9560,8 @@ def test_strict_research_plan_accepts_leaderboard_with_registered_run(tmp_path: 
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
 
+    store = LocalArtifactStore(tmp_path / "artifacts")
+
     with sessionmaker(engine)() as db:
         project = Project(id="p_registered_leaderboard_run", name="Registered Leaderboard Run")
         run = ExperimentRun(
@@ -9414,6 +9573,7 @@ def test_strict_research_plan_accepts_leaderboard_with_registered_run(tmp_path: 
             metrics_json=dumps_json({"mae": 1.0, "primary_metric_name": "mae", "primary_metric_value": 1.0}),
         )
         db.add_all([project, run])
+        store_ready_pipeline_for_run(db, store, project_id=project.id, run=run)
         db.commit()
 
         result = commit_research_plan_revision(
