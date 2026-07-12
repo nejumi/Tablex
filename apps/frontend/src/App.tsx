@@ -3073,7 +3073,7 @@ function ProjectDetail({
   }
 
   async function changeAutonomyMode(nextMode: AutonomyMode): Promise<void> {
-    const currentMode = effectiveProject.autonomy_mode ?? "approval_based";
+    const currentMode = effectiveProject.autonomy_mode ?? "full_auto";
     if (nextMode === currentMode) return;
     setBusy(true);
     setError(null);
@@ -3754,7 +3754,7 @@ function HomeTab({
   const topRun = leaderboard[0] ?? null;
   const recommendedNotebook = notebookIndex?.recommended_notebook ?? null;
   const latestIdea = ideas[0] ?? null;
-  const mode = project.autonomy_mode ?? "approval_based";
+  const mode = project.autonomy_mode ?? "full_auto";
   const datasetCount = overview?.counts.datasets ?? 0;
   const totalArtifactCount = overview?.counts.artifacts ?? artifacts.length;
   const projectStateLoaded = overview !== null;

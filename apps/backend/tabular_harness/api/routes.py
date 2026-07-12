@@ -987,7 +987,7 @@ def create_project(
         description=payload.description,
         task_type=payload.task_type,
         target_column=payload.target_column,
-        autonomy_mode=payload.autonomy_mode or "approval_based",
+        autonomy_mode=payload.autonomy_mode or "full_auto",
         current_phase="DRAFT",
         created_by=request_actor_id(request),
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import shutil
 import subprocess
@@ -20,6 +21,7 @@ from tabular_harness.services.agent_sessions import start_active_main_session_su
 from tabular_harness.services.artifacts import LocalArtifactStore
 
 AgentSessionSupervisorRunner = Callable[..., list[threading.Thread]]
+logger = logging.getLogger(__name__)
 
 
 def check_codex_runtime() -> None:
@@ -79,12 +81,17 @@ def run_agent_session_supervisor_loop(
     owner_id = lease_owner_id or f"agent-supervisor:pid:{os.getpid()}"
     interval = max(0.1, interval_seconds)
     while True:
-        supervisor_runner(
-            session_factory,
-            store,
-            agent_model=agent_model,
-            lease_owner_id=owner_id,
-        )
+        try:
+            supervisor_runner(
+                session_factory,
+                store,
+                agent_model=agent_model,
+                lease_owner_id=owner_id,
+            )
+        except Exception:
+            if once:
+                raise
+            logger.exception("AgentSession supervisor scan failed; retrying after the configured interval.")
         if once:
             return
         if stop_event is not None:

@@ -1160,7 +1160,7 @@ def test_project_autonomy_mode_persists(tmp_path: Path) -> None:
     project_response = client.post("/api/projects", json={"name": "Mission Control"})
     assert project_response.status_code == 200
     project = project_response.json()
-    assert project["autonomy_mode"] == "approval_based"
+    assert project["autonomy_mode"] == "full_auto"
 
     update_response = client.patch(f"/api/projects/{project['id']}", json={"autonomy_mode": "full_auto"})
     assert update_response.status_code == 200, update_response.text
@@ -1226,7 +1226,7 @@ def test_clone_project_data_only_reuses_uploaded_data_without_progress(tmp_path:
     clone = payload["project"]
     assert payload["mode"] == "data_only"
     assert clone["current_phase"] == "DATA_READY"
-    assert clone["autonomy_mode"] == "approval_based"
+    assert clone["autonomy_mode"] == "full_auto"
     assert clone["task_type"] is None
     assert clone["target_column"] is None
     assert payload["copied_counts"]["datasets"] == 1
@@ -1318,7 +1318,7 @@ def test_clone_project_full_remaps_progress_and_leaves_agent_power_off(tmp_path:
     assert response.status_code == 200, response.text
     clone = response.json()["project"]
     assert clone["current_phase"] == "IDLE"
-    assert clone["autonomy_mode"] == "approval_based"
+    assert clone["autonomy_mode"] == "full_auto"
     assert clone["task_type"] == "classification"
     assert clone["target_column"] == "target"
 

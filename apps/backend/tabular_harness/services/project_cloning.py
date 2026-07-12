@@ -71,7 +71,7 @@ def clone_project(
         primary_dataset_snapshot_id=None,
         current_phase=("IDLE" if mode == "full" else "DATA_READY"),
         status="active",
-        autonomy_mode="approval_based",
+        autonomy_mode="full_auto",
         created_by=created_by,
         created_at=utc_now(),
         updated_at=utc_now(),

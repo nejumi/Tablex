@@ -164,6 +164,6 @@ def test_full_clone_remaps_saved_progress_without_copying_live_state(tmp_path: P
             "project_id": clone.id,
         }
         assert clone.current_phase == "IDLE"
-        assert clone.autonomy_mode == "approval_based"
+        assert clone.autonomy_mode == "full_auto"
         assert clone.task_type == source.task_type
         assert clone.target_column == source.target_column

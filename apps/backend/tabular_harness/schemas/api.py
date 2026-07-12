@@ -10,7 +10,7 @@ class ProjectCreate(BaseModel):
     description: str | None = None
     task_type: str | None = None
     target_column: str | None = None
-    autonomy_mode: Literal["approval_based", "full_auto"] | None = "approval_based"
+    autonomy_mode: Literal["approval_based", "full_auto"] | None = "full_auto"
 
 
 class ProjectUpdate(BaseModel):

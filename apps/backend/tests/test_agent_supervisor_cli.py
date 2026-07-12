@@ -118,6 +118,34 @@ def test_agent_supervisor_loop_respects_stop_event(tmp_path: Path) -> None:
 
     assert len(calls) >= 2
     assert all(call == "dedicated-supervisor:stop-test" for call in calls)
+
+
+def test_agent_supervisor_loop_retries_after_transient_failure(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    stop_event = threading.Event()
+    calls = 0
+
+    def flaky_supervisor_runner(*args: object, **kwargs: object) -> list[threading.Thread]:
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("temporary database lock")
+        stop_event.set()
+        return []
+
+    run_agent_session_supervisor_loop(
+        session_factory,
+        store,
+        interval_seconds=0.01,
+        stop_event=stop_event,
+        supervisor_runner=flaky_supervisor_runner,
+    )
+
+    assert calls == 2
     assert stop_event.is_set()
 
 

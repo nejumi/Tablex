@@ -78,7 +78,7 @@ class Project(Base):
     primary_dataset_snapshot_id: Mapped[str | None] = mapped_column(String)
     current_phase: Mapped[str] = mapped_column(String, default="DRAFT", nullable=False)
     status: Mapped[str] = mapped_column(String, default="active", nullable=False)
-    autonomy_mode: Mapped[str] = mapped_column(String, default="approval_based", nullable=False)
+    autonomy_mode: Mapped[str] = mapped_column(String, default="full_auto", nullable=False)
     created_by: Mapped[str] = mapped_column(String, default="local-user", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

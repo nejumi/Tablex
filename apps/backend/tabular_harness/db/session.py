@@ -60,7 +60,7 @@ def ensure_sqlite_mvp_columns(engine: Engine) -> None:
         if "projects" in table_names:
             existing = {column["name"] for column in inspector.get_columns("projects")}
             additions = {
-                "autonomy_mode": "VARCHAR NOT NULL DEFAULT 'approval_based'",
+                "autonomy_mode": "VARCHAR NOT NULL DEFAULT 'full_auto'",
                 "primary_dataset_snapshot_id": "VARCHAR",
             }
             for column_name, ddl in additions.items():
