@@ -343,6 +343,10 @@ def start_or_resume_main_session(
     runner_kind: str = "codex_cli",
     created_by: str | None = None,
 ) -> AgentSession:
+    # Keep built-in craft context equipped for projects created by older Tablex versions.
+    from tabular_harness.services.asset_library import equip_default_project_skills
+
+    equip_default_project_skills(db, store, project_id=project.id)
     existing = active_main_session(db, project.id)
     if existing is not None:
         append_session_event(
@@ -1750,6 +1754,11 @@ def append_process_timeout_event(
         project = db.get(Project, project_id)
         if session is None or project is None:
             return
+        previous_thread_id = session.codex_thread_id
+        if timeout_kind == "turn_start_silence":
+            # A resumed thread that never begins a turn cannot consume new instructions.
+            # Keep the Tablex workspace and project state, but make the next attempt a fresh Codex thread.
+            session.codex_thread_id = None
         append_session_event(
             db,
             session,
@@ -1760,6 +1769,20 @@ def append_process_timeout_event(
             content="The current Codex CLI process produced no output for the idle timeout. The supervisor will continue if Full Auto remains on.",
             payload={"idle_timeout_seconds": timeout_seconds, "timeout_kind": timeout_kind},
         )
+        if timeout_kind == "turn_start_silence":
+            append_session_event(
+                db,
+                session,
+                source="tablex_sidecar",
+                event_type="codex_thread_reset_after_turn_start_timeout",
+                role="harness",
+                title="Codex thread will restart",
+                content=(
+                    "Codex acknowledged the thread but did not begin a turn. Tablex preserved the project workspace "
+                    "and will continue in a fresh Codex thread."
+                ),
+                payload={"previous_thread_id": previous_thread_id, "preserved_workspace": True},
+            )
         register_agent_session_attention_chat_turn(
             db,
             store=store,

@@ -1472,6 +1472,7 @@ printf '%s\n' '{"type":"thread.started","thread_id":"thread_silent"}'
             project_id=project.id,
             goal_text="Continue.",
             workspace_path=str(workspace),
+            codex_thread_id="thread_that_never_started_a_turn",
         )
         db.add_all([user, project, session])
         db.commit()
@@ -1506,11 +1507,15 @@ printf '%s\n' '{"type":"thread.started","thread_id":"thread_silent"}'
                 )
             )
         )
+        persisted_session = db.get(AgentSession, "as_silent")
+        reset_thread_id = persisted_session.codex_thread_id if persisted_session is not None else "missing"
 
     timeout_events = [event for event in events if event.event_type == "process_timeout"]
     assert timeout_events
     assert loads_json(timeout_events[-1].payload_json, {})["timeout_kind"] == "turn_start_silence"
     assert any(event.event_type == "thread.started" for event in events)
+    assert any(event.event_type == "codex_thread_reset_after_turn_start_timeout" for event in events)
+    assert reset_thread_id is None
     assert chat_artifacts
     stored_payloads = []
     for artifact in chat_artifacts:
@@ -2772,6 +2777,24 @@ def test_turn_prompt_includes_living_research_plan_contract(tmp_path: Path) -> N
         assert "for `artifacts/model_results.json` use top-level `research_plan_node_id`" in protocol
         assert '"schema_version": "model_results.v1"' in protocol
         assert '"research_plan_node_id": "modeling_and_diagnostics"' in protocol
+        assert "equipped_skill_references" in protocol
+        assert "Reason about the data-generating world" in protocol
+        assert "Separate measured facts, source-backed domain knowledge" in protocol
+        assert "A generic table merge followed by one boosted-tree fit is a starting point" in protocol
+        assert "fold-consistent ablations" in protocol
+        assert "reconstruct entity timelines" in protocol
+        assert "overlap/concurrency" in protocol
+        assert "global group-by count/mean/min/max and a flat merge as a lossy relational baseline" in protocol
+        assert "Run the hypothesis loop autonomously" in protocol
+        assert "structured experiment ledger" in protocol
+        assert "remaining high-value opportunities" in protocol
+        assert "Continue the evidence loop beyond a generic merge-and-boost baseline" in prompt.text
+
+
+def test_default_project_skills_include_domain_deep_dive() -> None:
+    from tabular_harness.services.asset_library import DEFAULT_PROJECT_SKILL_NAMES
+
+    assert "tablex_onodera_deep_dive" in DEFAULT_PROJECT_SKILL_NAMES
 
 
 def test_runner_failure_backoff_counts_attempts_not_sidecar_events(tmp_path: Path) -> None:

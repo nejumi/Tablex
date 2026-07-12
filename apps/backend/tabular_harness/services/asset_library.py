@@ -14,6 +14,7 @@ from tabular_harness.services.artifacts import LocalArtifactStore, create_lineag
 DEFAULT_PROJECT_SKILL_NAMES = {
     "tablex_grandmaster_eda",
     "tablex_modeling_strategy",
+    "tablex_onodera_deep_dive",
     "tabular_approach_research",
     "tabular_gradient_boosting_strategy",
     "evaluation_diagnostics_interpreter",
@@ -60,6 +61,10 @@ DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
             "instructions": [
                 "Use this as craft context for deep data understanding, not as deterministic harness logic.",
                 "Let Codex infer objectives, choose analyses, generate hypotheses, and write marimo notebooks from evidence.",
+                "Build a domain model of the people, organizations, machines, markets, policies, physical processes, incentives, constraints, and decisions that generated the records and surround the prediction-time decision.",
+                "Use imaginative mechanisms to find hypotheses generic AutoML would miss, while labeling measured facts, external evidence, hypotheses, and assumptions separately and seeking disconfirming evidence.",
+                "Move between macro profiling and representative raw entity histories, cohorts, edge cases, and model errors so feature ideas reflect observed mechanisms rather than column availability alone.",
+                "Translate domain and data hypotheses into prediction-time-safe feature families, then validate their incremental value with fold-consistent ablations and use the result to choose the next investigation.",
                 "Register hypotheses, visual story cards, evidence bundles, notebook source, reports, and next-analysis queues as artifacts.",
                 "Ask useful questions, but in Full Auto continue with explicit assumptions and fallback policies when safe.",
             ],
@@ -85,16 +90,6 @@ DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
                     "use": "Index of advanced tabular data-science workflows.",
                 },
                 {
-                    "title": "Home Credit Default Risk - Extensive EDA",
-                    "url": "https://www.kaggle.com/code/rishabhrao/home-credit-default-risk-extensive-eda",
-                    "use": "Multi-table credit-risk EDA inspiration.",
-                },
-                {
-                    "title": "Home Credit Default Risk Extensive EDA",
-                    "url": "https://www.kaggle.com/code/gpreda/home-credit-default-risk-extensive-eda",
-                    "use": "Home Credit table-by-table exploration inspiration.",
-                },
-                {
                     "title": "The Kaggle Grandmasters Playbook: 7 Battle-Tested Modeling Techniques for Tabular Data",
                     "url": "https://developer.nvidia.com/blog/the-kaggle-grandmasters-playbook-7-battle-tested-modeling-techniques-for-tabular-data/",
                     "use": "Grandmaster workflow principles: smarter EDA, validation, baselines, feature generation, fast feedback.",
@@ -103,6 +98,26 @@ DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
                     "title": "Kaggle Grandmasters Unveil Winning Strategies for Data Science Superpowers",
                     "url": "https://developer.nvidia.com/blog/kaggle-grandmasters-unveil-winning-strategies-for-data-science-superpowers/",
                     "use": "Problem formulation, data storytelling, validation, train/test difference, and iterative intuition.",
+                },
+                {
+                    "title": "M5 competition methods and results",
+                    "url": "https://github.com/Mcompetitions/M5-methods",
+                    "use": "Forecasting evidence on evaluation windows, hierarchy-aware pooling, recursive versus direct horizons, and combining complementary estimates.",
+                },
+                {
+                    "title": "Using Big Data to Enhance the Bosch Production Line Performance",
+                    "url": "https://arxiv.org/abs/1701.00705",
+                    "use": "Manufacturing example of recovering process structure and validating features from high-dimensional production records.",
+                },
+                {
+                    "title": "ASHRAE Great Energy Predictor III competition: overview and results",
+                    "url": "https://arxiv.org/abs/2007.06933",
+                    "use": "Cross-domain evidence on validation, reproducible workflows, domain-informed preprocessing, and complementary model diversity.",
+                },
+                {
+                    "title": "The Kaggle Book code repository",
+                    "url": "https://github.com/PacktPublishing/The-Kaggle-Book",
+                    "use": "Grandmaster-authored, cross-domain examples of validation, adversarial checks, feature engineering, and ensembling craft.",
                 },
                 {
                     "title": "marimo as reusable Python notebooks",
@@ -157,6 +172,10 @@ DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
             "instructions": [
                 "Use this as craft context for choosing and explaining modeling strategies, not as a fixed recipe.",
                 "Compare models only under the same EvaluationSpec and SplitManifest; label provisional results plainly.",
+                "Treat a generic merged-table boosted model as an initial reference, not an automatic stopping point. Pursue project-specific feature and model hypotheses while reversible work has material expected value.",
+                "Use out-of-fold ablations, subgroup stability, calibration, worst-error review, and residual structure to distinguish feature gains from estimator gains and to generate the next hypothesis.",
+                "Run feature-hypothesis iterations autonomously on unchanged folds: mechanism, minimal coherent feature family, out-of-fold delta and uncertainty, affected slices/errors, conclusion, then evidence-driven next hypothesis.",
+                "Keep disposable probes in an experiment ledger and promote serious distinct candidates to registered, fully packaged runs so reproducibility work does not replace investigation.",
                 "Consider baselines, linear models, tree ensembles, calibration, ensembling, TabPFN/TabICL-style options, and target-free methods when the project evidence supports them.",
                 "Register serious candidates with diagnostics, reports, and reproducible prediction pipelines.",
             ],
@@ -233,6 +252,9 @@ DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
             "instructions": [
                 "Use this as craft context when repeated entity, item, session, order, account, or event histories are available.",
                 "Inspect raw micro trajectories across target classes, target bins, important categories, edge cases, and model errors.",
+                "Recover domain event semantics before aggregating: identify starts, ends, intervals, ordering, overlap or concurrency, transitions, recurrence, and behavior changes that are observable at prediction time.",
+                "Use reconstructed timelines to ask mechanism-level questions that generic group-by statistics cannot express, then encode those mechanisms as auditable feature families.",
+                "Treat count/mean/min/max plus a flat merge as a lossy baseline. Preserve conditional distributions, tails, recency windows, period deltas, trends, change points, spacing, duration, sequence, nested-history, or cross-table consistency only where a semantic hypothesis justifies them.",
                 "Turn observed mechanisms into feature families, then validate them with fold-safe macro evidence and ablations.",
                 "Tie notebook/report narrative back to raw trajectory observations, feature intent, validation evidence, and model effect.",
             ],
@@ -302,7 +324,7 @@ DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
     {
         "asset_type": "feature_recipe",
         "name": "relational_aggregation_recipe",
-        "description": "Multi-table aggregation recipe for entity-level supporting tables such as credit history or transaction logs.",
+        "description": "Multi-table representation recipe for repeated entity, event, interval, or state-history tables.",
         "tags": ["features", "relational", "multi_table"],
         "semantic_tags": ["relational_features", "multi_table", "aggregation", "split_manifest", "leakage_control"],
         "content": {
