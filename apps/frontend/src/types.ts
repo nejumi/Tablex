@@ -957,7 +957,7 @@ export type LeaderboardEntry = {
   evaluation_grade?: "formal" | "provisional";
   evaluation_grade_reason?: string | null;
   model_version_id: string | null;
-  pipeline_artifact_id?: string | null;
+  pipeline_artifact_id: string;
   pipeline_input_contract?: {
     columns: Array<{ name: string; dtype?: string | null; required?: boolean }>;
     required_tables: Array<{

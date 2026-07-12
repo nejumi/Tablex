@@ -27,6 +27,9 @@ from tabular_harness.models.entities import (
 )
 from tabular_harness.services.artifacts import artifact_primary_path, create_lineage_edge
 from tabular_harness.services.locales import locale_is_japanese
+from tabular_harness.services.prediction_pipeline_contract import (
+    leaderboard_ready_pipeline_artifact,
+)
 
 
 @dataclass(frozen=True)
@@ -650,6 +653,10 @@ def research_plan_artifact_links(
         if edge.to_asset_type == "experiment_run":
             run = runs.get(edge.to_asset_id)
             params = loads_json(run.params_json, {}) if run is not None else {}
+            leaderboard_ready = (
+                run is not None
+                and leaderboard_ready_pipeline_artifact(db, run, params=params) is not None
+            )
             model_id = params.get("model_id") if isinstance(params, dict) else None
             link_key = ("experiment_run", node_id, edge.to_asset_id, role)
             if link_key in seen_links:
@@ -667,8 +674,8 @@ def research_plan_artifact_links(
                     "artifact_name": f"{model_id} · {edge.to_asset_id}" if isinstance(model_id, str) and model_id.strip() else edge.to_asset_id,
                     "asset_type": "experiment_run",
                     "artifact_version": None,
-                    "target_tab": "Leaderboard",
-                    "target_anchor": "result-readout",
+                    "target_tab": "Leaderboard" if leaderboard_ready else "Experiments",
+                    "target_anchor": "result-readout" if leaderboard_ready else "experiment-history",
                     "metadata": metadata if isinstance(metadata, dict) else {},
                     "created_at": edge.created_at.isoformat(),
                 }

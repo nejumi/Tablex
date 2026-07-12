@@ -297,6 +297,14 @@ def execute_pipeline_registration_request(
     if missing_files:
         raise ValueError(f"Pipeline directory is missing required files: {', '.join(missing_files)}")
     validate_pipeline_requirements_file(workspace_dir / "requirements.txt")
+    for entrypoint in ("train.py", "predict.py"):
+        source = (workspace_dir / entrypoint).read_text(encoding="utf-8")
+        try:
+            compile(source, entrypoint, "exec")
+        except SyntaxError as exc:
+            raise ValueError(f"Pipeline {entrypoint} is not valid Python: {exc.msg}") from exc
+    if not (workspace_dir / "README.md").read_text(encoding="utf-8").strip():
+        raise ValueError("Pipeline README.md must contain local training and prediction instructions")
     submitted_manifest = payload.get("manifest")
     if submitted_manifest is None:
         manifest_path_value = optional_nonempty_string(payload, "manifest_workspace_path")
@@ -327,6 +335,10 @@ def execute_pipeline_registration_request(
         request_id=request_id,
     )
     metric_reproduction = pipeline_metric_reproduction_summary(manifest=manifest, runs=runs)
+    if metric_reproduction.get("metric_reproduced") is not True:
+        raise ValueError(
+            "pipeline_manifest.expected_metrics must reproduce the linked ExperimentRun metrics before Leaderboard promotion"
+        )
     bundle_dir = workspace / "artifacts" / "pipeline_bundles"
     bundle_dir.mkdir(parents=True, exist_ok=True)
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", pipeline_name).strip("._") or "prediction_pipeline"
@@ -754,7 +766,7 @@ def pipeline_metric_reproduction_summary(
             "reason": "expected_metrics_missing",
             "comparisons": [],
         }
-    comparisons: list[dict[str, Any]] = []
+    expected_by_name: dict[str, float] = {}
     for expected in expected_metrics:
         if not isinstance(expected, dict):
             continue
@@ -762,31 +774,47 @@ def pipeline_metric_reproduction_summary(
         expected_value = expected.get("value")
         if not isinstance(metric_name, str) or not isinstance(expected_value, (int, float)):
             continue
-        observed_values: list[float] = []
-        for run in runs:
-            metrics = loads_json(run.metrics_json, {})
-            value = metrics.get(metric_name)
-            if isinstance(value, (int, float)):
-                observed_values.append(float(value))
-        observed_value = observed_values[0] if observed_values else None
-        absolute_delta = abs(float(expected_value) - observed_value) if observed_value is not None else None
-        relative_delta = absolute_delta / max(abs(float(expected_value)), 1e-12) if absolute_delta is not None else None
+        expected_by_name[metric_name.strip()] = float(expected_value)
+
+    comparisons: list[dict[str, Any]] = []
+    missing_primary_metrics: list[dict[str, str]] = []
+    for run in runs:
+        metrics = loads_json(run.metrics_json, {})
+        primary_metric_name = metrics.get("primary_metric_name")
+        if not isinstance(primary_metric_name, str) or not primary_metric_name.strip():
+            missing_primary_metrics.append({"run_id": run.id, "metric": "primary_metric_name"})
+            continue
+        metric_name = primary_metric_name.strip()
+        expected_value = expected_by_name.get(metric_name)
+        observed_value = metrics.get(metric_name)
+        if not isinstance(observed_value, (int, float)):
+            observed_value = metrics.get("primary_metric_value")
+        if expected_value is None:
+            missing_primary_metrics.append({"run_id": run.id, "metric": metric_name})
+            continue
+        observed_float = float(observed_value) if isinstance(observed_value, (int, float)) else None
+        absolute_delta = abs(expected_value - observed_float) if observed_float is not None else None
+        relative_delta = absolute_delta / max(abs(expected_value), 1e-12) if absolute_delta is not None else None
         comparisons.append(
             {
+                "run_id": run.id,
                 "metric": metric_name,
-                "expected": float(expected_value),
-                "observed": observed_value,
+                "expected": expected_value,
+                "observed": observed_float,
                 "absolute_delta": absolute_delta,
                 "relative_delta": relative_delta,
-                "matched": relative_delta is not None and relative_delta <= 0.05,
+                "matched": absolute_delta is not None
+                and absolute_delta <= max(abs(expected_value) * 1e-6, 1e-9),
             }
         )
-    matched_values = [item["matched"] for item in comparisons if item.get("observed") is not None]
+    matched_values = [item["matched"] for item in comparisons]
+    reproduced = bool(matched_values) and not missing_primary_metrics and all(matched_values)
     return {
         "schema_version": "prediction_pipeline_metric_reproduction.v1",
-        "metric_reproduced": all(matched_values) if matched_values else None,
-        "reason": None if matched_values else "observed_metric_missing",
+        "metric_reproduced": reproduced,
+        "reason": None if reproduced else "primary_metric_missing_or_mismatched",
         "comparisons": comparisons,
+        "missing_primary_metrics": missing_primary_metrics,
     }
 
 
@@ -853,6 +881,15 @@ def smoke_validate_prediction_pipeline(
         timeout_seconds = 300
     requirements_path = workspace_dir / "requirements.txt"
     smoke_python = ensure_prediction_pipeline_smoke_python(requirements_path)
+    train_entrypoint_check = "not_checked"
+    train_path = workspace_dir / "train.py"
+    if train_path.is_file():
+        validate_pipeline_train_entrypoint(
+            smoke_python=smoke_python,
+            train_path=train_path,
+            workspace_dir=workspace_dir,
+        )
+        train_entrypoint_check = "passed"
     try:
         completed = subprocess.run(
             prediction_pipeline_predict_command(
@@ -945,6 +982,7 @@ def smoke_validate_prediction_pipeline(
         "runtime_isolated": True,
         "python_executable": str(smoke_python),
         "requirements_hash": prediction_pipeline_requirements_hash(requirements_path),
+        "train_entrypoint_check": train_entrypoint_check,
         "input_mode": input_mode,
         "input_source": input_source,
         "input_rows": input_rows,
@@ -952,6 +990,49 @@ def smoke_validate_prediction_pipeline(
         "prediction_column": prediction_column,
         "validated_output_columns": required_output_columns,
     }
+
+
+def validate_pipeline_train_entrypoint(
+    *,
+    smoke_python: Path,
+    train_path: Path,
+    workspace_dir: Path,
+) -> None:
+    try:
+        completed = subprocess.run(
+            [str(smoke_python), str(train_path), "--help"],
+            cwd=str(workspace_dir),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise PipelineToolValidationError(
+            "Prediction pipeline train.py --help check timed out",
+            issues=[
+                pipeline_tool_issue(
+                    "pipeline.train",
+                    "train.py must expose a bounded --help command in the isolated pipeline runtime",
+                    timeout_seconds=60,
+                    repair="Use a standard CLI entrypoint that exits without training when invoked with --help.",
+                )
+            ],
+        ) from exc
+    if completed.returncode != 0:
+        stderr_tail = (completed.stderr or completed.stdout or "")[-4000:]
+        raise PipelineToolValidationError(
+            f"Prediction pipeline train.py --help check failed with exit code {completed.returncode}: {stderr_tail}",
+            issues=[
+                pipeline_tool_issue(
+                    "pipeline.train",
+                    "train.py did not start successfully in the isolated pipeline runtime",
+                    exit_code=completed.returncode,
+                    stderr_tail=stderr_tail,
+                    repair="Include all training dependencies and make train.py --help exit successfully.",
+                )
+            ],
+        )
 
 
 def pipeline_required_tables(input_contract: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1211,7 +1292,7 @@ def prediction_pipeline_requirements_hash(requirements_path: Path) -> str:
     except OSError as exc:
         raise ValueError("Pipeline requirements.txt could not be read") from exc
     digest = hashlib.sha256()
-    digest.update(f"python:{sys.version_info.major}.{sys.version_info.minor}\n".encode("utf-8"))
+    digest.update(f"python:{sys.version_info.major}.{sys.version_info.minor}\n".encode())
     digest.update(payload)
     return digest.hexdigest()
 

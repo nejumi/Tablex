@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import threading
 import time
@@ -97,6 +98,9 @@ from tabular_harness.services.jobs import (
 from tabular_harness.services.marimo_sessions import NativeMarimoSession
 from tabular_harness.services.metric_preferences import metric_lower_is_better
 from tabular_harness.services.portal import target_tab_for_artifact, target_tab_for_job
+from tabular_harness.services.prediction_pipeline_contract import (
+    LEADERBOARD_PIPELINE_REQUIRED_FILES,
+)
 from tabular_harness.services.research_plans import (
     commit_research_plan_revision,
     set_research_plan_current_work,
@@ -157,6 +161,105 @@ def run_queued_job(client: TestClient, job_id: str) -> dict[str, Any]:
         completed = worker.run_job(db, job)
         assert completed.status == "succeeded", completed.error_message
         return loads_json(completed.output_json, {})
+
+
+def store_validated_prediction_pipeline(
+    db: Any,
+    store: LocalArtifactStore,
+    *,
+    project_id: str,
+    run_ids: list[str],
+    name: str,
+    metric_name: str,
+    metric_value: float,
+    manifest: dict[str, Any] | None = None,
+) -> Artifact:
+    pipeline_manifest = manifest or {
+        "schema_version": "pipeline_manifest.v1",
+        "input_contract": {
+            "inference_format": {"columns": [{"name": "x", "dtype": "float", "required": True}]}
+        },
+        "output_contract": {
+            "columns": [{"name": "prediction", "dtype": "float", "required": True}],
+            "id_columns": [],
+            "prediction_column": "prediction",
+        },
+        "training": {"deterministic": True, "seed": 7},
+        "runtime": {"python": ">=3.11", "timeout_seconds_predict": 120},
+        "expected_metrics": [{"name": metric_name, "value": metric_value, "split": "validation"}],
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("pipeline_manifest.json", json.dumps(pipeline_manifest))
+        archive.writestr("train.py", "print('train')\n")
+        archive.writestr(
+            "predict.py",
+            "import argparse, csv\n"
+            "parser = argparse.ArgumentParser()\n"
+            "parser.add_argument('--input')\n"
+            "parser.add_argument('--input-dir')\n"
+            "parser.add_argument('--output', required=True)\n"
+            "args = parser.parse_args()\n"
+            "with open(args.output, 'w', encoding='utf-8', newline='') as f:\n"
+            "    writer = csv.DictWriter(f, fieldnames=['prediction'])\n"
+            "    writer.writeheader()\n"
+            "    writer.writerow({'prediction': '0.5'})\n",
+        )
+        archive.writestr("requirements.txt", "")
+        archive.writestr("README.md", "# Local pipeline\n\nRun train.py or predict.py with Python 3.11+.\n")
+    source_dir = store.root / "_test_pipeline_sources"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    source_path = source_dir / f"{name}.zip"
+    source_path.write_bytes(buffer.getvalue())
+    metadata = {
+        "experiment_run_ids": run_ids,
+        "pipeline_manifest": pipeline_manifest,
+        "smoke_validation": {
+            "status": "passed",
+            "input_mode": "input_file",
+            "input_source": "selftest/input.csv",
+            "input_rows": 2,
+            "output_rows": 2,
+            "runtime_isolated": True,
+        },
+        "metric_reproduction": {
+            "schema_version": "prediction_pipeline_metric_reproduction.v1",
+            "metric_reproduced": True,
+            "reason": None,
+            "comparisons": [
+                {
+                    "metric": metric_name,
+                    "expected": metric_value,
+                    "observed": metric_value,
+                    "absolute_delta": 0.0,
+                    "relative_delta": 0.0,
+                    "matched": True,
+                }
+            ],
+        },
+    }
+    version = next_artifact_version(db, project_id, "prediction_pipeline", name)
+    target_dir, stored, content_hash = store.store_existing_file(
+        org_id="local-org",
+        project_id=project_id,
+        asset_type="prediction_pipeline",
+        name=name,
+        version=version,
+        source_path=source_path,
+        filename=source_path.name,
+        metadata=metadata,
+    )
+    return register_artifact(
+        db,
+        project_id=project_id,
+        asset_type="prediction_pipeline",
+        name=name,
+        uri=str(target_dir),
+        content_hash=content_hash,
+        size_bytes=stored.size_bytes,
+        metadata={**metadata, "primary_path": str(stored.path)},
+        version=version,
+    )
 
 
 def test_research_findings_json_preview_renders_source_link_list(tmp_path: Path) -> None:
@@ -2028,6 +2131,18 @@ def test_deliverable_expectation_flow_from_runs_to_model_notebook(tmp_path: Path
         db.refresh(expectation)
         assert expectation.status == "fulfilled"
         assert expectation.fulfilled_by_artifact_id == notebook.id
+        pipeline = store_validated_prediction_pipeline(
+            db,
+            app.state.artifact_store,
+            project_id=project.id,
+            run_ids=[run_id],
+            name="deliverable_flow_pipeline",
+            metric_name="mae",
+            metric_value=42.0,
+        )
+        run_params = loads_json(runs[0].params_json, {})
+        run_params["pipeline_artifact_id"] = pipeline.id
+        runs[0].params_json = json.dumps(run_params)
         db.commit()
 
     leaderboard_response = client.get("/api/projects/p_deliverable_flow/leaderboard")
@@ -4194,6 +4309,19 @@ def test_leaderboard_collapses_duplicate_metric_results_and_keeps_richer_row(tmp
             summary_md=None,
         )
         db.add_all([rich_run, thin_run])
+        db.flush()
+        pipeline = store_validated_prediction_pipeline(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            run_ids=[rich_run.id],
+            name="lgbm_relational_pipeline",
+            metric_name="roc_auc",
+            metric_value=0.7844664737034611,
+        )
+        rich_params = json.loads(rich_run.params_json)
+        rich_params["pipeline_artifact_id"] = pipeline.id
+        rich_run.params_json = json.dumps(rich_params)
         db.commit()
 
     leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
@@ -4202,6 +4330,59 @@ def test_leaderboard_collapses_duplicate_metric_results_and_keeps_richer_row(tmp
     assert len(leaderboard) == 1
     assert leaderboard[0]["run_id"] == "run_rich_duplicate"
     assert leaderboard[0]["model_id"] == "lgbm_relational_aggregates_v1"
+    assert leaderboard[0]["pipeline_artifact_id"] == pipeline.id
+
+    bundle_response = client.get("/api/experiment-runs/run_rich_duplicate/pipeline-bundle")
+    assert bundle_response.status_code == 200
+    bundle_path = tmp_path / "downloaded_pipeline.zip"
+    bundle_path.write_bytes(bundle_response.content)
+    with zipfile.ZipFile(bundle_path) as archive:
+        assert LEADERBOARD_PIPELINE_REQUIRED_FILES.issubset(set(archive.namelist()))
+
+    predict_response = client.post(
+        f"/api/projects/{project_id}/pipelines/{pipeline.id}/predict",
+        json={"dataset_snapshot_id": "ds_prediction_input"},
+    )
+    assert predict_response.status_code == 200
+    assert predict_response.json()["job_type"] == "run_prediction_pipeline"
+
+
+def test_leaderboard_hides_score_only_experiment_runs(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "No score-only leaderboard rows"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+
+    with app.state.session_factory() as db:
+        db.add(
+            ExperimentRun(
+                id="run_score_only",
+                project_id=project_id,
+                runner_type="codex_main_session",
+                status="succeeded",
+                params_json=json.dumps(
+                    {
+                        "model_id": "score_only_model",
+                        "model_description": "Metrics without a reproducible prediction pipeline.",
+                        "features_used": ["x"],
+                    }
+                ),
+                metrics_json=json.dumps(
+                    {"primary_metric_name": "roc_auc", "primary_metric_value": 0.99, "roc_auc": 0.99}
+                ),
+            )
+        )
+        db.commit()
+
+    leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
+    assert leaderboard_response.status_code == 200
+    assert leaderboard_response.json() == []
+    runs_response = client.get(f"/api/projects/{project_id}/runs")
+    assert runs_response.status_code == 200
+    assert any(run["id"] == "run_score_only" for run in runs_response.json())
+    bundle_response = client.get("/api/experiment-runs/run_score_only/pipeline-bundle")
+    assert bundle_response.status_code == 404
 
 
 def test_prediction_input_columns_reads_csv_and_parquet_headers(tmp_path: Path) -> None:
@@ -4462,26 +4643,18 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
             "training": {},
             "runtime": {},
         }
-        pipeline_bundle = store_text_artifact(
+        pipeline_manifest["expected_metrics"] = [
+            {"name": "mae", "value": 27531.0, "split": "validation"}
+        ]
+        pipeline_bundle = store_validated_prediction_pipeline(
             db,
             app.state.artifact_store,
             project_id=project_id,
-            asset_type="prediction_pipeline",
+            run_ids=["run_leaderboard_reconcile"],
             name="hierarchical_median_pipeline",
-            filename="pipeline_bundle.zip",
-            text="zip placeholder",
-            metadata={
-                "experiment_run_ids": ["run_leaderboard_reconcile"],
-                "pipeline_manifest": pipeline_manifest,
-                "smoke_validation": {
-                    "status": "passed",
-                    "input_mode": "input_dir",
-                    "input_source": "selftest/input",
-                    "input_rows": 2,
-                    "output_rows": 2,
-                    "runtime_isolated": True,
-                },
-            },
+            metric_name="mae",
+            metric_value=27531.0,
+            manifest=pipeline_manifest,
         )
         prediction_input_artifact = store_text_artifact(
             db,
@@ -6494,7 +6667,7 @@ def test_native_marimo_proxy_forwards_alive_session_without_readiness_probe(
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
 
-        async def __aenter__(self) -> "FakeAsyncClient":
+        async def __aenter__(self) -> FakeAsyncClient:
             return self
 
         async def __aexit__(self, *args: Any) -> None:
@@ -8364,57 +8537,40 @@ def test_leaderboard_reports_prediction_pipeline_runtime_failure_state(tmp_path:
         project = Project(id="p_pipeline_runtime_state", name="Pipeline runtime state")
         db.add(project)
         db.flush()
-        pipeline = store_text_artifact(
+        runtime_manifest = {
+            "schema_version": "pipeline_manifest.v1",
+            "input_contract": {
+                "inference_format": {
+                    "columns": [{"name": "SK_ID_CURR", "dtype": "string", "required": True}]
+                }
+            },
+            "output_contract": {
+                "columns": [{"name": "prediction", "dtype": "float", "required": True}],
+                "prediction_column": "prediction",
+            },
+            "training": {},
+            "runtime": {},
+            "expected_metrics": [{"name": "roc_auc", "value": 0.7, "split": "validation"}],
+        }
+        pipeline = store_validated_prediction_pipeline(
             db,
             app.state.artifact_store,
             project_id=project.id,
-            asset_type="prediction_pipeline",
+            run_ids=["run_pipeline_runtime_state"],
             name="runtime_state_pipeline",
-            filename="runtime_state_pipeline.zip",
-            text="zip placeholder",
-            metadata={
-                "project_id": project.id,
-                "pipeline_manifest": {
-                    "schema_version": "pipeline_manifest.v1",
-                    "input_contract": {
-                        "inference_format": {
-                            "columns": [{"name": "SK_ID_CURR", "dtype": "string", "required": True}]
-                        }
-                    },
-                    "output_contract": {
-                        "columns": [{"name": "prediction", "dtype": "float", "required": True}],
-                        "prediction_column": "prediction",
-                    },
-                    "training": {},
-                    "runtime": {},
-                },
-            },
+            metric_name="roc_auc",
+            metric_value=0.7,
+            manifest=runtime_manifest,
         )
-        repaired_pipeline = store_text_artifact(
+        repaired_pipeline = store_validated_prediction_pipeline(
             db,
             app.state.artifact_store,
             project_id=project.id,
-            asset_type="prediction_pipeline",
+            run_ids=["run_pipeline_runtime_state"],
             name="runtime_state_pipeline",
-            filename="runtime_state_pipeline_v2.zip",
-            text="zip replacement",
-            metadata={
-                "project_id": project.id,
-                "pipeline_manifest": {
-                    "schema_version": "pipeline_manifest.v1",
-                    "input_contract": {
-                        "inference_format": {
-                            "columns": [{"name": "SK_ID_CURR", "dtype": "string", "required": True}]
-                        }
-                    },
-                    "output_contract": {
-                        "columns": [{"name": "prediction", "dtype": "float", "required": True}],
-                        "prediction_column": "prediction",
-                    },
-                    "training": {},
-                    "runtime": {},
-                },
-            },
+            metric_name="roc_auc",
+            metric_value=0.7,
+            manifest=runtime_manifest,
         )
         prediction_input = store_text_artifact(
             db,
@@ -9717,7 +9873,7 @@ def test_adaptive_strategy_brief_returns_locale_display_fields(tmp_path: Path) -
     assert artifact_payload["candidate_lanes"][0]["display_title"]
 
 
-def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_path: Path) -> None:
+def test_model_candidates_endpoint_keeps_unbundled_models_in_experiment_history(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
     project_response = client.post(
@@ -9791,12 +9947,13 @@ def test_model_candidates_endpoint_queues_requested_models_into_leaderboard(tmp_
 
     leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
     assert leaderboard_response.status_code == 200, leaderboard_response.text
-    leaderboard = leaderboard_response.json()
-    assert len(leaderboard) == 2
-    baseline_types = {row["metrics"]["baseline_type"] for row in leaderboard}
+    assert leaderboard_response.json() == []
+    runs_response = client.get(f"/api/projects/{project_id}/runs")
+    assert runs_response.status_code == 200
+    runs = runs_response.json()
+    assert len(runs) == 2
+    baseline_types = {row["metrics"]["baseline_type"] for row in runs}
     assert baseline_types == {"lightgbm_classifier", "logistic_regression"}
-    assert {row["model_id"] for row in leaderboard} == {"lightgbm_classifier", "logistic_regression"}
-    assert all(row["display_metric_name"] for row in leaderboard)
 
 
 def test_notebook_execution_endpoints_queue_worker_jobs(tmp_path: Path) -> None:
@@ -10583,12 +10740,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
 
     leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
     assert leaderboard_response.status_code == 200, leaderboard_response.text
-    leaderboard = leaderboard_response.json()
-    assert leaderboard[0]["run_id"] == baseline_output["experiment_run_id"]
-    assert leaderboard[0]["display_metric_name"] == "roc_auc"
-    assert leaderboard[0]["display_metric_source"] == "metric_preference"
-    assert leaderboard[0]["display_metric_available"] is True
-    assert abs(leaderboard[0]["display_metric_value"] - baseline_metrics["roc_auc"]) <= 1e-12
+    assert leaderboard_response.json() == []
 
 
     initial_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
@@ -11524,7 +11676,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
 
     leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
     assert leaderboard_response.status_code == 200
-    assert leaderboard_response.json()[0]["primary_metric_value"] is not None
+    assert leaderboard_response.json() == []
 
     diagnostics_response = client.post(f"/api/runs/{baseline_run['id']}/diagnostics")
     assert diagnostics_response.status_code == 200, diagnostics_response.text
@@ -11560,21 +11712,7 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert model_evidence_output["availability"]["prediction_review"] == "ready"
     leaderboard_with_model_diagnostics_response = client.get(f"/api/projects/{project_id}/leaderboard")
     assert leaderboard_with_model_diagnostics_response.status_code == 200
-    leaderboard_with_model_diagnostics = leaderboard_with_model_diagnostics_response.json()
-    diagnostics_row = next(row for row in leaderboard_with_model_diagnostics if row["run_id"] == baseline_run["id"])
-    assert diagnostics_row["model_diagnostics"]["status"] == "ready"
-    assert diagnostics_row["model_diagnostics"]["standard_checks"]["permutation_importance"]["artifact_id"] == (
-        model_evidence_output["permutation_importance_artifact_id"]
-    )
-    assert diagnostics_row["model_diagnostics"]["standard_checks"]["native_feature_importance"]["artifact_id"] == (
-        model_evidence_output["feature_importance_artifact_id"]
-    )
-    assert diagnostics_row["model_diagnostics"]["standard_checks"]["partial_dependence"]["artifact_id"] == (
-        model_evidence_output["partial_dependence_artifact_id"]
-    )
-    assert diagnostics_row["model_diagnostics"]["standard_checks"]["shap"]["artifact_id"] == (
-        model_evidence_output["shap_summary_artifact_id"]
-    )
+    assert leaderboard_with_model_diagnostics_response.json() == []
     model_evidence_report_response = client.get(
         f"/api/artifacts/{model_evidence_output['model_diagnostics_report_artifact_id']}/preview"
     )

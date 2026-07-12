@@ -6,7 +6,9 @@ description: Tablex 如何呈现模型运行、诊断、Notebook 和更深入的
 
 # 建模和诊断
 
-Leaderboard 是模型候选变得可比较的地方。好的行不仅应解释分数，还应说明模型使用了什么、为什么尝试它、有哪些证据支持，以及还缺什么。
+Leaderboard 是预测就绪模型候选的晋升界面。只有可下载的 pipeline 通过隔离预测冒烟测试、能在同一隔离依赖环境中启动训练入口、以数值精度匹配该 run 的主要指标，并包含 manifest、训练与预测入口、依赖和本地使用说明时，才会显示对应行。只有分数的 run 会保留在实验历史中，直到满足这项契约。
+
+每个 Leaderboard 行都能从 UI 运行预测，也能下载为自包含的本地 pipeline bundle。显示分数、模型实现和导出 bundle 因而属于同一个版本化交付物。
 
 ![比较模型分数、评估质量、诊断和预测就绪状态的 Leaderboard](/img/screenshots/leaderboard-model-evidence.png)
 
