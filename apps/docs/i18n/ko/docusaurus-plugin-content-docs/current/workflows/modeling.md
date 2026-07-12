@@ -6,7 +6,9 @@ description: Tablex가 model runs, diagnostics, notebooks, deeper feature engine
 
 # Modeling and diagnostics
 
-Leaderboard는 model candidates가 비교 가능한 형태가 되는 곳입니다. 좋은 row는 score뿐 아니라 model이 무엇을 사용했는지, 왜 시도했는지, 어떤 evidence가 뒷받침하는지, 무엇이 아직 없는지 설명해야 합니다.
+Leaderboard는 예측 준비가 끝난 model candidate를 승격하는 화면입니다. 다운로드 가능한 pipeline이 격리된 prediction smoke test를 통과하고 같은 dependency environment에서 training entrypoint를 시작할 수 있으며 run의 primary metric과 수치 정밀도로 일치하고 manifest, training/prediction entrypoint, dependencies, local usage instructions를 포함할 때만 row가 표시됩니다. Score만 있는 run은 이 contract를 충족할 때까지 experiment history에 남습니다.
+
+모든 Leaderboard row는 UI에서 prediction에 사용할 수 있고 self-contained local pipeline bundle로 다운로드할 수 있습니다. 표시 score, model implementation, exported bundle은 하나의 versioned deliverable로 관리됩니다.
 
 ![Model score, evaluation quality, diagnostics, prediction readiness를 비교하는 Leaderboard](/img/screenshots/leaderboard-model-evidence.png)
 

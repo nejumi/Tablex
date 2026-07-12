@@ -48,7 +48,7 @@ The most important constraints are:
 - **Frontend:** React/Vite workbench with Home, Data, Insights/Reports, Leaderboard, Notebooks, Assets, Jobs, Lineage, Agent Chat, and Raw transcript surfaces.
 - **Agent execution:** persistent `AgentSession` for Full Auto, Codex CLI integration, transcript persistence, workspace materialization under `.tablex/`, inbox/ack request protocols, and supervisor recovery.
 - **Artifacts and lineage:** datasets, semantic/relational catalogs, evidence, assumptions, reports, notebooks, model results, prediction pipelines, pilot runs, and generated assets are stored with hashes and lineage.
-- **Evaluation and modeling:** EvaluationSpec, SplitManifest, ExperimentRun, ModelVersion, Leaderboard, model diagnostics, feature importance/permutation importance/PDP/SHAP-style diagnostic artifacts where available, and downloadable prediction pipeline bundles.
+- **Evaluation and modeling:** EvaluationSpec, SplitManifest, ExperimentRun, ModelVersion, and model diagnostics. The Leaderboard promotes only validated prediction-ready runs whose versioned pipeline bundles can be used from the UI or downloaded for local training and prediction.
 - **Research and skills:** project and cross-project Skills, controlled research requests, source-backed findings, and research reports. External claims should be stored as Evidence or source-backed artifacts, not left only in logs.
 - **Pilot workflow:** registered prediction pipelines can be used for prediction batches, outcome ingestion, pilot scoring, and agent-authored validation audits that feed the same continuing Full Auto loop.
 

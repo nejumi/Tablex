@@ -328,6 +328,10 @@ from tabular_harness.services.portal import (
 from tabular_harness.services.prediction_input_feedback import (
     maybe_send_prediction_input_validation_failure_to_codex,
 )
+from tabular_harness.services.prediction_pipeline_contract import (
+    leaderboard_ready_pipeline_artifact,
+    prediction_pipeline_artifact_for_run,
+)
 from tabular_harness.services.project_guidance import (
     build_project_guidance,
 )
@@ -7973,6 +7977,11 @@ def leaderboard(
         select(ExperimentRun).where(ExperimentRun.project_id == project_id, ExperimentRun.status == "succeeded")
     ).all()
     notebook_index = build_project_notebook_index(db, project)
+    runs = [
+        run
+        for run in runs
+        if leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {})) is not None
+    ]
     runs = unique_leaderboard_runs(db, runs, notebook_index=notebook_index)
     metric_preference = latest_metric_preference(db, project_id)
     display_metric = metric_preference
@@ -8043,7 +8052,7 @@ def leaderboard(
         for metrics in [loads_json(run.metrics_json, {})]
         for params in [loads_json(run.params_json, {})]
         for model_id in [leaderboard_model_id(params, metrics)]
-        for pipeline_artifact in [experiment_run_pipeline_artifact(db, run, params=params)]
+        for pipeline_artifact in [leaderboard_ready_pipeline_artifact(db, run, params=params)]
         for display_metric_value in [preferred_metric_value(metrics, display_metric)]
     ]
 
@@ -8274,9 +8283,12 @@ def download_experiment_run_pipeline_bundle(
     if run is None:
         raise HTTPException(status_code=404, detail="ExperimentRun not found")
     require_project(db, run.project_id)
-    artifact = experiment_run_pipeline_artifact(db, run, params=loads_json(run.params_json, {}))
+    artifact = leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {}))
     if artifact is None:
-        raise HTTPException(status_code=404, detail="Prediction pipeline bundle is not registered for this run")
+        raise HTTPException(
+            status_code=404,
+            detail="A validated, reproducible prediction pipeline bundle is not registered for this run",
+        )
     path = artifact_primary_path(artifact)
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Prediction pipeline bundle file not found")
@@ -9084,54 +9096,7 @@ def leaderboard_features_used(params: dict[str, Any]) -> list[str]:
 
 
 def experiment_run_pipeline_artifact(db: Session, run: ExperimentRun, *, params: dict[str, Any]) -> Artifact | None:
-    candidate_ids: list[str] = []
-    for source in (params, params.get("raw") if isinstance(params.get("raw"), dict) else {}):
-        if not isinstance(source, dict):
-            continue
-        for key in ("pipeline_artifact_id", "prediction_pipeline_artifact_id", "pipeline_bundle_artifact_id"):
-            value = source.get(key)
-            if isinstance(value, str) and value.strip():
-                candidate_ids.append(value.strip())
-    for artifact_id in dict.fromkeys(candidate_ids):
-        artifact = db.get(Artifact, artifact_id)
-        if artifact is not None and artifact.project_id == run.project_id and artifact.asset_type == "prediction_pipeline":
-            return artifact
-
-    linked_edges = db.scalars(
-        select(LineageEdge)
-        .where(
-            LineageEdge.project_id == run.project_id,
-            LineageEdge.from_asset_type == "experiment_run",
-            LineageEdge.from_asset_id == run.id,
-            LineageEdge.to_asset_type == "artifact",
-            LineageEdge.relation_type.in_(
-                [
-                    "materializes_prediction_pipeline",
-                    "registered_prediction_pipeline",
-                    "prediction_pipeline",
-                ]
-            ),
-        )
-        .order_by(LineageEdge.created_at.desc())
-    ).all()
-    for edge in linked_edges:
-        artifact = db.get(Artifact, edge.to_asset_id)
-        if artifact is not None and artifact.project_id == run.project_id and artifact.asset_type == "prediction_pipeline":
-            return artifact
-
-    project_pipelines = db.scalars(
-        select(Artifact)
-        .where(Artifact.project_id == run.project_id, Artifact.asset_type == "prediction_pipeline")
-        .order_by(Artifact.created_at.desc())
-    ).all()
-    for artifact in project_pipelines:
-        metadata = loads_json(artifact.metadata_json, {})
-        if metadata.get("experiment_run_id") == run.id or metadata.get("run_id") == run.id:
-            return artifact
-        run_ids = metadata.get("experiment_run_ids")
-        if isinstance(run_ids, list) and run.id in run_ids:
-            return artifact
-    return None
+    return prediction_pipeline_artifact_for_run(db, run, params=params)
 
 
 def leaderboard_pipeline_input_contract(artifact: Artifact | None) -> dict[str, Any] | None:

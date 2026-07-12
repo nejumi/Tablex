@@ -152,6 +152,9 @@ from tabular_harness.services.model_diagnostics_artifacts import latest_run_arti
 from tabular_harness.services.prediction_input_feedback import (
     maybe_send_prediction_input_validation_failure_to_codex,
 )
+from tabular_harness.services.prediction_pipeline_contract import (
+    leaderboard_ready_pipeline_artifact,
+)
 from tabular_harness.services.research_plan_timeline import build_research_plan_timeline_response
 from tabular_harness.services.research_plans import (
     ResearchPlanValidationError,
@@ -4687,10 +4690,8 @@ def test_codex_structured_model_results_materialize_leaderboard_runs_and_chat_li
         assert chat_artifact is not None
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
         assert chat_payload["intent"]["type"] == "experiment_results_registered"
-        assert chat_payload["actions"][0]["target_tab"] == "Leaderboard"
-        assert chat_payload["actions"][0]["target_anchor"] == "result-readout"
-        assert any(action["target_tab"] == "Assets" for action in chat_payload["actions"])
-        assert chat_payload["visible_surfaces"]["leaderboard"]["run_ids"] == [run.id for run in runs]
+        assert chat_payload["actions"][0]["target_tab"] == "Assets"
+        assert "leaderboard" not in chat_payload["visible_surfaces"]
         assert chat_payload["visible_surfaces"]["assets"]["target_anchor"] == "assets-artifact-preview"
         pipeline_requests = [
             entry
@@ -4711,7 +4712,7 @@ def test_codex_structured_model_results_materialize_leaderboard_runs_and_chat_li
             if entry.get("type") == "pipeline_registration_request"
         ]
         assert len(pipeline_requests_after_rescan) == 1
-        assert chat_payload["next_focus"]["target_anchor"] == "result-readout"
+        assert chat_payload["next_focus"]["target_anchor"] == "agent-workspace"
 
         ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
         db.commit()
@@ -5210,7 +5211,8 @@ def test_codex_structured_model_results_accept_runs_array_with_nested_metric_sum
         )
         assert chat_artifact is not None
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
-        assert "Leaderboardに登録しました" in chat_payload["assistant_message"]
+        assert "実験履歴に登録しました" in chat_payload["assistant_message"]
+        assert "Leaderboardへ自動昇格します" in chat_payload["assistant_message"]
 
 
 def test_malformed_structured_model_results_are_announced_in_agent_chat(tmp_path: Path) -> None:
@@ -5443,7 +5445,7 @@ def test_structured_model_results_attach_to_single_active_research_plan_node(tmp
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
         assert chat_payload["intent"]["type"] == "experiment_results_registered"
         assert chat_payload["response_brief"]["research_plan_node_ids"] == ["modeling_and_diagnostics"]
-        assert chat_payload["visible_surfaces"]["leaderboard"]["run_ids"] == [run.id]
+        assert "leaderboard" not in chat_payload["visible_surfaces"]
         assert chat_payload["visible_surfaces"]["assets"]["artifact_id"] == source_artifact.id
         assert any(action["target_tab"] == "Assets" for action in chat_payload["actions"])
 
@@ -5689,11 +5691,10 @@ def test_existing_experiment_run_restores_chat_and_research_plan_link(tmp_path: 
         assert chat_artifact is not None
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
         assert chat_payload["intent"]["type"] == "experiment_results_registered"
-        assert chat_payload["actions"][0]["target_tab"] == "Leaderboard"
-        assert chat_payload["actions"][0]["target_anchor"] == "result-readout"
+        assert chat_payload["actions"][0]["target_tab"] == "Assets"
         assert chat_payload["response_brief"]["run_ids"] == [run.id]
         assert chat_payload["response_brief"]["research_plan_node_ids"] == ["modeling_and_diagnostics"]
-        assert chat_payload["visible_surfaces"]["leaderboard"]["run_ids"] == [run.id]
+        assert "leaderboard" not in chat_payload["visible_surfaces"]
         assert chat_payload["visible_surfaces"]["assets"]["artifact_id"] == source_artifact.id
         assert any(action["target_tab"] == "Assets" for action in chat_payload["actions"])
         timeline = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
@@ -6052,8 +6053,7 @@ def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Pa
         assert ack["result"]["registered_runs"][0]["split_manifest_id"] == split_manifest.id
         assert ack["result"]["registered_runs"][0]["source_artifact_id"] == source_artifact.id
         assert ack["result"]["chat_artifact_id"]
-        assert ack["result"]["visible_surfaces"]["leaderboard"]["target_tab"] == "Leaderboard"
-        assert ack["result"]["visible_surfaces"]["leaderboard"]["run_ids"] == [run.id]
+        assert "leaderboard" not in ack["result"]["visible_surfaces"]
         assert ack["result"]["visible_surfaces"]["assets"]["artifact_id"] == source_artifact.id
         assert ack["result"]["visible_surfaces"]["assets"]["target_anchor"] == "assets-artifact-preview"
         assert ack["result"]["visible_surfaces"]["data"]["dataset_snapshot_id"] == dataset.id
@@ -6102,7 +6102,7 @@ def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Pa
             if link["link_type"] == "artifact" and link["artifact_id"] == source_artifact.id
         )
         assert timeline_run_link["run_id"] == run.id
-        assert timeline_run_link["target_tab"] == "Leaderboard"
+        assert timeline_run_link["target_tab"] == "Experiments"
         assert timeline_source_link["role"] == "experiment_evidence"
         chat_artifact = db.scalar(
             select(Artifact)
@@ -6113,7 +6113,7 @@ def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Pa
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
         assert chat_payload["intent"]["type"] == "experiment_results_registered"
         assert chat_payload["response_brief"]["research_plan_node_ids"] == ["modeling_and_diagnostics"]
-        assert chat_payload["visible_surfaces"]["leaderboard"]["run_ids"] == [run.id]
+        assert "leaderboard" not in chat_payload["visible_surfaces"]
         assert chat_payload["visible_surfaces"]["assets"]["artifact_id"] == source_artifact.id
         assert chat_payload["visible_surfaces"]["data"]["dataset_snapshot_id"] == dataset.id
         assert chat_payload["visible_surfaces"]["evaluation"]["evaluation_spec_ids"] == [evaluation_spec.id]
@@ -6383,6 +6383,7 @@ def test_pipeline_request_registers_prediction_pipeline_and_links_run(tmp_path: 
         assert ack["job_id"] == job.id
         assert ack["result"]["smoke_validation"]["status"] == "passed"
         assert ack["result"]["smoke_validation"]["runtime_isolated"] is True
+        assert ack["result"]["smoke_validation"]["train_entrypoint_check"] == "passed"
         assert ack["result"]["smoke_validation"]["requirements_hash"]
         assert ack["result"]["metric_reproduction"]["metric_reproduced"] is True
         artifact = db.get(Artifact, ack["result"]["pipeline_artifact_id"])
@@ -6400,6 +6401,14 @@ def test_pipeline_request_registers_prediction_pipeline_and_links_run(tmp_path: 
         assert refreshed_run is not None
         assert loads_json(refreshed_run.params_json, {})["pipeline_artifact_id"] == artifact.id
         assert loads_json(artifact.metadata_json, {})["metric_reproduction"]["metric_reproduced"] is True
+        assert (
+            leaderboard_ready_pipeline_artifact(
+                db,
+                refreshed_run,
+                params=loads_json(refreshed_run.params_json, {}),
+            )
+            == artifact
+        )
         edge = db.scalar(
             select(LineageEdge).where(
                 LineageEdge.project_id == project.id,
@@ -6410,6 +6419,39 @@ def test_pipeline_request_registers_prediction_pipeline_and_links_run(tmp_path: 
             )
         )
         assert edge is not None
+
+
+def test_pipeline_metric_reproduction_requires_each_linked_run_primary_metric() -> None:
+    run = ExperimentRun(
+        id="run_primary_metric_contract",
+        project_id="p_primary_metric_contract",
+        runner_type="codex_main_session",
+        status="succeeded",
+        metrics_json=dumps_json(
+            {"primary_metric_name": "roc_auc", "primary_metric_value": 0.81, "roc_auc": 0.81}
+        ),
+    )
+
+    missing = pipeline_requests_module.pipeline_metric_reproduction_summary(
+        manifest={"expected_metrics": [{"name": "average_precision", "value": 0.3}]},
+        runs=[run],
+    )
+    assert missing["metric_reproduced"] is False
+    assert missing["missing_primary_metrics"] == [{"run_id": run.id, "metric": "roc_auc"}]
+
+    mismatched = pipeline_requests_module.pipeline_metric_reproduction_summary(
+        manifest={"expected_metrics": [{"name": "roc_auc", "value": 0.7}]},
+        runs=[run],
+    )
+    assert mismatched["metric_reproduced"] is False
+    assert mismatched["comparisons"][0]["matched"] is False
+
+    reproduced = pipeline_requests_module.pipeline_metric_reproduction_summary(
+        manifest={"expected_metrics": [{"name": "roc_auc", "value": 0.81}]},
+        runs=[run],
+    )
+    assert reproduced["metric_reproduced"] is True
+    assert reproduced["missing_primary_metrics"] == []
 
 
 def test_pipeline_manifest_normalizes_required_tables_contract() -> None:

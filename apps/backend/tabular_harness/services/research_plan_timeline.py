@@ -10,6 +10,9 @@ from tabular_harness.models.entities import AgentSession, Artifact, ExperimentRu
 from tabular_harness.services.agent_presence import supervisor_lease_active
 from tabular_harness.services.artifacts import artifact_primary_path
 from tabular_harness.services.portal import running_codex_processes_for_project
+from tabular_harness.services.prediction_pipeline_contract import (
+    leaderboard_ready_pipeline_artifact,
+)
 from tabular_harness.services.research_plans import (
     PLAN_CURRENT_STATUSES,
     PLAN_MAX_TOP_LEVEL_BLOCKS,
@@ -456,6 +459,10 @@ def research_plan_evidence_links(
                 run = db.get(ExperimentRun, run_id)
                 if run is None or run.project_id != revision.project_id:
                     continue
+                leaderboard_ready = (
+                    leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {}))
+                    is not None
+                )
                 links.append(
                     {
                         "id": f"evidence_run:{revision.id}:{node_id}:{item_index}:{run.id}",
@@ -468,8 +475,8 @@ def research_plan_evidence_links(
                         "artifact_name": research_plan_run_label(run),
                         "asset_type": "experiment_run",
                         "artifact_version": None,
-                        "target_tab": "Leaderboard",
-                        "target_anchor": "result-readout",
+                        "target_tab": "Leaderboard" if leaderboard_ready else "Experiments",
+                        "target_anchor": "result-readout" if leaderboard_ready else "experiment-history",
                         "metadata": {
                             "source": "research_plan_completion_evidence",
                             "runner_type": run.runner_type,

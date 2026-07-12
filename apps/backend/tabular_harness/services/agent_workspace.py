@@ -836,8 +836,10 @@ def build_session_context(
                 "operations": ["register_runs"],
                 "description": (
                     "Use this fixed JSON request/ack channel when model or evaluation results should become "
-                    "Tablex ExperimentRun records and appear in the Leaderboard. Each run must include a stable "
+                    "Tablex ExperimentRun records. Each run must include a stable "
                     "model_id and numeric metrics. Prefer one comparable primary metric across runs in the same result set. "
+                    "ExperimentRuns appear in the Leaderboard only after a linked reproducible pipeline passes isolated "
+                    "prediction smoke validation, reproduces the registered metrics, and remains downloadable for local use. "
                     "After registering runs, inspect result.pipeline_registration in the ack; if it is missing or partial, "
                     "continue with register_prediction_pipeline requests for those run ids before marking modeling/reporting complete."
                 ),
@@ -1017,9 +1019,10 @@ def build_session_context(
                 "schema_version": PIPELINE_REQUEST_SCHEMA_VERSION,
                 "operations": ["register_prediction_pipeline"],
                 "description": (
-                    "Use this fixed JSON request/ack channel when a leaderboard run has a reproducible prediction pipeline. "
+                    "Use this fixed JSON request/ack channel to promote an ExperimentRun with a reproducible prediction pipeline. "
                     "Tablex validates required files and manifest shape, zips the pipeline directory as a prediction_pipeline artifact, "
-                    "and links it to the declared ExperimentRun ids. predict.py must accept --input <file> for single-table inputs, "
+                    "links it to the declared ExperimentRun ids, and then exposes it in the Leaderboard. predict.py must accept "
+                    "--input <file> for single-table inputs, "
                     "or --input-dir <directory> when input_contract.required_tables is declared. The --input-dir directory contains "
                     "a manifest.json and one file per table."
                 ),

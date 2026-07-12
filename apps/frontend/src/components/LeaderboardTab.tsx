@@ -990,9 +990,7 @@ export function LeaderboardTab({
                   <div className="leaderboard-evidence-badges" key={`${entry.run_id}-evidence`}>
                     <span className={modelDiagnosticsBadgeClass(entry)}>{modelDiagnosticsStatusLabel(entry, text)}</span>
                     <small>{modelDiagnosticsChecksLabel(entry)}</small>
-                    {entry.pipeline_artifact_id ? (
-                      <span className={pipelineRuntimeBadgeClass(entry)}>{pipelineRuntimeStatusLabel(entry, text)}</span>
-                    ) : null}
+                    <span className={pipelineRuntimeBadgeClass(entry)}>{pipelineRuntimeStatusLabel(entry, text)}</span>
                     {openDeliverableExpectations(entry).length ? (
                       <span className="badge warning" title={deliverableExpectationsTitle(entry, text)}>
                         {text.deliverableExpectationsOpen.replace(
@@ -1031,7 +1029,7 @@ export function LeaderboardTab({
                     </button>
                     <button
                       className="leaderboard-row-primary"
-                      disabled={busy || !entry.pipeline_artifact_id}
+                      disabled={busy}
                       onClick={() => {
                         setPredictionEntry(entry);
                         setPredictionResultArtifactId(null);
@@ -1040,7 +1038,7 @@ export function LeaderboardTab({
                         setPredictionUploadError(null);
                         setPredictionBatchKind("external_test");
                       }}
-                      title={entry.pipeline_artifact_id ? text.leaderboardActionPredict : text.pipelineBundleUnavailable}
+                      title={text.leaderboardActionPredict}
                       type="button"
                     >
                       {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
@@ -1079,21 +1077,14 @@ export function LeaderboardTab({
                           <FileText size={15} />
                           {text.leaderboardActionDraftReport}
                         </button>
-                        {entry.pipeline_artifact_id ? (
-                          <a
-                            className="text-button"
-                            href={`${apiBase}/api/experiment-runs/${entry.run_id}/pipeline-bundle`}
-                            title={text.downloadPipelineBundle}
-                          >
-                            <Download size={15} />
-                            {text.leaderboardActionDownloadPipelineShort}
-                          </a>
-                        ) : (
-                          <button className="text-button" disabled title={text.pipelineBundleUnavailable} type="button">
-                            <Download size={15} />
-                            {text.leaderboardActionDownloadPipelineShort}
-                          </button>
-                        )}
+                        <a
+                          className="text-button"
+                          href={`${apiBase}/api/experiment-runs/${entry.run_id}/pipeline-bundle`}
+                          title={text.downloadPipelineBundle}
+                        >
+                          <Download size={15} />
+                          {text.leaderboardActionDownloadPipelineShort}
+                        </a>
                       </div>
                     </details>
                   </div>

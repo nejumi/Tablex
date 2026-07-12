@@ -6,7 +6,9 @@ description: モデルrun、診断、Notebook、特徴量深掘りの読み方�
 
 # モデリングと診断
 
-Leaderboardはモデル候補を比較する場所です。良い行はスコアだけでなく、何を使い、なぜ試し、どの根拠があり、何が不足しているかを説明します。
+Leaderboardは予測可能なモデル候補を昇格させる場所です。ダウンロード可能なpipelineが隔離環境の予測smoke testに合格し、同じ依存環境で学習entrypointを起動でき、runの主指標と数値精度で一致し、manifest、学習・予測entrypoint、依存関係、ローカル実行手順を含む場合にだけ行が表示されます。スコアだけのrunは、この契約を満たすまで実験履歴に残ります。
+
+すべてのLeaderboard行はUIから予測でき、自己完結したローカルpipeline bundleとしてダウンロードできます。表示スコア、モデル実装、export bundleは、同じversioned deliverableとして管理されます。
 
 ![モデルスコア、評価品質、診断、予測準備状況を比較するLeaderboard](/img/screenshots/leaderboard-model-evidence.png)
 

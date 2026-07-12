@@ -6,7 +6,9 @@ description: How Tablex presents model runs, diagnostics, notebooks, and deeper 
 
 # Modeling and diagnostics
 
-The Leaderboard is where model candidates become comparable. A good row should explain not only the score, but also what the model used, why it was tried, what evidence supports it, and what remains missing.
+The Leaderboard is the promotion surface for prediction-ready model candidates. A row appears only after its downloadable pipeline passes an isolated prediction smoke test, starts its training entrypoint in the same isolated dependency environment, matches the run's primary metric at numerical precision, and includes the manifest, training and prediction entrypoints, dependencies, and local usage instructions. Score-only runs remain in experiment history until that contract is complete.
+
+Every Leaderboard row can be used for prediction from the UI and downloaded as a self-contained local pipeline bundle. The displayed score, model implementation, and exported bundle therefore stay one versioned deliverable rather than three unrelated claims.
 
 ![Leaderboard comparing model scores, evaluation quality, diagnostics, and prediction readiness](/img/screenshots/leaderboard-model-evidence.png)
 

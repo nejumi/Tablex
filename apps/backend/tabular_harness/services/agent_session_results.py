@@ -47,6 +47,9 @@ from tabular_harness.services.metric_preferences import (
     leaderboard_sort_key_for_metric,
     normalize_metric_name,
 )
+from tabular_harness.services.prediction_pipeline_contract import (
+    leaderboard_ready_pipeline_artifact,
+)
 from tabular_harness.services.research_plans import (
     PLAN_CURRENT_STATUSES,
     attach_research_plan_artifact,
@@ -55,7 +58,6 @@ from tabular_harness.services.research_plans import (
     research_plan_block_id,
     research_plan_block_status,
     research_plan_blocks_from_revision,
-    research_plan_revision_document,
     validate_research_plan_node_exists,
 )
 
@@ -231,7 +233,7 @@ def process_experiment_result_requests(
                 source_artifact=None,
                 source_request_id=request_id,
             )
-            pipeline_registration = experiment_pipeline_registration_status(runs)
+            pipeline_registration = experiment_pipeline_registration_status(db, runs)
             if pipeline_registration["status"] != "ready":
                 write_pipeline_registration_request_to_workspace_inbox(
                     workspace,
@@ -291,6 +293,7 @@ def process_experiment_result_requests(
                     "model_diagnostics_notebook": model_diagnostics_notebook,
                     "chat_artifact_id": chat_artifact.id if chat_artifact is not None else None,
                     "visible_surfaces": experiment_result_visible_surfaces(
+                        db,
                         runs,
                         chat_artifact_id=chat_artifact.id if chat_artifact is not None else None,
                     ),
@@ -305,7 +308,7 @@ def process_experiment_result_requests(
                     event_type="experiment_result_request_succeeded",
                     role="harness",
                     title="Experiment result request processed",
-                    content=f"Registered {len(runs)} leaderboard run(s) from `{path.relative_to(workspace)}`.",
+                    content=f"Registered {len(runs)} experiment result(s) from `{path.relative_to(workspace)}`.",
                     payload=ack,
                     update_heartbeat=False,
                 )
@@ -317,7 +320,7 @@ def process_experiment_result_requests(
                         event_type="pipeline_registration_requested",
                         role="harness",
                         title="Prediction pipeline registration requested",
-                        content="Registered leaderboard runs do not yet have prediction pipeline bundles.",
+                        content="Experiment results are awaiting validated prediction pipelines before Leaderboard promotion.",
                         payload={
                             "schema_version": "pipeline_registration_request_notice.v1",
                             "source_request_id": request_id,
@@ -333,7 +336,7 @@ def process_experiment_result_requests(
                         event_type="model_diagnostics_artifacts_requested",
                         role="harness",
                         title="Model diagnostics artifacts requested",
-                        content="Registered leaderboard runs do not yet have standard model-diagnostics artifacts.",
+                        content="Registered experiment results do not yet have standard model-diagnostics artifacts.",
                         payload={
                             "schema_version": "model_diagnostics_artifact_request_notice.v1",
                             "source_request_id": request_id,
@@ -349,7 +352,7 @@ def process_experiment_result_requests(
                         event_type="model_diagnostics_notebook_requested",
                         role="harness",
                         title="Model diagnostics notebook requested",
-                        content="Registered leaderboard runs do not yet have linked model-diagnostics notebooks.",
+                        content="Registered experiment results do not yet have linked model-diagnostics notebooks.",
                         payload={
                             "schema_version": "model_diagnostics_notebook_request_notice.v1",
                             "source_request_id": request_id,
@@ -466,7 +469,7 @@ def ingest_registered_session_experiment_artifacts(
             created_runs.extend(runs)
             created_by_artifact[artifact.id] = runs
             workspace = resolve_runtime_data_path(session.workspace_path) if session.workspace_path else None
-            pipeline_registration = experiment_pipeline_registration_status(runs)
+            pipeline_registration = experiment_pipeline_registration_status(db, runs)
             if workspace is not None and pipeline_registration["status"] != "ready":
                 write_pipeline_registration_request_to_workspace_inbox(
                     workspace,
@@ -563,7 +566,7 @@ def restore_registered_session_experiment_visibility(
         )
         workspace = resolve_runtime_data_path(session.workspace_path) if session.workspace_path else None
         if workspace is not None:
-            pipeline_registration = experiment_pipeline_registration_status(group_runs)
+            pipeline_registration = experiment_pipeline_registration_status(db, group_runs)
             if pipeline_registration["status"] != "ready":
                 write_pipeline_registration_request_to_workspace_inbox(
                     workspace,
@@ -691,21 +694,16 @@ def experiment_run_ack_item(run: ExperimentRun) -> dict[str, Any]:
     }
 
 
-def run_pipeline_artifact_id(run: ExperimentRun) -> str | None:
-    params = loads_json(run.params_json, {})
-    value = params.get("pipeline_artifact_id")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
-
-
-def experiment_pipeline_registration_status(runs: list[ExperimentRun]) -> dict[str, Any]:
+def experiment_pipeline_registration_status(db: Session, runs: list[ExperimentRun]) -> dict[str, Any]:
     registered = [
-        {"run_id": run.id, "pipeline_artifact_id": pipeline_artifact_id}
+        {"run_id": run.id, "pipeline_artifact_id": artifact.id}
         for run in runs
-        for pipeline_artifact_id in [run_pipeline_artifact_id(run)]
-        if pipeline_artifact_id
+        for artifact in [
+            leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {}))
+        ]
+        if artifact is not None
     ]
+    registered_run_ids = {item["run_id"] for item in registered}
     missing = [
         {
             "run_id": run.id,
@@ -713,7 +711,7 @@ def experiment_pipeline_registration_status(runs: list[ExperimentRun]) -> dict[s
             "model_description": run.summary_md,
         }
         for run in runs
-        if run_pipeline_artifact_id(run) is None
+        if run.id not in registered_run_ids
     ]
     if registered and missing:
         status = "partial"
@@ -980,6 +978,7 @@ def artifact_payload_status(artifact: Artifact) -> str | None:
 
 
 def experiment_result_visible_surfaces(
+    db: Session,
     runs: list[ExperimentRun],
     *,
     chat_artifact_id: str | None,
@@ -996,12 +995,12 @@ def experiment_result_visible_surfaces(
         add_text_value(dataset_snapshot_ids, run.dataset_snapshot_id)
         add_text_value(evaluation_spec_ids, run.evaluation_spec_id)
         add_text_value(split_manifest_ids, run.split_manifest_id)
+    leaderboard_run_ids = [
+        run.id
+        for run in runs
+        if leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {})) is not None
+    ]
     surfaces: dict[str, Any] = {
-        "leaderboard": {
-            "target_tab": "Leaderboard",
-            "target_anchor": "result-readout",
-            "run_ids": [run.id for run in runs],
-        },
         "research_plan": {
             "target_tab": "Home",
             "target_anchor": "research-plan",
@@ -1013,6 +1012,12 @@ def experiment_result_visible_surfaces(
             "artifact_id": chat_artifact_id,
         },
     }
+    if leaderboard_run_ids:
+        surfaces["leaderboard"] = {
+            "target_tab": "Leaderboard",
+            "target_anchor": "result-readout",
+            "run_ids": leaderboard_run_ids,
+        }
     if source_artifact_ids:
         sorted_artifact_ids = sorted(source_artifact_ids)
         surfaces["assets"] = {
@@ -2015,13 +2020,14 @@ def register_experiment_registration_chat_turn(
     best_metrics = loads_json(best_run.metrics_json, {})
     metric_name = str(best_metrics.get("primary_metric_name") or "")
     metric_value = best_metrics.get("primary_metric_value")
-    pipeline_registration = experiment_pipeline_registration_status(runs)
+    pipeline_registration = experiment_pipeline_registration_status(db, runs)
     pipeline_missing = pipeline_registration["status"] != "ready"
+    promoted_count = int(pipeline_registration.get("registered_count") or 0)
     model_diagnostics_artifacts = experiment_model_diagnostics_artifact_status(db, project=project, runs=runs)
     diagnostic_artifacts_missing = model_diagnostics_artifacts["status"] not in {"ready", "registered"}
     model_diagnostics_notebook = experiment_model_diagnostics_notebook_status(db, project=project, runs=runs)
     diagnostics_notebook_missing = model_diagnostics_notebook["status"] != "ready"
-    visible_surfaces = experiment_result_visible_surfaces(runs, chat_artifact_id=None)
+    visible_surfaces = experiment_result_visible_surfaces(db, runs, chat_artifact_id=None)
     visible_state_fingerprint = experiment_registration_visible_state_fingerprint(
         runs=runs,
         visible_surfaces=visible_surfaces,
@@ -2038,13 +2044,18 @@ def register_experiment_registration_chat_turn(
     )
     run_ids = [run.id for run in runs]
     if japanese:
-        assistant_message = (
-            f"{len(runs)}件のモデル評価をLeaderboardに登録しました。"
-            f"この結果セットの先頭候補は {best_run.summary_md or best_run.id} で、"
-            f"{metric_name}={metric_value:.4g} です。"
-            if isinstance(metric_value, int | float)
-            else f"{len(runs)}件のモデル評価をLeaderboardに登録しました。"
+        destination = (
+            f"{promoted_count}件は検証済みpipeline付きでLeaderboardへ昇格し、"
+            f"残り{len(runs) - promoted_count}件はpipeline検証待ちです。"
+            if promoted_count
+            else "検証済みの再現可能pipeline bundleが登録されるとLeaderboardへ自動昇格します。"
         )
+        assistant_message = f"{len(runs)}件のモデル評価を実験履歴に登録しました。{destination}"
+        if isinstance(metric_value, int | float):
+            assistant_message += (
+                f" この結果セットの先頭候補は {best_run.summary_md or best_run.id} で、"
+                f"{metric_name}={metric_value:.4g} です。"
+            )
         missing_outputs: list[str] = []
         if pipeline_missing:
             missing_outputs.append("再現用の学習・予測スクリプト")
@@ -2055,16 +2066,21 @@ def register_experiment_registration_chat_turn(
         if missing_outputs:
             assistant_message += " 次に必要な登録: " + "、".join(missing_outputs) + "。"
         action_label = "リーダーボードを開く"
-        action_detail = "同じ評価結果セットとして登録されたモデルを順位表で確認できます。"
-        next_label = "リーダーボード"
+        action_detail = "検証済みpipeline付きのモデルを順位表で確認できます。"
+        next_label = "リーダーボード" if promoted_count else "Agent workspace"
     else:
-        assistant_message = (
-            f"Registered {len(runs)} model evaluation(s) on the leaderboard. "
-            f"The leading candidate in this result set is {best_run.summary_md or best_run.id} "
-            f"with {metric_name}={metric_value:.4g}."
-            if isinstance(metric_value, int | float)
-            else f"Registered {len(runs)} model evaluation(s) on the leaderboard."
+        destination = (
+            f"{promoted_count} have validated pipelines and are promoted to the Leaderboard; "
+            f"{len(runs) - promoted_count} are awaiting pipeline validation."
+            if promoted_count
+            else "They will be promoted to the Leaderboard automatically after validated reproducible pipeline bundles are registered."
         )
+        assistant_message = f"Registered {len(runs)} model evaluation(s) in experiment history. {destination}"
+        if isinstance(metric_value, int | float):
+            assistant_message += (
+                f" The leading candidate in this result set is {best_run.summary_md or best_run.id} "
+                f"with {metric_name}={metric_value:.4g}."
+            )
         missing_outputs = []
         if pipeline_missing:
             missing_outputs.append("reproducible train/predict scripts")
@@ -2075,8 +2091,8 @@ def register_experiment_registration_chat_turn(
         if missing_outputs:
             assistant_message += " Still needed: " + ", ".join(missing_outputs) + "."
         action_label = "Open leaderboard"
-        action_detail = "Compare the registered model runs as a ranked table."
-        next_label = "Leaderboard"
+        action_detail = "Compare models with validated reproducible pipelines as a ranked table."
+        next_label = "Leaderboard" if promoted_count else "Agent workspace"
     actions = experiment_registration_chat_actions(
         visible_surfaces=visible_surfaces,
         leaderboard_label=action_label,
@@ -2173,7 +2189,11 @@ def register_experiment_registration_chat_turn(
         },
         "worker_events": [],
         "token_usage": {"source": "not_applicable", "is_estimate": False, "series": []},
-        "next_focus": {"target_tab": "Leaderboard", "target_anchor": "result-readout", "label": next_label},
+        "next_focus": {
+            "target_tab": "Leaderboard" if promoted_count else "Home",
+            "target_anchor": "result-readout" if promoted_count else "agent-workspace",
+            "label": next_label,
+        },
     }
     chat_artifact = store_json_artifact(
         db,
@@ -2370,7 +2390,7 @@ def update_experiment_registration_chat_payload(
                     }
                 ),
                 "visible_surfaces": visible_surfaces_with_chat,
-                "pipeline_registration": experiment_pipeline_registration_status(runs),
+                "pipeline_registration": experiment_pipeline_registration_status(db, runs),
                 "model_diagnostics_artifacts": experiment_model_diagnostics_artifact_status(
                     db,
                     project=project,
@@ -2408,8 +2428,11 @@ def update_experiment_registration_chat_payload(
 def experiment_registration_minimal_message(runs: list[ExperimentRun], *, japanese: bool) -> str:
     count = len(runs)
     if japanese:
-        return f"{count}件のモデル評価をLeaderboardに登録しました。"
-    return f"Registered {count} model evaluation(s) on the leaderboard."
+        return f"{count}件のモデル評価を実験履歴に登録しました。検証済みpipelineの登録後にLeaderboardへ昇格します。"
+    return (
+        f"Registered {count} model evaluation(s) in experiment history. "
+        "They will be promoted after validated pipelines are registered."
+    )
 
 
 def experiment_registration_chat_actions(
@@ -2419,9 +2442,11 @@ def experiment_registration_chat_actions(
     leaderboard_detail: str,
     japanese: bool,
 ) -> list[dict[str, Any]]:
-    leaderboard_surface = visible_surfaces["leaderboard"]
-    actions: list[dict[str, Any]] = [
-        {
+    actions: list[dict[str, Any]] = []
+    leaderboard_surface = visible_surfaces.get("leaderboard")
+    if isinstance(leaderboard_surface, dict):
+        actions.append(
+            {
             "type": "open_surface",
             "status": "ready",
             "label": leaderboard_label,
@@ -2429,8 +2454,8 @@ def experiment_registration_chat_actions(
             "target_anchor": leaderboard_surface["target_anchor"],
             "detail": leaderboard_detail,
             "entity_ids": leaderboard_surface["run_ids"],
-        }
-    ]
+            }
+        )
     assets_surface = visible_surfaces.get("assets")
     if isinstance(assets_surface, dict):
         actions.append(
@@ -2689,7 +2714,6 @@ def write_experiment_result_request_rejection_to_workspace_inbox(
     error_type: str,
     error_message: str,
 ) -> None:
-    path = experiment_request_rejection_path(workspace)
     lines = [
         "schema_version: tablex_experiment_result_request_rejection.v1",
         f"request_id: {request_id}",

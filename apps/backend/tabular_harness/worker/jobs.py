@@ -81,10 +81,6 @@ from tabular_harness.services.baseline import (
 )
 from tabular_harness.services.benchmark_collection import create_benchmark_collection_plan
 from tabular_harness.services.benchmark_evidence import create_benchmark_evidence_pack
-from tabular_harness.services.prediction_input_feedback import (
-    maybe_send_prediction_pipeline_runtime_failure_to_codex,
-    prediction_pipeline_runtime_failure_message,
-)
 from tabular_harness.services.benchmarks import (
     benchmark_import_readiness,
     benchmark_to_dict,
@@ -152,6 +148,10 @@ from tabular_harness.services.planned_agent_execution import (
 from tabular_harness.services.planned_agent_workspace import (
     load_contract_payload,
     prepare_workspace_from_contract_artifact,
+)
+from tabular_harness.services.prediction_input_feedback import (
+    maybe_send_prediction_pipeline_runtime_failure_to_codex,
+    prediction_pipeline_runtime_failure_message,
 )
 from tabular_harness.services.project_guidance import (
     create_autonomous_decision_brief,
@@ -2589,6 +2589,9 @@ def register_prediction_pipeline_handler(db: Session, job: Job, store: LocalArti
         pipeline_tool_error_payload,
         write_pipeline_tool_ack,
     )
+    from tabular_harness.services.agent_session_results import (
+        restore_registered_session_experiment_visibility,
+    )
     from tabular_harness.services.agent_sessions import append_session_event
 
     try:
@@ -2653,7 +2656,10 @@ def register_prediction_pipeline_handler(db: Session, job: Job, store: LocalArti
         event_type="pipeline_request_succeeded",
         role="harness",
         title="Prediction pipeline registered",
-        content=f"Processed pipeline request `{operation}` from `{request_relative_path}`.",
+        content=(
+            f"Validated pipeline request `{operation}` from `{request_relative_path}`; "
+            "linked ExperimentRuns are now eligible for Leaderboard promotion."
+        ),
         payload=ack,
         artifact_id=result.get("pipeline_artifact_id"),
         update_heartbeat=False,
@@ -2667,6 +2673,7 @@ def register_prediction_pipeline_handler(db: Session, job: Job, store: LocalArti
             run_ids=[item for item in experiment_run_ids if isinstance(item, str)],
             pipeline_artifact_id=pipeline_artifact_id,
         )
+    restore_registered_session_experiment_visibility(db, store=store, project=project, session=session)
     return {
         "schema_version": "prediction_pipeline_registration_job.v1",
         "status": "succeeded",
@@ -2742,7 +2749,9 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
         runtime_isolated = True
         requirements_hash = prediction_pipeline_requirements_hash(requirements_path)
     else:
-        from tabular_harness.services.agent_requests.pipelines import prediction_pipeline_predict_command
+        from tabular_harness.services.agent_requests.pipelines import (
+            prediction_pipeline_predict_command,
+        )
 
     command = prediction_pipeline_predict_command(
         python_executable=runtime_python,
