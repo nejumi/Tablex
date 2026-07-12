@@ -2919,6 +2919,9 @@ def test_turn_prompt_keeps_chat_update_human_facing_not_internal_changelog(tmp_p
         assert ".tablex/inbox/<seq>_<kind>.json" in protocol
         assert "not an internal changelog" in protocol
         assert "Avoid raw artifact ids" in protocol
+        assert "Before starting a command or batch that is likely to run for several minutes" in protocol
+        assert "A long-running terminal command is not a reason to leave Agent Chat silent" in protocol
+        assert "reproducible prediction pipeline are completed, rejected" in protocol
         assert "do not make approval-waiting the headline" in protocol
         assert "Do not present Full Auto as stopped on approval" in protocol
         assert "which reversible analysis, modeling, diagnostics, notebook/report work, or research" in protocol
@@ -3094,6 +3097,8 @@ def test_progress_update_nudge_writes_inbox_without_faking_heartbeat(tmp_path: P
         assert request_path.exists()
         request_text = request_path.read_text(encoding="utf-8")
         assert "reports/chat_update.md" in request_text
+        assert "数分以上かかるコマンドや一括処理" in request_text
+        assert "全体の完了を待たず" in request_text
         assert "内部の再開処理" in request_text
 
         second_event = maybe_request_codex_progress_update(

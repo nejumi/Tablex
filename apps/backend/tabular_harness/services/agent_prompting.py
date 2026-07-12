@@ -120,6 +120,8 @@ This file is runner-facing protocol, not a user-facing report. Read it together 
 
 ## Human-Facing Updates
 - Keep accountability continuous. When meaningful progress happens, uncertainty changes, long work starts/finishes, errors are recovered, the plan changes, or the user needs to know what changed, overwrite `reports/chat_update.md` with the latest concise update in the user locale.
+- Before starting a command or batch that is likely to run for several minutes, publish a concise update first. Name the analysis, comparison, training, diagnostics, or packaging work being started; explain why it matters; and state the next result the user should expect. Do not wait until the whole batch finishes.
+- During multi-candidate modeling or other long evidence ladders, publish another update whenever a meaningful candidate and its reproducible prediction pipeline are completed, rejected, or materially change the next step. A long-running terminal command is not a reason to leave Agent Chat silent: report before launching it and again after it returns.
 - `reports/chat_update.md` is not an internal changelog. Say what is happening, why it matters, what changed, what uncertainty remains, and where the user should look next. Avoid raw artifact ids, hashes, internal schema names, and implementation vocabulary unless needed for a user decision.
 - Do not make the user read about session resume mechanics, inbox/ack checks, protocol checks, or repeated "nothing changed" bookkeeping. If no user-visible work changed, keep the next update focused on the actual result, remaining uncertainty, or the next useful review surface.
 - In Full Auto updates, do not make approval-waiting the headline when reversible work is continuing.

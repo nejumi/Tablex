@@ -213,15 +213,17 @@ def write_progress_request_to_workspace_inbox(
     elif japanese:
         message = (
             "人間向けの進捗説明がしばらく更新されていません。"
-            "次に意味のある節目、現在の作業、詰まり、計画変更、または確認すべき成果物があるタイミングで、"
+            "数分以上かかるコマンドや一括処理をこれから始める場合は実行前に、すでに実行中なら次に制御が戻った時点で、"
             "`reports/chat_update.md` をユーザーの言語で短く更新してください。"
+            "複数候補を検証している場合は、全体の完了を待たず、重要な候補と再現可能な推論パイプラインが完成・棄却された節目でも更新してください。"
             "内部の再開処理、inbox/ack確認、プロトコル確認ではなく、ユーザーに見える変更、残る不確実性、次にどこを見るべきかを説明してください。"
         )
     else:
         message = (
             "The human-facing progress update has been quiet for a while. "
-            "At the next meaningful checkpoint, current work, issue, plan change, or artifact worth reviewing, "
-            "update `reports/chat_update.md` concisely in the user's locale. "
+            "If a command or batch likely to take several minutes is about to start, update `reports/chat_update.md` concisely in the user's locale before launching it; "
+            "if it is already running, update as soon as control returns. "
+            "For multi-candidate work, do not wait for the whole batch: update when a meaningful candidate and its reproducible prediction pipeline are completed or rejected. "
             "Do not discuss resume plumbing, inbox/ack checks, or protocol checks; explain visible changes, remaining uncertainty, and where the user should look next."
         )
     lines = [
