@@ -28,7 +28,7 @@ This file is runner-facing protocol, not a user-facing report. Read it together 
 - Full Auto should continue reversible local analysis while questions are open. Use Give Up only as a last resort when no useful reversible work remains.
 
 ## Context And Data
-- `.tablex/context.json` is the current project state, data manifest, equipped Skill list, runtime facts, and request/ack contract index.
+- `.tablex/context.json` is the current project state, data manifest, equipped Skill list, runtime facts, and request/ack contract index. Read `equipped_skill_references` (not an assumed alias) and use the relevant instructions, references, and source inspirations as craft context before choosing the analysis.
 - `.tablex/data_manifest.json` and `.tablex/data/*` are stable workspace data paths. Native marimo notebooks are opened with the AgentSession workspace as cwd.
 - If objective, primary table, derived table, row grain, or task shape should become registered Tablex state, write requests under `.tablex/requests/data/` with `schema_version: "tablex_data_request.v1"`.
 - Supported data operations are `set_primary_table`, `register_derived_table`, and `commit_task_spec`. Targets may be empty for `clustering`, `anomaly_detection`, `exploratory`, or other non-supervised task shapes.
@@ -41,6 +41,20 @@ This file is runner-facing protocol, not a user-facing report. Read it together 
 - Supported evaluation operations are `propose_evaluation` and `generate_split`. `propose_evaluation` creates an EvaluationCandidate; `generate_split` queues SplitManifest generation for an approved EvaluationSpec.
 - Accepted `payload.split_policy.kind` values are `random`, `stratified`, `group`, `time`, `fixed_file`, `fold_column`, and `rolling_forward`. Tablex validates fixed ids, enums, and referenced columns; Codex owns the rationale.
 - Do not treat provisional internal-CV runs as final formal comparisons. After an EvaluationSpec and SplitManifest are approved, rerun the relevant candidates under that split before presenting a formal best model.
+
+## Analytical Depth
+- Reason about the data-generating world before treating the dataset as a matrix. Ask which people, organizations, machines, markets, policies, physical processes, incentives, constraints, and decisions produced the records; what is knowable at the prediction moment; and how the prediction will be used. Use this domain model to generate hypotheses that generic AutoML cannot see.
+- Exercise imagination, but keep epistemic boundaries explicit. Separate measured facts, source-backed domain knowledge, plausible mechanisms, and unverified assumptions. Seek disconfirming cases and translate promising mechanisms into auditable, prediction-time-safe features and evaluations rather than presenting speculation as a finding.
+- A generic table merge followed by one boosted-tree fit is a starting point, not a completed investigation when useful reversible work remains.
+- Build a project-specific hypothesis loop: use domain evidence and measured data behavior to propose mechanisms; inspect representative raw entities, histories, cohorts, or errors when applicable; derive prediction-time-safe feature families; compare them with fold-consistent ablations; interpret the out-of-fold result; and use that evidence to choose the next loop.
+- Treat rows as records of domain events and states, not only DataFrame columns. When repeated or relational tables permit it, reconstruct entity timelines, event intervals, ordering, overlap/concurrency, transitions, recurrence, and behavior changes. Derive features from the mechanisms those structures represent, then verify both their semantics and incremental value.
+- Treat global group-by count/mean/min/max and a flat merge as a lossy relational baseline, not the default endpoint. When justified by the domain, preserve conditional behavior, distribution shape and tails, recency windows, changes between periods, trends and change points, event spacing, sequences, duration and overlap, child-of-child history, and cross-table consistency. Choose representations from semantic hypotheses instead of generating an undirected aggregation catalog.
+- Look beyond global counts and means when the data supports richer semantics. Reason about ratios and differences, recency and frequency, trend and volatility, repeated-event state or sequence behavior, missingness as a process, cross-table consistency, and interactions. These are prompts for Codex judgment, not a required fixed recipe.
+- Separate feature-value evidence from model-family evidence. Compare serious feature sets and modeling alternatives under the same evaluation contract, and use calibration, subgroup stability, worst errors, residual structure, and importance/response diagnostics to explain gains and expose new hypotheses.
+- Run the hypothesis loop autonomously: state why a mechanism could matter, implement the smallest coherent feature-family test, compare out-of-fold deltas and uncertainty on unchanged folds, inspect affected slices or errors, record support/rejection/revision, and select the next hypothesis from that evidence. Do not substitute routine hyperparameter search for this reasoning loop.
+- Keep fast exploratory ablations in a structured experiment ledger or report. Promote serious, distinct candidates to registered ExperimentRuns and complete their downloadable pipelines; do not register every disposable probe merely to make it a Leaderboard row, and never drop a run after it has been registered.
+- Do not declare modeling complete solely because one non-trivial model beats a weak baseline. Completion should be supported by an evidence-backed account of explored hypotheses, ablations, failed or rejected ideas, remaining high-value opportunities, and why another reversible iteration is or is not worthwhile.
+- Keep every registered candidate reproducible as required below. Packaging work is part of each experiment, but it must not replace continued analytical depth.
 
 ## Research Plan
 - Keep a living plan when it helps the user follow the work. Use `outputs/research_plan.json` for draft plan documents and `.tablex/requests/research_plan/` for schema-validated operations.
@@ -170,7 +184,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         *intro,
         "",
         "Session files:",
-        "- `.tablex/context.json`: current project state, data paths, equipped Skills, runtime facts, and request/ack contract index.",
+        "- `.tablex/context.json`: current project state, data paths, equipped Skills, runtime facts, and request/ack contract index. Inspect `equipped_skill_references` explicitly and apply relevant Skill guidance.",
         "- `.tablex/PROTOCOL.md`: runner-facing protocol for fixed request/ack channels, inbox feedback, and output registration.",
         "- `.tablex/GOAL.md`: current goal text.",
         "",
@@ -180,6 +194,7 @@ def build_turn_prompt(db: Session, *, project: Project, session: AgentSession) -
         "- Do not destructively modify EvaluationSpec or SplitManifest.",
         "- Register important outputs under outputs/, reports/, notebooks/, artifacts/, or the fixed request/ack channels described in `.tablex/PROTOCOL.md`.",
         "- Keep the visible ResearchPlan, Chat update, Leaderboard, notebooks, diagnostics, pipelines, research findings, and pilot feedback synchronized through the request/ack protocol when those outputs exist.",
+        "- Continue the evidence loop beyond a generic merge-and-boost baseline: domain/data hypotheses, prediction-time-safe feature families, same-fold ablations, out-of-fold error and stability analysis, and evidence-driven next iterations belong in the main session whenever they can still add material information.",
         "- If objective, primary table, row grain, or task shape is not registered, inspect the data first and submit data requests when you are ready to register the framing. Do not wait for a user target when reversible local analysis can continue with provisional assumptions.",
         "- Write human-facing notebooks, reports, research summaries, and `reports/chat_update.md` in `.tablex/context.json` `human_interface.response_locale` unless the user explicitly asks otherwise.",
         "- During long turns, check `.tablex/inbox/` for user instructions, progress requests, rejected requests, runtime failures, and pilot observations; repair fixed-format feedback without waiting for a new turn when practical.",
