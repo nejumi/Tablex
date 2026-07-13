@@ -9498,6 +9498,123 @@ def test_agent_chat_brief_includes_recent_conversation_turns(tmp_path: Path, mon
     assert any(turn["artifact_id"] == first_output["artifact_id"] for turn in recent_turns)
 
 
+def test_agent_chat_history_omits_completed_job_without_codex_reply(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Missing reply"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    chat_response = client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "現在の状態を説明してください", "locale": "ja-JP"},
+    )
+    assert chat_response.status_code == 200, chat_response.text
+    job_id = chat_response.json()["job"]["id"]
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        job = db.get(Job, job_id)
+        assert job is not None
+        job.status = "succeeded"
+        job.updated_at = utc_now()
+        db.commit()
+
+    history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
+    assert history == []
+
+
+def test_agent_chat_history_loads_job_linked_codex_reply_outside_recent_window(tmp_path: Path) -> None:
+    client = make_client(tmp_path, api_agent_session_supervisor_enabled=False)
+    project_response = client.post("/api/projects", json={"name": "Long chat history"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        session = AgentSession(
+            id="ags_long_chat_history",
+            project_id=project_id,
+            org_id=project.org_id,
+            session_type="main_autonomous",
+            status="completed",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Answer from the main session.",
+            created_by="test",
+        )
+        db.add(session)
+        reply = store_json_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="agent_chat_turn",
+            name="linked_main_codex_reply",
+            filename="agent_chat_turn.json",
+            payload={
+                "schema_version": "agent_chat_turn.v1",
+                "project_id": project_id,
+                "user_message": "",
+                "assistant_message": "Codex authored this durable reply.",
+                "intent": {"type": "autonomous_agent_progress_report"},
+                "actions": [],
+                "action_summary": {},
+                "response_brief": {"agent_session_id": session.id},
+                "response_composer": {"mode": "main_codex_session", "status": "codex_authored"},
+                "worker_events": [],
+                "token_usage": {},
+                "next_focus": {},
+            },
+            metadata={
+                "source": "main_codex_session_chat_update",
+                "agent_session_id": session.id,
+            },
+        )
+        job = create_job(
+            db,
+            job_type="agent_chat_turn",
+            project_id=project_id,
+            input_payload={
+                "message": "Explain the current result.",
+                "locale": "en-US",
+                "delivered_agent_session_id": session.id,
+            },
+        )
+        job.status = "succeeded"
+        job.output_json = dumps_json({"progress_artifact_id": reply.id})
+        for index in range(65):
+            store_json_artifact(
+                db,
+                app.state.artifact_store,
+                project_id=project_id,
+                asset_type="agent_chat_turn",
+                name=f"later_chat_turn_{index}",
+                filename="agent_chat_turn.json",
+                payload={
+                    "schema_version": "agent_chat_turn.v1",
+                    "project_id": project_id,
+                    "user_message": "",
+                    "assistant_message": f"Later update {index}",
+                    "intent": {"type": "autonomous_agent_progress_report"},
+                    "actions": [],
+                    "action_summary": {},
+                    "response_brief": {},
+                    "response_composer": {"mode": "main_codex_session", "status": "codex_authored"},
+                    "worker_events": [],
+                    "token_usage": {},
+                    "next_focus": {},
+                },
+                metadata={"source": "main_codex_session_chat_update", "agent_session_id": session.id},
+            )
+        db.commit()
+
+    history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
+    linked_turn = next(turn for turn in history if turn["job_id"] == job.id)
+    assert linked_turn["assistant_message"] == "Codex authored this durable reply."
+    assert linked_turn["response_composer"]["status"] == "codex_authored"
+
+
 def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setenv("TABLEX_AGENT_RESPONSE_COMPOSER", "structured_fallback")
     client = make_client(tmp_path, api_agent_session_supervisor_enabled=False)

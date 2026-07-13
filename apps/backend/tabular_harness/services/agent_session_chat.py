@@ -437,6 +437,7 @@ def request_context_for_auto_registered_notebooks(
         details={
             "notebook_count": len(pending),
             "notebook_artifact_ids": [artifact.id for artifact in pending[:12]],
+            "notebook_versions": [artifact.version for artifact in pending[:12]],
             "workspace_paths": [
                 str(loads_json(artifact.metadata_json, {}).get("workspace_relative_path") or "")
                 for artifact in pending[:12]
@@ -501,6 +502,7 @@ def request_quality_repair_for_session_notebooks(
         details={
             "notebook_count": len(pending),
             "notebook_artifact_ids": [artifact.id for artifact in pending[:12]],
+            "notebook_versions": [artifact.version for artifact in pending[:12]],
             "workspace_paths": [
                 str(loads_json(artifact.metadata_json, {}).get("workspace_relative_path") or "")
                 for artifact in pending[:12]
@@ -903,11 +905,18 @@ def register_agent_session_notebook_chat_turn(
         return None
     response_locale = latest_project_response_locale(db, project)
     japanese = locale_is_japanese(response_locale)
+    notebook_metadata = loads_json(notebook_artifact.metadata_json, {})
+    workspace_path = str(notebook_metadata.get("workspace_relative_path") or "").strip()
+    notebook_label = Path(workspace_path).name if workspace_path else notebook_artifact.name
+    notebook_version = notebook_artifact.version
+    change_kind = "updated" if notebook_version > 1 else "new"
+    identity = f"`{notebook_label}` v{notebook_version}"
     if status == "ready":
         assistant_message = (
-            "分析ノートブックを保存しました。Tablex内のmarimoビューアーで開けます。"
+            f"Notebookを{'更新' if change_kind == 'updated' else '新規登録'}しました: {identity}。"
+            "Tablex内のmarimoビューアーで開けます。"
             if japanese
-            else "The analysis notebook is saved and can be opened in the Tablex marimo viewer."
+            else f"{'Updated' if change_kind == 'updated' else 'New'} notebook: {identity}. Open it in the Tablex marimo viewer."
         )
         action_status = "ready"
         action_label = "ノートブックを開く" if japanese else "Open notebook"
@@ -919,9 +928,10 @@ def register_agent_session_notebook_chat_turn(
         next_focus_label = "ノートブック" if japanese else "Notebook"
     elif status == "source_saved":
         assistant_message = (
-            "分析ノートブックのソースを保存しました。この同じ場所からmarimoで開けます。"
+            f"Notebookを{'更新' if change_kind == 'updated' else '新規登録'}しました: {identity}。"
+            "ここからmarimoで開けます。"
             if japanese
-            else "The analysis notebook source is saved and can be opened from this same place with marimo."
+            else f"{'Updated' if change_kind == 'updated' else 'New'} notebook: {identity}. Open it here with marimo."
         )
         action_status = "ready"
         action_label = "ノートブックを開く" if japanese else "Open notebook"
@@ -933,11 +943,11 @@ def register_agent_session_notebook_chat_turn(
         next_focus_label = "ノートブック" if japanese else "Notebook"
     elif status == "quality_needs_attention":
         assistant_message = (
-            "分析ノートブックのソースは保存しましたが、人が読む成果物としてはまだ不足があります。"
+            f"Notebookは修正が必要です: {identity}。人が読む成果物としてはまだ不足があります。"
             "図や発見、読順を補って再提出する修正対象として扱います。"
             if japanese
             else (
-                "The analysis notebook source is saved, but it is not yet a complete human-facing deliverable. "
+                f"Notebook needs revision: {identity}. It is not yet a complete human-facing deliverable. "
                 "It needs richer figures, findings, or read order before it should be treated as ready."
             )
         )
@@ -951,9 +961,9 @@ def register_agent_session_notebook_chat_turn(
         next_focus_label = "ノートブック" if japanese else "Notebook"
     else:
         assistant_message = (
-            "分析ノートブックのソースは保存されていますが、marimoで開く際に修正が必要です。"
+            f"Notebookの実行修正が必要です: {identity}。marimoで正常に開ける状態ではありません。"
             if japanese
-            else "The analysis notebook source is saved, but it needs a fix before marimo can open it."
+            else f"Notebook runtime fix required: {identity}. It cannot yet be opened successfully with marimo."
         )
         action_status = "needs_attention"
         action_label = "ノートブックを開く" if japanese else "Open notebook"
@@ -1015,6 +1025,9 @@ def register_agent_session_notebook_chat_turn(
             "schema_version": "notebook_artifact_update.v1",
             "agent_session_id": session.id,
             "notebook_artifact_id": notebook_artifact.id,
+            "notebook_name": notebook_label,
+            "notebook_version": notebook_version,
+            "change_kind": change_kind,
             "status": status,
             "error": error,
             "research_plan_node_id": linked_plan_node_id,
@@ -1323,24 +1336,23 @@ def latest_agent_session_notebook_chat_turn(
     notebook_artifact: Artifact,
     status: str,
 ) -> Artifact | None:
-    recent_chat_artifacts = list(
-        db.scalars(
-            select(Artifact)
-            .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
-            .order_by(Artifact.created_at.desc())
-            .limit(100)
-        ).all()
+    artifact_name = f"agent_session_notebook_update_{session.id}_{notebook_artifact.id}_{status}"
+    artifact = db.scalar(
+        select(Artifact)
+        .where(
+            Artifact.project_id == project.id,
+            Artifact.asset_type == "agent_chat_turn",
+            Artifact.name == artifact_name,
+        )
+        .order_by(Artifact.version.desc())
+        .limit(1)
     )
-    for artifact in recent_chat_artifacts:
-        metadata = loads_json(artifact.metadata_json, {})
-        if (
-            metadata.get("source") == "main_agent_session_notebook_update"
-            and metadata.get("agent_session_id") == session.id
-            and metadata.get("notebook_artifact_id") == notebook_artifact.id
-            and metadata.get("notebook_status") == status
-        ):
-            return artifact
-    return None
+    if artifact is None:
+        return None
+    metadata = loads_json(artifact.metadata_json, {})
+    if metadata.get("source") != "main_agent_session_notebook_update":
+        return None
+    return artifact
 
 
 def register_agent_session_attention_chat_turn(
@@ -1643,9 +1655,11 @@ def attention_chat_message(message_kind: str, *, details: dict[str, Any], japane
             "Existing plans and artifacts are unchanged, and the analysis is continuing."
         )
     if message_kind == "notebook_request_failed":
+        request_id = str(details.get("request_id") or "").strip()
+        request_label = f" (`{request_id}`)" if request_id else ""
         if japanese:
-            return "Notebookはまだ登録していません。未完成の表示にはせず、分析は続いています。"
-        return "The notebook has not been registered yet. It is not shown as complete, and the analysis is continuing."
+            return f"Notebook登録に失敗しました{request_label}。未完成の成果物としては表示せず、Codexが修正します。"
+        return f"Notebook registration failed{request_label}. It is not shown as complete; Codex will repair it."
     if message_kind == "model_diagnostics_request_failed":
         if japanese:
             return (
@@ -1680,13 +1694,23 @@ def attention_chat_message(message_kind: str, *, details: dict[str, Any], japane
     if message_kind == "notebook_quality_repair_needed":
         count = details.get("notebook_count")
         count_text = f"{int(count)}件" if isinstance(count, (int, float)) else "いくつか"
+        workspace_paths = details.get("workspace_paths") if isinstance(details.get("workspace_paths"), list) else []
+        versions = details.get("notebook_versions") if isinstance(details.get("notebook_versions"), list) else []
+        notebook_labels = [
+            f"`{Path(path).name}`{f' v{versions[index]}' if index < len(versions) else ''}"
+            for index, path in enumerate(workspace_paths[:3])
+            if isinstance(path, str) and path.strip()
+        ]
+        label_text = ", ".join(notebook_labels)
         if japanese:
             return (
-                f"{count_text}のNotebookは保存されていますが、人が読む成果物としては図や品質manifestが不足しています。"
+                f"Notebookは修正が必要です{f': {label_text}' if label_text else f'（{count_text}）'}。"
+                "人が読む成果物としては図や品質manifestが不足しています。"
                 "作業は継続中で、次の進捗で修正されたNotebookまたは判断結果が反映されます。"
             )
         return (
-            "Some notebooks are saved, but their quality manifests show they are not ready as human-facing deliverables. "
+            f"Notebook revision required{f': {label_text}' if label_text else ''}. "
+            "The quality manifest shows it is not ready as a human-facing deliverable. "
             "The work is continuing, and the next progress update will show the revised notebook or the resulting decision."
         )
     if message_kind == "static_html_output_rejected":

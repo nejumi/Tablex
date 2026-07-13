@@ -2423,8 +2423,13 @@ function ProjectDetail({
       12000
     );
     if (history !== null) {
-      setAgentChatMessages((current) => mergeAgentChatMessages(agentChatHistoryToMessages(history), current));
+      setAgentChatMessages(agentChatHistoryToMessages(history));
     }
+  }, [project.id]);
+
+  React.useEffect(() => {
+    setAgentChatMessages([]);
+    setPendingAgentChatMessages([]);
   }, [project.id]);
 
   React.useEffect(() => {
@@ -4925,8 +4930,7 @@ function agentChatHistoryToMessages(turns: AgentChatHistoryTurn[]): AgentChatMes
     const messages: AgentChatMessage[] = [];
     const turnId = turn.job_id ? `turn:${turn.job_id}` : `turn:${turn.artifact_id}`;
     const composerStatus = String(turn.response_composer?.status ?? "");
-    const activeHistoryTurn =
-      turn.artifact_id.startsWith("job_pending_") || ["queued", "running", "pending", "in_progress", "waiting_for_agent"].includes(composerStatus);
+    const activeHistoryTurn = ["queued", "running", "pending", "in_progress", "waiting_for_agent"].includes(composerStatus);
     if (turn.user_message.trim()) {
       messages.push({
         id: `${turnId}:user`,

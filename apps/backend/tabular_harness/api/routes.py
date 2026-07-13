@@ -4982,16 +4982,39 @@ def normalize_agent_chat_notebook_update_message(
     assistant_message: str,
     *,
     japanese: bool,
+    db: Session | None = None,
+    project_id: str | None = None,
 ) -> str:
     intent = payload.get("intent") if isinstance(payload.get("intent"), dict) else {}
     if intent.get("type") != "notebook_artifact_update":
         return assistant_message
     brief = payload.get("response_brief") if isinstance(payload.get("response_brief"), dict) else {}
+    notebook_name = str(brief.get("notebook_name") or "").strip()
+    notebook_version = brief.get("notebook_version")
+    notebook_artifact_id = brief.get("notebook_artifact_id")
+    if (
+        (not notebook_name or not isinstance(notebook_version, int))
+        and db is not None
+        and project_id
+        and isinstance(notebook_artifact_id, str)
+    ):
+        notebook_artifact = db.get(Artifact, notebook_artifact_id)
+        if notebook_artifact is not None and notebook_artifact.project_id == project_id:
+            metadata = loads_json(notebook_artifact.metadata_json, {})
+            workspace_path = str(metadata.get("workspace_relative_path") or "").strip()
+            notebook_name = Path(workspace_path).name if workspace_path else notebook_artifact.name
+            notebook_version = notebook_artifact.version
+    status = str(brief.get("status") or intent.get("status") or "").strip()
+    if notebook_name and isinstance(notebook_version, int) and status in {"ready", "source_saved"}:
+        identity = f"`{notebook_name}` v{notebook_version}"
+        updated = str(brief.get("change_kind") or "") == "updated" or notebook_version > 1
+        if japanese:
+            return f"Notebookを{'更新' if updated else '新規登録'}しました: {identity}。ここからmarimoで開けます。"
+        return f"{'Updated' if updated else 'New'} notebook: {identity}. Open it here with marimo."
     has_legacy_preview_reference = any(
         isinstance(brief.get(key), str) and bool(str(brief.get(key) or "").strip())
         for key in ("html_artifact_id", "preview_artifact_id")
     )
-    status = str(brief.get("status") or intent.get("status") or "").strip()
     if not has_legacy_preview_reference and status != "preview_failed":
         return assistant_message
     if status == "preview_failed":
@@ -5147,7 +5170,24 @@ def list_agent_chat_history(
         project=project,
         japanese=japanese,
     )
-    artifacts = list(
+    chat_jobs = list(
+        db.scalars(
+            select(Job)
+            .where(Job.project_id == project_id, Job.job_type == "agent_chat_turn")
+            .order_by(Job.created_at.desc())
+            .limit(30)
+        ).all()
+    )
+    progress_artifact_ids = {
+        progress_artifact_id
+        for job in chat_jobs
+        if isinstance(
+            progress_artifact_id := loads_json(job.output_json, {}).get("progress_artifact_id"),
+            str,
+        )
+        and progress_artifact_id.strip()
+    }
+    recent_artifacts = list(
         db.scalars(
             select(Artifact)
             .where(Artifact.project_id == project_id, Artifact.asset_type == "agent_chat_turn")
@@ -5155,6 +5195,21 @@ def list_agent_chat_history(
             .limit(60)
         ).all()
     )
+    referenced_artifacts = (
+        list(
+            db.scalars(
+                select(Artifact).where(
+                    Artifact.project_id == project_id,
+                    Artifact.asset_type == "agent_chat_turn",
+                    Artifact.id.in_(progress_artifact_ids),
+                )
+            ).all()
+        )
+        if progress_artifact_ids
+        else []
+    )
+    artifacts_by_id = {artifact.id: artifact for artifact in [*recent_artifacts, *referenced_artifacts]}
+    artifacts = sorted(artifacts_by_id.values(), key=lambda artifact: artifact.created_at, reverse=True)
     turns: list[dict[str, Any]] = []
     main_session_update_turns: list[dict[str, Any]] = []
     seen_job_ids: set[str] = set()
@@ -5180,6 +5235,8 @@ def list_agent_chat_history(
             payload,
             assistant_message,
             japanese=japanese,
+            db=db,
+            project_id=project_id,
         )
         assistant_message = normalize_agent_chat_attention_message(
             payload,
@@ -5289,14 +5346,6 @@ def list_agent_chat_history(
                 "created_at": job.created_at.isoformat(),
             }
         )
-    chat_jobs = list(
-        db.scalars(
-            select(Job)
-            .where(Job.project_id == project_id, Job.job_type == "agent_chat_turn")
-            .order_by(Job.created_at.desc())
-            .limit(30)
-        ).all()
-    )
     paired_update_ids: set[str] = set()
     for job in reversed(chat_jobs):
         if job.id in seen_job_ids:
@@ -5312,11 +5361,20 @@ def list_agent_chat_history(
             already_paired_update_ids=paired_update_ids,
         )
         if paired_update is not None:
-            turns.append(agent_chat_turn_from_main_session_update(db, project_id, job, payload, paired_update))
+            turns.append(agent_chat_turn_from_main_session_update(project_id, job, payload, paired_update))
             progress_artifact_id = paired_update.get("artifact_id")
             if isinstance(progress_artifact_id, str):
                 paired_update_ids.add(progress_artifact_id)
-        else:
+        elif job.status in {
+            "queued",
+            "running",
+            "pending",
+            "in_progress",
+            MAIN_SESSION_CHAT_WAITING_STATUS,
+            "failed",
+            "cancelled",
+            "timed_out",
+        }:
             turns.append(pending_agent_chat_turn_from_job(db, project_id, job, payload))
     latest_unlinked_update = next((turn for turn in reversed(main_session_update_turns) if not turn.get("actions")), None)
     linked_actions = merge_agent_chat_actions(registered_output_actions, limit=3)
@@ -5580,7 +5638,6 @@ def agent_chat_update_is_not_older_than_job(update: dict[str, Any], job: Job) ->
 
 
 def agent_chat_turn_from_main_session_update(
-    db: Session,
     project_id: str,
     job: Job,
     payload: dict[str, Any],
@@ -5588,7 +5645,6 @@ def agent_chat_turn_from_main_session_update(
 ) -> dict[str, Any]:
     locale = payload.get("locale") if isinstance(payload.get("locale"), str) else "en-US"
     delivered_session_id = payload.get("delivered_agent_session_id")
-    delivered_session = db.get(AgentSession, delivered_session_id) if isinstance(delivered_session_id, str) else None
     return {
         "schema_version": "agent_chat_turn.v1",
         "project_id": project_id,
@@ -5617,9 +5673,6 @@ def agent_chat_turn_from_main_session_update(
             if isinstance(payload.get("progress_update_requested_event_id"), str)
             else None,
             "progress_artifact_id": update_turn.get("artifact_id") if isinstance(update_turn.get("artifact_id"), str) else None,
-            "agent_session_observation": agent_session_observation_for_chat_wait(db=db, session=delivered_session)
-            if delivered_session is not None
-            else None,
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",
