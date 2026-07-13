@@ -2743,6 +2743,40 @@ def test_chat_update_links_registered_plan_evidence_without_parsing_message(tmp_
         assert chat_payload["next_focus"]["artifact_id"] == notebook_artifact.id
         assert chat_payload["next_focus"]["asset_type"] == "analysis_notebook"
 
+        db.add(
+            ExperimentRun(
+                id="run_chat_linked_followup",
+                project_id=project.id,
+                runner_type="codex_main_session",
+                status="succeeded",
+                params_json=dumps_json({"model_id": "followup_model"}),
+                metrics_json=dumps_json({"mae": 120.0}),
+            )
+        )
+        report_path.write_text("追加の比較を進めています。", encoding="utf-8")
+        maybe_register_chat_update_from_workspace_output(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            path=report_path,
+            artifact=source_artifact,
+        )
+        db.commit()
+
+        chat_artifacts = list(
+            db.scalars(
+                select(Artifact)
+                .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+                .order_by(Artifact.created_at.asc())
+            ).all()
+        )
+        assert len(chat_artifacts) == 2
+        followup_payload = loads_json(artifact_primary_path(chat_artifacts[-1]).read_text(encoding="utf-8"), {})
+        assert followup_payload["assistant_message"] == "追加の比較を進めています。"
+        assert followup_payload["actions"] == []
+        assert followup_payload["next_focus"]["target_tab"] == "Home"
+
 
 def test_turn_prompt_includes_living_research_plan_contract(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
@@ -10925,6 +10959,72 @@ def test_notebook_file_request_registers_source_ack_chat_and_plan_link(tmp_path:
         assert edge_metadata["role"] == "notebook_source"
 
 
+def test_solution_writeup_notebook_fulfills_project_expectation(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    notebooks_dir = workspace / "notebooks"
+    requests_dir = notebook_requests_dir(workspace)
+    notebooks_dir.mkdir(parents=True)
+    requests_dir.mkdir(parents=True)
+    (notebooks_dir / "solution_writeup.py").write_text(VISUAL_MARIMO_NOTEBOOK_SOURCE, encoding="utf-8")
+    (requests_dir / "register_solution_writeup.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_notebook_request.v1",
+                "request_id": "register_solution_writeup",
+                "operation": "register_notebook",
+                "payload": {
+                    "workspace_path": "notebooks/solution_writeup.py",
+                    "title": "Solution writeup",
+                    "notebook_kind": "solution_writeup",
+                    "quality_manifest": ready_notebook_quality_manifest(),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_solution_writeup", name="Solution Writeup")
+        session = AgentSession(
+            id="as_solution_writeup",
+            project_id=project.id,
+            goal_text="Author the project solution writeup.",
+            workspace_path=str(workspace),
+        )
+        expectation = DeliverableExpectation(
+            id="deliv_solution_writeup",
+            project_id=project.id,
+            kind="solution_writeup",
+            subject_ref=f"project:{project.id}",
+            status="open",
+            created_from="test",
+        )
+        db.add_all([project, session, expectation])
+        db.commit()
+
+        ingest_session_workspace_outputs(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            workspace=workspace,
+            allow_notebook_auto_registration=False,
+        )
+        db.commit()
+
+        notebook_artifact = db.scalar(
+            select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "analysis_notebook")
+        )
+        assert notebook_artifact is not None
+        assert loads_json(notebook_artifact.metadata_json, {})["notebook_kind"] == "solution_writeup"
+        db.refresh(expectation)
+        assert expectation.status == "fulfilled"
+        assert expectation.fulfilled_by_artifact_id == notebook_artifact.id
+
+
 def test_notebook_file_request_accepts_explicit_top_level_payload_and_read_order_labels(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
@@ -11642,12 +11742,12 @@ def test_model_diagnostics_notebook_request_links_related_runs(tmp_path: Path) -
         )
         assert notebook_artifact is not None
         metadata = loads_json(notebook_artifact.metadata_json, {})
-        assert metadata["notebook_kind"] == "model_diagnostics"
+        assert metadata["notebook_kind"] == "model_comparison"
         assert metadata["related_run_ids"] == [first_run.id, second_run.id]
         checks = metadata["notebook_quality_manifest"]["model_diagnostics"]["checks"]
         assert checks[0]["evidence"] == ["notebooks/model_diagnostics.py"]
-        assert latest_model_diagnostics_notebook_for_run(db, project.id, first_run.id) == notebook_artifact
-        assert latest_model_diagnostics_notebook_for_run(db, project.id, second_run.id) == notebook_artifact
+        assert latest_model_diagnostics_notebook_for_run(db, project.id, first_run.id) is None
+        assert latest_model_diagnostics_notebook_for_run(db, project.id, second_run.id) is None
 
         ack = loads_json(
             (notebook_acks_dir(workspace) / "register_related_model_diagnostics.ack.json").read_text(
@@ -11661,6 +11761,7 @@ def test_model_diagnostics_notebook_request_links_related_runs(tmp_path: Path) -
 
         notebook_index = build_project_notebook_index(db, project)
         item = notebook_index["items"][0]
+        assert item["notebook_kind"] == "model_comparison"
         assert item["run_id"] is None
         assert item["related_run_ids"] == [first_run.id, second_run.id]
 
@@ -11763,12 +11864,14 @@ def test_repeated_single_run_notebook_registration_promotes_to_related_runs(tmp_
         )
         assert notebook_artifact is not None
         metadata = loads_json(notebook_artifact.metadata_json, {})
+        assert metadata["notebook_kind"] == "model_comparison"
         assert metadata.get("run_id") is None
         assert metadata["related_run_ids"] == [first_run.id, second_run.id]
-        assert latest_model_diagnostics_notebook_for_run(db, project.id, first_run.id) == notebook_artifact
-        assert latest_model_diagnostics_notebook_for_run(db, project.id, second_run.id) == notebook_artifact
+        assert latest_model_diagnostics_notebook_for_run(db, project.id, first_run.id) is None
+        assert latest_model_diagnostics_notebook_for_run(db, project.id, second_run.id) is None
         notebook_index = build_project_notebook_index(db, project)
         item = notebook_index["items"][0]
+        assert item["notebook_kind"] == "model_comparison"
         assert item["run_id"] is None
         assert item["related_run_ids"] == [first_run.id, second_run.id]
 

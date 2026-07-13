@@ -26,9 +26,11 @@ from tabular_harness.services.research_plan_timeline import (
 from tabular_harness.services.research_plans import (
     ResearchPlanValidationError,
     attach_research_plan_artifact,
+    commit_research_plan_artifact_revision,
     commit_research_plan_revision,
     ensure_harness_initial_research_plan_revision,
     latest_research_plan_current_work,
+    latest_research_plan_revision,
     record_harness_dataset_upload_in_research_plan,
     record_harness_objective_in_research_plan,
     request_research_plan_human_attention,
@@ -711,6 +713,66 @@ def test_research_plan_timeline_does_not_promote_invalid_legacy_artifact(tmp_pat
         assert ignored["contract_validation"]["error_count"] > 0
         revisions = list(db.scalars(select(ResearchPlanRevision).where(ResearchPlanRevision.project_id == project.id)))
         assert revisions == []
+
+
+def test_invalid_harness_artifact_cannot_replace_and_legacy_active_pointer_recovers(tmp_path: Path) -> None:
+    invalid_plan_path = tmp_path / "invalid_research_plan.json"
+    invalid_plan_path.write_text(dumps_json({"schema_version": "research_plan.v1"}), encoding="utf-8")
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_harness_plan_recovery", name="Harness Plan Recovery")
+        invalid_artifact = Artifact(
+            id="art_invalid_harness_plan",
+            project_id=project.id,
+            asset_type="research_plan",
+            name="invalid_harness_plan",
+            version=1,
+            uri=str(tmp_path),
+            content_hash="invalid-harness-plan",
+            size_bytes=invalid_plan_path.stat().st_size,
+            metadata_json=dumps_json({"primary_path": str(invalid_plan_path)}),
+        )
+        db.add_all([project, invalid_artifact])
+        db.commit()
+        valid = commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "modeling",
+                        "title": "Modeling",
+                        "granularity": "chapter",
+                        "status": "active",
+                    }
+                ],
+            },
+            author_type="codex",
+            reason="Codex authored the visible plan.",
+            strict_validation=True,
+        )
+        db.commit()
+
+        assert commit_research_plan_artifact_revision(db, artifact=invalid_artifact) is None
+        assert latest_research_plan_revision(db, project_id=project.id) == valid.revision
+
+        invalid = commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={"schema_version": "research_plan.v1"},
+            author_type="harness",
+            reason="Legacy code promoted an invalid harness artifact.",
+            source_artifact_id=invalid_artifact.id,
+        )
+        assert invalid.revision.id != valid.revision.id
+        assert invalid.plan.active_revision_id == invalid.revision.id
+
+        recovered = latest_research_plan_revision(db, project_id=project.id)
+        assert recovered == valid.revision
+        assert invalid.plan.active_revision_id == valid.revision.id
 
 
 def test_research_plan_timeline_exposes_contract_validation_issues() -> None:

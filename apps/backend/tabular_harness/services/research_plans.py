@@ -100,7 +100,41 @@ def latest_research_plan_revision(db: Session, *, project_id: str) -> ResearchPl
     plan = db.scalar(select(ResearchPlan).where(ResearchPlan.project_id == project_id))
     if plan is None or not plan.active_revision_id:
         return None
-    return db.get(ResearchPlanRevision, plan.active_revision_id)
+    active = db.get(ResearchPlanRevision, plan.active_revision_id)
+    if active is None or not research_plan_revision_is_invalid_harness_artifact(active):
+        return active
+    revisions = list(
+        db.scalars(
+            select(ResearchPlanRevision)
+            .where(ResearchPlanRevision.research_plan_id == plan.id)
+            .order_by(ResearchPlanRevision.revision_index.desc())
+        ).all()
+    )
+    fallback = next(
+        (revision for revision in revisions if not research_plan_revision_is_invalid_harness_artifact(revision)),
+        None,
+    )
+    if fallback is None:
+        return active
+    plan.active_revision_id = fallback.id
+    plan.updated_at = utc_now()
+    db.flush()
+    return fallback
+
+
+def research_plan_revision_is_invalid_harness_artifact(revision: ResearchPlanRevision) -> bool:
+    if revision.author_type != "harness" or revision.source_artifact_id is None:
+        return False
+    document = research_plan_revision_document(revision)
+    timeline_blocks = document.get("timeline_blocks")
+    if not isinstance(timeline_blocks, list) or not timeline_blocks:
+        return True
+    metadata = loads_json(revision.metadata_json, {})
+    issues = metadata.get("validation_issues")
+    return isinstance(issues, list) and any(
+        isinstance(issue, dict) and issue.get("severity", "error") == "error"
+        for issue in issues
+    )
 
 
 def get_or_create_research_plan(db: Session, *, project_id: str) -> ResearchPlan:
@@ -393,16 +427,21 @@ def commit_research_plan_artifact_revision(
     metadata = loads_json(artifact.metadata_json, {})
     source = str(metadata.get("source") or "")
     author_type = "codex" if "codex" in source or "agent_session" in source or "main_agent" in source else "harness"
-    return commit_research_plan_revision(
-        db,
-        project_id=artifact.project_id,
-        document=document,
-        author_type=author_type,
-        reason=reason or f"Committed research_plan artifact {artifact.id}.",
-        source_artifact_id=artifact.id,
-        metadata={"artifact_name": artifact.name, "artifact_version": artifact.version, "source": source},
-        strict_validation=strict_validation,
-    )
+    try:
+        return commit_research_plan_revision(
+            db,
+            project_id=artifact.project_id,
+            document=document,
+            author_type=author_type,
+            reason=reason or f"Committed research_plan artifact {artifact.id}.",
+            source_artifact_id=artifact.id,
+            metadata={"artifact_name": artifact.name, "artifact_version": artifact.version, "source": source},
+            strict_validation=strict_validation or author_type == "harness",
+        )
+    except ResearchPlanValidationError:
+        if author_type != "harness":
+            raise
+        return None
 
 
 def commit_research_plan_revision(

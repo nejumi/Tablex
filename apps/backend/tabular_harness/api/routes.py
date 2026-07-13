@@ -185,6 +185,7 @@ from tabular_harness.services.agent_sessions import (
     append_session_event,
     append_user_instruction_to_workspace_inbox,
     attention_chat_message,
+    chat_action_output_identity,
     chat_update_actions_from_research_plan_evidence,
     chat_update_message_from_text,
     latest_codex_chat_update_at,
@@ -263,7 +264,13 @@ from tabular_harness.services.benchmarks import (
 )
 from tabular_harness.services.dataset_profile import profile_dataset_artifact
 from tabular_harness.services.decision_reporting import current_decision_report_payload
-from tabular_harness.services.deliverable_expectations import deliverable_expectations_for_run_ids
+from tabular_harness.services.deliverable_expectations import (
+    create_project_data_understanding_notebook_expectation,
+    create_project_solution_writeup_expectation,
+    create_run_model_diagnostics_notebook_expectations,
+    deliverable_expectations_for_run_ids,
+    reconcile_project_notebook_expectations,
+)
 from tabular_harness.services.evaluation import (
     approve_spec,
     candidate_to_dict,
@@ -5130,7 +5137,7 @@ def list_agent_chat_history(
     project = require_project(db, project_id)
     response_locale = latest_project_response_locale(db, project)
     japanese = locale_is_japanese(response_locale)
-    plan_actions, plan_next_focus = chat_update_actions_from_research_plan_evidence(
+    _plan_actions, plan_next_focus = chat_update_actions_from_research_plan_evidence(
         db,
         project=project,
         japanese=japanese,
@@ -5225,16 +5232,6 @@ def list_agent_chat_history(
         }
         if metadata.get("source") == "main_codex_session_chat_update" and isinstance(metadata.get("agent_session_id"), str):
             turn["agent_session_id"] = metadata["agent_session_id"]
-            if plan_actions:
-                turn["actions"] = plan_actions
-                response_brief = turn["response_brief"] if isinstance(turn["response_brief"], dict) else {}
-                turn["response_brief"] = {
-                    **response_brief,
-                    "linked_action_count": len(plan_actions),
-                    "linked_action_source": "research_plan_completion_evidence",
-                    "linked_actions_refreshed_for_display": True,
-                }
-                turn["next_focus"] = plan_next_focus
             main_session_update_turns.append(turn)
         else:
             turns.append(turn)
@@ -5322,7 +5319,7 @@ def list_agent_chat_history(
         else:
             turns.append(pending_agent_chat_turn_from_job(db, project_id, job, payload))
     latest_unlinked_update = next((turn for turn in reversed(main_session_update_turns) if not turn.get("actions")), None)
-    linked_actions = merge_agent_chat_actions(plan_actions, registered_output_actions, limit=3)
+    linked_actions = merge_agent_chat_actions(registered_output_actions, limit=3)
     linked_next_focus = registered_output_next_focus or plan_next_focus
     if latest_unlinked_update is not None and linked_actions:
         latest_unlinked_update["actions"] = linked_actions
@@ -5341,8 +5338,9 @@ def list_agent_chat_history(
     turns.extend(
         turn for turn in main_session_update_turns if isinstance(turn.get("artifact_id"), str) and turn["artifact_id"] not in paired_update_ids
     )
+    compacted_turns = compact_agent_chat_history_turns(turns, locale=response_locale, db=db, project_id=project_id)
     return prioritize_completed_waiting_for_input_turn(
-        compact_agent_chat_history_turns(turns, locale=response_locale, db=db, project_id=project_id),
+        dedupe_repeated_output_actions(compacted_turns),
         db=db,
         project_id=project_id,
     )
@@ -5418,6 +5416,24 @@ def merge_agent_chat_actions(*action_groups: list[dict[str, Any]], limit: int = 
             if len(merged) >= limit:
                 return merged
     return merged
+
+
+def dedupe_repeated_output_actions(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str, str, str]] = set()
+    for turn in reversed(turns):
+        actions = turn.get("actions") if isinstance(turn.get("actions"), list) else []
+        retained_reversed: list[dict[str, Any]] = []
+        for action in reversed(actions):
+            if not isinstance(action, dict):
+                continue
+            identity = chat_action_output_identity(action)
+            if identity is not None and identity in seen:
+                continue
+            if identity is not None:
+                seen.add(identity)
+            retained_reversed.append(action)
+        turn["actions"] = list(reversed(retained_reversed))
+    return turns
 
 
 def chat_update_actions_from_registered_output_evidence(
@@ -8074,6 +8090,25 @@ def leaderboard(
     if display_metric is None:
         display_metric = str(BUILTIN_METRIC_OPTIONS[0]["name"])
     sorted_runs = sorted(runs, key=lambda run: leaderboard_sort_key_for_metric(run, display_metric))
+    create_project_data_understanding_notebook_expectation(
+        db,
+        project=project,
+        created_from="leaderboard_deliverable_reconciliation",
+        dataset_snapshot_id=project.primary_dataset_snapshot_id,
+    )
+    create_project_solution_writeup_expectation(
+        db,
+        project=project,
+        created_from="leaderboard_deliverable_reconciliation",
+    )
+    create_run_model_diagnostics_notebook_expectations(
+        db,
+        project=project,
+        runs=sorted_runs,
+        created_from="leaderboard_deliverable_reconciliation",
+    )
+    db.flush()
+    reconcile_project_notebook_expectations(db, project_id=project_id)
     deliverable_expectations_by_run = deliverable_expectations_for_run_ids(
         db,
         project_id=project_id,
@@ -8121,6 +8156,11 @@ def leaderboard(
                 model_version_id=run.model_version_id,
             ),
             "related_notebooks": leaderboard_related_notebooks(
+                notebook_index,
+                run_id=run.id,
+                model_version_id=run.model_version_id,
+            ),
+            "primary_model_notebook": leaderboard_primary_model_notebook(
                 notebook_index,
                 run_id=run.id,
                 model_version_id=run.model_version_id,
@@ -9298,6 +9338,26 @@ def leaderboard_related_notebook_sort_key(
     score = float(recommendation_score) if isinstance(recommendation_score, (int, float)) else 0.0
     created_at = str(item.get("created_at") or "")
     return (1 if needs_attention else 0, kind_rank, run_rank, 0 if created_at else 1, -score)
+
+
+def leaderboard_primary_model_notebook(
+    notebook_index: dict[str, Any],
+    *,
+    run_id: str,
+    model_version_id: str | None,
+) -> dict[str, Any] | None:
+    return next(
+        (
+            item
+            for item in leaderboard_related_notebooks(
+                notebook_index,
+                run_id=run_id,
+                model_version_id=model_version_id,
+            )
+            if item.get("notebook_kind") == "model_diagnostics" and item.get("run_id") == run_id
+        ),
+        None,
+    )
 
 
 def leaderboard_model_id(params: dict[str, Any], metrics: dict[str, Any]) -> str:

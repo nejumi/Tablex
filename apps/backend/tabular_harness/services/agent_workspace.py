@@ -681,7 +681,8 @@ def build_session_context(
                 ),
             },
             "living_research_plan": (
-                "When the project plan changes, write outputs/research_plan.json with optional timeline_blocks. "
+                "When the project plan changes, write outputs/research_plan.json as a draft if useful. Every "
+                "commit_revision tool request must submit the whole next document with a non-empty timeline_blocks array. "
                 "Tablex renders those blocks directly; after the initial anchors, Codex may append, refine, supersede, or branch them. "
                 "Keep top-level timeline_blocks coarse and capped at 7 nodes: use granularity chapter, phase, or milestone. Put individual analyses, "
                 "model attempts, diagnostics, notebook sections, and reports in subtasks, ExperimentRuns, artifacts, or completion evidence. "
@@ -1174,7 +1175,8 @@ def build_session_context(
                     "optional_project_link": "Set payload.research_plan_node_id to link the notebook source to a visible plan node.",
                     "optional_context_links": (
                         "Set payload.dataset_snapshot_id for data notebooks, payload.run_id for single-run diagnostics, "
-                        "payload.related_run_ids when one notebook compares multiple leaderboard runs, and "
+                        "payload.related_run_ids with notebook_kind=model_comparison when one supplementary notebook "
+                        "compares multiple leaderboard runs, and "
                         "payload.model_version_id when the notebook explains a model package. Tablex validates these ids "
                         "and stores them on the notebook artifact so Data, Leaderboard, Assets, and ResearchPlan can all "
                         "open the same notebook viewer."
@@ -1190,6 +1192,22 @@ def build_session_context(
                     "not_applicable, needs_model_artifact, needs_dependency, or deferred, and give a short reason for "
                     "anything not included."
                 ),
+                "deliverable_roles": {
+                    "data_understanding": "One dedicated EDA/data-understanding notebook linked to the primary DatasetSnapshot.",
+                    "model_diagnostics": (
+                        "One run-specific notebook per serious Leaderboard ExperimentRun using payload.run_id. Cover the "
+                        "run's feature engineering, preprocessing, training configuration, OOF evaluation, diagnostics, "
+                        "inference contract, and limitations."
+                    ),
+                    "model_comparison": (
+                        "Optional supplementary notebook linked with related_run_ids. It does not fulfill the run-specific "
+                        "model_diagnostics deliverables."
+                    ),
+                    "solution_writeup": (
+                        "One project-level synthesis notebook covering the full evidence ladder, accepted and rejected "
+                        "hypotheses, final solution, inference behavior, limitations, and reproducible next steps."
+                    ),
+                },
                 "marimo_authoring_constraints": [
                         (
                             "Marimo public variables returned or assigned by cells must be unique across the notebook. "

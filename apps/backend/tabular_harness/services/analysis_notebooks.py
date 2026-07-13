@@ -1366,6 +1366,12 @@ def _notebook_index_item(
 ) -> dict[str, Any]:
     metadata = loads_json(notebook_artifact.metadata_json, {})
     notebook_kind = str(metadata.get("notebook_kind") or _infer_notebook_kind_from_artifact(notebook_artifact, metadata))
+    if (
+        notebook_kind == "model_diagnostics"
+        and not metadata.get("run_id")
+        and metadata.get("related_run_ids")
+    ):
+        notebook_kind = "model_comparison"
     manifest_artifact = _latest_artifact_for_metadata_cached(
         db, project.id, "notebook_run_manifest", "notebook_artifact_id", notebook_artifact.id, artifact_lookup
     )
@@ -2000,10 +2006,12 @@ def _notebook_recommendation_score(
     score = 20
     if coverage.get("native_marimo_status") == "runtime_error":
         score -= 120
-    if notebook_kind == "model_diagnostics":
+    if notebook_kind in {"model_diagnostics", "model_comparison"}:
         score += 10
     if notebook_kind == "data_understanding":
         score += 35
+    if notebook_kind == "solution_writeup":
+        score += 30
     if coverage.get("has_report"):
         score += 10
     if coverage.get("has_visualization"):
@@ -2016,7 +2024,7 @@ def _notebook_recommendation_score(
         score += 2
     readiness = str(content.get("readiness") or "unknown")
     quality_score = int(content.get("quality_score") or 0)
-    if notebook_kind == "model_diagnostics":
+    if notebook_kind in {"model_diagnostics", "model_comparison"}:
         if readiness == "evidence_ready":
             score += 90
         elif readiness == "partial_review":
@@ -2385,8 +2393,12 @@ def _notebook_display_title(
 def _notebook_title(notebook_kind: str) -> str:
     if notebook_kind == "model_diagnostics":
         return "Model Diagnostics Notebook"
+    if notebook_kind == "model_comparison":
+        return "Model Comparison Notebook"
     if notebook_kind == "data_understanding":
         return "Data Understanding Notebook"
+    if notebook_kind == "solution_writeup":
+        return "Solution Writeup"
     return "Analysis Notebook"
 
 

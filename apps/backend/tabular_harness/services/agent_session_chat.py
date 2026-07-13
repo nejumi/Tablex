@@ -1863,6 +1863,63 @@ def chat_update_actions_from_research_plan_evidence(
     return actions, next_focus
 
 
+def chat_action_output_identity(action: dict[str, Any]) -> tuple[str, str, str, str] | None:
+    artifact_id = action.get("artifact_id")
+    run_id = action.get("run_id")
+    entity_id = ""
+    entity_ids = action.get("entity_ids")
+    if isinstance(entity_ids, list):
+        entity_id = next((item for item in entity_ids if isinstance(item, str) and item), "")
+    output_id = artifact_id if isinstance(artifact_id, str) and artifact_id else run_id
+    if not isinstance(output_id, str) or not output_id:
+        output_id = entity_id
+    if not output_id:
+        return None
+    return (
+        "registered_output",
+        str(action.get("target_tab") or ""),
+        str(action.get("target_anchor") or ""),
+        output_id,
+    )
+
+
+def unannounced_research_plan_actions(
+    db: Session,
+    *,
+    project: Project,
+    actions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    announced: set[tuple[str, str, str, str]] = set()
+    chat_artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+            .order_by(Artifact.created_at.desc())
+            .limit(500)
+        ).all()
+    )
+    for chat_artifact in chat_artifacts:
+        try:
+            payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
+        except OSError:
+            continue
+        prior_actions = payload.get("actions") if isinstance(payload, dict) else None
+        if not isinstance(prior_actions, list):
+            continue
+        for prior_action in prior_actions:
+            if not isinstance(prior_action, dict):
+                continue
+            identity = chat_action_output_identity(prior_action)
+            if identity is not None:
+                announced.add(identity)
+    return [
+        action
+        for action in actions
+        if action.get("source") != "research_plan_completion_evidence"
+        or chat_action_output_identity(action) not in announced
+    ]
+
+
 def notebook_action_artifact_targets(
     db: Session,
     *,
@@ -2098,6 +2155,19 @@ def maybe_register_chat_update_from_workspace_output(
     response_locale = latest_project_response_locale(db, project)
     japanese = locale_is_japanese(response_locale)
     actions, next_focus = chat_update_actions_from_research_plan_evidence(db, project=project, japanese=japanese)
+    actions = unannounced_research_plan_actions(db, project=project, actions=actions)
+    if actions:
+        first_action = actions[0]
+        next_focus = {
+            "target_tab": first_action.get("target_tab") or "Home",
+            "target_anchor": first_action.get("target_anchor") or "agent-workspace",
+            "label": first_action.get("label") or "Agent workspace",
+        }
+        for key in ("artifact_id", "artifact_ids", "asset_type", "entity_ids", "run_id"):
+            if first_action.get(key) is not None:
+                next_focus[key] = first_action.get(key)
+    else:
+        next_focus = {"target_tab": "Home", "target_anchor": "agent-workspace", "label": "Agent workspace"}
     visible_state_fingerprint = chat_update_visible_state_fingerprint(
         db,
         project=project,

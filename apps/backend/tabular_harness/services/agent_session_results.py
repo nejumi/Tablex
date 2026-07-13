@@ -41,6 +41,7 @@ from tabular_harness.services.artifacts import (
     create_lineage_edge,
 )
 from tabular_harness.services.deliverable_expectations import (
+    create_project_solution_writeup_expectation,
     create_run_model_diagnostics_notebook_expectations,
 )
 from tabular_harness.services.experiment_evidence import register_experiment_evidence
@@ -294,6 +295,11 @@ def process_experiment_result_requests(
                     diagnostics_status=model_diagnostics_artifacts,
                 )
             model_diagnostics_notebook = experiment_model_diagnostics_notebook_status(db, project=project, runs=runs)
+            create_project_solution_writeup_expectation(
+                db,
+                project=project,
+                created_from=f"register_runs:{request_id}",
+            )
             if model_diagnostics_notebook["status"] != "ready":
                 create_run_model_diagnostics_notebook_expectations(
                     db,
@@ -531,6 +537,11 @@ def ingest_registered_session_experiment_artifacts(
                     diagnostics_status=diagnostics_artifact_status,
                 )
             diagnostics_notebook_status = experiment_model_diagnostics_notebook_status(db, project=project, runs=runs)
+            create_project_solution_writeup_expectation(
+                db,
+                project=project,
+                created_from=f"artifact:{artifact.id}",
+            )
             if workspace is not None and diagnostics_notebook_status["status"] != "ready":
                 create_run_model_diagnostics_notebook_expectations(
                     db,
@@ -811,9 +822,6 @@ def experiment_model_diagnostics_notebook_status(
         value = metadata.get("run_id")
         if isinstance(value, str) and value in run_ids:
             linked_run_ids.add(value)
-        related = metadata.get("related_run_ids")
-        if isinstance(related, list):
-            linked_run_ids.update(item for item in related if isinstance(item, str) and item in run_ids)
     missing = [
         {
             "run_id": run.id,
@@ -836,8 +844,10 @@ def experiment_model_diagnostics_notebook_status(
         "linked_count": len(linked_run_ids),
         "missing_runs": missing[:50],
         "next_request": (
-            "Write a tablex_notebook_request.v1 register_notebook request for a model-diagnostics marimo notebook "
-            "linked to the missing run ids. The quality_manifest.model_diagnostics checks should declare "
+            "Write one tablex_notebook_request.v1 register_notebook request per missing run for a run-specific "
+            "model-diagnostics marimo notebook with payload.run_id. A shared comparison notebook may supplement "
+            "these notebooks but does not satisfy a run-specific deliverable. The quality_manifest.model_diagnostics "
+            "checks should declare "
             "permutation_importance, native_feature_importance, partial_dependence, and shap coverage."
             if missing
             else None
@@ -2990,11 +3000,12 @@ def write_model_diagnostics_notebook_request_to_workspace_inbox(
         f"missing_count: {diagnostics_status.get('missing_count', len(missing_items))}",
         "",
         "Leaderboard rows were registered, but one or more runs do not yet have linked model-diagnostics marimo notebooks.",
-        "Continue the work and author native marimo notebook source for the missing runs, then submit fixed JSON requests under `.tablex/requests/notebooks/` with `schema_version: \"tablex_notebook_request.v1\"` and operation `register_notebook`.",
+        "Continue the work and author one native marimo notebook source for each missing run, then submit one fixed JSON request per run under `.tablex/requests/notebooks/` with `schema_version: \"tablex_notebook_request.v1\"` and operation `register_notebook`.",
         "",
         "Notebook request requirements:",
         "- notebook_kind: model_diagnostics",
-        "- run_id: the single ExperimentRun being diagnosed, or related_run_ids: an array of ExperimentRun ids when one notebook compares multiple leaderboard rows",
+        "- run_id: the single ExperimentRun documented by this notebook; related_run_ids comparison notebooks are supplementary and do not fulfill this requirement",
+        "- explain this run's feature engineering and preprocessing, estimator/training configuration, unchanged-fold evaluation and OOF comparison, diagnostics and errors, prediction input contract, and limitations using registered evidence",
         "- quality_manifest.figure_count > 0 with meaningful visual diagnostics",
         "- quality_manifest.model_diagnostics.checks entries for permutation_importance, native_feature_importance, partial_dependence, and shap",
         "- each check uses status included, not_applicable, needs_model_artifact, needs_dependency, or deferred with evidence/reason",

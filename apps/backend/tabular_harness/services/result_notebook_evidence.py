@@ -106,13 +106,9 @@ def latest_model_diagnostics_notebook_for_run(
     )
     for artifact in notebooks:
         metadata = loads_json(artifact.metadata_json, {})
-        related_run_ids = metadata.get("related_run_ids")
         if (
             metadata.get("notebook_kind") == "model_diagnostics"
-            and (
-                metadata.get("run_id") == run_id
-                or (isinstance(related_run_ids, list) and run_id in related_run_ids)
-            )
+            and metadata.get("run_id") == run_id
         ):
             return artifact
     return None

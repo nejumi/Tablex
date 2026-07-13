@@ -1037,6 +1037,17 @@ export type LeaderboardEntry = {
     >;
   };
   related_notebook_artifact_ids?: string[];
+  primary_model_notebook?: {
+    artifact_id: string;
+    title?: string | null;
+    notebook_kind?: string | null;
+    status?: string | null;
+    native_marimo_status?: string | null;
+    needs_attention?: boolean;
+    openable?: boolean;
+    run_id?: string | null;
+    model_version_id?: string | null;
+  } | null;
   related_notebooks?: Array<{
     artifact_id: string;
     title?: string | null;

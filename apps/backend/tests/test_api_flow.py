@@ -4582,6 +4582,44 @@ def test_leaderboard_collapses_duplicate_metric_results_and_keeps_richer_row(tmp
         rich_params = json.loads(rich_run.params_json)
         rich_params["pipeline_artifact_id"] = pipeline.id
         rich_run.params_json = json.dumps(rich_params)
+        shared_notebook = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="shared_model_comparison",
+            filename="shared_model_comparison.py",
+            text="import marimo\n\napp = marimo.App()\n",
+            metadata={
+                "project_id": project_id,
+                "notebook_kind": "model_diagnostics",
+                "related_run_ids": [rich_run.id],
+            },
+        )
+        db.add(
+            DeliverableExpectation(
+                id="deliv_legacy_shared_model_notebook",
+                project_id=project_id,
+                kind="model_diagnostics_notebook",
+                subject_ref=f"experiment_run:{rich_run.id}",
+                status="fulfilled",
+                created_from="legacy_shared_notebook",
+                fulfilled_by_artifact_id=shared_notebook.id,
+                fulfilled_at=utc_now(),
+            )
+        )
+        db.add(
+            DeliverableExpectation(
+                id="deliv_legacy_shared_data_notebook",
+                project_id=project_id,
+                kind="data_understanding_notebook",
+                subject_ref=f"project:{project_id}",
+                status="fulfilled",
+                created_from="legacy_shared_notebook",
+                fulfilled_by_artifact_id=shared_notebook.id,
+                fulfilled_at=utc_now(),
+            )
+        )
         db.commit()
 
     leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
@@ -4592,6 +4630,50 @@ def test_leaderboard_collapses_duplicate_metric_results_and_keeps_richer_row(tmp
     assert leaderboard[0]["model_id"] == "lgbm_relational_aggregates_v1"
     assert leaderboard[0]["pipeline_artifact_id"] == pipeline.id
     assert leaderboard[0]["pipeline_export_status"] == "ready"
+    assert leaderboard[0]["primary_model_notebook"] is None
+    assert leaderboard[0]["related_notebooks"][0]["notebook_kind"] == "model_comparison"
+    assert leaderboard[0]["deliverable_expectations"][0]["status"] == "open"
+    assert leaderboard[0]["deliverable_expectations"][0]["metadata"]["reopened_reason"] == "missing_exact_run_notebook"
+
+    with app.state.session_factory() as db:
+        expectation_kinds = set(
+            db.scalars(
+                select(DeliverableExpectation.kind).where(DeliverableExpectation.project_id == project_id)
+            ).all()
+        )
+        assert expectation_kinds == {
+            "data_understanding_notebook",
+            "model_diagnostics_notebook",
+            "solution_writeup",
+        }
+        data_expectation = db.scalar(
+            select(DeliverableExpectation).where(
+                DeliverableExpectation.project_id == project_id,
+                DeliverableExpectation.kind == "data_understanding_notebook",
+            )
+        )
+        assert data_expectation is not None
+        assert data_expectation.status == "open"
+        assert loads_json(data_expectation.metadata_json, {})["reopened_reason"] == "missing_data_understanding_notebook"
+        exact_notebook = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="rich_run_model_notebook",
+            filename="rich_run_model_notebook.py",
+            text="import marimo\n\napp = marimo.App()\n",
+            metadata={
+                "project_id": project_id,
+                "notebook_kind": "model_diagnostics",
+                "run_id": rich_run.id,
+            },
+        )
+        exact_notebook_id = exact_notebook.id
+        db.commit()
+
+    refreshed_leaderboard = client.get(f"/api/projects/{project_id}/leaderboard").json()
+    assert refreshed_leaderboard[0]["primary_model_notebook"]["artifact_id"] == exact_notebook_id
 
     build_response = client.post(
         "/api/experiment-runs/run_rich_duplicate/pipeline-bundle/build",
@@ -6131,6 +6213,88 @@ def test_latest_codex_chat_update_links_registered_notebooks_and_leaderboard(
     assert notebook_action["artifact_id"] == notebook.id
     assert progress_turn["next_focus"]["target_tab"] == "Leaderboard"
     assert progress_turn["response_brief"]["linked_action_source"] == "registered_output_evidence"
+
+
+def test_agent_chat_history_shows_repeated_notebook_evidence_action_only_once(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.run_main_agent_session_supervisor",
+        lambda *args, **kwargs: None,
+    )
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Deduplicated notebook links"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+
+    with app.state.session_factory() as db:
+        session = AgentSession(
+            id="ags_deduplicated_notebook_links",
+            project_id=project_id,
+            session_type="main_autonomous",
+            status="stopped",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Keep reporting progress without repeating old outputs.",
+        )
+        db.add(session)
+        notebook = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="deduplicated_notebook",
+            filename="deduplicated_notebook.py",
+            text="import marimo\n\napp = marimo.App()\n",
+            metadata={"project_id": project_id, "agent_session_id": session.id},
+        )
+        chat_artifacts = []
+        for index in range(2):
+            chat_artifacts.append(
+                store_json_artifact(
+                    db,
+                    app.state.artifact_store,
+                    project_id=project_id,
+                    asset_type="agent_chat_turn",
+                    name=f"repeated_notebook_link_{index}",
+                    filename="agent_chat_turn.json",
+                    payload={
+                        "schema_version": "agent_chat_turn.v1",
+                        "assistant_message": f"Progress update {index}",
+                        "intent": {"type": "autonomous_agent_progress_report", "status": "running"},
+                        "actions": [
+                            {
+                                "type": "open_artifact",
+                                "status": "ready",
+                                "label": "Open notebook",
+                                "target_tab": "Notebooks",
+                                "target_anchor": "notebook-native-marimo-top",
+                                "artifact_id": notebook.id,
+                                "artifact_ids": [notebook.id],
+                                "source": "research_plan_completion_evidence",
+                            }
+                        ],
+                        "response_brief": {"schema_version": "progress.v1"},
+                        "worker_events": [],
+                    },
+                    metadata={
+                        "project_id": project_id,
+                        "agent_session_id": session.id,
+                        "source": "main_codex_session_chat_update",
+                    },
+                )
+            )
+        db.commit()
+
+    history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
+    assert history_response.status_code == 200, history_response.text
+    history_by_id = {turn["artifact_id"]: turn for turn in history_response.json()}
+    first_turn = history_by_id[chat_artifacts[0].id]
+    latest_turn = history_by_id[chat_artifacts[1].id]
+    assert first_turn["actions"] == []
+    assert [action["artifact_id"] for action in latest_turn["actions"]] == [notebook.id]
 
 
 def test_agent_activity_uses_notebook_update_chat_turn_as_target(

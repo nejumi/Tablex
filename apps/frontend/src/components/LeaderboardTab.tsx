@@ -925,20 +925,6 @@ export function LeaderboardTab({
     return completedJob;
   }
 
-  async function prepareResultNotebookEvidence() {
-    const job = await api<Job>(`/api/projects/${project.id}/results/notebook-evidence`, { method: "POST" });
-    const completedJob = await runQueuedJobAndWait(job, { timeoutMs: 10 * 60_000, label: "Result notebook evidence job" });
-    await openNotebookOrAskAgentToAuthor({
-      completedJob,
-      locale,
-      projectName: project.name,
-      notebookKind: "result evidence",
-      onOpenNotebookArtifact,
-      onAskAgent
-    });
-    return completedJob;
-  }
-
   async function prepareRunNotebookEvidence(entry: LeaderboardEntry) {
     const job = await api<Job>(`/api/runs/${entry.run_id}/analysis-notebook`, { method: "POST" });
     const completedJob = await runQueuedJobAndWait(job, {
@@ -1191,7 +1177,10 @@ export function LeaderboardTab({
                 text.leaderboardHeaderActions
               ]}
               rows={leaderboard.map((entry) => {
-                const existingNotebook = notebooksForLeaderboardEntry(notebookIndex, entry)[0] ?? null;
+                const existingNotebookArtifactId =
+                  entry.primary_model_notebook?.openable === false
+                    ? null
+                    : entry.primary_model_notebook?.artifact_id ?? null;
                 return [
                   <strong className="leaderboard-rank" key={`${entry.run_id}-rank`}>#{entry.rank}</strong>,
                   <div className="leaderboard-model-cell" key={`${entry.run_id}-model`}>
@@ -1239,8 +1228,8 @@ export function LeaderboardTab({
                       className="leaderboard-row-primary"
                       disabled={busy}
                       onClick={() => {
-                        if (existingNotebook) {
-                          onOpenNotebookArtifact(existingNotebook.artifact_ids.notebook);
+                        if (existingNotebookArtifactId) {
+                          onOpenNotebookArtifact(existingNotebookArtifactId);
                           return;
                         }
                         void runAction(() => prepareRunNotebookEvidence(entry));

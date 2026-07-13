@@ -110,7 +110,7 @@ def assert_human_facing_notebook_quality(
                 )
             ],
         )
-    if notebook_kind == "model_diagnostics":
+    if notebook_kind in {"model_diagnostics", "model_comparison"}:
         assert_model_diagnostics_manifest(quality_manifest)
     runtime_preflight = marimo_notebook_runtime_preflight_for_artifact(notebook_artifact)
     if runtime_preflight.get("ok") is True:

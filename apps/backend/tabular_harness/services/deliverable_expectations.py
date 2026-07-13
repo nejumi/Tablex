@@ -11,6 +11,7 @@ from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import (
     AgentSession,
+    Artifact,
     DeliverableExpectation,
     ExperimentRun,
     Project,
@@ -21,6 +22,7 @@ from tabular_harness.services.agent_inbox import write_inbox_entry
 DELIVERABLE_EXPECTATION_KINDS = {
     "data_understanding_notebook",
     "model_diagnostics_notebook",
+    "solution_writeup",
     "pipeline_bundle",
     "validation_audit",
     "research_findings",
@@ -168,6 +170,22 @@ def create_project_data_understanding_notebook_expectation(
     )
 
 
+def create_project_solution_writeup_expectation(
+    db: Session,
+    *,
+    project: Project,
+    created_from: str,
+) -> DeliverableExpectation:
+    return upsert_deliverable_expectation(
+        db,
+        project_id=project.id,
+        kind="solution_writeup",
+        subject_ref=project_subject_ref(project.id),
+        created_from=created_from,
+        metadata={"notebook_kind": "solution_writeup"},
+    )
+
+
 def fulfill_run_model_diagnostics_notebook_expectations(
     db: Session,
     *,
@@ -212,6 +230,24 @@ def fulfill_project_data_understanding_notebook_expectations(
     )
 
 
+def fulfill_project_solution_writeup_expectations(
+    db: Session,
+    *,
+    project: Project,
+    notebook_artifact_id: str,
+) -> DeliverableExpectation:
+    return upsert_deliverable_expectation(
+        db,
+        project_id=project.id,
+        kind="solution_writeup",
+        subject_ref=project_subject_ref(project.id),
+        created_from="register_notebook",
+        metadata={"notebook_kind": "solution_writeup", "notebook_artifact_id": notebook_artifact_id},
+        status="fulfilled",
+        fulfilled_by_artifact_id=notebook_artifact_id,
+    )
+
+
 def fulfill_run_pipeline_bundle_expectations(
     db: Session,
     *,
@@ -232,6 +268,51 @@ def fulfill_run_pipeline_bundle_expectations(
         )
         for run_id in unique_strings(run_ids)
     ]
+
+
+def reconcile_project_notebook_expectations(
+    db: Session,
+    *,
+    project_id: str,
+) -> None:
+    expected_notebook_kinds = {
+        "data_understanding_notebook": "data_understanding",
+        "solution_writeup": "solution_writeup",
+    }
+    expectations = list(
+        db.scalars(
+            select(DeliverableExpectation).where(
+                DeliverableExpectation.project_id == project_id,
+                DeliverableExpectation.kind.in_(tuple(expected_notebook_kinds)),
+            )
+        ).all()
+    )
+    for expectation in expectations:
+        if expectation.status != "fulfilled":
+            continue
+        artifact = db.get(Artifact, expectation.fulfilled_by_artifact_id) if expectation.fulfilled_by_artifact_id else None
+        metadata = loads_json(artifact.metadata_json, {}) if artifact is not None else {}
+        expected_kind = expected_notebook_kinds[expectation.kind]
+        if (
+            artifact is not None
+            and artifact.project_id == project_id
+            and metadata.get("notebook_kind") == expected_kind
+        ):
+            continue
+        expectation.status = "open"
+        expectation.fulfilled_by_artifact_id = None
+        expectation.fulfilled_at = None
+        expectation.notification_sent_at = None
+        expectation.updated_at = utc_now()
+        current = loads_json(expectation.metadata_json, {})
+        expectation.metadata_json = dumps_json(
+            {
+                **current,
+                "reopened_reason": f"missing_{expected_kind}_notebook",
+                "previous_mismatched_notebook_artifact_id": artifact.id if artifact is not None else None,
+            }
+        )
+    db.flush()
 
 
 def deliverable_expectations_for_run_ids(
@@ -255,7 +336,30 @@ def deliverable_expectations_for_run_ids(
         run_id = run_id_from_subject_ref(expectation.subject_ref)
         if run_id is None:
             continue
+        if expectation.kind == "model_diagnostics_notebook" and expectation.status == "fulfilled":
+            artifact = db.get(Artifact, expectation.fulfilled_by_artifact_id) if expectation.fulfilled_by_artifact_id else None
+            metadata = loads_json(artifact.metadata_json, {}) if artifact is not None else {}
+            if (
+                artifact is None
+                or artifact.project_id != project_id
+                or metadata.get("notebook_kind") != "model_diagnostics"
+                or metadata.get("run_id") != run_id
+            ):
+                expectation.status = "open"
+                expectation.fulfilled_by_artifact_id = None
+                expectation.fulfilled_at = None
+                expectation.notification_sent_at = None
+                expectation.updated_at = utc_now()
+                current = loads_json(expectation.metadata_json, {})
+                expectation.metadata_json = dumps_json(
+                    {
+                        **current,
+                        "reopened_reason": "missing_exact_run_notebook",
+                        "previous_shared_notebook_artifact_id": artifact.id if artifact is not None else None,
+                    }
+                )
         by_run.setdefault(run_id, []).append(expectation_to_dict(expectation))
+    db.flush()
     return by_run
 
 

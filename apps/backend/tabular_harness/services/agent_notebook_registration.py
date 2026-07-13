@@ -164,6 +164,8 @@ def apply_notebook_request_metadata(
         validated_related_run_ids = linked_run_ids
         run_id = None
         model_version_id = None
+        if notebook_kind == "model_diagnostics":
+            notebook_kind = "model_comparison"
 
     updates = {
         "title": notebook_title,

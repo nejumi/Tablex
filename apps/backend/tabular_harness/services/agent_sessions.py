@@ -170,6 +170,7 @@ from tabular_harness.services.agent_session_chat import (
     attach_notebook_artifacts_to_current_research_plan,
     attach_registered_session_notebooks_to_current_research_plan,
     attention_chat_message,
+    chat_action_output_identity,
     chat_update_actions_from_research_plan_evidence,
     chat_update_message_from_text,
     latest_agent_session_notebook_registration_event,
@@ -300,6 +301,7 @@ from tabular_harness.services.artifacts import (
 from tabular_harness.services.dataset_profile import profile_dataset_artifact
 from tabular_harness.services.deliverable_expectations import (
     fulfill_project_data_understanding_notebook_expectations,
+    fulfill_project_solution_writeup_expectations,
     fulfill_run_model_diagnostics_notebook_expectations,
     maybe_write_open_deliverable_expectation_observation,
 )
@@ -2094,17 +2096,18 @@ def execute_notebook_registration_request(
             dataset_snapshot_id=dataset_snapshot_id if isinstance(dataset_snapshot_id, str) else None,
         )
     if context_links.get("notebook_kind") == "model_diagnostics":
-        run_ids = []
         run_id = context_links.get("run_id")
         if isinstance(run_id, str) and run_id.strip():
-            run_ids.append(run_id)
-        related_run_ids = context_links.get("related_run_ids")
-        if isinstance(related_run_ids, list):
-            run_ids.extend(item for item in related_run_ids if isinstance(item, str))
-        fulfill_run_model_diagnostics_notebook_expectations(
+            fulfill_run_model_diagnostics_notebook_expectations(
+                db,
+                project=project,
+                run_ids=[run_id],
+                notebook_artifact_id=notebook_artifact.id,
+            )
+    if context_links.get("notebook_kind") == "solution_writeup":
+        fulfill_project_solution_writeup_expectations(
             db,
             project=project,
-            run_ids=run_ids,
             notebook_artifact_id=notebook_artifact.id,
         )
     node_id = str(payload.get("research_plan_node_id") or "").strip() or None
