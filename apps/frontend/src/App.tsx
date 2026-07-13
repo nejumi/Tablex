@@ -9256,7 +9256,8 @@ function ExperimentsTab({
       "feature_importance",
       "permutation_importance",
       "model_diagnostics_artifact_pack",
-      "model_diagnostics_artifact_report"
+      "model_diagnostics_artifact_report",
+      "experiment_evidence"
     ].includes(artifact.asset_type)
   );
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
@@ -9339,17 +9340,45 @@ function ExperimentsTab({
       <Panel title="Experiment Runs" icon={<Play size={18} />}>
         {runs.length ? (
           <Table
-            headers={["Run", "Runner", "Status", "Model", "ModelVersion", "Features", "Primary Metric", "Spec", "Split", "Notebooks", "Actions"]}
+            headers={["Run", "Model", "Primary Metric", "Evidence", "Evaluation", "Notebooks", "Actions"]}
             rows={runs.map((run) => [
-              run.id,
-              run.runner_type,
-              run.status,
-              formatBaseline(run.metrics),
-              run.model_version_id ?? "-",
-              formatFeatureCount(run.metrics),
+              <div className="cell-stack" key={`${run.id}-identity`}>
+                <span>{run.id}</span>
+                <small>{run.runner_type.replace(/_/g, " ")} · {run.status}</small>
+              </div>,
+              <div className="cell-stack" key={`${run.id}-model`}>
+                <span>{run.model_label || run.model_id || formatBaseline(run.metrics)}</span>
+                <small>{run.model_version_id ? `ModelVersion ${run.model_version_id}` : "No ModelVersion"}</small>
+                <small>
+                  {run.features_used.length
+                    ? `${run.features_used.length} feature families`
+                    : formatFeatureCount(run.metrics) === "-"
+                      ? "Feature count unavailable"
+                      : `${formatFeatureCount(run.metrics)} features`}
+                </small>
+              </div>,
               formatMetric(run.metrics),
-              run.evaluation_spec_id ?? "-",
-              run.split_manifest_id ?? "-",
+              run.experiment_evidence?.artifact_id ? (
+                <button
+                  className="quiet-button"
+                  key={`${run.id}-evidence`}
+                  onClick={() => void loadPreview(run.experiment_evidence!.artifact_id!)}
+                  title="Open verified experiment evidence"
+                >
+                  <ListChecks size={14} />
+                  {run.experiment_evidence.status === "verified"
+                    ? run.experiment_evidence.prediction_coverage_scope === "split_manifest_validation"
+                      ? "Validation verified"
+                      : "OOF verified"
+                    : "Evidence registered"}
+                </button>
+              ) : (
+                <span className="muted" key={`${run.id}-evidence-missing`}>Not registered</span>
+              ),
+              <div className="cell-stack" key={`${run.id}-evaluation`}>
+                <span>{run.evaluation_spec_id ?? "No EvaluationSpec"}</span>
+                <small>{run.split_manifest_id ?? "No SplitManifest"}</small>
+              </div>,
                 <RelatedNotebookLinks
                   key={`${run.id}-notebooks`}
                   notebooks={notebooksForRun(notebookIndex, run.id)}

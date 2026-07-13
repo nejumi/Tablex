@@ -43,6 +43,7 @@ from tabular_harness.services.artifacts import (
 from tabular_harness.services.deliverable_expectations import (
     create_run_model_diagnostics_notebook_expectations,
 )
+from tabular_harness.services.experiment_evidence import register_experiment_evidence
 from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.metric_preferences import (
     leaderboard_sort_key_for_metric,
@@ -175,6 +176,7 @@ class RunSpec:
     dataset_snapshot_id: str | None = None
     evaluation_spec_id: str | None = None
     split_manifest_id: str | None = None
+    experiment_evidence: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -251,15 +253,16 @@ def process_experiment_result_requests(
                 raise ValueError(f"Unsupported experiment result operation: {operation}")
             body = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
             specs = run_specs_from_experiment_request(body, request_id=request_id)
-            runs = register_experiment_run_specs(
-                db,
-                store=store,
-                project=project,
-                session=session,
-                specs=specs,
-                source_artifact=None,
-                source_request_id=request_id,
-            )
+            with db.begin_nested():
+                runs = register_experiment_run_specs(
+                    db,
+                    store=store,
+                    project=project,
+                    session=session,
+                    specs=specs,
+                    source_artifact=None,
+                    source_request_id=request_id,
+                )
             created_runs.extend(runs)
             chat_artifact = register_experiment_registration_chat_turn(
                 db,
@@ -481,15 +484,16 @@ def ingest_registered_session_experiment_artifacts(
                 raise ValueError(
                     f"`{schema_version}` did not contain any registerable model result rows with a numeric primary metric"
                 )
-            runs = register_experiment_run_specs(
-                db,
-                store=store,
-                project=project,
-                session=session,
-                specs=specs,
-                source_artifact=artifact,
-                source_request_id=None,
-            )
+            with db.begin_nested():
+                runs = register_experiment_run_specs(
+                    db,
+                    store=store,
+                    project=project,
+                    session=session,
+                    specs=specs,
+                    source_artifact=artifact,
+                    source_request_id=None,
+                )
         except Exception as exc:
             register_structured_experiment_result_failure(
                 db,
@@ -737,6 +741,9 @@ def experiment_run_ack_item(run: ExperimentRun) -> dict[str, Any]:
         "evaluation_spec_id": run.evaluation_spec_id,
         "split_manifest_id": run.split_manifest_id,
         "research_plan_node_id": params.get("research_plan_node_id"),
+        "experiment_evidence_status": params.get("experiment_evidence_status", "missing"),
+        "experiment_evidence_artifact_id": params.get("experiment_evidence_artifact_id"),
+        "parent_run_id": params.get("parent_run_id"),
     }
 
 
@@ -1149,6 +1156,11 @@ def run_specs_from_experiment_request(payload: dict[str, Any], *, request_id: st
                 dataset_snapshot_id=optional_text_field(item, "dataset_snapshot_id") or default_dataset_snapshot_id,
                 evaluation_spec_id=optional_text_field(item, "evaluation_spec_id") or default_evaluation_spec_id,
                 split_manifest_id=optional_text_field(item, "split_manifest_id") or default_split_manifest_id,
+                experiment_evidence=(
+                    json_safe_object(item["experiment_evidence"])
+                    if isinstance(item.get("experiment_evidence"), dict)
+                    else None
+                ),
             )
         )
     primary_metric_names = {spec.primary_metric_name for spec in specs}
@@ -1225,6 +1237,11 @@ def run_specs_from_structured_result_payload(payload: dict[str, Any], *, source_
                 dataset_snapshot_id=optional_text_field(payload, "dataset_snapshot_id"),
                 evaluation_spec_id=optional_text_field(payload, "evaluation_spec_id"),
                 split_manifest_id=optional_text_field(payload, "split_manifest_id"),
+                experiment_evidence=(
+                    json_safe_object(item["experiment_evidence"])
+                    if isinstance(item.get("experiment_evidence"), dict)
+                    else None
+                ),
             )
         )
     return specs
@@ -1295,7 +1312,6 @@ def register_experiment_run_specs(
     source_artifact: Artifact | None,
     source_request_id: str | None,
 ) -> list[ExperimentRun]:
-    del store
     validate_run_specs_have_single_primary_metric(specs)
     validate_run_spec_plan_node_refs(db, project=project, specs=specs)
     contexts = [
@@ -1362,6 +1378,7 @@ def register_experiment_run_specs(
                     "declared_evaluation_spec_id": spec.evaluation_spec_id,
                     "declared_split_manifest_id": spec.split_manifest_id,
                     "context_warnings": context.warnings,
+                    "experiment_evidence_status": "provided" if spec.experiment_evidence is not None else "missing",
                 }
             ),
             metrics_json=dumps_json(spec.metrics),
@@ -1370,6 +1387,22 @@ def register_experiment_run_specs(
         )
         db.add(run)
         db.flush()
+        if spec.experiment_evidence is not None:
+            evidence_artifact = register_experiment_evidence(
+                db,
+                store=store,
+                project=project,
+                run=run,
+                payload=spec.experiment_evidence,
+            )
+            attach_experiment_artifact_to_current_plan_node(
+                db,
+                project=project,
+                source_artifact_id=evidence_artifact.id,
+                run=run,
+                node_id=research_plan_node_id,
+                allow_current_fallback=False,
+            )
         created.append(run)
         source_artifact_id = context.source_artifact_id
         if source_artifact_id:

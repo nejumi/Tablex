@@ -925,12 +925,25 @@ export type Run = {
   evaluation_grade?: "formal" | "provisional";
   evaluation_grade_reason?: string | null;
   model_version_id: string | null;
+  model_id: string | null;
+  model_label: string | null;
+  features_used: string[];
   runner_type: string;
   status: string;
   metrics: Record<string, unknown>;
   summary_md: string | null;
   started_at: string | null;
   ended_at: string | null;
+  experiment_evidence?: {
+    status: string;
+    artifact_id: string | null;
+    parent_run_id: string | null;
+    metric_replay_status: string | null;
+    prediction_coverage_status: string | null;
+    prediction_coverage_scope: string | null;
+    hypothesis_verdict: string | null;
+    decision_action: string | null;
+  };
 };
 
 export type LeaderboardEntry = {

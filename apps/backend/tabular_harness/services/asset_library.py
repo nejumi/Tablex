@@ -207,11 +207,13 @@ DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
                 "Use out-of-fold ablations, subgroup stability, calibration, worst-error review, and residual structure to distinguish feature gains from estimator gains and to generate the next hypothesis.",
                 "Run feature-hypothesis iterations autonomously on unchanged folds: mechanism, minimal coherent feature family, out-of-fold delta and uncertainty, affected slices/errors, conclusion, then evidence-driven next hypothesis.",
                 "Keep disposable probes in an experiment ledger and promote serious distinct candidates to registered, fully packaged runs so reproducibility work does not replace investigation.",
+                "When promoting a validated candidate, register experiment_evidence.v1 with its hypothesis, parent run, exact change set, fold metrics, complete OOF prediction artifact, learning verdict, remaining uncertainty, and next decision. Treat harness replay as factual integrity evidence, not a substitute for scientific judgment.",
                 "Consider baselines, linear models, tree ensembles, calibration, ensembling, TabPFN/TabICL-style options, and target-free methods when the project evidence supports them.",
                 "Register serious candidates with diagnostics, reports, and reproducible prediction pipelines.",
             ],
             "expected_outputs": [
                 "experiment_runs",
+                "experiment_evidence",
                 "model_diagnostics_notebook",
                 "model_report",
                 "prediction_pipeline_bundle",

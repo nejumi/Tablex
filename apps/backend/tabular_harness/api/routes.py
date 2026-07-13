@@ -7880,23 +7880,53 @@ def list_runs(
 ) -> list[dict[str, Any]]:
     require_project(db, project_id)
     runs = db.scalars(select(ExperimentRun).where(ExperimentRun.project_id == project_id).order_by(ExperimentRun.started_at.desc())).all()
-    return [
-        {
-            "id": run.id,
-            "project_id": run.project_id,
-            "dataset_snapshot_id": run.dataset_snapshot_id,
-            "evaluation_spec_id": run.evaluation_spec_id,
-            "split_manifest_id": run.split_manifest_id,
-            "model_version_id": run.model_version_id,
-            "runner_type": run.runner_type,
-            "status": run.status,
-            "metrics": loads_json(run.metrics_json, {}),
-            "summary_md": run.summary_md,
-            "started_at": run.started_at.isoformat() if run.started_at else None,
-            "ended_at": run.ended_at.isoformat() if run.ended_at else None,
-        }
-        for run in runs
-    ]
+    params_by_run_id = {run.id: loads_json(run.params_json, {}) for run in runs}
+    evidence_artifact_ids = {
+        artifact_id
+        for params in params_by_run_id.values()
+        for artifact_id in [params.get("experiment_evidence_artifact_id")]
+        if isinstance(artifact_id, str)
+    }
+    evidence_artifacts = {
+        artifact.id: artifact
+        for artifact in db.scalars(select(Artifact).where(Artifact.id.in_(evidence_artifact_ids))).all()
+    }
+    response: list[dict[str, Any]] = []
+    for run in runs:
+        params = params_by_run_id[run.id]
+        evidence_artifact_id = params.get("experiment_evidence_artifact_id")
+        evidence_artifact = evidence_artifacts.get(evidence_artifact_id)
+        evidence_metadata = loads_json(evidence_artifact.metadata_json, {}) if evidence_artifact is not None else {}
+        response.append(
+            {
+                "id": run.id,
+                "project_id": run.project_id,
+                "dataset_snapshot_id": run.dataset_snapshot_id,
+                "evaluation_spec_id": run.evaluation_spec_id,
+                "split_manifest_id": run.split_manifest_id,
+                "model_version_id": run.model_version_id,
+                "model_id": params.get("model_id"),
+                "model_label": params.get("model_label"),
+                "features_used": params.get("features_used") if isinstance(params.get("features_used"), list) else [],
+                "runner_type": run.runner_type,
+                "status": run.status,
+                "metrics": loads_json(run.metrics_json, {}),
+                "summary_md": run.summary_md,
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "ended_at": run.ended_at.isoformat() if run.ended_at else None,
+                "experiment_evidence": {
+                    "status": params.get("experiment_evidence_status", "missing"),
+                    "artifact_id": evidence_artifact.id if evidence_artifact is not None else None,
+                    "parent_run_id": params.get("parent_run_id"),
+                    "metric_replay_status": evidence_metadata.get("metric_replay_status"),
+                    "prediction_coverage_status": evidence_metadata.get("prediction_coverage_status"),
+                    "prediction_coverage_scope": evidence_metadata.get("prediction_coverage_scope"),
+                    "hypothesis_verdict": evidence_metadata.get("hypothesis_verdict"),
+                    "decision_action": evidence_metadata.get("decision_action"),
+                },
+            }
+        )
+    return response
 
 
 @router.post("/api/projects/{project_id}/experiments/compare", response_model=JobRead)

@@ -52,6 +52,7 @@ The most important constraints are:
 - **Research and skills:** project and cross-project Skills, controlled research requests, source-backed findings, and research reports. External claims should be stored as Evidence or source-backed artifacts, not left only in logs.
 - **Pilot workflow:** registered prediction pipelines can be used for prediction batches, outcome ingestion, pilot scoring, and agent-authored validation audits that feed the same continuing Full Auto loop.
 - **Codex-managed prediction:** Predict sends the selected model, actual inputs, evaluation/OOF lineage, purpose, and available evidence to the same continuing Codex session. Codex decides what to inspect, invokes the canonical pipeline, reviews the real output, and can investigate, repair, or rerun before releasing a reasoned result. Tablex supplies timely context, execution, artifacts, lineage, progress, and the user interface without replacing that judgment with fixed drift rules.
+- **Verified experiment evidence:** Validated candidates can link hypothesis, parent run, exact change set, fold results, OOF predictions, learning, and decision in `experiment_evidence.v1`. Tablex replays supported metrics from OOF rows joined to frozen DatasetSnapshot labels while leaving analytical judgment to Codex.
 
 ## Core Workflow
 
