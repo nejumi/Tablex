@@ -305,6 +305,7 @@ from tabular_harness.services.deliverable_expectations import (
     fulfill_run_model_diagnostics_notebook_expectations,
     maybe_write_open_deliverable_expectation_observation,
 )
+from tabular_harness.services.experiment_run_semantics import experiment_run_requires_prediction_runtime
 from tabular_harness.services.jobs import TERMINAL_STATUSES as TERMINAL_JOB_STATUSES
 from tabular_harness.services.jobs import mark_job_succeeded
 from tabular_harness.services.locales import locale_is_japanese
@@ -734,7 +735,8 @@ def project_has_incomplete_prediction_runs(db: Session, *, project: Project) -> 
         )
     ).all()
     return any(
-        leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {})) is None
+        experiment_run_requires_prediction_runtime(run)
+        and leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {})) is None
         for run in runs
     )
 

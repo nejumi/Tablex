@@ -45,6 +45,7 @@ from tabular_harness.services.deliverable_expectations import (
     create_run_model_diagnostics_notebook_expectations,
 )
 from tabular_harness.services.experiment_evidence import register_experiment_evidence
+from tabular_harness.services.experiment_run_semantics import experiment_run_requires_prediction_runtime
 from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.metric_preferences import (
     leaderboard_sort_key_for_metric,
@@ -759,9 +760,10 @@ def experiment_run_ack_item(run: ExperimentRun) -> dict[str, Any]:
 
 
 def experiment_pipeline_registration_status(db: Session, runs: list[ExperimentRun]) -> dict[str, Any]:
+    model_runs = [run for run in runs if experiment_run_requires_prediction_runtime(run)]
     registered = [
         {"run_id": run.id, "pipeline_artifact_id": artifact.id}
-        for run in runs
+        for run in model_runs
         for artifact in [
             leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {}))
         ]
@@ -774,7 +776,7 @@ def experiment_pipeline_registration_status(db: Session, runs: list[ExperimentRu
             "model_id": loads_json(run.params_json, {}).get("model_id"),
             "model_description": run.summary_md,
         }
-        for run in runs
+        for run in model_runs
         if run.id not in registered_run_ids
     ]
     if registered and missing:
@@ -788,6 +790,8 @@ def experiment_pipeline_registration_status(db: Session, runs: list[ExperimentRu
         "status": status,
         "missing_count": len(missing),
         "registered_count": len(registered),
+        "model_run_count": len(model_runs),
+        "non_model_record_count": len(runs) - len(model_runs),
         "missing_runs": missing[:50],
         "registered_pipelines": registered[:50],
         "next_request": (
@@ -805,7 +809,8 @@ def experiment_model_diagnostics_notebook_status(
     project: Project,
     runs: list[ExperimentRun],
 ) -> dict[str, Any]:
-    run_ids = {run.id for run in runs}
+    model_runs = [run for run in runs if experiment_run_requires_prediction_runtime(run)]
+    run_ids = {run.id for run in model_runs}
     linked_run_ids: set[str] = set()
     artifacts = list(
         db.scalars(
@@ -828,7 +833,7 @@ def experiment_model_diagnostics_notebook_status(
             "model_id": loads_json(run.params_json, {}).get("model_id"),
             "model_description": run.summary_md,
         }
-        for run in runs
+        for run in model_runs
         if run.id not in linked_run_ids
     ]
     if linked_run_ids and missing:
@@ -842,6 +847,8 @@ def experiment_model_diagnostics_notebook_status(
         "status": status,
         "missing_count": len(missing),
         "linked_count": len(linked_run_ids),
+        "model_run_count": len(model_runs),
+        "non_model_record_count": len(runs) - len(model_runs),
         "missing_runs": missing[:50],
         "next_request": (
             "Write one tablex_notebook_request.v1 register_notebook request per missing run for a run-specific "
@@ -861,7 +868,8 @@ def experiment_model_diagnostics_artifact_status(
     project: Project,
     runs: list[ExperimentRun],
 ) -> dict[str, Any]:
-    run_statuses = [model_diagnostics_artifact_status_for_run(db, project=project, run=run) for run in runs]
+    model_runs = [run for run in runs if experiment_run_requires_prediction_runtime(run)]
+    run_statuses = [model_diagnostics_artifact_status_for_run(db, project=project, run=run) for run in model_runs]
     missing = [item for item in run_statuses if item["status"] == "missing"]
     partial = [item for item in run_statuses if item["status"] == "partial"]
     registered = [item for item in run_statuses if item["status"] == "registered"]
@@ -891,6 +899,7 @@ def experiment_model_diagnostics_artifact_status(
         "partial_count": len(partial),
         "missing_count": len(missing),
         "run_count": len(run_statuses),
+        "non_model_record_count": len(runs) - len(model_runs),
         "runs": run_statuses[:50],
         "missing_runs": missing_runs[:50],
         "next_request": (
