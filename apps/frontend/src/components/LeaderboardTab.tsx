@@ -1,5 +1,5 @@
 import React from "react";
-import { BookOpen, Download, FileText, ListChecks, Loader2, MessageSquare, MoreHorizontal, PieChart, Play, Plus, Upload } from "lucide-react";
+import { BookOpen, Download, FileText, ListChecks, Loader2, MessageSquare, MoreHorizontal, PieChart, Play, Plus, Upload, X } from "lucide-react";
 import type { LocaleMessages } from "../copy";
 import { ArtifactLineagePanel } from "./ArtifactLineagePanel";
 import { RelatedNotebookLinks, notebooksForLeaderboardEntry, notebooksForLeaderboardResults } from "./NotebookLinks";
@@ -486,12 +486,14 @@ export function LeaderboardTab({
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = React.useState<string | null>(null);
   const [predictionEntry, setPredictionEntry] = React.useState<LeaderboardEntry | null>(null);
+  const predictionPanelRef = React.useRef<HTMLDivElement | null>(null);
   const [predictionDatasetId, setPredictionDatasetId] = React.useState<string>("");
   const [predictionResultArtifactId, setPredictionResultArtifactId] = React.useState<string | null>(null);
   const [predictionUploadedInputs, setPredictionUploadedInputs] = React.useState<Record<string, UploadedPredictionInput>>({});
   const [predictionUploadError, setPredictionUploadError] = React.useState<string | null>(null);
   const [predictionDragKey, setPredictionDragKey] = React.useState<string | null>(null);
   const [predictionBatchKind, setPredictionBatchKind] = React.useState<PredictionBatchKind>("external_test");
+  const [pipelineExportRequests, setPipelineExportRequests] = React.useState<Set<string>>(() => new Set());
   const [pilotOutcomeDeploymentId, setPilotOutcomeDeploymentId] = React.useState<string | null>(null);
   const [pilotOutcomeUploadError, setPilotOutcomeUploadError] = React.useState<string | null>(null);
   const [pilotOutcomeJoinKeys, setPilotOutcomeJoinKeys] = React.useState<string>("");
@@ -500,6 +502,14 @@ export function LeaderboardTab({
   const [pilotOutcomeObservedAtColumn, setPilotOutcomeObservedAtColumn] = React.useState<string>("");
   const [pilotOutcomePredictionBatchId, setPilotOutcomePredictionBatchId] = React.useState<string>("");
   const prewarmedNotebookArtifactsRef = React.useRef<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    if (!predictionEntry) return;
+    const frame = window.requestAnimationFrame(() => {
+      predictionPanelRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [predictionEntry]);
 
   async function loadPreview(artifactId: string) {
     setPreviewLoadingId(artifactId);
@@ -606,6 +616,15 @@ export function LeaderboardTab({
     const artifactId = textField(completed.output.artifact_id) ?? textField(completed.output.prediction_batch_artifact_id);
     setPredictionResultArtifactId(artifactId);
     if (artifactId) await loadPreview(artifactId);
+  }
+
+  async function requestPipelineExport(entry: LeaderboardEntry) {
+    await api(`/api/experiment-runs/${entry.run_id}/pipeline-bundle/build`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locale })
+    });
+    setPipelineExportRequests((current) => new Set(current).add(entry.run_id));
   }
 
   async function ensurePilotDeploymentForPrediction(entry: LeaderboardEntry): Promise<{ id: string }> {
@@ -1040,6 +1059,8 @@ export function LeaderboardTab({
                       }}
                       title={text.leaderboardActionPredict}
                       type="button"
+                      aria-controls="leaderboard-prediction-workspace"
+                      aria-expanded={predictionEntry?.run_id === entry.run_id}
                     >
                       {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
                       <span>{text.leaderboardActionPredictShort}</span>
@@ -1077,14 +1098,28 @@ export function LeaderboardTab({
                           <FileText size={15} />
                           {text.leaderboardActionDraftReport}
                         </button>
-                        <a
-                          className="text-button"
-                          href={`${apiBase}/api/experiment-runs/${entry.run_id}/pipeline-bundle`}
-                          title={text.downloadPipelineBundle}
-                        >
-                          <Download size={15} />
-                          {text.leaderboardActionDownloadPipelineShort}
-                        </a>
+                        {entry.pipeline_export_status === "ready" ? (
+                          <a
+                            className="text-button"
+                            href={`${apiBase}/api/experiment-runs/${entry.run_id}/pipeline-bundle`}
+                            title={text.downloadPipelineBundle}
+                          >
+                            <Download size={15} />
+                            {text.leaderboardActionDownloadPipelineShort}
+                          </a>
+                        ) : (
+                          <button
+                            className="text-button"
+                            disabled={busy || pipelineExportRequests.has(entry.run_id)}
+                            onClick={() => void runAction(() => requestPipelineExport(entry))}
+                            type="button"
+                          >
+                            <Download size={15} />
+                            {pipelineExportRequests.has(entry.run_id)
+                              ? text.pipelineBundleRequested
+                              : text.buildPipelineBundle}
+                          </button>
+                        )}
                       </div>
                     </details>
                   </div>
@@ -1093,11 +1128,40 @@ export function LeaderboardTab({
             />
           </div>
           {predictionEntry ? (
-            <div className="leaderboard-prediction-panel">
-              <div>
-                <div className="eyebrow">{text.predictionDrawerTitle}</div>
-                <h3>{leaderboardEntryModelLabel(predictionEntry)}</h3>
-                <p>{text.predictionDrawerBody}</p>
+            <div
+              className="leaderboard-prediction-overlay"
+              onMouseDown={(event) => {
+                if (event.currentTarget === event.target) setPredictionEntry(null);
+              }}
+              role="presentation"
+            >
+            <div
+              aria-label={`${text.predictionDrawerTitle}: ${leaderboardEntryModelLabel(predictionEntry)}`}
+              aria-modal="true"
+              className="leaderboard-prediction-panel"
+              id="leaderboard-prediction-workspace"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setPredictionEntry(null);
+              }}
+              ref={predictionPanelRef}
+              role="dialog"
+              tabIndex={-1}
+            >
+              <div className="prediction-dialog-header">
+                <div>
+                  <div className="eyebrow">{text.predictionDrawerTitle}</div>
+                  <h3>{leaderboardEntryModelLabel(predictionEntry)}</h3>
+                  <p>{text.predictionDrawerBody}</p>
+                </div>
+                <button
+                  aria-label={text.close}
+                  className="icon-button"
+                  onClick={() => setPredictionEntry(null)}
+                  title={text.close}
+                  type="button"
+                >
+                  <X size={18} />
+                </button>
               </div>
               {predictionEntry.pipeline_runtime?.last_run_status === "failed" ? (
                 <div className="inline-alert warning">
@@ -1244,6 +1308,7 @@ export function LeaderboardTab({
                 ) : null}
               </div>
               {predictionResultArtifactId ? <span className="badge success">{text.predictionCompleted}</span> : null}
+            </div>
             </div>
           ) : null}
           </>
@@ -1648,7 +1713,7 @@ function relatedOutputItemsForLeaderboardEntry(
     });
   }
 
-  if (entry.pipeline_artifact_id) {
+  if (entry.pipeline_artifact_id && entry.pipeline_export_status === "ready") {
     add({
       id: `pipeline:${entry.pipeline_artifact_id}`,
       kind: "pipeline",

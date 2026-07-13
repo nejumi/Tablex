@@ -138,6 +138,7 @@ from tabular_harness.schemas import (
     ModelCandidatesRunCreate,
     ModelValidationRead,
     ModelVersionRead,
+    PipelineBundleBuildCreate,
     PortalIdeaCreate,
     PortalIdeaRead,
     PortalOverviewRead,
@@ -331,6 +332,7 @@ from tabular_harness.services.prediction_input_feedback import (
     maybe_send_prediction_input_validation_failure_to_codex,
 )
 from tabular_harness.services.prediction_pipeline_contract import (
+    export_ready_pipeline_artifact,
     leaderboard_ready_pipeline_artifact,
     prediction_pipeline_artifact_for_run,
 )
@@ -8061,6 +8063,11 @@ def leaderboard(
             "evaluation_grade_reason": leaderboard_evaluation_grade_reason(db, run),
             "model_version_id": run.model_version_id,
             "pipeline_artifact_id": pipeline_artifact.id if pipeline_artifact is not None else None,
+            "pipeline_export_status": (
+                "ready"
+                if export_ready_pipeline_artifact(db, run, params=params) is not None
+                else "not_built"
+            ),
             "pipeline_input_contract": leaderboard_pipeline_input_contract(pipeline_artifact),
             "pipeline_smoke_validation": leaderboard_pipeline_smoke_validation(pipeline_artifact),
             "pipeline_runtime": leaderboard_pipeline_runtime(db, project_id=project_id, pipeline_artifact=pipeline_artifact),
@@ -8303,6 +8310,119 @@ def diagnostic_check_status(raw_status: Any, artifact: Artifact | None) -> dict[
     }
 
 
+@router.post("/api/experiment-runs/{run_id}/pipeline-bundle/build")
+def request_experiment_run_pipeline_bundle(
+    run_id: str,
+    payload: PipelineBundleBuildCreate,
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
+) -> dict[str, Any]:
+    run = db.get(ExperimentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="ExperimentRun not found")
+    project = require_project(db, run.project_id)
+    params = loads_json(run.params_json, {})
+    runtime_artifact = leaderboard_ready_pipeline_artifact(db, run, params=params)
+    if runtime_artifact is None:
+        raise HTTPException(status_code=409, detail="This model is not ready for UI prediction yet")
+    ready_artifact = export_ready_pipeline_artifact(db, run, params=params)
+    if ready_artifact is not None:
+        return {
+            "schema_version": "prediction_pipeline_export_request.v1",
+            "project_id": project.id,
+            "run_id": run.id,
+            "status": "ready",
+            "pipeline_artifact_id": ready_artifact.id,
+            "download_url": f"/api/experiment-runs/{run.id}/pipeline-bundle",
+        }
+
+    session = active_main_session(db, project.id) or latest_main_session(db, project.id)
+    if session is None or session.status == "stopped":
+        raise HTTPException(status_code=409, detail="Start Agent power before requesting a local pipeline bundle")
+    if session.status in {"failed", "gave_up"}:
+        raise HTTPException(status_code=409, detail=f"The main agent session is {session.status}; restart it first")
+    woke_session = False
+    if session.status == "completed":
+        session.status = "between_turns"
+        session.pid = None
+        session.ended_at = None
+        session.updated_at = utc_now()
+        project.current_phase = "AUTONOMOUS_LOOP"
+        project.autonomy_mode = "full_auto"
+        project.updated_at = utc_now()
+        woke_session = True
+
+    model_label = leaderboard_model_label(params, model_id=leaderboard_model_id(params, loads_json(run.metrics_json, {})))
+    japanese = str(payload.locale or "").lower().startswith("ja")
+    message = (
+        f"Leaderboardのモデル「{model_label or run.id}」について、登録済みのUI予測runtime `{runtime_artifact.id}` を推論実装の正本として、"
+        f"ローカルで学習・予測できる完全なdownload bundleを作成し検証してください。ExperimentRun `{run.id}` のモデルとスコアは変更しないでください。"
+        if japanese
+        else f"For Leaderboard model {model_label or run.id}, use registered UI prediction runtime `{runtime_artifact.id}` as the canonical inference implementation and build and validate the complete downloadable bundle for local training and prediction. Do not change the model or score for ExperimentRun `{run.id}`."
+    )
+    event = append_session_event(
+        db,
+        session,
+        source="user",
+        event_type="user_instruction",
+        role="user",
+        title="Build local pipeline bundle",
+        content=message,
+        payload={
+            "locale": payload.locale,
+            "channel": "model_action",
+            "action": "build_prediction_pipeline_bundle",
+            "run_id": run.id,
+            "pipeline_artifact_id": runtime_artifact.id,
+            "delivery": "workspace_inbox_and_transcript",
+            "requested_by": request_actor_id(request),
+        },
+    )
+    append_user_instruction_to_workspace_inbox(
+        session,
+        event=event,
+        message=message,
+        locale=payload.locale,
+        channel="model_action",
+    )
+    maybe_request_codex_progress_update(
+        db,
+        session=session,
+        locale=payload.locale,
+        stale_after_seconds=0,
+        min_interval_seconds=0,
+        trigger="pipeline_export_request",
+        user_message=message,
+    )
+    should_wake_main_session = (
+        project.current_phase == "AUTONOMOUS_LOOP"
+        and session.status in {"starting", "between_turns", "waiting_for_runner"}
+        and not supervisor_slot_active(session.id)
+    )
+    db.commit()
+    if should_wake_main_session and request.app.state.settings.api_agent_session_supervisor_enabled:
+        start_main_agent_session_supervisor_thread(
+            request.app.state.session_factory,
+            store,
+            project_id=project.id,
+            session_id=session.id,
+            supervisor_runner=run_main_agent_session_supervisor,
+            turn_timeout_seconds=request.app.state.settings.agent_idle_timeout_seconds,
+            turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
+        )
+    return {
+        "schema_version": "prediction_pipeline_export_request.v1",
+        "project_id": project.id,
+        "run_id": run.id,
+        "status": "requested",
+        "pipeline_artifact_id": runtime_artifact.id,
+        "agent_session_id": session.id,
+        "transcript_event_id": event.id,
+        "woke_session": woke_session,
+    }
+
+
 @router.get("/api/experiment-runs/{run_id}/pipeline-bundle")
 def download_experiment_run_pipeline_bundle(
     run_id: str,
@@ -8312,11 +8432,11 @@ def download_experiment_run_pipeline_bundle(
     if run is None:
         raise HTTPException(status_code=404, detail="ExperimentRun not found")
     require_project(db, run.project_id)
-    artifact = leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {}))
+    artifact = export_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {}))
     if artifact is None:
         raise HTTPException(
             status_code=404,
-            detail="A validated, reproducible prediction pipeline bundle is not registered for this run",
+            detail="The local training and prediction bundle has not been built for this model",
         )
     path = artifact_primary_path(artifact)
     if not path.exists() or not path.is_file():

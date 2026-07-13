@@ -2091,10 +2091,10 @@ def register_experiment_registration_chat_turn(
     run_ids = [run.id for run in runs]
     if japanese:
         destination = (
-            f"{promoted_count}件は検証済みpipeline付きでLeaderboardへ昇格し、"
-            f"残り{len(runs) - promoted_count}件はpipeline検証待ちです。"
+            f"{promoted_count}件はUI予測可能なruntime付きでLeaderboardへ昇格し、"
+            f"残り{len(runs) - promoted_count}件はruntime検証待ちです。"
             if promoted_count
-            else "検証済みの再現可能pipeline bundleが登録されるとLeaderboardへ自動昇格します。"
+            else "検証済みの予測runtimeが登録されるとLeaderboardへ自動昇格します。"
         )
         assistant_message = f"{len(runs)}件のモデル評価を実験履歴に登録しました。{destination}"
         if isinstance(metric_value, int | float):
@@ -2104,7 +2104,7 @@ def register_experiment_registration_chat_turn(
             )
         missing_outputs: list[str] = []
         if pipeline_missing:
-            missing_outputs.append("再現用の学習・予測スクリプト")
+            missing_outputs.append("UI予測用runtime")
         if diagnostic_artifacts_missing:
             missing_outputs.append("permutation importance、feature importance、PDP、SHAPなどのモデル診断データ")
         if diagnostics_notebook_missing:
@@ -2112,14 +2112,14 @@ def register_experiment_registration_chat_turn(
         if missing_outputs:
             assistant_message += " 次に必要な登録: " + "、".join(missing_outputs) + "。"
         action_label = "リーダーボードを開く"
-        action_detail = "検証済みpipeline付きのモデルを順位表で確認できます。"
+        action_detail = "UI予測可能なモデルを順位表で確認できます。"
         next_label = "リーダーボード" if promoted_count else "Agent workspace"
     else:
         destination = (
-            f"{promoted_count} have validated pipelines and are promoted to the Leaderboard; "
-            f"{len(runs) - promoted_count} are awaiting pipeline validation."
+            f"{promoted_count} have validated prediction runtimes and are promoted to the Leaderboard; "
+            f"{len(runs) - promoted_count} are awaiting runtime validation."
             if promoted_count
-            else "They will be promoted to the Leaderboard automatically after validated reproducible pipeline bundles are registered."
+            else "They will be promoted to the Leaderboard automatically after validated prediction runtimes are registered."
         )
         assistant_message = f"Registered {len(runs)} model evaluation(s) in experiment history. {destination}"
         if isinstance(metric_value, int | float):
@@ -2129,7 +2129,7 @@ def register_experiment_registration_chat_turn(
             )
         missing_outputs = []
         if pipeline_missing:
-            missing_outputs.append("reproducible train/predict scripts")
+            missing_outputs.append("UI prediction runtimes")
         if diagnostic_artifacts_missing:
             missing_outputs.append("model diagnostics data for permutation importance, feature importance, PDP, and SHAP")
         if diagnostics_notebook_missing:
@@ -2137,7 +2137,7 @@ def register_experiment_registration_chat_turn(
         if missing_outputs:
             assistant_message += " Still needed: " + ", ".join(missing_outputs) + "."
         action_label = "Open leaderboard"
-        action_detail = "Compare models with validated reproducible pipelines as a ranked table."
+        action_detail = "Compare models with validated UI prediction runtimes as a ranked table."
         next_label = "Leaderboard" if promoted_count else "Agent workspace"
     actions = experiment_registration_chat_actions(
         visible_surfaces=visible_surfaces,
@@ -2830,16 +2830,14 @@ def write_pipeline_registration_request_to_workspace_inbox(
         f"source_request_id: {source_request_id or '<unknown>'}",
         f"missing_count: {pipeline_registration.get('missing_count', len(missing_items))}",
         "",
-        "One or more registered model runs are incomplete because they do not yet have validated prediction pipeline bundles.",
+        "One or more registered model runs are incomplete because they do not yet have validated prediction runtimes for Leaderboard UI scoring.",
         "Continue the work and create one model-specific pipeline directory under `pipelines/<name>/` for every missing run, then submit one fixed JSON request per run under `.tablex/requests/pipelines/` with `schema_version: \"tablex_pipeline_request.v1\"` and operation `register_prediction_pipeline`.",
-        "Do not remove, hide, merge away, or downgrade missing model runs. Preserve each model's fitted estimator, feature construction, preprocessing, and raw-input inference behavior in its own downloadable bundle.",
+        "Do not remove, hide, merge away, or downgrade missing model runs. Preserve each model's fitted estimator, feature construction, preprocessing, and raw-input inference behavior in its own runtime.",
         "",
         "Required pipeline files:",
         "- pipeline_manifest.json",
-        "- train.py",
         "- predict.py",
         "- requirements.txt",
-        "- README.md",
         "",
         "The pipeline must accept production-style inference input without the target column. If history is required, declare it in pipeline_manifest.json history_requirements and recompute lag/rolling features inside predict.py.",
         "",

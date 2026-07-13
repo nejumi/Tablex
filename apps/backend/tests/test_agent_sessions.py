@@ -154,6 +154,7 @@ from tabular_harness.services.prediction_input_feedback import (
     maybe_send_prediction_input_validation_failure_to_codex,
 )
 from tabular_harness.services.prediction_pipeline_contract import (
+    export_ready_pipeline_artifact,
     leaderboard_ready_pipeline_artifact,
 )
 from tabular_harness.services.research_plan_timeline import build_research_plan_timeline_response
@@ -6046,7 +6047,7 @@ def test_experiment_result_file_request_registers_leaderboard_run_with_ack(tmp_p
         assert chat_payload["response_brief"]["model_diagnostics_artifacts"]["status"] == "missing"
         assert chat_payload["response_brief"]["model_diagnostics_notebook"]["status"] == "missing"
         assert "Still needed:" in chat_payload["assistant_message"]
-        assert "reproducible train/predict scripts" in chat_payload["assistant_message"]
+        assert "UI prediction runtimes" in chat_payload["assistant_message"]
         assert "model diagnostics data for permutation importance" in chat_payload["assistant_message"]
         assert "model-diagnostics notebooks" in chat_payload["assistant_message"]
 
@@ -6612,7 +6613,8 @@ def test_pipeline_request_registers_prediction_pipeline_and_links_run(tmp_path: 
         assert ack["result"]["smoke_validation"]["runtime_isolated"] is True
         assert ack["result"]["smoke_validation"]["train_entrypoint_check"] == "passed"
         assert ack["result"]["smoke_validation"]["requirements_hash"]
-        assert ack["result"]["metric_reproduction"]["metric_reproduced"] is True
+        assert ack["result"]["metric_claim_consistency"]["claims_match"] is True
+        assert ack["result"]["capabilities"] == {"prediction_enabled": True, "export_ready": True}
         artifact = db.get(Artifact, ack["result"]["pipeline_artifact_id"])
         assert artifact is not None
         assert artifact.asset_type == "prediction_pipeline"
@@ -6627,9 +6629,17 @@ def test_pipeline_request_registers_prediction_pipeline_and_links_run(tmp_path: 
         refreshed_run = db.get(ExperimentRun, "run_pipeline")
         assert refreshed_run is not None
         assert loads_json(refreshed_run.params_json, {})["pipeline_artifact_id"] == artifact.id
-        assert loads_json(artifact.metadata_json, {})["metric_reproduction"]["metric_reproduced"] is True
+        assert loads_json(artifact.metadata_json, {})["metric_claim_consistency"]["claims_match"] is True
         assert (
             leaderboard_ready_pipeline_artifact(
+                db,
+                refreshed_run,
+                params=loads_json(refreshed_run.params_json, {}),
+            )
+            == artifact
+        )
+        assert (
+            export_ready_pipeline_artifact(
                 db,
                 refreshed_run,
                 params=loads_json(refreshed_run.params_json, {}),
@@ -6648,7 +6658,7 @@ def test_pipeline_request_registers_prediction_pipeline_and_links_run(tmp_path: 
         assert edge is not None
 
 
-def test_pipeline_metric_reproduction_requires_each_linked_run_primary_metric() -> None:
+def test_pipeline_metric_claim_consistency_requires_each_linked_run_primary_metric() -> None:
     run = ExperimentRun(
         id="run_primary_metric_contract",
         project_id="p_primary_metric_contract",
@@ -6659,26 +6669,84 @@ def test_pipeline_metric_reproduction_requires_each_linked_run_primary_metric() 
         ),
     )
 
-    missing = pipeline_requests_module.pipeline_metric_reproduction_summary(
+    missing = pipeline_requests_module.pipeline_metric_claim_consistency_summary(
         manifest={"expected_metrics": [{"name": "average_precision", "value": 0.3}]},
         runs=[run],
     )
-    assert missing["metric_reproduced"] is False
+    assert missing["claims_match"] is False
     assert missing["missing_primary_metrics"] == [{"run_id": run.id, "metric": "roc_auc"}]
 
-    mismatched = pipeline_requests_module.pipeline_metric_reproduction_summary(
+    mismatched = pipeline_requests_module.pipeline_metric_claim_consistency_summary(
         manifest={"expected_metrics": [{"name": "roc_auc", "value": 0.7}]},
         runs=[run],
     )
-    assert mismatched["metric_reproduced"] is False
+    assert mismatched["claims_match"] is False
     assert mismatched["comparisons"][0]["matched"] is False
 
-    reproduced = pipeline_requests_module.pipeline_metric_reproduction_summary(
+    matching = pipeline_requests_module.pipeline_metric_claim_consistency_summary(
         manifest={"expected_metrics": [{"name": "roc_auc", "value": 0.81}]},
         runs=[run],
     )
-    assert reproduced["metric_reproduced"] is True
-    assert reproduced["missing_primary_metrics"] == []
+    assert matching["claims_match"] is True
+    assert matching["missing_primary_metrics"] == []
+
+
+def test_prediction_runtime_is_leaderboard_ready_before_export_bundle(tmp_path: Path) -> None:
+    archive_path = tmp_path / "runtime.zip"
+    manifest = {
+        "schema_version": "pipeline_manifest.v1",
+        "input_contract": {"inference_format": {"columns": [{"name": "x"}]}},
+        "output_contract": {"columns": [{"name": "prediction"}], "prediction_column": "prediction"},
+        "runtime": {},
+    }
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("pipeline_manifest.json", dumps_json(manifest))
+        archive.writestr("predict.py", "print('prediction runtime')\n")
+        archive.writestr("requirements.txt", "\n")
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_runtime_only", name="Runtime only")
+        artifact = Artifact(
+            id="art_runtime_only",
+            project_id=project.id,
+            asset_type="prediction_pipeline",
+            name="runtime_only",
+            uri=str(archive_path.parent),
+            content_hash="runtime-only-hash",
+            size_bytes=archive_path.stat().st_size,
+            version=1,
+            metadata_json=dumps_json(
+                {
+                    "primary_path": str(archive_path),
+                    "pipeline_manifest": manifest,
+                    "smoke_validation": {"status": "passed", "runtime_isolated": True},
+                    "metric_claim_consistency": {
+                        "schema_version": "prediction_pipeline_metric_claim_consistency.v1",
+                        "claims_match": True,
+                        "comparisons": [
+                            {"run_id": "run_runtime_only", "metric": "roc_auc", "observed": 0.8, "matched": True}
+                        ],
+                    },
+                }
+            ),
+        )
+        run = ExperimentRun(
+            id="run_runtime_only",
+            project_id=project.id,
+            runner_type="codex_main_session",
+            status="succeeded",
+            params_json=dumps_json({"pipeline_artifact_id": artifact.id}),
+            metrics_json=dumps_json(
+                {"primary_metric_name": "roc_auc", "primary_metric_value": 0.8, "roc_auc": 0.8}
+            ),
+        )
+        db.add_all([project, artifact, run])
+        db.commit()
+
+        assert leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {})) == artifact
+        assert export_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {})) is None
 
 
 def test_pipeline_manifest_normalizes_required_tables_contract() -> None:
@@ -7126,7 +7194,7 @@ def test_pipeline_request_accepts_live_codex_manifest_compatibility(tmp_path: Pa
         assert "pipeline_manifest.output_contract.string_columns_normalized" in warnings
         assert "pipeline_manifest.expected_metrics.metric_alias_normalized" in warnings
         assert ack["result"]["smoke_validation"]["input_source"] == "manifest.source_data_workspace_path"
-        assert ack["result"]["metric_reproduction"]["metric_reproduced"] is True
+        assert ack["result"]["metric_claim_consistency"]["claims_match"] is True
         artifact = db.get(Artifact, ack["result"]["pipeline_artifact_id"])
         assert artifact is not None
         metadata = loads_json(artifact.metadata_json, {})

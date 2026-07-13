@@ -4765,13 +4765,42 @@ td {
   table-layout: fixed;
 }
 
+.leaderboard-prediction-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(3 8 13 / 72%);
+  backdrop-filter: blur(3px);
+}
+
 .leaderboard-prediction-panel {
   display: grid;
   gap: 14px;
+  width: min(920px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
   border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent) 6%, var(--surface));
   padding: 14px;
+}
+
+.leaderboard-prediction-panel:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 68%, transparent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .leaderboard-prediction-overlay {
+    padding: 10px;
+  }
+
+  .leaderboard-prediction-panel {
+    max-height: calc(100vh - 20px);
+  }
 }
 
 .leaderboard-prediction-panel h3,
@@ -4781,6 +4810,25 @@ td {
 
 .leaderboard-prediction-panel .field {
   max-width: 560px;
+}
+
+.prediction-dialog-header {
+  position: sticky;
+  top: -14px;
+  z-index: 2;
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin: -14px -14px 0;
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.prediction-dialog-header > div {
+  display: grid;
+  gap: 4px;
 }
 
 .inline-alert {
@@ -4838,6 +4886,11 @@ td {
 .prediction-input-dropzone span,
 .prediction-input-validation small {
   color: var(--muted);
+}
+
+.prediction-input-dropzone > div:first-child {
+  display: grid;
+  gap: 3px;
 }
 
 .prediction-input-validation {

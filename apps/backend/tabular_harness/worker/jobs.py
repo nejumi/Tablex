@@ -2681,7 +2681,8 @@ def register_prediction_pipeline_handler(db: Session, job: Job, store: LocalArti
         "pipeline_artifact_id": result.get("pipeline_artifact_id"),
         "experiment_run_ids": result.get("experiment_run_ids", []),
         "smoke_validation": result.get("smoke_validation"),
-        "metric_reproduction": result.get("metric_reproduction"),
+        "metric_claim_consistency": result.get("metric_claim_consistency"),
+        "capabilities": result.get("capabilities"),
         "ack_workspace_relative_path": str(ack_path.relative_to(workspace)),
     }
 

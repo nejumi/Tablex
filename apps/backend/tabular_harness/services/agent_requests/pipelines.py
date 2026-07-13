@@ -292,18 +292,20 @@ def execute_pipeline_registration_request(
     workspace_dir = resolve_workspace_relative_path(workspace, workspace_dir_value)
     if not workspace_dir.exists() or not workspace_dir.is_dir():
         raise ValueError(f"payload.workspace_dir does not exist or is not a directory: {workspace_dir_value}")
-    required_files = ["pipeline_manifest.json", "train.py", "predict.py", "requirements.txt", "README.md"]
+    required_files = ["pipeline_manifest.json", "predict.py", "requirements.txt"]
     missing_files = [name for name in required_files if not (workspace_dir / name).is_file()]
     if missing_files:
         raise ValueError(f"Pipeline directory is missing required files: {', '.join(missing_files)}")
     validate_pipeline_requirements_file(workspace_dir / "requirements.txt")
-    for entrypoint in ("train.py", "predict.py"):
+    for entrypoint in ("predict.py", "train.py"):
+        if not (workspace_dir / entrypoint).is_file():
+            continue
         source = (workspace_dir / entrypoint).read_text(encoding="utf-8")
         try:
             compile(source, entrypoint, "exec")
         except SyntaxError as exc:
             raise ValueError(f"Pipeline {entrypoint} is not valid Python: {exc.msg}") from exc
-    if not (workspace_dir / "README.md").read_text(encoding="utf-8").strip():
+    if (workspace_dir / "README.md").is_file() and not (workspace_dir / "README.md").read_text(encoding="utf-8").strip():
         raise ValueError("Pipeline README.md must contain local training and prediction instructions")
     submitted_manifest = payload.get("manifest")
     if submitted_manifest is None:
@@ -322,7 +324,7 @@ def execute_pipeline_registration_request(
     run_ids = require_string_list(payload.get("experiment_run_ids", []), "payload.experiment_run_ids")
     if len(run_ids) != 1:
         raise ValueError(
-            "payload.experiment_run_ids must contain exactly one run id so every Leaderboard model has its own complete pipeline bundle"
+            "payload.experiment_run_ids must contain exactly one run id so every Leaderboard model has its own prediction runtime"
         )
     runs = []
     for run_id in run_ids:
@@ -336,11 +338,7 @@ def execute_pipeline_registration_request(
         manifest=manifest,
         request_id=request_id,
     )
-    metric_reproduction = pipeline_metric_reproduction_summary(manifest=manifest, runs=runs)
-    if metric_reproduction.get("metric_reproduced") is not True:
-        raise ValueError(
-            "pipeline_manifest.expected_metrics must reproduce the linked ExperimentRun metrics before Leaderboard promotion"
-        )
+    metric_claim_consistency = pipeline_metric_claim_consistency_summary(manifest=manifest, runs=runs)
     bundle_dir = workspace / "artifacts" / "pipeline_bundles"
     bundle_dir.mkdir(parents=True, exist_ok=True)
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", pipeline_name).strip("._") or "prediction_pipeline"
@@ -374,7 +372,8 @@ def execute_pipeline_registration_request(
             "submitted_pipeline_manifest": submitted_manifest if submitted_manifest != manifest else None,
             "compatibility_warnings": compatibility_warnings,
             "smoke_validation": smoke_validation,
-            "metric_reproduction": metric_reproduction,
+            "metric_claim_consistency": metric_claim_consistency,
+            "capabilities": pipeline_capabilities(workspace_dir, metric_claim_consistency),
             "primary_path": str(bundle_path),
         },
     )
@@ -399,7 +398,8 @@ def execute_pipeline_registration_request(
             "submitted_pipeline_manifest": submitted_manifest if submitted_manifest != manifest else None,
             "compatibility_warnings": compatibility_warnings,
             "smoke_validation": smoke_validation,
-            "metric_reproduction": metric_reproduction,
+            "metric_claim_consistency": metric_claim_consistency,
+            "capabilities": pipeline_capabilities(workspace_dir, metric_claim_consistency),
             "primary_path": str(target_dir / bundle_path.name),
         },
         version=version,
@@ -446,7 +446,8 @@ def execute_pipeline_registration_request(
         "bundle_workspace_path": str(bundle_path.relative_to(workspace)),
         "compatibility_warnings": compatibility_warnings,
         "smoke_validation": smoke_validation,
-        "metric_reproduction": metric_reproduction,
+        "metric_claim_consistency": metric_claim_consistency,
+        "capabilities": pipeline_capabilities(workspace_dir, metric_claim_consistency),
     }
 
 
@@ -755,7 +756,7 @@ def optional_nonempty_string(payload: dict[str, Any], key: str, *, prefix: str =
     return stripped or None
 
 
-def pipeline_metric_reproduction_summary(
+def pipeline_metric_claim_consistency_summary(
     *,
     manifest: dict[str, Any],
     runs: list[ExperimentRun],
@@ -763,8 +764,8 @@ def pipeline_metric_reproduction_summary(
     expected_metrics = manifest.get("expected_metrics")
     if not isinstance(expected_metrics, list) or not expected_metrics:
         return {
-            "schema_version": "prediction_pipeline_metric_reproduction.v1",
-            "metric_reproduced": None,
+            "schema_version": "prediction_pipeline_metric_claim_consistency.v1",
+            "claims_match": None,
             "reason": "expected_metrics_missing",
             "comparisons": [],
         }
@@ -810,13 +811,35 @@ def pipeline_metric_reproduction_summary(
             }
         )
     matched_values = [item["matched"] for item in comparisons]
-    reproduced = bool(matched_values) and not missing_primary_metrics and all(matched_values)
+    claims_match = bool(matched_values) and not missing_primary_metrics and all(matched_values)
     return {
-        "schema_version": "prediction_pipeline_metric_reproduction.v1",
-        "metric_reproduced": reproduced,
-        "reason": None if reproduced else "primary_metric_missing_or_mismatched",
+        "schema_version": "prediction_pipeline_metric_claim_consistency.v1",
+        "claims_match": claims_match,
+        "reason": None if claims_match else "primary_metric_claim_missing_or_mismatched",
         "comparisons": comparisons,
         "missing_primary_metrics": missing_primary_metrics,
+    }
+
+
+def pipeline_metric_reproduction_summary(
+    *,
+    manifest: dict[str, Any],
+    runs: list[ExperimentRun],
+) -> dict[str, Any]:
+    """Compatibility view for callers that still consume the historical field names."""
+    summary = pipeline_metric_claim_consistency_summary(manifest=manifest, runs=runs)
+    return {
+        **summary,
+        "schema_version": "prediction_pipeline_metric_reproduction.v1",
+        "metric_reproduced": summary.get("claims_match"),
+    }
+
+
+def pipeline_capabilities(workspace_dir: Path, metric_claim_consistency: dict[str, Any]) -> dict[str, bool]:
+    export_files_ready = all((workspace_dir / name).is_file() for name in ("train.py", "README.md"))
+    return {
+        "prediction_enabled": True,
+        "export_ready": export_files_ready and metric_claim_consistency.get("claims_match") is True,
     }
 
 

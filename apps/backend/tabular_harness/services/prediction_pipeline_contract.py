@@ -11,8 +11,9 @@ from tabular_harness.core.json import loads_json
 from tabular_harness.models.entities import Artifact, ExperimentRun, LineageEdge
 from tabular_harness.services.artifacts import artifact_primary_path
 
-LEADERBOARD_PIPELINE_REQUIRED_FILES = frozenset(
-    {"pipeline_manifest.json", "train.py", "predict.py", "requirements.txt", "README.md"}
+PREDICTION_RUNTIME_REQUIRED_FILES = frozenset({"pipeline_manifest.json", "predict.py", "requirements.txt"})
+EXPORT_BUNDLE_REQUIRED_FILES = frozenset(
+    {*PREDICTION_RUNTIME_REQUIRED_FILES, "train.py", "README.md"}
 )
 
 
@@ -74,22 +75,32 @@ def leaderboard_ready_pipeline_artifact(
     *,
     params: dict[str, Any],
 ) -> Artifact | None:
+    """Return the runtime used for Leaderboard prediction.
+
+    The historical name is retained for callers and stored projects. Leaderboard
+    readiness means target-free UI inference is smoke-tested; it does not imply
+    that the optional local training/export bundle has been built.
+    """
+    return prediction_enabled_pipeline_artifact(db, run, params=params)
+
+
+def prediction_enabled_pipeline_artifact(
+    db: Session,
+    run: ExperimentRun,
+    *,
+    params: dict[str, Any],
+) -> Artifact | None:
     artifact = prediction_pipeline_artifact_for_run(db, run, params=params)
     if artifact is None:
         return None
     metadata = loads_json(artifact.metadata_json, {})
     manifest = metadata.get("pipeline_manifest")
     smoke = metadata.get("smoke_validation")
-    metric_reproduction = metadata.get("metric_reproduction")
     if not isinstance(manifest, dict) or manifest.get("schema_version") != "pipeline_manifest.v1":
         return None
     if not all(isinstance(manifest.get(key), dict) for key in ("input_contract", "output_contract", "runtime")):
         return None
     if not isinstance(smoke, dict) or smoke.get("status") != "passed" or smoke.get("runtime_isolated") is not True:
-        return None
-    if not isinstance(metric_reproduction, dict) or metric_reproduction.get("metric_reproduced") is not True:
-        return None
-    if not pipeline_reproduces_run_primary_metric(metric_reproduction, run):
         return None
     try:
         path = artifact_primary_path(artifact)
@@ -97,22 +108,61 @@ def leaderboard_ready_pipeline_artifact(
             return None
         with zipfile.ZipFile(path) as archive:
             names = {name.rstrip("/") for name in archive.namelist() if name and not name.endswith("/")}
-            if not LEADERBOARD_PIPELINE_REQUIRED_FILES.issubset(names):
+            if not PREDICTION_RUNTIME_REQUIRED_FILES.issubset(names):
                 return None
             bundled_manifest = json.loads(archive.read("pipeline_manifest.json").decode("utf-8"))
             if not isinstance(bundled_manifest, dict) or bundled_manifest.get("schema_version") != "pipeline_manifest.v1":
                 return None
-            for entrypoint in ("train.py", "predict.py"):
-                compile(archive.read(entrypoint).decode("utf-8"), entrypoint, "exec")
-            if not archive.read("README.md").strip():
-                return None
+            compile(archive.read("predict.py").decode("utf-8"), "predict.py", "exec")
     except (OSError, KeyError, UnicodeDecodeError, json.JSONDecodeError, SyntaxError, zipfile.BadZipFile):
         return None
     return artifact
 
 
-def pipeline_reproduces_run_primary_metric(
-    metric_reproduction: dict[str, Any],
+def export_ready_pipeline_artifact(
+    db: Session,
+    run: ExperimentRun,
+    *,
+    params: dict[str, Any],
+) -> Artifact | None:
+    artifact = prediction_enabled_pipeline_artifact(db, run, params=params)
+    if artifact is None:
+        return None
+    metadata = loads_json(artifact.metadata_json, {})
+    consistency = metric_claim_consistency_from_metadata(metadata)
+    if not isinstance(consistency, dict) or consistency.get("claims_match") is not True:
+        return None
+    if not pipeline_claim_matches_run_primary_metric(consistency, run):
+        return None
+    try:
+        path = artifact_primary_path(artifact)
+        with zipfile.ZipFile(path) as archive:
+            names = {name.rstrip("/") for name in archive.namelist() if name and not name.endswith("/")}
+            if not EXPORT_BUNDLE_REQUIRED_FILES.issubset(names):
+                return None
+            compile(archive.read("train.py").decode("utf-8"), "train.py", "exec")
+            if not archive.read("README.md").strip():
+                return None
+    except (OSError, KeyError, UnicodeDecodeError, SyntaxError, zipfile.BadZipFile):
+        return None
+    return artifact
+
+
+def metric_claim_consistency_from_metadata(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    current = metadata.get("metric_claim_consistency")
+    if isinstance(current, dict):
+        return current
+    legacy = metadata.get("metric_reproduction")
+    if not isinstance(legacy, dict):
+        return None
+    migrated = dict(legacy)
+    migrated["schema_version"] = "prediction_pipeline_metric_claim_consistency.v1"
+    migrated.setdefault("claims_match", legacy.get("metric_reproduced"))
+    return migrated
+
+
+def pipeline_claim_matches_run_primary_metric(
+    metric_claim_consistency: dict[str, Any],
     run: ExperimentRun,
 ) -> bool:
     metrics = loads_json(run.metrics_json, {})
@@ -122,7 +172,7 @@ def pipeline_reproduces_run_primary_metric(
         observed_value = metrics.get("primary_metric_value")
     if not isinstance(metric_name, str) or not metric_name.strip() or not isinstance(observed_value, (int, float)):
         return False
-    comparisons = metric_reproduction.get("comparisons")
+    comparisons = metric_claim_consistency.get("comparisons")
     if not isinstance(comparisons, list):
         return False
     for comparison in comparisons:
@@ -138,3 +188,11 @@ def pipeline_reproduces_run_primary_metric(
         if absolute_delta <= max(abs(float(observed_value)) * 1e-6, 1e-9):
             return True
     return False
+
+
+def pipeline_reproduces_run_primary_metric(
+    metric_reproduction: dict[str, Any],
+    run: ExperimentRun,
+) -> bool:
+    """Compatibility alias for persisted v1 metadata and external callers."""
+    return pipeline_claim_matches_run_primary_metric(metric_reproduction, run)

@@ -99,7 +99,7 @@ from tabular_harness.services.marimo_sessions import NativeMarimoSession
 from tabular_harness.services.metric_preferences import metric_lower_is_better
 from tabular_harness.services.portal import target_tab_for_artifact, target_tab_for_job
 from tabular_harness.services.prediction_pipeline_contract import (
-    LEADERBOARD_PIPELINE_REQUIRED_FILES,
+    EXPORT_BUNDLE_REQUIRED_FILES,
 )
 from tabular_harness.services.research_plans import (
     commit_research_plan_revision,
@@ -4496,13 +4496,21 @@ def test_leaderboard_collapses_duplicate_metric_results_and_keeps_richer_row(tmp
     assert leaderboard[0]["run_id"] == "run_rich_duplicate"
     assert leaderboard[0]["model_id"] == "lgbm_relational_aggregates_v1"
     assert leaderboard[0]["pipeline_artifact_id"] == pipeline.id
+    assert leaderboard[0]["pipeline_export_status"] == "ready"
+
+    build_response = client.post(
+        "/api/experiment-runs/run_rich_duplicate/pipeline-bundle/build",
+        json={"locale": "en"},
+    )
+    assert build_response.status_code == 200
+    assert build_response.json()["status"] == "ready"
 
     bundle_response = client.get("/api/experiment-runs/run_rich_duplicate/pipeline-bundle")
     assert bundle_response.status_code == 200
     bundle_path = tmp_path / "downloaded_pipeline.zip"
     bundle_path.write_bytes(bundle_response.content)
     with zipfile.ZipFile(bundle_path) as archive:
-        assert LEADERBOARD_PIPELINE_REQUIRED_FILES.issubset(set(archive.namelist()))
+        assert EXPORT_BUNDLE_REQUIRED_FILES.issubset(set(archive.namelist()))
 
     predict_response = client.post(
         f"/api/projects/{project_id}/pipelines/{pipeline.id}/predict",

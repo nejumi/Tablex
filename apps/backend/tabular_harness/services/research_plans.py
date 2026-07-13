@@ -1012,8 +1012,8 @@ def validate_research_plan_document(
                             research_plan_issue(
                                 "done_node_incomplete_prediction_pipelines",
                                 f"{path}/completion_evidence",
-                                f"Node `{block_id}` references model run(s) without complete prediction pipelines: {', '.join(incomplete_pipeline_run_ids[:6])}.",
-                                "Create and register one validated model-specific prediction pipeline bundle per run before marking the node done. Do not remove model evidence to bypass this requirement.",
+                                f"Node `{block_id}` references model run(s) without prediction-enabled runtimes: {', '.join(incomplete_pipeline_run_ids[:6])}.",
+                                "Create and register one smoke-validated model-specific prediction runtime per run before marking the node done. A complete downloadable training bundle is not required. Do not remove model evidence to bypass this requirement.",
                             )
                         )
                     missing_registered_deliverables = missing_registered_research_plan_deliverables(

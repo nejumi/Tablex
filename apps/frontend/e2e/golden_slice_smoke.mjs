@@ -221,7 +221,7 @@ async function main() {
     await page.getByText("Golden slice model diagnostics notebook").first().waitFor();
     await page.screenshot({ path: path.join(outputDir, "0121_i6_notebook_from_chat.png"), fullPage: true });
 
-    await page.getByRole("button", { name: /Leaderboard|リーダーボード/ }).click();
+    await page.getByRole("button", { name: /^(Leaderboard|リーダーボード)$/ }).click();
     await page.getByText("Golden slice logistic model").first().waitFor();
     await page.getByText("Deterministic credit-risk model").first().waitFor();
     const bundleResponse = await api.get(`${backendBase}/api/experiment-runs/${seed.run_id}/pipeline-bundle`);
@@ -237,9 +237,15 @@ async function main() {
     await page.getByText("Golden slice model diagnostics notebook").first().waitFor();
     await page.screenshot({ path: path.join(outputDir, "0121_i6_notebook_from_leaderboard.png"), fullPage: true });
 
-    await page.getByRole("button", { name: /Leaderboard|リーダーボード/ }).click();
+    await page.getByRole("button", { name: /^(Leaderboard|リーダーボード)$/ }).click();
     await page.getByText(/Pilot|仮運用/).first().waitFor();
     await page.getByText(/ROC[-_\s]?AUC|roc_auc/i).first().waitFor();
+    await page.locator('button[title="Predict with this model"], button[title="このモデルで予測"]').first().click();
+    const predictionDialog = page.getByRole("dialog", { name: /Prediction|予測/ });
+    await predictionDialog.waitFor({ state: "visible" });
+    await predictionDialog.screenshot({ path: path.join(outputDir, "leaderboard_prediction_modal.png") });
+    await predictionDialog.getByRole("button", { name: /Close|閉じる/ }).first().click();
+    await predictionDialog.waitFor({ state: "hidden" });
     await page.screenshot({ path: path.join(outputDir, "0121_i6_leaderboard_pilot.png"), fullPage: true });
 
     const evidence = {
@@ -255,6 +261,7 @@ async function main() {
         "output/playwright/0121_i6_notebook_from_chat.png",
         "output/playwright/0121_i6_notebook_from_leaderboard.png",
         "output/playwright/0121_i6_leaderboard_pilot.png",
+        "output/playwright/leaderboard_prediction_modal.png",
       ],
     };
     await writeFile(path.join(outputDir, "0121_i6_golden_slice_result.json"), `${JSON.stringify(evidence, null, 2)}\n`, "utf-8");

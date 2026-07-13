@@ -809,6 +809,10 @@ class AgentConsoleMessageCreate(BaseModel):
     locale: str | None = None
 
 
+class PipelineBundleBuildCreate(BaseModel):
+    locale: str | None = None
+
+
 class AgentConsoleMessageRead(BaseModel):
     schema_version: str
     project_id: str
