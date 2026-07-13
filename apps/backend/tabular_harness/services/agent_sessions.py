@@ -996,6 +996,7 @@ def start_main_agent_session_supervisor_thread(
     supervisor_runner: SupervisorRunner | None = None,
     turn_timeout_seconds: int = MAIN_AGENT_IDLE_TIMEOUT_SECONDS,
     turn_start_silence_timeout_seconds: int = MAIN_AGENT_TURN_START_SILENCE_TIMEOUT_SECONDS,
+    shutdown_event: threading.Event | None = None,
 ) -> threading.Thread | None:
     if not acquire_supervisor_slot(session_id):
         return None
@@ -1025,6 +1026,7 @@ def start_main_agent_session_supervisor_thread(
                 lease_owner_id=lease_owner_id,
                 turn_timeout_seconds=turn_timeout_seconds,
                 turn_start_silence_timeout_seconds=turn_start_silence_timeout_seconds,
+                shutdown_event=shutdown_event,
                 slot_acquired=True,
             )
         finally:
@@ -1048,6 +1050,7 @@ def start_active_main_session_supervisors(
     supervisor_runner: SupervisorRunner | None = None,
     turn_timeout_seconds: int = MAIN_AGENT_IDLE_TIMEOUT_SECONDS,
     turn_start_silence_timeout_seconds: int = MAIN_AGENT_TURN_START_SILENCE_TIMEOUT_SECONDS,
+    shutdown_event: threading.Event | None = None,
 ) -> list[threading.Thread]:
     launch_specs: list[tuple[str, str]] = []
     with session_factory() as db:
@@ -1116,10 +1119,22 @@ def start_active_main_session_supervisors(
             supervisor_runner=supervisor_runner,
             turn_timeout_seconds=turn_timeout_seconds,
             turn_start_silence_timeout_seconds=turn_start_silence_timeout_seconds,
+            shutdown_event=shutdown_event,
         )
         if thread is not None:
             threads.append(thread)
     return threads
+
+
+def wait_for_any_event(events: tuple[threading.Event | None, ...], timeout_seconds: float) -> bool:
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        if any(event is not None and event.is_set() for event in events):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.25, remaining))
 
 
 def run_main_agent_session_supervisor(
@@ -1133,6 +1148,7 @@ def run_main_agent_session_supervisor(
     max_turns: int = 100_000,
     turn_timeout_seconds: int = MAIN_AGENT_IDLE_TIMEOUT_SECONDS,
     turn_start_silence_timeout_seconds: int = MAIN_AGENT_TURN_START_SILENCE_TIMEOUT_SECONDS,
+    shutdown_event: threading.Event | None = None,
     slot_acquired: bool = False,
 ) -> None:
     if not slot_acquired and not acquire_supervisor_slot(session_id):
@@ -1148,6 +1164,8 @@ def run_main_agent_session_supervisor(
     )
     try:
         for _ in range(max_turns):
+            if shutdown_event is not None and shutdown_event.is_set():
+                return
             if supervisor_lease_lost_event_is_set(session_factory, session_id=session_id, event=lease_lost_event):
                 return
             with session_factory() as db:
@@ -1161,7 +1179,7 @@ def run_main_agent_session_supervisor(
                     return
                 if clear_stale_stored_runner_pid(db, session=session):
                     db.commit()
-                    if lease_lost_event.wait(1):
+                    if wait_for_any_event((lease_lost_event, shutdown_event), 1):
                         continue
                     continue
                 if session.status in TERMINAL_SESSION_STATUSES:
@@ -1223,7 +1241,10 @@ def run_main_agent_session_supervisor(
                 timeout_seconds=turn_timeout_seconds,
                 turn_start_silence_timeout_seconds=turn_start_silence_timeout_seconds,
                 cancel_event=lease_lost_event,
+                shutdown_event=shutdown_event,
             )
+            if shutdown_event is not None and shutdown_event.is_set():
+                return
             if supervisor_lease_lost_event_is_set(session_factory, session_id=session_id, event=lease_lost_event):
                 return
             with session_factory() as db:
@@ -1277,7 +1298,7 @@ def run_main_agent_session_supervisor(
                         details={"retry_delay_seconds": retry_delay, "failure_kind": "runner_unavailable"},
                     )
                     db.commit()
-                    if lease_lost_event.wait(retry_delay):
+                    if wait_for_any_event((lease_lost_event, shutdown_event), retry_delay):
                         continue
                     continue
                 if exit_code != 0:
@@ -1308,7 +1329,7 @@ def run_main_agent_session_supervisor(
                         details={"exit_code": exit_code, "retry_delay_seconds": retry_delay},
                     )
                     db.commit()
-                    if lease_lost_event.wait(retry_delay):
+                    if wait_for_any_event((lease_lost_event, shutdown_event), retry_delay):
                         continue
                     continue
                 session.status = "between_turns"
@@ -1325,7 +1346,7 @@ def run_main_agent_session_supervisor(
                     payload={"turn_index": session.turn_index},
                 )
                 db.commit()
-            if lease_lost_event.wait(2):
+            if wait_for_any_event((lease_lost_event, shutdown_event), 2):
                 continue
     finally:
         lease_stop_event.set()
@@ -1347,6 +1368,7 @@ def run_codex_cli_turn_streaming(
     timeout_seconds: int,
     turn_start_silence_timeout_seconds: int = MAIN_AGENT_TURN_START_SILENCE_TIMEOUT_SECONDS,
     cancel_event: threading.Event | None = None,
+    shutdown_event: threading.Event | None = None,
 ) -> int | None:
     if shutil.which("codex") is None:
         with session_factory() as db:
@@ -1590,12 +1612,17 @@ def run_codex_cli_turn_streaming(
                     elif event_type.startswith("item."):
                         item_seen_after_thread_start = True
             now = time.monotonic()
-            if cancel_event is not None and cancel_event.is_set() and process.poll() is None and not cancel_sent:
+            cancellation_reason = None
+            if shutdown_event is not None and shutdown_event.is_set():
+                cancellation_reason = "supervisor_shutdown"
+            elif cancel_event is not None and cancel_event.is_set():
+                cancellation_reason = "supervisor_lease_lost"
+            if cancellation_reason is not None and process.poll() is None and not cancel_sent:
                 process.terminate()
                 append_process_cancelled_event(
                     session_factory,
                     session_id=session_id,
-                    reason="supervisor_lease_lost",
+                    reason=cancellation_reason,
                 )
                 cancel_sent = True
                 terminated_at = now

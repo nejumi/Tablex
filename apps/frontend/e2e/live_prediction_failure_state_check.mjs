@@ -32,13 +32,10 @@ try {
   const dialog = page.getByRole("dialog", { name: /Prediction|予測/ });
   const failure = dialog.getByText("The prediction process could not start.");
   await failure.waitFor({ state: "visible" });
-  const managingVisible = await dialog
-    .getByText(/Codex is managing this prediction|Codexがこの予測を管理しています/)
-    .isVisible()
-    .catch(() => false);
-  if (managingVisible) throw new Error("Failed prediction was simultaneously shown as Codex-managed");
+  const activeOperationVisible = await dialog.locator(".prediction-operation-status").isVisible().catch(() => false);
+  if (activeOperationVisible) throw new Error("Failed prediction was simultaneously shown as active");
 
-  process.stdout.write(`${JSON.stringify({ status: "passed", managingVisible })}\n`);
+  process.stdout.write(`${JSON.stringify({ status: "passed", activeOperationVisible })}\n`);
 } finally {
   await browser.close();
 }

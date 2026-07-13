@@ -68,6 +68,7 @@ def analyze_dataset_quality(
         evaluation_spec=evaluation_spec,
         split_manifest=split_manifest,
     )
+    reconcile_superseded_target_findings(db, project=project, dataset=dataset, gate=gate)
     gate_artifact = store_json_artifact(
         db,
         store,
@@ -197,7 +198,7 @@ def build_data_quality_gate(
     split_manifest: SplitManifest | None,
 ) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
-    checks.extend(basic_profile_checks(project, dataset, profile, semantic_columns))
+    checks.extend(basic_profile_checks(project, dataset, dataset_artifact, profile, semantic_columns))
     checks.extend(duckdb_dataset_checks(project, dataset_artifact, profile))
     checks.extend(evaluation_quality_checks(evaluation_spec, split_manifest, profile))
     counts = status_counts(checks)
@@ -239,6 +240,7 @@ def build_data_quality_gate(
 def basic_profile_checks(
     project: Project,
     dataset: DatasetSnapshot,
+    dataset_artifact: Artifact,
     profile: dict[str, Any],
     semantic_columns: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -262,6 +264,10 @@ def basic_profile_checks(
         )
     ]
     column_names = {str(item.get("name")) for item in columns}
+    artifact_metadata = loads_json(dataset_artifact.metadata_json, {})
+    registered_column_names = artifact_metadata.get("column_names")
+    if isinstance(registered_column_names, list):
+        column_names.update(str(item) for item in registered_column_names if isinstance(item, str))
     if is_bounded_profile(profile):
         sample_raw = profile.get("profile_sample")
         sample: dict[str, Any] = sample_raw if isinstance(sample_raw, dict) else {}
@@ -298,8 +304,8 @@ def basic_profile_checks(
                 "Target column exists in dataset" if project.target_column in column_names else "Target column not found",
                 "Project target_column must match an uploaded dataset column.",
                 [project.target_column],
-                "block_until_answered",
-                ["target_definition"],
+                "infer_and_continue" if project.target_column in column_names else "block_until_answered",
+                [] if project.target_column in column_names else ["target_definition"],
             )
         )
     leakage = [str(item.get("name")) for item in columns if item.get("is_leakage_suspect")]
@@ -382,6 +388,49 @@ def basic_profile_checks(
         )
     )
     return checks
+
+
+def reconcile_superseded_target_findings(
+    db: Session,
+    *,
+    project: Project,
+    dataset: DatasetSnapshot,
+    gate: dict[str, Any],
+) -> None:
+    target_check = next(
+        (check for check in gate.get("checks", []) if check.get("check_id") == "target_exists"),
+        None,
+    )
+    if not isinstance(target_check, dict) or target_check.get("status") != "pass":
+        return
+    active_statuses = {"adopted", "inferred", "provisional", "open"}
+    assumptions = db.scalars(
+        select(Assumption).where(
+            Assumption.project_id == project.id,
+            Assumption.subject_type == "dataset_snapshot",
+            Assumption.subject_ref == dataset.id,
+            Assumption.topic == "target",
+            Assumption.created_by_type == "system",
+            Assumption.status.in_(active_statuses),
+        )
+    ).all()
+    for assumption in assumptions:
+        assumption.status = "rejected"
+        assumption.requires_user_confirmation = False
+
+    questions = db.scalars(
+        select(Question).where(
+            Question.project_id == project.id,
+            Question.topic == "target_definition",
+            Question.status == "open",
+            Question.blocks_next_phase.is_(True),
+        )
+    ).all()
+    for question in questions:
+        question.status = "resolved"
+        question.blocks_next_phase = False
+        question.can_proceed_without_answer = True
+        question.fallback_policy = "infer_and_continue"
 
 
 def duckdb_dataset_checks(project: Project, dataset_artifact: Artifact, profile: dict[str, Any]) -> list[dict[str, Any]]:

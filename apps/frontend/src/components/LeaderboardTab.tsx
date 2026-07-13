@@ -145,6 +145,27 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+function predictionOperationCommandError(operation: Job | null): string | null {
+  const commandError = objectRecord(operation?.context.codex_command_error);
+  const error = objectRecord(commandError?.error);
+  return textField(error?.message) ?? (commandError ? operation?.error_message ?? null : null);
+}
+
+function predictionExecutionElapsedSeconds(operation: Job | null): number | null {
+  const progress = objectRecord(operation?.context.execution_progress);
+  return typeof progress?.elapsed_seconds === "number" ? progress.elapsed_seconds : null;
+}
+
+function predictionReviewStatusForOperation(operation: Job): string {
+  if (operation.status === "running") return "running_pipeline";
+  if (operation.status === "queued") return "pipeline_queued";
+  if (operation.status === "waiting_for_agent_review") return "waiting_for_codex_review";
+  if (operation.status === "waiting_for_agent" && predictionOperationCommandError(operation)) {
+    return "command_rejected";
+  }
+  return "waiting_for_codex";
+}
+
 function notebookSourceArtifactIdFromJobOutput(output: Record<string, unknown>): string | null {
   const recommended = objectRecord(output.recommended_notebook);
   const recommendedArtifacts = objectRecord(recommended?.artifact_ids);
@@ -499,6 +520,7 @@ export function LeaderboardTab({
   const [predictionReviewStatus, setPredictionReviewStatus] = React.useState<string | null>(null);
   const [predictionReviewSummary, setPredictionReviewSummary] = React.useState<string | null>(null);
   const [predictionOperationJobId, setPredictionOperationJobId] = React.useState<string | null>(null);
+  const [predictionOperation, setPredictionOperation] = React.useState<Job | null>(null);
   const [predictionUploadedInputs, setPredictionUploadedInputs] = React.useState<Record<string, UploadedPredictionInput>>({});
   const [predictionInputsPreparing, setPredictionInputsPreparing] = React.useState(false);
   const predictionAutoPreparationKey = React.useRef<string | null>(null);
@@ -596,6 +618,7 @@ export function LeaderboardTab({
       try {
         const operation = await api<Job>(`/api/jobs/${predictionOperationJobId}`);
         if (cancelled) return;
+        setPredictionOperation(operation);
         setPredictionStatusRefreshError(null);
         if (operation.status === "succeeded") {
           const artifactId =
@@ -614,13 +637,7 @@ export function LeaderboardTab({
           setPredictionOperationJobId(null);
           return;
         }
-        setPredictionReviewStatus(
-          operation.status === "running"
-            ? "running_pipeline"
-            : operation.status === "waiting_for_agent_review"
-              ? "waiting_for_codex_review"
-              : "waiting_for_codex"
-        );
+        setPredictionReviewStatus(predictionReviewStatusForOperation(operation));
       } catch (err) {
         if (!cancelled) setPredictionStatusRefreshError(err instanceof Error ? err.message : String(err));
       }
@@ -747,6 +764,7 @@ export function LeaderboardTab({
     }
     setPredictionReviewStatus("waiting_for_codex");
     setPredictionOperationJobId(job.id);
+    setPredictionOperation(job);
   }
 
   function restorePredictionOperation(entry: LeaderboardEntry) {
@@ -758,16 +776,11 @@ export function LeaderboardTab({
       )
       .sort((left, right) => right.created_at.localeCompare(left.created_at))[0];
     if (!operation) return;
+    setPredictionOperation(operation);
     setPredictionStatusRefreshError(null);
     if (["waiting_for_agent", "queued", "running", "waiting_for_agent_review"].includes(operation.status)) {
       setPredictionOperationJobId(operation.id);
-      setPredictionReviewStatus(
-        operation.status === "running"
-          ? "running_pipeline"
-          : operation.status === "waiting_for_agent_review"
-            ? "waiting_for_codex_review"
-            : "waiting_for_codex"
-      );
+      setPredictionReviewStatus(predictionReviewStatusForOperation(operation));
       return;
     }
     if (["failed", "cancelled", "timed_out"].includes(operation.status)) {
@@ -788,6 +801,7 @@ export function LeaderboardTab({
   function openPredictionWorkspace(entry: LeaderboardEntry) {
     setPredictionEntry(entry);
     setPredictionOperationJobId(null);
+    setPredictionOperation(null);
     setPredictionResultArtifactId(null);
     setPredictionResultContextArtifactId(null);
     setPredictionReviewStatus(null);
@@ -1531,21 +1545,59 @@ export function LeaderboardTab({
               {predictionReviewStatus === "submitting" ? (
                 <span className="badge warning">{text.predictionStarting}</span>
               ) : null}
-              {predictionReviewStatus === "waiting_for_codex" && !predictionUploadError ? (
-                <button
-                  className="badge warning"
-                  disabled={!predictionResultContextArtifactId}
-                  onClick={() => predictionResultContextArtifactId && void loadPreview(predictionResultContextArtifactId)}
-                  type="button"
+              {predictionOperation && ["waiting_for_codex", "command_rejected", "pipeline_queued", "running_pipeline", "waiting_for_codex_review"].includes(predictionReviewStatus ?? "") ? (
+                <div
+                  className={`prediction-operation-status${predictionReviewStatus === "command_rejected" ? " warning" : ""}`}
+                  role={predictionReviewStatus === "command_rejected" ? "alert" : "status"}
                 >
-                  {text.predictionCodexReviewPending}
-                </button>
-              ) : null}
-              {predictionReviewStatus === "running_pipeline" ? (
-                <span className="badge warning">{text.predictionPipelineRunning}</span>
-              ) : null}
-              {predictionReviewStatus === "waiting_for_codex_review" ? (
-                <span className="badge warning">{text.predictionCodexReviewingResult}</span>
+                  {predictionReviewStatus === "command_rejected" ? null : <Loader2 className="spin" size={18} />}
+                  <div>
+                    <strong>
+                      {predictionReviewStatus === "command_rejected"
+                        ? text.predictionCommandRejectedTitle
+                        : predictionReviewStatus === "pipeline_queued"
+                          ? text.predictionPipelineQueuedTitle
+                          : predictionReviewStatus === "running_pipeline"
+                            ? text.predictionPipelineRunning
+                            : predictionReviewStatus === "waiting_for_codex_review"
+                              ? text.predictionCodexReviewingResult
+                              : text.predictionCodexInputReviewTitle}
+                    </strong>
+                    <span>
+                      {predictionReviewStatus === "command_rejected"
+                        ? text.predictionCommandRejectedBody
+                        : predictionReviewStatus === "pipeline_queued"
+                          ? text.predictionPipelineQueuedBody
+                          : predictionReviewStatus === "running_pipeline"
+                            ? text.predictionPipelineRunningBody
+                            : predictionReviewStatus === "waiting_for_codex_review"
+                              ? text.predictionCodexReviewingResultBody
+                              : text.predictionCodexInputReviewBody}
+                    </span>
+                    {predictionReviewStatus === "command_rejected" && predictionOperationCommandError(predictionOperation) ? (
+                      <code>{predictionOperationCommandError(predictionOperation)}</code>
+                    ) : null}
+                    {predictionReviewStatus === "waiting_for_codex_review" && predictionResultContextArtifactId ? (
+                      <button
+                        className="secondary-button"
+                        onClick={() => void loadPreview(predictionResultContextArtifactId)}
+                        type="button"
+                      >
+                        <FileText size={15} />
+                        {text.predictionOpenResultEvidence}
+                      </button>
+                    ) : null}
+                    {predictionReviewStatus === "running_pipeline" && predictionExecutionElapsedSeconds(predictionOperation) !== null ? (
+                      <small>
+                        {text.predictionExecutionElapsed.replace(
+                          "{seconds}",
+                          String(predictionExecutionElapsedSeconds(predictionOperation))
+                        )}
+                      </small>
+                    ) : null}
+                    <small>{text.predictionStatusUpdated.replace("{time}", formatDate(predictionOperation.updated_at))}</small>
+                  </div>
+                </div>
               ) : null}
               {predictionReviewStatus === "usable_with_caveats" ? (
                 <span className="badge warning">{text.predictionCodexReviewCaveats}</span>

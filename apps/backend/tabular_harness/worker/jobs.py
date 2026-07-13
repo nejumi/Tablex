@@ -6,6 +6,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 import zipfile
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
@@ -2940,13 +2942,13 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
         output_path=output_path,
         history_path=history_path,
     )
-    completed = subprocess.run(
-        command,
+    db.commit()
+    completed = run_prediction_subprocess_with_progress(
+        db,
+        job=job,
+        command=command,
         cwd=str(extract_dir),
-        capture_output=True,
-        text=True,
         timeout=int(payload.get("timeout_seconds") or 300),
-        check=False,
     )
     if completed.returncode != 0:
         stderr_tail = (completed.stderr or completed.stdout or "")[-4000:]
@@ -3239,6 +3241,102 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
         "session_continuation_job_id": continuation_job.id if continuation_job else None,
     }
     return output
+
+
+def run_prediction_subprocess_with_progress(
+    db: Session,
+    command: list[str],
+    *,
+    job: Job,
+    cwd: str,
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    started_at = utc_now()
+    started_monotonic = time.monotonic()
+    update_prediction_execution_progress(
+        db,
+        job=job,
+        phase="pipeline_running",
+        started_at=started_at,
+        elapsed_seconds=0,
+    )
+    with (
+        tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file,
+        tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file,
+    ):
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            text=True,
+        )
+        next_heartbeat_at = started_monotonic + 5
+        timed_out = False
+        while process.poll() is None:
+            now = time.monotonic()
+            elapsed_seconds = max(0, int(now - started_monotonic))
+            if now - started_monotonic >= timeout:
+                timed_out = True
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+                break
+            if now >= next_heartbeat_at:
+                update_prediction_execution_progress(
+                    db,
+                    job=job,
+                    phase="pipeline_running",
+                    started_at=started_at,
+                    elapsed_seconds=elapsed_seconds,
+                )
+                next_heartbeat_at = now + 5
+            time.sleep(0.5)
+        return_code = process.wait()
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read()
+        stderr = stderr_file.read()
+    elapsed_seconds = max(0, int(time.monotonic() - started_monotonic))
+    if timed_out:
+        return_code = 124
+        stderr = f"{stderr}\nPrediction pipeline exceeded the {timeout}s execution timeout.".strip()
+    update_prediction_execution_progress(
+        db,
+        job=job,
+        phase="pipeline_finished",
+        started_at=started_at,
+        elapsed_seconds=elapsed_seconds,
+        return_code=return_code,
+    )
+    return subprocess.CompletedProcess(command, return_code, stdout=stdout, stderr=stderr)
+
+
+def update_prediction_execution_progress(
+    db: Session,
+    *,
+    job: Job,
+    phase: str,
+    started_at: datetime,
+    elapsed_seconds: int,
+    return_code: int | None = None,
+) -> None:
+    observed_at = utc_now()
+    context = loads_json(job.context_json, {})
+    context["execution_progress"] = {
+        "schema_version": "prediction_execution_progress.v1",
+        "phase": phase,
+        "started_at": started_at.isoformat(),
+        "last_heartbeat_at": observed_at.isoformat(),
+        "elapsed_seconds": elapsed_seconds,
+        "return_code": return_code,
+    }
+    job.context_json = dumps_json(context)
+    job.updated_at = observed_at
+    db.commit()
 
 
 def prediction_input_integrity_report(
@@ -4640,6 +4738,8 @@ def continue_autonomous_session_handler(db: Session, job: Job, store: LocalArtif
         output["session_continuation_job_id"] = next_job.id
     output["schema_version"] = "autonomous_session_continuation.v1"
     return output
+
+
 def maybe_queue_autonomous_session_continuation(
     db: Session,
     *,
@@ -4652,6 +4752,10 @@ def maybe_queue_autonomous_session_continuation(
     if resolved_project is None and project_id is not None:
         resolved_project = db.get(Project, project_id)
     if resolved_project is None or resolved_project.current_phase != "AUTONOMOUS_LOOP":
+        return None
+    from tabular_harness.services.agent_supervisor import active_main_session
+
+    if active_main_session(db, resolved_project.id) is not None:
         return None
     return queue_autonomous_session_continuation(
         db,

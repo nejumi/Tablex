@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -80,14 +81,19 @@ def run_agent_session_supervisor_loop(
 ) -> None:
     owner_id = lease_owner_id or f"agent-supervisor:pid:{os.getpid()}"
     interval = max(0.1, interval_seconds)
+    active_threads: set[threading.Thread] = set()
     while True:
         try:
-            supervisor_runner(
+            active_threads = {thread for thread in active_threads if thread.is_alive()}
+            started_threads = supervisor_runner(
                 session_factory,
                 store,
                 agent_model=agent_model,
                 lease_owner_id=owner_id,
+                shutdown_event=stop_event,
             )
+            if started_threads:
+                active_threads.update(started_threads)
         except Exception:
             if once:
                 raise
@@ -96,9 +102,11 @@ def run_agent_session_supervisor_loop(
             return
         if stop_event is not None:
             if stop_event.wait(interval):
-                return
+                break
         else:
             time.sleep(interval)
+    for thread in active_threads:
+        thread.join(timeout=20)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -126,6 +134,14 @@ def main() -> None:
     init_db(engine)
     session_factory = create_session_factory(engine)
     artifact_store = LocalArtifactStore(settings.artifact_root)
+    stop_event = threading.Event()
+
+    def request_shutdown(signum: int, frame: object) -> None:
+        del signum, frame
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
     run_agent_session_supervisor_loop(
         session_factory,
         artifact_store,
@@ -133,6 +149,7 @@ def main() -> None:
         interval_seconds=args.interval,
         lease_owner_id=args.owner_id,
         agent_model=args.agent_model,
+        stop_event=stop_event,
     )
 
 

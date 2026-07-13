@@ -8,6 +8,7 @@ from tabular_harness.core.config import get_settings
 from tabular_harness.db.session import create_engine_for_settings, create_session_factory, init_db
 from tabular_harness.services.agent_sessions import start_active_main_session_supervisors
 from tabular_harness.services.artifacts import LocalArtifactStore
+from tabular_harness.services.jobs import reap_orphaned_worker_jobs
 from tabular_harness.worker.jobs import create_default_worker
 
 
@@ -43,6 +44,9 @@ def main() -> None:
     selected_job_types = set(args.job_type) if args.job_type else set(worker.handlers)
     selected_job_types.difference_update(args.exclude_job_type)
     artifact_store = LocalArtifactStore(settings.artifact_root)
+    with session_factory() as session:
+        reap_orphaned_worker_jobs(session, worker_id=args.worker_id)
+        session.commit()
     supervisor_recovery_interval_seconds = 15.0
     next_supervisor_recovery_at = 0.0
     if not args.once and not args.no_agent_session_supervisor:

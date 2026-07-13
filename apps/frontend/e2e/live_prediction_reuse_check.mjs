@@ -27,7 +27,7 @@ try {
   await dialog.waitFor({ state: "visible" });
   const runButton = dialog.getByRole("button", { name: /Run prediction|予測を実行/ });
   const operationStatus = dialog.getByText(
-    /Codex is managing this prediction|Codexがこの予測を管理しています/
+    /Codex is reviewing the prediction inputs|Codexが予測入力を確認しています|Prediction execution accepted|予測実行を受理しました|canonical prediction pipeline|Codex is reviewing the actual prediction result|Codexが実際の予測結果を確認しています/
   );
   const readinessDeadline = Date.now() + 60_000;
   while (

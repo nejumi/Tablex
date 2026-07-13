@@ -94,6 +94,9 @@ JOB_LOCK_EXPIRY_SECONDS = 10 * 60
 STALE_RUNNING_JOB_TIMEOUT_SECONDS = {
     "agent_chat_turn": 5 * 60,
     "continue_autonomous_session": 10 * 60,
+    # Planned Codex tasks run with a 30-minute execution policy. The extra
+    # grace period covers workspace ingestion and worker cleanup after Codex exits.
+    "run_planned_agent_task_codex": 40 * 60,
     "select_primary_table": 15 * 60,
     "upload_data_bundle": 60 * 60,
 }
@@ -302,6 +305,27 @@ def reap_stale_running_jobs(db: Session, *, now: datetime | None = None) -> int:
     if reaped:
         db.flush()
     return reaped
+
+
+def reap_orphaned_worker_jobs(db: Session, *, worker_id: str) -> int:
+    """Close jobs left running by a previous process with the same worker identity."""
+    candidates = db.scalars(
+        select(Job).where(Job.status == "running", Job.locked_by == worker_id)
+    ).all()
+    for job in candidates:
+        mark_job_timed_out(
+            job,
+            f"{job.job_type} was interrupted when worker {worker_id} restarted.",
+            {
+                "schema_version": "orphaned_worker_job.v1",
+                "job_type": job.job_type,
+                "worker_id": worker_id,
+                "recovery": "worker_startup",
+            },
+        )
+    if candidates:
+        db.flush()
+    return len(candidates)
 
 
 def latest_job_activity_at(job: Job) -> datetime:

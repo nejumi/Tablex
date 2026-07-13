@@ -174,6 +174,7 @@ from tabular_harness.services.result_notebook_evidence import (
     latest_model_diagnostics_notebook_for_run,
 )
 from tabular_harness.worker.jobs import (
+    maybe_queue_autonomous_session_continuation,
     register_prediction_pipeline_handler,
     run_prediction_pipeline_handler,
     score_pilot_outcomes_handler,
@@ -6598,8 +6599,35 @@ def test_agent_managed_prediction_waits_for_codex_execute_and_review(tmp_path: P
         assert any((operation_dir / "inputs").iterdir())
         assert any((workspace / ".tablex" / "inbox").glob("*_request.json"))
 
-        execute_request_id = "execute_managed_prediction"
+        rejected_request_id = "execute_managed_prediction_without_decision"
         pipeline_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
+        (pipeline_requests_dir(workspace) / f"{rejected_request_id}.json").write_text(
+            dumps_json(
+                {
+                    "schema_version": "tablex_pipeline_request.v1",
+                    "operation": "execute_prediction",
+                    "request_id": rejected_request_id,
+                    "payload": {"prediction_operation_job_id": job.id},
+                }
+            ),
+            encoding="utf-8",
+        )
+        process_pipeline_tool_requests(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            workspace=workspace,
+        )
+        db.commit()
+        db.refresh(job)
+        command_error = loads_json(job.context_json, {})["codex_command_error"]
+        assert job.status == "waiting_for_agent"
+        assert job.error_message == "payload.decision_context must explain why the prediction is ready to execute"
+        assert command_error["request_id"] == rejected_request_id
+        assert command_error["operation"] == "execute_prediction"
+
+        execute_request_id = "execute_managed_prediction"
         (pipeline_requests_dir(workspace) / f"{execute_request_id}.json").write_text(
             dumps_json(
                 {
@@ -6625,7 +6653,10 @@ def test_agent_managed_prediction_waits_for_codex_execute_and_review(tmp_path: P
         db.commit()
         db.refresh(job)
         assert job.status == "queued"
-        assert loads_json(job.context_json, {})["codex_preflight"]["evidence_artifact_ids"] == [context_artifact.id]
+        accepted_context = loads_json(job.context_json, {})
+        assert accepted_context["codex_preflight"]["evidence_artifact_ids"] == [context_artifact.id]
+        assert "codex_command_error" not in accepted_context
+        assert job.error_message is None
 
         job.status = "waiting_for_agent_review"
         job.output_json = dumps_json({"prediction_batch_artifact_id": "art_prediction_result"})
@@ -6665,6 +6696,53 @@ def test_agent_managed_prediction_waits_for_codex_execute_and_review(tmp_path: P
         assert loads_json(artifact_primary_path(review_artifact).read_text(encoding="utf-8"), {})["verdict"] == (
             "usable_with_caveats"
         )
+
+
+def test_active_main_session_does_not_queue_legacy_continuation_job(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    with sessionmaker(engine)() as db:
+        project = Project(
+            id="p_main_session_continuation",
+            name="Main session continuation",
+            current_phase="AUTONOMOUS_LOOP",
+            autonomy_mode="full_auto",
+        )
+        session = AgentSession(
+            id="ags_main_session_continuation",
+            project_id=project.id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Continue through the main Codex session.",
+        )
+        parent_job = Job(
+            id="job_main_session_parent",
+            project_id=project.id,
+            job_type="run_prediction_pipeline",
+            status="waiting_for_agent_review",
+        )
+        db.add_all([project, session, parent_job])
+        db.commit()
+
+        continuation = maybe_queue_autonomous_session_continuation(
+            db,
+            job=parent_job,
+            project=project,
+            reason="prediction_result_ready_for_codex_review",
+        )
+
+        assert continuation is None
+        continuation_jobs = list(
+            db.scalars(
+                select(Job).where(
+                    Job.project_id == project.id,
+                    Job.job_type == "continue_autonomous_session",
+                )
+            ).all()
+        )
+        assert continuation_jobs == []
 
 
 def test_worker_preserves_agent_review_wait_state(tmp_path: Path) -> None:
@@ -8129,6 +8207,10 @@ def test_prediction_pipeline_worker_runs_multitable_input_dir(tmp_path: Path) ->
             "bureau": bureau_artifact.id,
         }
         assert metadata["batch_kind"] == "external_test"
+        execution_progress = loads_json(job.context_json, {})["execution_progress"]
+        assert execution_progress["phase"] == "pipeline_finished"
+        assert execution_progress["return_code"] == 0
+        assert execution_progress["elapsed_seconds"] >= 0
         integrity_artifact = db.get(Artifact, output["prediction_input_integrity_artifact_id"])
         assert integrity_artifact is not None
         integrity = loads_json(artifact_primary_path(integrity_artifact).read_text(encoding="utf-8"), {})

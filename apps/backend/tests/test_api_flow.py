@@ -36,6 +36,7 @@ from tabular_harness.models.entities import (
     AgentTranscriptEvent,
     Artifact,
     AssetReference,
+    Assumption,
     DatasetSnapshot,
     DeliverableExpectation,
     EvaluationCandidate,
@@ -86,6 +87,7 @@ from tabular_harness.services.artifacts import (
 )
 from tabular_harness.services.auth import create_auth_session, create_user
 from tabular_harness.services.autonomy import latest_data_understanding_notebook_artifact
+from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.deliverable_expectations import (
     fulfill_run_pipeline_bundle_expectations,
     maybe_write_open_deliverable_expectation_observation,
@@ -94,6 +96,7 @@ from tabular_harness.services.jobs import (
     acquire_next_job,
     create_job,
     mark_job_running,
+    reap_orphaned_worker_jobs,
     reap_stale_running_jobs,
 )
 from tabular_harness.services.marimo_sessions import NativeMarimoSession
@@ -8100,6 +8103,11 @@ def test_reap_stale_running_jobs_times_out_orphaned_running_jobs(tmp_path: Path)
         stale_primary.locked_by = "dead-worker"
         stale_primary.locked_at = now - timedelta(minutes=20)
         stale_primary.updated_at = now - timedelta(minutes=16)
+        stale_codex = create_job(db, job_type="run_planned_agent_task_codex", project_id=project_id, priority=80)
+        stale_codex.status = "running"
+        stale_codex.locked_by = "dead-worker"
+        stale_codex.locked_at = now - timedelta(minutes=45)
+        stale_codex.updated_at = now - timedelta(minutes=41)
         old_training = create_job(db, job_type="train_model_candidates", project_id=project_id, priority=60)
         old_training.status = "running"
         old_training.locked_by = "busy-worker"
@@ -8118,6 +8126,7 @@ def test_reap_stale_running_jobs_times_out_orphaned_running_jobs(tmp_path: Path)
             "stale_continuation": stale_continuation.id,
             "stale_upload": stale_upload.id,
             "stale_primary": stale_primary.id,
+            "stale_codex": stale_codex.id,
             "old_training": old_training.id,
             "fresh_chat": fresh_chat.id,
             "active_upload": active_upload.id,
@@ -8140,13 +8149,18 @@ def test_reap_stale_running_jobs_times_out_orphaned_running_jobs(tmp_path: Path)
         )
         db.execute(
             update(Job)
+            .where(Job.id == ids["stale_codex"])
+            .values(created_at=now - timedelta(minutes=45), updated_at=now - timedelta(minutes=41))
+        )
+        db.execute(
+            update(Job)
             .where(Job.id == ids["old_training"])
             .values(created_at=now - timedelta(hours=2), updated_at=now - timedelta(hours=2))
         )
         db.commit()
 
     with session_factory() as db:
-        assert reap_stale_running_jobs(db, now=now) == 4
+        assert reap_stale_running_jobs(db, now=now) == 5
         db.commit()
 
     with session_factory() as db:
@@ -8154,9 +8168,125 @@ def test_reap_stale_running_jobs_times_out_orphaned_running_jobs(tmp_path: Path)
         assert db.get(Job, ids["stale_continuation"]).status == "timed_out"
         assert db.get(Job, ids["stale_upload"]).status == "timed_out"
         assert db.get(Job, ids["stale_primary"]).status == "timed_out"
+        assert db.get(Job, ids["stale_codex"]).status == "timed_out"
         assert db.get(Job, ids["old_training"]).status == "running"
         assert db.get(Job, ids["fresh_chat"]).status == "running"
         assert db.get(Job, ids["active_upload"]).status == "running"
+
+
+def test_worker_startup_reaps_jobs_owned_by_previous_process(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Worker restart cleanup"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        orphaned = create_job(db, job_type="run_planned_agent_task_codex", project_id=project_id)
+        orphaned.status = "running"
+        orphaned.locked_by = "restarted-worker"
+        active_elsewhere = create_job(db, job_type="run_prediction_pipeline", project_id=project_id)
+        active_elsewhere.status = "running"
+        active_elsewhere.locked_by = "other-worker"
+        orphaned_id = orphaned.id
+        active_elsewhere_id = active_elsewhere.id
+        db.commit()
+
+    with app.state.session_factory() as db:
+        assert reap_orphaned_worker_jobs(db, worker_id="restarted-worker") == 1
+        db.commit()
+
+    with app.state.session_factory() as db:
+        recovered = db.get(Job, orphaned_id)
+        assert recovered is not None
+        assert recovered.status == "timed_out"
+        assert recovered.ended_at is not None
+        assert loads_json(recovered.output_json, {})["schema_version"] == "orphaned_worker_job.v1"
+        still_active = db.get(Job, active_elsewhere_id)
+        assert still_active is not None
+        assert still_active.status == "running"
+
+
+def test_data_quality_uses_registered_schema_without_profile_and_resolves_false_target_blocker(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Registered schema target"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.target_column = "TARGET"
+        dataset_artifact = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="uploaded_primary_table",
+            name="registered_schema_train",
+            filename="train.csv",
+            text="id,TARGET,feature\n1,0,3.5\n2,1,4.5\n",
+            metadata={"project_id": project_id, "column_names": ["id", "TARGET", "feature"]},
+        )
+        dataset = DatasetSnapshot(
+            id="ds_registered_schema_target",
+            project_id=project_id,
+            artifact_id=dataset_artifact.id,
+            source_type="user_upload",
+            source_ref="train.csv",
+            row_count=2,
+            column_count=3,
+            schema_hash="schema",
+            data_hash="data",
+        )
+        false_assumption = Assumption(
+            id="asm_false_missing_target",
+            project_id=project_id,
+            topic="target",
+            subject_type="dataset_snapshot",
+            subject_ref=dataset.id,
+            statement="Target column not found; fallback policy is block_until_answered.",
+            status="adopted",
+            confidence=0.78,
+            risk_level="blocking",
+            fallback_policy="block_until_answered",
+            requires_user_confirmation=True,
+            created_by_type="system",
+        )
+        target_question = Question(
+            id="q_false_missing_target",
+            project_id=project_id,
+            question_set_id="qs_false_missing_target",
+            topic="target_definition",
+            question="Is the target correct?",
+            why_it_matters="Evaluation depends on it.",
+            status="open",
+            blocks_next_phase=True,
+            can_proceed_without_answer=False,
+            fallback_policy="block_until_answered",
+        )
+        db.add_all([dataset, false_assumption, target_question])
+        db.flush()
+
+        result = analyze_dataset_quality(
+            db,
+            store=app.state.artifact_store,
+            project=project,
+            dataset=dataset,
+        )
+        db.commit()
+
+        target_check = next(check for check in result.gate["checks"] if check["check_id"] == "target_exists")
+        assert target_check["status"] == "pass"
+        assert target_check["fallback_policy"] == "infer_and_continue"
+        db.refresh(false_assumption)
+        db.refresh(target_question)
+        assert false_assumption.status == "rejected"
+        assert false_assumption.requires_user_confirmation is False
+        assert target_question.status == "resolved"
+        assert target_question.blocks_next_phase is False
 
 
 def test_project_jobs_endpoint_reaps_stale_upload_data_bundle(tmp_path: Path) -> None:
@@ -9257,9 +9387,8 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
         for worker in activity["workers"]
         if worker.get("job_id") == chat["job"]["id"] and worker.get("status") == "waiting_for_agent"
     ]
-    assert waiting_workers
-    assert waiting_workers[0]["active"] is True
-    assert activity["active_count"] >= 1
+    assert waiting_workers == []
+    assert chat["job"]["id"] not in activity["turn_state"]["active_job_ids"]
     history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
     assert history[-1]["job_id"] == chat["job"]["id"]
     assert history[-1]["user_message"] == "この条件で特徴量を見直してください"

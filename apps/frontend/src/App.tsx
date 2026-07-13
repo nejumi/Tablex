@@ -2746,6 +2746,7 @@ function ProjectDetail({
   React.useEffect(() => {
     if (pendingIntervention || userSettings.interventionCountdownSeconds <= 0) return;
     for (const job of jobs) {
+      if (!jobHasFreshAutonomyIntervention(job, userSettings.interventionCountdownSeconds)) continue;
       const intervention = firstAutonomyIntervention(job.output);
       if (!intervention) continue;
       const key = autonomyInterventionKey(intervention, job.id);
@@ -5001,6 +5002,15 @@ function firstAutonomyIntervention(output: Record<string, unknown>): AutonomyInt
     };
   }
   return null;
+}
+
+function jobHasFreshAutonomyIntervention(job: Job, countdownSeconds: number): boolean {
+  if (!isTerminalJob(job)) return true;
+  const updatedAt = Date.parse(job.updated_at);
+  if (!Number.isFinite(updatedAt)) return false;
+  const replayWindowMs = Math.max(60_000, countdownSeconds * 1000);
+  const ageMs = Date.now() - updatedAt;
+  return ageMs >= 0 && ageMs <= replayWindowMs;
 }
 
 function autonomyInterventionKey(intervention: AutonomyIntervention, jobId: string): string {

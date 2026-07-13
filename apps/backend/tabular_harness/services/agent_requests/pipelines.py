@@ -112,6 +112,7 @@ def process_pipeline_tool_requests(
             continue
         request_id = path.stem
         operation = ""
+        request: dict[str, Any] = {}
         try:
             raw_text = path.read_text(encoding="utf-8")
             request = loads_json(raw_text, {})
@@ -211,6 +212,14 @@ def process_pipeline_tool_requests(
                     update_heartbeat=False,
                 )
         except Exception as exc:
+            record_prediction_operation_command_failure(
+                db,
+                project=project,
+                request=request,
+                request_id=request_id,
+                operation=operation,
+                exc=exc,
+            )
             ack = {
                 "schema_version": PIPELINE_ACK_SCHEMA_VERSION,
                 "request_id": request_id,
@@ -232,6 +241,38 @@ def process_pipeline_tool_requests(
                     payload={**ack, "workspace_relative_path": str(path.relative_to(workspace))},
                     update_heartbeat=False,
                 )
+
+
+def record_prediction_operation_command_failure(
+    db: Session,
+    *,
+    project: Project,
+    request: dict[str, Any],
+    request_id: str,
+    operation: str,
+    exc: Exception,
+) -> None:
+    if operation not in {"execute_prediction", "complete_prediction_review"}:
+        return
+    payload = request.get("payload")
+    if not isinstance(payload, dict):
+        return
+    operation_job_id = str(payload.get("prediction_operation_job_id") or "").strip()
+    job = db.get(Job, operation_job_id)
+    if job is None or job.project_id != project.id or job.job_type != "run_prediction_pipeline":
+        return
+    error = pipeline_tool_error_payload(exc)
+    context = loads_json(job.context_json, {})
+    context["codex_command_error"] = {
+        "schema_version": "prediction_operation_command_error.v1",
+        "request_id": request_id,
+        "operation": operation,
+        "error": error,
+        "failed_at": utc_now().isoformat(),
+    }
+    job.context_json = dumps_json(context)
+    job.error_message = str(exc)
+    job.updated_at = utc_now()
 
 
 def execute_agent_managed_prediction_request(
@@ -290,6 +331,7 @@ def execute_agent_managed_prediction_request(
         ),
         "submitted_at": utc_now().isoformat(),
     }
+    context.pop("codex_command_error", None)
     job.context_json = dumps_json(context)
     job.status = "queued"
     job.error_message = None

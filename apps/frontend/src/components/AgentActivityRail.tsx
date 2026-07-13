@@ -313,7 +313,7 @@ function AgentWorkerCard({
       <div className="agent-worker-topline">
         <strong>{event.display_name}</strong>
         <div className="agent-worker-actions">
-          <span className={isLive ? "live" : isWaiting ? "waiting" : ""}>{workerStatusLabel(event.status, text)}</span>
+          <span className={isLive ? "live" : isWaiting ? "waiting" : ""}>{workerEventStatusLabel(event, text)}</span>
           {targetTab && !targetIsNoOp ? (
             <button
               className="icon-button agent-worker-open"
@@ -475,7 +475,7 @@ function isLiveWorkerStatus(status: string) {
 }
 
 function isWaitingWorkerStatus(status: string) {
-  return ["queued", "approval_required", "starting", "between_turns", "waiting_for_runner", "waiting_for_agent"].includes(status);
+  return ["queued", "approval_required", "starting", "between_turns", "waiting_for_runner", "waiting_for_agent", "waiting_for_agent_review"].includes(status);
 }
 
 function isRunningWorkerStatus(status: string) {
@@ -518,8 +518,9 @@ function isActiveWorkerEventAt(event: AgentWorkerEvent, now: number) {
 }
 
 export function jobActiveForActivity(job: Job, now: number = Date.now()) {
+  if (job.job_type === "agent_chat_turn" && job.status === "waiting_for_agent") return false;
   if (job.status === "running" || job.status === "approval_required") return true;
-  if (job.status === "waiting_for_agent") return true;
+  if (["waiting_for_agent", "waiting_for_agent_review"].includes(job.status)) return true;
   if (job.status === "queued") {
     if (isScheduledForFuture(job.run_after, now)) return false;
     return isRecentTimestamp(job.created_at, now, QUEUED_WORKER_ACTIVITY_TTL_MS);
@@ -535,7 +536,7 @@ function eventActiveForActivity(
   now: number
 ) {
   if (status === "running" || status === "approval_required") return explicitActive !== false;
-  if (status === "waiting_for_agent") return explicitActive !== false;
+  if (["waiting_for_agent", "waiting_for_agent_review"].includes(status)) return explicitActive !== false;
   if (status === "queued") {
     if (isScheduledForFuture(runAfter, now)) return false;
     return explicitActive !== false && isRecentTimestamp(createdAt, now, QUEUED_WORKER_ACTIVITY_TTL_MS);
@@ -587,7 +588,7 @@ function compareWorkerEvents(left: AgentWorkerEvent, right: AgentWorkerEvent) {
 function workerStatusRank(status: string) {
   if (status === "running") return 0;
   if (status === "approval_required") return 1;
-  if (["starting", "between_turns", "waiting_for_runner", "waiting_for_agent"].includes(status)) return 2;
+  if (["starting", "between_turns", "waiting_for_runner", "waiting_for_agent", "waiting_for_agent_review"].includes(status)) return 2;
   if (status === "queued") return 3;
   return 4;
 }
@@ -613,16 +614,23 @@ export function workerStatusLabel(status: string, text: LocaleMessages) {
   return humanizeLabel(status);
 }
 
+function workerEventStatusLabel(event: AgentWorkerEvent, text: LocaleMessages) {
+  if (event.job_type === "run_prediction_pipeline") {
+    if (event.human_description?.source === "prediction_command_error") return text.predictionCommandRejectedTitle;
+    if (event.status === "waiting_for_agent") return text.predictionCodexInputReviewTitle;
+    if (event.status === "queued") return text.predictionPipelineQueuedTitle;
+    if (event.status === "running") return text.predictionPipelineRunning;
+    if (event.status === "waiting_for_agent_review") return text.predictionCodexReviewingResult;
+  }
+  return workerStatusLabel(event.status, text);
+}
+
 export function humanizeLabel(value: string) {
   return value
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function isMainAgentReplyWaitJob(job: Job) {
-  return job.job_type === "agent_chat_turn" && job.status === "waiting_for_agent";
 }
 
 function formatElapsed(startMs: number, nowMs: number) {
@@ -664,13 +672,6 @@ function coerceHumanDescription(raw: unknown): AgentWorkerEvent["human_descripti
 }
 
 function jobHumanDescription(job: Job, text: LocaleMessages): RequiredHumanDescription {
-  if (isMainAgentReplyWaitJob(job)) {
-    return {
-      title: text.workerMainAgentWaitTitle,
-      summary: text.workerMainAgentWaitSummary,
-      source: "main_agent_chat_wait_state"
-    };
-  }
   const fromOutput = coerceHumanDescription(job.output.human_description);
   if (fromOutput?.title || fromOutput?.summary) {
     return { title: fromOutput.title ?? jobHeadline(job), summary: fromOutput.summary ?? jobHeadline(job), source: fromOutput.source };
@@ -698,6 +699,46 @@ function jobHumanDescription(job: Job, text: LocaleMessages): RequiredHumanDescr
 
 function defaultJobHumanDescription(job: Job, text: LocaleMessages): RequiredHumanDescription | null {
   const waiting = job.status === "queued" ? `${text.workerWaitingSummaryPrefix} ` : "";
+  if (job.job_type === "run_prediction_pipeline") {
+    const commandError = job.context.codex_command_error;
+    if (job.status === "waiting_for_agent" && commandError && typeof commandError === "object") {
+      const error = (commandError as Record<string, unknown>).error;
+      const message = error && typeof error === "object" ? (error as Record<string, unknown>).message : null;
+      return {
+        title: text.predictionCommandRejectedTitle,
+        summary: typeof message === "string" ? message : text.predictionCommandRejectedBody,
+        source: "prediction_command_error"
+      };
+    }
+    if (job.status === "waiting_for_agent") {
+      return {
+        title: text.predictionCodexInputReviewTitle,
+        summary: text.predictionCodexInputReviewBody,
+        source: "prediction_input_review"
+      };
+    }
+    if (job.status === "queued") {
+      return {
+        title: text.predictionPipelineQueuedTitle,
+        summary: text.predictionPipelineQueuedBody,
+        source: "prediction_pipeline_queued"
+      };
+    }
+    if (job.status === "running") {
+      return {
+        title: text.predictionPipelineRunning,
+        summary: text.predictionPipelineRunningBody,
+        source: "prediction_pipeline_running"
+      };
+    }
+    if (job.status === "waiting_for_agent_review") {
+      return {
+        title: text.predictionCodexReviewingResult,
+        summary: text.predictionCodexReviewingResultBody,
+        source: "prediction_result_review"
+      };
+    }
+  }
   if (job.job_type === "run_baseline") {
     return {
       title: text.workerRunBaselineTitle,
@@ -730,6 +771,7 @@ function defaultJobHumanDescription(job: Job, text: LocaleMessages): RequiredHum
 }
 
 export function workerEventsFromJob(job: Job, now: number, text: LocaleMessages): AgentWorkerEvent[] {
+  if (job.job_type === "agent_chat_turn" && job.status === "waiting_for_agent") return [];
   const outputEvents = job.output.worker_events;
   if (Array.isArray(outputEvents)) {
     const coercedEvents = outputEvents
@@ -838,6 +880,7 @@ function estimatedJobTokens(job: Job): TokenSeriesPoint[] {
 }
 
 function workerDisplayName(jobType: string, text: LocaleMessages) {
+  if (jobType === "run_prediction_pipeline") return text.workerDisplayPrediction;
   if (jobType === "continue_autonomous_session") return text.workerDisplayAutonomousSession;
   if (jobType.includes("train") || jobType.includes("baseline")) return text.workerDisplayTraining;
   if (jobType.includes("notebook")) return text.workerDisplayNotebook;
@@ -850,6 +893,7 @@ function targetTabForJob(jobType: string): string | null {
   if (jobType.includes("upload") || jobType.includes("dataset") || jobType.includes("primary_table")) return "Data";
   if (jobType.includes("autonomous")) return "Home";
   if (jobType.includes("train") || jobType.includes("baseline")) return "Leaderboard";
+  if (jobType === "run_prediction_pipeline") return "Leaderboard";
   if (jobType.includes("notebook")) return "Notebooks";
   if (jobType.includes("research") || jobType.includes("agent")) return "Home";
   if (jobType.includes("experiment")) return "Experiments";
