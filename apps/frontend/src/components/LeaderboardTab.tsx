@@ -135,7 +135,7 @@ function predictionRunReady(
 ): boolean {
   const requiredTables = entry.pipeline_input_contract?.required_tables ?? [];
   if (requiredTables.length) {
-    return requiredTables.every((table) => table.optional || predictionInputIsUsable(uploadedInputs[table.name]));
+    return requiredTables.some((table) => predictionInputIsUsable(uploadedInputs[table.name]));
   }
   if (predictionInputIsUsable(uploadedInputs[SINGLE_PREDICTION_INPUT_KEY])) return true;
   return Boolean(datasetId);
@@ -452,6 +452,9 @@ export function metricLabel(metric: string | null | undefined) {
 
 export function LeaderboardTab({
   project,
+  jobs,
+  leaderboardLoading,
+  leaderboardLoadError,
   specs,
   datasets,
   artifacts,
@@ -467,6 +470,9 @@ export function LeaderboardTab({
   onOpenNotebookArtifact
 }: {
   project: Project;
+  jobs: Job[];
+  leaderboardLoading: boolean;
+  leaderboardLoadError: string | null;
   specs: EvaluationSpec[];
   datasets: DatasetSnapshot[];
   artifacts: Artifact[];
@@ -493,9 +499,11 @@ export function LeaderboardTab({
   const [predictionReviewStatus, setPredictionReviewStatus] = React.useState<string | null>(null);
   const [predictionReviewSummary, setPredictionReviewSummary] = React.useState<string | null>(null);
   const [predictionOperationJobId, setPredictionOperationJobId] = React.useState<string | null>(null);
-  const [predictionOperationRunId, setPredictionOperationRunId] = React.useState<string | null>(null);
   const [predictionUploadedInputs, setPredictionUploadedInputs] = React.useState<Record<string, UploadedPredictionInput>>({});
+  const [predictionInputsPreparing, setPredictionInputsPreparing] = React.useState(false);
+  const predictionAutoPreparationKey = React.useRef<string | null>(null);
   const [predictionUploadError, setPredictionUploadError] = React.useState<string | null>(null);
+  const [predictionStatusRefreshError, setPredictionStatusRefreshError] = React.useState<string | null>(null);
   const [predictionDragKey, setPredictionDragKey] = React.useState<string | null>(null);
   const [predictionBatchKind, setPredictionBatchKind] = React.useState<PredictionBatchKind>("external_test");
   const [pipelineExportRequests, setPipelineExportRequests] = React.useState<Set<string>>(() => new Set());
@@ -506,6 +514,65 @@ export function LeaderboardTab({
   const [pilotOutcomePredictionColumn, setPilotOutcomePredictionColumn] = React.useState<string>("prediction");
   const [pilotOutcomeObservedAtColumn, setPilotOutcomeObservedAtColumn] = React.useState<string>("");
   const [pilotOutcomePredictionBatchId, setPilotOutcomePredictionBatchId] = React.useState<string>("");
+
+  React.useEffect(() => {
+    const entry = predictionEntry;
+    const requiredTables = entry?.pipeline_input_contract?.required_tables ?? [];
+    if (!entry?.pipeline_artifact_id || !requiredTables.length) {
+      predictionAutoPreparationKey.current = null;
+      return;
+    }
+    const pipelineArtifactId = entry.pipeline_artifact_id;
+    const preparationKey = `${entry.pipeline_artifact_id}:${artifacts
+      .filter((artifact) => ["prediction_input", "uploaded_supporting_table"].includes(artifact.asset_type))
+      .map((artifact) => artifact.id)
+      .sort()
+      .join(",")}`;
+    if (predictionAutoPreparationKey.current === preparationKey) return;
+    predictionAutoPreparationKey.current = preparationKey;
+    let cancelled = false;
+    async function prepareMatchingProjectTables() {
+      setPredictionInputsPreparing(true);
+      try {
+        await Promise.all(requiredTables.map(async (table) => {
+          const candidates = reusablePredictionInputArtifacts(artifacts, table.name);
+          for (const artifact of candidates) {
+            try {
+              const validation = await api<PredictionInputValidationResponse>(
+                `/api/projects/${project.id}/prediction-inputs/${artifact.id}/validate`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    pipeline_artifact_id: pipelineArtifactId,
+                    table_name: table.name
+                  })
+                }
+              );
+              if (validation.validation_report.status === "failed") continue;
+              const prepared = {
+                artifactId: artifact.id,
+                filename: predictionInputArtifactLabel(artifact),
+                validationReport: validation.validation_report
+              };
+              if (!cancelled) {
+                setPredictionUploadedInputs((current) => ({ [table.name]: prepared, ...current }));
+              }
+              break;
+            } catch {
+              // Try the next registered table; explicit upload remains available.
+            }
+          }
+        }));
+      } finally {
+        if (!cancelled) setPredictionInputsPreparing(false);
+      }
+    }
+    void prepareMatchingProjectTables();
+    return () => {
+      cancelled = true;
+    };
+  }, [artifacts, predictionEntry, project.id]);
   const prewarmedNotebookArtifactsRef = React.useRef<Set<string>>(new Set());
 
   React.useEffect(() => {
@@ -517,6 +584,11 @@ export function LeaderboardTab({
   }, [predictionEntry]);
 
   React.useEffect(() => {
+    if (!predictionEntry || predictionOperationJobId || predictionReviewStatus) return;
+    restorePredictionOperation(predictionEntry);
+  }, [jobs, predictionEntry, predictionOperationJobId, predictionReviewStatus]);
+
+  React.useEffect(() => {
     if (!predictionOperationJobId) return;
     let cancelled = false;
     let timer: number | null = null;
@@ -524,6 +596,7 @@ export function LeaderboardTab({
       try {
         const operation = await api<Job>(`/api/jobs/${predictionOperationJobId}`);
         if (cancelled) return;
+        setPredictionStatusRefreshError(null);
         if (operation.status === "succeeded") {
           const artifactId =
             textField(operation.output.artifact_id) ?? textField(operation.output.prediction_batch_artifact_id);
@@ -532,7 +605,6 @@ export function LeaderboardTab({
           setPredictionReviewSummary(textField(objectRecord(operation.output.codex_review)?.summary));
           setPredictionResultArtifactId(artifactId);
           setPredictionOperationJobId(null);
-          setPredictionOperationRunId(null);
           if (artifactId) await loadPreview(artifactId);
           return;
         }
@@ -540,7 +612,6 @@ export function LeaderboardTab({
           setPredictionUploadError(operation.error_message ?? `${text.leaderboardActionPredict} ${operation.status}.`);
           setPredictionReviewStatus("rejected");
           setPredictionOperationJobId(null);
-          setPredictionOperationRunId(null);
           return;
         }
         setPredictionReviewStatus(
@@ -551,7 +622,7 @@ export function LeaderboardTab({
               : "waiting_for_codex"
         );
       } catch (err) {
-        if (!cancelled) setPredictionUploadError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setPredictionStatusRefreshError(err instanceof Error ? err.message : String(err));
       }
       if (!cancelled) timer = window.setTimeout(() => void poll(), 1500);
     };
@@ -583,6 +654,7 @@ export function LeaderboardTab({
     formData.append("table_name", tableName ?? "prediction_input");
     formData.append("batch_kind", predictionBatchKind);
     setPredictionUploadError(null);
+    setPredictionStatusRefreshError(null);
     const uploaded = await api<PredictionInputUploadResponse>(`/api/projects/${project.id}/prediction-inputs`, {
       method: "POST",
       body: formData
@@ -633,6 +705,11 @@ export function LeaderboardTab({
 
   async function runPredictionForEntry(entry: LeaderboardEntry) {
     if (!entry.pipeline_artifact_id) return;
+    setPredictionUploadError(null);
+    setPredictionReviewStatus("submitting");
+    setPredictionReviewSummary(null);
+    setPredictionResultArtifactId(null);
+    setPredictionResultContextArtifactId(null);
     const requiredTables = entry.pipeline_input_contract?.required_tables ?? [];
     const payload: Record<string, unknown> = { batch_kind: predictionBatchKind };
     if (requiredTables.length) {
@@ -641,8 +718,6 @@ export function LeaderboardTab({
         const uploaded = predictionUploadedInputs[table.name];
         if (predictionInputIsUsable(uploaded)) {
           tableMapping[table.name] = uploaded.artifactId;
-        } else if (!table.optional) {
-          throw new Error(text.predictionMissingRequiredTable.replace("{table}", table.name));
         }
       }
       if (!Object.keys(tableMapping).length) throw new Error(text.predictionNoUploadedInputs);
@@ -658,17 +733,73 @@ export function LeaderboardTab({
       const deployment = await ensurePilotDeploymentForPrediction(entry);
       payload.deployment_id = deployment.id;
     }
-    const job = await api<Job>(`/api/projects/${project.id}/pipelines/${entry.pipeline_artifact_id}/predict`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    let job: Job;
+    try {
+      job = await api<Job>(`/api/projects/${project.id}/pipelines/${entry.pipeline_artifact_id}/predict`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, locale })
+      });
+    } catch (err) {
+      setPredictionUploadError(err instanceof Error ? err.message : String(err));
+      setPredictionReviewStatus("rejected");
+      throw err;
+    }
     setPredictionReviewStatus("waiting_for_codex");
-    setPredictionReviewSummary(null);
+    setPredictionOperationJobId(job.id);
+  }
+
+  function restorePredictionOperation(entry: LeaderboardEntry) {
+    const operation = jobs
+      .filter(
+        (job) =>
+          job.job_type === "run_prediction_pipeline" &&
+          textField(job.input.pipeline_artifact_id) === entry.pipeline_artifact_id
+      )
+      .sort((left, right) => right.created_at.localeCompare(left.created_at))[0];
+    if (!operation) return;
+    setPredictionStatusRefreshError(null);
+    if (["waiting_for_agent", "queued", "running", "waiting_for_agent_review"].includes(operation.status)) {
+      setPredictionOperationJobId(operation.id);
+      setPredictionReviewStatus(
+        operation.status === "running"
+          ? "running_pipeline"
+          : operation.status === "waiting_for_agent_review"
+            ? "waiting_for_codex_review"
+            : "waiting_for_codex"
+      );
+      return;
+    }
+    if (["failed", "cancelled", "timed_out"].includes(operation.status)) {
+      setPredictionUploadError(operation.error_message ?? `${text.leaderboardActionPredict} ${operation.status}.`);
+      setPredictionReviewStatus("rejected");
+      return;
+    }
+    if (operation.status === "succeeded") {
+      setPredictionResultArtifactId(
+        textField(operation.output.artifact_id) ?? textField(operation.output.prediction_batch_artifact_id)
+      );
+      setPredictionResultContextArtifactId(textField(operation.output.prediction_result_context_artifact_id));
+      setPredictionReviewStatus(textField(operation.output.prediction_integrity_review_status));
+      setPredictionReviewSummary(textField(objectRecord(operation.output.codex_review)?.summary));
+    }
+  }
+
+  function openPredictionWorkspace(entry: LeaderboardEntry) {
+    setPredictionEntry(entry);
+    setPredictionOperationJobId(null);
     setPredictionResultArtifactId(null);
     setPredictionResultContextArtifactId(null);
-    setPredictionOperationJobId(job.id);
-    setPredictionOperationRunId(entry.run_id);
+    setPredictionReviewStatus(null);
+    setPredictionReviewSummary(null);
+    setPredictionUploadedInputs({});
+    setPredictionInputsPreparing(Boolean(entry.pipeline_input_contract?.required_tables.length));
+    predictionAutoPreparationKey.current = null;
+    setPredictionDatasetId("");
+    setPredictionUploadError(null);
+    setPredictionStatusRefreshError(null);
+    setPredictionBatchKind("external_test");
+    restorePredictionOperation(entry);
   }
 
   async function requestPipelineExport(entry: LeaderboardEntry) {
@@ -948,6 +1079,9 @@ export function LeaderboardTab({
   const hasRequiredPredictionTables = predictionRequiredTables.length > 0;
   const singlePredictionUpload = predictionUploadedInputs[SINGLE_PREDICTION_INPUT_KEY];
   const hasUsableSinglePredictionUpload = predictionInputIsUsable(singlePredictionUpload);
+  const selectedPredictionInputs = Object.entries(predictionUploadedInputs).filter(([, input]) =>
+    predictionInputIsUsable(input)
+  );
   const showPredictionDatasetSelector = Boolean(
     predictionEntry && !hasRequiredPredictionTables && !hasUsableSinglePredictionUpload
   );
@@ -964,9 +1098,13 @@ export function LeaderboardTab({
                 ? text.leaderboardRankedTitle
                     .replace("{count}", String(leaderboard.length))
                     .replace("{metric}", metricLabel(topMetricName))
-                : text.leaderboardNoRunsTitle}
+                : leaderboardLoading
+                  ? text.leaderboardLoadingTitle
+                  : leaderboardLoadError
+                    ? text.leaderboardLoadFailedTitle
+                    : text.leaderboardNoRunsTitle}
             </h2>
-            <div className="badge-row">
+            {(!leaderboardLoading && !leaderboardLoadError) || leaderboard.length ? <div className="badge-row">
               <span className={evidenceMetricClass(readoutTone)}>{readoutStatus.replace(/_/g, " ")}</span>
               <span className={approvedSpecCount ? "badge success" : "badge warning"}>
                 {approvedSpecCount ? text.leaderboardEvaluationReady : text.leaderboardEvaluationMissing}
@@ -979,7 +1117,7 @@ export function LeaderboardTab({
               ) : null}
               {formalRunCount ? <span className="badge success">{text.leaderboardFormalBadge}</span> : null}
               {provisionalRunCount ? <span className="badge warning">{text.leaderboardProvisionalBadge}</span> : null}
-            </div>
+            </div> : null}
           </div>
           <div className="leaderboard-controls">
             <label>
@@ -1101,22 +1239,8 @@ export function LeaderboardTab({
                     </button>
                     <button
                       className="leaderboard-row-primary"
-                      disabled={busy || Boolean(predictionOperationJobId && predictionOperationRunId !== entry.run_id)}
-                      onClick={() => {
-                        if (predictionOperationJobId && predictionOperationRunId === entry.run_id) {
-                          setPredictionEntry(entry);
-                          return;
-                        }
-                        setPredictionEntry(entry);
-                        setPredictionResultArtifactId(null);
-                        setPredictionResultContextArtifactId(null);
-                        setPredictionReviewStatus(null);
-                        setPredictionReviewSummary(null);
-                        setPredictionUploadedInputs({});
-                        setPredictionDatasetId("");
-                        setPredictionUploadError(null);
-                        setPredictionBatchKind("external_test");
-                      }}
+                      disabled={busy}
+                      onClick={() => openPredictionWorkspace(entry)}
                       title={text.leaderboardActionPredict}
                       type="button"
                       aria-controls="leaderboard-prediction-workspace"
@@ -1223,34 +1347,61 @@ export function LeaderboardTab({
                   <X size={18} />
                 </button>
               </div>
-              {predictionEntry.pipeline_runtime?.last_run_status === "failed" ? (
+              {predictionUploadError ? (
+                <div className="inline-alert warning" role="alert">
+                  <strong>{text.predictionFailedTitle}</strong>
+                  <span>{predictionUploadError}</span>
+                </div>
+              ) : null}
+              {predictionStatusRefreshError && !predictionUploadError ? (
+                <div className="inline-alert warning" role="status">
+                  <strong>{text.predictionStatusRefreshFailed}</strong>
+                  <span>{predictionStatusRefreshError}</span>
+                </div>
+              ) : null}
+              {predictionEntry.pipeline_runtime?.last_run_status === "failed" && !predictionUploadError ? (
                 <div className="inline-alert warning">
                   <strong>{text.pipelineRuntimeFailed}</strong>
                   <span>{text.predictionRuntimeFailedBanner}</span>
                 </div>
               ) : null}
               <div className="inline-alert">
-                <strong>{text.predictionRegistrationCheck}</strong>
-                <span>{pipelineSmokeValidationLabel(predictionEntry, text)}</span>
+                <strong>
+                  {predictionInputsPreparing
+                    ? text.predictionPreparingProjectTables
+                    : selectedPredictionInputs.length
+                      ? text.predictionAutomaticInputsReady.replace("{count}", String(selectedPredictionInputs.length))
+                      : text.predictionAutomaticInputsEmpty}
+                </strong>
+                {selectedPredictionInputs.map(([key, input]) => (
+                  <span key={key}>
+                    {key === SINGLE_PREDICTION_INPUT_KEY ? text.predictionSingleInput : key}: {input.filename}
+                    {typeof input.validationReport.row_count === "number" ? ` · ${input.validationReport.row_count} rows` : ""}
+                  </span>
+                ))}
               </div>
-              <label className="field">
-                <span>{text.predictionBatchKindLabel}</span>
-                <select
-                  value={predictionBatchKind}
-                  onChange={(event) => setPredictionBatchKind(event.target.value as PredictionBatchKind)}
-                >
-                  <option value="external_test">{text.predictionBatchKindTest}</option>
-                  <option value="pilot">{text.predictionBatchKindPilot}</option>
-                  <option value="benchmark_submission">{text.predictionBatchKindBenchmark}</option>
-                </select>
-              </label>
-              {predictionBatchKind === "pilot" ? (
-                <div className="inline-alert">
-                  <span>{text.predictionPilotLocalOnly}</span>
-                </div>
-              ) : null}
+              <details className="prediction-options-details">
+                <summary>{text.predictionAdvancedOptions}</summary>
+                <label className="field">
+                  <span>{text.predictionBatchKindLabel}</span>
+                  <select
+                    value={predictionBatchKind}
+                    onChange={(event) => setPredictionBatchKind(event.target.value as PredictionBatchKind)}
+                  >
+                    <option value="external_test">{text.predictionBatchKindTest}</option>
+                    <option value="pilot">{text.predictionBatchKindPilot}</option>
+                    <option value="benchmark_submission">{text.predictionBatchKindBenchmark}</option>
+                  </select>
+                </label>
+                {predictionBatchKind === "pilot" ? <small>{text.predictionPilotLocalOnly}</small> : null}
+              </details>
               {predictionEntry.pipeline_input_contract ? (
-                <div className="prediction-contract">
+                <details className="prediction-contract">
+                  <summary>{text.predictionTechnicalDetails}</summary>
+                  <div className="inline-alert">
+                    <strong>{text.predictionRegistrationCheck}</strong>
+                    <span>{pipelineSmokeValidationLabel(predictionEntry, text)}</span>
+                  </div>
                   {predictionEntry.pipeline_input_contract.columns.length ? (
                     <div>
                       <strong>{text.predictionExpectedColumns}</strong>
@@ -1294,12 +1445,15 @@ export function LeaderboardTab({
                       </div>
                     </div>
                   ) : null}
-                </div>
+                </details>
               ) : (
                 <EmptyInline text={text.predictionNoContract} />
               )}
-              <div className="prediction-upload-section">
-                <strong>{text.predictionUploadTitle}</strong>
+              <details
+                className="prediction-upload-section"
+                open={!selectedPredictionInputs.length && !predictionInputsPreparing}
+              >
+                <summary>{text.predictionChangeInputs}</summary>
                 {hasRequiredPredictionTables ? (
                   <div className="prediction-table-inputs">
                     {predictionRequiredTables.map((table) =>
@@ -1319,8 +1473,7 @@ export function LeaderboardTab({
                     text.predictionSingleInput
                   )
                 )}
-                {predictionUploadError ? <span className="badge warning">{predictionUploadError}</span> : null}
-              </div>
+              </details>
               {hasUsableSinglePredictionUpload && singlePredictionUpload ? (
                 <div className="prediction-active-input">
                   <span className="badge success">{text.predictionUploadedFileActive}</span>
@@ -1359,8 +1512,8 @@ export function LeaderboardTab({
                   onClick={() => void runAction(() => runPredictionForEntry(predictionEntry))}
                   type="button"
                 >
-                  {busy || predictionOperationJobId ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                  {text.predictionRun}
+                  {busy || predictionOperationJobId || predictionReviewStatus === "submitting" ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                  {predictionReviewStatus === "submitting" ? text.predictionStarting : text.predictionRun}
                 </button>
                 <button className="secondary-button" type="button" onClick={() => setPredictionEntry(null)}>
                   {text.close}
@@ -1375,7 +1528,10 @@ export function LeaderboardTab({
               {predictionResultArtifactId && predictionReviewStatus !== "rejected" ? (
                 <span className="badge success">{text.predictionCompleted}</span>
               ) : null}
-              {predictionReviewStatus === "waiting_for_codex" ? (
+              {predictionReviewStatus === "submitting" ? (
+                <span className="badge warning">{text.predictionStarting}</span>
+              ) : null}
+              {predictionReviewStatus === "waiting_for_codex" && !predictionUploadError ? (
                 <button
                   className="badge warning"
                   disabled={!predictionResultContextArtifactId}
@@ -1402,6 +1558,19 @@ export function LeaderboardTab({
             </div>
           ) : null}
           </>
+        ) : leaderboardLoading ? (
+          <div className="leaderboard-loading-state" aria-live="polite">
+            <Loader2 className="spin" size={20} />
+            <div>
+              <strong>{text.leaderboardLoadingTitle}</strong>
+              <span>{text.leaderboardLoadingBody}</span>
+            </div>
+          </div>
+        ) : leaderboardLoadError ? (
+          <div className="inline-alert warning" role="alert">
+            <strong>{text.leaderboardLoadFailedTitle}</strong>
+            <span>{leaderboardLoadError}</span>
+          </div>
         ) : (
           <EmptyInline text={text.leaderboardEmpty} />
         )}
@@ -1711,13 +1880,21 @@ function reusablePredictionInputArtifacts(artifacts: Artifact[], tableName: stri
   const normalizedTable = tableName?.trim() || null;
   return artifacts
     .filter((artifact) => {
-      if (artifact.asset_type !== "prediction_input") return false;
+      if (!normalizedTable) return artifact.asset_type === "prediction_input";
+      if (!["prediction_input", "uploaded_supporting_table"].includes(artifact.asset_type)) return false;
       if (!normalizedTable) return true;
       const artifactTableName = typeof artifact.metadata.table_name === "string" ? artifact.metadata.table_name : "";
-      return artifactTableName === normalizedTable;
+      return normalizedPredictionTableName(artifactTableName) === normalizedPredictionTableName(normalizedTable);
     })
-    .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+    .sort((left, right) => {
+      const typePriority = Number(right.asset_type === "prediction_input") - Number(left.asset_type === "prediction_input");
+      return typePriority || Date.parse(right.created_at) - Date.parse(left.created_at);
+    })
     .slice(0, 8);
+}
+
+function normalizedPredictionTableName(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
 function predictionInputDtypeSummary(dtypeChecks: Array<{ name?: string; observed_dtype?: string | null }>) {

@@ -83,6 +83,7 @@ JOB_TYPES = {
     "generate_user_avatar_candidates",
     "register_prediction_pipeline",
     "run_prediction_pipeline",
+    "run_agent_compute",
     "score_pilot_outcomes",
 }
 

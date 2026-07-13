@@ -1,0 +1,4 @@
+ARG TABLEX_BASE_IMAGE=tablex:local
+FROM ${TABLEX_BASE_IMAGE}
+
+RUN --mount=type=cache,target=/root/.cache/pip pip install '.[gpu]'

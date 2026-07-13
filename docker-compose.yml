@@ -43,8 +43,48 @@ services:
       HOME: /tmp/tablex-home
       CODEX_HOME: /codex-auth
       TABLEX_CODEX_HOME: /tmp/tablex-codex-home
+      TABLEX_RUNTIME_LOCATION: docker_worker
+      TABLEX_COMPUTE_EXECUTOR_URL: http://tablex-compute-executor:8090
     volumes:
       - ${TABLEX_DATA_DIR:-./data}:/data
       - ${TABLEX_CODEX_AUTH_DIR:-./.tablex-codex-auth}:/codex-auth
     depends_on:
-      - tablex-api
+      tablex-api:
+        condition: service_started
+      tablex-compute-executor:
+        condition: service_healthy
+    networks:
+      - default
+      - tablex-compute
+
+  tablex-compute-executor:
+    image: tablex:local
+    user: "${TABLEX_UID:-1000}:${TABLEX_GID:-1000}"
+    restart: unless-stopped
+    command: ["uvicorn", "tabular_harness.services.compute_executor:app", "--host", "0.0.0.0", "--port", "8090"]
+    environment:
+      HARNESS_ARTIFACT_ROOT: /data/artifacts
+      HOME: /tmp/tablex-home
+      TABLEX_RUNTIME_LOCATION: isolated_compute_executor
+      TABLEX_COMPUTE_DEVICE_MODE: cpu
+    volumes:
+      - ${TABLEX_DATA_DIR:-./data}/artifacts:/data/artifacts
+    networks:
+      - tablex-compute
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=4g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+networks:
+  tablex-compute:
+    internal: true

@@ -105,6 +105,67 @@ start_codex_worker() {
   printf "%s\n" "$!" >"$WORKER_PID_FILE"
 }
 
+host_nvidia_gpu_available() {
+  command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1
+}
+
+resource_snapshot_path() {
+  printf '%s\n' "$DATA_DIR/runtime/compute-resources.json"
+}
+
+persist_cpu_resource_snapshot() {
+  snapshot=$(resource_snapshot_path)
+  mkdir -p "$(dirname "$snapshot")"
+  if docker run --rm \
+    -e TABLEX_RUNTIME_LOCATION=isolated_compute_executor \
+    -e TABLEX_COMPUTE_DEVICE_MODE=cpu \
+    tablex:local \
+    python -m tabular_harness.core.runtime_resources >"$snapshot.tmp"; then
+    mv "$snapshot.tmp" "$snapshot"
+    return 0
+  fi
+  rm -f "$snapshot.tmp"
+  return 1
+}
+
+gpu_image_ready() {
+  snapshot=$(resource_snapshot_path)
+  mkdir -p "$(dirname "$snapshot")"
+  if ! docker run --rm --gpus all \
+    -e TABLEX_RUNTIME_LOCATION=gpu_startup_probe \
+    -e TABLEX_COMPUTE_DEVICE_MODE=gpu \
+    tablex-gpu:local \
+    python -m tabular_harness.core.runtime_resources >"$snapshot.gpu.tmp"; then
+    rm -f "$snapshot.gpu.tmp"
+    return 1
+  fi
+  if ! "$VENV_DIR/bin/python" -c 'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")); raise SystemExit(0 if value.get("gpu", {}).get("usable_for_compute") is True else 1)' "$snapshot.gpu.tmp"; then
+    rm -f "$snapshot.gpu.tmp"
+    return 1
+  fi
+  mv "$snapshot.gpu.tmp" "$snapshot"
+}
+
+start_compose_services() {
+  TABLEX_DATA_DIR="$DATA_DIR" TABLEX_CODEX_AUTH_DIR="$CODEX_AUTH_DIR" TABLEX_UID="$HOST_UID" TABLEX_GID="$HOST_GID" \
+    docker compose -f "$ROOT/docker-compose.yml" build tablex-api tablex-worker tablex-compute-executor
+  persist_cpu_resource_snapshot || printf '%s\n' "Tablex: CPU runtime capability snapshot could not be persisted."
+  if host_nvidia_gpu_available; then
+    printf '%s\n' "Tablex: NVIDIA GPU detected; preparing the optional GPU runtime."
+    if TABLEX_DATA_DIR="$DATA_DIR" TABLEX_CODEX_AUTH_DIR="$CODEX_AUTH_DIR" TABLEX_UID="$HOST_UID" TABLEX_GID="$HOST_GID" \
+      docker compose -f "$ROOT/docker-compose.yml" -f "$ROOT/docker-compose.gpu.yml" build tablex-worker tablex-compute-executor \
+      && gpu_image_ready; then
+      TABLEX_DATA_DIR="$DATA_DIR" TABLEX_CODEX_AUTH_DIR="$CODEX_AUTH_DIR" TABLEX_UID="$HOST_UID" TABLEX_GID="$HOST_GID" \
+        docker compose -f "$ROOT/docker-compose.yml" -f "$ROOT/docker-compose.gpu.yml" up -d --remove-orphans tablex-api tablex-worker tablex-compute-executor
+      printf '%s\n' "Tablex: GPU runtime is available to Codex-managed compute and compatible prediction pipelines."
+      return
+    fi
+    printf '%s\n' "Tablex: GPU runtime probe failed; continuing with the CPU runtime."
+  fi
+  TABLEX_DATA_DIR="$DATA_DIR" TABLEX_CODEX_AUTH_DIR="$CODEX_AUTH_DIR" TABLEX_UID="$HOST_UID" TABLEX_GID="$HOST_GID" \
+    docker compose -f "$ROOT/docker-compose.yml" up -d --remove-orphans tablex-api tablex-worker tablex-compute-executor
+}
+
 stop_supervisor() {
   if supervisor_running; then
     pid=$(cat "$PID_FILE")
@@ -136,7 +197,7 @@ case ${1:-up} in
     require_command codex
     codex login status >/dev/null 2>&1 || die "Codex is not authenticated. Run: codex login --device-auth"
     check_runtime
-    TABLEX_DATA_DIR="$DATA_DIR" TABLEX_CODEX_AUTH_DIR="$CODEX_AUTH_DIR" TABLEX_UID="$HOST_UID" TABLEX_GID="$HOST_GID" docker compose -f "$ROOT/docker-compose.yml" up --build -d --remove-orphans tablex-api tablex-worker
+    start_compose_services
     start_codex_worker
     start_supervisor
     printf '%s\n' "Tablex: http://localhost:8080"

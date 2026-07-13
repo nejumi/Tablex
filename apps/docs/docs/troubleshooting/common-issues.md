@@ -52,6 +52,12 @@ Provisional results mean the run was useful for exploration but not yet tied to 
 
 Check whether the input satisfies the pipeline contract. Missing tables, target columns, unsupported dtypes, or mismatched categorical preprocessing can all break prediction. The failure should be sent back to the agent for repair or clarification.
 
+Matching tables already registered in the project are reused automatically after a fast structural check. Tablex may start a Codex-managed prediction with partial inputs so Codex can inspect coverage and decide how to proceed; it must not silently replace a missing table with all-null data. The prediction workspace should show which inputs were found and keep the operation available once any usable input is ready.
+
+## GPU is not used
+
+GPU use is optional and selected per experiment. Run `scripts/tablex up` and read the startup message. Tablex checks the visible NVIDIA device, driver, compute capability, and performs real probes for XGBoost, LightGBM, CatBoost, and PyTorch. A library that fails its probe remains CPU-only even when another library can use the GPU. If the NVIDIA container runtime is unavailable or no probe passes, Tablex continues on CPU; CPU-only installation is a supported configuration. Agent-authored compute runs in an internal executor without Codex credentials, the metadata database, external network access, or a public port.
+
 ## An asset exists but is hard to find
 
 Use Assets for the full inventory. For normal reading, prefer contextual links from Home, Insight, Data, Leaderboard, and Notebooks.

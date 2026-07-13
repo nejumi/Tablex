@@ -53,6 +53,7 @@ The most important constraints are:
 - **Pilot workflow:** registered prediction pipelines can be used for prediction batches, outcome ingestion, pilot scoring, and agent-authored validation audits that feed the same continuing Full Auto loop.
 - **Codex-managed prediction:** Predict sends the selected model, actual inputs, evaluation/OOF lineage, purpose, and available evidence to the same continuing Codex session. Codex decides what to inspect, invokes the canonical pipeline, reviews the real output, and can investigate, repair, or rerun before releasing a reasoned result. Tablex supplies timely context, execution, artifacts, lineage, progress, and the user interface without replacing that judgment with fixed drift rules.
 - **Verified experiment evidence:** Validated candidates can link hypothesis, parent run, exact change set, fold results, OOF predictions, learning, and decision in `experiment_evidence.v1`. Tablex replays supported metrics from OOF rows joined to frozen DatasetSnapshot labels while leaving analytical judgment to Codex.
+- **Environment-aware compute:** Tablex observes CPU, memory, visible NVIDIA devices, compute capability, driver support, and real library GPU probes. Codex receives those facts and chooses CPU or GPU for each useful experiment; Tablex records the requested, selected, and actually reported device with lineage instead of assuming that every GPU-capable host or library is usable.
 
 ## Core Workflow
 
@@ -174,6 +175,8 @@ The device-auth command prints a URL and one-time code. `scripts/tablex up` reus
 Tablex does not pin Full Auto to an older fallback model. The agent model remains the authenticated Codex default unless the user explicitly selects another model.
 
 The launcher requires Docker and the Codex CLI, but its runtime bootstrap does not require host `pip`, `python3-venv`, or sudo. It bootstraps a pinned, official uv binary from its digest-locked container image and creates the companion runtime under `.tablex-runtime/`. Ubuntu may require a one-time administrator installation of its distribution-provided bubblewrap AppArmor profile; use the exact commands in the [troubleshooting guide](apps/docs/docs/troubleshooting/common-issues.md).
+
+When an NVIDIA GPU and the Docker NVIDIA runtime are available, `scripts/tablex up` builds the optional GPU image and runs real XGBoost, LightGBM, CatBoost, and PyTorch capability probes. Only libraries that pass are reported to Codex as GPU-ready. If detection, image construction, or the probe fails, Tablex starts the CPU runtime instead. CPU-only hosts need no GPU setup. Agent-authored compute runs in a private executor with no Codex authentication mount, metadata database, external network, or published port. Its root filesystem is read-only, while the trusted worker registers outputs and device/resource evidence with lineage.
 
 Open `http://localhost:8080` and verify the API:
 

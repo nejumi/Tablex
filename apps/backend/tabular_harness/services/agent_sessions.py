@@ -64,14 +64,14 @@ from tabular_harness.services.agent_outputs import (
     should_skip_session_output,
 )
 from tabular_harness.services.agent_prompting import build_turn_prompt, session_protocol_text
-from tabular_harness.services.prediction_pipeline_contract import leaderboard_ready_pipeline_artifact
+from tabular_harness.services.agent_requests.compute import (
+    process_compute_tool_requests as process_compute_tool_requests_impl,
+)
 from tabular_harness.services.agent_requests.data import (
     DATA_REQUEST_SCHEMA_VERSION,
     TASK_SPEC_SCHEMA_VERSION,
     data_acks_dir,
     data_requests_dir,
-)
-from tabular_harness.services.agent_requests.data import (
     process_data_tool_requests as process_data_tool_requests_impl,
 )
 from tabular_harness.services.agent_requests.evaluation import (
@@ -306,6 +306,7 @@ from tabular_harness.services.deliverable_expectations import (
 from tabular_harness.services.jobs import TERMINAL_STATUSES as TERMINAL_JOB_STATUSES
 from tabular_harness.services.jobs import mark_job_succeeded
 from tabular_harness.services.locales import locale_is_japanese
+from tabular_harness.services.prediction_pipeline_contract import leaderboard_ready_pipeline_artifact
 from tabular_harness.services.research_plan_timeline import (
     research_plan_contract_validation_summary,
     research_plan_evidence_links,
@@ -1940,6 +1941,24 @@ def process_pipeline_tool_requests(
     )
 
 
+def process_compute_tool_requests(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    session: AgentSession,
+    workspace: Path,
+) -> None:
+    process_compute_tool_requests_impl(
+        db,
+        store=store,
+        project=project,
+        session=session,
+        workspace=workspace,
+        append_session_event_fn=append_session_event,
+    )
+
+
 def process_model_diagnostics_tool_requests(
     db: Session,
     *,
@@ -2124,6 +2143,7 @@ def ingest_session_workspace_outputs(
         process_experiment_result_requests_fn=process_experiment_result_requests,
         process_model_diagnostics_tool_requests_fn=process_model_diagnostics_tool_requests,
         process_pipeline_tool_requests_fn=process_pipeline_tool_requests,
+        process_compute_tool_requests_fn=process_compute_tool_requests,
         process_pilot_tool_requests_fn=process_pilot_tool_requests,
         process_deliverable_tool_requests_fn=process_deliverable_tool_requests,
         maybe_write_open_deliverable_expectation_observation_fn=maybe_write_open_deliverable_expectation_observation,

@@ -21,6 +21,9 @@ ENV PYTHONUNBUFFERED=1
 ENV HARNESS_DATA_DIR=/data
 ENV FRONTEND_DIST_DIR=/app/frontend_dist
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml /app/pyproject.toml
 COPY apps/backend /app/apps/backend
 COPY alembic.ini /app/alembic.ini
@@ -30,9 +33,9 @@ COPY --from=codex-cli /usr/local/bin/node /usr/local/bin/node
 COPY --from=codex-cli /usr/local/lib/node_modules/@openai/codex /usr/local/lib/node_modules/@openai/codex
 RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex \
     && codex --version
-COPY --from=frontend-build /app/apps/frontend/dist /app/frontend_dist
 RUN chmod -R a+rX /app/apps/backend
 RUN --mount=type=cache,target=/root/.cache/pip pip install .
+COPY --from=frontend-build /app/apps/frontend/dist /app/frontend_dist
 COPY benchmarks /app/benchmarks
 RUN mkdir -p /data
 EXPOSE 8080

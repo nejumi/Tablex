@@ -7924,6 +7924,16 @@ def list_runs(
                     "hypothesis_verdict": evidence_metadata.get("hypothesis_verdict"),
                     "decision_action": evidence_metadata.get("decision_action"),
                 },
+                "compute_resource": {
+                    "selected_device": params.get("selected_compute_device"),
+                    "actual_device": params.get("actual_compute_device"),
+                    "fallback_reason": params.get("compute_fallback_reason"),
+                    "evidence_artifact_ids": (
+                        params.get("compute_resource_evidence_artifact_ids")
+                        if isinstance(params.get("compute_resource_evidence_artifact_ids"), list)
+                        else []
+                    ),
+                },
             }
         )
     return response
@@ -8564,6 +8574,14 @@ def run_prediction_pipeline_endpoint(
         "deployment_id": deployment_id if isinstance(deployment_id, str) else None,
         "timeout_seconds": payload.get("timeout_seconds") if isinstance(payload.get("timeout_seconds"), int) else 300,
     }
+    existing_operation = matching_active_prediction_operation(
+        db,
+        project_id=project.id,
+        session_id=session.id,
+        execution_payload=execution_payload,
+    )
+    if existing_operation is not None:
+        return job_to_dict(existing_operation)
     job, _context_artifact = create_agent_managed_prediction_operation(
         db,
         store=store,
@@ -8572,7 +8590,7 @@ def run_prediction_pipeline_endpoint(
         pipeline_artifact=artifact,
         execution_payload=execution_payload,
         requested_by=request_actor_id(request),
-        locale=payload.get("locale") if isinstance(payload.get("locale"), str) else latest_project_response_locale(db, project.id),
+        locale=payload.get("locale") if isinstance(payload.get("locale"), str) else latest_project_response_locale(db, project),
     )
     should_wake_main_session = (
         project.current_phase == "AUTONOMOUS_LOOP"
@@ -8591,6 +8609,43 @@ def run_prediction_pipeline_endpoint(
             turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
         )
     return job_to_dict(job)
+
+
+def matching_active_prediction_operation(
+    db: Session,
+    *,
+    project_id: str,
+    session_id: str,
+    execution_payload: dict[str, Any],
+) -> Job | None:
+    candidates = db.scalars(
+        select(Job)
+        .where(
+            Job.project_id == project_id,
+            Job.job_type == "run_prediction_pipeline",
+            Job.status.not_in(["succeeded", "failed", "cancelled", "timed_out"]),
+        )
+        .order_by(Job.created_at.desc())
+    ).all()
+    comparable_fields = {
+        "pipeline_artifact_id",
+        "dataset_snapshot_id",
+        "input_artifact_id",
+        "input_artifact_ids_by_table",
+        "history_artifact_id",
+        "batch_kind",
+        "deployment_id",
+        "timeout_seconds",
+    }
+    expected = {field: execution_payload.get(field) for field in comparable_fields}
+    for candidate in candidates:
+        candidate_input = loads_json(candidate.input_json, {})
+        if candidate_input.get("agent_session_id") != session_id:
+            continue
+        observed = {field: candidate_input.get(field) for field in comparable_fields}
+        if observed == expected:
+            return candidate
+    return None
 
 
 @router.post("/api/projects/{project_id}/prediction-inputs")
@@ -8720,8 +8775,8 @@ def validate_prediction_input_artifact(
     artifact = db.get(Artifact, artifact_id)
     if artifact is None or artifact.project_id != project.id:
         raise HTTPException(status_code=404, detail="Prediction input artifact not found")
-    if artifact.asset_type != "prediction_input":
-        raise HTTPException(status_code=400, detail="Artifact is not a prediction input")
+    if artifact.asset_type not in {"prediction_input", "uploaded_supporting_table"}:
+        raise HTTPException(status_code=400, detail="Artifact is not a reusable prediction table")
     try:
         input_path = artifact_primary_path(artifact)
     except ValueError as exc:
@@ -8734,6 +8789,7 @@ def validate_prediction_input_artifact(
         input_path=input_path,
         pipeline_artifact_id=pipeline_artifact_id if isinstance(pipeline_artifact_id, str) else None,
         table_name=table_name if isinstance(table_name, str) and table_name.strip() else "prediction_input",
+        fixed_profile=registered_prediction_input_profile(loads_json(artifact.metadata_json, {})),
     )
     return {
         "schema_version": "prediction_input_validation.v1",
@@ -8898,7 +8954,7 @@ def run_pilot_prediction_endpoint(
         pipeline_artifact=pipeline_artifact,
         execution_payload=execution_payload,
         requested_by=request_actor_id(request),
-        locale=payload.get("locale") if isinstance(payload.get("locale"), str) else latest_project_response_locale(db, project.id),
+        locale=payload.get("locale") if isinstance(payload.get("locale"), str) else latest_project_response_locale(db, project),
     )
     should_wake_main_session = (
         project.current_phase == "AUTONOMOUS_LOOP"
@@ -9447,6 +9503,7 @@ def prediction_input_validation_report(
     input_path: Path,
     pipeline_artifact_id: str | None,
     table_name: str,
+    fixed_profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     observed_columns = prediction_input_columns(input_path)
     expected_columns: list[dict[str, Any]] = []
@@ -9471,7 +9528,7 @@ def prediction_input_validation_report(
     forbidden_columns = prediction_forbidden_columns_for_table(contract, table_name) if isinstance(contract, dict) else []
     forbidden_columns_present = [name for name in forbidden_columns if name in observed_columns]
     key_columns = prediction_join_keys_for_table(contract, table_name) if isinstance(contract, dict) else []
-    fixed_profile = prediction_input_fixed_profile(input_path, key_columns=key_columns)
+    observed_profile = fixed_profile or prediction_input_fixed_profile(input_path, key_columns=key_columns)
     return {
         "schema_version": "prediction_input_validation_report.v1",
         "status": "failed" if missing_columns else "passed",
@@ -9482,9 +9539,19 @@ def prediction_input_validation_report(
         "unexpected_columns": unexpected_columns,
         "forbidden_columns": forbidden_columns,
         "forbidden_columns_present": forbidden_columns_present,
-        "row_count": fixed_profile["row_count"],
-        "key_checks": fixed_profile["key_checks"],
-        "dtype_checks": fixed_profile["dtype_checks"],
+        "row_count": observed_profile["row_count"],
+        "key_checks": observed_profile["key_checks"],
+        "dtype_checks": observed_profile["dtype_checks"],
+    }
+
+
+def registered_prediction_input_profile(metadata: dict[str, Any]) -> dict[str, Any]:
+    validation_report = metadata.get("validation_report")
+    prior = validation_report if isinstance(validation_report, dict) else {}
+    return {
+        "row_count": prior.get("row_count", metadata.get("row_count")),
+        "key_checks": prior.get("key_checks") if isinstance(prior.get("key_checks"), list) else [],
+        "dtype_checks": prior.get("dtype_checks") if isinstance(prior.get("dtype_checks"), list) else [],
     }
 
 

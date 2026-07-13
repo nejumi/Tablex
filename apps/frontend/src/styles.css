@@ -4808,6 +4808,24 @@ td {
   margin: 0;
 }
 
+.leaderboard-loading-state {
+  display: flex;
+  min-height: 220px;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.leaderboard-loading-state > div {
+  display: grid;
+  gap: 3px;
+}
+
+.leaderboard-loading-state strong {
+  color: var(--text-strong);
+}
+
 .leaderboard-prediction-panel .field {
   max-width: 560px;
 }
@@ -4857,6 +4875,28 @@ td {
 }
 
 .prediction-contract {
+  display: grid;
+  gap: 10px;
+}
+
+.prediction-contract > summary,
+.prediction-options-details > summary,
+.prediction-upload-section > summary {
+  cursor: pointer;
+  color: var(--text-strong);
+  font-weight: 700;
+}
+
+.prediction-contract[open],
+.prediction-options-details[open],
+.prediction-upload-section[open] {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.prediction-options-details[open] {
   display: grid;
   gap: 10px;
 }

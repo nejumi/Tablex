@@ -1,0 +1,18 @@
+services:
+  tablex-worker:
+    image: tablex-gpu:local
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    environment:
+      TABLEX_COMPUTE_DEVICE_MODE: gpu
+    gpus: all
+
+  tablex-compute-executor:
+    image: tablex-gpu:local
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    environment:
+      TABLEX_COMPUTE_DEVICE_MODE: gpu
+    gpus: all

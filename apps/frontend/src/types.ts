@@ -944,6 +944,12 @@ export type Run = {
     hypothesis_verdict: string | null;
     decision_action: string | null;
   };
+  compute_resource?: {
+    selected_device: string | null;
+    actual_device: string | null;
+    fallback_reason: string | null;
+    evidence_artifact_ids: string[];
+  };
 };
 
 export type LeaderboardEntry = {

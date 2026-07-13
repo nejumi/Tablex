@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from tabular_harness.core.config import get_settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.core.runtime_paths import resolve_runtime_data_path
+from tabular_harness.core.runtime_resources import detect_compute_resources, load_managed_compute_resources
 from tabular_harness.models.entities import (
     AgentSession,
     Artifact,
@@ -30,6 +31,7 @@ from tabular_harness.models.entities import (
     utc_now,
 )
 from tabular_harness.services.agent_prompting import session_protocol_text
+from tabular_harness.services.agent_requests.compute import compute_acks_dir, compute_requests_dir
 from tabular_harness.services.agent_requests.data import (
     DATA_REQUEST_SCHEMA_VERSION,
     TASK_SPEC_SCHEMA_VERSION,
@@ -158,6 +160,8 @@ def prepare_session_workspace(
     notebook_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     experiment_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
     experiment_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
+    compute_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
+    compute_acks_dir(workspace).mkdir(parents=True, exist_ok=True)
     write_session_context_file(db, project=project, session=session)
     (workspace / ".tablex" / "GOAL.md").write_text(session.goal_text, encoding="utf-8")
     (workspace / SESSION_INTERNAL_DIR / SESSION_PROTOCOL_FILENAME).write_text(session_protocol_text(), encoding="utf-8")
@@ -389,6 +393,9 @@ def write_sample_rows_csv(path: Path, rows: list[dict[str, Any]]) -> bool:
 
 def python_runtime_context(workspace: Path) -> dict[str, Any]:
     workspace_python = workspace / SESSION_INTERNAL_DIR / SESSION_BIN_DIR / "python"
+    host_compute_resources = detect_compute_resources(probe_libraries=True)
+    managed_compute_resources = load_managed_compute_resources()
+    compute_resources = managed_compute_resources or host_compute_resources
     packages = {
         "marimo": package_version_or_none("marimo"),
         "pandas": package_version_or_none("pandas"),
@@ -411,9 +418,9 @@ def python_runtime_context(workspace: Path) -> dict[str, Any]:
             "workspace_python": str(workspace_python),
             "workspace_python_exists": workspace_python.exists(),
             "packages": packages,
-            "gpu": {
-                "nvidia_smi_available": shutil.which("nvidia-smi") is not None,
-            },
+            "compute_resources": compute_resources,
+            "host_compute_resources": host_compute_resources,
+            "gpu": compute_resources["gpu"],
         },
         "notebook_execution": {
             "marimo_available": packages["marimo"] is not None,
@@ -661,6 +668,18 @@ def build_session_context(
                 "Use dataset_access links for data reads. Tablex opens registered marimo source notebooks with native marimo "
                 "after they are saved as artifacts."
             ),
+            "compute_tool_requests": {
+                "request_dir": ".tablex/requests/compute",
+                "ack_dir": ".tablex/acks/compute",
+                "schema_version": "tablex_compute_request.v1",
+                "operations": ["execute"],
+                "device_preferences": ["cpu", "gpu", "auto"],
+                "description": (
+                    "Run a Codex-authored Python compute script in the credential-free isolated executor. Inspect "
+                    "python_runtimes.tablex_backend.compute_resources first, choose cpu or gpu deliberately, "
+                    "declare CPU fallback policy, and emit the required result manifest with the actual device used."
+                ),
+            },
             "living_research_plan": (
                 "When the project plan changes, write outputs/research_plan.json with optional timeline_blocks. "
                 "Tablex renders those blocks directly; after the initial anchors, Codex may append, refine, supersede, or branch them. "

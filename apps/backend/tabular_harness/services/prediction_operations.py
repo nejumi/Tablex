@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -211,11 +212,18 @@ def prediction_context_pack(
             "metric_claim_consistency": pipeline_metadata.get("metric_claim_consistency"),
         },
         "input_artifacts": input_artifacts,
+        "input_contract_observation": prediction_input_contract_observation(
+            pipeline_metadata=pipeline_metadata,
+            execution_payload=execution_payload,
+        ),
         "experiment_runs": run_context,
         "execution_payload": execution_payload,
         "agent_responsibility": {
             "owner": "main_codex_session",
-            "before_execution": "Inspect the actual inputs and relevant project evidence, then decide what checks are material for this prediction.",
+            "before_execution": (
+                "Inspect the actual inputs, declared input contract, missing-table observation, coverage, and relevant project evidence; "
+                "then decide what checks and repairs are material for this prediction. Do not silently represent an absent table as all-null data."
+            ),
             "execution": "Start the canonical pipeline only through the structured execute_prediction request.",
             "after_execution": "Inspect the result in context, repair or rerun when needed, and complete the operation with a user-facing verdict.",
         },
@@ -245,6 +253,47 @@ def prediction_context_pack(
             },
         },
     }
+
+
+def prediction_input_contract_observation(
+    *,
+    pipeline_metadata: dict[str, Any],
+    execution_payload: dict[str, Any],
+) -> dict[str, Any]:
+    manifest = pipeline_metadata.get("pipeline_manifest")
+    input_contract = manifest.get("input_contract") if isinstance(manifest, dict) else None
+    required_tables = input_contract.get("required_tables") if isinstance(input_contract, dict) else None
+    declared = [table for table in required_tables if isinstance(table, dict)] if isinstance(required_tables, list) else []
+    mapping = execution_payload.get("input_artifact_ids_by_table")
+    provided_names = [str(name) for name in mapping if isinstance(name, str)] if isinstance(mapping, dict) else []
+    provided_normalized = {_normalize_prediction_table_name(name) for name in provided_names}
+    missing_required: list[str] = []
+    for table in declared:
+        name = str(table.get("name") or "").strip()
+        if not name or bool(table.get("optional")):
+            continue
+        if _normalize_prediction_table_name(name) not in provided_normalized:
+            missing_required.append(name)
+    return {
+        "schema_version": "prediction_input_contract_observation.v1",
+        "declared_tables": [
+            {
+                "name": str(table.get("name") or "").strip(),
+                "role": table.get("role"),
+                "optional": bool(table.get("optional")),
+            }
+            for table in declared
+            if str(table.get("name") or "").strip()
+        ],
+        "provided_tables": provided_names,
+        "missing_required_tables": missing_required,
+        "has_partial_relational_input": bool(declared and missing_required),
+        "interpretation_owner": "main_codex_session",
+    }
+
+
+def _normalize_prediction_table_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
 
 
 def prediction_run_context(db: Session, *, project: Project, run_ids: Any) -> list[dict[str, Any]]:

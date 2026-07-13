@@ -617,6 +617,8 @@ scripts/tablex up
 
 The launcher reuses host Codex authentication, builds a managed Python companion runtime on first use, and runs a model-free auth/sandbox check before starting Docker. A failed check aborts startup. Linux users should install the official Codex bubblewrap and AppArmor prerequisites rather than disabling AppArmor globally.
 
+On hosts with `nvidia-smi`, the launcher also builds `Dockerfile.gpu` through `docker-compose.gpu.yml` and accepts that runtime only after the resource detector observes a usable GPU and at least one library passes a real GPU probe. Otherwise it logs the reason and starts the ordinary CPU services. The trusted worker claims `run_agent_compute` and sends only a schema-validated execution request to `tablex-compute-executor` over an internal Docker network. The executor has no Codex auth mount, metadata database, external network, or published port; it uses a read-only root filesystem and a writable shared artifact root. The worker then persists `compute_resource_evidence` plus output/log lineage. Do not infer GPU readiness from a device name or CUDA version alone.
+
 Verify the complete runtime:
 
 ```bash

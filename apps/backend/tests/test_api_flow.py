@@ -4714,7 +4714,7 @@ def test_prediction_endpoint_creates_codex_managed_waiting_operation(tmp_path: P
         operation = routes_module.run_prediction_pipeline_endpoint(
             project.id,
             pipeline.id,
-            {"input_artifact_id": prediction_input.id, "batch_kind": "external_test", "locale": "en"},
+            {"input_artifact_id": prediction_input.id, "batch_kind": "external_test"},
             SimpleNamespace(state=SimpleNamespace(user_id="local-user"), app=app),
             db,
             app.state.artifact_store,
@@ -4722,6 +4722,25 @@ def test_prediction_endpoint_creates_codex_managed_waiting_operation(tmp_path: P
 
     assert operation["status"] == "waiting_for_agent"
     assert operation["job_type"] == "run_prediction_pipeline"
+    with app.state.session_factory() as db:
+        repeated = routes_module.run_prediction_pipeline_endpoint(
+            project.id,
+            pipeline.id,
+            {"input_artifact_id": prediction_input.id, "batch_kind": "external_test"},
+            SimpleNamespace(state=SimpleNamespace(user_id="local-user"), app=app),
+            db,
+            app.state.artifact_store,
+        )
+        prediction_jobs = list(
+            db.scalars(
+                select(Job).where(
+                    Job.project_id == project.id,
+                    Job.job_type == "run_prediction_pipeline",
+                )
+            ).all()
+        )
+    assert repeated["id"] == operation["id"]
+    assert len(prediction_jobs) == 1
     with app.state.session_factory() as db:
         job = db.get(Job, operation["id"])
         assert job is not None

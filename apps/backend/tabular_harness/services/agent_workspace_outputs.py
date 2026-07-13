@@ -96,6 +96,7 @@ def ingest_session_workspace_outputs_impl(
     process_experiment_result_requests_fn: Callable[..., None],
     process_model_diagnostics_tool_requests_fn: Callable[..., None],
     process_pipeline_tool_requests_fn: Callable[..., None],
+    process_compute_tool_requests_fn: Callable[..., None],
     process_pilot_tool_requests_fn: Callable[..., None],
     process_deliverable_tool_requests_fn: Callable[..., None],
     maybe_write_open_deliverable_expectation_observation_fn: Callable[..., None],
@@ -286,6 +287,9 @@ def ingest_session_workspace_outputs_impl(
     if not project_session_still_registered_fn(db, project_id=project.id, session_id=session.id):
         return
     process_pipeline_tool_requests_fn(db, store=store, project=project, session=session, workspace=workspace)
+    if not project_session_still_registered_fn(db, project_id=project.id, session_id=session.id):
+        return
+    process_compute_tool_requests_fn(db, store=store, project=project, session=session, workspace=workspace)
     if not project_session_still_registered_fn(db, project_id=project.id, session_id=session.id):
         return
     process_pilot_tool_requests_fn(db, store=store, project=project, session=session, workspace=workspace)

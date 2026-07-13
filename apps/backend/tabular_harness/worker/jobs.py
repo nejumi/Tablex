@@ -98,6 +98,7 @@ from tabular_harness.services.benchmarks import (
     store_benchmark_supporting_table_artifacts,
     validate_required_files,
 )
+from tabular_harness.services.compute_execution import execute_agent_compute_job
 from tabular_harness.services.data_quality import analyze_dataset_quality
 from tabular_harness.services.dataset_profile import profile_dataset_artifact
 from tabular_harness.services.decision_reporting import create_decision_report_v1
@@ -217,6 +218,10 @@ def stub_job_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[s
         "policy": loads_json(job.policy_json, {}),
         "attempt_count": job.attempt_count,
     }
+
+
+def run_agent_compute_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
+    return execute_agent_compute_job(db, store=store, job=job)
 
 
 def agent_chat_turn_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
@@ -4755,6 +4760,7 @@ def concrete_handlers() -> dict[str, JobHandler]:
     handlers["validate_model_package"] = validate_model_package_handler
     handlers["register_prediction_pipeline"] = register_prediction_pipeline_handler
     handlers["run_prediction_pipeline"] = run_prediction_pipeline_handler
+    handlers["run_agent_compute"] = run_agent_compute_handler
     handlers["score_pilot_outcomes"] = score_pilot_outcomes_handler
     handlers["prepare_model_diagnostics_notebook_authoring"] = prepare_model_diagnostics_notebook_authoring_handler
     handlers["plan_baseline_strategy"] = plan_baseline_strategy_handler

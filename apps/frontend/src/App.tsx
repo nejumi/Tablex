@@ -31,6 +31,7 @@ import {
   BookOpen,
   Check,
   Copy,
+  Cpu,
   Database,
   Download,
   Eye,
@@ -2340,6 +2341,8 @@ function ProjectDetail({
   const [jobs, setJobs] = React.useState<Job[]>([]);
   const [runs, setRuns] = React.useState<Run[]>([]);
   const [leaderboard, setLeaderboard] = React.useState<LeaderboardEntry[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = React.useState(true);
+  const [leaderboardLoadError, setLeaderboardLoadError] = React.useState<string | null>(null);
   const [pilotDeployments, setPilotDeployments] = React.useState<PilotDeploymentRead[]>([]);
   const [modelVersions, setModelVersions] = React.useState<ModelVersion[]>([]);
   const [validationsByModelVersion, setValidationsByModelVersion] = React.useState<Record<string, ModelValidation[]>>({});
@@ -2395,6 +2398,7 @@ function ProjectDetail({
   const datasetsRef = React.useRef<DatasetSnapshot[]>([]);
   const artifactsRef = React.useRef<Artifact[]>([]);
   const jobsRef = React.useRef<Job[]>([]);
+  const leaderboardRef = React.useRef<LeaderboardEntry[]>([]);
   const tableeMotionState: TableeMotionState = liveAgentOrModelActivity
     ? "working"
     : effectiveProject.current_phase === "AUTONOMOUS_LOOP"
@@ -2430,7 +2434,14 @@ function ProjectDetail({
     datasetsRef.current = datasets;
     artifactsRef.current = artifacts;
     jobsRef.current = jobs;
-  }, [datasets, artifacts, jobs]);
+    leaderboardRef.current = leaderboard;
+  }, [datasets, artifacts, jobs, leaderboard]);
+  React.useEffect(() => {
+    leaderboardRef.current = [];
+    setLeaderboard([]);
+    setLeaderboardLoading(true);
+    setLeaderboardLoadError(null);
+  }, [project.id]);
   const turnState = agentActivity?.turn_state ?? fallbackTurnState(effectiveProject);
   const focusRecommendation = React.useMemo(
     () => {
@@ -2454,6 +2465,26 @@ function ProjectDetail({
 
   const refresh = React.useCallback(async () => {
     setError(null);
+    const jobsRequest = api<Job[]>(`/api/projects/${project.id}/jobs`)
+      .then((data) => {
+        jobsRef.current = data;
+        setJobs(data);
+        return data;
+      })
+      .catch(() => jobsRef.current);
+    const leaderboardRequest = api<LeaderboardEntry[]>(`/api/projects/${project.id}/leaderboard`)
+      .then((data) => {
+        leaderboardRef.current = data;
+        setLeaderboard(data);
+        setLeaderboardLoading(false);
+        setLeaderboardLoadError(null);
+        return data;
+      })
+      .catch((err) => {
+        setLeaderboardLoading(false);
+        setLeaderboardLoadError(err instanceof Error ? err.message : String(err));
+        return leaderboardRef.current;
+      });
     try {
       const [
         overviewData,
@@ -2502,9 +2533,9 @@ function ProjectDetail({
         apiOrFallback<EvaluationSpec[]>(`/api/projects/${project.id}/evaluation/specs`, [], 3500),
         apiOrFallback<Artifact[]>(`/api/projects/${project.id}/artifacts?limit=1000`, artifactsRef.current, 12000),
         apiOrFallback<BenchmarkDataset[]>(`/api/benchmarks`, [], 3500),
-        apiOrFallback<Job[]>(`/api/projects/${project.id}/jobs`, jobsRef.current, 8000),
+        jobsRequest,
         apiOrFallback<Run[]>(`/api/projects/${project.id}/runs`, [], 7000),
-        apiOrFallback<LeaderboardEntry[]>(`/api/projects/${project.id}/leaderboard`, [], 7000),
+        leaderboardRequest,
         apiOrFallback<PilotDeploymentIndex>(`/api/projects/${project.id}/pilot-deployments`, {
           schema_version: "pilot_deployment_index.v1",
           project_id: project.id,
@@ -3579,6 +3610,9 @@ function ProjectDetail({
       {tab === "Leaderboard" && (
         <LeaderboardTab
           project={effectiveProject}
+          jobs={jobs}
+          leaderboardLoading={leaderboardLoading}
+          leaderboardLoadError={leaderboardLoadError}
           specs={specs}
           datasets={datasets}
           artifacts={artifacts}
@@ -9257,7 +9291,8 @@ function ExperimentsTab({
       "permutation_importance",
       "model_diagnostics_artifact_pack",
       "model_diagnostics_artifact_report",
-      "experiment_evidence"
+      "experiment_evidence",
+      "compute_resource_evidence"
     ].includes(artifact.asset_type)
   );
   const [preview, setPreview] = React.useState<ArtifactPreview | null>(null);
@@ -9358,23 +9393,37 @@ function ExperimentsTab({
                 </small>
               </div>,
               formatMetric(run.metrics),
-              run.experiment_evidence?.artifact_id ? (
-                <button
-                  className="quiet-button"
-                  key={`${run.id}-evidence`}
-                  onClick={() => void loadPreview(run.experiment_evidence!.artifact_id!)}
-                  title="Open verified experiment evidence"
-                >
-                  <ListChecks size={14} />
-                  {run.experiment_evidence.status === "verified"
-                    ? run.experiment_evidence.prediction_coverage_scope === "split_manifest_validation"
-                      ? "Validation verified"
-                      : "OOF verified"
-                    : "Evidence registered"}
-                </button>
-              ) : (
-                <span className="muted" key={`${run.id}-evidence-missing`}>Not registered</span>
-              ),
+              <div className="cell-stack" key={`${run.id}-evidence`}>
+                {run.experiment_evidence?.artifact_id ? (
+                  <button
+                    className="quiet-button"
+                    onClick={() => void loadPreview(run.experiment_evidence!.artifact_id!)}
+                    title="Open verified experiment evidence"
+                  >
+                    <ListChecks size={14} />
+                    {run.experiment_evidence.status === "verified"
+                      ? run.experiment_evidence.prediction_coverage_scope === "split_manifest_validation"
+                        ? "Validation verified"
+                        : "OOF verified"
+                      : "Evidence registered"}
+                  </button>
+                ) : (
+                  <span className="muted">Not registered</span>
+                )}
+                {run.compute_resource?.evidence_artifact_ids.length ? (
+                  <button
+                    className="quiet-button"
+                    onClick={() => {
+                      const ids = run.compute_resource!.evidence_artifact_ids;
+                      void loadPreview(ids[ids.length - 1]);
+                    }}
+                    title={run.compute_resource.fallback_reason || "Open compute resource evidence"}
+                  >
+                    <Cpu size={14} />
+                    {`${(run.compute_resource.actual_device || run.compute_resource.selected_device || "compute").toUpperCase()} used`}
+                  </button>
+                ) : null}
+              </div>,
               <div className="cell-stack" key={`${run.id}-evaluation`}>
                 <span>{run.evaluation_spec_id ?? "No EvaluationSpec"}</span>
                 <small>{run.split_manifest_id ?? "No SplitManifest"}</small>
