@@ -14,6 +14,7 @@ from tabular_harness.services.jobs import (
     mark_job_failed,
     mark_job_running,
     mark_job_succeeded,
+    mark_job_waiting,
 )
 
 
@@ -43,6 +44,8 @@ class SyncWorker:
             output = handler(db, job, self.store)
             if output.get("job_status") == "failed":
                 mark_job_failed(job, str(output.get("error_message") or "Job failed"), output)
+            elif output.get("job_status") in {"waiting_for_agent", "waiting_for_agent_review"}:
+                mark_job_waiting(job, str(output["job_status"]), output)
             else:
                 mark_job_succeeded(job, output)
             db.commit()

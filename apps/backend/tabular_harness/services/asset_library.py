@@ -9,18 +9,49 @@ from tabular_harness.core.ids import new_id
 from tabular_harness.core.json import dumps_json, loads_json
 from tabular_harness.models.entities import Artifact, Asset, AssetReference, AssetVersion
 from tabular_harness.services.approach import store_json_artifact
-from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path, create_lineage_edge
+from tabular_harness.services.artifacts import (
+    LocalArtifactStore,
+    artifact_primary_path,
+    create_lineage_edge,
+)
 
 DEFAULT_PROJECT_SKILL_NAMES = {
     "tablex_grandmaster_eda",
     "tablex_modeling_strategy",
     "tablex_onodera_deep_dive",
+    "tablex_prediction_review",
     "tabular_approach_research",
     "tabular_gradient_boosting_strategy",
     "evaluation_diagnostics_interpreter",
 }
 
 DEFAULT_LIBRARY_ASSETS: list[dict[str, Any]] = [
+    {
+        "asset_type": "skill",
+        "name": "tablex_prediction_review",
+        "description": (
+            "Helps Codex manage prediction operations in context, inspect material train/validation/inference differences, "
+            "and decide whether results are trustworthy without imposing a fixed drift recipe."
+        ),
+        "tags": ["agent", "prediction", "inference", "validation", "operations"],
+        "semantic_tags": ["prediction_review", "inference_integrity", "agent_managed_prediction", "skill"],
+        "content": {
+            "instructions": [
+                "Own the prediction from input review through execution, output review, repair or rerun, and the user-facing judgment.",
+                "Start from the prediction purpose, model assumptions, EvaluationSpec, SplitManifest, OOF or validation evidence, feature construction, and actual inference inputs.",
+                "Consider schema and entity semantics, missingness, unseen values, numeric or categorical shift, relationship coverage and density, time range and recency, and prediction-time feature availability when they are material to this project.",
+                "Compare output shape, range, concentration, ranking, class share, uncertainty, or temporal behavior with local validation or OOF predictions when that comparison is meaningful for the task.",
+                "Treat comparisons and generic drift statistics as clues. Choose project-specific analyses, seek alternative explanations, and do not turn a threshold or checklist into the conclusion.",
+                "A successful process exit is not evidence of trustworthy prediction. Inspect actual outputs and repair or rerun the canonical pipeline when training-serving consistency is doubtful.",
+                "Return a concise verdict grounded in artifacts and explain limitations or next actions to the user.",
+            ],
+            "guardrails": [
+                "Do not read or materialize secrets or connector credentials.",
+                "Do not use unavailable prediction-time targets or future information.",
+                "Do not replace project-specific judgment with universal drift thresholds.",
+            ],
+        },
+    },
     {
         "asset_type": "skill",
         "name": "tabular_approach_research",

@@ -153,6 +153,14 @@ from tabular_harness.services.prediction_input_feedback import (
     maybe_send_prediction_pipeline_runtime_failure_to_codex,
     prediction_pipeline_runtime_failure_message,
 )
+from tabular_harness.services.prediction_input_integrity import inspect_prediction_input_integrity
+from tabular_harness.services.prediction_operations import (
+    notify_prediction_failure_to_agent,
+    notify_prediction_result_to_agent,
+)
+from tabular_harness.services.prediction_pipeline_contract import (
+    prediction_table_is_safely_optional,
+)
 from tabular_harness.services.project_guidance import (
     create_autonomous_decision_brief,
     create_guided_journey_comparison,
@@ -2708,6 +2716,81 @@ def workspace_relative_path_for_job(workspace: Path, value: Any, job_type: str, 
     return resolved
 
 
+def agent_managed_prediction_failure_output(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    job: Job,
+    payload: dict[str, Any],
+    pipeline_artifact: Artifact,
+    stage: str,
+    error_message: str,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if payload.get("agent_managed") is not True:
+        return None
+    agent_session_id = payload.get("agent_session_id")
+    agent_session = db.get(AgentSession, agent_session_id) if isinstance(agent_session_id, str) else None
+    if agent_session is None or agent_session.project_id != project.id or not agent_session.workspace_path:
+        return None
+    result_context = {
+        "schema_version": "prediction_result_context.v1",
+        "status": "execution_needs_codex",
+        "project_id": project.id,
+        "prediction_operation_job_id": job.id,
+        "pipeline_artifact_id": pipeline_artifact.id,
+        "stage": stage,
+        "error_message": error_message,
+        "details": details or {},
+        "instruction": (
+            "Investigate with the actual operation inputs and project evidence. Repair or rerun when appropriate; "
+            "do not reduce this to a generic error classification."
+        ),
+    }
+    result_context_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="prediction_result_context",
+        name=f"prediction_result_context_{job.id}",
+        filename="prediction_result_context.json",
+        payload=result_context,
+        metadata={
+            "project_id": project.id,
+            "job_id": job.id,
+            "pipeline_artifact_id": pipeline_artifact.id,
+            "agent_session_id": agent_session.id,
+            "status": "execution_needs_codex",
+        },
+        created_by=job.created_by,
+    )
+    delivery = notify_prediction_failure_to_agent(
+        db,
+        session=agent_session,
+        job=job,
+        result_artifact=result_context_artifact,
+        result_context=result_context,
+    )
+    continuation_job = maybe_queue_autonomous_session_continuation(
+        db,
+        job=job,
+        project=project,
+        reason="prediction_execution_returned_to_codex",
+    )
+    return {
+        "schema_version": "prediction_pipeline_job.v1",
+        "job_status": "waiting_for_agent",
+        "status": "execution_needs_codex",
+        "error_message": error_message,
+        "pipeline_artifact_id": pipeline_artifact.id,
+        "prediction_result_context_artifact_id": result_context_artifact.id,
+        "prediction_integrity_review_status": "codex_investigating",
+        "codex_result_delivery": delivery,
+        "session_continuation_job_id": continuation_job.id if continuation_job else None,
+    }
+
+
 def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
     payload = loads_json(job.input_json, {})
     project = project_for_job(db, job, "run_prediction_pipeline")
@@ -2721,10 +2804,100 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
     if pipeline_artifact.asset_type != "prediction_pipeline":
         raise ValueError("Artifact is not a prediction_pipeline")
 
-    input_dir = prediction_input_dir_for_job(db, project=project, payload=payload, run_dir=get_settings().data_dir / "_pipeline_runs" / job.id)
+    run_dir = (get_settings().data_dir / "_pipeline_runs" / job.id).resolve()
+    try:
+        validate_prediction_pipeline_table_inputs(pipeline_artifact, payload)
+    except ValueError as exc:
+        managed_failure = agent_managed_prediction_failure_output(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            payload=payload,
+            pipeline_artifact=pipeline_artifact,
+            stage="input_contract",
+            error_message=str(exc),
+        )
+        if managed_failure is not None:
+            return managed_failure
+        raise
+    input_dir = prediction_input_dir_for_job(db, project=project, payload=payload, run_dir=run_dir)
     input_path = None if input_dir is not None else prediction_input_path_for_job(db, project=project, payload=payload)
     history_path = prediction_history_path_for_job(db, project=project, payload=payload)
-    run_dir = (get_settings().data_dir / "_pipeline_runs" / job.id).resolve()
+    integrity_report = prediction_input_integrity_report(
+        pipeline_artifact=pipeline_artifact,
+        input_dir=input_dir,
+    )
+    integrity_artifact = None
+    if integrity_report is not None:
+        integrity_artifact = store_json_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="prediction_input_integrity",
+            name=f"prediction_input_integrity_{job.id}",
+            filename="prediction_input_integrity.json",
+            payload=integrity_report,
+            metadata={
+                "project_id": project.id,
+                "job_id": job.id,
+                "pipeline_artifact_id": pipeline_artifact.id,
+                "status": integrity_report.get("status"),
+            },
+            created_by=job.created_by,
+        )
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=pipeline_artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=integrity_artifact.id,
+            relation_type="validates_prediction_input_for",
+            metadata={"job_id": job.id},
+            org_id=project.org_id,
+        )
+        hard_errors = integrity_report.get("hard_errors")
+        if isinstance(hard_errors, list) and hard_errors:
+            error_detail = "; ".join(str(item) for item in hard_errors)
+            managed_failure = agent_managed_prediction_failure_output(
+                db,
+                store=store,
+                project=project,
+                job=job,
+                payload=payload,
+                pipeline_artifact=pipeline_artifact,
+                stage="input_integrity",
+                error_message=error_detail,
+                details={"prediction_input_integrity_artifact_id": integrity_artifact.id},
+            )
+            if managed_failure is not None:
+                managed_failure["prediction_input_integrity_artifact_id"] = integrity_artifact.id
+                return managed_failure
+            codex_feedback = maybe_send_prediction_pipeline_runtime_failure_to_codex(
+                db,
+                project=project,
+                pipeline_artifact=pipeline_artifact,
+                job_id=job.id,
+                error_message=error_detail,
+                error_summary="Prediction input integrity validation failed",
+                exit_code=None,
+                input_artifact_id=None,
+                dataset_snapshot_id=None,
+                input_artifact_ids_by_table=payload.get("input_artifact_ids_by_table")
+                if isinstance(payload.get("input_artifact_ids_by_table"), dict)
+                else None,
+            )
+            return {
+                "schema_version": "prediction_pipeline_job.v1",
+                "job_status": "failed",
+                "status": "failed",
+                "error_message": "Prediction input integrity validation failed",
+                "error_detail": error_detail,
+                "pipeline_artifact_id": pipeline_artifact.id,
+                "prediction_input_integrity_artifact_id": integrity_artifact.id,
+                "codex_feedback": codex_feedback,
+            }
     extract_dir = run_dir / "pipeline"
     output_path = run_dir / "predictions.csv"
     extract_dir.mkdir(parents=True, exist_ok=True)
@@ -2773,6 +2946,30 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
     if completed.returncode != 0:
         stderr_tail = (completed.stderr or completed.stdout or "")[-4000:]
         error_summary = prediction_pipeline_runtime_failure_message(exit_code=completed.returncode)
+        managed_failure = agent_managed_prediction_failure_output(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            payload=payload,
+            pipeline_artifact=pipeline_artifact,
+            stage="pipeline_execution",
+            error_message=error_summary,
+            details={
+                "exit_code": completed.returncode,
+                "stderr_tail": stderr_tail,
+                "prediction_input_integrity_artifact_id": integrity_artifact.id if integrity_artifact else None,
+            },
+        )
+        if managed_failure is not None:
+            managed_failure.update(
+                {
+                    "exit_code": completed.returncode,
+                    "stderr_tail": stderr_tail,
+                    "prediction_input_integrity_artifact_id": integrity_artifact.id if integrity_artifact else None,
+                }
+            )
+            return managed_failure
         codex_feedback = maybe_send_prediction_pipeline_runtime_failure_to_codex(
             db,
             project=project,
@@ -2805,8 +3002,22 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
             "runtime_isolated": runtime_isolated,
             "python_executable": runtime_python,
             "requirements_hash": requirements_hash,
+            "prediction_input_integrity_artifact_id": integrity_artifact.id if integrity_artifact else None,
         }
     if not output_path.exists() or output_path.stat().st_size == 0:
+        managed_failure = agent_managed_prediction_failure_output(
+            db,
+            store=store,
+            project=project,
+            job=job,
+            payload=payload,
+            pipeline_artifact=pipeline_artifact,
+            stage="pipeline_output",
+            error_message="Prediction pipeline did not create a non-empty predictions.csv",
+            details={"prediction_input_integrity_artifact_id": integrity_artifact.id if integrity_artifact else None},
+        )
+        if managed_failure is not None:
+            return managed_failure
         raise ValueError("Prediction pipeline did not create a non-empty predictions.csv")
     version = next_artifact_version(db, project.id, "prediction_batch", f"prediction_batch_{job.id}")
     target_dir, stored, content_hash = store.store_existing_file(
@@ -2832,6 +3043,8 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
             "runtime_isolated": runtime_isolated,
             "python_executable": runtime_python,
             "requirements_hash": requirements_hash,
+            "prediction_input_integrity_artifact_id": integrity_artifact.id if integrity_artifact else None,
+            "prediction_integrity_review_status": "waiting_for_codex" if payload.get("agent_managed") is True else None,
         },
     )
     prediction_artifact = register_artifact(
@@ -2857,6 +3070,7 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
             "runtime_isolated": runtime_isolated,
             "python_executable": runtime_python,
             "requirements_hash": requirements_hash,
+            "prediction_integrity_review_status": "waiting_for_codex" if payload.get("agent_managed") is True else None,
         },
         version=version,
         org_id=project.org_id,
@@ -2871,6 +3085,18 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
         relation_type="produces_prediction_batch",
         metadata={"job_id": job.id},
     )
+    if integrity_artifact is not None:
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=integrity_artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=prediction_artifact.id,
+            relation_type="validates_input_for_prediction_batch",
+            metadata={"job_id": job.id},
+            org_id=project.org_id,
+        )
     deployment_id = payload.get("deployment_id")
     pilot_prediction_batch_id = None
     if isinstance(deployment_id, str) and deployment_id.strip():
@@ -2905,17 +3131,124 @@ def run_prediction_pipeline_handler(db: Session, job: Job, store: LocalArtifactS
         )
         db.add(batch)
         pilot_prediction_batch_id = batch.id
-    return {
+    agent_managed = payload.get("agent_managed") is True
+    result_context_artifact = None
+    codex_result_delivery = None
+    continuation_job = None
+    if agent_managed:
+        agent_session_id = payload.get("agent_session_id")
+        agent_session = db.get(AgentSession, agent_session_id) if isinstance(agent_session_id, str) else None
+        if agent_session is None or agent_session.project_id != project.id or not agent_session.workspace_path:
+            raise ValueError("Codex-managed prediction lost its main AgentSession context")
+        result_context = {
+            "schema_version": "prediction_result_context.v1",
+            "project_id": project.id,
+            "prediction_operation_job_id": job.id,
+            "pipeline_artifact_id": pipeline_artifact.id,
+            "prediction_artifact_id": prediction_artifact.id,
+            "prediction_input_integrity_artifact_id": integrity_artifact.id if integrity_artifact else None,
+            "input_dataset_snapshot_id": payload.get("dataset_snapshot_id"),
+            "input_artifact_id": payload.get("input_artifact_id"),
+            "input_artifact_ids_by_table": payload.get("input_artifact_ids_by_table")
+            if isinstance(payload.get("input_artifact_ids_by_table"), dict)
+            else None,
+            "prediction_purpose": batch_kind,
+            "runtime": {
+                "isolated": runtime_isolated,
+                "python_executable": runtime_python,
+                "requirements_hash": requirements_hash,
+                "stdout_tail": (completed.stdout or "")[-4000:],
+                "stderr_tail": (completed.stderr or "")[-4000:],
+            },
+            "review_guidance": (
+                "Use project-specific judgment. Compare actual inputs and outputs with local validation or OOF evidence when material, "
+                "but do not treat a generic checklist or threshold as the conclusion."
+            ),
+        }
+        result_context_artifact = store_json_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="prediction_result_context",
+            name=f"prediction_result_context_{job.id}",
+            filename="prediction_result_context.json",
+            payload=result_context,
+            metadata={
+                "project_id": project.id,
+                "job_id": job.id,
+                "pipeline_artifact_id": pipeline_artifact.id,
+                "prediction_artifact_id": prediction_artifact.id,
+                "agent_session_id": agent_session.id,
+            },
+            created_by=job.created_by,
+        )
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=prediction_artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=result_context_artifact.id,
+            relation_type="provides_context_for_prediction_review",
+            metadata={"job_id": job.id},
+            org_id=project.org_id,
+        )
+        codex_result_delivery = notify_prediction_result_to_agent(
+            db,
+            session=agent_session,
+            job=job,
+            result_artifact=result_context_artifact,
+            prediction_artifact=prediction_artifact,
+            result_context=result_context,
+        )
+        continuation_job = maybe_queue_autonomous_session_continuation(
+            db,
+            job=job,
+            project=project,
+            reason="prediction_result_ready_for_codex_review",
+        )
+    output = {
         "schema_version": "prediction_pipeline_job.v1",
+        "job_status": "waiting_for_agent_review" if agent_managed else "succeeded",
         "prediction_batch_artifact_id": prediction_artifact.id,
         "pilot_prediction_batch_id": pilot_prediction_batch_id,
         "artifact_id": prediction_artifact.id,
-        "artifact_ids": [pipeline_artifact.id, prediction_artifact.id],
+        "artifact_ids": [
+            artifact_id
+            for artifact_id in [
+                pipeline_artifact.id,
+                integrity_artifact.id if integrity_artifact else None,
+                result_context_artifact.id if result_context_artifact else None,
+                prediction_artifact.id,
+            ]
+            if artifact_id is not None
+        ],
         "row_source": str(input_dir or input_path),
         "runtime_isolated": runtime_isolated,
         "python_executable": runtime_python,
         "requirements_hash": requirements_hash,
+        "prediction_input_integrity_artifact_id": integrity_artifact.id if integrity_artifact else None,
+        "prediction_result_context_artifact_id": result_context_artifact.id if result_context_artifact else None,
+        "prediction_integrity_review_status": "waiting_for_codex" if agent_managed else "not_requested",
+        "codex_result_delivery": codex_result_delivery,
+        "session_continuation_job_id": continuation_job.id if continuation_job else None,
     }
+    return output
+
+
+def prediction_input_integrity_report(
+    *,
+    pipeline_artifact: Artifact,
+    input_dir: Path | None,
+) -> dict[str, Any] | None:
+    if input_dir is None:
+        return None
+    metadata = loads_json(pipeline_artifact.metadata_json, {})
+    manifest = metadata.get("pipeline_manifest")
+    input_contract = manifest.get("input_contract") if isinstance(manifest, dict) else None
+    if not isinstance(input_contract, dict):
+        return None
+    return inspect_prediction_input_integrity(input_dir=input_dir, input_contract=input_contract)
 
 
 def prediction_input_dir_for_job(db: Session, *, project: Project, payload: dict[str, Any], run_dir: Path) -> Path | None:
@@ -2950,6 +3283,35 @@ def prediction_input_dir_for_job(db: Session, *, project: Project, payload: dict
         raise ValueError("run_prediction_pipeline input_artifact_ids_by_table did not contain any valid table inputs")
     (input_dir / "manifest.json").write_text(dumps_json(manifest), encoding="utf-8")
     return input_dir
+
+
+def validate_prediction_pipeline_table_inputs(pipeline_artifact: Artifact, payload: dict[str, Any]) -> None:
+    metadata = loads_json(pipeline_artifact.metadata_json, {})
+    manifest = metadata.get("pipeline_manifest")
+    input_contract = manifest.get("input_contract") if isinstance(manifest, dict) else None
+    tables = input_contract.get("required_tables") if isinstance(input_contract, dict) else None
+    declared_tables = [table for table in tables if isinstance(table, dict)] if isinstance(tables, list) else []
+    if not declared_tables:
+        return
+    mapping = payload.get("input_artifact_ids_by_table")
+    mapped_names = {
+        str(name).strip()
+        for name, artifact_id in mapping.items()
+        if isinstance(name, str) and name.strip() and isinstance(artifact_id, str) and artifact_id.strip()
+    } if isinstance(mapping, dict) else set()
+    missing = [
+        str(table.get("name") or "").strip()
+        for table in declared_tables
+        if isinstance(table.get("name"), str)
+        and str(table.get("name") or "").strip() not in mapped_names
+        and not prediction_table_is_safely_optional(table)
+    ]
+    if missing:
+        raise ValueError(
+            "Prediction input is missing required table(s): "
+            + ", ".join(missing)
+            + ". Table omission is allowed only with a validated omission_policy in the pipeline manifest."
+        )
 
 
 def prediction_batch_kind_from_payload(payload: dict[str, Any]) -> str:

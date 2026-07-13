@@ -15,6 +15,21 @@ PREDICTION_RUNTIME_REQUIRED_FILES = frozenset({"pipeline_manifest.json", "predic
 EXPORT_BUNDLE_REQUIRED_FILES = frozenset(
     {*PREDICTION_RUNTIME_REQUIRED_FILES, "train.py", "README.md"}
 )
+TABLE_OMISSION_POLICY_SCHEMA_VERSION = "prediction_table_omission_policy.v1"
+
+
+def prediction_table_is_safely_optional(table: dict[str, Any]) -> bool:
+    if table.get("optional") is not True:
+        return False
+    policy = table.get("omission_policy")
+    if not isinstance(policy, dict):
+        return False
+    if policy.get("schema_version") != TABLE_OMISSION_POLICY_SCHEMA_VERSION:
+        return False
+    if policy.get("status") != "validated" or policy.get("fallback_smoke_status") != "passed":
+        return False
+    evidence_artifact_id = policy.get("evidence_artifact_id")
+    return isinstance(evidence_artifact_id, str) and bool(evidence_artifact_id.strip())
 
 
 def prediction_pipeline_artifact_for_run(

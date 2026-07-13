@@ -51,6 +51,7 @@ The most important constraints are:
 - **Evaluation and modeling:** EvaluationSpec, SplitManifest, ExperimentRun, ModelVersion, and model diagnostics. Every promoted model candidate keeps a validated, versioned prediction runtime for drag-and-drop scoring from the Leaderboard. Complete local training/prediction bundles are built on demand for selected models, so export packaging does not block hypothesis iteration or reduce the visible candidate set.
 - **Research and skills:** project and cross-project Skills, controlled research requests, source-backed findings, and research reports. External claims should be stored as Evidence or source-backed artifacts, not left only in logs.
 - **Pilot workflow:** registered prediction pipelines can be used for prediction batches, outcome ingestion, pilot scoring, and agent-authored validation audits that feed the same continuing Full Auto loop.
+- **Codex-managed prediction:** Predict sends the selected model, actual inputs, evaluation/OOF lineage, purpose, and available evidence to the same continuing Codex session. Codex decides what to inspect, invokes the canonical pipeline, reviews the real output, and can investigate, repair, or rerun before releasing a reasoned result. Tablex supplies timely context, execution, artifacts, lineage, progress, and the user interface without replacing that judgment with fixed drift rules.
 
 ## Core Workflow
 

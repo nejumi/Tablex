@@ -331,10 +331,12 @@ from tabular_harness.services.portal import (
 from tabular_harness.services.prediction_input_feedback import (
     maybe_send_prediction_input_validation_failure_to_codex,
 )
+from tabular_harness.services.prediction_operations import create_agent_managed_prediction_operation
 from tabular_harness.services.prediction_pipeline_contract import (
     export_ready_pipeline_artifact,
     leaderboard_ready_pipeline_artifact,
     prediction_pipeline_artifact_for_run,
+    prediction_table_is_safely_optional,
 )
 from tabular_harness.services.project_cloning import clone_project
 from tabular_harness.services.project_guidance import (
@@ -8484,7 +8486,9 @@ def run_prediction_pipeline_endpoint(
     project_id: str,
     artifact_id: str,
     payload: dict[str, Any],
+    request: Request,
     db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
     artifact = db.get(Artifact, artifact_id)
@@ -8504,33 +8508,58 @@ def run_prediction_pipeline_endpoint(
         and not isinstance(input_artifact_ids_by_table, dict)
     ):
         raise HTTPException(status_code=400, detail="dataset_snapshot_id, input_artifact_id, or input_artifact_ids_by_table is required")
-    job = create_job(
+    session = active_main_session(db, project.id) or latest_main_session(db, project.id)
+    if session is None or session.status == "stopped" or not session.workspace_path:
+        raise HTTPException(status_code=409, detail="Start Agent power before running an intelligent prediction")
+    if session.status in {"failed", "gave_up"}:
+        raise HTTPException(status_code=409, detail=f"The main agent session is {session.status}; restart it first")
+    if session.status == "completed":
+        session.status = "between_turns"
+        session.pid = None
+        session.ended_at = None
+        session.updated_at = utc_now()
+    execution_payload = {
+        "pipeline_artifact_id": artifact.id,
+        "dataset_snapshot_id": dataset_snapshot_id if isinstance(dataset_snapshot_id, str) else None,
+        "input_artifact_id": input_artifact_id if isinstance(input_artifact_id, str) else None,
+        "input_artifact_ids_by_table": {
+            str(key): str(value)
+            for key, value in input_artifact_ids_by_table.items()
+            if isinstance(key, str) and isinstance(value, str) and key.strip() and value.strip()
+        }
+        if isinstance(input_artifact_ids_by_table, dict)
+        else None,
+        "history_artifact_id": history_artifact_id if isinstance(history_artifact_id, str) else None,
+        "batch_kind": normalize_prediction_batch_kind(batch_kind if isinstance(batch_kind, str) else None),
+        "deployment_id": deployment_id if isinstance(deployment_id, str) else None,
+        "timeout_seconds": payload.get("timeout_seconds") if isinstance(payload.get("timeout_seconds"), int) else 300,
+    }
+    job, _context_artifact = create_agent_managed_prediction_operation(
         db,
-        job_type="run_prediction_pipeline",
-        project_id=project.id,
-        input_payload={
-            "pipeline_artifact_id": artifact.id,
-            "dataset_snapshot_id": dataset_snapshot_id if isinstance(dataset_snapshot_id, str) else None,
-            "input_artifact_id": input_artifact_id if isinstance(input_artifact_id, str) else None,
-            "input_artifact_ids_by_table": {
-                str(key): str(value)
-                for key, value in input_artifact_ids_by_table.items()
-                if isinstance(key, str) and isinstance(value, str) and key.strip() and value.strip()
-            }
-            if isinstance(input_artifact_ids_by_table, dict)
-            else None,
-            "history_artifact_id": history_artifact_id if isinstance(history_artifact_id, str) else None,
-            "batch_kind": normalize_prediction_batch_kind(batch_kind if isinstance(batch_kind, str) else None),
-            "deployment_id": deployment_id if isinstance(deployment_id, str) else None,
-            "timeout_seconds": payload.get("timeout_seconds") if isinstance(payload.get("timeout_seconds"), int) else 300,
-        },
-        policy={
-            "execution": "queued_worker",
-            "external_network_access": "disabled",
-            "connector_credentials_materialized": False,
-            "secrets_materialized": False,
-        },
+        store=store,
+        project=project,
+        session=session,
+        pipeline_artifact=artifact,
+        execution_payload=execution_payload,
+        requested_by=request_actor_id(request),
+        locale=payload.get("locale") if isinstance(payload.get("locale"), str) else latest_project_response_locale(db, project.id),
     )
+    should_wake_main_session = (
+        project.current_phase == "AUTONOMOUS_LOOP"
+        and session.status in {"starting", "between_turns", "waiting_for_runner"}
+        and not supervisor_slot_active(session.id)
+    )
+    db.commit()
+    if should_wake_main_session and request.app.state.settings.api_agent_session_supervisor_enabled:
+        start_main_agent_session_supervisor_thread(
+            request.app.state.session_factory,
+            store,
+            project_id=project.id,
+            session_id=session.id,
+            supervisor_runner=run_main_agent_session_supervisor,
+            turn_timeout_seconds=request.app.state.settings.agent_idle_timeout_seconds,
+            turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
+        )
     return job_to_dict(job)
 
 
@@ -8795,37 +8824,68 @@ def list_pilot_deployments_endpoint(
 def run_pilot_prediction_endpoint(
     deployment_id: str,
     payload: dict[str, Any],
+    request: Request,
     db: Annotated[Session, Depends(get_session)],
+    store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     deployment = db.get(PilotDeployment, deployment_id)
     if deployment is None:
         raise HTTPException(status_code=404, detail="Pilot deployment not found")
-    require_project(db, deployment.project_id)
+    project = require_project(db, deployment.project_id)
     dataset_snapshot_id = payload.get("dataset_snapshot_id")
     input_artifact_id = payload.get("input_artifact_id")
     history_artifact_id = payload.get("history_artifact_id")
     if not isinstance(dataset_snapshot_id, str) and not isinstance(input_artifact_id, str):
         raise HTTPException(status_code=400, detail="dataset_snapshot_id or input_artifact_id is required")
-    job = create_job(
+    pipeline_artifact = db.get(Artifact, deployment.pipeline_artifact_id)
+    if pipeline_artifact is None or pipeline_artifact.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Prediction pipeline artifact not found")
+    session = active_main_session(db, project.id) or latest_main_session(db, project.id)
+    if session is None or session.status == "stopped" or not session.workspace_path:
+        raise HTTPException(status_code=409, detail="Start Agent power before running an intelligent pilot prediction")
+    if session.status in {"failed", "gave_up"}:
+        raise HTTPException(status_code=409, detail=f"The main agent session is {session.status}; restart it first")
+    if session.status == "completed":
+        session.status = "between_turns"
+        session.pid = None
+        session.ended_at = None
+        session.updated_at = utc_now()
+    execution_payload = {
+        "deployment_id": deployment.id,
+        "pipeline_artifact_id": deployment.pipeline_artifact_id,
+        "dataset_snapshot_id": dataset_snapshot_id if isinstance(dataset_snapshot_id, str) else None,
+        "input_artifact_id": input_artifact_id if isinstance(input_artifact_id, str) else None,
+        "history_artifact_id": history_artifact_id if isinstance(history_artifact_id, str) else None,
+        "batch_kind": "pilot",
+        "as_of": payload.get("as_of") if isinstance(payload.get("as_of"), str) else utc_now().isoformat(),
+        "timeout_seconds": payload.get("timeout_seconds") if isinstance(payload.get("timeout_seconds"), int) else 300,
+    }
+    job, _context_artifact = create_agent_managed_prediction_operation(
         db,
-        job_type="run_prediction_pipeline",
-        project_id=deployment.project_id,
-        input_payload={
-            "deployment_id": deployment.id,
-            "pipeline_artifact_id": deployment.pipeline_artifact_id,
-            "dataset_snapshot_id": dataset_snapshot_id if isinstance(dataset_snapshot_id, str) else None,
-            "input_artifact_id": input_artifact_id if isinstance(input_artifact_id, str) else None,
-            "history_artifact_id": history_artifact_id if isinstance(history_artifact_id, str) else None,
-            "as_of": payload.get("as_of") if isinstance(payload.get("as_of"), str) else utc_now().isoformat(),
-            "timeout_seconds": payload.get("timeout_seconds") if isinstance(payload.get("timeout_seconds"), int) else 300,
-        },
-        policy={
-            "execution": "queued_worker",
-            "external_network_access": "disabled",
-            "connector_credentials_materialized": False,
-            "secrets_materialized": False,
-        },
+        store=store,
+        project=project,
+        session=session,
+        pipeline_artifact=pipeline_artifact,
+        execution_payload=execution_payload,
+        requested_by=request_actor_id(request),
+        locale=payload.get("locale") if isinstance(payload.get("locale"), str) else latest_project_response_locale(db, project.id),
     )
+    should_wake_main_session = (
+        project.current_phase == "AUTONOMOUS_LOOP"
+        and session.status in {"starting", "between_turns", "waiting_for_runner"}
+        and not supervisor_slot_active(session.id)
+    )
+    db.commit()
+    if should_wake_main_session and request.app.state.settings.api_agent_session_supervisor_enabled:
+        start_main_agent_session_supervisor_thread(
+            request.app.state.session_factory,
+            store,
+            project_id=project.id,
+            session_id=session.id,
+            supervisor_runner=run_main_agent_session_supervisor,
+            turn_timeout_seconds=request.app.state.settings.agent_idle_timeout_seconds,
+            turn_start_silence_timeout_seconds=request.app.state.settings.agent_turn_start_silence_timeout_seconds,
+        )
     return job_to_dict(job)
 
 
@@ -9298,7 +9358,8 @@ def leaderboard_pipeline_input_contract(artifact: Artifact | None) -> dict[str, 
                     ],
                     "as_of_column": item.get("as_of_column") if isinstance(item.get("as_of_column"), str) else None,
                     "history_window": item.get("history_window") if isinstance(item.get("history_window"), str) else None,
-                    "optional": item.get("optional") is True,
+                    "optional": prediction_table_is_safely_optional(item),
+                    "declared_optional": item.get("optional") is True,
                 }
             )
     history_requirements = input_contract.get("history_requirements")

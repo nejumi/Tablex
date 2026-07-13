@@ -969,6 +969,7 @@ export type LeaderboardEntry = {
       as_of_column?: string | null;
       history_window?: string | null;
       optional?: boolean;
+      declared_optional?: boolean;
     }>;
     history_requirements?: Record<string, unknown> | null;
   } | null;

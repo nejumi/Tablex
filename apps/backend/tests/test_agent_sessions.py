@@ -11,6 +11,7 @@ from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import pytest
 import tabular_harness.services.agent_notebook_quality as agent_notebook_quality_module
 import tabular_harness.services.agent_requests.pipelines as pipeline_requests_module
 import tabular_harness.services.agent_requests.research_plan as research_plan_requests_module
@@ -112,6 +113,7 @@ from tabular_harness.services.agent_sessions import (
     pipeline_acks_dir,
     pipeline_requests_dir,
     prepare_session_workspace,
+    process_pipeline_tool_requests,
     progress_request_path,
     publish_raw_codex_transcript_snapshot,
     raw_codex_stderr_path,
@@ -153,6 +155,8 @@ from tabular_harness.services.model_diagnostics_artifacts import latest_run_arti
 from tabular_harness.services.prediction_input_feedback import (
     maybe_send_prediction_input_validation_failure_to_codex,
 )
+from tabular_harness.services.prediction_input_integrity import inspect_prediction_input_integrity
+from tabular_harness.services.prediction_operations import create_agent_managed_prediction_operation
 from tabular_harness.services.prediction_pipeline_contract import (
     export_ready_pipeline_artifact,
     leaderboard_ready_pipeline_artifact,
@@ -6526,6 +6530,170 @@ def test_experiment_result_request_rejects_wrong_schema_version(tmp_path: Path) 
         assert db.scalar(select(func.count()).select_from(ExperimentRun).where(ExperimentRun.project_id == project.id)) == 0
 
 
+def test_agent_managed_prediction_waits_for_codex_execute_and_review(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_agent_managed_prediction", name="Agent Managed Prediction")
+        session = AgentSession(
+            id="ags_agent_managed_prediction",
+            project_id=project.id,
+            goal_text="Manage prediction.",
+            workspace_path=str(workspace),
+            status="between_turns",
+        )
+        db.add_all([project, session])
+        db.flush()
+        pipeline_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="prediction_pipeline",
+            name="managed_pipeline",
+            filename="pipeline.zip",
+            text="pipeline",
+            metadata={
+                "project_id": project.id,
+                "experiment_run_ids": [],
+                "pipeline_manifest": {"schema_version": "pipeline_manifest.v1"},
+            },
+        )
+        input_artifact = store_text_artifact(
+            db,
+            store,
+            project_id=project.id,
+            asset_type="prediction_input",
+            name="managed_input",
+            filename="input.csv",
+            text="row_id,x\n1,2\n",
+            metadata={"project_id": project.id},
+        )
+
+        job, context_artifact = create_agent_managed_prediction_operation(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            pipeline_artifact=pipeline_artifact,
+            execution_payload={
+                "pipeline_artifact_id": pipeline_artifact.id,
+                "input_artifact_id": input_artifact.id,
+                "batch_kind": "external_test",
+            },
+            requested_by="local-user",
+            locale="ja",
+        )
+        db.commit()
+
+        assert job.status == "waiting_for_agent"
+        context = loads_json(artifact_primary_path(context_artifact).read_text(encoding="utf-8"), {})
+        assert context["prediction_operation_job_id"] == job.id
+        assert context["structured_commands"]["execute_prediction"]["payload"]["prediction_operation_job_id"] == job.id
+        operation_dir = workspace / ".tablex" / "prediction_operations" / job.id
+        assert (operation_dir / "context.json").is_file()
+        assert any((operation_dir / "inputs").iterdir())
+        assert any((workspace / ".tablex" / "inbox").glob("*_request.json"))
+
+        execute_request_id = "execute_managed_prediction"
+        pipeline_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
+        (pipeline_requests_dir(workspace) / f"{execute_request_id}.json").write_text(
+            dumps_json(
+                {
+                    "schema_version": "tablex_pipeline_request.v1",
+                    "operation": "execute_prediction",
+                    "request_id": execute_request_id,
+                    "payload": {
+                        "prediction_operation_job_id": job.id,
+                        "decision_context": "Inspected the actual input and model evidence; canonical execution is appropriate.",
+                        "evidence_artifact_ids": [context_artifact.id],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        process_pipeline_tool_requests(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            workspace=workspace,
+        )
+        db.commit()
+        db.refresh(job)
+        assert job.status == "queued"
+        assert loads_json(job.context_json, {})["codex_preflight"]["evidence_artifact_ids"] == [context_artifact.id]
+
+        job.status = "waiting_for_agent_review"
+        job.output_json = dumps_json({"prediction_batch_artifact_id": "art_prediction_result"})
+        complete_request_id = "complete_managed_prediction"
+        (pipeline_requests_dir(workspace) / f"{complete_request_id}.json").write_text(
+            dumps_json(
+                {
+                    "schema_version": "tablex_pipeline_request.v1",
+                    "operation": "complete_prediction_review",
+                    "request_id": complete_request_id,
+                    "payload": {
+                        "prediction_operation_job_id": job.id,
+                        "verdict": "usable_with_caveats",
+                        "summary": "The result is usable for this test with the stated coverage limitation.",
+                        "evidence_artifact_ids": [context_artifact.id],
+                        "actions": ["Keep the coverage limitation with the exported result."],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        process_pipeline_tool_requests(
+            db,
+            store=store,
+            project=project,
+            session=session,
+            workspace=workspace,
+        )
+        db.commit()
+        db.refresh(job)
+        assert job.status == "succeeded"
+        output = loads_json(job.output_json, {})
+        assert output["prediction_integrity_review_status"] == "usable_with_caveats"
+        assert output["codex_review"]["summary"].startswith("The result is usable")
+        review_artifact = db.get(Artifact, output["prediction_review_artifact_id"])
+        assert review_artifact is not None
+        assert loads_json(artifact_primary_path(review_artifact).read_text(encoding="utf-8"), {})["verdict"] == (
+            "usable_with_caveats"
+        )
+
+
+def test_worker_preserves_agent_review_wait_state(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_waiting_prediction_review", name="Waiting prediction review")
+        db.add(project)
+        db.flush()
+        job = create_job(db, job_type="run_prediction_pipeline", project_id=project.id)
+        db.commit()
+        worker = SyncWorker(
+            handlers={
+                "run_prediction_pipeline": lambda _db, _job, _store: {
+                    "job_status": "waiting_for_agent_review",
+                    "prediction_batch_artifact_id": "art_result",
+                }
+            },
+            store=store,
+        )
+
+        completed = worker.run_job(db, job)
+
+        assert completed.status == "waiting_for_agent_review"
+        assert loads_json(completed.output_json, {})["prediction_batch_artifact_id"] == "art_result"
+        assert completed.ended_at is None
+
+
 def test_pipeline_request_registers_prediction_pipeline_and_links_run(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
@@ -6769,6 +6937,12 @@ def test_pipeline_manifest_normalizes_required_tables_contract() -> None:
                     "as_of_column": "event_time",
                     "history_window": "365d",
                     "optional": True,
+                    "omission_policy": {
+                        "schema_version": "prediction_table_omission_policy.v1",
+                        "status": "validated",
+                        "fallback_smoke_status": "passed",
+                        "evidence_artifact_id": "art_validated_history_omission",
+                    },
                 },
             ],
         },
@@ -6789,6 +6963,61 @@ def test_pipeline_manifest_normalizes_required_tables_contract() -> None:
     assert tables[1]["as_of_column"] == "event_time"
     assert tables[1]["history_window"] == "365d"
     assert tables[1]["optional"] is True
+
+
+def test_pipeline_manifest_rejects_unvalidated_optional_table() -> None:
+    manifest = {
+        "schema_version": "pipeline_manifest.v1",
+        "input_contract": {
+            "inference_format": {"columns": ["x"]},
+            "required_tables": [
+                {
+                    "name": "history",
+                    "role": "history",
+                    "columns": ["entity_id"],
+                    "optional": True,
+                }
+            ],
+        },
+        "output_contract": {"columns": ["prediction"], "prediction_column": "prediction"},
+        "training": {},
+        "runtime": {},
+    }
+
+    with pytest.raises(pipeline_requests_module.PipelineToolValidationError, match="pipeline_manifest is invalid") as exc_info:
+        pipeline_requests_module.normalize_pipeline_manifest(manifest)
+
+    assert any(issue["pointer"].endswith(".omission_policy") for issue in exc_info.value.issues)
+
+
+def test_prediction_input_integrity_measures_zero_overlap_without_replacing_codex_judgment(tmp_path: Path) -> None:
+    (tmp_path / "application.csv").write_text("entity_id\n1\n2\n", encoding="utf-8")
+    (tmp_path / "history.csv").write_text("entity_id,event\n99,a\n", encoding="utf-8")
+
+    report = inspect_prediction_input_integrity(
+        input_dir=tmp_path,
+        input_contract={
+            "required_tables": [
+                {"name": "application", "role": "primary", "join_keys": ["entity_id"]},
+                {
+                    "name": "history",
+                    "role": "history",
+                    "join_keys": ["entity_id"],
+                    "coverage_reference": {
+                        "entity_coverage_rate": 0.8,
+                        "review_if_absolute_delta_exceeds": 0.1,
+                    },
+                },
+            ]
+        },
+    )
+
+    assert report["status"] == "measured"
+    history = next(item for item in report["table_profiles"] if item["table_name"] == "history")
+    assert history["entity_coverage_rate"] == 0.0
+    assert history["training_reference_comparison"]["absolute_delta"] == -0.8
+    assert any("zero join-key coverage" in item for item in report["attention_reasons"])
+    assert report["hard_errors"] == []
 
 
 def test_pipeline_smoke_uses_required_tables_selftest_input_dir(tmp_path: Path) -> None:
@@ -7767,8 +7996,10 @@ def test_prediction_pipeline_worker_runs_multitable_input_dir(tmp_path: Path) ->
         "with open(input_dir / 'bureau.csv', encoding='utf-8', newline='') as f:\n"
         "    bureau_rows = list(csv.DictReader(f))\n"
         "with open(args.output, 'w', encoding='utf-8', newline='') as dst:\n"
-        "    dst.write('application_rows,bureau_rows\\n')\n"
-        "    dst.write(f'{len(app_rows)},{len(bureau_rows)}\\n')\n",
+        "    writer = csv.DictWriter(dst, fieldnames=['SK_ID_CURR', 'prediction'])\n"
+        "    writer.writeheader()\n"
+        "    for row in app_rows:\n"
+        "        writer.writerow({'SK_ID_CURR': row['SK_ID_CURR'], 'prediction': len(bureau_rows) / 10})\n",
         encoding="utf-8",
     )
     bundle_path = tmp_path / "multitable_pipeline.zip"
@@ -7777,9 +8008,44 @@ def test_prediction_pipeline_worker_runs_multitable_input_dir(tmp_path: Path) ->
 
     with sessionmaker(engine)() as db:
         project = Project(id="p_multitable_pipeline_run", name="Multitable Pipeline Run")
-        db.add(project)
+        managed_workspace = tmp_path / "managed-prediction-workspace"
+        managed_workspace.mkdir()
+        managed_session = AgentSession(
+            id="ags_multitable_managed_prediction",
+            project_id=project.id,
+            goal_text="Manage multitable prediction.",
+            workspace_path=str(managed_workspace),
+            status="between_turns",
+        )
+        db.add_all([project, managed_session])
         db.flush()
         version = next_artifact_version(db, project.id, "prediction_pipeline", "multitable_pipeline")
+        pipeline_manifest = {
+            "schema_version": "pipeline_manifest.v1",
+            "input_contract": {
+                "required_tables": [
+                    {
+                        "name": "application",
+                        "role": "primary",
+                        "columns": [],
+                        "join_keys": ["SK_ID_CURR"],
+                        "optional": False,
+                    },
+                    {
+                        "name": "bureau",
+                        "role": "history",
+                        "columns": [],
+                        "join_keys": ["SK_ID_CURR"],
+                        "optional": False,
+                    },
+                ]
+            },
+            "output_contract": {
+                "columns": ["SK_ID_CURR", "prediction"],
+                "id_columns": ["SK_ID_CURR"],
+                "prediction_column": "prediction",
+            },
+        }
         target_dir, stored, content_hash = store.store_existing_file(
             org_id=project.org_id,
             project_id=project.id,
@@ -7788,7 +8054,11 @@ def test_prediction_pipeline_worker_runs_multitable_input_dir(tmp_path: Path) ->
             version=version,
             source_path=bundle_path,
             filename="multitable_pipeline.zip",
-            metadata={"project_id": project.id, "primary_path": str(bundle_path)},
+            metadata={
+                "project_id": project.id,
+                "primary_path": str(bundle_path),
+                "pipeline_manifest": pipeline_manifest,
+            },
         )
         pipeline_artifact = register_artifact(
             db,
@@ -7798,7 +8068,11 @@ def test_prediction_pipeline_worker_runs_multitable_input_dir(tmp_path: Path) ->
             uri=str(target_dir),
             content_hash=content_hash,
             size_bytes=stored.size_bytes,
-            metadata={"project_id": project.id, "primary_path": str(target_dir / "multitable_pipeline.zip")},
+            metadata={
+                "project_id": project.id,
+                "primary_path": str(target_dir / "multitable_pipeline.zip"),
+                "pipeline_manifest": pipeline_manifest,
+            },
             version=version,
             org_id=project.org_id,
         )
@@ -7846,13 +8120,74 @@ def test_prediction_pipeline_worker_runs_multitable_input_dir(tmp_path: Path) ->
         prediction_artifact = db.get(Artifact, output["prediction_batch_artifact_id"])
         assert prediction_artifact is not None
         assert output["row_source"].endswith("input_dir")
-        assert artifact_primary_path(prediction_artifact).read_text(encoding="utf-8") == "application_rows,bureau_rows\n2,3\n"
+        assert artifact_primary_path(prediction_artifact).read_text(encoding="utf-8") == (
+            "SK_ID_CURR,prediction\n1,0.3\n2,0.3\n"
+        )
         metadata = loads_json(prediction_artifact.metadata_json, {})
         assert metadata["input_artifact_ids_by_table"] == {
             "application": application_artifact.id,
             "bureau": bureau_artifact.id,
         }
         assert metadata["batch_kind"] == "external_test"
+        integrity_artifact = db.get(Artifact, output["prediction_input_integrity_artifact_id"])
+        assert integrity_artifact is not None
+        integrity = loads_json(artifact_primary_path(integrity_artifact).read_text(encoding="utf-8"), {})
+        assert integrity["status"] == "measured"
+        bureau_profile = next(item for item in integrity["table_profiles"] if item["table_name"] == "bureau")
+        assert bureau_profile["entity_coverage_rate"] == 1.0
+        assert bureau_profile["rows_per_table_entity"] == 1.5
+
+        missing_history_job = Job(
+            id="job_multitable_missing_history",
+            project_id=project.id,
+            job_type="run_prediction_pipeline",
+            input_json=dumps_json(
+                {
+                    "pipeline_artifact_id": pipeline_artifact.id,
+                    "input_artifact_ids_by_table": {"application": application_artifact.id},
+                }
+            ),
+            status="running",
+        )
+        db.add(missing_history_job)
+        db.commit()
+        with pytest.raises(ValueError, match="missing required table.*bureau"):
+            run_prediction_pipeline_handler(db, missing_history_job, store)
+
+        managed_job = Job(
+            id="job_multitable_managed_prediction",
+            project_id=project.id,
+            job_type="run_prediction_pipeline",
+            input_json=dumps_json(
+                {
+                    "pipeline_artifact_id": pipeline_artifact.id,
+                    "input_artifact_ids_by_table": {
+                        "application": application_artifact.id,
+                        "bureau": bureau_artifact.id,
+                    },
+                    "agent_managed": True,
+                    "agent_session_id": managed_session.id,
+                    "batch_kind": "external_test",
+                }
+            ),
+            status="running",
+        )
+        db.add(managed_job)
+        db.commit()
+
+        managed_output = run_prediction_pipeline_handler(db, managed_job, store)
+        db.commit()
+
+        assert managed_output["job_status"] == "waiting_for_agent_review"
+        assert managed_output["prediction_integrity_review_status"] == "waiting_for_codex"
+        result_context_artifact = db.get(Artifact, managed_output["prediction_result_context_artifact_id"])
+        assert result_context_artifact is not None
+        result_context = loads_json(artifact_primary_path(result_context_artifact).read_text(encoding="utf-8"), {})
+        assert result_context["prediction_operation_job_id"] == managed_job.id
+        result_dir = managed_workspace / ".tablex" / "prediction_operations" / managed_job.id / "result"
+        assert (result_dir / "context.json").is_file()
+        assert (result_dir / "predictions.csv").is_symlink()
+        assert any((managed_workspace / ".tablex" / "inbox").glob("*_observation.json"))
 
 
 def test_prediction_pipeline_runtime_failure_is_summarized_and_returned_to_codex(tmp_path: Path) -> None:
@@ -7994,6 +8329,37 @@ def test_prediction_pipeline_runtime_failure_is_summarized_and_returned_to_codex
             entry for entry in duplicate_inbox_entries if entry.get("type") == "prediction_pipeline_runtime_failed"
         ]
         assert len(duplicate_runtime_failure_entries) == 1
+
+        managed_failure_job = Job(
+            id="job_predict_failure_agent_managed",
+            project_id=project.id,
+            job_type="run_prediction_pipeline",
+            input_json=dumps_json(
+                {
+                    "pipeline_artifact_id": pipeline_artifact.id,
+                    "input_artifact_id": prediction_input.id,
+                    "agent_managed": True,
+                    "agent_session_id": session.id,
+                }
+            ),
+            status="running",
+        )
+        db.add(managed_failure_job)
+        db.commit()
+
+        managed_failure_output = run_prediction_pipeline_handler(db, managed_failure_job, store)
+        db.commit()
+
+        assert managed_failure_output["job_status"] == "waiting_for_agent"
+        assert managed_failure_output["prediction_integrity_review_status"] == "codex_investigating"
+        result_context = db.get(Artifact, managed_failure_output["prediction_result_context_artifact_id"])
+        assert result_context is not None
+        result_payload = loads_json(artifact_primary_path(result_context).read_text(encoding="utf-8"), {})
+        assert result_payload["stage"] == "pipeline_execution"
+        assert result_payload["details"]["exit_code"] == 1
+        assert any(
+            entry.get("type") == "prediction_execution_needs_codex" for entry in list_inbox_entries(workspace)
+        )
 
 
 def test_prediction_pipeline_worker_passes_history_for_time_series_features(tmp_path: Path) -> None:

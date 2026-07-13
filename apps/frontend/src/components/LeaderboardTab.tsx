@@ -489,6 +489,11 @@ export function LeaderboardTab({
   const predictionPanelRef = React.useRef<HTMLDivElement | null>(null);
   const [predictionDatasetId, setPredictionDatasetId] = React.useState<string>("");
   const [predictionResultArtifactId, setPredictionResultArtifactId] = React.useState<string | null>(null);
+  const [predictionResultContextArtifactId, setPredictionResultContextArtifactId] = React.useState<string | null>(null);
+  const [predictionReviewStatus, setPredictionReviewStatus] = React.useState<string | null>(null);
+  const [predictionReviewSummary, setPredictionReviewSummary] = React.useState<string | null>(null);
+  const [predictionOperationJobId, setPredictionOperationJobId] = React.useState<string | null>(null);
+  const [predictionOperationRunId, setPredictionOperationRunId] = React.useState<string | null>(null);
   const [predictionUploadedInputs, setPredictionUploadedInputs] = React.useState<Record<string, UploadedPredictionInput>>({});
   const [predictionUploadError, setPredictionUploadError] = React.useState<string | null>(null);
   const [predictionDragKey, setPredictionDragKey] = React.useState<string | null>(null);
@@ -510,6 +515,52 @@ export function LeaderboardTab({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [predictionEntry]);
+
+  React.useEffect(() => {
+    if (!predictionOperationJobId) return;
+    let cancelled = false;
+    let timer: number | null = null;
+    const poll = async () => {
+      try {
+        const operation = await api<Job>(`/api/jobs/${predictionOperationJobId}`);
+        if (cancelled) return;
+        if (operation.status === "succeeded") {
+          const artifactId =
+            textField(operation.output.artifact_id) ?? textField(operation.output.prediction_batch_artifact_id);
+          setPredictionResultContextArtifactId(textField(operation.output.prediction_result_context_artifact_id));
+          setPredictionReviewStatus(textField(operation.output.prediction_integrity_review_status));
+          setPredictionReviewSummary(textField(objectRecord(operation.output.codex_review)?.summary));
+          setPredictionResultArtifactId(artifactId);
+          setPredictionOperationJobId(null);
+          setPredictionOperationRunId(null);
+          if (artifactId) await loadPreview(artifactId);
+          return;
+        }
+        if (["failed", "cancelled", "timed_out"].includes(operation.status)) {
+          setPredictionUploadError(operation.error_message ?? `${text.leaderboardActionPredict} ${operation.status}.`);
+          setPredictionReviewStatus("rejected");
+          setPredictionOperationJobId(null);
+          setPredictionOperationRunId(null);
+          return;
+        }
+        setPredictionReviewStatus(
+          operation.status === "running"
+            ? "running_pipeline"
+            : operation.status === "waiting_for_agent_review"
+              ? "waiting_for_codex_review"
+              : "waiting_for_codex"
+        );
+      } catch (err) {
+        if (!cancelled) setPredictionUploadError(err instanceof Error ? err.message : String(err));
+      }
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 1500);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [predictionOperationJobId, text.leaderboardActionPredict]);
 
   async function loadPreview(artifactId: string) {
     setPreviewLoadingId(artifactId);
@@ -612,10 +663,12 @@ export function LeaderboardTab({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    const completed = await runQueuedJobAndWait(job, { label: text.leaderboardActionPredict });
-    const artifactId = textField(completed.output.artifact_id) ?? textField(completed.output.prediction_batch_artifact_id);
-    setPredictionResultArtifactId(artifactId);
-    if (artifactId) await loadPreview(artifactId);
+    setPredictionReviewStatus("waiting_for_codex");
+    setPredictionReviewSummary(null);
+    setPredictionResultArtifactId(null);
+    setPredictionResultContextArtifactId(null);
+    setPredictionOperationJobId(job.id);
+    setPredictionOperationRunId(entry.run_id);
   }
 
   async function requestPipelineExport(entry: LeaderboardEntry) {
@@ -1048,10 +1101,17 @@ export function LeaderboardTab({
                     </button>
                     <button
                       className="leaderboard-row-primary"
-                      disabled={busy}
+                      disabled={busy || Boolean(predictionOperationJobId && predictionOperationRunId !== entry.run_id)}
                       onClick={() => {
+                        if (predictionOperationJobId && predictionOperationRunId === entry.run_id) {
+                          setPredictionEntry(entry);
+                          return;
+                        }
                         setPredictionEntry(entry);
                         setPredictionResultArtifactId(null);
+                        setPredictionResultContextArtifactId(null);
+                        setPredictionReviewStatus(null);
+                        setPredictionReviewSummary(null);
                         setPredictionUploadedInputs({});
                         setPredictionDatasetId("");
                         setPredictionUploadError(null);
@@ -1290,24 +1350,54 @@ export function LeaderboardTab({
               <div className="button-row">
                 <button
                   className="primary-button"
-                  disabled={busy || !predictionEntry.pipeline_artifact_id || !predictionRunReady(predictionEntry, predictionDatasetId, predictionUploadedInputs)}
+                  disabled={
+                    busy ||
+                    Boolean(predictionOperationJobId) ||
+                    !predictionEntry.pipeline_artifact_id ||
+                    !predictionRunReady(predictionEntry, predictionDatasetId, predictionUploadedInputs)
+                  }
                   onClick={() => void runAction(() => runPredictionForEntry(predictionEntry))}
                   type="button"
                 >
-                  {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                  {busy || predictionOperationJobId ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
                   {text.predictionRun}
                 </button>
                 <button className="secondary-button" type="button" onClick={() => setPredictionEntry(null)}>
                   {text.close}
                 </button>
-                {predictionResultArtifactId ? (
+                {predictionResultArtifactId && predictionReviewStatus !== "rejected" ? (
                   <a className="secondary-button" href={`${apiBase}/api/artifacts/${predictionResultArtifactId}/download`}>
                     <Download size={16} />
                     {text.predictionDownload}
                   </a>
                 ) : null}
               </div>
-              {predictionResultArtifactId ? <span className="badge success">{text.predictionCompleted}</span> : null}
+              {predictionResultArtifactId && predictionReviewStatus !== "rejected" ? (
+                <span className="badge success">{text.predictionCompleted}</span>
+              ) : null}
+              {predictionReviewStatus === "waiting_for_codex" ? (
+                <button
+                  className="badge warning"
+                  disabled={!predictionResultContextArtifactId}
+                  onClick={() => predictionResultContextArtifactId && void loadPreview(predictionResultContextArtifactId)}
+                  type="button"
+                >
+                  {text.predictionCodexReviewPending}
+                </button>
+              ) : null}
+              {predictionReviewStatus === "running_pipeline" ? (
+                <span className="badge warning">{text.predictionPipelineRunning}</span>
+              ) : null}
+              {predictionReviewStatus === "waiting_for_codex_review" ? (
+                <span className="badge warning">{text.predictionCodexReviewingResult}</span>
+              ) : null}
+              {predictionReviewStatus === "usable_with_caveats" ? (
+                <span className="badge warning">{text.predictionCodexReviewCaveats}</span>
+              ) : null}
+              {predictionReviewStatus === "rejected" ? (
+                <span className="badge warning">{text.predictionCodexReviewRejected}</span>
+              ) : null}
+              {predictionReviewSummary ? <p className="prediction-input-note">{predictionReviewSummary}</p> : null}
             </div>
             </div>
           ) : null}

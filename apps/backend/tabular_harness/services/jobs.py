@@ -162,6 +162,17 @@ def mark_job_succeeded(job: Job, output: dict[str, Any] | None = None) -> None:
     job.updated_at = utc_now()
 
 
+def mark_job_waiting(job: Job, status: str, output: dict[str, Any] | None = None) -> None:
+    if status not in {"waiting_for_agent", "waiting_for_agent_review"}:
+        raise ValueError(f"Unsupported waiting job status: {status}")
+    job.status = status
+    job.output_json = dumps_json(output or {})
+    job.locked_by = None
+    job.locked_at = None
+    job.ended_at = None
+    job.updated_at = utc_now()
+
+
 def mark_job_failed(job: Job, error_message: str, output: dict[str, Any] | None = None) -> None:
     job.status = "failed"
     job.error_message = error_message

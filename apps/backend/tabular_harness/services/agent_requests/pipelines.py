@@ -17,14 +17,25 @@ from sqlalchemy.orm import Session
 
 from tabular_harness.core.config import get_settings
 from tabular_harness.core.json import dumps_json, loads_json
-from tabular_harness.models.entities import AgentSession, ExperimentRun, Project, utc_now
+from tabular_harness.models.entities import (
+    AgentSession,
+    Artifact,
+    ExperimentRun,
+    Job,
+    Project,
+    utc_now,
+)
+from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import (
     LocalArtifactStore,
     create_lineage_edge,
     next_artifact_version,
     register_artifact,
 )
-from tabular_harness.services.jobs import create_job
+from tabular_harness.services.jobs import create_job, mark_job_succeeded
+from tabular_harness.services.prediction_pipeline_contract import (
+    prediction_table_is_safely_optional,
+)
 from tabular_harness.services.research_plans import attach_research_plan_artifact
 
 SESSION_INTERNAL_DIR = ".tablex"
@@ -114,60 +125,88 @@ def process_pipeline_tool_requests(
                     f"expected {PIPELINE_REQUEST_SCHEMA_VERSION}"
                 )
             operation = str(request.get("operation") or "").strip()
-            if operation != "register_prediction_pipeline":
-                raise ValueError(f"Unsupported pipeline request operation: {operation or '<missing>'}")
-            payload, compatibility_warnings = normalize_pipeline_request_payload(request)
             request_hash = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
-            job = create_job(
-                db,
-                job_type="register_prediction_pipeline",
-                project_id=project.id,
-                input_payload={
-                    "schema_version": "prediction_pipeline_registration_job.v1",
-                    "agent_session_id": session.id,
+            if operation == "register_prediction_pipeline":
+                payload, compatibility_warnings = normalize_pipeline_request_payload(request)
+                job = create_job(
+                    db,
+                    job_type="register_prediction_pipeline",
+                    project_id=project.id,
+                    input_payload={
+                        "schema_version": "prediction_pipeline_registration_job.v1",
+                        "agent_session_id": session.id,
+                        "request_id": request_id,
+                        "operation": operation,
+                        "request_hash": request_hash,
+                        "request_workspace_relative_path": str(path.relative_to(workspace)),
+                        "ack_workspace_relative_path": str(ack_path.relative_to(workspace)),
+                        "payload": payload,
+                        "compatibility_warnings": compatibility_warnings,
+                    },
+                    context={
+                        "source": "codex_main_session",
+                        "agent_session_id": session.id,
+                        "workspace_path": str(workspace),
+                    },
+                    policy={
+                        "execution": "local_worker",
+                        "reason": "prediction pipeline smoke validation can install requirements and execute code",
+                    },
+                    priority=35,
+                    max_attempts=1,
+                    created_by="codex_main_session",
+                )
+                ack = {
+                    "schema_version": PIPELINE_ACK_SCHEMA_VERSION,
                     "request_id": request_id,
                     "operation": operation,
+                    "status": "queued",
+                    "job_id": job.id,
                     "request_hash": request_hash,
-                    "request_workspace_relative_path": str(path.relative_to(workspace)),
-                    "ack_workspace_relative_path": str(ack_path.relative_to(workspace)),
-                    "payload": payload,
-                    "compatibility_warnings": compatibility_warnings,
-                },
-                context={
-                    "source": "codex_main_session",
-                    "agent_session_id": session.id,
-                    "workspace_path": str(workspace),
-                },
-                policy={
-                    "execution": "local_worker",
-                    "reason": "prediction pipeline smoke validation can install requirements and execute code",
-                },
-                priority=35,
-                max_attempts=1,
-                created_by="codex_main_session",
-            )
-            ack = {
-                "schema_version": PIPELINE_ACK_SCHEMA_VERSION,
-                "request_id": request_id,
-                "operation": operation,
-                "status": "queued",
-                "job_id": job.id,
-                "request_hash": request_hash,
-                "accepted_at": utc_now().isoformat(),
-                "message": "Prediction pipeline registration was accepted and queued for worker validation.",
-            }
-            if compatibility_warnings:
-                ack["compatibility_warnings"] = compatibility_warnings
+                    "accepted_at": utc_now().isoformat(),
+                    "message": "Prediction pipeline registration was accepted and queued for worker validation.",
+                }
+                if compatibility_warnings:
+                    ack["compatibility_warnings"] = compatibility_warnings
+            elif operation == "execute_prediction":
+                ack = execute_agent_managed_prediction_request(
+                    db,
+                    project=project,
+                    session=session,
+                    request=request,
+                    request_id=request_id,
+                    request_hash=request_hash,
+                )
+            elif operation == "complete_prediction_review":
+                ack = complete_agent_managed_prediction_review(
+                    db,
+                    store=store,
+                    project=project,
+                    session=session,
+                    request=request,
+                    request_id=request_id,
+                    request_hash=request_hash,
+                )
+            else:
+                raise ValueError(f"Unsupported pipeline request operation: {operation or '<missing>'}")
             write_pipeline_tool_ack(ack_path, ack)
             if append_session_event_fn is not None:
                 append_session_event_fn(
                     db,
                     session,
                     source="tablex_sidecar",
-                    event_type="pipeline_request_queued",
+                    event_type=(
+                        "pipeline_request_queued"
+                        if operation == "register_prediction_pipeline"
+                        else "prediction_operation_command_accepted"
+                    ),
                     role="harness",
-                    title="Prediction pipeline registration queued",
-                    content=f"Queued pipeline request `{operation}` from `{path.relative_to(workspace)}`.",
+                    title=(
+                        "Prediction pipeline registration queued"
+                        if operation == "register_prediction_pipeline"
+                        else "Prediction operation command accepted"
+                    ),
+                    content=f"Accepted pipeline request `{operation}` from `{path.relative_to(workspace)}`.",
                     payload=ack,
                     update_heartbeat=False,
                 )
@@ -195,12 +234,212 @@ def process_pipeline_tool_requests(
                 )
 
 
+def execute_agent_managed_prediction_request(
+    db: Session,
+    *,
+    project: Project,
+    session: AgentSession,
+    request: dict[str, Any],
+    request_id: str,
+    request_hash: str,
+) -> dict[str, Any]:
+    payload = request.get("payload")
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be an object")
+    operation_job_id = str(payload.get("prediction_operation_job_id") or "").strip()
+    job = db.get(Job, operation_job_id)
+    if job is None or job.project_id != project.id or job.job_type != "run_prediction_pipeline":
+        raise ValueError("payload.prediction_operation_job_id must reference this project's prediction operation")
+    if job.status not in {"waiting_for_agent", "waiting_for_agent_review"}:
+        raise ValueError(f"Prediction operation cannot execute from status `{job.status}`")
+    decision_context = payload.get("decision_context")
+    if not isinstance(decision_context, str) or not decision_context.strip():
+        raise ValueError("payload.decision_context must explain why the prediction is ready to execute")
+    execution_overrides = payload.get("execution_overrides")
+    if execution_overrides is not None and not isinstance(execution_overrides, dict):
+        raise ValueError("payload.execution_overrides must be an object when provided")
+    job_input = loads_json(job.input_json, {})
+    allowed_overrides = {
+        "pipeline_artifact_id",
+        "dataset_snapshot_id",
+        "input_artifact_id",
+        "input_artifact_ids_by_table",
+        "history_artifact_id",
+        "batch_kind",
+        "deployment_id",
+        "timeout_seconds",
+    }
+    if isinstance(execution_overrides, dict):
+        unknown = sorted(set(execution_overrides) - allowed_overrides)
+        if unknown:
+            raise ValueError("payload.execution_overrides contains unsupported field(s): " + ", ".join(unknown))
+        job_input.update(execution_overrides)
+    job_input["agent_managed"] = True
+    job_input["agent_session_id"] = session.id
+    job.input_json = dumps_json(job_input)
+    context = loads_json(job.context_json, {})
+    context["codex_preflight"] = {
+        "request_id": request_id,
+        "request_hash": request_hash,
+        "decision_context": decision_context.strip(),
+        "evidence_artifact_ids": require_project_artifact_ids(
+            db,
+            project=project,
+            value=payload.get("evidence_artifact_ids"),
+            field_name="payload.evidence_artifact_ids",
+        ),
+        "submitted_at": utc_now().isoformat(),
+    }
+    job.context_json = dumps_json(context)
+    job.status = "queued"
+    job.error_message = None
+    job.locked_by = None
+    job.locked_at = None
+    job.ended_at = None
+    job.updated_at = utc_now()
+    return {
+        "schema_version": PIPELINE_ACK_SCHEMA_VERSION,
+        "request_id": request_id,
+        "operation": "execute_prediction",
+        "status": "queued",
+        "job_id": job.id,
+        "request_hash": request_hash,
+        "accepted_at": utc_now().isoformat(),
+        "message": "The Codex-managed prediction operation was queued for canonical pipeline execution.",
+    }
+
+
+def complete_agent_managed_prediction_review(
+    db: Session,
+    *,
+    store: LocalArtifactStore,
+    project: Project,
+    session: AgentSession,
+    request: dict[str, Any],
+    request_id: str,
+    request_hash: str,
+) -> dict[str, Any]:
+    payload = request.get("payload")
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be an object")
+    operation_job_id = str(payload.get("prediction_operation_job_id") or "").strip()
+    job = db.get(Job, operation_job_id)
+    if job is None or job.project_id != project.id or job.job_type != "run_prediction_pipeline":
+        raise ValueError("payload.prediction_operation_job_id must reference this project's prediction operation")
+    if job.status not in {"waiting_for_agent", "waiting_for_agent_review"}:
+        raise ValueError(f"Prediction operation cannot be completed from status `{job.status}`")
+    verdict = str(payload.get("verdict") or "").strip()
+    if verdict not in {"trustworthy", "usable_with_caveats", "rejected"}:
+        raise ValueError("payload.verdict must be trustworthy, usable_with_caveats, or rejected")
+    if job.status == "waiting_for_agent" and verdict != "rejected":
+        raise ValueError("A prediction without a completed execution can only be reviewed as rejected")
+    summary = payload.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("payload.summary must contain the user-facing judgment")
+    output = loads_json(job.output_json, {})
+    review_payload = {
+        "schema_version": "prediction_operation_codex_review.v1",
+        "project_id": project.id,
+        "prediction_operation_job_id": job.id,
+        "agent_session_id": session.id,
+        "request_id": request_id,
+        "request_hash": request_hash,
+        "verdict": verdict,
+        "summary": summary.strip(),
+        "evidence_artifact_ids": require_project_artifact_ids(
+            db,
+            project=project,
+            value=payload.get("evidence_artifact_ids"),
+            field_name="payload.evidence_artifact_ids",
+        ),
+        "actions": require_string_list(payload.get("actions"), "payload.actions"),
+        "reviewed_at": utc_now().isoformat(),
+    }
+    review_artifact = store_json_artifact(
+        db,
+        store,
+        project_id=project.id,
+        asset_type="prediction_review",
+        name=f"prediction_review_{job.id}",
+        filename="prediction_review.json",
+        payload=review_payload,
+        metadata={
+            "project_id": project.id,
+            "prediction_operation_job_id": job.id,
+            "agent_session_id": session.id,
+            "verdict": verdict,
+        },
+        created_by="codex_main_session",
+    )
+    prediction_artifact_id = output.get("prediction_batch_artifact_id")
+    prediction_artifact = db.get(Artifact, prediction_artifact_id) if isinstance(prediction_artifact_id, str) else None
+    if prediction_artifact is not None and prediction_artifact.project_id == project.id:
+        prediction_metadata = loads_json(prediction_artifact.metadata_json, {})
+        prediction_metadata["prediction_integrity_review_status"] = verdict
+        prediction_metadata["prediction_review_artifact_id"] = review_artifact.id
+        prediction_artifact.metadata_json = dumps_json(prediction_metadata)
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=prediction_artifact.id,
+            to_asset_type="artifact",
+            to_asset_id=review_artifact.id,
+            relation_type="reviewed_by_codex",
+            metadata={"prediction_operation_job_id": job.id, "verdict": verdict},
+            org_id=project.org_id,
+        )
+    result_context_artifact_id = output.get("prediction_result_context_artifact_id")
+    if isinstance(result_context_artifact_id, str):
+        create_lineage_edge(
+            db,
+            project_id=project.id,
+            from_asset_type="artifact",
+            from_asset_id=result_context_artifact_id,
+            to_asset_type="artifact",
+            to_asset_id=review_artifact.id,
+            relation_type="supports_prediction_review",
+            metadata={"prediction_operation_job_id": job.id},
+            org_id=project.org_id,
+        )
+    output["prediction_integrity_review_status"] = verdict
+    output["prediction_review_artifact_id"] = review_artifact.id
+    output["codex_review"] = review_payload
+    mark_job_succeeded(job, output)
+    return {
+        "schema_version": PIPELINE_ACK_SCHEMA_VERSION,
+        "request_id": request_id,
+        "operation": "complete_prediction_review",
+        "status": "completed",
+        "job_id": job.id,
+        "verdict": verdict,
+        "request_hash": request_hash,
+        "accepted_at": utc_now().isoformat(),
+        "message": "The Codex-managed prediction review was recorded.",
+    }
+
+
 def pipeline_tool_error_payload(exc: Exception) -> dict[str, Any]:
     payload: dict[str, Any] = {"type": type(exc).__name__, "message": str(exc)}
     issues = getattr(exc, "issues", None)
     if isinstance(issues, list):
         payload["issues"] = issues
     return payload
+
+
+def require_project_artifact_ids(
+    db: Session,
+    *,
+    project: Project,
+    value: Any,
+    field_name: str,
+) -> list[str]:
+    artifact_ids = require_string_list(value, field_name)
+    for artifact_id in artifact_ids:
+        artifact = db.get(Artifact, artifact_id)
+        if artifact is None or artifact.project_id != project.id:
+            raise ValueError(f"{field_name} contains an artifact outside this project: {artifact_id}")
+    return artifact_ids
 
 
 def normalize_pipeline_request_payload(request: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -321,6 +560,7 @@ def execute_pipeline_registration_request(
         raise ValueError("payload.manifest or pipeline_manifest.json must be an object")
     manifest, manifest_warnings = normalize_pipeline_manifest(submitted_manifest)
     compatibility_warnings.extend(manifest_warnings)
+    validate_pipeline_omission_policy_artifacts(db, project=project, manifest=manifest)
     run_ids = require_string_list(payload.get("experiment_run_ids", []), "payload.experiment_run_ids")
     if len(run_ids) != 1:
         raise ValueError(
@@ -621,6 +861,41 @@ def normalize_pipeline_required_tables(value: Any) -> tuple[list[dict[str, Any]]
             optional_value = table.get(optional_key)
             table[optional_key] = optional_value.strip() if isinstance(optional_value, str) and optional_value.strip() else None
         table["optional"] = bool(table.get("optional"))
+        if table["optional"] and not prediction_table_is_safely_optional(table):
+            issues.append(
+                {
+                    "pointer": f"{pointer}.omission_policy",
+                    "message": (
+                        "is required when optional=true and must declare a validated fallback smoke plus an "
+                        "evidence artifact; otherwise the table must be required"
+                    ),
+                }
+            )
+        coverage_reference = table.get("coverage_reference")
+        if coverage_reference is not None:
+            if not isinstance(coverage_reference, dict):
+                issues.append({"pointer": f"{pointer}.coverage_reference", "message": "must be an object"})
+            else:
+                coverage_rate = coverage_reference.get("entity_coverage_rate")
+                if not isinstance(coverage_rate, int | float) or isinstance(coverage_rate, bool) or not 0 <= float(coverage_rate) <= 1:
+                    issues.append(
+                        {
+                            "pointer": f"{pointer}.coverage_reference.entity_coverage_rate",
+                            "message": "must be a number between 0 and 1",
+                        }
+                    )
+                review_delta = coverage_reference.get("review_if_absolute_delta_exceeds")
+                if review_delta is not None and (
+                    not isinstance(review_delta, int | float)
+                    or isinstance(review_delta, bool)
+                    or not 0 <= float(review_delta) <= 1
+                ):
+                    issues.append(
+                        {
+                            "pointer": f"{pointer}.coverage_reference.review_if_absolute_delta_exceeds",
+                            "message": "must be a number between 0 and 1 when provided",
+                        }
+                    )
         normalized.append(table)
     return normalized, issues
 
@@ -841,6 +1116,27 @@ def pipeline_capabilities(workspace_dir: Path, metric_claim_consistency: dict[st
         "prediction_enabled": True,
         "export_ready": export_files_ready and metric_claim_consistency.get("claims_match") is True,
     }
+
+
+def validate_pipeline_omission_policy_artifacts(
+    db: Session,
+    *,
+    project: Project,
+    manifest: dict[str, Any],
+) -> None:
+    input_contract = manifest.get("input_contract")
+    tables = input_contract.get("required_tables") if isinstance(input_contract, dict) else None
+    for index, table in enumerate(tables if isinstance(tables, list) else []):
+        if not isinstance(table, dict) or not prediction_table_is_safely_optional(table):
+            continue
+        policy = table.get("omission_policy")
+        artifact_id = policy.get("evidence_artifact_id") if isinstance(policy, dict) else None
+        artifact = db.get(Artifact, artifact_id) if isinstance(artifact_id, str) else None
+        if artifact is None or artifact.project_id != project.id:
+            raise ValueError(
+                f"pipeline_manifest.input_contract.required_tables/{index}.omission_policy.evidence_artifact_id "
+                "must reference a registered artifact in this project"
+            )
 
 
 def smoke_validate_prediction_pipeline(
@@ -1133,7 +1429,7 @@ def smoke_input_dir_for_pipeline(
             if isinstance(column.get("name"), str) and column.get("required", True) is not False
         ]
         if not source_path.is_file():
-            if bool(table.get("optional")):
+            if prediction_table_is_safely_optional(table):
                 continue
             issues.append(
                 pipeline_tool_issue(

@@ -71,6 +71,7 @@ from tabular_harness.services.agent_sessions import (
     pipeline_acks_dir,
     pipeline_requests_dir,
     prepare_session_workspace,
+    process_pipeline_tool_requests,
     progress_request_path,
     register_agent_session_attention_chat_turn,
     user_instructions_inbox_path,
@@ -161,6 +162,83 @@ def run_queued_job(client: TestClient, job_id: str) -> dict[str, Any]:
         completed = worker.run_job(db, job)
         assert completed.status == "succeeded", completed.error_message
         return loads_json(completed.output_json, {})
+
+
+def run_codex_managed_prediction(client: TestClient, *, workspace: Path, job_id: str) -> dict[str, Any]:
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        job = db.get(Job, job_id)
+        assert job is not None
+        project = db.get(Project, job.project_id)
+        session = db.scalar(
+            select(AgentSession)
+            .where(AgentSession.project_id == job.project_id)
+            .order_by(AgentSession.created_at.desc())
+            .limit(1)
+        )
+        assert project is not None and session is not None
+        execute_id = f"execute_{job.id}"
+        pipeline_requests_dir(workspace).mkdir(parents=True, exist_ok=True)
+        (pipeline_requests_dir(workspace) / f"{execute_id}.json").write_text(
+            dumps_json(
+                {
+                    "schema_version": "tablex_pipeline_request.v1",
+                    "operation": "execute_prediction",
+                    "request_id": execute_id,
+                    "payload": {
+                        "prediction_operation_job_id": job.id,
+                        "decision_context": "Test Codex inspected the supplied prediction context and approved canonical execution.",
+                        "evidence_artifact_ids": [],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        process_pipeline_tool_requests(
+            db,
+            store=app.state.artifact_store,
+            project=project,
+            session=session,
+            workspace=workspace,
+        )
+        db.commit()
+        db.refresh(job)
+        assert job.status == "queued"
+        worker = create_default_worker(store=app.state.artifact_store)
+        executed = worker.run_job(db, job)
+        assert executed.status == "waiting_for_agent_review", executed.error_message
+        execution_output = loads_json(executed.output_json, {})
+        result_context_artifact_id = execution_output.get("prediction_result_context_artifact_id")
+        assert isinstance(result_context_artifact_id, str)
+        complete_id = f"complete_{job.id}"
+        (pipeline_requests_dir(workspace) / f"{complete_id}.json").write_text(
+            dumps_json(
+                {
+                    "schema_version": "tablex_pipeline_request.v1",
+                    "operation": "complete_prediction_review",
+                    "request_id": complete_id,
+                    "payload": {
+                        "prediction_operation_job_id": job.id,
+                        "verdict": "trustworthy",
+                        "summary": "Test Codex reviewed the actual result and found it suitable for this fixture.",
+                        "evidence_artifact_ids": [result_context_artifact_id],
+                        "actions": [],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        process_pipeline_tool_requests(
+            db,
+            store=app.state.artifact_store,
+            project=project,
+            session=session,
+            workspace=workspace,
+        )
+        db.commit()
+        db.refresh(job)
+        assert job.status == "succeeded"
+        return loads_json(job.output_json, {})
 
 
 def store_validated_prediction_pipeline(
@@ -4440,6 +4518,20 @@ def test_leaderboard_collapses_duplicate_metric_results_and_keeps_richer_row(tmp
     metrics = {"primary_metric_name": "roc_auc", "primary_metric_value": 0.7844664737034611, "roc_auc": 0.7844664737034611}
 
     with app.state.session_factory() as db:
+        workspace = tmp_path / "duplicate-leaderboard-agent"
+        workspace.mkdir()
+        db.add(
+            AgentSession(
+                id="ags_duplicate_leaderboard",
+                project_id=project_id,
+                session_type="main_autonomous",
+                status="between_turns",
+                autonomy_mode="full_auto",
+                runner_kind="codex_cli",
+                goal_text="Manage leaderboard prediction.",
+                workspace_path=str(workspace),
+            )
+        )
         rich_run = ExperimentRun(
             id="run_rich_duplicate",
             project_id=project_id,
@@ -4569,6 +4661,77 @@ def test_prediction_input_columns_reads_csv_and_parquet_headers(tmp_path: Path) 
     with duckdb.connect(database=":memory:") as connection:
         connection.execute("COPY (SELECT 1::INT AS x, 'A' AS row_id) TO ? (FORMAT PARQUET)", [str(parquet_path)])
     assert routes_module.prediction_input_columns(parquet_path) == ["x", "row_id"]
+
+
+def test_prediction_endpoint_creates_codex_managed_waiting_operation(tmp_path: Path) -> None:
+    client = make_client(tmp_path, api_agent_session_supervisor_enabled=False)
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = Project(id="p_codex_managed_prediction_api", name="Codex managed prediction API")
+        workspace = tmp_path / "codex-managed-prediction-api-workspace"
+        workspace.mkdir()
+        session = AgentSession(
+            id="ags_codex_managed_prediction_api",
+            project_id=project.id,
+            session_type="main_autonomous",
+            status="between_turns",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Manage API prediction.",
+            workspace_path=str(workspace),
+        )
+        db.add(project)
+        db.flush()
+        db.add(session)
+        db.flush()
+        pipeline = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project.id,
+            asset_type="prediction_pipeline",
+            name="api_managed_pipeline",
+            filename="pipeline.zip",
+            text="pipeline",
+            metadata={
+                "project_id": project.id,
+                "experiment_run_ids": [],
+                "pipeline_manifest": {"schema_version": "pipeline_manifest.v1"},
+            },
+        )
+        prediction_input = store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project.id,
+            asset_type="prediction_input",
+            name="api_managed_input",
+            filename="input.csv",
+            text="row_id,x\n1,2\n",
+            metadata={"project_id": project.id},
+        )
+        db.commit()
+
+    with app.state.session_factory() as db:
+        operation = routes_module.run_prediction_pipeline_endpoint(
+            project.id,
+            pipeline.id,
+            {"input_artifact_id": prediction_input.id, "batch_kind": "external_test", "locale": "en"},
+            SimpleNamespace(state=SimpleNamespace(user_id="local-user"), app=app),
+            db,
+            app.state.artifact_store,
+        )
+
+    assert operation["status"] == "waiting_for_agent"
+    assert operation["job_type"] == "run_prediction_pipeline"
+    with app.state.session_factory() as db:
+        job = db.get(Job, operation["id"])
+        assert job is not None
+        context = loads_json(job.context_json, {})
+        assert context["agent_session_id"] == session.id
+        assert context["prediction_context_artifact_id"]
+    operation_dir = workspace / ".tablex" / "prediction_operations" / operation["id"]
+    assert (operation_dir / "context.json").is_file()
+    assert any((operation_dir / "inputs").iterdir())
+    assert any((workspace / ".tablex" / "inbox").glob("*_request.json"))
 
 
 def test_prediction_input_parquet_fixed_profile_reports_rows_dtypes_and_key_checks(tmp_path: Path) -> None:
@@ -4749,7 +4912,9 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
             autonomy_mode="full_auto",
             runner_kind="codex_cli",
             goal_text="Register model results.",
+            workspace_path=str(tmp_path / "leaderboard-reconcile-agent"),
         )
+        Path(session.workspace_path).mkdir()
         db.add(session)
         db.flush()
         source_artifact = store_text_artifact(
@@ -4809,6 +4974,12 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
                         "as_of_column": "event_time",
                         "history_window": "365d",
                         "optional": True,
+                        "omission_policy": {
+                            "schema_version": "prediction_table_omission_policy.v1",
+                            "status": "validated",
+                            "fallback_smoke_status": "passed",
+                            "evidence_artifact_id": "art_history_omission_validation",
+                        },
                     },
                 ],
             },
@@ -4937,7 +5108,7 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
     assert predict_response.status_code == 200, predict_response.text
     predict_job = predict_response.json()
     assert predict_job["job_type"] == "run_prediction_pipeline"
-    assert predict_job["status"] == "queued"
+    assert predict_job["status"] == "waiting_for_agent"
     prediction_upload_response = client.post(
         f"/api/projects/{project_id}/prediction-inputs",
         data={"pipeline_artifact_id": pipeline_bundle.id, "table_name": "application", "batch_kind": "external_test"},
@@ -4995,7 +5166,7 @@ def test_leaderboard_read_does_not_reconcile_existing_run_into_chat_links(
     assert pilot_predict_response.status_code == 200, pilot_predict_response.text
     pilot_job = pilot_predict_response.json()
     assert pilot_job["job_type"] == "run_prediction_pipeline"
-    assert pilot_job["status"] == "queued"
+    assert pilot_job["status"] == "waiting_for_agent"
     with app.state.session_factory() as db:
         outcome_artifact = store_text_artifact(
             db,
@@ -5593,7 +5764,11 @@ def test_pilot_phase_vertical_loop_registers_pipeline_predicts_scores_and_notifi
         json={"dataset_snapshot_id": "ds_pilot_vertical_a", "as_of": "2026-07-06T00:00:00Z"},
     )
     assert predict_a_response.status_code == 200, predict_a_response.text
-    prediction_a_output = run_queued_job(client, predict_a_response.json()["id"])
+    prediction_a_output = run_codex_managed_prediction(
+        client,
+        workspace=workspace,
+        job_id=predict_a_response.json()["id"],
+    )
     assert prediction_a_output["pilot_prediction_batch_id"] is not None
     assert prediction_a_output["runtime_isolated"] is True
     assert "_pipeline_envs" in prediction_a_output["python_executable"]
@@ -5603,7 +5778,11 @@ def test_pilot_phase_vertical_loop_registers_pipeline_predicts_scores_and_notifi
         json={"dataset_snapshot_id": "ds_pilot_vertical_b", "as_of": "2026-07-07T00:00:00Z"},
     )
     assert predict_b_response.status_code == 200, predict_b_response.text
-    prediction_b_output = run_queued_job(client, predict_b_response.json()["id"])
+    prediction_b_output = run_codex_managed_prediction(
+        client,
+        workspace=workspace,
+        job_id=predict_b_response.json()["id"],
+    )
     prediction_batch_b_id = prediction_b_output["pilot_prediction_batch_id"]
     assert prediction_batch_b_id is not None
     assert prediction_b_output["runtime_isolated"] is True
@@ -8710,6 +8889,20 @@ def test_leaderboard_reports_prediction_pipeline_runtime_failure_state(tmp_path:
         project = Project(id="p_pipeline_runtime_state", name="Pipeline runtime state")
         db.add(project)
         db.flush()
+        workspace = tmp_path / "pipeline-runtime-agent"
+        workspace.mkdir()
+        db.add(
+            AgentSession(
+                id="ags_pipeline_runtime_state",
+                project_id=project.id,
+                session_type="main_autonomous",
+                status="between_turns",
+                autonomy_mode="full_auto",
+                runner_kind="codex_cli",
+                goal_text="Manage prediction runtime.",
+                workspace_path=str(workspace),
+            )
+        )
         runtime_manifest = {
             "schema_version": "pipeline_manifest.v1",
             "input_contract": {
