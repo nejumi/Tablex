@@ -45,6 +45,8 @@ from tabular_harness.services.adaptive_strategy import create_adaptive_strategy_
 from tabular_harness.services.agent_chat import handle_agent_chat_turn
 from tabular_harness.services.agent_context import prepare_idea_agent_context_pack
 from tabular_harness.services.agent_inbox import write_inbox_entry
+from tabular_harness.services.agent_sessions import start_or_resume_main_session
+from tabular_harness.services.agent_supervisor import active_main_session
 from tabular_harness.services.agent_task_planner import plan_project_agent_task
 from tabular_harness.services.agent_task_readiness import review_agent_task_readiness
 from tabular_harness.services.agent_tasks import run_idea_agent_task_stub
@@ -4639,32 +4641,37 @@ def start_autonomous_loop_handler(db: Session, job: Job, store: LocalArtifactSto
                 )
             ],
         }
-    runner_mode = str(payload.get("runner_mode") or RUNNER_MODE_CODEX_IF_AVAILABLE)
-    output = run_autonomous_loop_tick(
+    session = start_or_resume_main_session(
         db,
         store=store,
         project=project,
-        job=job,
-        runner_mode=runner_mode,
+        goal_text=None,
         autonomy_mode="full_auto",
-        locale=locale,
-        agent_model=payload.get("agent_model") if isinstance(payload.get("agent_model"), str) else None,
-        utility_model=payload.get("utility_model") if isinstance(payload.get("utility_model"), str) else None,
+        runner_kind="codex_cli",
+        created_by=job.created_by or "tablex-deferred-start",
     )
-    next_job = queue_autonomous_session_continuation(
-        db,
-        project=project,
-        reason="start_after_data_intake_completed",
-        parent_job_id=job.id,
-        exclude_job_id=job.id,
-        runner_mode=runner_mode,
-        locale=locale,
-        run_after_seconds=15,
-    )
-    if next_job is not None:
-        output["session_continuation_job_id"] = next_job.id
-    output["schema_version"] = "autonomous_loop_start.v1"
-    return output
+    japanese = locale is not None and locale.lower().startswith("ja")
+    return {
+        "schema_version": "agent_session_start.v1",
+        "project_id": project.id,
+        "agent_session_id": session.id,
+        "status": "resumed" if session.turn_index > 0 or session.codex_thread_id else "started",
+        "assistant_message": (
+            "データ取り込みが完了しました。フルオートは現在のエージェントセッションで続行します。"
+            if japanese
+            else "Data intake is complete. Full Auto is continuing in the current agent session."
+        ),
+        "created_job_ids": [],
+        "worker_events": [
+            autonomous_session_worker_event(
+                job,
+                project,
+                status="succeeded",
+                headline="Main agent session is ready",
+                detail="Data intake completed and the autonomous analysis session can continue.",
+            )
+        ],
+    }
 
 
 def continue_autonomous_session_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
@@ -4683,6 +4690,23 @@ def continue_autonomous_session_handler(db: Session, job: Job, store: LocalArtif
             "status": "stopped",
             "reason": "Full Auto is no longer active for this project.",
             "worker_events": [autonomous_session_worker_event(job, project, status="succeeded", headline="Autonomous session is off")],
+        }
+    session = active_main_session(db, project.id)
+    if session is not None:
+        return {
+            "schema_version": "autonomous_session_continuation.v1",
+            "status": "continued_by_main_session",
+            "agent_session_id": session.id,
+            "reason": "Full Auto is continuing in the current agent session.",
+            "worker_events": [
+                autonomous_session_worker_event(
+                    job,
+                    project,
+                    status="succeeded",
+                    headline="Main agent session is active",
+                    detail="The current autonomous analysis session owns the next step.",
+                )
+            ],
         }
     active_child_ids = active_autonomous_child_job_ids(db, project.id, exclude_job_id=job.id)
     if active_child_ids:

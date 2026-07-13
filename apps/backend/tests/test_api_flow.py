@@ -75,6 +75,7 @@ from tabular_harness.services.agent_sessions import (
     process_pipeline_tool_requests,
     progress_request_path,
     register_agent_session_attention_chat_turn,
+    start_or_resume_main_session,
     user_instructions_inbox_path,
 )
 from tabular_harness.services.analysis_notebooks import marimo_notebook_source_hash_for_artifact
@@ -2805,18 +2806,6 @@ def test_full_auto_start_during_data_upload_is_preserved_until_intake_finishes(
     assert project_after_start["autonomy_mode"] == "full_auto"
     assert project_after_start["current_phase"] == "AUTONOMOUS_LOOP"
 
-    def fake_autonomous_tick(db: Any, **kwargs: Any) -> dict[str, Any]:
-        del db
-        project = kwargs["project"]
-        project.autonomy_mode = "full_auto"
-        project.current_phase = "AUTONOMOUS_LOOP"
-        return {
-            "schema_version": "fake_autonomous_tick.v1",
-            "assistant_message": "Full Auto started after upload.",
-            "worker_events": [],
-        }
-
-    monkeypatch.setattr("tabular_harness.worker.jobs.run_autonomous_loop_tick", fake_autonomous_tick)
     app = cast(Any, client.app)
     with app.state.session_factory() as db:
         worker = create_default_worker(store=app.state.artifact_store)
@@ -2828,7 +2817,59 @@ def test_full_auto_start_during_data_upload_is_preserved_until_intake_finishes(
         assert completed_start is not None
         assert completed_start.id == start_job["id"]
         assert completed_start.status == "succeeded", completed_start.error_message
-        assert loads_json(completed_start.output_json, {})["schema_version"] == "autonomous_loop_start.v1"
+        start_output = loads_json(completed_start.output_json, {})
+        assert start_output["schema_version"] == "agent_session_start.v1"
+        assert start_output["agent_session_id"]
+        legacy_jobs = db.scalars(
+            select(Job).where(
+                Job.project_id == project_id,
+                Job.job_type.in_({"continue_autonomous_session", "run_planned_agent_task_codex"}),
+            )
+        ).all()
+        assert legacy_jobs == []
+
+
+def test_legacy_continuation_stops_when_main_agent_session_exists(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Main session owns Full Auto"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.autonomy_mode = "full_auto"
+        project.current_phase = "AUTONOMOUS_LOOP"
+        session = start_or_resume_main_session(
+            db,
+            store=app.state.artifact_store,
+            project=project,
+            goal_text=None,
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            created_by="test",
+        )
+        continuation_job = create_job(
+            db,
+            job_type="continue_autonomous_session",
+            project_id=project_id,
+            input_payload={"runner_mode": "codex_cli_if_available"},
+        )
+        db.flush()
+
+        output = continue_autonomous_session_handler(db, continuation_job, app.state.artifact_store)
+
+        assert output["status"] == "continued_by_main_session"
+        assert output["agent_session_id"] == session.id
+        assert output.get("session_continuation_job_id") is None
+        child_jobs = db.scalars(
+            select(Job).where(
+                Job.project_id == project_id,
+                Job.job_type == "run_planned_agent_task_codex",
+            )
+        ).all()
+        assert child_jobs == []
 
 
 def test_autonomy_stop_cancels_project_work_without_old_job_type_allowlist(tmp_path: Path) -> None:
