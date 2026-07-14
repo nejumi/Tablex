@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import threading
 import time
 import zipfile
@@ -1435,18 +1436,18 @@ def test_delete_project_removes_project_scoped_records(tmp_path: Path, monkeypat
     stopped_projects: list[str] = []
     cleanup_requests: list[dict[str, str]] = []
 
-    def fake_schedule_project_artifact_cleanup(settings: Any, *, org_id: str, project_id: str) -> dict[str, Any]:
+    def fake_remove_project_artifacts_and_verify(settings: Any, *, org_id: str, project_id: str) -> dict[str, Any]:
         del settings
         cleanup_requests.append({"org_id": org_id, "project_id": project_id})
-        return {"status": "scheduled", "target_count": 3}
+        return {"status": "completed", "target_count": 3, "remaining_count": 0}
 
     monkeypatch.setattr(
         "tabular_harness.api.routes.stop_native_marimo_sessions_for_project",
         lambda project_id: stopped_projects.append(project_id) or 2,
     )
     monkeypatch.setattr(
-        "tabular_harness.api.routes.schedule_project_artifact_cleanup",
-        fake_schedule_project_artifact_cleanup,
+        "tabular_harness.api.routes.remove_project_artifacts_and_verify",
+        fake_remove_project_artifacts_and_verify,
     )
     client = make_client(tmp_path)
 
@@ -1492,7 +1493,11 @@ def test_delete_project_removes_project_scoped_records(tmp_path: Path, monkeypat
     assert delete_response.status_code == 200
     assert delete_response.json()["deleted"] is True
     assert delete_response.json()["stopped_marimo_sessions"] == 2
-    assert delete_response.json()["artifact_cleanup"] == {"status": "scheduled", "target_count": 3}
+    assert delete_response.json()["artifact_cleanup"] == {
+        "status": "completed",
+        "target_count": 3,
+        "remaining_count": 0,
+    }
     assert stopped_projects == [project_id]
     assert cleanup_requests == [{"org_id": "local-org", "project_id": project_id}]
 
@@ -1505,11 +1510,62 @@ def test_delete_project_removes_project_scoped_records(tmp_path: Path, monkeypat
         assert not db.scalars(select(AssetReference).where(AssetReference.source_id == project_id)).all()
 
 
+def test_delete_project_stops_codex_tree_and_removes_workspace(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_response = client.post("/api/projects", json={"name": "Delete running project"})
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+    app = cast(Any, client.app)
+    session_id = "ags_delete_running_project"
+    workspace = app.state.settings.artifact_root / "agent_sessions" / project_id / session_id
+    workspace.mkdir(parents=True)
+    (workspace / "work.txt").write_text("active", encoding="utf-8")
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text("#!/bin/sh\nsleep 60 &\nwait\n", encoding="utf-8")
+    fake_codex.chmod(0o755)
+    process = subprocess.Popen(
+        [str(fake_codex), "exec", "--cd", str(workspace), session_id],
+        start_new_session=True,
+    )
+    try:
+        with app.state.session_factory() as db:
+            project = db.get(Project, project_id)
+            assert project is not None
+            project.autonomy_mode = "full_auto"
+            project.current_phase = "AUTONOMOUS_LOOP"
+            db.add(
+                AgentSession(
+                    id=session_id,
+                    project_id=project_id,
+                    session_type="main_autonomous",
+                    status="running",
+                    autonomy_mode="full_auto",
+                    runner_kind="codex_cli",
+                    goal_text="Delete while running.",
+                    workspace_path=str(workspace),
+                    pid=process.pid,
+                    last_heartbeat_at=utc_now(),
+                )
+            )
+            db.commit()
+
+        response = client.delete(f"/api/projects/{project_id}")
+        assert response.status_code == 200, response.text
+        assert response.json()["artifact_cleanup"]["status"] == "completed"
+        process.wait(timeout=3)
+        assert not workspace.exists()
+        assert client.get(f"/api/projects/{project_id}").status_code == 404
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+
+
 def test_delete_project_removes_evaluation_experiment_dependencies(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setattr("tabular_harness.api.routes.stop_native_marimo_sessions_for_project", lambda project_id: 0)
     monkeypatch.setattr(
-        "tabular_harness.api.routes.schedule_project_artifact_cleanup",
-        lambda settings, *, org_id, project_id: {"status": "scheduled", "target_count": 0},
+        "tabular_harness.api.routes.remove_project_artifacts_and_verify",
+        lambda settings, *, org_id, project_id: {"status": "completed", "target_count": 0, "remaining_count": 0},
     )
     client = make_client(tmp_path)
 

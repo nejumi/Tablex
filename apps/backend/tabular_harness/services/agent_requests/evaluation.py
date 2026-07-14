@@ -15,7 +15,9 @@ from tabular_harness.models.entities import (
     DatasetSnapshot,
     EvaluationCandidate,
     EvaluationSpec,
+    Job,
     Project,
+    SplitManifest,
     utc_now,
 )
 from tabular_harness.services.agent_inbox import latest_inbox_entry_path, write_inbox_entry
@@ -376,6 +378,41 @@ def execute_generate_split_request(db: Session, *, project: Project, payload: di
             f"SplitManifest generation is not implemented for split_type={spec.split_type!r}; "
             "Codex can still propose it as an EvaluationCandidate."
         )
+    existing_split = db.scalar(
+        select(SplitManifest)
+        .where(
+            SplitManifest.project_id == project.id,
+            SplitManifest.evaluation_spec_id == spec.id,
+        )
+        .order_by(SplitManifest.created_at.desc())
+        .limit(1)
+    )
+    if existing_split is not None:
+        return {
+            "job_id": None,
+            "evaluation_spec_id": spec.id,
+            "split_manifest_id": existing_split.id,
+            "status": "succeeded",
+            "reused": True,
+        }
+    active_split_jobs = db.scalars(
+        select(Job)
+        .where(
+            Job.project_id == project.id,
+            Job.job_type == "build_split_manifest",
+            Job.status.in_(("queued", "running", "waiting_for_approval")),
+        )
+        .order_by(Job.created_at.desc())
+    )
+    for active_job in active_split_jobs:
+        job_input = loads_json(active_job.input_json, {})
+        if job_input.get("evaluation_spec_id") == spec.id:
+            return {
+                "job_id": active_job.id,
+                "evaluation_spec_id": spec.id,
+                "status": active_job.status,
+                "reused": True,
+            }
     job = create_job(
         db,
         job_type="build_split_manifest",
@@ -384,7 +421,7 @@ def execute_generate_split_request(db: Session, *, project: Project, payload: di
         policy={"execution": "queued_worker", "network": "disabled", "secret_access": "forbidden"},
         priority=70,
     )
-    return {"job_id": job.id, "evaluation_spec_id": spec.id, "status": job.status}
+    return {"job_id": job.id, "evaluation_spec_id": spec.id, "status": job.status, "reused": False}
 
 
 def evaluation_request_dataset(db: Session, *, project: Project, payload: dict[str, Any]) -> DatasetSnapshot:

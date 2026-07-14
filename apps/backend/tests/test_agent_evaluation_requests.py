@@ -291,12 +291,82 @@ def test_agent_evaluation_generate_split_request_queues_job(tmp_path: Path) -> N
             session=session,
             workspace=workspace,
         )
+        first_job = db.scalar(
+            select(Job).where(
+                Job.project_id == project_id,
+                Job.job_type == "build_split_manifest",
+            )
+        )
+        assert first_job is not None
+        (request_dir / "generate_split_again.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "tablex_evaluation_request.v1",
+                    "request_id": "generate_split_again",
+                    "operation": "generate_split",
+                    "payload": {"evaluation_spec_id": spec.id},
+                }
+            ),
+            encoding="utf-8",
+        )
+        process_evaluation_tool_requests(
+            db,
+            store=app.state.artifact_store,
+            project=project,
+            session=session,
+            workspace=workspace,
+        )
+        split_jobs = list(
+            db.scalars(
+                select(Job).where(
+                    Job.project_id == project_id,
+                    Job.job_type == "build_split_manifest",
+                )
+            )
+        )
+        assert [item.id for item in split_jobs] == [first_job.id]
         db.commit()
     ack = loads_json((workspace / ".tablex" / "acks" / "evaluation" / "generate_split.ack.json").read_text(), {})
     assert ack["status"] == "succeeded"
     job_id = ack["result"]["job_id"]
+    duplicate_ack = loads_json(
+        (workspace / ".tablex" / "acks" / "evaluation" / "generate_split_again.ack.json").read_text(), {}
+    )
+    assert duplicate_ack["result"]["job_id"] == job_id
+    assert duplicate_ack["result"]["reused"] is True
     output = run_worker_job(client, job_id)
     assert output["split_manifest_id"]
+
+    (request_dir / "generate_split_after_completion.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tablex_evaluation_request.v1",
+                "request_id": "generate_split_after_completion",
+                "operation": "generate_split",
+                "payload": {"evaluation_spec_id": output["evaluation_spec_id"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        session = db.get(AgentSession, "ags_eval_split")
+        assert project is not None and session is not None
+        process_evaluation_tool_requests(
+            db,
+            store=app.state.artifact_store,
+            project=project,
+            session=session,
+            workspace=workspace,
+        )
+        db.commit()
+    completed_ack = loads_json(
+        (workspace / ".tablex" / "acks" / "evaluation" / "generate_split_after_completion.ack.json").read_text(),
+        {},
+    )
+    assert completed_ack["result"]["job_id"] is None
+    assert completed_ack["result"]["split_manifest_id"] == output["split_manifest_id"]
+    assert completed_ack["result"]["reused"] is True
 
 
 def test_agent_evaluation_request_can_be_promoted_approved_and_split(

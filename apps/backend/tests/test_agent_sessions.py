@@ -16,7 +16,9 @@ import tabular_harness.services.agent_notebook_quality as agent_notebook_quality
 import tabular_harness.services.agent_requests.pipelines as pipeline_requests_module
 import tabular_harness.services.agent_requests.research_plan as research_plan_requests_module
 import tabular_harness.services.agent_sessions as agent_sessions_module
+import tabular_harness.services.agent_supervisor as agent_supervisor_module
 from sqlalchemy import create_engine, func, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from tabular_harness.core.config import get_settings
 from tabular_harness.core.json import dumps_json, loads_json
@@ -1718,6 +1720,27 @@ def test_codex_stream_lines_are_indexed_in_one_batch(tmp_path: Path) -> None:
     assert events[-1].source == "codex_cli_stderr"
 
 
+def test_codex_stream_metadata_lock_does_not_escape_streaming_loop(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    session_factory = sessionmaker(engine)
+
+    def locked_append(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        raise OperationalError("INSERT agent_transcript_events", {}, Exception("database is locked"))
+
+    monkeypatch.setattr(agent_sessions_module, "append_codex_stream_lines", locked_append)
+    persisted = agent_sessions_module.append_codex_stream_lines_safely(
+        session_factory,
+        project_id="p_locked_stream",
+        session_id="as_locked_stream",
+        lines=[("stdout", '{"type":"turn.started"}\n')],
+    )
+    assert persisted is False
+
+
 def test_supervisor_thread_releases_slot_when_global_runner_is_replaced(tmp_path: Path, monkeypatch: Any) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
@@ -2070,6 +2093,63 @@ def test_supervisor_lease_heartbeat_signals_lost_lease(tmp_path: Path) -> None:
     finally:
         stop_event.set()
         thread.join(timeout=2)
+
+
+def test_supervisor_lease_heartbeat_ignores_transient_database_lock(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(engine)
+    attempts = 0
+
+    def transient_renew(*args: Any, **kwargs: Any) -> bool:
+        nonlocal attempts
+        del args, kwargs
+        attempts += 1
+        if attempts == 1:
+            raise OperationalError("UPDATE agent_supervisor_leases", {}, Exception("database is locked"))
+        return True
+
+    monkeypatch.setattr(agent_supervisor_module, "renew_supervisor_lease", transient_renew)
+    stop_event, lease_lost_event, thread = start_supervisor_lease_heartbeat(
+        session_factory,
+        session_id="as_transient_lock",
+        owner_id="owner-a",
+        ttl_seconds=3,
+    )
+    try:
+        deadline = time.monotonic() + 3
+        while attempts < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert attempts >= 2
+        assert not lease_lost_event.is_set()
+    finally:
+        stop_event.set()
+        thread.join(timeout=2)
+
+
+def test_codex_process_tree_termination_stops_child_work(tmp_path: Path) -> None:
+    child_pid_path = tmp_path / "child.pid"
+    process = subprocess.Popen(
+        ["bash", "-c", f"sleep 60 & echo $! > {child_pid_path}; wait"],
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 3
+        while not child_pid_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert child_pid_path.exists()
+        child_pid = int(child_pid_path.read_text(encoding="utf-8").strip())
+
+        assert agent_supervisor_module.terminate_stale_codex_process(process.pid) is True
+        process.wait(timeout=3)
+        assert not agent_supervisor_module.pid_is_alive(child_pid)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
 
 
 def test_main_supervisor_stops_before_runner_when_lease_is_lost(
@@ -13282,6 +13362,49 @@ def test_research_plan_file_requests_accept_explicit_legacy_path_and_node_alias(
             )
             == 0
         )
+
+
+def test_research_plan_current_work_can_follow_codex_beyond_stale_prior_node(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_plan_nonblocking_current", name="Nonblocking plan")
+        db.add(project)
+        db.flush()
+        commit_research_plan_revision(
+            db,
+            project_id=project.id,
+            document={
+                "schema_version": "research_plan.v2",
+                "timeline_blocks": [
+                    {
+                        "id": "objective_framing",
+                        "title": "Objective framing",
+                        "granularity": "chapter",
+                        "status": "active",
+                    },
+                    {
+                        "id": "evaluation_and_modeling",
+                        "title": "Evaluation and modeling",
+                        "granularity": "chapter",
+                        "status": "pending",
+                    },
+                ],
+            },
+            author_type="codex",
+            reason="Initial plan",
+            strict_validation=False,
+        )
+
+        current = set_research_plan_current_work(
+            db,
+            project_id=project.id,
+            node_id="evaluation_and_modeling",
+            summary="Codex is already evaluating models; the stale display plan must not block it.",
+            status="active",
+            expected_outputs=["leaderboard_entry"],
+        )
+        assert current.node_id == "evaluation_and_modeling"
 
 
 def test_failed_research_plan_file_request_is_announced_in_agent_chat(tmp_path: Path) -> None:

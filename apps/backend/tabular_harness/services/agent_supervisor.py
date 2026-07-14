@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from tabular_harness.core.json import loads_json
@@ -20,7 +20,9 @@ from tabular_harness.models.entities import (
     Project,
     utc_now,
 )
-from tabular_harness.services.agent_presence import supervisor_lease_active
+from tabular_harness.services.agent_presence import (
+    supervisor_lease_active,  # noqa: F401 - public re-export
+)
 from tabular_harness.services.agent_transcript import append_session_event
 
 MAIN_AUTONOMOUS_SESSION_TYPE = "main_autonomous"
@@ -158,11 +160,15 @@ def release_supervisor_lease(
     session_id: str,
     owner_id: str,
 ) -> None:
-    with session_factory() as db:
-        lease = db.get(AgentSupervisorLease, session_id)
-        if lease is not None and lease.owner_id == owner_id:
-            db.delete(lease)
-            db.commit()
+    try:
+        with session_factory() as db:
+            lease = db.get(AgentSupervisorLease, session_id)
+            if lease is not None and lease.owner_id == owner_id:
+                db.delete(lease)
+                db.commit()
+    except SQLAlchemyError:
+        # Lease expiry remains a safe fallback when SQLite is briefly busy.
+        return
 
 
 def start_supervisor_lease_heartbeat(
@@ -178,12 +184,18 @@ def start_supervisor_lease_heartbeat(
     def heartbeat() -> None:
         interval = max(1.0, ttl_seconds / 3)
         while not stop_event.wait(interval):
-            if not renew_supervisor_lease(
-                session_factory,
-                session_id=session_id,
-                owner_id=owner_id,
-                ttl_seconds=ttl_seconds,
-            ):
+            try:
+                renewed = renew_supervisor_lease(
+                    session_factory,
+                    session_id=session_id,
+                    owner_id=owner_id,
+                    ttl_seconds=ttl_seconds,
+                )
+            except SQLAlchemyError:
+                # A temporary metadata writer lock says nothing about lease
+                # ownership. Keep supervising and retry on the next heartbeat.
+                continue
+            if not renewed:
                 lease_lost_event.set()
                 return
 
@@ -233,26 +245,46 @@ def supervisor_lease_lost_event_is_set(
 
 def pid_is_alive(pid: int) -> bool:
     try:
+        stat_fields = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()
+        if len(stat_fields) > 2 and stat_fields[2] == "Z":
+            return False
+    except OSError:
+        pass
+    try:
         os.kill(pid, 0)
     except OSError:
         return False
     return True
 
 
-def terminate_stale_codex_process(pid: int) -> None:
+def signal_codex_process_tree(pid: int, sig: signal.Signals) -> None:
     try:
-        os.kill(pid, signal.SIGTERM)
+        process_group_id = os.getpgid(pid)
+        if process_group_id == pid:
+            os.killpg(process_group_id, sig)
+            return
     except OSError:
         return
+    try:
+        os.kill(pid, sig)
+    except OSError:
+        pass
+
+
+def terminate_stale_codex_process(pid: int) -> bool:
+    signal_codex_process_tree(pid, signal.SIGTERM)
     deadline = time.monotonic() + STALE_PROCESS_TERM_GRACE_SECONDS
     while time.monotonic() < deadline:
         if not pid_is_alive(pid):
-            return
+            return True
         time.sleep(0.1)
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except OSError:
-        return
+    signal_codex_process_tree(pid, signal.SIGKILL)
+    deadline = time.monotonic() + STALE_PROCESS_TERM_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        if not pid_is_alive(pid):
+            return True
+        time.sleep(0.1)
+    return not pid_is_alive(pid)
 
 
 def pid_matches_agent_codex_process(pid: int, workspace: Path | None, session_id: str) -> bool:
@@ -274,10 +306,11 @@ def stop_main_session(db: Session, project: Project, *, record_event: bool = Tru
     if session is None:
         return None
     if session.pid:
-        try:
-            os.kill(session.pid, signal.SIGTERM)
-        except OSError:
-            pass
+        pid = session.pid
+        workspace = resolve_runtime_data_path(session.workspace_path) if session.workspace_path else None
+        if pid_is_alive(pid) and pid_matches_agent_codex_process(pid, workspace, session.id):
+            if not terminate_stale_codex_process(pid):
+                raise RuntimeError(f"Codex process {pid} did not stop")
     session.status = "stopped"
     session.pid = None
     session.ended_at = utc_now()

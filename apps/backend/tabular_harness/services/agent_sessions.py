@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from tabular_harness.agent.runners import codex_harness_config_args, safe_env
@@ -326,6 +327,26 @@ from tabular_harness.services.research_plans import (
     research_plan_revision_document,
     research_plan_source_is_marimo_notebook,
 )
+
+
+def append_codex_stream_lines_safely(
+    session_factory: sessionmaker[Session],
+    *,
+    project_id: str,
+    session_id: str,
+    lines: list[tuple[str, str]],
+) -> bool:
+    """Persist a transcript batch without making metadata contention stop Codex."""
+    try:
+        append_codex_stream_lines(
+            session_factory,
+            project_id=project_id,
+            session_id=session_id,
+            lines=lines,
+        )
+    except SQLAlchemyError:
+        return False
+    return True
 
 SESSION_OUTPUT_MIN_VERSION_INTERVAL_SECONDS = 30
 STREAM_EVENT_FLUSH_INTERVAL_SECONDS = 0.5
@@ -1532,28 +1553,33 @@ def run_codex_cli_turn_streaming(
             env=runner_env,
             start_new_session=True,
         )
-        with session_factory() as db:
-            session = db.get(AgentSession, session_id)
-            if session is not None:
-                session.pid = process.pid
-                session.status = "running"
-                session.last_heartbeat_at = utc_now()
-                append_session_event(
-                    db,
-                    session,
-                    source="tablex_sidecar",
-                    event_type="process_started",
-                    role="harness",
-                    title="Codex started",
-                    content=f"Codex process pid={process.pid} is running.",
-                    payload={
-                        "pid": process.pid,
-                        "stdout_path": str(raw_stdout_path),
-                        "stderr_path": str(raw_stderr_path),
-                        "stdout_mode": "workspace_file_tail",
-                    },
-                )
-                db.commit()
+        try:
+            with session_factory() as db:
+                session = db.get(AgentSession, session_id)
+                if session is not None:
+                    session.pid = process.pid
+                    session.status = "running"
+                    session.last_heartbeat_at = utc_now()
+                    append_session_event(
+                        db,
+                        session,
+                        source="tablex_sidecar",
+                        event_type="process_started",
+                        role="harness",
+                        title="Codex started",
+                        content=f"Codex process pid={process.pid} is running.",
+                        payload={
+                            "pid": process.pid,
+                            "stdout_path": str(raw_stdout_path),
+                            "stderr_path": str(raw_stderr_path),
+                            "stdout_mode": "workspace_file_tail",
+                        },
+                    )
+                    db.commit()
+        except SQLAlchemyError:
+            # The raw transcript and the child process are authoritative while
+            # a temporary SQLite writer lock prevents presence metadata writes.
+            pass
         if process.stdin is not None:
             process.stdin.write(prompt)
             process.stdin.close()
@@ -1687,14 +1713,14 @@ def run_codex_cli_turn_streaming(
                 len(pending_stream_events) >= STREAM_EVENT_FLUSH_MAX_LINES
                 or now - last_stream_event_flush >= STREAM_EVENT_FLUSH_INTERVAL_SECONDS
             ):
-                append_codex_stream_lines(
+                if append_codex_stream_lines_safely(
                     session_factory,
                     project_id=project_id,
                     session_id=session_id,
                     lines=pending_stream_events,
-                )
-                pending_stream_events = []
-                last_stream_event_flush = now
+                ):
+                    pending_stream_events = []
+                    last_stream_event_flush = now
             if now - last_workspace_ingest >= 10:
                 ingest_session_workspace_outputs_safely(
                     session_factory,
@@ -1737,12 +1763,16 @@ def run_codex_cli_turn_streaming(
         stdout_writer.close()
         stderr_writer.close()
     if pending_stream_events:
-        append_codex_stream_lines(
+        flush_deadline = time.monotonic() + 30
+        while not append_codex_stream_lines_safely(
             session_factory,
             project_id=project_id,
             session_id=session_id,
             lines=pending_stream_events,
-        )
+        ):
+            if time.monotonic() >= flush_deadline:
+                break
+            time.sleep(1)
     try:
         return_code = process.wait(timeout=5)
     except subprocess.TimeoutExpired:
@@ -1769,21 +1799,24 @@ def run_codex_cli_turn_streaming(
         workspace=workspace,
         allow_notebook_auto_registration=True,
     )
-    with session_factory() as db:
-        session = db.get(AgentSession, session_id)
-        if session is not None:
-            session.pid = None
-            append_session_event(
-                db,
-                session,
-                source="codex_cli",
-                event_type="process_exited",
-                role="runner",
-                title="Codex process exited",
-                content=f"Codex CLI exited with code {return_code}.",
-                payload={"exit_code": return_code},
-            )
-            db.commit()
+    try:
+        with session_factory() as db:
+            session = db.get(AgentSession, session_id)
+            if session is not None:
+                session.pid = None
+                append_session_event(
+                    db,
+                    session,
+                    source="codex_cli",
+                    event_type="process_exited",
+                    role="runner",
+                    title="Codex process exited",
+                    content=f"Codex CLI exited with code {return_code}.",
+                    payload={"exit_code": return_code},
+                )
+                db.commit()
+    except SQLAlchemyError:
+        pass
     maybe_request_codex_progress_update_safely(
         session_factory,
         project_id=project_id,

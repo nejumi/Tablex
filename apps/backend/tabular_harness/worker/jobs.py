@@ -133,13 +133,6 @@ from tabular_harness.services.kaggle_probe import (
     fetch_kaggle_competition_inventory,
     probe_kaggle_benchmark_access,
 )
-from tabular_harness.services.marimo_sessions import (
-    NATIVE_MARIMO_PREWARM_READY_TIMEOUT_SECONDS,
-    cleanup_native_marimo_sessions,
-    marimo_available,
-    start_or_get_native_marimo_session,
-    wait_for_native_marimo_session_ready,
-)
 from tabular_harness.services.model_diagnostics_artifacts import (
     materialize_model_diagnostics_artifacts,
 )
@@ -2222,31 +2215,15 @@ def plan_notebook_execution_handler(db: Session, job: Job, store: LocalArtifactS
 
 def prewarm_native_marimo_session_handler(db: Session, job: Job, store: LocalArtifactStore) -> dict[str, Any]:
     del store
-    settings = get_settings()
-    cleaned_session_count = cleanup_native_marimo_sessions(settings=settings)
     notebook_artifact = notebook_artifact_for_job(db, job, "prewarm_native_marimo_session")
-    if not marimo_available():
-        return {
-            "schema_version": "native_marimo_prewarm.v1",
-            "status": "skipped",
-            "reason": "marimo_unavailable",
-            "analysis_notebook_artifact_id": notebook_artifact.id,
-            "cleaned_session_count": cleaned_session_count,
-        }
-    session = start_or_get_native_marimo_session(artifact=notebook_artifact, settings=settings)
-    ready = wait_for_native_marimo_session_ready(
-        session,
-        timeout_seconds=NATIVE_MARIMO_PREWARM_READY_TIMEOUT_SECONDS,
-    )
+    # Native marimo processes must be owned by the API process that exposes and
+    # stops them. Starting one inside a generic worker makes project deletion
+    # unable to prove that the process was terminated.
     return {
         "schema_version": "native_marimo_prewarm.v1",
-        "status": "ready" if ready else session.status(),
+        "status": "deferred",
+        "reason": "api_owned_on_open",
         "analysis_notebook_artifact_id": notebook_artifact.id,
-        "session_id": session.id,
-        "session_status": session.status(),
-        "ready": ready,
-        "source_hash": session.source_hash,
-        "cleaned_session_count": cleaned_session_count,
     }
 
 
@@ -4338,6 +4315,10 @@ def train_model_candidates_handler(db: Session, job: Job, store: LocalArtifactSt
                 "pr_auc": result.metrics.get("pr_auc"),
             }
         )
+        # Candidate training can run for minutes. Persist each completed model
+        # before starting the next one so SQLite does not retain a writer lock
+        # throughout the following fit.
+        db.commit()
     status = "succeeded" if successes else "failed"
     output: dict[str, Any] = {
         "schema_version": "model_candidate_training.v1",

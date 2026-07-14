@@ -15,7 +15,10 @@ from tabular_harness.services.analysis_notebooks import (
 )
 
 NOTEBOOK_QUALITY_MANIFEST_SCHEMA_VERSION = "tablex_notebook_quality_manifest.v1"
-NOTEBOOK_MIN_HUMAN_FACING_FIGURES = 3
+# A declared visualization is a verifiable artifact property. Deciding that an
+# analysis needs an arbitrary number of figures is a Codex judgment, not a
+# harness-owned registration gate.
+NOTEBOOK_MIN_HUMAN_FACING_FIGURES = 1
 
 
 class NotebookToolValidationError(ValueError):

@@ -1136,7 +1136,11 @@ def delete_project(
     db.delete(project)
     db.flush()
     db.commit()
-    cleanup = schedule_project_artifact_cleanup(request.app.state.settings, org_id=org_id, project_id=project_id)
+    cleanup = remove_project_artifacts_and_verify(
+        request.app.state.settings,
+        org_id=org_id,
+        project_id=project_id,
+    )
     return {
         "schema_version": "project_delete.v1",
         "project_id": project_id,
@@ -11624,26 +11628,22 @@ def delete_project_rows(db: Session, project_id: str) -> None:
     db.execute(delete(Artifact).where(Artifact.project_id == project_id))
 
 
-def schedule_project_artifact_cleanup(settings: Any, *, org_id: str, project_id: str) -> dict[str, Any]:
+def remove_project_artifacts_and_verify(settings: Any, *, org_id: str, project_id: str) -> dict[str, Any]:
     targets = project_artifact_cleanup_targets(settings, org_id=org_id, project_id=project_id)
-    thread = threading.Thread(
-        target=remove_project_artifact_roots,
-        kwargs={"settings": settings, "targets": targets},
-        name=f"tablex-project-artifact-cleanup-{project_id}",
-        daemon=True,
-    )
-    try:
-        thread.start()
-    except RuntimeError as exc:
-        LOGGER.exception("Failed to schedule artifact cleanup for deleted project %s.", project_id)
-        return {
-            "status": "failed_to_schedule",
-            "target_count": len(targets),
-            "error": str(exc),
-        }
+    remove_project_artifact_roots(settings, targets=targets)
+    remaining = [str(path) for path in targets if path.exists()]
+    if remaining:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Project metadata was deleted, but artifact cleanup did not complete.",
+                "remaining_paths": remaining,
+            },
+        )
     return {
-        "status": "scheduled",
+        "status": "completed",
         "target_count": len(targets),
+        "remaining_count": 0,
     }
 
 
@@ -11682,7 +11682,7 @@ def remove_path_if_under_allowed_roots(path: Path, allowed_roots: list[Path]) ->
     if not any(path_is_under(resolved, root) for root in allowed_roots):
         return
     if resolved.is_dir():
-        shutil.rmtree(resolved, ignore_errors=True)
+        shutil.rmtree(resolved)
     elif resolved.exists():
         resolved.unlink(missing_ok=True)
 

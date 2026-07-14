@@ -1359,15 +1359,6 @@ def validate_research_plan_current_work_target(
             f"current_work.node_id `{node_id}` points to a {node_status} ResearchPlan node. "
             "Set current_work to the next open node, or commit a follow-up node before declaring active work."
         )
-    if status in PLAN_CURRENT_STATUSES:
-        for prior_index, prior_block in enumerate(blocks[:node_index]):
-            prior_status = research_plan_block_status(prior_block)
-            if prior_status not in PLAN_TERMINAL_STATUSES:
-                prior_id = research_plan_block_id(prior_block, prior_index)
-                raise ValueError(
-                    f"current_work.node_id `{node_id}` skips earlier node `{prior_id}` "
-                    f"which is still {prior_status}. Finish, skip, or revise that earlier node first."
-                )
 
 
 def validate_research_plan_node_exists(revision: ResearchPlanRevision, *, node_id: str) -> None:
