@@ -1623,6 +1623,7 @@ def _latest_native_marimo_runtime_failure(db: Session, project_id: str, notebook
         if (
             metadata.get("source") != "native_marimo_runtime_failure"
             or metadata.get("notebook_artifact_id") != notebook_artifact_id
+            or metadata.get("status") == "recovered"
         ):
             continue
         if not current_source_hash_loaded:

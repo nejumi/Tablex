@@ -7398,6 +7398,14 @@ def get_native_marimo_session_endpoint(
                 )
             if artifact is not None:
                 db.commit()
+    elif session.project_id is not None and payload.get("status") == "running":
+        notebook_artifact = db.get(Artifact, session.artifact_id)
+        if notebook_artifact is not None and resolve_native_marimo_runtime_failures(
+            db,
+            project_id=session.project_id,
+            notebook_artifact=notebook_artifact,
+        ):
+            db.commit()
     return payload
 
 
@@ -7418,8 +7426,8 @@ def record_native_marimo_runtime_failure_chat_turn(
     error_summary = summarize_runtime_error_for_chat(error_message)
     notebook_source_hash = marimo_notebook_source_hash_for_artifact(notebook_artifact)
     source_hash_key = notebook_source_hash[:16] if notebook_source_hash is not None else "unknown_source"
-    digest = hashlib.sha1(f"{notebook_artifact.id}:runtime:{source_hash_key}:{error_message}".encode()).hexdigest()[:12]
-    source_key = f"native_marimo_runtime_failure:{notebook_artifact.id}:{source_hash_key}:{digest}"
+    digest = hashlib.sha1(f"{notebook_artifact.id}:runtime:{source_hash_key}:{error_summary}".encode()).hexdigest()[:12]
+    source_key = f"native_marimo_runtime_failure:{notebook_artifact.id}:{source_hash_key}"
     if native_marimo_failure_chat_turn_exists(
         db,
         project=project,
@@ -7542,6 +7550,38 @@ def record_native_marimo_runtime_failure_chat_turn(
             "status": "failed",
         },
     )
+
+
+def resolve_native_marimo_runtime_failures(
+    db: Session,
+    *,
+    project_id: str,
+    notebook_artifact: Artifact,
+) -> bool:
+    source_hash = marimo_notebook_source_hash_for_artifact(notebook_artifact)
+    changed = False
+    failures = db.scalars(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.asset_type == "agent_chat_turn")
+        .order_by(Artifact.created_at.desc())
+        .limit(200)
+    ).all()
+    for failure in failures:
+        metadata = loads_json(failure.metadata_json, {})
+        if (
+            metadata.get("source") != "native_marimo_runtime_failure"
+            or metadata.get("notebook_artifact_id") != notebook_artifact.id
+            or metadata.get("status") == "recovered"
+        ):
+            continue
+        failure_hash = metadata.get("notebook_source_hash")
+        if source_hash is not None and failure_hash != source_hash:
+            continue
+        metadata["status"] = "recovered"
+        metadata["recovered_at"] = utc_now().isoformat()
+        failure.metadata_json = dumps_json(metadata)
+        changed = True
+    return changed
 
 
 def summarize_runtime_error_for_chat(error_message: str, *, limit: int = 900) -> str:
@@ -7719,6 +7759,8 @@ def native_marimo_failure_chat_turn_exists(
     ).all()
     for artifact in recent:
         metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("status") == "recovered":
+            continue
         if metadata.get("source") == source and metadata.get("source_key") == source_key:
             return True
     return False
@@ -8110,11 +8152,6 @@ def leaderboard(
         select(ExperimentRun).where(ExperimentRun.project_id == project_id, ExperimentRun.status == "succeeded")
     ).all()
     notebook_index = build_project_notebook_index(db, project)
-    runs = [
-        run
-        for run in runs
-        if leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {})) is not None
-    ]
     runs = unique_leaderboard_runs(db, runs, notebook_index=notebook_index)
     metric_preference = latest_metric_preference(db, project_id)
     display_metric = metric_preference

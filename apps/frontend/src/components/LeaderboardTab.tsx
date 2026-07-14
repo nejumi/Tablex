@@ -1242,9 +1242,9 @@ export function LeaderboardTab({
                     </button>
                     <button
                       className="leaderboard-row-primary"
-                      disabled={busy}
+                      disabled={busy || !entry.pipeline_artifact_id}
                       onClick={() => openPredictionWorkspace(entry)}
-                      title={text.leaderboardActionPredict}
+                      title={entry.pipeline_artifact_id ? text.leaderboardActionPredict : text.predictionRuntimeUnavailable}
                       type="button"
                       aria-controls="leaderboard-prediction-workspace"
                       aria-expanded={predictionEntry?.run_id === entry.run_id}
@@ -1894,6 +1894,7 @@ function pipelineRuntimeBadgeClass(entry: LeaderboardEntry) {
 }
 
 function pipelineRuntimeStatusLabel(entry: LeaderboardEntry, text: LocaleMessages) {
+  if (!entry.pipeline_artifact_id) return text.pipelineRuntimeMissing;
   if (entry.pipeline_runtime?.superseded_by_artifact_id) return text.pipelineRuntimeSuperseded;
   const status = entry.pipeline_runtime?.last_run_status;
   if (status === "succeeded") return text.pipelineRuntimeReady;

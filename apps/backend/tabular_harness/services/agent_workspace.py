@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import importlib.metadata as importlib_metadata
 import json
+import os
 import re
 import shutil
 import sys
@@ -240,7 +241,7 @@ def ensure_session_dataset_links(db: Session, *, workspace: Path, project_id: st
             if target.exists() or target.is_symlink():
                 target.unlink()
             if not target.exists() and not target.is_symlink():
-                target.symlink_to(source_path)
+                target.symlink_to(os.path.relpath(source_path, start=target.parent))
         except OSError:
             try:
                 if source_path.stat().st_size > settings.notebook_data_copy_max_bytes:

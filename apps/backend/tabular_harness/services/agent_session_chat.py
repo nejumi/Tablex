@@ -39,11 +39,15 @@ from tabular_harness.services.agent_session_inbox import (
 )
 from tabular_harness.services.agent_transcript import append_session_event
 from tabular_harness.services.agent_workspace import latest_project_response_locale
+from tabular_harness.services.analysis_notebooks import marimo_notebook_source_hash_for_artifact
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
 from tabular_harness.services.jobs import TERMINAL_STATUSES as TERMINAL_JOB_STATUSES
 from tabular_harness.services.jobs import mark_job_succeeded
 from tabular_harness.services.locales import locale_is_japanese
+from tabular_harness.services.prediction_pipeline_contract import (
+    leaderboard_ready_pipeline_artifact,
+)
 from tabular_harness.services.research_plan_timeline import research_plan_evidence_links
 from tabular_harness.services.research_plans import (
     PLAN_CURRENT_STATUSES,
@@ -1821,6 +1825,11 @@ def chat_update_actions_from_research_plan_evidence(
     if notebook_link is not None:
         artifact_id = notebook_link.get("artifact_id")
         if isinstance(artifact_id, str) and artifact_id:
+            notebook_action_status = "needs_attention" if notebook_runtime_failure_is_active(
+                db,
+                project_id=project.id,
+                notebook_artifact_id=artifact_id,
+            ) else "ready"
             action_artifact_id, action_artifact_ids, action_detail = notebook_action_artifact_targets(
                 db,
                 project_id=project.id,
@@ -1830,7 +1839,7 @@ def chat_update_actions_from_research_plan_evidence(
             actions.append(
                 {
                     "type": "open_artifact",
-                    "status": "ready",
+                    "status": notebook_action_status,
                     "label": "ノートブックを開く" if japanese else "Open notebook",
                     "target_tab": "Notebooks",
                     "target_anchor": "notebook-native-marimo-top",
@@ -1845,14 +1854,28 @@ def chat_update_actions_from_research_plan_evidence(
     if run_link is not None:
         run_id = run_link.get("run_id")
         if isinstance(run_id, str) and run_id:
+            run = db.get(ExperimentRun, run_id)
+            pipeline_ready = bool(
+                run is not None
+                and leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {})) is not None
+            )
+            run_action_status = "ready" if pipeline_ready else "working" if run is not None else "needs_attention"
+            run_action_detail = evidence_link_detail(run_link)
+            if run is not None and not pipeline_ready:
+                completion_detail = (
+                    "モデルは登録済みで、UI予測runtimeを完成中です。"
+                    if japanese
+                    else "The model is registered; its UI prediction runtime is still being completed."
+                )
+                run_action_detail = f"{run_action_detail} · {completion_detail}" if run_action_detail else completion_detail
             actions.append(
                 {
                     "type": "open_surface",
-                    "status": "ready",
+                    "status": run_action_status,
                     "label": "リーダーボードを見る" if japanese else "Open leaderboard",
                     "target_tab": "Leaderboard",
                     "target_anchor": "result-readout",
-                    "detail": evidence_link_detail(run_link),
+                    "detail": run_action_detail,
                     "entity_ids": [run_id],
                     "run_id": run_id,
                     "research_plan_node_id": run_link.get("node_id"),
@@ -1889,6 +1912,34 @@ def chat_update_actions_from_research_plan_evidence(
         if first.get(key) is not None:
             next_focus[key] = first.get(key)
     return actions, next_focus
+
+
+def notebook_runtime_failure_is_active(
+    db: Session,
+    *,
+    project_id: str,
+    notebook_artifact_id: str,
+) -> bool:
+    notebook_artifact = db.get(Artifact, notebook_artifact_id)
+    source_hash = (
+        marimo_notebook_source_hash_for_artifact(notebook_artifact)
+        if notebook_artifact is not None
+        else None
+    )
+    failures = db.scalars(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.asset_type == "agent_chat_turn")
+        .order_by(Artifact.created_at.desc())
+        .limit(200)
+    ).all()
+    return any(
+        metadata.get("source") == "native_marimo_runtime_failure"
+        and metadata.get("notebook_artifact_id") == notebook_artifact_id
+        and metadata.get("status") != "recovered"
+        and (source_hash is None or metadata.get("notebook_source_hash") == source_hash)
+        for artifact in failures
+        for metadata in [loads_json(artifact.metadata_json, {})]
+    )
 
 
 def chat_action_output_identity(action: dict[str, Any]) -> tuple[str, str, str, str] | None:

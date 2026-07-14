@@ -517,7 +517,10 @@ def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path
     assert ".tablex/requests/research_plan/" in protocol_text
     assert "reports/chat_update.md" in protocol_text
     assert (workspace / ".tablex" / "data_manifest.json").exists()
-    assert (workspace / ".tablex" / "data" / "ds_runtime__train.csv").exists()
+    dataset_link = workspace / ".tablex" / "data" / "ds_runtime__train.csv"
+    assert dataset_link.exists()
+    assert dataset_link.is_symlink()
+    assert not dataset_link.readlink().is_absolute()
     data_manifest = loads_json((workspace / ".tablex" / "data_manifest.json").read_text(encoding="utf-8"), {})
     assert data_manifest["schema_version"] == "tablex_session_data_manifest.v1"
     assert data_manifest["root"] == ".tablex/data"
@@ -5086,8 +5089,8 @@ def test_codex_structured_model_results_materialize_leaderboard_runs_and_chat_li
         assert chat_artifact is not None
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
         assert chat_payload["intent"]["type"] == "experiment_results_registered"
-        assert chat_payload["actions"][0]["target_tab"] == "Assets"
-        assert "leaderboard" not in chat_payload["visible_surfaces"]
+        assert chat_payload["actions"][0]["target_tab"] == "Leaderboard"
+        assert chat_payload["visible_surfaces"]["leaderboard"]["run_ids"] == [run.id for run in runs]
         assert chat_payload["visible_surfaces"]["assets"]["target_anchor"] == "assets-artifact-preview"
         pipeline_requests = [
             entry
@@ -5108,7 +5111,7 @@ def test_codex_structured_model_results_materialize_leaderboard_runs_and_chat_li
             if entry.get("type") == "pipeline_registration_request"
         ]
         assert len(pipeline_requests_after_rescan) == 1
-        assert chat_payload["next_focus"]["target_anchor"] == "agent-workspace"
+        assert chat_payload["next_focus"]["target_anchor"] == "result-readout"
 
         ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
         db.commit()
@@ -5607,8 +5610,8 @@ def test_codex_structured_model_results_accept_runs_array_with_nested_metric_sum
         )
         assert chat_artifact is not None
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
-        assert "実験履歴に登録しました" in chat_payload["assistant_message"]
-        assert "Leaderboardへ自動昇格します" in chat_payload["assistant_message"]
+        assert "Leaderboardに表示" in chat_payload["assistant_message"]
+        assert "予測runtimeを完成中" in chat_payload["assistant_message"]
 
 
 def test_malformed_structured_model_results_are_announced_in_agent_chat(tmp_path: Path) -> None:
@@ -5841,7 +5844,7 @@ def test_structured_model_results_attach_to_single_active_research_plan_node(tmp
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
         assert chat_payload["intent"]["type"] == "experiment_results_registered"
         assert chat_payload["response_brief"]["research_plan_node_ids"] == ["modeling_and_diagnostics"]
-        assert "leaderboard" not in chat_payload["visible_surfaces"]
+        assert chat_payload["visible_surfaces"]["leaderboard"]["run_ids"] == [run.id]
         assert chat_payload["visible_surfaces"]["assets"]["artifact_id"] == source_artifact.id
         assert any(action["target_tab"] == "Assets" for action in chat_payload["actions"])
 
@@ -6087,10 +6090,10 @@ def test_existing_experiment_run_restores_chat_and_research_plan_link(tmp_path: 
         assert chat_artifact is not None
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
         assert chat_payload["intent"]["type"] == "experiment_results_registered"
-        assert chat_payload["actions"][0]["target_tab"] == "Assets"
+        assert chat_payload["actions"][0]["target_tab"] == "Leaderboard"
         assert chat_payload["response_brief"]["run_ids"] == [run.id]
         assert chat_payload["response_brief"]["research_plan_node_ids"] == ["modeling_and_diagnostics"]
-        assert "leaderboard" not in chat_payload["visible_surfaces"]
+        assert chat_payload["visible_surfaces"]["leaderboard"]["run_ids"] == [run.id]
         assert chat_payload["visible_surfaces"]["assets"]["artifact_id"] == source_artifact.id
         assert any(action["target_tab"] == "Assets" for action in chat_payload["actions"])
         timeline = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
@@ -6232,6 +6235,71 @@ def test_experiment_result_file_request_registers_leaderboard_run_with_ack(tmp_p
         assert "UI prediction runtimes" in chat_payload["assistant_message"]
         assert "model diagnostics data for permutation importance" in chat_payload["assistant_message"]
         assert "model-diagnostics notebooks" in chat_payload["assistant_message"]
+
+
+def test_experiment_result_request_keeps_run_when_optional_evidence_is_invalid(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    workspace = tmp_path / "workspace"
+    request_dir = experiment_requests_dir(workspace)
+    request_dir.mkdir(parents=True)
+    (request_dir / "invalid_evidence.json").write_text(
+        dumps_json(
+            {
+                "schema_version": "tablex_experiment_result_request.v1",
+                "request_id": "exp_req_invalid_evidence",
+                "operation": "register_runs",
+                "payload": {
+                    "runs": [
+                        {
+                            "model_id": "relational_candidate",
+                            "model_description": "A relational candidate with metrics that remain useful independently of its evidence record.",
+                            "features_used": ["application", "bureau"],
+                            "primary_metric_name": "roc_auc",
+                            "metrics": {"roc_auc": 0.79},
+                            "experiment_evidence": {
+                                "schema_version": "experiment_evidence.v1",
+                                "hypothesis": "This legacy shape is invalid because hypothesis must be an object.",
+                            },
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with sessionmaker(engine)() as db:
+        project = Project(id="p_invalid_evidence", name="Invalid Evidence")
+        session = AgentSession(
+            id="as_invalid_evidence",
+            project_id=project.id,
+            goal_text="Register the model and report invalid optional evidence.",
+            workspace_path=str(workspace),
+        )
+        db.add_all([project, session])
+        db.commit()
+
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        ack = loads_json(
+            (experiment_acks_dir(workspace) / "invalid_evidence.ack.json").read_text(encoding="utf-8"),
+            {},
+        )
+        assert ack["status"] == "succeeded"
+        assert ack["result"]["registered_count"] == 1
+        assert ack["result"]["registered_runs"][0]["experiment_evidence_status"] == "invalid"
+        assert (
+            ack["result"]["registered_runs"][0]["experiment_evidence_error"]
+            == "experiment_evidence.hypothesis must be an object"
+        )
+        run = db.scalar(select(ExperimentRun).where(ExperimentRun.project_id == project.id))
+        assert run is not None
+        params = loads_json(run.params_json, {})
+        assert params["experiment_evidence_status"] == "invalid"
+        assert params["experiment_evidence_error"] == "experiment_evidence.hypothesis must be an object"
 
 
 def test_experiment_result_request_skips_duplicate_result_signature_with_ack(tmp_path: Path) -> None:
@@ -6463,7 +6531,7 @@ def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Pa
         assert ack["result"]["registered_runs"][0]["split_manifest_id"] == split_manifest.id
         assert ack["result"]["registered_runs"][0]["source_artifact_id"] == source_artifact.id
         assert ack["result"]["chat_artifact_id"]
-        assert "leaderboard" not in ack["result"]["visible_surfaces"]
+        assert ack["result"]["visible_surfaces"]["leaderboard"]["run_ids"] == [run.id]
         assert ack["result"]["visible_surfaces"]["assets"]["artifact_id"] == source_artifact.id
         assert ack["result"]["visible_surfaces"]["assets"]["target_anchor"] == "assets-artifact-preview"
         assert ack["result"]["visible_surfaces"]["data"]["dataset_snapshot_id"] == dataset.id
@@ -6523,7 +6591,7 @@ def test_experiment_result_request_links_runs_to_research_plan_node(tmp_path: Pa
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
         assert chat_payload["intent"]["type"] == "experiment_results_registered"
         assert chat_payload["response_brief"]["research_plan_node_ids"] == ["modeling_and_diagnostics"]
-        assert "leaderboard" not in chat_payload["visible_surfaces"]
+        assert chat_payload["visible_surfaces"]["leaderboard"]["run_ids"] == [run.id]
         assert chat_payload["visible_surfaces"]["assets"]["artifact_id"] == source_artifact.id
         assert chat_payload["visible_surfaces"]["data"]["dataset_snapshot_id"] == dataset.id
         assert chat_payload["visible_surfaces"]["evaluation"]["evaluation_spec_ids"] == [evaluation_spec.id]

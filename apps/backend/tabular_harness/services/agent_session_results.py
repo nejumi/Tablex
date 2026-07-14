@@ -45,7 +45,9 @@ from tabular_harness.services.deliverable_expectations import (
     create_run_model_diagnostics_notebook_expectations,
 )
 from tabular_harness.services.experiment_evidence import register_experiment_evidence
-from tabular_harness.services.experiment_run_semantics import experiment_run_requires_prediction_runtime
+from tabular_harness.services.experiment_run_semantics import (
+    experiment_run_requires_prediction_runtime,
+)
 from tabular_harness.services.locales import locale_is_japanese
 from tabular_harness.services.metric_preferences import (
     leaderboard_sort_key_for_metric,
@@ -367,7 +369,7 @@ def process_experiment_result_requests(
                         event_type="pipeline_registration_requested",
                         role="harness",
                         title="Prediction pipeline registration requested",
-                        content="Experiment results are awaiting validated prediction pipelines before Leaderboard promotion.",
+                        content="Experiment results are visible on the Leaderboard while their UI prediction runtimes are completed.",
                         payload={
                             "schema_version": "pipeline_registration_request_notice.v1",
                             "source_request_id": request_id,
@@ -755,6 +757,7 @@ def experiment_run_ack_item(run: ExperimentRun) -> dict[str, Any]:
         "research_plan_node_id": params.get("research_plan_node_id"),
         "experiment_evidence_status": params.get("experiment_evidence_status", "missing"),
         "experiment_evidence_artifact_id": params.get("experiment_evidence_artifact_id"),
+        "experiment_evidence_error": params.get("experiment_evidence_error"),
         "parent_run_id": params.get("parent_run_id"),
     }
 
@@ -1067,11 +1070,7 @@ def experiment_result_visible_surfaces(
         add_text_value(dataset_snapshot_ids, run.dataset_snapshot_id)
         add_text_value(evaluation_spec_ids, run.evaluation_spec_id)
         add_text_value(split_manifest_ids, run.split_manifest_id)
-    leaderboard_run_ids = [
-        run.id
-        for run in runs
-        if leaderboard_ready_pipeline_artifact(db, run, params=loads_json(run.params_json, {})) is not None
-    ]
+    leaderboard_run_ids = [run.id for run in runs]
     surfaces: dict[str, Any] = {
         "research_plan": {
             "target_tab": "Home",
@@ -1407,21 +1406,28 @@ def register_experiment_run_specs(
         db.add(run)
         db.flush()
         if spec.experiment_evidence is not None:
-            evidence_artifact = register_experiment_evidence(
-                db,
-                store=store,
-                project=project,
-                run=run,
-                payload=spec.experiment_evidence,
-            )
-            attach_experiment_artifact_to_current_plan_node(
-                db,
-                project=project,
-                source_artifact_id=evidence_artifact.id,
-                run=run,
-                node_id=research_plan_node_id,
-                allow_current_fallback=False,
-            )
+            try:
+                evidence_artifact = register_experiment_evidence(
+                    db,
+                    store=store,
+                    project=project,
+                    run=run,
+                    payload=spec.experiment_evidence,
+                )
+            except ValueError as exc:
+                params = loads_json(run.params_json, {})
+                params["experiment_evidence_status"] = "invalid"
+                params["experiment_evidence_error"] = str(exc)
+                run.params_json = dumps_json(params)
+            else:
+                attach_experiment_artifact_to_current_plan_node(
+                    db,
+                    project=project,
+                    source_artifact_id=evidence_artifact.id,
+                    run=run,
+                    node_id=research_plan_node_id,
+                    allow_current_fallback=False,
+                )
         created.append(run)
         source_artifact_id = context.source_artifact_id
         if source_artifact_id:
@@ -2143,10 +2149,10 @@ def register_experiment_registration_chat_turn(
     run_ids = [run.id for run in runs]
     if japanese:
         destination = (
-            f"{promoted_count}件はUI予測可能なruntime付きでLeaderboardへ昇格し、"
-            f"残り{len(runs) - promoted_count}件はruntime検証待ちです。"
+            f"全件をLeaderboardに表示しました。{promoted_count}件はUI予測可能で、"
+            f"残り{len(runs) - promoted_count}件は予測runtimeを完成中です。"
             if promoted_count
-            else "検証済みの予測runtimeが登録されるとLeaderboardへ自動昇格します。"
+            else "全件をLeaderboardに表示し、予測runtimeを完成中として明示しています。"
         )
         assistant_message = f"{len(runs)}件のモデル評価を実験履歴に登録しました。{destination}"
         if isinstance(metric_value, int | float):
@@ -2164,14 +2170,14 @@ def register_experiment_registration_chat_turn(
         if missing_outputs:
             assistant_message += " 次に必要な登録: " + "、".join(missing_outputs) + "。"
         action_label = "リーダーボードを開く"
-        action_detail = "UI予測可能なモデルを順位表で確認できます。"
-        next_label = "リーダーボード" if promoted_count else "Agent workspace"
+        action_detail = "登録済みモデルの順位と予測runtimeの完成状態を確認できます。"
+        next_label = "リーダーボード"
     else:
         destination = (
-            f"{promoted_count} have validated prediction runtimes and are promoted to the Leaderboard; "
-            f"{len(runs) - promoted_count} are awaiting runtime validation."
+            f"All are visible on the Leaderboard. {promoted_count} have UI prediction runtimes; "
+            f"{len(runs) - promoted_count} are still being completed."
             if promoted_count
-            else "They will be promoted to the Leaderboard automatically after validated prediction runtimes are registered."
+            else "All are visible on the Leaderboard and explicitly marked as awaiting UI prediction runtimes."
         )
         assistant_message = f"Registered {len(runs)} model evaluation(s) in experiment history. {destination}"
         if isinstance(metric_value, int | float):
@@ -2189,8 +2195,8 @@ def register_experiment_registration_chat_turn(
         if missing_outputs:
             assistant_message += " Still needed: " + ", ".join(missing_outputs) + "."
         action_label = "Open leaderboard"
-        action_detail = "Compare models with validated UI prediction runtimes as a ranked table."
-        next_label = "Leaderboard" if promoted_count else "Agent workspace"
+        action_detail = "Compare registered models and inspect each UI prediction runtime state."
+        next_label = "Leaderboard"
     actions = experiment_registration_chat_actions(
         visible_surfaces=visible_surfaces,
         leaderboard_label=action_label,
@@ -2288,8 +2294,8 @@ def register_experiment_registration_chat_turn(
         "worker_events": [],
         "token_usage": {"source": "not_applicable", "is_estimate": False, "series": []},
         "next_focus": {
-            "target_tab": "Leaderboard" if promoted_count else "Home",
-            "target_anchor": "result-readout" if promoted_count else "agent-workspace",
+            "target_tab": "Leaderboard",
+            "target_anchor": "result-readout",
             "label": next_label,
         },
     }
@@ -2526,10 +2532,10 @@ def update_experiment_registration_chat_payload(
 def experiment_registration_minimal_message(runs: list[ExperimentRun], *, japanese: bool) -> str:
     count = len(runs)
     if japanese:
-        return f"{count}件のモデル評価を実験履歴に登録しました。検証済みpipelineの登録後にLeaderboardへ昇格します。"
+        return f"{count}件のモデル評価をLeaderboardに登録しました。予測runtimeの完成状態も確認できます。"
     return (
-        f"Registered {count} model evaluation(s) in experiment history. "
-        "They will be promoted after validated pipelines are registered."
+        f"Registered {count} model evaluation(s) on the Leaderboard. "
+        "Their UI prediction runtime completion state is visible there."
     )
 
 

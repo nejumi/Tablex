@@ -4927,7 +4927,7 @@ def test_leaderboard_collapses_duplicate_metric_results_and_keeps_richer_row(tmp
     assert predict_response.json()["job_type"] == "run_prediction_pipeline"
 
 
-def test_leaderboard_hides_score_only_experiment_runs(tmp_path: Path) -> None:
+def test_leaderboard_shows_score_only_runs_as_prediction_runtime_pending(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_response = client.post("/api/projects", json={"name": "No score-only leaderboard rows"})
     assert project_response.status_code == 200
@@ -4957,7 +4957,11 @@ def test_leaderboard_hides_score_only_experiment_runs(tmp_path: Path) -> None:
 
     leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
     assert leaderboard_response.status_code == 200
-    assert leaderboard_response.json() == []
+    rows = leaderboard_response.json()
+    assert len(rows) == 1
+    assert rows[0]["run_id"] == "run_score_only"
+    assert rows[0]["pipeline_artifact_id"] is None
+    assert rows[0]["pipeline_runtime"] is None
     runs_response = client.get(f"/api/projects/{project_id}/runs")
     assert runs_response.status_code == 200
     assert any(run["id"] == "run_score_only" for run in runs_response.json())
@@ -7693,8 +7697,15 @@ def test_native_marimo_runtime_error_is_recorded_in_chat_once(tmp_path: Path, mo
             self.id = "mos_runtime_error"
             self.artifact_id = artifact_id
             self.project_id = project_id
+            self.call_count = 0
 
         def to_dict(self) -> dict[str, Any]:
+            self.call_count += 1
+            error_excerpt = (
+                "Traceback (most recent call last):\nNameError: name 'true' is not defined"
+                if self.call_count == 1
+                else None
+            )
             return {
                 "schema_version": "native_marimo_session.v1",
                 "session_id": self.id,
@@ -7706,15 +7717,16 @@ def test_native_marimo_runtime_error_is_recorded_in_chat_once(tmp_path: Path, mo
                 "started_at": utc_now().isoformat(),
                 "last_accessed_at": utc_now().isoformat(),
                 "runtime": {
-                    "has_error": True,
-                    "error_excerpt": "Traceback (most recent call last):\nNameError: name 'true' is not defined",
+                    "has_error": error_excerpt is not None,
+                    "error_excerpt": error_excerpt,
                 },
             }
 
+    fake_session = FakeNativeMarimoSession(notebook_id, project_id)
     monkeypatch.setattr(
         routes_module,
         "native_marimo_session",
-        lambda session_id: FakeNativeMarimoSession(notebook_id, project_id),
+        lambda session_id: fake_session,
     )
 
     first_response = client.get("/api/marimo-sessions/mos_runtime_error")
@@ -7722,6 +7734,7 @@ def test_native_marimo_runtime_error_is_recorded_in_chat_once(tmp_path: Path, mo
     assert first_response.json()["runtime"]["has_error"] is True
     second_response = client.get("/api/marimo-sessions/mos_runtime_error")
     assert second_response.status_code == 200
+    assert second_response.json()["runtime"]["has_error"] is False
 
     history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
     assert history_response.status_code == 200
@@ -7737,6 +7750,15 @@ def test_native_marimo_runtime_error_is_recorded_in_chat_once(tmp_path: Path, mo
     assert isinstance(turn["response_brief"]["notebook_source_hash"], str)
     assert len(turn["response_brief"]["notebook_source_hash"]) == 64
     assert "NameError" in turn["response_brief"]["error_message"]
+    with app.state.session_factory() as db:
+        failure_artifact = db.scalar(
+            select(Artifact).where(
+                Artifact.project_id == project_id,
+                Artifact.asset_type == "agent_chat_turn",
+            )
+        )
+        assert failure_artifact is not None
+        assert loads_json(failure_artifact.metadata_json, {})["status"] == "recovered"
 
 
 def test_native_marimo_runtime_error_excerpt_prefers_traceback(tmp_path: Path) -> None:
@@ -11003,7 +11025,9 @@ def test_model_candidates_endpoint_keeps_unbundled_models_in_experiment_history(
 
     leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
     assert leaderboard_response.status_code == 200, leaderboard_response.text
-    assert leaderboard_response.json() == []
+    initial_leaderboard = leaderboard_response.json()
+    assert len(initial_leaderboard) == 2
+    assert all(row["pipeline_artifact_id"] is None for row in initial_leaderboard)
     runs_response = client.get(f"/api/projects/{project_id}/runs")
     assert runs_response.status_code == 200
     runs = runs_response.json()
@@ -11796,7 +11820,10 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
 
     leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
     assert leaderboard_response.status_code == 200, leaderboard_response.text
-    assert leaderboard_response.json() == []
+    initial_leaderboard = leaderboard_response.json()
+    assert len(initial_leaderboard) == 1
+    assert initial_leaderboard[0]["run_id"] == baseline_output["experiment_run_id"]
+    assert initial_leaderboard[0]["pipeline_artifact_id"] is None
 
 
     initial_readout_response = client.get(f"/api/projects/{project_id}/results/readout")
@@ -12732,7 +12759,9 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
 
     leaderboard_response = client.get(f"/api/projects/{project_id}/leaderboard")
     assert leaderboard_response.status_code == 200
-    assert leaderboard_response.json() == []
+    leaderboard_rows = leaderboard_response.json()
+    assert [row["run_id"] for row in leaderboard_rows] == [baseline_run["id"]]
+    assert leaderboard_rows[0]["pipeline_artifact_id"] is None
 
     diagnostics_response = client.post(f"/api/runs/{baseline_run['id']}/diagnostics")
     assert diagnostics_response.status_code == 200, diagnostics_response.text
@@ -12768,7 +12797,9 @@ def test_project_upload_profile_evaluation_split_flow(tmp_path: Path, monkeypatc
     assert model_evidence_output["availability"]["prediction_review"] == "ready"
     leaderboard_with_model_diagnostics_response = client.get(f"/api/projects/{project_id}/leaderboard")
     assert leaderboard_with_model_diagnostics_response.status_code == 200
-    assert leaderboard_with_model_diagnostics_response.json() == []
+    leaderboard_with_model_diagnostics = leaderboard_with_model_diagnostics_response.json()
+    assert [row["run_id"] for row in leaderboard_with_model_diagnostics] == [baseline_run["id"]]
+    assert leaderboard_with_model_diagnostics[0]["pipeline_artifact_id"] is None
     model_evidence_report_response = client.get(
         f"/api/artifacts/{model_evidence_output['model_diagnostics_report_artifact_id']}/preview"
     )
