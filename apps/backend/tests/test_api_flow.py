@@ -6467,7 +6467,7 @@ def test_agent_activity_uses_experiment_registration_chat_turn_as_human_summary(
     assert activity["workers"][0]["target_anchor"] == "result-readout"
 
 
-def test_latest_codex_chat_update_links_registered_notebooks_and_leaderboard(
+def test_latest_codex_chat_update_does_not_gain_links_from_later_outputs(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -6497,26 +6497,7 @@ def test_latest_codex_chat_update_links_registered_notebooks_and_leaderboard(
             goal_text="Expose registered outputs from the latest progress update.",
         )
         db.add_all([user, session])
-        notebook = store_text_artifact(
-            db,
-            app.state.artifact_store,
-            project_id=project_id,
-            asset_type="analysis_notebook",
-            name="salary_eda_notebook",
-            filename="salary_eda.py",
-            text="import marimo\n\napp = marimo.App()\n",
-            metadata={"project_id": project_id, "agent_session_id": session.id},
-        )
-        run = ExperimentRun(
-            id="run_chat_output_links",
-            project_id=project_id,
-            runner_type="codex_main_session",
-            status="succeeded",
-            params_json=json.dumps({"agent_session_id": session.id, "model_id": "hierarchical_median"}),
-            metrics_json=json.dumps({"primary_metric_name": "mae", "primary_metric_value": 27531.0, "mae": 27531.0}),
-            summary_md="Hierarchical median baseline.",
-        )
-        db.add(run)
+        db.flush()
         progress = store_json_artifact(
             db,
             app.state.artifact_store,
@@ -6531,6 +6512,11 @@ def test_latest_codex_chat_update_links_registered_notebooks_and_leaderboard(
                 "actions": [],
                 "response_brief": {"schema_version": "progress.v1"},
                 "worker_events": [],
+                "next_focus": {
+                    "target_tab": "Home",
+                    "target_anchor": "agent-workspace",
+                    "label": "Agent workspace",
+                },
             },
             metadata={
                 "project_id": project_id,
@@ -6539,17 +6525,37 @@ def test_latest_codex_chat_update_links_registered_notebooks_and_leaderboard(
             },
         )
         db.commit()
+        store_text_artifact(
+            db,
+            app.state.artifact_store,
+            project_id=project_id,
+            asset_type="analysis_notebook",
+            name="salary_eda_notebook",
+            filename="salary_eda.py",
+            text="import marimo\n\napp = marimo.App()\n",
+            metadata={"project_id": project_id, "agent_session_id": session.id},
+        )
+        db.add(
+            ExperimentRun(
+                id="run_chat_output_links",
+                project_id=project_id,
+                runner_type="codex_main_session",
+                status="succeeded",
+                params_json=json.dumps({"agent_session_id": session.id, "model_id": "hierarchical_median"}),
+                metrics_json=json.dumps(
+                    {"primary_metric_name": "mae", "primary_metric_value": 27531.0, "mae": 27531.0}
+                ),
+                summary_md="Hierarchical median baseline.",
+            )
+        )
+        db.commit()
 
     history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
     assert history_response.status_code == 200, history_response.text
     progress_turn = next(turn for turn in history_response.json() if turn["artifact_id"] == progress.id)
-    target_tabs = [action["target_tab"] for action in progress_turn["actions"]]
-    assert "Notebooks" in target_tabs
-    assert "Leaderboard" in target_tabs
-    notebook_action = next(action for action in progress_turn["actions"] if action["target_tab"] == "Notebooks")
-    assert notebook_action["artifact_id"] == notebook.id
-    assert progress_turn["next_focus"]["target_tab"] == "Leaderboard"
-    assert progress_turn["response_brief"]["linked_action_source"] == "registered_output_evidence"
+    assert progress_turn["actions"] == []
+    assert progress_turn["next_focus"]["target_tab"] == "Home"
+    assert "linked_action_source" not in progress_turn["response_brief"]
 
 
 def test_agent_chat_history_shows_repeated_notebook_evidence_action_only_once(

@@ -32,6 +32,8 @@ Tablex must not build Chat by keyword-matching natural language, extracting rand
 
 Chat submission must not be a long synchronous HTTP gate. The API acknowledges the user turn, persists any instruction for the main session, queues response composition work, and lets a worker save the Codex-authored response artifact. The UI may show a transient pending bubble, but it must not persist that pending copy as the final answer.
 
+Persisted Chat turns are immutable records of what was known and linked when the turn was created. History reads must not attach current notebooks, runs, research, or navigation actions to an older turn that did not reference them. A newly registered output gets its own factual registration turn, or is linked from a Codex-authored turn that explicitly names that output.
+
 Fixed UI copy is acceptable for labels, buttons, timestamps, process state, validation errors, and file or artifact metadata. Fixed analytical prose, hypotheses, findings, notebook narrative, model interpretation, and conversational responses are not acceptable substitutes for Codex-authored content.
 
 ## Full Auto Loop

@@ -186,7 +186,6 @@ from tabular_harness.services.agent_sessions import (
     append_user_instruction_to_workspace_inbox,
     attention_chat_message,
     chat_action_output_identity,
-    chat_update_actions_from_research_plan_evidence,
     chat_update_message_from_text,
     latest_codex_chat_update_at,
     latest_codex_transcript_output_at,
@@ -337,11 +336,6 @@ from tabular_harness.services.portal import (
     running_codex_processes_for_project,
     worker_events_from_job,
 )
-from tabular_harness.services.project_execution_control import (
-    clear_project_execution_stop,
-    request_project_execution_stop,
-    wait_for_project_execution_stop_ack,
-)
 from tabular_harness.services.prediction_input_feedback import (
     maybe_send_prediction_input_validation_failure_to_codex,
 )
@@ -353,6 +347,11 @@ from tabular_harness.services.prediction_pipeline_contract import (
     prediction_table_is_safely_optional,
 )
 from tabular_harness.services.project_cloning import clone_project
+from tabular_harness.services.project_execution_control import (
+    clear_project_execution_stop,
+    request_project_execution_stop,
+    wait_for_project_execution_stop_ack,
+)
 from tabular_harness.services.project_guidance import (
     build_project_guidance,
 )
@@ -5287,16 +5286,6 @@ def list_agent_chat_history(
     project = require_project(db, project_id)
     response_locale = latest_project_response_locale(db, project)
     japanese = locale_is_japanese(response_locale)
-    _plan_actions, plan_next_focus = chat_update_actions_from_research_plan_evidence(
-        db,
-        project=project,
-        japanese=japanese,
-    )
-    registered_output_actions, registered_output_next_focus = chat_update_actions_from_registered_output_evidence(
-        db,
-        project=project,
-        japanese=japanese,
-    )
     chat_jobs = list(
         db.scalars(
             select(Job)
@@ -5503,18 +5492,6 @@ def list_agent_chat_history(
             "timed_out",
         }:
             turns.append(pending_agent_chat_turn_from_job(db, project_id, job, payload))
-    latest_unlinked_update = next((turn for turn in reversed(main_session_update_turns) if not turn.get("actions")), None)
-    linked_actions = merge_agent_chat_actions(registered_output_actions, limit=3)
-    linked_next_focus = registered_output_next_focus or plan_next_focus
-    if latest_unlinked_update is not None and linked_actions:
-        latest_unlinked_update["actions"] = linked_actions
-        response_brief = latest_unlinked_update["response_brief"] if isinstance(latest_unlinked_update["response_brief"], dict) else {}
-        latest_unlinked_update["response_brief"] = {
-            **response_brief,
-            "linked_action_count": len(linked_actions),
-            "linked_action_source": "registered_output_evidence",
-        }
-        latest_unlinked_update["next_focus"] = linked_next_focus
     paired_update_ids.update({
         str(turn.get("paired_progress_artifact_id"))
         for turn in turns
@@ -5619,108 +5596,6 @@ def dedupe_repeated_output_actions(turns: list[dict[str, Any]]) -> list[dict[str
             retained_reversed.append(action)
         turn["actions"] = list(reversed(retained_reversed))
     return turns
-
-
-def chat_update_actions_from_registered_output_evidence(
-    db: Session,
-    *,
-    project: Project,
-    japanese: bool,
-) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    actions: list[dict[str, Any]] = []
-    latest_notebooks = list(
-        db.scalars(
-            select(Artifact)
-            .where(
-                Artifact.project_id == project.id,
-                Artifact.asset_type.in_(("analysis_notebook", "marimo_notebook")),
-            )
-            .order_by(Artifact.created_at.desc(), Artifact.version.desc())
-            .limit(12)
-        ).all()
-    )
-    notebook_ids: list[str] = []
-    for artifact in latest_notebooks:
-        if research_plan_artifact_is_native_marimo_source(artifact):
-            notebook_ids.append(artifact.id)
-        if len(notebook_ids) >= 3:
-            break
-    if notebook_ids:
-        actions.append(
-            {
-                "type": "open_surface",
-                "status": "ready",
-                "label": "ノートブックを開く" if japanese else "Open notebooks",
-                "target_tab": "Notebooks",
-                "target_anchor": NOTEBOOK_NATIVE_MARIMO_ANCHOR,
-                "artifact_id": notebook_ids[0],
-                "artifact_ids": notebook_ids,
-                "detail": (
-                    "登録済みのmarimo notebookをnative marimoで開きます。"
-                    if japanese
-                    else "Open the registered marimo notebooks with native marimo."
-                ),
-            }
-        )
-    run_count = db.scalar(
-        select(func.count())
-        .select_from(ExperimentRun)
-        .where(ExperimentRun.project_id == project.id, ExperimentRun.status == "succeeded")
-    )
-    if int(run_count or 0) > 0:
-        actions.append(
-            {
-                "type": "open_surface",
-                "status": "ready",
-                "label": "リーダーボードを見る" if japanese else "Open leaderboard",
-                "target_tab": "Leaderboard",
-                "target_anchor": "result-readout",
-                "detail": (
-                    f"登録済みのモデル評価 {int(run_count or 0)} 件を順位表で確認できます。"
-                    if japanese
-                    else f"Review {int(run_count or 0)} registered model evaluation(s) in the ranked table."
-                ),
-            }
-        )
-    latest_research = db.scalar(
-        select(Artifact)
-        .where(Artifact.project_id == project.id, Artifact.asset_type == "research_findings_report")
-        .order_by(Artifact.created_at.desc())
-        .limit(1)
-    )
-    if latest_research is not None:
-        metadata = loads_json(latest_research.metadata_json, {})
-        topic = metadata.get("topic") if isinstance(metadata.get("topic"), str) else None
-        actions.append(
-            {
-                "type": "open_artifact",
-                "status": "ready",
-                "label": "保存済みの関連調査を開く" if japanese else "Open saved related research",
-                "target_tab": "Assets",
-                "target_anchor": "assets-artifact-preview",
-                "artifact_id": latest_research.id,
-                "artifact_ids": [latest_research.id],
-                "detail": (
-                    f"登録済みの従来知見調査を確認できます。{topic}"
-                    if japanese and topic
-                    else "登録済みの従来知見調査を確認できます。"
-                    if japanese
-                    else f"Open the registered prior-knowledge research. {topic}"
-                    if topic
-                    else "Open the registered prior-knowledge research."
-                ),
-            }
-        )
-    if not actions:
-        return [], None
-    next_focus = actions[-1]
-    return actions, {
-        "target_tab": next_focus.get("target_tab"),
-        "target_anchor": next_focus.get("target_anchor"),
-        "artifact_id": next_focus.get("artifact_id"),
-        "artifact_ids": next_focus.get("artifact_ids", []),
-        "label": next_focus.get("label"),
-    }
 
 
 def matching_main_session_update_for_chat_job(
