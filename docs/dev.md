@@ -615,7 +615,7 @@ codex login --device-auth  # only when needed
 scripts/tablex up
 ```
 
-The launcher reuses host Codex authentication, builds a managed Python companion runtime on first use, and runs a model-free auth/sandbox check before starting Docker. A failed check aborts startup. Linux users should install the official Codex bubblewrap and AppArmor prerequisites rather than disabling AppArmor globally.
+The launcher reuses host Codex authentication, builds a managed Python companion runtime on first use, and runs a model-free auth/sandbox check before starting Docker. A failed check aborts startup. When a systemd user session is available, `up` installs and enables non-root `tablex-agent-supervisor.service` and `tablex-codex-worker.service` units. They restart failed companion processes and recover active AgentSessions after an OS reboot once the user's service manager starts. The recovery keeps the persisted workspace, transcript, and Codex thread ID instead of creating a replacement session. Linux users should install the official Codex bubblewrap and AppArmor prerequisites rather than disabling AppArmor globally.
 
 On hosts with `nvidia-smi`, the launcher also builds `Dockerfile.gpu` through `docker-compose.gpu.yml` and accepts that runtime only after the resource detector observes a usable GPU and at least one library passes a real GPU probe. Otherwise it logs the reason and starts the ordinary CPU services. The trusted worker claims `run_agent_compute` and sends only a schema-validated execution request to `tablex-compute-executor` over an internal Docker network. The executor has no Codex auth mount, metadata database, external network, or published port; it uses a read-only root filesystem and a writable shared artifact root. The worker then persists `compute_resource_evidence` plus output/log lineage. Do not infer GPU readiness from a device name or CUDA version alone.
 
@@ -630,10 +630,12 @@ scripts/tablex status
 
 ```bash
 scripts/tablex up
+scripts/tablex enable-autostart
+scripts/tablex disable-autostart
 scripts/tablex down
 ```
 
-Project data is stored under the ignored `data/` directory and is not removed by `scripts/tablex down`. Host Codex credentials stay in the user's normal `CODEX_HOME` and are never copied into project data or workspaces.
+`up` enables the user services by default; `TABLEX_AUTOSTART=0 scripts/tablex up` keeps the companions attached only to the current manual deployment. `down` stops Docker and disables the user services so an intentionally stopped deployment is not revived at the next login. On non-systemd hosts, `up` reports that it cannot provide OS-level automatic recovery and the user must run it again after reboot. Project data is stored under the ignored `data/` directory and is not removed by `scripts/tablex down`. Host Codex credentials stay in the user's normal `CODEX_HOME` and are never copied into project data or workspaces.
 
 For an image-only build check, run `docker build -t tablex:dev .` and `docker run --rm tablex:dev codex --version`. This verifies the bundled CLI used by container-only helpers, not the host companion runtime.
 

@@ -748,17 +748,21 @@ def attach_notebook_artifacts_to_current_research_plan(
         return None
     current = latest_research_plan_current_work(db, project_id=notebook_artifact.project_id)
     target_node_id = node_id.strip() if isinstance(node_id, str) and node_id.strip() else None
-    target_revision_id = revision_id.strip() if isinstance(revision_id, str) and revision_id.strip() else None
     if target_node_id is None:
-        if current is None or not current.node_id.strip():
-            revision = latest_research_plan_revision(db, project_id=notebook_artifact.project_id)
-            target_node_id = single_current_research_plan_node_id(revision)
-            target_revision_id = revision.id if revision is not None else None
-            if target_node_id is None:
-                return None
-        else:
-            target_node_id = current.node_id
-            target_revision_id = current.revision_id
+        metadata = loads_json(notebook_artifact.metadata_json, {})
+        target_node_id = metadata_text(metadata, "research_plan_node_id")
+    if target_node_id is None and current is not None:
+        expected_outputs = loads_json(current.expected_outputs_json, [])
+        normalized_outputs = {
+            str(output).strip().lower().replace("-", "_").replace(" ", "_")
+            for output in expected_outputs
+            if isinstance(output, str) and output.strip()
+        }
+        if normalized_outputs.intersection({"notebook", "marimo_notebook", "analysis_notebook"}):
+            target_node_id = current.node_id.strip() or None
+    if target_node_id is None:
+        return None
+    target_revision_id = revision_id.strip() if isinstance(revision_id, str) and revision_id.strip() else None
     if target_revision_id is None and current is not None and current.revision_id:
         target_revision_id = current.revision_id
     if target_revision_id is None:
@@ -1605,9 +1609,9 @@ def attention_chat_message(message_kind: str, *, details: dict[str, Any], japane
         stale_seconds = details.get("stale_after_seconds")
         stale_text = f"{int(stale_seconds) // 60}分" if isinstance(stale_seconds, (int, float)) else "しばらく"
         if japanese:
-            return f"進捗表示が{stale_text}以上更新されていません。分析は続いています。"
+            return f"進捗出力が{stale_text}以上届いていないため、TablexからCodexへ現在状況の更新を依頼しました。"
         stale_text_en = f"{int(stale_seconds) // 60} minutes" if isinstance(stale_seconds, (int, float)) else "a while"
-        return f"The progress display has not been updated for over {stale_text_en}. The analysis is still running."
+        return f"No progress output arrived for over {stale_text_en}, so Tablex asked Codex for a current status update."
     if message_kind == "research_plan_request_failed":
         if japanese:
             return (

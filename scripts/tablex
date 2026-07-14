@@ -10,10 +10,14 @@ PID_FILE="$RUNTIME_DIR/agent-supervisor.pid"
 LOG_FILE="$RUNTIME_DIR/agent-supervisor.log"
 WORKER_PID_FILE="$RUNTIME_DIR/codex-worker.pid"
 WORKER_LOG_FILE="$RUNTIME_DIR/codex-worker.log"
+SYSTEMD_USER_DIR=${XDG_CONFIG_HOME:-"$HOME/.config"}/systemd/user
+SUPERVISOR_UNIT=tablex-agent-supervisor.service
+WORKER_UNIT=tablex-codex-worker.service
 DATA_DIR=${TABLEX_DATA_DIR:-"$ROOT/data"}
 CODEX_AUTH_DIR=${CODEX_HOME:-"$HOME/.codex"}
 HOST_UID=${TABLEX_UID:-$(id -u)}
 HOST_GID=${TABLEX_GID:-$(id -g)}
+AUTOSTART=${TABLEX_AUTOSTART:-1}
 
 die() {
   printf '%s\n' "Tablex: $*" >&2
@@ -65,6 +69,105 @@ worker_running() {
   [ -f "$WORKER_PID_FILE" ] || return 1
   worker_pid=$(cat "$WORKER_PID_FILE")
   kill -0 "$worker_pid" 2>/dev/null
+}
+
+user_systemd_available() {
+  command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1
+}
+
+systemd_escape_value() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/%/%%/g'
+}
+
+systemd_escape_path() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/%/%%/g' -e 's/ /\\x20/g' -e 's/	/\\x09/g'
+}
+
+write_user_service_units() {
+  mkdir -p "$SYSTEMD_USER_DIR"
+  codex_bin_dir=$(dirname "$(command -v codex)")
+  service_path=${TABLEX_SERVICE_PATH:-"$codex_bin_dir:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+  escaped_root=$(systemd_escape_path "$ROOT")
+  escaped_data_dir=$(systemd_escape_value "$DATA_DIR")
+  escaped_codex_auth_dir=$(systemd_escape_value "$CODEX_AUTH_DIR")
+  escaped_tablex_codex_home=$(systemd_escape_value "$RUNTIME_DIR/codex-home")
+  escaped_path=$(systemd_escape_value "$service_path")
+  escaped_supervisor=$(systemd_escape_value "$VENV_DIR/bin/tablex-agent-supervisor")
+  escaped_worker=$(systemd_escape_value "$VENV_DIR/bin/tablex-worker")
+
+  cat >"$SYSTEMD_USER_DIR/$SUPERVISOR_UNIT" <<EOF
+[Unit]
+Description=Tablex Full Auto recovery
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=$escaped_root
+Environment="HOME=$(systemd_escape_value "$HOME")"
+Environment="PATH=$escaped_path"
+Environment="CODEX_HOME=$escaped_codex_auth_dir"
+Environment="HARNESS_DATA_DIR=$escaped_data_dir"
+Environment="TABLEX_CODEX_HOME=$escaped_tablex_codex_home"
+ExecStart="$escaped_supervisor" --interval 15 --owner-id host-agent-supervisor
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=default.target
+EOF
+
+  cat >"$SYSTEMD_USER_DIR/$WORKER_UNIT" <<EOF
+[Unit]
+Description=Tablex Codex job worker
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=$escaped_root
+Environment="HOME=$(systemd_escape_value "$HOME")"
+Environment="PATH=$escaped_path"
+Environment="CODEX_HOME=$escaped_codex_auth_dir"
+Environment="HARNESS_DATA_DIR=$escaped_data_dir"
+Environment="TABLEX_CODEX_HOME=$escaped_tablex_codex_home"
+ExecStart="$escaped_worker" --interval 2 --worker-id host-codex-worker --no-agent-session-supervisor --job-type generate_user_avatar_candidates --job-type agent_chat_turn --job-type run_planned_agent_task_codex --job-type continue_autonomous_session
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=default.target
+EOF
+}
+
+stop_user_services() {
+  if user_systemd_available; then
+    systemctl --user disable --now "$SUPERVISOR_UNIT" "$WORKER_UNIT" >/dev/null 2>&1 || true
+    systemctl --user reset-failed "$SUPERVISOR_UNIT" "$WORKER_UNIT" >/dev/null 2>&1 || true
+  fi
+}
+
+start_user_services() {
+  write_user_service_units
+  systemctl --user daemon-reload
+  systemctl --user enable "$SUPERVISOR_UNIT" "$WORKER_UNIT" >/dev/null
+  systemctl --user restart "$WORKER_UNIT" "$SUPERVISOR_UNIT"
+  rm -f "$PID_FILE" "$WORKER_PID_FILE"
+}
+
+start_host_companions() {
+  if [ "$AUTOSTART" != "0" ] && user_systemd_available; then
+    start_user_services
+    printf '%s\n' "Tablex: automatic Full Auto recovery is enabled for this user session."
+    return
+  fi
+  start_codex_worker
+  start_supervisor
+  if [ "$AUTOSTART" != "0" ]; then
+    printf '%s\n' "Tablex: user services are unavailable; run scripts/tablex up after an OS restart."
+  fi
 }
 
 check_runtime() {
@@ -208,36 +311,62 @@ case ${1:-up} in
     require_command codex
     codex login status >/dev/null 2>&1 || die "Codex is not authenticated. Run: codex login --device-auth"
     check_runtime
+    stop_user_services
     stop_supervisor
     stop_codex_worker
     start_compose_services
-    start_codex_worker
-    start_supervisor
+    start_host_companions
     printf '%s\n' "Tablex: http://localhost:8080"
     ;;
+  enable-autostart)
+    setup_runtime
+    require_command codex
+    codex login status >/dev/null 2>&1 || die "Codex is not authenticated. Run: codex login --device-auth"
+    check_runtime
+    user_systemd_available || die "A running systemd user session is required for automatic recovery."
+    stop_supervisor
+    stop_codex_worker
+    start_user_services
+    printf '%s\n' "Tablex: automatic Full Auto recovery is enabled for this user session."
+    ;;
+  disable-autostart)
+    stop_user_services
+    printf '%s\n' "Tablex: automatic Full Auto recovery is disabled."
+    ;;
   down)
+    stop_user_services
     stop_codex_worker
     stop_supervisor
     TABLEX_DATA_DIR="$DATA_DIR" TABLEX_CODEX_AUTH_DIR="$CODEX_AUTH_DIR" TABLEX_UID="$HOST_UID" TABLEX_GID="$HOST_GID" docker compose -f "$ROOT/docker-compose.yml" down
     ;;
   status)
     TABLEX_DATA_DIR="$DATA_DIR" TABLEX_CODEX_AUTH_DIR="$CODEX_AUTH_DIR" TABLEX_UID="$HOST_UID" TABLEX_GID="$HOST_GID" docker compose -f "$ROOT/docker-compose.yml" ps
-    if supervisor_running; then
+    if user_systemd_available && systemctl --user is-active --quiet "$SUPERVISOR_UNIT"; then
+      printf '%s\n' "host agent supervisor: running (automatic recovery enabled)"
+    elif supervisor_running; then
       printf 'host agent supervisor: running (pid %s)\n' "$(cat "$PID_FILE")"
     else
       printf '%s\n' "host agent supervisor: stopped"
     fi
-    if worker_running; then
+    if user_systemd_available && systemctl --user is-active --quiet "$WORKER_UNIT"; then
+      printf '%s\n' "host Codex worker: running (automatic recovery enabled)"
+    elif worker_running; then
       printf 'host Codex worker: running (pid %s)\n' "$(cat "$WORKER_PID_FILE")"
     else
       printf '%s\n' "host Codex worker: stopped"
     fi
     ;;
   logs)
-    touch "$LOG_FILE" "$WORKER_LOG_FILE"
-    tail -f "$LOG_FILE" "$WORKER_LOG_FILE"
+    if user_systemd_available && {
+      systemctl --user is-active --quiet "$SUPERVISOR_UNIT" || systemctl --user is-active --quiet "$WORKER_UNIT";
+    }; then
+      journalctl --user -f -u "$SUPERVISOR_UNIT" -u "$WORKER_UNIT"
+    else
+      touch "$LOG_FILE" "$WORKER_LOG_FILE"
+      tail -f "$LOG_FILE" "$WORKER_LOG_FILE"
+    fi
     ;;
   *)
-    die "usage: scripts/tablex [setup|up|down|status|logs]"
+    die "usage: scripts/tablex [setup|up|enable-autostart|disable-autostart|down|status|logs]"
     ;;
 esac

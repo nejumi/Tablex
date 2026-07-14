@@ -21,6 +21,7 @@ from tabular_harness.models.entities import (
     Project,
     SplitManifest,
 )
+from tabular_harness.services.agent_presence import supervisor_lease_active
 from tabular_harness.services.agent_response_composer import compose_agent_chat_response
 from tabular_harness.services.agent_task_planner import AgentTaskPlanResult
 from tabular_harness.services.approach import store_json_artifact
@@ -358,6 +359,7 @@ def build_agent_session_context(db: Session, project_id: str) -> dict[str, Any]:
     ordered_events = list(reversed(events))
     codex_processes = running_codex_processes_for_project(project_id)
     live_pid = session_has_observed_codex_process(session, codex_processes)
+    lease_active = supervisor_lease_active(db, session.id)
     latest_chat_created_at = latest_chat_artifact.created_at if latest_chat_artifact else None
     events_after_chat = [
         event for event in ordered_events if latest_chat_created_at is None or event.created_at > latest_chat_created_at
@@ -384,7 +386,7 @@ def build_agent_session_context(db: Session, project_id: str) -> dict[str, Any]:
             "turn_index": session.turn_index,
             "pid": session.pid,
             "pid_is_alive": live_pid,
-            "observed_runner_state": observed_runner_state(session.status, live_pid),
+            "observed_runner_state": observed_runner_state(session.status, live_pid, lease_active),
             "observed_codex_process_count": len(codex_processes),
             "codex_thread_id": session.codex_thread_id,
             "last_heartbeat_at": session.last_heartbeat_at.isoformat() if session.last_heartbeat_at else None,
@@ -445,13 +447,13 @@ def session_has_observed_codex_process(session: AgentSession, processes: list[di
     return any(process.get("pid") == session.pid for process in processes)
 
 
-def observed_runner_state(status: str, live_pid: bool) -> str:
+def observed_runner_state(status: str, live_pid: bool, lease_active: bool = False) -> str:
     if live_pid:
         return "codex_process_running"
-    if status == "running":
-        return "stale_running_state_without_process"
-    if status in {"starting", "between_turns", "waiting_for_runner"}:
-        return "supervisor_should_continue"
+    if lease_active:
+        return "supervisor_active"
+    if status in {"starting", "running", "between_turns", "waiting_for_runner"}:
+        return "recovery_unavailable"
     return status
 
 

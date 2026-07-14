@@ -381,6 +381,7 @@ MAIN_SESSION_CHAT_WAITING_STATUS = "waiting_for_agent"
 DATA_INTAKE_JOB_TYPES = {"upload_data_bundle", "select_primary_table", "import_benchmark_dataset"}
 POWER_STOP_PRESERVED_JOB_TYPES = {"upload_data_bundle", "select_primary_table"}
 AUTONOMY_STOP_PROCESS_TERM_GRACE_SECONDS = 2.0
+AGENT_RECOVERY_STARTUP_GRACE_SECONDS = 60
 
 
 def pid_alive_for_autonomy_stop(pid: int) -> bool:
@@ -6499,10 +6500,15 @@ def get_current_agent_session(project_id: str, db: Annotated[Session, Depends(ge
     payload["pid_is_observed_codex_process"] = bool(
         session.pid is not None and any(process.get("pid") == session.pid for process in observed_processes)
     )
+    lease_active = supervisor_lease_active(db, session.id)
     if observed_processes:
         payload["observed_runner_state"] = "running"
+    elif lease_active:
+        payload["observed_runner_state"] = "supervisor_active"
+    elif agent_session_recovery_startup_grace_active(session):
+        payload["observed_runner_state"] = "awaiting_supervisor"
     elif session.status in {"starting", "running", "between_turns", "waiting_for_runner"}:
-        payload["observed_runner_state"] = "supervisor_should_continue"
+        payload["observed_runner_state"] = "recovery_unavailable"
     else:
         payload["observed_runner_state"] = session.status
     return payload
@@ -10160,8 +10166,9 @@ def get_project_agent_activity(
     session_has_process = False
     if session is not None:
         session_processes = running_codex_processes_for_project(project_id)
+        session_supervisor_active = supervisor_lease_active(db, session.id)
         session_has_process = bool(session_processes) or (
-            session.status == "running" and supervisor_lease_active(db, session.id)
+            session.status == "running" and session_supervisor_active
         )
         last_codex_output_at = latest_codex_transcript_output_at(db, session_id=session.id)
         heartbeat_age_seconds = seconds_since_timestamp(last_codex_output_at, now=utc_now())
@@ -10176,9 +10183,19 @@ def get_project_agent_activity(
             and not session_has_process
             and session.status in live_session_statuses
         )
+        recovery_startup_grace_active = agent_session_recovery_startup_grace_active(session)
+        recovery_unavailable = (
+            project_agent_powered_on
+            and session.status in live_session_statuses
+            and not session_has_process
+            and not session_supervisor_active
+            and not recovery_startup_grace_active
+        )
         session_display_status = (
             "stopped"
             if stale_live_status_while_powered_off
+            else "recovery_unavailable"
+            if recovery_unavailable
             else "running"
             if session.status == "running" and session_has_process
             else "between_turns"
@@ -10187,7 +10204,7 @@ def get_project_agent_activity(
         )
         session_active = session_has_process or (
             project_agent_powered_on and session.status in {"starting", "between_turns", "waiting_for_runner"}
-        )
+        ) or recovery_startup_grace_active
         retry_delay = retry_state.get("retry_delay_seconds") if retry_state else None
         japanese = locale_is_japanese(response_locale)
         retry_detail = (
@@ -10212,6 +10229,7 @@ def get_project_agent_activity(
             project_id=project_id,
             session_id=session.id,
             include_current_work=include_current_work_focus,
+            runner_active=session_has_process,
         )
         current_summary = current_focus.get("summary") if current_focus else None
         current_target_tab = current_focus.get("target_tab") if current_focus else None
@@ -10241,9 +10259,15 @@ def get_project_agent_activity(
             if japanese
             else "The agent loop is off, but stopped work is still settling."
         )
-        running_headline = "静かに作業中" if japanese else "Codex is running quietly"
+        running_headline = "進捗更新待ち" if japanese else "No recent progress update"
         working_headline = "Codexが作業中" if japanese else "Codex is working"
         retry_headline = "再開待ち" if japanese else "Waiting to resume"
+        recovery_headline = "自動再開できていません" if japanese else "Automatic recovery is not running"
+        recovery_detail = (
+            "作業状態は保存されていますが、Codexを自動再開できていません。Tablexを再起動すると続行できます。"
+            if japanese
+            else "The work is preserved, but Tablex could not restart Codex automatically. Restart Tablex to continue."
+        )
         continue_headline = "次の作業を準備中" if japanese else "Preparing the next step"
         powered_off_headline = "Agent loopはOFF" if japanese else "Agent loop is off"
         powered_off_process_headline = (
@@ -10256,6 +10280,8 @@ def get_project_agent_activity(
             if not project_agent_powered_on and session_has_process
             else powered_off_headline
             if not project_agent_powered_on
+            else recovery_headline
+            if recovery_unavailable
             else
             running_headline
             if running_quietly
@@ -10269,6 +10295,8 @@ def get_project_agent_activity(
             session_detail = f"{powered_off_process_detail}{heartbeat_phrase}"
         elif not project_agent_powered_on:
             session_detail = powered_off_detail
+        elif recovery_unavailable:
+            session_detail = recovery_detail
         elif session_has_process:
             session_detail = f"{current_summary or running_detail}{heartbeat_phrase}"
         elif session.status == "waiting_for_runner":
@@ -10345,14 +10373,23 @@ def get_project_agent_activity(
         and session.status in {"starting", "running", "between_turns", "waiting_for_runner"}
     ):
         observed_processes = list(turn_state.get("codex_processes") or [])
+        session_supervisor_active = supervisor_lease_active(db, session.id)
         session_has_process = bool(observed_processes) or (
-            session.status == "running" and supervisor_lease_active(db, session.id)
+            session.status == "running" and session_supervisor_active
+        )
+        recovery_startup_grace_active = agent_session_recovery_startup_grace_active(session)
+        recovery_unavailable = (
+            not session_has_process
+            and not session_supervisor_active
+            and not recovery_startup_grace_active
         )
         last_codex_output_at = latest_codex_transcript_output_at(db, session_id=session.id)
         heartbeat_age_seconds = seconds_since_timestamp(last_codex_output_at, now=utc_now())
         heartbeat_phrase = heartbeat_phrase_for_locale(heartbeat_age_seconds, locale=response_locale)
         running_quietly = session_has_process and heartbeat_age_seconds is not None and heartbeat_age_seconds >= 120
-        if session_has_process:
+        if recovery_unavailable:
+            turn_detail = recovery_detail
+        elif session_has_process:
             turn_detail = f"{current_summary or running_detail}{heartbeat_phrase}"
         elif session.status == "waiting_for_runner":
             turn_detail = session_detail
@@ -10371,8 +10408,8 @@ def get_project_agent_activity(
                     [*list(turn_state.get("sources") or []), "metadata_db.agent_supervisor_leases"]
                 )
             ),
-            "state": "agent_running" if session_has_process else "agent_scheduled",
-            "owner": "agent",
+            "state": "agent_running" if session_has_process else "stale_runner" if recovery_unavailable else "agent_scheduled",
+            "owner": "system" if recovery_unavailable else "agent",
             "label": headline,
             "detail": turn_detail,
             "input_attention": False,
@@ -10548,6 +10585,7 @@ def latest_agent_session_activity_focus(
     session_id: str,
     limit: int = 280,
     include_current_work: bool = True,
+    runner_active: bool = False,
 ) -> dict[str, Any] | None:
     accepted_chat_sources = {
         "main_codex_session_chat_update",
@@ -10577,6 +10615,14 @@ def latest_agent_session_activity_focus(
         try:
             payload = loads_json(artifact_primary_path(artifact).read_text(encoding="utf-8"), {})
         except (OSError, TypeError, ValueError):
+            continue
+        intent = payload.get("intent") if isinstance(payload.get("intent"), dict) else {}
+        if runner_active and intent.get("message_kind") in {
+            "runner_unavailable",
+            "turn_recovery",
+            "process_timeout",
+            "turn_start_silence",
+        }:
             continue
         message = payload.get("assistant_message")
         if isinstance(message, str) and message.strip():
@@ -10949,6 +10995,13 @@ def heartbeat_phrase_for_locale(seconds: int | None, *, locale: str | None) -> s
     return f" Last observed output was {format_elapsed_seconds(seconds)} ago."
 
 
+def agent_session_recovery_startup_grace_active(session: AgentSession) -> bool:
+    if session.status not in {"starting", "running", "between_turns", "waiting_for_runner"}:
+        return False
+    heartbeat_age = seconds_since_timestamp(session.last_heartbeat_at, now=utc_now())
+    return heartbeat_age is not None and heartbeat_age < AGENT_RECOVERY_STARTUP_GRACE_SECONDS
+
+
 def format_elapsed_seconds_ja(seconds: int) -> str:
     if seconds < 60:
         return f"{seconds}秒"
@@ -10978,6 +11031,18 @@ def latest_agent_session_retry_state(db: Session, session_id: str) -> dict[str, 
         .limit(1)
     )
     if event is None:
+        return None
+    resolved_event = db.scalar(
+        select(AgentTranscriptEvent.id)
+        .where(
+            AgentTranscriptEvent.session_id == session_id,
+            AgentTranscriptEvent.event_index > event.event_index,
+            AgentTranscriptEvent.event_type.in_(["process_started", "turn.started", "item.started", "item.completed"]),
+        )
+        .order_by(AgentTranscriptEvent.event_index.asc())
+        .limit(1)
+    )
+    if resolved_event is not None:
         return None
     payload = loads_json(event.payload_json, {})
     payload["event_type"] = event.event_type

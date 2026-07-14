@@ -1627,6 +1627,7 @@ export function App() {
           <ProjectCloneDialog
             project={projectPendingClone}
             text={text}
+            existingProjectNames={projects.map((project) => project.name)}
             busy={cloningProjectId === projectPendingClone.id}
             onCancel={() => {
               if (!cloningProjectId) setProjectPendingClone(null);
@@ -2433,6 +2434,15 @@ function ProjectDetail({
   }, [project.id]);
 
   React.useEffect(() => {
+    setAgentActivity(null);
+    setAgentSession(null);
+    setAgentTranscriptEvents([]);
+    setAgentRawTranscript(null);
+    transcriptSessionIdRef.current = null;
+    transcriptSinceIndexRef.current = null;
+  }, [project.id]);
+
+  React.useEffect(() => {
     setResearchPlanTimeline(null);
   }, [project.id, setResearchPlanTimelineForCurrentLocale]);
   React.useEffect(() => {
@@ -2447,7 +2457,7 @@ function ProjectDetail({
     setLeaderboardLoading(true);
     setLeaderboardLoadError(null);
   }, [project.id]);
-  const turnState = agentActivity?.turn_state ?? fallbackTurnState(effectiveProject);
+  const turnState = agentActivity?.turn_state ?? fallbackTurnState(effectiveProject, text);
   const focusRecommendation = React.useMemo(
     () => {
       if (guidance) return focusFromGuidance(guidance, text);
@@ -2659,11 +2669,6 @@ function ProjectDetail({
       const sessionId = sessionData?.id ?? null;
       const canRequestDelta = sessionId !== null && sessionId === transcriptSessionIdRef.current;
       const sinceIndex = canRequestDelta ? transcriptSinceIndexRef.current : null;
-      const transcriptUrl =
-        sinceIndex === null
-          ? `/api/projects/${project.id}/agent-session/transcript`
-          : `/api/projects/${project.id}/agent-session/transcript?since_index=${sinceIndex}`;
-      const transcriptData = await api<AgentTranscriptEvent[]>(transcriptUrl).catch(() => []);
       setAgentActivity(data);
       if (projectData) {
         onProjectUpdatedRef.current(projectData);
@@ -2673,6 +2678,11 @@ function ProjectDetail({
       if (researchPlanTimelineData) {
         setResearchPlanTimelineForCurrentLocale(researchPlanTimelineData);
       }
+      const transcriptUrl =
+        sinceIndex === null
+          ? `/api/projects/${project.id}/agent-session/transcript`
+          : `/api/projects/${project.id}/agent-session/transcript?since_index=${sinceIndex}`;
+      const transcriptData = await api<AgentTranscriptEvent[]>(transcriptUrl).catch(() => []);
       setAgentTranscriptEvents((current) => {
         const next = sinceIndex === null ? transcriptData : mergeTranscriptEvents(current, transcriptData);
         transcriptSessionIdRef.current = sessionId;
@@ -2683,6 +2693,10 @@ function ProjectDetail({
       // The activity overlay is opportunistic; project refresh still surfaces hard errors.
     }
   }, [project.id, setResearchPlanTimelineForCurrentLocale, displayLocale]);
+
+  React.useEffect(() => {
+    void refreshAgentActivity();
+  }, [refreshAgentActivity]);
 
   React.useEffect(() => {
     void refresh();
@@ -5219,13 +5233,13 @@ function isActiveAgentTurn(turn: AgentConversationTurn): boolean {
   return Boolean(turn.assistant.transient) && ["pending", "running", "queued", "in_progress", "waiting_for_agent"].includes(status);
 }
 
-function fallbackTurnState(project: Project): TurnState {
+function fallbackTurnState(project: Project, text: LocaleMessages): TurnState {
   if (project.current_phase === "AUTONOMOUS_LOOP") {
     return {
       schema_version: "turn_state.v1",
-      state: "needs_attention",
+      state: "loading",
       owner: "system",
-      label: "Checking agent state",
+      label: text.turnStateLoading,
       detail: "",
       input_attention: false,
       confidence: "fallback"

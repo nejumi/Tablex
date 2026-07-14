@@ -170,7 +170,7 @@ codex login --device-auth  # only when Codex is not already authenticated
 scripts/tablex up
 ```
 
-The device-auth command prints a URL and one-time code. `scripts/tablex up` reuses that host authentication, creates its managed Python runtime on first use, checks Codex authentication and local sandboxing without a model call, then starts Tablex. If the runtime check fails, Tablex stops before starting a misleading UI-only deployment. On Linux, install the official Codex bubblewrap/AppArmor prerequisites; do not disable the host security restriction globally.
+The device-auth command prints a URL and one-time code. `scripts/tablex up` reuses that host authentication, creates its managed Python runtime on first use, checks Codex authentication and local sandboxing without a model call, then starts Tablex. On Linux with a running systemd user session, the launcher also registers non-root user services for the Full Auto supervisor and Codex worker. They restart after a process failure and after the next user login following an OS reboot, then continue active projects with their persisted AgentSession, workspace, transcript, and Codex thread ID. No system service or root-owned Tablex process is installed. If the runtime check fails, Tablex stops before starting a misleading UI-only deployment. On Linux, install the official Codex bubblewrap/AppArmor prerequisites; do not disable the host security restriction globally.
 
 Tablex does not pin Full Auto to an older fallback model. The agent model remains the authenticated Codex default unless the user explicitly selects another model.
 
@@ -187,13 +187,15 @@ scripts/tablex status
 
 ### Later starts
 
-Authentication survives normal restarts:
+Authentication and project state survive normal restarts. On a systemd-based Linux desktop, the host companions restart automatically after login and resume active Full Auto work. The commands below remain available to refresh the runtime or manage autostart explicitly:
 
 ```bash
 scripts/tablex up
+scripts/tablex enable-autostart
+scripts/tablex disable-autostart
 ```
 
-Use `scripts/tablex down` to stop Tablex. `scripts/tablex status` shows Docker and companion state, and `scripts/tablex logs` follows the companion log. Project data remains under `data/`; host Codex authentication remains in the user's normal `CODEX_HOME`. Never put Codex tokens, API keys, or authentication contents in Compose environment variables, images, logs, or repository files.
+`scripts/tablex up` enables user-session autostart by default when supported; set `TABLEX_AUTOSTART=0` for an intentionally manual session. On hosts without a running systemd user session, the launcher starts ordinary detached companions and clearly reports that `scripts/tablex up` must be run after an OS reboot. Use `scripts/tablex down` to stop Tablex and disable its user services. `scripts/tablex status` shows Docker, companion, and automatic-recovery state, while `scripts/tablex logs` follows either the user-service journal or detached companion log. Project data remains under `data/`; host Codex authentication remains in the user's normal `CODEX_HOME`. Never put Codex tokens, API keys, or authentication contents in Compose environment variables, images, logs, or repository files.
 
 ## Auth And Settings
 

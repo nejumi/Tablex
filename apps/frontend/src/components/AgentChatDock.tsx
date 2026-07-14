@@ -389,6 +389,8 @@ function turnStateClassName(turnState: TurnState) {
 
 export function turnStateLabel(turnState: TurnState, text: LocaleMessages, locale?: string) {
   switch (turnState.state) {
+    case "loading":
+      return text.turnStateLoading;
     case "agent_running":
       return text.turnStateAgentRunning;
     case "worker_pending":

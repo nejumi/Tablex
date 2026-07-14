@@ -5,20 +5,35 @@ import type { Project } from "../types";
 
 export type ProjectCloneMode = "data_only" | "full";
 
+export function nextProjectCloneName(projectName: string, suffix: string, existingNames: string[]): string {
+  const escapedSuffix = suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const root = projectName.replace(new RegExp(`\\s+${escapedSuffix}(?:\\s+\\d+)?$`, "iu"), "").trim();
+  const base = `${root || projectName} ${suffix}`.trim();
+  const occupied = new Set(existingNames.map((name) => name.trim().toLocaleLowerCase()));
+  if (!occupied.has(base.toLocaleLowerCase())) return base;
+  let index = 2;
+  while (occupied.has(`${base} ${index}`.toLocaleLowerCase())) index += 1;
+  return `${base} ${index}`;
+}
+
 export function ProjectCloneDialog({
   project,
   text,
+  existingProjectNames,
   busy,
   onCancel,
   onConfirm
 }: {
   project: Project;
   text: LocaleMessages;
+  existingProjectNames: string[];
   busy: boolean;
   onCancel: () => void;
   onConfirm: (name: string, mode: ProjectCloneMode) => void;
 }) {
-  const [name, setName] = React.useState(`${project.name} ${text.projectCloneNameSuffix}`);
+  const [name, setName] = React.useState(() =>
+    nextProjectCloneName(project.name, text.projectCloneNameSuffix, existingProjectNames)
+  );
   const [mode, setMode] = React.useState<ProjectCloneMode>("data_only");
 
   React.useEffect(() => {

@@ -15,7 +15,7 @@ from tabular_harness.models.entities import (
     Project,
 )
 from tabular_harness.services.artifacts import LocalArtifactStore, register_artifact
-from tabular_harness.services.project_cloning import clone_project
+from tabular_harness.services.project_cloning import clone_project, unique_project_clone_name
 
 
 def setup_project(tmp_path: Path):
@@ -100,6 +100,28 @@ def test_data_only_clone_copies_uploaded_data_and_resets_analysis(tmp_path: Path
         assert clone.primary_dataset_snapshot_id == cloned_dataset.id
         assert cloned_file != source_file
         assert cloned_file.read_bytes() == source_file.read_bytes()
+
+
+def test_clone_name_is_numbered_when_requested_name_already_exists(tmp_path: Path) -> None:
+    session_factory, _ = setup_project(tmp_path)
+    with session_factory() as db:
+        db.add_all(
+            [
+                Project(id="p_source", name="Home Credit Demo"),
+                Project(id="p_copy", name="Home Credit Demo copy"),
+                Project(id="p_copy_2", name="Home Credit Demo copy 2"),
+            ]
+        )
+        db.commit()
+
+        assert (
+            unique_project_clone_name(
+                db,
+                org_id="local-org",
+                requested_name="Home Credit Demo copy",
+            )
+            == "Home Credit Demo copy 3"
+        )
 
 
 def test_full_clone_remaps_saved_progress_without_copying_live_state(tmp_path: Path) -> None:

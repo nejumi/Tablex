@@ -3228,6 +3228,126 @@ def test_agent_activity_uses_supervisor_lease_for_host_runner_presence(
     assert activity["workers"][0]["active"] is True
 
 
+def test_agent_activity_does_not_claim_active_work_when_output_is_stale(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    now = utc_now()
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.running_codex_processes_for_project",
+        lambda project_id: [],
+    )
+    monkeypatch.setattr(
+        "tabular_harness.services.portal.running_codex_processes_for_project",
+        lambda project_id: [],
+    )
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.latest_codex_transcript_output_at",
+        lambda db, session_id: now - timedelta(minutes=6),
+    )
+    client = make_client(tmp_path, api_agent_session_supervisor_enabled=False)
+
+    app = cast(Any, client.app)
+    project_id = "p_stale_host_runner_activity"
+    with app.state.session_factory() as db:
+        project = Project(
+            id=project_id,
+            name="Stale host runner activity",
+            autonomy_mode="full_auto",
+            current_phase="AUTONOMOUS_LOOP",
+        )
+        db.add(project)
+        db.flush()
+        session = AgentSession(
+            id="ags_stale_host_runner_activity",
+            project_id=project_id,
+            session_type="main_autonomous",
+            status="running",
+            autonomy_mode="full_auto",
+            runner_kind="codex_cli",
+            goal_text="Continue on the host runner.",
+            started_at=now,
+            last_heartbeat_at=now,
+        )
+        db.add(session)
+        db.flush()
+        db.add(
+            AgentSupervisorLease(
+                session_id=session.id,
+                owner_id="host-agent-supervisor",
+                acquired_at=now,
+                heartbeat_at=now,
+                expires_at=now + timedelta(seconds=45),
+            )
+        )
+        db.commit()
+
+        activity = routes_module.get_project_agent_activity(project_id, db)
+
+    assert activity["turn_state"]["state"] == "agent_running"
+    assert activity["turn_state"]["label"] == "No recent progress update"
+    assert activity["turn_state"]["last_output_seconds_ago"] >= 360
+    assert "Last observed output was 6m ago" in activity["turn_state"]["detail"]
+
+
+def test_agent_activity_reports_unavailable_recovery_without_process_or_lease(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        "tabular_harness.api.routes.running_codex_processes_for_project",
+        lambda project_id: [],
+    )
+    monkeypatch.setattr(
+        "tabular_harness.services.portal.running_codex_processes_for_project",
+        lambda project_id: [],
+    )
+    client = make_client(tmp_path, api_agent_session_supervisor_enabled=False)
+
+    app = cast(Any, client.app)
+    project_id = "p_recovery_unavailable"
+    now = utc_now()
+    with app.state.session_factory() as db:
+        db.add(
+            Project(
+                id=project_id,
+                name="Recovery unavailable",
+                autonomy_mode="full_auto",
+                current_phase="AUTONOMOUS_LOOP",
+            )
+        )
+        db.flush()
+        db.add(
+            AgentSession(
+                id="ags_recovery_unavailable",
+                project_id=project_id,
+                session_type="main_autonomous",
+                status="running",
+                autonomy_mode="full_auto",
+                runner_kind="codex_cli",
+                goal_text="Continue after restart.",
+                pid=4242,
+                started_at=now,
+                last_heartbeat_at=now - timedelta(minutes=5),
+            )
+        )
+        db.commit()
+
+    activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
+    assert activity_response.status_code == 200
+    activity = activity_response.json()
+    assert activity["active_count"] == 0
+    assert activity["turn_state"]["state"] == "stale_runner"
+    assert activity["turn_state"]["owner"] == "system"
+    assert "could not restart Codex automatically" in activity["turn_state"]["detail"]
+    assert activity["workers"][0]["status"] == "recovery_unavailable"
+    assert activity["workers"][0]["active"] is False
+
+    session_response = client.get(f"/api/projects/{project_id}/agent-session/current")
+    assert session_response.status_code == 200
+    assert session_response.json()["observed_runner_state"] == "recovery_unavailable"
+
+
 def test_agent_activity_hides_queued_autonomous_worker_when_project_idle(
     tmp_path: Path,
     monkeypatch: Any,
@@ -7748,6 +7868,16 @@ def test_agent_activity_surfaces_runner_retry_state(tmp_path: Path, monkeypatch:
             content="Codex CLI is unavailable. Tablex will retry.",
             payload={"retry_delay_seconds": 120, "failure_kind": "runner_unavailable"},
         )
+        now = utc_now()
+        db.add(
+            AgentSupervisorLease(
+                session_id=session.id,
+                owner_id="test-supervisor",
+                acquired_at=now,
+                heartbeat_at=now,
+                expires_at=now + timedelta(seconds=45),
+            )
+        )
         db.commit()
 
     activity_response = client.get(f"/api/projects/{project_id}/agent-activity")
@@ -7766,6 +7896,27 @@ def test_agent_activity_surfaces_runner_retry_state(tmp_path: Path, monkeypatch:
     assert activity["workers"][0]["headline"] == "Waiting to resume"
     assert activity["workers"][0]["retry_state"]["retry_delay_seconds"] == 120
     assert activity["workers"][0]["retry_state"]["failure_kind"] == "runner_unavailable"
+
+    with app.state.session_factory() as db:
+        session = db.get(AgentSession, "ags_retry_state")
+        assert session is not None
+        session.status = "running"
+        session.last_heartbeat_at = utc_now()
+        append_session_event(
+            db,
+            session,
+            source="tablex_sidecar",
+            event_type="process_started",
+            role="harness",
+            title="Codex started",
+            content="Codex process is running.",
+            payload={"pid": 4321},
+        )
+        db.commit()
+
+    recovered_activity = client.get(f"/api/projects/{project_id}/agent-activity").json()
+    assert recovered_activity["turn_state"]["retry_state"] is None
+    assert recovered_activity["workers"][0]["retry_state"] is None
 
 
 def test_project_update_starts_main_session_after_target_change(
@@ -8095,7 +8246,7 @@ def test_full_auto_codex_start_creates_main_agent_session_transcript(
     assert session["session_type"] == "main_autonomous"
     assert session["observed_codex_process_count"] == 0
     assert session["pid_is_observed_codex_process"] is False
-    assert session["observed_runner_state"] == "supervisor_should_continue"
+    assert session["observed_runner_state"] == "recovery_unavailable"
 
     transcript_response = client.get(f"/api/projects/{project_id}/agent-session/transcript")
     assert transcript_response.status_code == 200

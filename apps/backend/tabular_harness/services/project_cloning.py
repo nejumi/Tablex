@@ -61,10 +61,11 @@ def clone_project(
     mode: ProjectCloneMode,
     created_by: str,
 ) -> tuple[Project, dict[str, int]]:
+    target_name = unique_project_clone_name(db, org_id=source.org_id, requested_name=name)
     target = Project(
         id=new_id("p"),
         org_id=source.org_id,
-        name=name.strip(),
+        name=target_name,
         description=source.description,
         task_type=source.task_type if mode == "full" else None,
         target_column=source.target_column if mode == "full" else None,
@@ -145,6 +146,24 @@ def clone_project(
     counts["datasets"] = counts.pop("dataset_snapshots", 0)
     counts["artifacts"] = len(rows_by_table.get("artifacts", []))
     return target, counts
+
+
+def unique_project_clone_name(db: Session, *, org_id: str, requested_name: str) -> str:
+    base = requested_name.strip()
+    existing = {
+        name.casefold()
+        for name in db.scalars(select(Project.name).where(Project.org_id == org_id)).all()
+        if isinstance(name, str)
+    }
+    if base.casefold() not in existing:
+        return base
+    index = 2
+    while True:
+        suffix = f" {index}"
+        candidate = f"{base[: 200 - len(suffix)].rstrip()}{suffix}"
+        if candidate.casefold() not in existing:
+            return candidate
+        index += 1
 
 
 def project_rows_to_clone(db: Session, *, source: Project, mode: ProjectCloneMode) -> dict[str, list[dict[str, Any]]]:

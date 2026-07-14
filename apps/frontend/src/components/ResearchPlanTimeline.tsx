@@ -71,6 +71,8 @@ export function ResearchPlanTimeline({
           const blockIsCurrentButNotLive = blockIsDeclaredCurrent && !declaredCurrentWorkIsLive;
           const effectiveStatus = blockIsLiveCurrentWork ? "active" : block.status;
           const statusLabel = researchPlanBlockRuntimeAwareStatusLabel(block, currentWork, poweredOn, turnState, text);
+          const runEvidenceCount = block.evidenceLinks?.filter((link) => link.outputKind === "run").length ?? 0;
+          const otherEvidenceCount = (block.evidenceLinks?.length ?? 0) - runEvidenceCount;
           return (
             <React.Fragment key={block.id}>
               <button
@@ -94,9 +96,14 @@ export function ResearchPlanTimeline({
                     {block.subtasks.length} {block.subtasks.length === 1 ? text.planSubtaskSingular : text.planSubtaskPlural}
                   </em>
                 ) : null}
-                {block.evidenceLinks?.length ? (
+                {runEvidenceCount ? (
                   <em className="research-plan-evidence-pill">
-                    {block.evidenceLinks.length} {text.researchPlanDetailEvidence}
+                    {runEvidenceCount} {text.metricRuns}
+                  </em>
+                ) : null}
+                {otherEvidenceCount ? (
+                  <em className="research-plan-evidence-pill">
+                    {otherEvidenceCount} {text.researchPlanDetailEvidence}
                   </em>
                 ) : null}
                 <small>

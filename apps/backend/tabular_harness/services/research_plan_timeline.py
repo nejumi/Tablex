@@ -403,10 +403,27 @@ def research_plan_contract_validation_summary(
 
 
 def merge_research_plan_links(*link_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    explicit_notebook_nodes = {
+        str(link.get("artifact_id")): str(link.get("node_id"))
+        for links in link_groups
+        for link in links
+        if str(link.get("artifact_id") or "")
+        and isinstance(link.get("metadata"), dict)
+        and str(link["metadata"].get("source") or "") == "research_plan_completion_evidence"
+    }
     merged: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, str]] = set()
     for links in link_groups:
         for link in links:
+            metadata = link.get("metadata") if isinstance(link.get("metadata"), dict) else {}
+            artifact_id = str(link.get("artifact_id") or "")
+            if (
+                artifact_id
+                and metadata.get("source") == "main_agent_session_notebook_link"
+                and explicit_notebook_nodes.get(artifact_id)
+                and explicit_notebook_nodes[artifact_id] != str(link.get("node_id") or "")
+            ):
+                continue
             link_type = str(link.get("link_type") or "artifact")
             node_id = str(link.get("node_id") or "")
             target_id = str(link.get("artifact_id") or link.get("run_id") or link.get("id") or "")

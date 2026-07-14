@@ -4733,7 +4733,8 @@ def test_supervisor_safe_progress_update_uses_project_locale_without_browser_pol
         chat_payload = loads_json(artifact_primary_path(chat_artifacts[0]).read_text(encoding="utf-8"), {})
         assert chat_payload["intent"]["type"] == "agent_attention_event"
         assert chat_payload["intent"]["message_kind"] == "progress_update_requested"
-        assert "進捗表示" in chat_payload["assistant_message"]
+        assert "進捗出力" in chat_payload["assistant_message"]
+        assert "現在状況の更新を依頼" in chat_payload["assistant_message"]
         assert chat_payload["actions"][0]["target_tab"] == "Home"
 
 
@@ -12353,7 +12354,7 @@ def test_notebook_file_request_rejects_static_html_registered_as_notebook(tmp_pa
         assert chat_payload["intent"]["message_kind"] == "notebook_request_failed"
 
 
-def test_auto_registered_notebook_attaches_to_single_active_research_plan_node(tmp_path: Path) -> None:
+def test_auto_registered_notebook_does_not_guess_active_research_plan_node(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
     store = LocalArtifactStore(tmp_path / "artifacts")
@@ -12416,8 +12417,7 @@ def test_auto_registered_notebook_attaches_to_single_active_research_plan_node(t
                 LineageEdge.to_asset_id == notebook_artifact.id,
             )
         )
-        assert source_edge is not None
-        assert loads_json(source_edge.metadata_json, {})["node_id"] == "data_understanding"
+        assert source_edge is None
         chat_artifact = db.scalar(
             select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
         )
@@ -12425,12 +12425,16 @@ def test_auto_registered_notebook_attaches_to_single_active_research_plan_node(t
         chat_payload = loads_json(artifact_primary_path(chat_artifact).read_text(encoding="utf-8"), {})
         assert chat_payload["actions"][0]["target_tab"] == "Notebooks"
         assert chat_payload["actions"][0]["artifact_id"] == notebook_artifact.id
-        assert chat_payload["response_brief"]["research_plan_node_id"] == "data_understanding"
+        assert chat_payload["response_brief"]["research_plan_node_id"] is None
         assert chat_payload["response_brief"]["source_transcript_event"]["event_type"] == "notebook_chat_turn_registered"
 
         timeline = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
         data_block = next(block for block in timeline["blocks"] if block["id"] == "data_understanding")
-        assert any(link["artifact_id"] == notebook_artifact.id for link in data_block["attached_artifacts"])
+        assert not any(link["artifact_id"] == notebook_artifact.id for link in data_block["attached_artifacts"])
+
+        context_request = notebook_context_request_path(workspace)
+        assert context_request.exists()
+        assert notebook_artifact.id in context_request.read_text(encoding="utf-8")
 
 
 def test_auto_registered_notebook_without_request_asks_codex_for_context_registration(tmp_path: Path) -> None:
@@ -12631,7 +12635,7 @@ def test_notebook_request_context_registration_does_not_emit_missing_context_att
         assert not any(payload.get("intent", {}).get("message_kind") == "notebook_context_registration_needed" for payload in chat_payloads)
 
 
-def test_existing_notebook_registration_restores_chat_and_plan_link(tmp_path: Path) -> None:
+def test_existing_notebook_registration_does_not_guess_plan_link(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
     store = LocalArtifactStore(tmp_path / "artifacts")
@@ -12700,14 +12704,12 @@ def test_existing_notebook_registration_restores_chat_and_plan_link(tmp_path: Pa
         assert chat_payload["intent"]["status"] == "quality_needs_attention"
         assert chat_payload["actions"][0]["artifact_id"] == notebook_artifact.id
         assert chat_payload["actions"][0]["artifact_ids"] == [notebook_artifact.id]
-        assert chat_payload["response_brief"]["research_plan_node_id"] == "data_understanding"
+        assert chat_payload["response_brief"]["research_plan_node_id"] is None
         assert chat_payload["response_brief"]["source_transcript_event"]["event_type"] == "notebook_chat_turn_registered"
         timeline = build_research_plan_timeline_response(db, project_id=project.id, locale="en-US")
         data_block = timeline["blocks"][0]
         attached_ids = {link["artifact_id"] for link in data_block["attached_artifacts"] if link["link_type"] == "artifact"}
-        assert {
-            notebook_artifact.id,
-        }.issubset(attached_ids)
+        assert notebook_artifact.id not in attached_ids
 
 
 def test_research_plan_ingest_commits_contract_valid_workspace_plan(tmp_path: Path) -> None:

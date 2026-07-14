@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import zipfile
 from datetime import timedelta
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from tabular_harness.models.entities import (
 from tabular_harness.services.research_plan_timeline import (
     build_research_plan_timeline_response,
     clean_research_plan_timeline_blocks,
+    merge_research_plan_links,
 )
 from tabular_harness.services.research_plans import (
     ResearchPlanValidationError,
@@ -188,6 +190,26 @@ def test_research_plan_links_dedupe_duplicate_artifact_edges_before_lookup() -> 
         blocks = {block["id"]: block for block in response["blocks"]}
         assert response["contract_validation"]["status"] == "ok"
         assert [link["artifact_id"] for link in blocks["data_upload"]["attached_artifacts"]] == [artifact.id]
+
+
+def test_research_plan_links_prefer_explicit_notebook_completion_node() -> None:
+    notebook_id = "art_notebook_with_explicit_context"
+    implicit_link = {
+        "node_id": "evaluation_design",
+        "artifact_id": notebook_id,
+        "link_type": "artifact",
+        "role": "notebook",
+        "metadata": {"source": "main_agent_session_notebook_link"},
+    }
+    explicit_link = {
+        "node_id": "data_understanding",
+        "artifact_id": notebook_id,
+        "link_type": "artifact",
+        "role": "completion_evidence",
+        "metadata": {"source": "research_plan_completion_evidence"},
+    }
+
+    assert merge_research_plan_links([implicit_link], [explicit_link]) == [explicit_link]
 
 
 def test_harness_objective_records_canonical_plan_progress_after_upload() -> None:
@@ -1301,6 +1323,17 @@ def test_research_plan_timeline_ignores_legacy_blank_current_work() -> None:
 def test_research_plan_timeline_exposes_completion_evidence_artifacts_and_runs(tmp_path: Path) -> None:
     notebook_path = tmp_path / "story_notebook.py"
     notebook_path.write_text("import marimo\n\napp = marimo.App()\n", encoding="utf-8")
+    pipeline_path = tmp_path / "story_model_runtime.zip"
+    pipeline_manifest = {
+        "schema_version": "pipeline_manifest.v1",
+        "input_contract": {},
+        "output_contract": {},
+        "runtime": {},
+    }
+    with zipfile.ZipFile(pipeline_path, "w") as archive:
+        archive.writestr("pipeline_manifest.json", dumps_json(pipeline_manifest))
+        archive.writestr("predict.py", "print('prediction runtime')\n")
+        archive.writestr("requirements.txt", "\n")
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
 
@@ -1322,10 +1355,29 @@ def test_research_plan_timeline_exposes_completion_evidence_artifacts_and_runs(t
             project_id=project.id,
             runner_type="codex_main_session",
             status="succeeded",
-            params_json=dumps_json({"model_id": "text_masked_ridge"}),
+            params_json=dumps_json(
+                {"model_id": "text_masked_ridge", "pipeline_artifact_id": "art_story_model_runtime"}
+            ),
             metrics_json=dumps_json({"mae": 25275.0}),
         )
-        db.add_all([project, artifact, run])
+        pipeline = Artifact(
+            id="art_story_model_runtime",
+            project_id=project.id,
+            asset_type="prediction_pipeline",
+            name="story_model_runtime",
+            version=1,
+            uri=str(tmp_path),
+            content_hash="pipeline-hash",
+            size_bytes=pipeline_path.stat().st_size,
+            metadata_json=dumps_json(
+                {
+                    "primary_path": str(pipeline_path),
+                    "pipeline_manifest": pipeline_manifest,
+                    "smoke_validation": {"status": "passed", "runtime_isolated": True},
+                }
+            ),
+        )
+        db.add_all([project, artifact, pipeline, run])
         db.commit()
 
         commit_research_plan_revision(

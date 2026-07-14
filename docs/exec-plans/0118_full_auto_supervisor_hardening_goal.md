@@ -177,7 +177,7 @@ Still deferred:
 ## Deferred Scope
 
 - Do not prune historical duplicate artifacts automatically. Existing projects may still contain large artifact histories from older naming behavior; deletion or compaction needs an explicit maintenance command and user approval.
-- systemd/supervisord unit files remain future work. Docker Compose wiring is present for local split-process operation.
+- The supported Linux launcher now installs non-root systemd user units for the host supervisor and Codex worker, providing process and login-time restart recovery. A deployment-specific supervisord or system service remains an operator choice for headless hosted environments.
 - Full browser UX review remains necessary for Activity overlay behavior under live running workloads. Chat/Raw, Research Plan Japanese rendering, and Notebook preview/Japanese chrome now have Firefox Playwright evidence for the inspected project.
 - Chat quality still depends on Codex honoring `reports/chat_update.md` at a useful cadence. The harness now requests those updates from the supervisor path as well as user/chat/activity paths, but real long-running sessions should be observed to confirm the cadence feels natural.
 - Research Plan still needs the document-revision/tool substrate. The current pass is a stop-loss cleanup, not the final ideal model for plan authority or current-work reporting.
