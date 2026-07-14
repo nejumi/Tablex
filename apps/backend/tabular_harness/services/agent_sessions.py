@@ -687,7 +687,11 @@ def processed_workspace_inbox_filenames(session: AgentSession) -> set[str]:
     return processed
 
 
-def unprocessed_actionable_workspace_inbox_exists(session: AgentSession) -> bool:
+def unprocessed_actionable_workspace_inbox_exists(
+    session: AgentSession,
+    *,
+    newer_than: datetime | None = None,
+) -> bool:
     if not session.workspace_path:
         return False
     workspace = resolve_runtime_data_path(session.workspace_path)
@@ -700,9 +704,34 @@ def unprocessed_actionable_workspace_inbox_exists(session: AgentSession) -> bool
         entry_type = str(entry.get("type") or "")
         if entry_type in COMPLETED_PLAN_NON_ACTIONABLE_INBOX_TYPES:
             continue
+        if newer_than is not None:
+            created_at = entry.get("created_at")
+            try:
+                entry_created_at = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+            except ValueError:
+                entry_created_at = None
+            if entry_created_at is not None:
+                reference = newer_than.replace(tzinfo=timezone.utc) if newer_than.tzinfo is None else newer_than
+                observed = entry_created_at.replace(tzinfo=timezone.utc) if entry_created_at.tzinfo is None else entry_created_at
+                if observed <= reference:
+                    continue
         if entry_kind in {"request", "rejection", "observation", "user_instruction"}:
             return True
     return False
+
+
+def latest_codex_turn_started_at(db: Session, *, session_id: str) -> datetime | None:
+    event = db.scalar(
+        select(AgentTranscriptEvent)
+        .where(
+            AgentTranscriptEvent.session_id == session_id,
+            AgentTranscriptEvent.source == "codex_cli",
+            AgentTranscriptEvent.event_type == "turn.started",
+        )
+        .order_by(AgentTranscriptEvent.event_index.desc())
+        .limit(1)
+    )
+    return event.created_at if event is not None else None
 
 
 def main_session_should_pause_after_completed_plan(db: Session, *, project: Project, session: AgentSession) -> bool:
@@ -715,7 +744,10 @@ def main_session_should_pause_after_completed_plan(db: Session, *, project: Proj
         return False
     if project_has_incomplete_prediction_runs(db, project=project):
         return False
-    if unprocessed_actionable_workspace_inbox_exists(session):
+    if unprocessed_actionable_workspace_inbox_exists(
+        session,
+        newer_than=latest_codex_turn_started_at(db, session_id=session.id),
+    ):
         return False
     latest_state_change = latest_request_or_rejection_artifact_at(db, project_id=project.id)
     latest_chat = latest_codex_chat_update_at(db, project_id=project.id, session_id=session.id)
@@ -963,24 +995,13 @@ def maybe_request_codex_progress_update_safely(
                 session=session,
                 locale=locale,
             )
-            progress_event = maybe_request_codex_progress_update(
+            maybe_request_codex_progress_update(
                 db,
                 session=session,
                 locale=locale,
                 stale_after_seconds=PROGRESS_UPDATE_NUDGE_AFTER_SECONDS,
                 min_interval_seconds=PROGRESS_UPDATE_NUDGE_MIN_INTERVAL_SECONDS,
             )
-            if progress_event is not None and store is not None:
-                register_agent_session_attention_chat_turn(
-                    db,
-                    store=store,
-                    project=project,
-                    session=session,
-                    attention_key=f"progress_update_requested:{session.id}",
-                    status="running",
-                    message_kind="progress_update_requested",
-                    details=loads_json(progress_event.payload_json, {}),
-                )
             db.commit()
     except Exception:
         return

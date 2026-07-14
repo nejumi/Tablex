@@ -5770,7 +5770,7 @@ def compact_agent_chat_history_turns(
     db: Session | None = None,
     project_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    ordered = dedupe_consecutive_identical_agent_chat_turns(
+    ordered = dedupe_identical_agent_chat_turns(
         dedupe_repeated_experiment_registration_failure_turns(
             dedupe_repeated_experiment_registration_turns(
                 coalesce_adjacent_notebook_update_turns(
@@ -5948,54 +5948,35 @@ def agent_chat_identical_assistant_turn_key(turn: dict[str, Any]) -> str | None:
     if user_message or not assistant_message:
         return None
     intent = turn.get("intent") if isinstance(turn.get("intent"), dict) else {}
-    actions = turn.get("actions") if isinstance(turn.get("actions"), list) else []
-    action_key = [
-        {
-            "type": str(action.get("type") or ""),
-            "status": str(action.get("status") or ""),
-            "label": str(action.get("label") or ""),
-            "target_tab": str(action.get("target_tab") or ""),
-            "target_anchor": str(action.get("target_anchor") or ""),
-            "artifact_id": str(action.get("artifact_id") or ""),
-            "run_id": str(action.get("run_id") or ""),
-        }
-        for action in actions
-        if isinstance(action, dict)
-    ]
     return json.dumps(
         {
             "assistant_message": assistant_message,
             "intent_type": str(intent.get("type") or ""),
             "intent_status": str(intent.get("status") or ""),
             "message_kind": str(intent.get("message_kind") or ""),
-            "actions": action_key,
         },
         ensure_ascii=False,
         sort_keys=True,
     )
 
 
-def dedupe_consecutive_identical_agent_chat_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    deduped: list[dict[str, Any]] = []
-    previous_key: str | None = None
-    previous_index: int | None = None
-    for turn in turns:
+def dedupe_identical_agent_chat_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest_index_by_key: dict[str, int] = {}
+    for index, turn in enumerate(turns):
         key = agent_chat_identical_assistant_turn_key(turn)
-        if key is not None and key == previous_key and previous_index is not None:
-            previous_turn = deduped[previous_index]
-            latest = dict(turn)
-            previous_actions = previous_turn.get("actions") if isinstance(previous_turn.get("actions"), list) else []
-            latest_actions = latest.get("actions") if isinstance(latest.get("actions"), list) else []
-            latest["actions"] = merge_agent_chat_actions(latest_actions, previous_actions, limit=6)
-            deduped[previous_index] = latest
+        if key is None:
+            continue
+        latest_index_by_key[key] = index
+
+    deduped: list[dict[str, Any]] = []
+    for index, turn in enumerate(turns):
+        key = agent_chat_identical_assistant_turn_key(turn)
+        if key is None:
+            deduped.append(turn)
+            continue
+        if latest_index_by_key.get(key) != index:
             continue
         deduped.append(turn)
-        if key is None:
-            previous_key = None
-            previous_index = None
-        else:
-            previous_key = key
-            previous_index = len(deduped) - 1
     return deduped
 
 

@@ -15,14 +15,19 @@ from tabular_harness.models.entities import (
     DatasetSnapshot,
     EvaluationCandidate,
     EvaluationSpec,
-    Job,
     Project,
     utc_now,
 )
 from tabular_harness.services.agent_inbox import latest_inbox_entry_path, write_inbox_entry
 from tabular_harness.services.approach import store_json_artifact
 from tabular_harness.services.artifacts import LocalArtifactStore, create_lineage_edge
-from tabular_harness.services.evaluation import load_profile_for_dataset
+from tabular_harness.services.evaluation import (
+    approve_spec,
+    create_evaluation_approval_review,
+    load_profile_for_dataset,
+    promote_candidate_to_spec,
+    write_spec_artifact,
+)
 from tabular_harness.services.jobs import create_job
 from tabular_harness.services.metric_preferences import normalize_metric_name
 
@@ -293,7 +298,7 @@ def execute_propose_evaluation_request(
         to_asset_id=candidate.id,
         relation_type="evaluated_by",
     )
-    return {
+    result = {
         "candidate_id": candidate.id,
         "artifact_id": artifact.id,
         "dataset_snapshot_id": dataset.id,
@@ -303,6 +308,60 @@ def execute_propose_evaluation_request(
         "requires_approval": True,
         "split_generation_supported": split_kind in GENERATABLE_SPLIT_KINDS,
     }
+    if project.autonomy_mode != "full_auto":
+        return result
+
+    spec = promote_candidate_to_spec(db, store=store, candidate=candidate)
+    review = create_evaluation_approval_review(db, store=store, spec=spec, approval_intent=True)
+    result.update(
+        {
+            "evaluation_spec_id": spec.id,
+            "approval_review_artifact_id": review.artifact.id,
+            "approval_blocked": review.blocked,
+        }
+    )
+    if review.blocked:
+        return result
+
+    approve_spec(spec)
+    approved_artifact = write_spec_artifact(db, store, spec)
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="artifact",
+        from_asset_id=review.artifact.id,
+        to_asset_type="evaluation_spec",
+        to_asset_id=spec.id,
+        relation_type="supports_approval",
+    )
+    create_lineage_edge(
+        db,
+        project_id=project.id,
+        from_asset_type="evaluation_spec",
+        from_asset_id=spec.id,
+        to_asset_type="artifact",
+        to_asset_id=approved_artifact.id,
+        relation_type="produces",
+    )
+    split_job = None
+    if split_kind in GENERATABLE_SPLIT_KINDS:
+        split_job = create_job(
+            db,
+            job_type="build_split_manifest",
+            project_id=project.id,
+            input_payload={"evaluation_spec_id": spec.id},
+            policy={"execution": "queued_worker", "network": "disabled", "secret_access": "forbidden"},
+            priority=70,
+        )
+    result.update(
+        {
+            "status": spec.status,
+            "requires_approval": False,
+            "evaluation_spec_artifact_id": approved_artifact.id,
+            "split_job_id": split_job.id if split_job is not None else None,
+        }
+    )
+    return result
 
 
 def execute_generate_split_request(db: Session, *, project: Project, payload: dict[str, Any]) -> dict[str, Any]:

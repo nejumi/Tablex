@@ -380,6 +380,8 @@ def execute_research_plan_tool_request(
         }
     if operation == "request_human_attention":
         node_id, compatibility_warnings = research_plan_request_node_id(payload, required=False)
+        requested_blocks_next_phase = bool(payload.get("blocks_next_phase") or False)
+        full_auto_continues = project.autonomy_mode == "full_auto" and requested_blocks_next_phase
         question = request_research_plan_human_attention(
             db,
             project_id=project.id,
@@ -391,13 +393,18 @@ def execute_research_plan_tool_request(
             else None,
             impact_if_wrong=str(payload.get("impact_if_wrong")) if payload.get("impact_if_wrong") is not None else None,
             urgency=str(payload.get("urgency") or "medium"),
-            fallback_policy=str(payload.get("fallback_policy") or "infer_and_continue"),
-            blocks_next_phase=bool(payload.get("blocks_next_phase") or False),
+            fallback_policy=(
+                "infer_and_continue"
+                if full_auto_continues
+                else str(payload.get("fallback_policy") or "infer_and_continue")
+            ),
+            blocks_next_phase=requested_blocks_next_phase and not full_auto_continues,
             revision_id=str(payload.get("revision_id")) if payload.get("revision_id") is not None else None,
         )
         return {
             "question_id": question.id,
             "can_proceed_without_answer": question.can_proceed_without_answer,
+            "continued_automatically": full_auto_continues,
             "compatibility_warnings": compatibility_warnings,
         }
     raise ValueError(f"Unsupported ResearchPlan request operation: {operation}")

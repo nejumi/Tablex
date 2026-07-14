@@ -2098,6 +2098,32 @@ def agent_chat_turn_assistant_message(chat_artifact: Artifact) -> str | None:
     return message if isinstance(message, str) and message.strip() else None
 
 
+def latest_agent_chat_update_artifact_for_message(
+    db: Session,
+    *,
+    project: Project,
+    session: AgentSession,
+    message: str,
+) -> Artifact | None:
+    artifacts = list(
+        db.scalars(
+            select(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+            .order_by(Artifact.created_at.desc())
+            .limit(100)
+        ).all()
+    )
+    for artifact in artifacts:
+        metadata = loads_json(artifact.metadata_json, {})
+        if metadata.get("source") != "main_codex_session_chat_update":
+            continue
+        if metadata.get("agent_session_id") != session.id:
+            continue
+        if agent_chat_turn_assistant_message(artifact) == message:
+            return artifact
+    return None
+
+
 def chat_update_visible_state_fingerprint(
     db: Session,
     *,
@@ -2204,6 +2230,14 @@ def maybe_register_chat_update_from_workspace_output(
         next_focus=next_focus,
     )
     pending_chat_job = pending_main_session_chat_job_exists(db, project=project, session=session)
+    previous_same_message = latest_agent_chat_update_artifact_for_message(
+        db,
+        project=project,
+        session=session,
+        message=message,
+    )
+    if previous_same_message is not None and not pending_chat_job:
+        return
     latest_same_state_chat = latest_agent_chat_update_artifact_for_state(
         db,
         project=project,

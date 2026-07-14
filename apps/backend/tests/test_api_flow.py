@@ -964,7 +964,7 @@ def test_agent_chat_history_compaction_dedupes_identical_progress_reports() -> N
 
 def test_agent_chat_history_compaction_dedupes_identical_attention_turns() -> None:
     repeated_message = "モデル評価結果はまだLeaderboardに反映していません。作業は継続中です。"
-    turns = [
+    repeated_turns = [
         {
             "created_at": f"2026-07-07T10:0{index}:00",
             "user_message": "",
@@ -976,12 +976,25 @@ def test_agent_chat_history_compaction_dedupes_identical_attention_turns() -> No
         }
         for index in range(3)
     ]
+    turns = [
+        repeated_turns[0],
+        {
+            "created_at": "2026-07-07T10:00:30",
+            "user_message": "",
+            "assistant_message": "別の実作業が進みました。",
+            "intent": {"type": "autonomous_agent_progress_report", "status": "ready"},
+            "actions": [],
+            "artifact_id": "art_progress_between_attention",
+        },
+        *repeated_turns[1:],
+    ]
 
     compacted = compact_agent_chat_history_turns(turns, locale="ja-JP")
 
-    assert len(compacted) == 1
-    assert compacted[0]["artifact_id"] == "art_attention_2"
-    assert compacted[0]["assistant_message"] == repeated_message
+    assert len(compacted) == 2
+    assert compacted[0]["artifact_id"] == "art_progress_between_attention"
+    assert compacted[1]["artifact_id"] == "art_attention_2"
+    assert compacted[1]["assistant_message"] == repeated_message
 
 
 def test_agent_chat_history_compaction_replaces_legacy_experiment_registration_state() -> None:

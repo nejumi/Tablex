@@ -16,7 +16,10 @@ from sqlalchemy.orm import Session
 from tabular_harness.core.config import get_settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.core.runtime_paths import resolve_runtime_data_path
-from tabular_harness.core.runtime_resources import detect_compute_resources, load_managed_compute_resources
+from tabular_harness.core.runtime_resources import (
+    detect_compute_resources,
+    load_managed_compute_resources,
+)
 from tabular_harness.models.entities import (
     AgentSession,
     Artifact,
@@ -24,11 +27,17 @@ from tabular_harness.models.entities import (
     AssetReference,
     AssetVersion,
     DatasetSnapshot,
+    EvaluationSpec,
     Job,
     Project,
     ResearchPlanRevision,
     User,
     utc_now,
+)
+from tabular_harness.services.agent_context import (
+    evaluation_context,
+    latest_approved_spec,
+    latest_split_for_spec,
 )
 from tabular_harness.services.agent_prompting import session_protocol_text
 from tabular_harness.services.agent_requests.compute import compute_acks_dir, compute_requests_dir
@@ -539,6 +548,27 @@ def prior_research_status_context(db: Session, *, project_id: str) -> dict[str, 
     }
 
 
+def session_evaluation_spec(spec: EvaluationSpec | None) -> dict[str, Any] | None:
+    if spec is None:
+        return None
+    return {
+        "id": spec.id,
+        "dataset_snapshot_id": spec.dataset_snapshot_id,
+        "source_evaluation_candidate_id": spec.source_evaluation_candidate_id,
+        "name": spec.name,
+        "split_type": spec.split_type,
+        "primary_metric": spec.primary_metric,
+        "secondary_metrics": loads_json(spec.secondary_metrics_json, []),
+        "time_column": spec.time_column,
+        "group_column": spec.group_column,
+        "stratify_column": spec.stratify_column,
+        "excluded_columns": loads_json(spec.excluded_columns_json, []),
+        "assumption_ids": loads_json(spec.assumption_ids_json, []),
+        "risk_level": spec.risk_level,
+        "status": spec.status,
+    }
+
+
 def build_session_context(
     db: Session,
     *,
@@ -567,6 +597,9 @@ def build_session_context(
     )
     response_locale = response_locale.strip() if isinstance(response_locale, str) and response_locale.strip() else latest_project_response_locale(db, project)
     equipped_skills = equipped_skill_context(db, skill_references)
+    evaluation_spec = latest_approved_spec(db, project.id)
+    split_manifest = latest_split_for_spec(db, evaluation_spec.id) if evaluation_spec is not None else None
+    registered_evaluation = evaluation_context(evaluation_spec, split_manifest)
     latest_research_plan_artifact = next((item for item in artifacts if item.asset_type == "research_plan"), None)
     data_manifest = session_data_manifest(workspace)
     data_links_by_dataset_id = {
@@ -604,6 +637,9 @@ def build_session_context(
         },
         "prior_research_status": prior_research_status_context(db, project_id=project.id),
         "session": {"id": session.id, "turn_index": session.turn_index, "codex_thread_id": session.codex_thread_id},
+        "evaluation_spec": session_evaluation_spec(evaluation_spec),
+        "split_manifest": registered_evaluation.get("split_manifest"),
+        "evaluation_context": registered_evaluation,
         "protocol": {
             "path": f"{SESSION_INTERNAL_DIR}/{SESSION_PROTOCOL_FILENAME}",
             "instruction": "Read this runner-facing protocol for request/ack channels, inbox handling, and output registration.",

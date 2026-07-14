@@ -25,7 +25,7 @@ This file is runner-facing protocol, not a user-facing report. Read it together 
 - Do not use validation/test targets in feature generation.
 - Do not destructively modify approved EvaluationSpec or SplitManifest records; create candidates or new versions when needed.
 - Tablex validates fixed JSON schemas, artifact ids, file paths, metric identifiers, safety boundaries, lineage, and evaluation-integrity constraints. Codex owns project reasoning, objective framing, analysis, hypotheses, and report/notebook narrative.
-- Full Auto should continue reversible local analysis while questions are open. Use Give Up only as a last resort when no useful reversible work remains.
+- Full Auto should continue reversible local analysis while questions are open. Human-attention requests are intervention windows, not blocking gates. Do not request explicit user approval for an initial schema-validated evaluation proposal; only a true evaluation-integrity conflict may stop progress. Use Give Up only as a last resort when no useful reversible work remains.
 
 ## Context And Data
 - `.tablex/context.json` is the current project state, data manifest, equipped Skill list, runtime facts, and request/ack contract index. Read `equipped_skill_references` (not an assumed alias) and use the relevant instructions, references, and source inspirations as craft context before choosing the analysis.
@@ -38,7 +38,7 @@ This file is runner-facing protocol, not a user-facing report. Read it together 
 
 ## Evaluation Contract
 - When the metric or validation split should become registered Tablex state, write requests under `.tablex/requests/evaluation/` with `schema_version: "tablex_evaluation_request.v1"`.
-- Supported evaluation operations are `propose_evaluation` and `generate_split`. `propose_evaluation` creates an EvaluationCandidate; `generate_split` queues SplitManifest generation for an approved EvaluationSpec.
+- Supported evaluation operations are `propose_evaluation` and `generate_split`. In Full Auto, a valid `propose_evaluation` request is promoted and approved automatically when the approval review finds no real integrity blocker, and Tablex queues SplitManifest generation when the split kind is locally generatable. Read the ack for `evaluation_spec_id`, `split_job_id`, and any factual blocker. `generate_split` remains available for an approved EvaluationSpec.
 - Accepted `payload.split_policy.kind` values are `random`, `stratified`, `group`, `time`, `fixed_file`, `fold_column`, and `rolling_forward`. Tablex validates fixed ids, enums, and referenced columns; Codex owns the rationale.
 - Do not treat provisional internal-CV runs as final formal comparisons. After an EvaluationSpec and SplitManifest are approved, rerun the relevant candidates under that split before presenting a formal best model.
 

@@ -447,6 +447,28 @@ def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path
             column_count=2,
             schema_hash="runtime_schema",
         )
+        evaluation_spec = EvaluationSpec(
+            id="eval_runtime",
+            project_id=project.id,
+            dataset_snapshot_id=dataset.id,
+            name="Runtime evaluation",
+            split_type="stratified",
+            primary_metric="roc_auc",
+            secondary_metrics_json=dumps_json(["log_loss"]),
+            stratify_column="y",
+            rationale_md="Exercise the continuing session evaluation context.",
+            risk_level="low",
+            status="approved",
+        )
+        split_manifest = SplitManifest(
+            id="split_runtime",
+            project_id=project.id,
+            evaluation_spec_id=evaluation_spec.id,
+            artifact_id=dataset_artifact.id,
+            train_count=8,
+            valid_count=2,
+            summary_json=dumps_json({"split_type": "stratified", "fold_count": 5}),
+        )
         store_text_artifact(
             db,
             store,
@@ -470,7 +492,7 @@ def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path
             goal_text="Expose the notebook runtime.",
             workspace_path=str(workspace),
         )
-        db.add_all([dataset, session])
+        db.add_all([dataset, evaluation_spec, split_manifest, session])
         db.commit()
 
         prepared_workspace = prepare_session_workspace(db, store=store, project=project, session=session)
@@ -511,6 +533,10 @@ def test_prepare_session_workspace_exposes_backend_python_runtime(tmp_path: Path
     assert context["agent_capabilities"]["web_search_enabled"] is True
     assert "register no_findings" in context["agent_capabilities"]["research_instruction"]
     assert context["protocol"]["path"] == ".tablex/PROTOCOL.md"
+    assert context["evaluation_spec"]["id"] == "eval_runtime"
+    assert context["evaluation_spec"]["status"] == "approved"
+    assert context["split_manifest"]["id"] == "split_runtime"
+    assert context["evaluation_context"]["primary_metric"] == "roc_auc"
     prior_research = context["prior_research_status"]
     assert prior_research["schema_version"] == "prior_research_status.v1"
     assert prior_research["registered_report_count"] == 0
@@ -3792,6 +3818,19 @@ def test_completed_plan_pauses_main_session_until_new_input(tmp_path: Path) -> N
             title="Pipeline registration requested",
         )
         assert main_session_should_pause_after_completed_plan(db, project=project, session=session) is False
+        append_session_event(
+            db,
+            session,
+            source="codex_cli",
+            event_type="turn.started",
+            role="system",
+            title="Codex turn started",
+            content="Codex received the current workspace inbox.",
+            payload={},
+            update_heartbeat=False,
+        )
+        db.commit()
+        assert main_session_should_pause_after_completed_plan(db, project=project, session=session) is True
         mark_inbox_entry_processed(workspace, pipeline_request, processed_by="codex")
         assert main_session_should_pause_after_completed_plan(db, project=project, session=session) is True
         append_session_event(
@@ -4836,6 +4875,29 @@ def test_codex_authored_chat_update_is_registered_as_persistent_chat_turn(tmp_pa
             )
         )
         assert len(updated_chat_artifacts) == 2
+
+        db.add(
+            ExperimentRun(
+                id="run_chat_second_state_change",
+                project_id=project.id,
+                runner_type="codex_main_session",
+                status="succeeded",
+                metrics_json=dumps_json({"primary_metric_name": "auc", "primary_metric_value": 0.71}),
+                params_json=dumps_json({"model_id": "second_visible_run"}),
+            )
+        )
+        chat_update.write_text("モデル結果を追加しました。", encoding="utf-8")
+        ingest_session_workspace_outputs(db, store=store, project=project, session=session, workspace=workspace)
+        db.commit()
+
+        repeated_message_artifacts = list(
+            db.scalars(
+                select(Artifact)
+                .where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
+                .order_by(Artifact.created_at.asc())
+            )
+        )
+        assert len(repeated_message_artifacts) == 2
 
         create_job(
             db,
@@ -13047,6 +13109,8 @@ def test_research_plan_file_requests_commit_presence_links_and_attention(tmp_pat
                     "why_it_matters": "It changes the evaluation boundary.",
                     "provisional_assumption": "Continue with the uploaded objective for local analysis.",
                     "urgency": "high",
+                    "fallback_policy": "await_explicit_approval",
+                    "blocks_next_phase": True,
                 },
             }
         ),
@@ -13104,6 +13168,10 @@ def test_research_plan_file_requests_commit_presence_links_and_attention(tmp_pat
         question = db.scalar(select(Question).where(Question.project_id == project.id, Question.topic == "research_plan"))
         assert question is not None
         assert question.can_proceed_without_answer is True
+        assert question.blocks_next_phase is False
+        assert question.fallback_policy == "infer_and_continue"
+        attention_ack = loads_json((ack_dir / "04_attention.ack.json").read_text(encoding="utf-8"), {})
+        assert attention_ack["result"]["continued_automatically"] is True
         chat_artifact = db.scalar(
             select(Artifact).where(Artifact.project_id == project.id, Artifact.asset_type == "agent_chat_turn")
         )

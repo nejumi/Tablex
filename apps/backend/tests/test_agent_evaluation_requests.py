@@ -7,11 +7,18 @@ from typing import Any, cast
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
-
 from tabular_harness.core.config import Settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
-from tabular_harness.models.entities import AgentSession, DatasetSnapshot, EvaluationCandidate, ExperimentRun, Job, Project
+from tabular_harness.models.entities import (
+    AgentSession,
+    DatasetSnapshot,
+    EvaluationCandidate,
+    EvaluationSpec,
+    ExperimentRun,
+    Job,
+    Project,
+)
 from tabular_harness.services.agent_requests.evaluation import (
     EVALUATION_ACK_SCHEMA_VERSION,
     process_evaluation_tool_requests,
@@ -127,12 +134,25 @@ def test_agent_evaluation_request_creates_candidate_and_ack(tmp_path: Path) -> N
         assert candidate.primary_metric == "roc_auc"
         assert candidate.split_type == "group"
         assert candidate.group_column == "customer_id"
+        spec = db.scalar(select(EvaluationSpec).where(EvaluationSpec.source_evaluation_candidate_id == candidate.id))
+        assert spec is not None
+        assert spec.status == "approved"
+        split_job = db.scalar(
+            select(Job).where(
+                Job.project_id == project_id,
+                Job.job_type == "build_split_manifest",
+            )
+        )
+        assert split_job is not None
         db.commit()
     ack = loads_json((workspace / ".tablex" / "acks" / "evaluation" / "propose_auc_group.ack.json").read_text(), {})
     assert ack["schema_version"] == EVALUATION_ACK_SCHEMA_VERSION
     assert ack["status"] == "succeeded"
     assert ack["result"]["candidate_id"]
     assert ack["result"]["split_generation_supported"] is True
+    assert ack["result"]["evaluation_spec_id"] == spec.id
+    assert ack["result"]["requires_approval"] is False
+    assert ack["result"]["split_job_id"] == split_job.id
 
 
 @pytest.mark.parametrize(
@@ -364,7 +384,10 @@ def test_leaderboard_marks_runs_formal_or_provisional(tmp_path: Path) -> None:
     project_id, _dataset_id = upload_project_dataset(client)
     app = cast(Any, client.app)
     with app.state.session_factory() as db:
-        from tabular_harness.services.evaluation import create_default_evaluation_candidates, generate_split_manifest
+        from tabular_harness.services.evaluation import (
+            create_default_evaluation_candidates,
+            generate_split_manifest,
+        )
 
         project = db.get(Project, project_id)
         assert project is not None
