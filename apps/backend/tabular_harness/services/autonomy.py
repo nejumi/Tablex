@@ -51,8 +51,10 @@ from tabular_harness.services.baseline import (
     run_model_candidate,
 )
 from tabular_harness.services.data_quality import analyze_dataset_quality
+from tabular_harness.services.deliverable_expectations import (
+    create_project_data_understanding_notebook_expectation,
+)
 from tabular_harness.services.diagnostics import analyze_run_diagnostics
-from tabular_harness.services.deliverable_expectations import create_project_data_understanding_notebook_expectation
 from tabular_harness.services.eda_review import create_dataset_eda_review
 from tabular_harness.services.evaluation import (
     approve_spec,
@@ -84,6 +86,7 @@ AUTONOMOUS_CONTINUATION_JOB_TYPE = "continue_autonomous_session"
 ACTIVE_AUTONOMOUS_JOB_STATUSES = {"queued", "running", "approval_required"}
 AUTONOMOUS_CHILD_JOB_TYPES = {
     "build_split_manifest",
+    "run_agent_compute",
     "run_baseline",
     "train_model_candidates",
     "run_planned_agent_task_codex",

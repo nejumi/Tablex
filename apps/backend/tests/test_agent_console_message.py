@@ -5,7 +5,6 @@ from typing import Any, cast
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
-
 from tabular_harness.core.config import Settings
 from tabular_harness.core.json import loads_json
 from tabular_harness.main import create_app
@@ -121,12 +120,16 @@ def test_console_message_does_not_wake_stopped_session(tmp_path: Path) -> None:
         session = db.get(AgentSession, "ags_console_stopped")
         assert session is not None
         assert session.status == "stopped"
-        events = list(db.scalars(select(AgentTranscriptEvent).where(AgentTranscriptEvent.session_id == session.id)))
+        events = list(
+            db.scalars(
+                select(AgentTranscriptEvent).where(AgentTranscriptEvent.session_id == session.id)
+            )
+        )
         assert events == []
     assert list_inbox_entries(workspace) == []
 
 
-def test_agent_chat_wakes_completed_main_session_instead_of_composing_locally(tmp_path: Path) -> None:
+def test_agent_chat_wakes_completed_main_session_and_queues_reply(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     project_id = create_project(client)
     workspace = tmp_path / "workspace"
@@ -155,8 +158,8 @@ def test_agent_chat_wakes_completed_main_session_instead_of_composing_locally(tm
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["response_composer"]["mode"] == "main_codex_session"
-    assert body["response_composer"]["status"] == "waiting_for_agent"
+    assert body["response_composer"]["mode"] == "queued_worker"
+    assert body["response_composer"]["status"] == "queued"
     assert body["response_brief"]["delivery"] == "workspace_inbox_and_transcript"
     with app.state.session_factory() as db:
         session = db.get(AgentSession, "ags_chat_completed")
@@ -167,7 +170,7 @@ def test_agent_chat_wakes_completed_main_session_instead_of_composing_locally(tm
         assert project.current_phase == "AUTONOMOUS_LOOP"
         job = db.get(Job, body["job"]["id"])
         assert job is not None
-        assert job.status == "waiting_for_agent"
+        assert job.status == "queued"
         event = db.scalar(
             select(AgentTranscriptEvent).where(
                 AgentTranscriptEvent.session_id == session.id,
@@ -200,8 +203,8 @@ def test_agent_chat_starts_missing_full_auto_main_session(tmp_path: Path) -> Non
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["response_composer"]["mode"] == "main_codex_session"
-    assert body["response_composer"]["status"] == "waiting_for_agent"
+    assert body["response_composer"]["mode"] == "queued_worker"
+    assert body["response_composer"]["status"] == "queued"
     with app.state.session_factory() as db:
         session = db.scalar(select(AgentSession).where(AgentSession.project_id == project_id))
         assert session is not None
@@ -235,8 +238,8 @@ def test_agent_chat_starts_full_auto_main_session_from_idle_phase(tmp_path: Path
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["response_composer"]["mode"] == "main_codex_session"
-    assert body["response_composer"]["status"] == "waiting_for_agent"
+    assert body["response_composer"]["mode"] == "queued_worker"
+    assert body["response_composer"]["status"] == "queued"
     with app.state.session_factory() as db:
         project = db.get(Project, project_id)
         assert project is not None

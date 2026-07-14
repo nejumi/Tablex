@@ -19,10 +19,46 @@ from tabular_harness.agent.runners import safe_env
 from tabular_harness.core.config import get_settings
 from tabular_harness.db.session import create_engine_for_settings, create_session_factory, init_db
 from tabular_harness.services.agent_sessions import start_active_main_session_supervisors
+from tabular_harness.services.agent_supervisor import terminate_stale_codex_process
 from tabular_harness.services.artifacts import LocalArtifactStore
+from tabular_harness.services.portal import running_codex_processes_for_project
+from tabular_harness.services.project_execution_control import (
+    list_project_execution_stop_requests,
+    record_project_execution_stop_ack,
+)
 
 AgentSessionSupervisorRunner = Callable[..., list[threading.Thread]]
 logger = logging.getLogger(__name__)
+
+
+def reconcile_project_execution_stop_requests(data_dir: Path) -> None:
+    for request in list_project_execution_stop_requests(data_dir):
+        project_id = str(request["project_id"])
+        observed = running_codex_processes_for_project(project_id)
+        results: list[dict[str, object]] = []
+        terminated_count = 0
+        for process in observed:
+            pid = process.get("pid")
+            if not isinstance(pid, int):
+                continue
+            terminated = terminate_stale_codex_process(pid)
+            terminated_count += int(terminated)
+            results.append(
+                {
+                    "pid": pid,
+                    "command": process.get("command"),
+                    "terminated": terminated,
+                }
+            )
+        remaining = running_codex_processes_for_project(project_id)
+        record_project_execution_stop_ack(
+            data_dir,
+            request=request,
+            observed_count=len(observed),
+            terminated_count=terminated_count,
+            remaining_count=len(remaining),
+            processes=results,
+        )
 
 
 def check_codex_runtime() -> None:
@@ -81,19 +117,25 @@ def run_agent_session_supervisor_loop(
 ) -> None:
     owner_id = lease_owner_id or f"agent-supervisor:pid:{os.getpid()}"
     interval = max(0.1, interval_seconds)
+    control_data_dir = get_settings().data_dir
     active_threads: set[threading.Thread] = set()
+    next_supervisor_scan_at = 0.0
     while True:
         try:
-            active_threads = {thread for thread in active_threads if thread.is_alive()}
-            started_threads = supervisor_runner(
-                session_factory,
-                store,
-                agent_model=agent_model,
-                lease_owner_id=owner_id,
-                shutdown_event=stop_event,
-            )
-            if started_threads:
-                active_threads.update(started_threads)
+            reconcile_project_execution_stop_requests(control_data_dir)
+            now = time.monotonic()
+            if now >= next_supervisor_scan_at:
+                active_threads = {thread for thread in active_threads if thread.is_alive()}
+                started_threads = supervisor_runner(
+                    session_factory,
+                    store,
+                    agent_model=agent_model,
+                    lease_owner_id=owner_id,
+                    shutdown_event=stop_event,
+                )
+                if started_threads:
+                    active_threads.update(started_threads)
+                next_supervisor_scan_at = now + interval
         except Exception:
             if once:
                 raise
@@ -101,10 +143,10 @@ def run_agent_session_supervisor_loop(
         if once:
             return
         if stop_event is not None:
-            if stop_event.wait(interval):
+            if stop_event.wait(min(0.25, interval)):
                 break
         else:
-            time.sleep(interval)
+            time.sleep(min(0.25, interval))
     for thread in active_threads:
         thread.join(timeout=20)
 

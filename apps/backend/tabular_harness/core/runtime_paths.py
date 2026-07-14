@@ -19,6 +19,11 @@ def resolve_runtime_data_path(path: Path | str, *, data_dir: Path | None = None)
 
     if not candidate.is_absolute() or candidate.exists():
         return candidate
+    try:
+        candidate.relative_to(data_dir)
+        return candidate
+    except ValueError:
+        pass
 
     # Host workers and the Docker API share this volume at different roots.
     # Recover legacy absolute records at the stable data-root boundary.

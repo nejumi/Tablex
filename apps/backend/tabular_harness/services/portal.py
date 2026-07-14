@@ -251,9 +251,9 @@ def worker_events_from_job(
     project_name: str | None = None,
     active_job_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    # A chat instruction delivered to the continuing main session is waiting
-    # for a conversational reply, not occupying an independent worker slot.
-    if job.job_type == "agent_chat_turn" and job.status == "waiting_for_agent":
+    # Chat reply state is already visible in Chat and does not occupy the
+    # analysis activity rail.
+    if job.job_type == "agent_chat_turn":
         return []
     output = loads_json(job.output_json, {})
     context = loads_json(job.context_json, {})
@@ -487,7 +487,7 @@ def build_project_turn_state(
 
 
 def job_active_for_activity(job: Job, *, active_job_ids: set[str] | None = None) -> bool:
-    if job.job_type == "agent_chat_turn" and job.status == "waiting_for_agent":
+    if job.job_type == "agent_chat_turn":
         return False
     waiting_child_ids = heartbeat_waiting_child_ids(job)
     if waiting_child_ids and (active_job_ids is None or any(child_id in active_job_ids for child_id in waiting_child_ids)):

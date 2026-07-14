@@ -47,6 +47,8 @@ When the power button is ON:
 - If Codex returns control while Full Auto remains ON, Tablex should resume the same session with updated context instead of silently stopping.
 - The only normal stop is the user turning power OFF. Hard safety boundaries and Codex's explicit last-resort Give Up state are exceptions.
 - Approval prompts in Full Auto are timed intervention windows. If the user does not answer before the countdown expires, Tablex records the provisional assumption and Codex continues.
+- Power OFF is an execution boundary, not a display preference. Tablex must stop the main Codex process tree, cancel queued and running token-consuming jobs, prevent restart recovery from re-queuing them, and reject new Agent Chat work until the user explicitly turns power on again. A worker finishing after cancellation must not overwrite the cancelled state.
+- Project deletion first applies the same power boundary, then verifies Codex, child compute, marimo, and project artifact cleanup. It must not report `deleted=true` or remove the project metadata when active execution or artifact deletion cannot be verified.
 
 The runner must be able to keep working through data understanding, objective framing, research, evaluation design, modeling, error analysis, improvement ideas, reporting, and notebook authoring without waiting for harness-only pseudo-blockers.
 
@@ -85,6 +87,7 @@ Research must preserve its provenance boundary. When the runner has internet acc
 
 - Compute choice is agent judgment informed by observed facts, not a fixed GPU-first workflow. The context pack should expose CPU, memory, visible accelerators, compute capability, driver limits, installed libraries, and real library probes without prescribing a model family.
 - A structured compute request may ask for `cpu`, `gpu`, or `auto` and must declare its fallback policy. Tablex executes the requested script without a shell, records requested, selected, and agent-reported actual device, stores resource/log/output evidence, and links that evidence to any resulting ExperimentRun.
+- Child compute uses a durable execution ID. Worker or executor restart must reattach to that execution or restart it with a bounded attempt count rather than silently losing it or starting duplicates. While child compute is active, the main Codex session returns control instead of polling; Tablex resumes the same session with the terminal acknowledgement and registered artifacts.
 - GPU visibility alone is not GPU readiness. Each supported library is available only after its minimal probe succeeds in the current runtime. A failed probe is a factual capability observation; it does not prevent Codex from choosing another compatible library or CPU.
 - The isolated compute executor has no Codex authentication, project connector credentials, metadata database, or external network. CPU fallback must remain usable on hosts without accelerators. Hosted deployments may replace the local executor with leased compute while preserving the same request, evidence, artifact, and lineage contracts.
 

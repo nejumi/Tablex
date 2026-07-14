@@ -262,6 +262,7 @@ from tabular_harness.services.benchmarks import (
     resolve_benchmark_root,
     table_name_from_path,
 )
+from tabular_harness.services.compute_execution import cancel_agent_compute_executions
 from tabular_harness.services.dataset_profile import profile_dataset_artifact
 from tabular_harness.services.decision_reporting import current_decision_report_payload
 from tabular_harness.services.deliverable_expectations import (
@@ -286,6 +287,7 @@ from tabular_harness.services.jobs import (
     mark_job_failed,
     mark_job_running,
     mark_job_succeeded,
+    project_agent_power_was_explicitly_stopped,
     reap_stale_running_jobs,
     retry_job,
 )
@@ -334,6 +336,11 @@ from tabular_harness.services.portal import (
     list_portal_ideas,
     running_codex_processes_for_project,
     worker_events_from_job,
+)
+from tabular_harness.services.project_execution_control import (
+    clear_project_execution_stop,
+    request_project_execution_stop,
+    wait_for_project_execution_stop_ack,
 )
 from tabular_harness.services.prediction_input_feedback import (
     maybe_send_prediction_input_validation_failure_to_codex,
@@ -392,9 +399,23 @@ def pid_alive_for_autonomy_stop(pid: int) -> bool:
     return True
 
 
+def process_group_alive_for_autonomy_stop(process_group_id: int) -> bool:
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def terminate_codex_process_for_autonomy_stop(pid: int) -> dict[str, Any]:
     try:
-        os.kill(pid, signal.SIGTERM)
+        process_group_id = os.getpgid(pid)
+    except ProcessLookupError:
+        return {"pid": pid, "status": "not_found", "terminated": False, "kill_escalated": False}
+    try:
+        os.killpg(process_group_id, signal.SIGTERM)
     except ProcessLookupError:
         return {"pid": pid, "status": "not_found", "terminated": False, "kill_escalated": False}
     except PermissionError:
@@ -410,12 +431,12 @@ def terminate_codex_process_for_autonomy_stop(pid: int) -> dict[str, Any]:
 
     deadline = time.monotonic() + AUTONOMY_STOP_PROCESS_TERM_GRACE_SECONDS
     while time.monotonic() < deadline:
-        if not pid_alive_for_autonomy_stop(pid):
+        if not process_group_alive_for_autonomy_stop(process_group_id):
             return {"pid": pid, "status": "terminated", "terminated": True, "kill_escalated": False}
         time.sleep(0.05)
 
     try:
-        os.kill(pid, signal.SIGKILL)
+        os.killpg(process_group_id, signal.SIGKILL)
     except ProcessLookupError:
         return {"pid": pid, "status": "terminated", "terminated": True, "kill_escalated": False}
     except PermissionError:
@@ -429,7 +450,12 @@ def terminate_codex_process_for_autonomy_stop(pid: int) -> dict[str, Any]:
             "error_type": type(exc).__name__,
         }
 
-    if pid_alive_for_autonomy_stop(pid):
+    deadline = time.monotonic() + AUTONOMY_STOP_PROCESS_TERM_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        if not process_group_alive_for_autonomy_stop(process_group_id):
+            return {"pid": pid, "status": "killed", "terminated": True, "kill_escalated": True}
+        time.sleep(0.05)
+    if process_group_alive_for_autonomy_stop(process_group_id):
         return {"pid": pid, "status": "still_running", "terminated": False, "kill_escalated": True}
     return {"pid": pid, "status": "killed", "terminated": True, "kill_escalated": True}
 
@@ -455,6 +481,23 @@ def cleanup_project_codex_processes_for_autonomy_stop(project_id: str) -> dict[s
         "terminated_count": sum(1 for result in results if result.get("terminated") is True),
         "remaining_count": sum(1 for result in results if result.get("terminated") is not True),
         "processes": results,
+    }
+
+
+def stop_and_verify_project_codex_execution(settings: Any, project_id: str) -> dict[str, Any]:
+    if settings.api_agent_session_supervisor_enabled:
+        return cleanup_project_codex_processes_for_autonomy_stop(project_id)
+    stop_request = request_project_execution_stop(settings.data_dir, project_id=project_id)
+    ack = wait_for_project_execution_stop_ack(settings.data_dir, request=stop_request)
+    return {
+        "schema_version": "project_codex_process_cleanup.v1",
+        "project_id": project_id,
+        "control_request_id": stop_request["request_id"],
+        "control_ack": ack,
+        "observed_count": int(ack.get("observed_count") or 0),
+        "terminated_count": int(ack.get("terminated_count") or 0),
+        "remaining_count": 0 if ack.get("verified") is True else 1,
+        "processes": ack.get("processes") if isinstance(ack.get("processes"), list) else [],
     }
 
 
@@ -1128,24 +1171,61 @@ def delete_project(
 ) -> dict[str, Any]:
     project = require_visible_project(request, db, project_id)
     org_id = project.org_id
+    compute_execution_ids = list(
+        db.scalars(
+            select(Job.id).where(
+                Job.project_id == project_id,
+                Job.job_type == "run_agent_compute",
+            )
+        ).all()
+    )
     stop_main_session(db, project, record_event=False)
-    stopped_marimo_sessions = stop_native_marimo_sessions_for_project(project_id)
+    project.current_phase = "IDLE"
+    project.status = "deleting"
+    project.updated_at = utc_now()
     for job in db.scalars(select(Job).where(Job.project_id == project_id)).all():
         cancel_job_service(job, cancelled_by=request_actor_id(request))
+    db.commit()
+
+    codex_process_cleanup = stop_and_verify_project_codex_execution(
+        request.app.state.settings, project_id
+    )
+    compute_cleanup = cancel_agent_compute_executions(compute_execution_ids, purge_records=True)
+    if codex_process_cleanup["remaining_count"] or compute_cleanup["remaining_count"]:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Project deletion stopped because active execution cleanup could not be verified.",
+                "codex_process_cleanup": codex_process_cleanup,
+                "compute_cleanup": compute_cleanup,
+            },
+        )
+    stopped_marimo_sessions = stop_native_marimo_sessions_for_project(project_id)
     delete_project_rows(db, project_id)
     db.delete(project)
     db.flush()
-    db.commit()
     cleanup = remove_project_artifacts_and_verify(
         request.app.state.settings,
         org_id=org_id,
         project_id=project_id,
     )
+    if cleanup.get("remaining_count"):
+        db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Project artifact deletion could not be verified.",
+                "artifact_cleanup": cleanup,
+            },
+        )
+    db.commit()
     return {
         "schema_version": "project_delete.v1",
         "project_id": project_id,
         "deleted": True,
         "stopped_marimo_sessions": stopped_marimo_sessions,
+        "codex_process_cleanup": codex_process_cleanup,
+        "compute_cleanup": compute_cleanup,
         "artifact_cleanup": cleanup,
     }
 
@@ -1714,6 +1794,7 @@ def start_project_autonomy(
     job: Job | None = None
     try:
         project = require_project(db, project_id)
+        clear_project_execution_stop(request.app.state.settings.data_dir, project_id=project_id)
         if payload.autonomy_mode == "full_auto":
             runner_mode = "codex_cli_if_available" if payload.runner_mode == "harness_only" else payload.runner_mode
             project.autonomy_mode = "full_auto"
@@ -1895,6 +1976,7 @@ def start_project_autonomy(
 @router.post("/api/projects/{project_id}/autonomy/stop", response_model=JobRead)
 def stop_project_autonomy(
     project_id: str,
+    request: Request,
     db: Annotated[Session, Depends(get_session)],
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
     payload: AutonomyStopCreate | None = None,
@@ -1925,18 +2007,54 @@ def stop_project_autonomy(
                 ~Job.job_type.in_(POWER_STOP_PRESERVED_JOB_TYPES),
             )
         ).all()
+        compute_execution_ids = list(
+            db.scalars(
+                select(Job.id).where(
+                    Job.project_id == project_id,
+                    Job.job_type == "run_agent_compute",
+                    ~Job.status.in_({"succeeded", "failed", "timed_out"}),
+                )
+            ).all()
+        )
         cancelled_ids: list[str] = []
         for active_job in active_jobs:
             cancel_job_service(active_job, cancelled_by="tablex-autonomy-power")
             cancelled_ids.append(active_job.id)
         stopped_session = stop_main_session(db, project)
-        codex_process_cleanup = cleanup_project_codex_processes_for_autonomy_stop(project_id)
         project.current_phase = "IDLE"
         project.updated_at = utc_now()
+        db.commit()
+        codex_process_cleanup = stop_and_verify_project_codex_execution(
+            request.app.state.settings, project_id
+        )
+        compute_cleanup = cancel_agent_compute_executions(compute_execution_ids)
+        if codex_process_cleanup["remaining_count"] or compute_cleanup["remaining_count"]:
+            error_message = "Agent power is off, but active execution cleanup could not be verified."
+            job = db.get(Job, job.id)
+            assert job is not None
+            mark_job_failed(
+                job,
+                error_message,
+                {
+                    "schema_version": "autonomous_loop_stop_failure.v1",
+                    "project_id": project_id,
+                    "codex_process_cleanup": codex_process_cleanup,
+                    "compute_cleanup": compute_cleanup,
+                },
+            )
+            db.commit()
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "message": error_message,
+                    "codex_process_cleanup": codex_process_cleanup,
+                    "compute_cleanup": compute_cleanup,
+                },
+            )
         assistant_message = (
-            "Agent loopを停止しました。実行中または待機中の作業は可能な範囲でキャンセルしました。再開すると、最新のProject状態を読み直して続きから動きます。"
+            "Agent loopを停止しました。待機中の作業をキャンセルし、Codexと子computeが停止済みであることを確認しました。明示的に再開するまで、このProjectで新しいCodex実行は始まりません。"
             if japanese
-            else "Autonomous activity is stopped. Active or queued work was cancelled where possible. When restarted, the loop will reread the latest project state before continuing."
+            else "Autonomous activity is stopped. Queued work was cancelled, and Codex and child compute cleanup were verified. No new Codex execution will start for this project until you explicitly restart it."
         )
         mark_job_succeeded(
             job,
@@ -1948,6 +2066,7 @@ def stop_project_autonomy(
                 "cancelled_job_ids": cancelled_ids,
                 "stopped_agent_session_id": stopped_session.id if stopped_session is not None else None,
                 "codex_process_cleanup": codex_process_cleanup,
+                "compute_cleanup": compute_cleanup,
                 "worker_events": [
                     {
                         "worker_id": "full-auto-loop",
@@ -4393,6 +4512,11 @@ def create_agent_chat_turn(
     store: Annotated[LocalArtifactStore, Depends(get_artifact_store)],
 ) -> dict[str, Any]:
     project = require_project(db, project_id)
+    if project_agent_power_was_explicitly_stopped(db, project):
+        raise HTTPException(
+            status_code=409,
+            detail="The agent power is off. Start Full Auto before sending Agent Chat input.",
+        )
     sidecar_only = is_sidecar_chat_request(payload.message)
     session = active_main_session(db, project_id)
     if session is None and not sidecar_only:
@@ -4476,12 +4600,10 @@ def create_agent_chat_turn(
                 "agent_model": payload.agent_model,
                 "utility_model": payload.utility_model,
                 "delivered_to_running_codex_session": True,
-                "response_completion_source": "main_codex_session_chat_update",
+                "response_completion_source": "codex_response_composer_or_main_session_chat_update",
             },
             priority=90,
         )
-        job.status = MAIN_SESSION_CHAT_WAITING_STATUS
-        job.updated_at = utc_now()
         should_wake_main_session = (
             project.current_phase == "AUTONOMOUS_LOOP"
             and session.status in {"starting", "between_turns", "waiting_for_runner"}
@@ -4720,7 +4842,7 @@ def queued_main_session_chat_response(
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",
-            "mode": "main_codex_session",
+            "mode": "queued_worker" if job.status == "queued" else "main_codex_session",
             "status": job.status,
         },
         "worker_events": [
@@ -5366,7 +5488,7 @@ def list_agent_chat_history(
             already_paired_update_ids=paired_update_ids,
         )
         if paired_update is not None:
-            turns.append(agent_chat_turn_from_main_session_update(project_id, job, payload, paired_update))
+            turns.append(agent_chat_turn_from_main_session_update(db, project_id, job, payload, paired_update))
             progress_artifact_id = paired_update.get("artifact_id")
             if isinstance(progress_artifact_id, str):
                 paired_update_ids.add(progress_artifact_id)
@@ -5643,6 +5765,7 @@ def agent_chat_update_is_not_older_than_job(update: dict[str, Any], job: Job) ->
 
 
 def agent_chat_turn_from_main_session_update(
+    db: Session,
     project_id: str,
     job: Job,
     payload: dict[str, Any],
@@ -5650,6 +5773,7 @@ def agent_chat_turn_from_main_session_update(
 ) -> dict[str, Any]:
     locale = payload.get("locale") if isinstance(payload.get("locale"), str) else "en-US"
     delivered_session_id = payload.get("delivered_agent_session_id")
+    delivered_session = db.get(AgentSession, delivered_session_id) if isinstance(delivered_session_id, str) else None
     return {
         "schema_version": "agent_chat_turn.v1",
         "project_id": project_id,
@@ -5668,6 +5792,9 @@ def agent_chat_turn_from_main_session_update(
             "job_id": job.id,
             "job_status": job.status,
             "delivered_agent_session_id": delivered_session_id if isinstance(delivered_session_id, str) else None,
+            "agent_session_observation": agent_session_observation_for_chat_wait(db=db, session=delivered_session)
+            if delivered_session is not None
+            else None,
             "agent_transcript_event_id": payload.get("agent_transcript_event_id")
             if isinstance(payload.get("agent_transcript_event_id"), str)
             else None,
@@ -5751,7 +5878,11 @@ def pending_agent_chat_turn_from_job(db: Session, project_id: str, job: Job, pay
         },
         "response_composer": {
             "schema_version": "agent_response_composer.v1",
-            "mode": "main_codex_session" if delivered_to_running_codex else "queued_worker",
+            "mode": "queued_worker"
+            if job.status in {"queued", "running"}
+            else "main_codex_session"
+            if delivered_to_running_codex
+            else "queued_worker",
             "status": job.status,
         },
         "worker_events": output.get("worker_events") if isinstance(output.get("worker_events"), list) else [],
@@ -11669,18 +11800,11 @@ def remove_project_artifacts_and_verify(settings: Any, *, org_id: str, project_i
     targets = project_artifact_cleanup_targets(settings, org_id=org_id, project_id=project_id)
     remove_project_artifact_roots(settings, targets=targets)
     remaining = [str(path) for path in targets if path.exists()]
-    if remaining:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "message": "Project metadata was deleted, but artifact cleanup did not complete.",
-                "remaining_paths": remaining,
-            },
-        )
     return {
-        "status": "completed",
+        "status": "completed" if not remaining else "incomplete",
         "target_count": len(targets),
-        "remaining_count": 0,
+        "remaining_count": len(remaining),
+        "remaining_paths": remaining,
     }
 
 
@@ -11689,12 +11813,14 @@ def project_artifact_cleanup_targets(settings: Any, *, org_id: str, project_id: 
         settings.artifact_root / org_id / project_id,
         settings.artifact_root / "agent_sessions" / project_id,
         settings.artifact_root / "_workspaces" / project_id,
+        Path(tempfile.gettempdir()) / "tablex-response-composer" / project_id,
     ]
 
 
 def remove_project_artifact_roots(settings: Any, *, targets: list[Path]) -> None:
     allowed_roots = [
         settings.artifact_root.resolve(),
+        (Path(tempfile.gettempdir()) / "tablex-response-composer").resolve(),
     ]
     seen: set[Path] = set()
     for candidate in targets:

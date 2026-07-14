@@ -20,6 +20,7 @@ services:
       HOME: /tmp/tablex-home
       CODEX_HOME: /codex-auth
       TABLEX_CODEX_HOME: /tmp/tablex-codex-home
+      TABLEX_COMPUTE_EXECUTOR_URL: http://tablex-compute-executor:8090
       FRONTEND_DIST_DIR: /app/frontend_dist
       TABLEX_API_AGENT_SESSION_SUPERVISOR_ENABLED: "false"
       TABLEX_LOCAL_WORKER_ENABLED: "false"
@@ -31,6 +32,11 @@ services:
     depends_on:
       tablex-codex-ready:
         condition: service_completed_successfully
+      tablex-compute-executor:
+        condition: service_healthy
+    networks:
+      - default
+      - tablex-compute
 
   tablex-worker:
     image: tablex:local

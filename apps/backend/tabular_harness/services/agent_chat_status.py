@@ -25,7 +25,9 @@ def seconds_since_timestamp(value: datetime | None, *, now: datetime) -> int | N
         return None
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
-    return max(0, int((now.astimezone(timezone.utc) - value.astimezone(timezone.utc)).total_seconds()))
+    return max(
+        0, int((now.astimezone(timezone.utc) - value.astimezone(timezone.utc)).total_seconds())
+    )
 
 
 def agent_chat_wait_state(
@@ -65,11 +67,11 @@ def agent_chat_wait_state(
     elif status == "queued":
         stale = job_age_seconds >= 60
         if delivered_to_running_codex:
-            worker_state = "waiting_for_main_agent_reply"
+            worker_state = "waiting_for_response_composer"
             assistant_message = (
-                f"受け取りました。入力は進行中の分析エージェントに届いています。Codexの返答が届き次第、このチャットに残します（待機 {age_label}）。"
+                f"受け取りました。入力は進行中の分析エージェントに届いています。現在のプロジェクト状態を基に、チャットの返答を準備しています（待機 {age_label}）。"
                 if japanese
-                else f"Received. The running analysis agent has the message. The next Codex reply will be saved here when it arrives ({age_label})."
+                else f"Received. The running analysis agent has the message, and a chat reply is being prepared from the current project state ({age_label})."
             )
         else:
             worker_state = "waiting_for_local_worker"
@@ -85,11 +87,11 @@ def agent_chat_wait_state(
                 else " No reply has returned yet; Activity or Jobs shows the processing state."
             )
         if delivered_to_running_codex:
-            headline = "Agentに伝達済み" if japanese else "Delivered to agent"
+            headline = "返答準備中" if japanese else "Preparing reply"
             detail = (
-                f"Codexの返答が届き次第、このチャットに保存します。待機 {age_label}。"
+                f"分析への指示配送とチャット返答の準備を進めています。待機 {age_label}。"
                 if japanese
-                else f"The next Codex reply will be saved here. Waiting {age_label}."
+                else f"The instruction was delivered and the chat reply is being prepared. Waiting {age_label}."
             )
         else:
             headline = "返答準備中" if japanese else "Preparing reply"
@@ -143,13 +145,13 @@ def agent_chat_wait_state(
             )
             headline = "返答を作成できませんでした" if japanese else "Reply not prepared"
         elif status in {"cancelled", "canceled"}:
-            assistant_message = "返答はキャンセルされました。" if japanese else "The reply was cancelled."
+            assistant_message = (
+                "返答はキャンセルされました。" if japanese else "The reply was cancelled."
+            )
             headline = "キャンセル済み" if japanese else "Cancelled"
         else:
             assistant_message = (
-                "返答の処理状態を確認しています。"
-                if japanese
-                else "Checking the reply status."
+                "返答の処理状態を確認しています。" if japanese else "Checking the reply status."
             )
             headline = "状態確認中" if japanese else "Checking status"
         if status not in {"succeeded", "completed"}:

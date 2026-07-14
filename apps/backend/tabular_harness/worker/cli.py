@@ -8,15 +8,23 @@ from tabular_harness.core.config import get_settings
 from tabular_harness.db.session import create_engine_for_settings, create_session_factory, init_db
 from tabular_harness.services.agent_sessions import start_active_main_session_supervisors
 from tabular_harness.services.artifacts import LocalArtifactStore
-from tabular_harness.services.jobs import reap_orphaned_worker_jobs
+from tabular_harness.services.jobs import (
+    reap_orphaned_worker_jobs,
+    requeue_interrupted_agent_compute_jobs,
+    requeue_waiting_agent_chat_jobs,
+)
 from tabular_harness.worker.jobs import create_default_worker
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the local Tablex worker.")
-    parser.add_argument("--once", action="store_true", help="Process at most one queued job and exit.")
+    parser.add_argument(
+        "--once", action="store_true", help="Process at most one queued job and exit."
+    )
     parser.add_argument("--interval", type=float, default=2.0, help="Polling interval in seconds.")
-    parser.add_argument("--worker-id", default="local-worker", help="Worker identifier for job locks.")
+    parser.add_argument(
+        "--worker-id", default="local-worker", help="Worker identifier for job locks."
+    )
     parser.add_argument(
         "--no-agent-session-supervisor",
         action="store_true",
@@ -46,6 +54,10 @@ def main() -> None:
     artifact_store = LocalArtifactStore(settings.artifact_root)
     with session_factory() as session:
         reap_orphaned_worker_jobs(session, worker_id=args.worker_id)
+        if "run_agent_compute" in selected_job_types:
+            requeue_interrupted_agent_compute_jobs(session)
+        if "agent_chat_turn" in selected_job_types:
+            requeue_waiting_agent_chat_jobs(session)
         session.commit()
     supervisor_recovery_interval_seconds = 15.0
     next_supervisor_recovery_at = 0.0

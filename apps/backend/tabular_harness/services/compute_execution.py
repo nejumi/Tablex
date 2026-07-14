@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,7 @@ def execute_agent_compute_job(
     fallback_policy = str(payload.get("fallback_policy") or "cpu_on_unavailable")
     execution = run_compute_script(
         store=store,
+        execution_id=job.id,
         workspace=workspace,
         script_path=script_path,
         arguments=list(payload.get("arguments") or []),
@@ -219,10 +221,30 @@ def execute_agent_compute_job(
         must_exist=False,
     )
     write_compute_ack(ack_path, ack)
+    from tabular_harness.services.agent_sessions import append_session_event
+
+    append_session_event(
+        db,
+        session,
+        source="tablex_sidecar",
+        event_type="compute_request_completed" if succeeded else "compute_request_failed",
+        role="harness",
+        title="Compute run completed" if succeeded else "Compute run failed",
+        content=(
+            "The requested child compute completed and its result artifacts are available."
+            if succeeded
+            else str(result_manifest_error or f"Compute script exited with code {exit_code}")
+        ),
+        payload={**ack, "workspace_relative_path": str(ack_path.relative_to(workspace))},
+        artifact_id=evidence.id,
+        update_heartbeat=False,
+    )
     result = {
         "schema_version": "agent_compute_job_result.v1",
         "job_status": "succeeded" if succeeded else "failed",
-        "error_message": None if succeeded else result_manifest_error or f"Compute script exited with code {exit_code}",
+        "error_message": None
+        if succeeded
+        else result_manifest_error or f"Compute script exited with code {exit_code}",
         "selected_device": selected_device,
         "actual_device": actual_device,
         "fallback_reason": fallback_reason,
@@ -240,9 +262,78 @@ def execute_agent_compute_job(
     return result
 
 
+def cancel_agent_compute_executions(
+    execution_ids: list[str],
+    *,
+    purge_records: bool = False,
+) -> dict[str, Any]:
+    """Cancel durable child compute and verify that no requested execution remains active."""
+    unique_ids = list(dict.fromkeys(execution_ids))
+    executor_url = os.getenv("TABLEX_COMPUTE_EXECUTOR_URL", "").strip()
+    if not unique_ids:
+        return {
+            "schema_version": "agent_compute_cancellation.v1",
+            "requested_count": 0,
+            "cancelled_count": 0,
+            "deleted_count": 0,
+            "remaining_count": 0,
+            "executions": [],
+        }
+    if not executor_url:
+        return {
+            "schema_version": "agent_compute_cancellation.v1",
+            "requested_count": len(unique_ids),
+            "cancelled_count": 0,
+            "deleted_count": 0,
+            "remaining_count": len(unique_ids),
+            "executions": [
+                {"execution_id": execution_id, "status": "executor_not_configured"}
+                for execution_id in unique_ids
+            ],
+        }
+
+    executions: list[dict[str, Any]] = []
+    for execution_id in unique_ids:
+        url = f"{executor_url.rstrip('/')}/executions/{execution_id}"
+        try:
+            response = httpx.delete(url, timeout=15)
+            if response.status_code == 404:
+                executions.append({"execution_id": execution_id, "status": "not_started"})
+                continue
+            response.raise_for_status()
+            payload = response.json()
+            status = payload.get("status") if isinstance(payload, dict) else None
+            if purge_records and status in {"cancelled", "completed", "failed"}:
+                purge_response = httpx.delete(f"{url}/record", timeout=15)
+                purge_response.raise_for_status()
+                status = "deleted"
+            executions.append(
+                {"execution_id": execution_id, "status": status or "invalid_response"}
+            )
+        except (httpx.HTTPError, ValueError) as exc:
+            executions.append(
+                {
+                    "execution_id": execution_id,
+                    "status": "cancellation_failed",
+                    "error_type": type(exc).__name__,
+                }
+            )
+    terminal_statuses = {"cancelled", "completed", "failed", "not_started", "deleted"}
+    remaining_count = sum(1 for item in executions if item["status"] not in terminal_statuses)
+    return {
+        "schema_version": "agent_compute_cancellation.v1",
+        "requested_count": len(unique_ids),
+        "cancelled_count": sum(1 for item in executions if item["status"] == "cancelled"),
+        "deleted_count": sum(1 for item in executions if item["status"] == "deleted"),
+        "remaining_count": remaining_count,
+        "executions": executions,
+    }
+
+
 def run_compute_script(
     *,
     store: LocalArtifactStore,
+    execution_id: str,
     workspace: Path,
     script_path: Path,
     arguments: list[str],
@@ -257,24 +348,63 @@ def run_compute_script(
             workspace_relative_path = str(workspace.relative_to(root))
         except ValueError as exc:
             raise ValueError("Compute workspace is outside the shared artifact root") from exc
-        response = httpx.post(
-            f"{executor_url.rstrip('/')}/execute",
-            json={
-                "schema_version": "isolated_compute_request.v1",
-                "workspace_relative_path": workspace_relative_path,
-                "script_path": str(script_path.relative_to(workspace)),
-                "arguments": arguments,
-                "requested_device": requested_device,
-                "fallback_policy": fallback_policy,
-                "timeout_seconds": timeout_seconds,
-            },
-            timeout=timeout_seconds + 30,
-        )
-        response.raise_for_status()
-        result = response.json()
-        if not isinstance(result, dict) or result.get("schema_version") != "isolated_compute_execution.v1":
-            raise ValueError("Compute executor returned an invalid response")
-        return result
+        request_payload = {
+            "schema_version": "isolated_compute_request.v1",
+            "workspace_relative_path": workspace_relative_path,
+            "script_path": str(script_path.relative_to(workspace)),
+            "arguments": arguments,
+            "requested_device": requested_device,
+            "fallback_policy": fallback_policy,
+            "timeout_seconds": timeout_seconds,
+        }
+        execution_url = f"{executor_url.rstrip('/')}/executions/{execution_id}"
+        deadline = time.monotonic() + timeout_seconds + 90
+        submit_required = True
+        while True:
+            try:
+                if submit_required:
+                    response = httpx.post(execution_url, json=request_payload, timeout=30)
+                    submit_required = False
+                else:
+                    response = httpx.get(execution_url, timeout=30)
+                response.raise_for_status()
+            except httpx.RequestError as exc:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "Compute executor did not become reachable before its declared timeout"
+                    ) from exc
+                submit_required = True
+                time.sleep(2)
+                continue
+            status_payload = response.json()
+            if (
+                not isinstance(status_payload, dict)
+                or status_payload.get("schema_version") != "isolated_compute_status.v1"
+            ):
+                raise ValueError("Compute executor returned an invalid execution status")
+            status = status_payload.get("status")
+            if status == "completed":
+                result = status_payload.get("result")
+                if (
+                    not isinstance(result, dict)
+                    or result.get("schema_version") != "isolated_compute_execution.v1"
+                ):
+                    raise ValueError("Compute executor completed without a valid result")
+                return result
+            if status == "failed":
+                error = status_payload.get("error")
+                message = error.get("message") if isinstance(error, dict) else None
+                raise ValueError(str(message or "Compute executor failed"))
+            if status == "cancelled":
+                raise RuntimeError("Compute execution was cancelled by the project power control")
+            if status == "interrupted":
+                submit_required = True
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "Compute executor did not reach a terminal state before its declared timeout"
+                )
+            time.sleep(2)
     return run_compute_script_locally(
         workspace=workspace,
         script_path=script_path,
@@ -324,7 +454,10 @@ def run_compute_script_locally(
             timed_out = True
             exit_code = 124
             stdout = text_from_timeout_stream(exc.stdout)
-            stderr = text_from_timeout_stream(exc.stderr) + "\nCompute execution exceeded its declared timeout."
+            stderr = (
+                text_from_timeout_stream(exc.stderr)
+                + "\nCompute execution exceeded its declared timeout."
+            )
     ended_at = datetime.now(timezone.utc)
     return {
         "schema_version": "isolated_compute_execution.v1",
@@ -406,7 +539,9 @@ def register_declared_outputs(
             continue
         source_path = resolve_workspace_path(workspace, item.get("path"), must_exist=True)
         if not source_path.is_file():
-            raise ValueError(f"Declared compute output is not a file: {source_path.relative_to(workspace)}")
+            raise ValueError(
+                f"Declared compute output is not a file: {source_path.relative_to(workspace)}"
+            )
         asset_type = str(item.get("asset_type") or "compute_output")
         name = str(item.get("name") or f"compute_output_{new_id('out')}")
         version = next_artifact_version(db, project.id, asset_type, name)
@@ -418,7 +553,10 @@ def register_declared_outputs(
             version=version,
             source_path=source_path,
             filename=source_path.name,
-            metadata={"job_id": job.id, "workspace_relative_path": str(source_path.relative_to(workspace))},
+            metadata={
+                "job_id": job.id,
+                "workspace_relative_path": str(source_path.relative_to(workspace)),
+            },
         )
         artifacts.append(
             register_artifact(

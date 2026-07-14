@@ -100,6 +100,7 @@ from tabular_harness.services.jobs import (
     mark_job_running,
     reap_orphaned_worker_jobs,
     reap_stale_running_jobs,
+    requeue_interrupted_agent_compute_jobs,
 )
 from tabular_harness.services.marimo_sessions import NativeMarimoSession
 from tabular_harness.services.metric_preferences import metric_lower_is_better
@@ -1439,7 +1440,12 @@ def test_delete_project_removes_project_scoped_records(tmp_path: Path, monkeypat
     def fake_remove_project_artifacts_and_verify(settings: Any, *, org_id: str, project_id: str) -> dict[str, Any]:
         del settings
         cleanup_requests.append({"org_id": org_id, "project_id": project_id})
-        return {"status": "completed", "target_count": 3, "remaining_count": 0}
+        return {
+            "status": "completed",
+            "target_count": 4,
+            "remaining_count": 0,
+            "remaining_paths": [],
+        }
 
     monkeypatch.setattr(
         "tabular_harness.api.routes.stop_native_marimo_sessions_for_project",
@@ -1495,8 +1501,9 @@ def test_delete_project_removes_project_scoped_records(tmp_path: Path, monkeypat
     assert delete_response.json()["stopped_marimo_sessions"] == 2
     assert delete_response.json()["artifact_cleanup"] == {
         "status": "completed",
-        "target_count": 3,
+        "target_count": 4,
         "remaining_count": 0,
+        "remaining_paths": [],
     }
     assert stopped_projects == [project_id]
     assert cleanup_requests == [{"org_id": "local-org", "project_id": project_id}]
@@ -1559,6 +1566,54 @@ def test_delete_project_stops_codex_tree_and_removes_workspace(tmp_path: Path) -
         if process.poll() is None:
             process.kill()
             process.wait(timeout=3)
+
+
+def test_delete_project_stays_powered_off_when_compute_cleanup_cannot_be_verified(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    client = make_client(tmp_path)
+    project_id = client.post("/api/projects", json={"name": "Delete cleanup boundary"}).json()["id"]
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "AUTONOMOUS_LOOP"
+        compute_job = create_job(db, job_type="run_agent_compute", project_id=project_id)
+        compute_job.status = "cancelled"
+        compute_job_id = compute_job.id
+        db.commit()
+    cleanup_requests: list[list[str]] = []
+
+    def fail_compute_cleanup(execution_ids: list[str], **kwargs: Any) -> dict[str, Any]:
+        cleanup_requests.append(execution_ids)
+        assert kwargs == {"purge_records": True}
+        return {
+            "schema_version": "agent_compute_cancellation.v1",
+            "requested_count": len(execution_ids),
+            "cancelled_count": 0,
+            "remaining_count": 1,
+            "executions": [{"execution_id": compute_job_id, "status": "cancellation_failed"}],
+        }
+
+    monkeypatch.setattr(
+        routes_module,
+        "cancel_agent_compute_executions",
+        fail_compute_cleanup,
+    )
+
+    response = client.delete(f"/api/projects/{project_id}")
+
+    assert response.status_code == 503
+    assert cleanup_requests == [[compute_job_id]]
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        assert project.current_phase == "IDLE"
+        assert project.status == "deleting"
+        compute_job = db.get(Job, compute_job_id)
+        assert compute_job is not None
+        assert compute_job.status == "cancelled"
 
 
 def test_delete_project_removes_evaluation_experiment_dependencies(tmp_path: Path, monkeypatch: Any) -> None:
@@ -2839,6 +2894,54 @@ def test_full_auto_start_creates_main_agent_session_without_dataset_even_with_le
     assert transcript_response.status_code == 200
     transcript_event_types = [event["event_type"] for event in transcript_response.json()]
     assert "session_resumed_after_power_on" in transcript_event_types
+
+
+def test_agent_power_off_rejects_new_chat_and_worker_token_jobs(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_id = client.post("/api/projects", json={"name": "Power boundary"}).json()["id"]
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "AUTONOMOUS_LOOP"
+        project.autonomy_mode = "full_auto"
+        db.add(
+            AgentSession(
+                id="ags_power_boundary",
+                project_id=project_id,
+                session_type="main_autonomous",
+                status="between_turns",
+                autonomy_mode="full_auto",
+                runner_kind="codex_cli",
+                goal_text="Stop without another token-consuming turn.",
+            )
+        )
+        db.commit()
+
+    response = client.post(f"/api/projects/{project_id}/autonomy/stop")
+    assert response.status_code == 200, response.text
+    assert client.post(
+        f"/api/projects/{project_id}/agent-chat",
+        json={"message": "This must not start Codex.", "locale": "en-US"},
+    ).status_code == 409
+
+    with app.state.session_factory() as db:
+        queued = create_job(
+            db,
+            job_type="run_planned_agent_task_codex",
+            project_id=project_id,
+        )
+        queued_id = queued.id
+        db.commit()
+    with app.state.session_factory() as db:
+        assert acquire_next_job(
+            db,
+            worker_id="power-boundary-worker",
+            job_types={"run_planned_agent_task_codex"},
+        ) is None
+        db.commit()
+    with app.state.session_factory() as db:
+        assert db.get(Job, queued_id).status == "cancelled"
 
 
 def test_full_auto_start_during_data_upload_is_preserved_until_intake_finishes(
@@ -8654,6 +8757,60 @@ def test_worker_startup_reaps_jobs_owned_by_previous_process(tmp_path: Path) -> 
         assert still_active.status == "running"
 
 
+def test_worker_restart_never_requeues_compute_after_agent_power_off(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_id = client.post("/api/projects", json={"name": "Stopped compute recovery"}).json()["id"]
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "IDLE"
+        stop_job = create_job(db, job_type="stop_autonomous_loop", project_id=project_id)
+        stop_job.status = "succeeded"
+        compute_job = create_job(db, job_type="run_agent_compute", project_id=project_id)
+        compute_job.status = "running"
+        compute_job.locked_by = "restarted-worker"
+        compute_job_id = compute_job.id
+        db.commit()
+
+    with app.state.session_factory() as db:
+        assert reap_orphaned_worker_jobs(db, worker_id="restarted-worker") == 1
+        db.commit()
+
+    with app.state.session_factory() as db:
+        compute_job = db.get(Job, compute_job_id)
+        assert compute_job is not None
+        assert compute_job.status == "cancelled"
+        assert acquire_next_job(db, worker_id="next-worker", job_types={"run_agent_compute"}) is None
+
+
+def test_worker_startup_requeues_legacy_interrupted_compute_when_power_is_on(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project_id = client.post("/api/projects", json={"name": "Legacy compute recovery"}).json()["id"]
+    app = cast(Any, client.app)
+    with app.state.session_factory() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.current_phase = "AUTONOMOUS_LOOP"
+        compute_job = create_job(db, job_type="run_agent_compute", project_id=project_id)
+        compute_job.status = "timed_out"
+        compute_job.output_json = dumps_json({"schema_version": "orphaned_worker_job.v1"})
+        compute_job.error_message = "Worker restarted."
+        compute_job_id = compute_job.id
+        db.commit()
+
+    with app.state.session_factory() as db:
+        assert requeue_interrupted_agent_compute_jobs(db) == 1
+        db.commit()
+
+    with app.state.session_factory() as db:
+        compute_job = db.get(Job, compute_job_id)
+        assert compute_job is not None
+        assert compute_job.status == "queued"
+        assert compute_job.error_message is None
+        assert loads_json(compute_job.output_json, {})["recovery"] == "reattach_or_restart_durable_compute_execution"
+
+
 def test_data_quality_uses_registered_schema_without_profile_and_resolves_false_target_blocker(
     tmp_path: Path,
 ) -> None:
@@ -9648,7 +9805,7 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     assert chat["response_composer"]["status"] == "queued"
     assert chat["artifact_id"].startswith("pending_")
     assert "返答を準備しています" in chat["assistant_message"]
-    assert chat["response_brief"]["wait_state"]["worker_state"] == "waiting_for_local_worker"
+    assert chat["response_brief"]["wait_state"]["worker_state"] == "waiting_for_response_composer"
 
     pending_history_response = client.get(f"/api/projects/{project_id}/agent-chat/history")
     assert pending_history_response.status_code == 200
@@ -9658,7 +9815,7 @@ def test_agent_chat_records_conversation_without_mutating_project_state(tmp_path
     assert pending_history[0]["artifact_id"] == f"job_pending_{chat['job']['id']}"
     assert pending_history[0]["response_composer"]["status"] == "queued"
     assert "返答を準備しています" in pending_history[0]["assistant_message"]
-    assert pending_history[0]["response_brief"]["wait_state"]["worker_state"] == "waiting_for_local_worker"
+    assert pending_history[0]["response_brief"]["wait_state"]["worker_state"] == "waiting_for_response_composer"
     assert pending_history[0]["response_brief"]["wait_state"]["job_age_seconds"] >= 0
 
     app = cast(Any, client.app)
@@ -9905,14 +10062,14 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert chat_response.status_code == 200, chat_response.text
     chat = chat_response.json()
     assert chat["job"]["job_type"] == "agent_chat_turn"
-    assert chat["job"]["status"] == "waiting_for_agent"
+    assert chat["job"]["status"] == "queued"
     assert chat["job"]["priority"] == 90
     assert chat["job"]["run_after"] is None
-    assert chat["response_composer"]["mode"] == "main_codex_session"
-    assert chat["response_composer"]["status"] == "waiting_for_agent"
+    assert chat["response_composer"]["mode"] == "queued_worker"
+    assert chat["response_composer"]["status"] == "queued"
     assert "入力は進行中の分析エージェントに届いています" in chat["assistant_message"]
     assert "worker待ち" not in chat["assistant_message"]
-    assert chat["response_brief"]["wait_state"]["worker_state"] == "waiting_for_main_agent_reply"
+    assert chat["response_brief"]["wait_state"]["worker_state"] == "waiting_for_response_composer"
     assert chat["response_brief"]["progress_update_requested_event_id"]
     observation = chat["response_brief"]["agent_session_observation"]
     assert observation["schema_version"] == "agent_session_chat_wait_observation.v1"
@@ -9944,7 +10101,7 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     assert "ユーザーがAgent Chatで返答を待っています" in progress_request_text
     assert "この条件で特徴量を見直してください" in loads_json(latest.read_text(encoding="utf-8"), {})["content"]
     jobs = client.get(f"/api/projects/{project_id}/jobs").json()
-    assert any(job["job_type"] == "agent_chat_turn" and job["status"] == "waiting_for_agent" for job in jobs)
+    assert any(job["job_type"] == "agent_chat_turn" and job["status"] == "queued" for job in jobs)
     activity = client.get(f"/api/projects/{project_id}/agent-activity").json()
     waiting_workers = [
         worker
@@ -9956,11 +10113,11 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
     history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
     assert history[-1]["job_id"] == chat["job"]["id"]
     assert history[-1]["user_message"] == "この条件で特徴量を見直してください"
-    assert history[-1]["response_composer"]["mode"] == "main_codex_session"
-    assert history[-1]["response_composer"]["status"] == "waiting_for_agent"
-    assert "Codexの返答が届き次第" in history[-1]["assistant_message"]
+    assert history[-1]["response_composer"]["mode"] == "queued_worker"
+    assert history[-1]["response_composer"]["status"] == "queued"
+    assert "チャットの返答を準備しています" in history[-1]["assistant_message"]
     assert history[-1]["response_brief"]["delivered_agent_session_id"] == "ags_inbox_delivery"
-    assert history[-1]["response_brief"]["wait_state"]["worker_state"] == "waiting_for_main_agent_reply"
+    assert history[-1]["response_brief"]["wait_state"]["worker_state"] == "waiting_for_response_composer"
     history_observation = history[-1]["response_brief"]["agent_session_observation"]
     assert history_observation["agent_session_id"] == "ags_inbox_delivery"
     assert history_observation["latest_codex_message"]["content"] == "現在のデータを確認しています。"
@@ -9987,16 +10144,15 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
 
     worker = SyncWorker(handlers={"agent_chat_turn": agent_chat_turn_handler}, store=app.state.artifact_store)
     with app.state.session_factory() as db:
-        assert worker.run_next_job(db, project_id=project_id, job_types={"agent_chat_turn"}) is None
-        waiting_job = db.get(Job, chat["job"]["id"])
-        assert waiting_job is not None
-        assert waiting_job.status == "waiting_for_agent"
-        direct_run_result = worker.run_job(db, waiting_job)
-        assert direct_run_result.status == "waiting_for_agent"
-        db.refresh(waiting_job)
-        assert waiting_job.status == "waiting_for_agent"
-        assert waiting_job.started_at is None
-        assert waiting_job.ended_at is None
+        completed_job = worker.run_next_job(db, project_id=project_id, job_types={"agent_chat_turn"})
+        assert completed_job is not None
+        assert completed_job.id == chat["job"]["id"]
+        assert completed_job.status == "succeeded"
+
+    composed_history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
+    composed_turn = next(turn for turn in composed_history if turn.get("job_id") == chat["job"]["id"])
+    assert composed_turn["response_composer"]["status"] == "fallback"
+    assert composed_turn["assistant_message"]
 
     report_path = workspace / "reports" / "chat_update.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -10027,11 +10183,10 @@ def test_agent_chat_writes_active_session_instruction_to_workspace_inbox(tmp_pat
         db.commit()
 
     completed_history = client.get(f"/api/projects/{project_id}/agent-chat/history").json()
-    completed_turn = completed_history[-1]
-    assert completed_turn["job_id"] == chat["job"]["id"]
-    assert "特徴量の見直し依頼" in completed_turn["assistant_message"]
-    assert completed_turn["response_composer"]["mode"] == "main_codex_session"
-    assert completed_turn["response_brief"]["progress_artifact_id"]
+    completed_turn = next(turn for turn in completed_history if turn.get("job_id") == chat["job"]["id"])
+    assert completed_turn["response_composer"]["status"] == "fallback"
+    progress_turn = next(turn for turn in completed_history if "特徴量の見直し依頼" in turn["assistant_message"])
+    assert progress_turn["response_composer"]["mode"] == "main_codex_session"
 
 
 def test_agent_chat_wakes_between_turns_main_session(tmp_path: Path, monkeypatch: Any) -> None:
@@ -10082,8 +10237,8 @@ def test_agent_chat_wakes_between_turns_main_session(tmp_path: Path, monkeypatch
     assert chat_response.status_code == 200, chat_response.text
     assert supervisor_starts == [{"project_id": project_id, "session_id": "ags_wake_between_turns"}]
     chat = chat_response.json()
-    assert chat["response_composer"]["mode"] == "main_codex_session"
-    assert chat["job"]["status"] == "waiting_for_agent"
+    assert chat["response_composer"]["mode"] == "queued_worker"
+    assert chat["job"]["status"] == "queued"
     assert user_instructions_inbox_path(workspace).exists()
 
 
@@ -10343,9 +10498,9 @@ def test_agent_chat_history_pairs_each_main_session_update_once(tmp_path: Path, 
     assert first_turn["response_brief"]["progress_artifact_id"] == progress_artifact.id
     assert "最初の質問に対応する進捗" in first_turn["assistant_message"]
     assert second_turn["user_message"] == "二つ目の質問です。"
-    assert second_turn["response_composer"]["mode"] == "main_codex_session"
-    assert second_turn["response_composer"]["status"] == "waiting_for_agent"
-    assert "Codexの返答が届き次第" in second_turn["assistant_message"]
+    assert second_turn["response_composer"]["mode"] == "queued_worker"
+    assert second_turn["response_composer"]["status"] == "queued"
+    assert "チャットの返答を準備しています" in second_turn["assistant_message"]
     assert second_turn["artifact_id"].startswith("job_pending_")
 
 

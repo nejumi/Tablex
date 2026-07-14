@@ -89,6 +89,13 @@ JOB_TYPES = {
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}
 RUNNABLE_STATUSES = {"queued"}
+POWER_CONTROLLED_JOB_TYPES = {
+    "agent_chat_turn",
+    "continue_autonomous_session",
+    "run_agent_compute",
+    "run_agent_task",
+    "run_planned_agent_task_codex",
+}
 APPROVAL_REQUIRED_JOB_TYPES = {"run_agent_task"}
 JOB_LOCK_EXPIRY_SECONDS = 10 * 60
 STALE_RUNNING_JOB_TIMEOUT_SECONDS = {
@@ -100,6 +107,24 @@ STALE_RUNNING_JOB_TIMEOUT_SECONDS = {
     "select_primary_table": 15 * 60,
     "upload_data_bundle": 60 * 60,
 }
+
+
+def project_agent_power_was_explicitly_stopped(db: Session, project: Project) -> bool:
+    if project.current_phase == "AUTONOMOUS_LOOP":
+        return False
+    if project.status == "deleting":
+        return True
+    stop_job_id = db.scalar(
+        select(Job.id)
+        .where(
+            Job.project_id == project.id,
+            Job.job_type == "stop_autonomous_loop",
+            Job.status != "cancelled",
+        )
+        .order_by(Job.created_at.desc())
+        .limit(1)
+    )
+    return stop_job_id is not None
 
 
 def create_job(
@@ -247,6 +272,11 @@ def acquire_next_job(
         stmt = stmt.where(Job.project_id == project_id)
     candidates = db.scalars(stmt.limit(50)).all()
     for job in candidates:
+        if job.job_type in POWER_CONTROLLED_JOB_TYPES and job.project_id is not None:
+            project = db.get(Project, job.project_id)
+            if project is None or project_agent_power_was_explicitly_stopped(db, project):
+                cancel_job(job, cancelled_by="tablex-agent-power-boundary")
+                continue
         if job.locked_by and not queued_job_lock_is_stale(job, now=now):
             continue
         run_after = job.run_after
@@ -273,6 +303,77 @@ def acquire_next_job(
         db.expire_all()
         return db.get(Job, job.id)
     return None
+
+
+def requeue_waiting_agent_chat_jobs(
+    db: Session,
+    *,
+    now: datetime | None = None,
+    project_id: str | None = None,
+) -> int:
+    """Recover chat turns left waiting by the former main-session-only reply path."""
+    observed_at = now or utc_now()
+    stmt = select(Job).where(
+        Job.job_type == "agent_chat_turn",
+        Job.status == "waiting_for_agent",
+    )
+    if project_id is not None:
+        stmt = stmt.where(Job.project_id == project_id)
+    jobs = list(db.scalars(stmt.order_by(Job.created_at)).all())
+    for job in jobs:
+        project = db.get(Project, job.project_id) if job.project_id is not None else None
+        if project is None or project_agent_power_was_explicitly_stopped(db, project):
+            cancel_job(job, cancelled_by="tablex-agent-power-boundary")
+            continue
+        job.status = "queued"
+        job.locked_by = None
+        job.locked_at = None
+        job.run_after = None
+        job.updated_at = observed_at
+    if jobs:
+        db.flush()
+    return len(jobs)
+
+
+def requeue_interrupted_agent_compute_jobs(db: Session, *, now: datetime | None = None) -> int:
+    """Migrate compute jobs interrupted before durable executor reattachment existed."""
+    observed_at = now or utc_now()
+    jobs = list(
+        db.scalars(
+            select(Job)
+            .where(
+                Job.job_type == "run_agent_compute",
+                Job.status == "timed_out",
+            )
+            .order_by(Job.created_at)
+        ).all()
+    )
+    recovered = 0
+    for job in jobs:
+        project = db.get(Project, job.project_id) if job.project_id is not None else None
+        if project is None or project_agent_power_was_explicitly_stopped(db, project):
+            continue
+        output = loads_json(job.output_json, {})
+        if output.get("schema_version") != "orphaned_worker_job.v1":
+            continue
+        job.status = "queued"
+        job.error_message = None
+        job.output_json = dumps_json(
+            {
+                "schema_version": "interrupted_compute_job_recovery.v1",
+                "previous_status": "timed_out",
+                "recovery": "reattach_or_restart_durable_compute_execution",
+            }
+        )
+        job.locked_by = None
+        job.locked_at = None
+        job.run_after = None
+        job.ended_at = None
+        job.updated_at = observed_at
+        recovered += 1
+    if recovered:
+        db.flush()
+    return recovered
 
 
 def reap_stale_running_jobs(db: Session, *, now: datetime | None = None) -> int:
@@ -313,6 +414,25 @@ def reap_orphaned_worker_jobs(db: Session, *, worker_id: str) -> int:
         select(Job).where(Job.status == "running", Job.locked_by == worker_id)
     ).all()
     for job in candidates:
+        if job.job_type == "run_agent_compute":
+            project = db.get(Project, job.project_id) if job.project_id is not None else None
+            if project is None or project_agent_power_was_explicitly_stopped(db, project):
+                cancel_job(job, cancelled_by="tablex-agent-power-boundary")
+                continue
+            job.status = "queued"
+            job.output_json = dumps_json(
+                {
+                    "schema_version": "orphaned_worker_job_recovery.v1",
+                    "job_type": job.job_type,
+                    "worker_id": worker_id,
+                    "recovery": "reattach_to_durable_compute_execution",
+                }
+            )
+            job.locked_by = None
+            job.locked_at = None
+            job.ended_at = None
+            job.updated_at = utc_now()
+            continue
         mark_job_timed_out(
             job,
             f"{job.job_type} was interrupted when worker {worker_id} restarted.",

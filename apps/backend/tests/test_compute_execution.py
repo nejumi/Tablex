@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,13 @@ from tabular_harness.models.entities import (
 from tabular_harness.services.agent_requests.compute import process_compute_tool_requests
 from tabular_harness.services.artifacts import LocalArtifactStore, artifact_primary_path
 from tabular_harness.services.compute_execution import execute_agent_compute_job
-from tabular_harness.services.compute_executor import execute_payload
+from tabular_harness.services.compute_executor import (
+    cancel_execution,
+    delete_execution_record,
+    execute_payload,
+    get_execution,
+    submit_execution,
+)
 
 
 def test_compute_request_runs_with_cpu_fallback_and_links_resource_evidence(
@@ -308,3 +315,78 @@ def test_isolated_executor_filters_credentials_and_reports_boundary(
     }
     assert "OPENAI_API_KEY" not in environment
     assert environment["TABLEX_SELECTED_DEVICE"] == "cpu"
+
+
+def test_durable_compute_execution_is_idempotent(tmp_path: Path, monkeypatch: Any) -> None:
+    artifact_root = tmp_path / "artifacts"
+    workspace = artifact_root / "agent_sessions" / "project" / "session"
+    workspace.mkdir(parents=True)
+    (workspace / "probe.py").write_text("print('durable')\n", encoding="utf-8")
+    monkeypatch.setenv("HARNESS_ARTIFACT_ROOT", str(artifact_root))
+    monkeypatch.setattr(
+        "tabular_harness.services.compute_executor.detect_compute_resources",
+        lambda **kwargs: {
+            "schema_version": "compute_resource_snapshot.v1",
+            "gpu": {"status": "unavailable", "usable_for_compute": False, "reason": "CPU test"},
+        },
+    )
+    payload = {
+        "schema_version": "isolated_compute_request.v1",
+        "workspace_relative_path": "agent_sessions/project/session",
+        "script_path": "probe.py",
+        "arguments": [],
+        "requested_device": "cpu",
+        "fallback_policy": "cpu_on_unavailable",
+        "timeout_seconds": 30,
+    }
+
+    first = submit_execution("job_durable_idempotent", payload)
+    second = submit_execution("job_durable_idempotent", payload)
+    assert first["attempt"] == 1
+    assert second["attempt"] == 1
+
+    deadline = time.monotonic() + 5
+    status = get_execution("job_durable_idempotent")
+    while status["status"] == "running" and time.monotonic() < deadline:
+        time.sleep(0.02)
+        status = get_execution("job_durable_idempotent")
+    assert status["status"] == "completed"
+    assert status["attempt"] == 1
+    assert status["result"]["exit_code"] == 0
+    assert "durable" in status["result"]["stdout"]
+
+
+def test_durable_compute_cancellation_is_terminal(tmp_path: Path, monkeypatch: Any) -> None:
+    artifact_root = tmp_path / "artifacts"
+    workspace = artifact_root / "agent_sessions" / "project" / "cancel-session"
+    workspace.mkdir(parents=True)
+    (workspace / "slow.py").write_text(
+        "import time\nfrom pathlib import Path\ntime.sleep(30)\nPath('finished').write_text('bad')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HARNESS_ARTIFACT_ROOT", str(artifact_root))
+    monkeypatch.setattr(
+        "tabular_harness.services.compute_executor.detect_compute_resources",
+        lambda **kwargs: {
+            "schema_version": "compute_resource_snapshot.v1",
+            "gpu": {"status": "unavailable", "usable_for_compute": False, "reason": "CPU test"},
+        },
+    )
+    payload = {
+        "schema_version": "isolated_compute_request.v1",
+        "workspace_relative_path": "agent_sessions/project/cancel-session",
+        "script_path": "slow.py",
+        "arguments": [],
+        "requested_device": "cpu",
+        "fallback_policy": "cpu_on_unavailable",
+        "timeout_seconds": 60,
+    }
+
+    submit_execution("job_durable_cancel", payload)
+    cancelled = cancel_execution("job_durable_cancel")
+    assert cancelled["status"] == "cancelled"
+    time.sleep(0.1)
+    assert get_execution("job_durable_cancel")["status"] == "cancelled"
+    assert not (workspace / "finished").exists()
+    assert submit_execution("job_durable_cancel", payload)["status"] == "cancelled"
+    assert delete_execution_record("job_durable_cancel")["deleted"] is True

@@ -13,8 +13,10 @@ from typing import Any, Literal
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel
 
+from tabular_harness.core.config import get_settings
 from tabular_harness.schemas import AgentResult, AgentTaskContract
 from tabular_harness.services.codex_transcript import build_codex_cli_transcript
+from tabular_harness.services.project_execution_control import project_execution_stop_requested
 
 CODEX_HARNESS_CONFIG_ARGS = ("-c", "mcp_servers={}")
 
@@ -287,6 +289,18 @@ class CodexCliRunner(AgentRunner):
         execution_policy: ExecutionPolicy,
     ) -> AgentResult:
         workspace = Path(workspace_ref.path).resolve()
+        if project_execution_stop_requested(
+            get_settings().data_dir, project_id=workspace_ref.project_id
+        ):
+            return AgentResult(
+                task_id=task_contract.task_id,
+                status="failed",
+                final_message="Codex execution was cancelled by the project power control.",
+                outputs={"runner": "codex_cli", "cancelled_by_project_power": True},
+                artifacts=[],
+                warnings=[],
+                failure_reason="project_power_off",
+            )
         harness_dir = workspace / ".harness"
         harness_dir.mkdir(parents=True, exist_ok=True)
         contract_path = harness_dir / "task_contract.json"
@@ -337,6 +351,7 @@ class CodexCliRunner(AgentRunner):
                     network_enabled=execution_policy.network in {"restricted", "full"},
                 ),
                 check=False,
+                start_new_session=True,
             )
         except FileNotFoundError:
             duration_ms = int((time.perf_counter() - started_at) * 1000)
@@ -393,6 +408,18 @@ class CodexCliRunner(AgentRunner):
         codex_cli_log["result_path"] = str(result_path.relative_to(workspace))
         codex_cli_log["last_message_path"] = str(last_message_path.relative_to(workspace))
         if completed.returncode != 0 and codex_cli_rejected_output_schema(completed):
+            if project_execution_stop_requested(
+                get_settings().data_dir, project_id=workspace_ref.project_id
+            ):
+                return AgentResult(
+                    task_id=task_contract.task_id,
+                    status="failed",
+                    final_message="Codex retry was cancelled by the project power control.",
+                    outputs={"runner": "codex_cli", "cancelled_by_project_power": True},
+                    artifacts=[],
+                    warnings=[],
+                    failure_reason="project_power_off",
+                )
             first_attempt_log = codex_cli_log
             retry_cmd = build_command(include_output_schema=False)
             retry_command_summary = " ".join(retry_cmd[:-1] + ["-"])
@@ -408,8 +435,9 @@ class CodexCliRunner(AgentRunner):
                     workspace,
                     sandbox=execution_policy.sandbox,
                     network_enabled=execution_policy.network in {"restricted", "full"},
-                ),
+                    ),
                     check=False,
+                    start_new_session=True,
                 )
             except subprocess.TimeoutExpired as exc:
                 duration_ms = int((time.perf_counter() - retry_started_at) * 1000)

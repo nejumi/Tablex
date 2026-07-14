@@ -42,6 +42,10 @@ class SyncWorker:
             mark_job_running(job)
             db.commit()
             output = handler(db, job, self.store)
+            db.refresh(job)
+            if job.status == "cancelled":
+                db.commit()
+                return job
             if output.get("job_status") == "failed":
                 mark_job_failed(job, str(output.get("error_message") or "Job failed"), output)
             elif output.get("job_status") in {"waiting_for_agent", "waiting_for_agent_review"}:
@@ -56,6 +60,8 @@ class SyncWorker:
             failed_job = db.get(Job, job_id)
             if failed_job is None:
                 return job
+            if failed_job.status == "cancelled":
+                return failed_job
             mark_job_failed(failed_job, str(exc))
             try:
                 db.commit()

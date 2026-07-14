@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tabular_harness.core.json import dumps_json, loads_json
-from tabular_harness.core.runtime_paths import resolve_runtime_data_path
+from tabular_harness.core.runtime_paths import LOGICAL_DATA_ROOT, resolve_runtime_data_path
 from tabular_harness.models.entities import (
     AgentSession,
     AgentTranscriptEvent,
@@ -21,6 +21,15 @@ from tabular_harness.models.entities import (
 from tabular_harness.services.agent_inbox import latest_inbox_entry_path, write_inbox_entry
 from tabular_harness.services.agent_notebook_quality import notebook_quality_feedback_from_metadata
 from tabular_harness.services.locales import locale_is_japanese
+
+
+def session_workspace_path(session: AgentSession) -> Path:
+    workspace = Path(session.workspace_path or "")
+    try:
+        workspace.relative_to(LOGICAL_DATA_ROOT)
+    except ValueError:
+        return workspace
+    return resolve_runtime_data_path(workspace)
 
 
 def user_instructions_inbox_path(workspace: Path) -> Path:
@@ -162,7 +171,7 @@ def append_user_instruction_to_workspace_inbox(
 ) -> None:
     if not session.workspace_path:
         return
-    workspace = resolve_runtime_data_path(session.workspace_path)
+    workspace = session_workspace_path(session)
     payload = {
         "schema_version": "tablex_user_instruction.v1",
         "session_id": session.id,
@@ -197,7 +206,7 @@ def write_progress_request_to_workspace_inbox(
 ) -> None:
     if not session.workspace_path:
         return
-    workspace = resolve_runtime_data_path(session.workspace_path)
+    workspace = session_workspace_path(session)
     japanese = locale_is_japanese(locale)
     user_message_excerpt = user_message.strip()[:1200] if isinstance(user_message, str) and user_message.strip() else None
     if trigger == "user_chat_message":
@@ -275,7 +284,7 @@ def write_research_plan_current_work_request_to_workspace_inbox(
 ) -> None:
     if not session.workspace_path:
         return
-    workspace = resolve_runtime_data_path(session.workspace_path)
+    workspace = session_workspace_path(session)
     path = research_plan_current_work_request_path(workspace)
     japanese = locale_is_japanese(locale)
     if japanese:
@@ -354,7 +363,7 @@ def write_task_spec_request_to_workspace_inbox(
 ) -> None:
     if not session.workspace_path:
         return
-    workspace = resolve_runtime_data_path(session.workspace_path)
+    workspace = session_workspace_path(session)
     lines = [
         "schema_version: tablex_task_spec_request.v1",
         f"event_index: {event.event_index}",
@@ -405,7 +414,7 @@ def write_data_framing_request_to_workspace_inbox(
 ) -> None:
     if not session.workspace_path:
         return
-    workspace = resolve_runtime_data_path(session.workspace_path)
+    workspace = session_workspace_path(session)
     dataset_line = ", ".join(dataset_snapshot_ids)
     lines = [
         "schema_version: tablex_data_framing_request.v1",
@@ -494,7 +503,7 @@ def write_research_plan_contract_request_to_workspace_inbox(
 ) -> None:
     if not session.workspace_path:
         return
-    workspace = resolve_runtime_data_path(session.workspace_path)
+    workspace = session_workspace_path(session)
     path = research_plan_contract_request_path(workspace)
     japanese = locale_is_japanese(locale)
     issues = [issue for issue in validation.get("issues", []) if isinstance(issue, dict)]
@@ -574,7 +583,7 @@ def write_research_plan_artifact_rejection_to_workspace_inbox(
 ) -> None:
     if not session.workspace_path:
         return
-    workspace = resolve_runtime_data_path(session.workspace_path)
+    workspace = session_workspace_path(session)
     path = research_plan_artifact_rejection_path(workspace)
     lines = [
         "schema_version: tablex_research_plan_artifact_rejection.v1",

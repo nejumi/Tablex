@@ -11,9 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from tabular_harness.agent.runners import CODEX_HARNESS_CONFIG_ARGS, safe_env
+from tabular_harness.core.config import get_settings
 from tabular_harness.models.entities import Project
 from tabular_harness.services.codex_transcript import build_codex_cli_transcript
 from tabular_harness.services.locales import locale_is_japanese
+from tabular_harness.services.project_execution_control import project_execution_stop_requested
 
 
 @dataclass(frozen=True)
@@ -258,7 +260,20 @@ def build_human_response_brief(
 def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
     if shutil.which("codex") is None:
         return CodexCompositionResult(message=None, status="codex_not_found", failure_reason="Codex CLI binary was not found on PATH.")
-    with tempfile.TemporaryDirectory(prefix="tablex-response-composer-") as tmp:
+    project = brief.get("project") if isinstance(brief.get("project"), dict) else {}
+    raw_project_id = project.get("id")
+    project_id = str(raw_project_id or "unknown-project")
+    if isinstance(raw_project_id, str) and project_execution_stop_requested(
+        get_settings().data_dir, project_id=raw_project_id
+    ):
+        return CodexCompositionResult(
+            message=None,
+            status="cancelled",
+            failure_reason="Codex response composition was cancelled by the project power control.",
+        )
+    composer_root = Path(tempfile.gettempdir()) / "tablex-response-composer" / project_id
+    composer_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="turn-", dir=composer_root) as tmp:
         workspace = Path(tmp)
         response_path = workspace / "response.txt"
         timeout_seconds = codex_response_timeout_seconds()
@@ -310,6 +325,7 @@ def compose_with_codex_cli(brief: dict[str, Any]) -> CodexCompositionResult:
                 timeout=timeout_seconds,
                 env=safe_env(workspace),
                 check=False,
+                start_new_session=True,
             )
         except subprocess.TimeoutExpired as exc:
             duration_ms = int((time.perf_counter() - started_at) * 1000)

@@ -1183,6 +1183,19 @@ def wait_for_any_event(events: tuple[threading.Event | None, ...], timeout_secon
         time.sleep(min(0.25, remaining))
 
 
+def active_agent_compute_job_ids(db: Session, *, project_id: str) -> list[str]:
+    jobs = db.scalars(
+        select(Job)
+        .where(
+            Job.project_id == project_id,
+            Job.job_type == "run_agent_compute",
+            Job.status.in_({"queued", "running"}),
+        )
+        .order_by(Job.created_at)
+    ).all()
+    return [job.id for job in jobs]
+
+
 def run_main_agent_session_supervisor(
     session_factory: sessionmaker[Session],
     store: LocalArtifactStore,
@@ -1247,6 +1260,28 @@ def run_main_agent_session_supervisor(
                     )
                     db.commit()
                     return
+                active_compute_ids = active_agent_compute_job_ids(db, project_id=project.id)
+                if active_compute_ids and not pending_main_session_user_instruction_exists(db, session=session):
+                    if session.status != "between_turns":
+                        session.status = "between_turns"
+                        session.pid = None
+                        session.updated_at = utc_now()
+                        session.last_heartbeat_at = utc_now()
+                        append_session_event(
+                            db,
+                            session,
+                            source="tablex_sidecar",
+                            event_type="session_waiting_for_child_compute",
+                            role="harness",
+                            title="Child compute is running",
+                            content="Codex returned control while the requested child compute runs. The same session will resume when it finishes.",
+                            payload={"active_compute_job_ids": active_compute_ids},
+                            update_heartbeat=False,
+                        )
+                    db.commit()
+                    if wait_for_any_event((lease_lost_event, shutdown_event), 2):
+                        continue
+                    continue
                 workspace = prepare_session_workspace(db, store=store, project=project, session=session)
                 contract_request_event = maybe_request_research_plan_contract_revision(
                     db,
